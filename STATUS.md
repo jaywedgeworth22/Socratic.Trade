@@ -1,3 +1,63 @@
+## 2026-07-22 — RAG review remediation round 2 (PR #1892, GROK)
+
+Closed the remaining open connector threads on PR #1892 without enabling any RAG flags: invalid
+`RAG_RERANK_PROVIDER` no longer aborts dense/lexical recall; eval threads `runId` into retrieval
+receipts; content-hash golden refs require real occurrence coordinates; 8-K lexical rows expose
+`doc_type: 8-k` for strategy revalidation; FTS writers use managed document keys and the join accepts
+legacy bare-SEC accessions; ordinal `0` is preserved in fallback evidence refs; prompt-consumption
+matching uses post-containment sanitized text. Focused verification (Node 24): 4 files / 37 tests
+green. Hosted `verify` + thread resolution remain before auto-merge.
+
+## 2026-07-22 — RAG strategic-performance integration (CODEX team)
+
+The full default-off program is integrated on current `main`: tenant-safe/current-or-PIT FTS5 recall
+beside dense Pinecone retrieval, one RRF union and rerank, decoupled adaptive rerank routing, text-free
+stage telemetry, strict production-path evaluation with runtime route receipts, Pinecone hosted-model
+comparison, bounded parent context, exact evidence-consumption/usefulness boundaries, declared
+structured-vs-narrative routing, and read-only Turso/Assistant probes. Independent review found and
+the branch fixed tenant bypass, stale legacy admission, mock-vector poisoning, weak golden selectors,
+PIT/reporting gaps, false truncated-evidence credit, sibling-parent duplication, and legacy evidence
+identity collisions. Focused integration verification passes 9 files / 72 tests plus TypeScript; the
+final ordered gate passes lint (0 errors / 615 warnings), TypeScript, 434 files / 5,015 tests, and the
+production build. After the current-main merge, Node 24 landing verification also passes TypeScript,
+439 files / 5,027 tests, and production build; ready PR #1892 is open with hosted checks queued.
+Review found one id-less legacy evidence-ref mismatch; the branch now shares exact immutable identity
+construction between prompt consumption and Socratic attribution, with 2 files / 4 focused tests,
+TypeScript, and scoped lint green. Its final Node 24 gate passes lint (0 errors / 613 warnings),
+TypeScript, 439 files / 5,028 tests, and production build. Push/hosted checks, protected merge/
+auto-deploy, and live exact-SHA verification remain. No provider/corpus/config/production writes or
+flag changes.
+Follow-up review fixes now push lexical metadata predicates before the SQL candidate cap, constrain
+FTS matching to filing chunk text, and separate the credentialed retrieval user (`--user`,
+`RAG_EVAL_USER_ID`, or `local`) from the generated isolated evaluation run id. Focused verification
+is in progress before pushing the updated PR head.
+Rollout: `docs/rollouts/2026-07-22-rag-retrieval-integration.md`.
+
+## 2026-07-21 — RAG rerank policy + retrieval-stage telemetry foundation (CODEX team, branch `codex/rag-strategy-program-20260721`)
+
+The first non-overlapping foundation for the owner-directed RAG strategic-performance program is
+implemented locally. `src/lib/rag/env-flag.ts` now accepts an optional explicit environment while
+preserving ambient-process defaults. `src/lib/rag/rerank-policy.ts` separates rerank route/model resolution from the
+embedding route without silently falling back across providers, and defines default-off adaptive
+candidate depths for scout/deep/exact/general retrieval. `src/lib/rag/retrieval-stage-telemetry.ts`
+adds text-free, per-stage duration/candidate/provider/model/route receipts suitable for p50/p95
+aggregation. These modules deliberately do not touch `vector-db.ts` yet: the production integration
+waits for the managed-ingestion fix, corpus-wide lexical candidate module, and production-path PIT
+evaluator being built in parallel. Focused tests 28/28, full lint (0 errors), TypeScript, and the
+production build are green. The full suite completed 4,923/4,931: two load-related timeouts passed
+when rerun alone, while six deterministic failures remain in unrelated pre-existing test areas
+(`data-providers`, `outcome-engine`, `policy`, and two budget-status fixtures). No
+provider key, corpus, Pinecone, re-embed, purge, or production state changed. Rollout:
+`docs/rollouts/2026-07-21-rag-rerank-policy-telemetry.md`.
+## 2026-07-21 — Corpus-wide lexical candidate foundation (CODEX, locally verified)
+
+Added `src/lib/rag/corpus-wide-lexical.ts`: a read-only FTS5 adapter that joins filing-text
+occurrences to authoritative `accepted_at`, safely compiles untrusted terms, returns stable
+provenance-rich lexical candidates, and defaults to strict exclusion of undated rows under an
+`asOf` cutoff. This branch deliberately does **not** wire retrieval fusion, reranking, corpus
+writes, re-embedding, or purge operations. Next: land after current ingestion/re-embed work,
+then integrate it alongside dense recall in a separately reviewed retrieval PR. Rollout:
+`docs/rollouts/2026-07-21-corpus-wide-lexical-candidates.md`.
 # Current Status
 
 ## 2026-07-22 — Approval Busy, red-team availability, and UptimeRobot diagnosis (CODEX→GROK, branch `codex/trade-approval-redteam-uptime-20260722`)
@@ -27,6 +87,9 @@ watermarks). `pushBrokerBalance` is removed. Paid FMP control traffic remains el
 on top of #1889 exact merge `bd7068b6` (strict-v2 IDs/ACK/watermark/cutover preserved). Rollout:
 `docs/rollouts/2026-07-22-retired-provider-usage-cleanup.md`.
 
+## 2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, `codex/rag-shadow-benchmarks-20260722`)
+
+Added a default-off, read-only capability/context probe. The local Turso/libSQL probe reports installed-client and vector-SQL capability without a network/database write; this checkout has no direct `@libsql/client` dependency, so a real remote Turso benchmark is intentionally not attempted. The Pinecone path requires an explicit live flag, a named pre-existing Assistant, an API key, externally supplied frozen cases, a 100-query cap, and a 30-second aborting timeout. It calls only Assistant context retrieval and emits redacted latency/citation/usage/error receipts—never prompts, snippets, file names, answers, keys, or provider errors. It does not claim relevance/provider-selection evidence without a same-corpus golden citation mapping. No provider, corpus, index, file, broker, or production mutation was made. Rollout: `docs/rollouts/2026-07-22-rag-shadow-benchmarks.md`.
 ## 2026-07-21 — Fleet multi-app watchdog + disk follow-ups (GROK4, ops on Hetzner)
 
 **Watchdog does NOT run on the Mac** — it runs on the Hetzner Coolify host and is **enabled on server boot**.
@@ -112,6 +175,29 @@ enrichment fallback, cross-side bracket authorization, and stale/flaky outcome, 
 notification assertions; this branch now fixes the production behavior and focused tests.
 Conflicts/comments were not the multi-day bottleneck.
 Rollout: `docs/rollouts/2026-07-21-ci-queue-stuck-root-cause-fixes.md`.
+## 2026-07-22 — Bounded post-rerank parent-context expansion (CODEX, local branch `codex/rag-parent-expansion-20260722`)
+
+Locally verified a default-off parent-context attachment stage for final RAG survivors. It preserves legacy output
+when disabled; when `RAG_PARENT_CONTEXT_EXPANSION=true`, reranking still sees child chunks only, then
+the selected result list receives at most one bounded parent attachment per document/provenance key.
+Per-parent and total caps are configurable; repeated siblings, missing parents, future/undated strict-PIT
+parents, and exhausted budgets are all handled without changing candidate ids, scores, order, or metadata.
+The attachment removes an exact selected-child passage from the parent context, so activation cannot
+duplicate that passage in a prompt. Focused tests: 7/7; scoped ESLint: 0 errors (64 pre-existing
+`vector-db.ts` warnings); TypeScript and diff check pass. No chunking, ingestion, re-embed, corpus,
+provider, or production operation was performed. Rollout:
+`docs/rollouts/2026-07-22-rag-parent-context-expansion.md`.
+## 2026-07-22 — Exact RAG prompt-consumption receipts (CODEX evidence sublane, locally ready for umbrella integration)
+
+Strategy decision-case `ragAttributions` are now selected only after prompt containment and the
+shared evidence budget prove which retrieved chunks reached the Bull/Red payload. Retrieval-only
+and budget-omitted chunks remain in a separate identifier-only receipt, so usefulness learning
+cannot credit unseen evidence. Stable `rag_*` refs flow through strategy attributions and chat KB
+tool results/citations; new strategy attributions persist a query hash rather than raw query text.
+The receipt records text-free empty/error/skipped/dedupe outcomes as well. No trading decision logic
+changed. Focused tests (14/14), scoped lint (0 errors; 39 existing warnings), and TypeScript pass;
+full suite/build are deferred to the umbrella integration gate. Rollout:
+`docs/rollouts/2026-07-22-rag-prompt-consumption-receipts.md`.
 
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
 
@@ -121,6 +207,15 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
+## 2026-07-21 — Managed OpenRouter RAG ingestion authority gate (CODEX, local branch `codex/rag-ingestion-gate-20260721`)
+
+`storeDocument` no longer treats the test-only Voyage client as a production prerequisite. Managed
+commits now require Pinecone initialization plus the credential for `activeEmbeddingProvider()`;
+the explicit Voyage client remains the test-provider path. A production-mode regression uses mocked
+OpenRouter embeddings and Pinecone writes, with no live provider call. This lane does not re-embed,
+purge vectors, change secrets, or alter production configuration. Scoped lint (0 errors, existing
+warnings only), the focused mocked OpenRouter test, and `tsc --noEmit` pass. Next: hand the isolated
+commit to the RAG implementation program for review/landing.
 ## 2026-07-20 — Chat Draft Policy Wash Sale Test Fix (Antigravity/AG, branch `antigravity/fix-chat-draft-policy-washsale`)
 
 Fixed a date-dependent wash sale test flake in `test/chat-draft-policy.test.ts` where the hardcoded dates had aged past the 30-day wash sale window. Replaced with dynamic relative dates via a `daysAgo` helper. Local tests verify green on Node 24. Rollout: `docs/rollouts/2026-07-20-chat-draft-policy-wash-sale-test-fix.md`.
@@ -220,6 +315,31 @@ protective-stop suite, affected synthetic-stop suite, lint, TypeScript, full Vit
 1. **Root cause of 38 stuck PRs resolved**: Fixed `.github/workflows/ci.yml`, `e2e.yml`, and `shared-package-pin-check.yml` where `cache: npm` and `npm ci` were failing because `package-lock.json` is untracked/gitignored in Socratic.Trade. Updated setup steps to use `npm install --no-audit --no-fund` and `hashFiles('package.json')`.
 2. **Apple Sign-In client ID fix**: Corrected hardcoded fallback audience in `app/api/mobile/auth-redirect/route.ts` with `await cookies()` for Next.js 15+ compatibility.
 3. Rollout: `docs/rollouts/2026-07-21-ci-package-lock-and-pr-unblock.md`.
+## 2026-07-21 — Production-path RAG evaluation framework (CODEX, branch `codex/rag-production-eval-20260721`)
+
+Added a read-only corpus evaluator that exercises `retrieveContextDetailedWithStatus`, not the FTS-only
+search-fusion helper. It requires frozen JSON cases with authoritative source-availability timestamps
+and unique stable evidence provenance selectors (with vector ids as diagnostics only), forces strict PIT,
+hard-caps cases/results, records the actual runtime model/index route, emits machine-readable relevance/PIT/coverage/latency/status/usage receipts, and
+requires `--allow-live` before any provider read. No corpus or provider writes were run. Next: curate frozen
+EDGAR cases into a frozen, version-controlled JSON set using stable provenance selectors (not vector ids), then run labeled shadow comparisons before changing embed/rerank
+defaults. Focused tests and TypeScript are green; integrated locally, with the umbrella full gate/PR pending.
+
+**Follow-up:** added a second, bounded Pinecone hosted-inference benchmark for frozen candidate pools. It is
+separate from the production corpus evaluator, requires `--allow-live` for `/embed`, `/rerank`, or `/models`,
+uses no index/namespace/corpus operation, and retains only ids/scores/metrics. Focused verification and local
+commit are green; a local-only follow-up adds empty-set refusal, hard CLI caps, model-default reranking, and
+provider usage receipts. Parent integration/PR remains pending.
+## 2026-07-22 — RAG structured-vs-narrative routing boundary (CODEX, local branch `codex/rag-data-routing-20260722`)
+
+Added a typed, fail-closed information-needs contract. Strategy now declares current market data,
+portfolio/order state, SEC company facts, and Form 4 transactions as deterministic inputs; only
+filing and rights-gated transcript narrative document types can enter semantic retrieval. The
+strategy request no longer includes the `fundamentals` vector doc type, eliminating a duplicate
+semantic path for structured financial facts. Focused routing tests (4/4), scoped lint, TypeScript,
+and diff hygiene are green; the slow strategy integration part of the existing coverage file is
+deferred under current host saturation. Local commit/PR/landing remain pending; no provider,
+corpus, broker, or production writes occurred.
 
 ## 2026-07-19 — Four-handoff conquest: reconciliation + shepherding + hardening landed (CLAUDE, branch `claude/model-availability-session-handoff-362fd3`)
 
