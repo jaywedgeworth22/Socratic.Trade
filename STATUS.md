@@ -25,6 +25,9 @@ Fixed Admin panel UI bugs:
 4. Cleaned up API Connections mapping in `route.ts`: aliased legacy `earningscall` rows into the `earningscalls-dev-rapidapi` environment block and formatted `congress.trade` as 'Congress.Trade (Public API)'. Profile photo extraction for the Admin Header was investigated but deemed too resource-heavy since the Admin layout intentionally excludes the `ConsoleDataProvider` that wraps the trading shell.
 
 All 420 files / 4,901 tests and the Next.js build verified green. Rollout: `docs/rollouts/2026-07-22-admin-ui-polish.md`.
+## 2026-07-22 — UI Redesign: Proposal Slide-out Drawer and Inline Approval (ANTIGRAVITY)
+
+Implemented a slide-out drawer for strategy proposals containing the full `ThesisNarrative` and relevant `Evidence`. Replaced the "Market Thesis" hero with a streamlined feed of these clickable `ProposalRow`s and moved historical actions to the bottom of the page. Added inline "Approve Proposal" buttons in the drawer to allow direct approval of pending trades from the dashboard. Rollout note: `docs/rollouts/2026-07-22-proposal-row-drawer.md`. Next: land.sh, PR, await user review.
 ## 2026-07-22 — Robinhood cap resilience landing (GROK pickup, branch `codex/robinhood-cap-fix`)
 
 Pickup from CODEX handoff. Node 24 confirmed (`24.18.0` modules=137); `npm rebuild better-sqlite3`
