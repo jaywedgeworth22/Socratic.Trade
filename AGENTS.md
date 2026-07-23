@@ -143,6 +143,7 @@ script calling `https://jays.services/api/v1/...` must use
 `https://host.jays.services/api/v1/...` instead.** The box hosts
 `socratic-trade-prod` (= `socratictrade.com`, see the production stanza below) plus the
 `github-runner` service (two GitHub Actions deploy runners).
+**MAC RUNNER RETIRED & DELETED (OWNER DIRECTIVE, 2026-07-21):** The Mac host self-hosted runner `trading-live-mac` is permanently stopped, uninstalled, and deleted from GitHub settings. **DO NOT EVER START, RE-REGISTER, OR REFERENCE `trading-live-mac` OR `trading-live` RUNNER LABELS AGAIN.** All CI/CD jobs must target `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`.
 **Build caveats:** the box's `concurrent_builds` is
 pinned to **1** (two parallel `next build`s OOM-wedged the old 4 GB box on 2026-07-07,
 console reboot required; unproven on the 8 GB box — loosen only deliberately), and Docker
@@ -476,6 +477,33 @@ paternalism that keeps creeping back in from every agent (Claude, Codex, others)
 - Don't run destructive git operations (`reset --hard`, force-push, branch
  deletion) without explicit user confirmation in the current conversation,
  even if a previous session was authorized to push.
+
+- **NEVER create a new provider API key. No agent, on any platform, ever.**
+ (Owner ruling, 2026-07-20 — binding for Claude, Codex, Antigravity/Gemini,
+ Cursor, Monet, cloud sessions, and any sub-agent they spawn.) The owner
+ maintains exactly ONE intended key per provider per app, with spend caps and
+ rate guardrails deliberately configured on that key. Agents provisioning their
+ own keys — for Socratic.Trade and Congress.Trade both — silently routed
+ production spend around those guardrails and made "which key is even in use?"
+ unanswerable. That is the failure this rule exists to prevent.
+  - Do not create, mint, rotate, or regenerate a key in ANY provider console or
+    API (OpenRouter, OpenAI, Anthropic, Pinecone, Voyage, FMP, …), and do not
+    swap in a key from another app, another workspace, or your own MCP
+    provisioning.
+  - If a key is missing, wrong, exhausted, or rejected: STOP and tell the owner
+    what you observed and which key you believe is in play (identify it by its
+    masked first-8/last-4 preview — see below — never by pasting a value). The
+    owner supplies keys via the `chmod 600` handoff in `/Users/jay/.secrets/`.
+    Waiting is always cheaper than a second key.
+  - To see WHICH key is serving without ever revealing one: the Connections page
+    (`/console/connections#api-keys`) shows the masked preview of the key that
+    actually resolves for you, and `/admin/llm-usage` breaks spend down per
+    distinct key fingerprint (`keyRef`) and per user.
+  - Trap that makes this worse: `migrateLocalEnvCredentials`
+    (`src/lib/db-api-keys.ts`) seeds the primary user's key store from env ONCE,
+    and `resolveLlmCredential` reads the DB row BEFORE env — so a key stored in
+    the DB permanently shadows `OPENROUTER_API_KEY`. Rotating the Infisical
+    secret alone changes nothing until that row is replaced via Connections.
 
 ## Cursor Cloud specific instructions
 

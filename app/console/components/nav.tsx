@@ -421,8 +421,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
     <>
       <nav
         ref={navRef}
-        className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]/85 backdrop-blur-xl supports-[backdrop-filter]:bg-[color:var(--con-surface)]/70 lg:hidden"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        className="con-tabbar fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]/85 backdrop-blur-xl supports-[backdrop-filter]:bg-[color:var(--con-surface)]/70 lg:hidden"
         aria-label="Console navigation"
       >
         <div className="flex">

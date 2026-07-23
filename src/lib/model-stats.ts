@@ -37,6 +37,11 @@
 // negative avg return = the veto added value). The UI applies the same
 // 20/50-resolved-veto gates as the Results page 'Red Team veto efficacy' card.
 
+// Canonicalize a (possibly OpenRouter-route-qualified) model id to its bare catalog name so
+// live/historical/benchmark stats align across the routing cutover. One shared definition in
+// ./model-identity — aliased to `cleanModelId` here so the call sites below stay unchanged.
+import { canonicalModelId as cleanModelId } from "./model-identity";
+
 export type ModelRole = "green" | "red" | "strategist";
 
 /** The "unattributed" reviewer bucket from getRedTeamEfficacy — matured vetoes with no

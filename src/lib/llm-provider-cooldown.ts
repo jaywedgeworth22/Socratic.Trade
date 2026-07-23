@@ -65,6 +65,16 @@ const cooldowns = createDurableMap<LlmProviderCooldownRecord>("llm-provider-cool
 // suppressed (the earliest active cooldown expiry at the time the alert fired).
 const exhaustionAlerts = createDurableMap<number>("llm-provider-cooldown-alert");
 
+function cooldownProvider(provider: string, model?: string | null): string {
+  if (provider === "openrouter" && model && model.includes("/")) {
+    const raw = model.split("/")[0];
+    if (raw === "google") return "gemini";
+    if (raw === "mistralai") return "mistral";
+    return raw;
+  }
+  return provider;
+}
+
 function laneKey(provider: string, keySource?: string | null, userId?: string | null): string {
   // A 'user' keySource is a per-user credential — scope its cooldown to that user.
   if (keySource === "user") return `${provider} user ${userId ?? "local"}`;
@@ -140,12 +150,19 @@ export function recordLlmProviderFailure(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.detail ? { detail: input.detail.replace(/\s+/g, " ").slice(0, 240) } : {})
   };
+  // Transient (rate/5xx) failures cool only the vendor sub-lane so a busy OpenAI-family primary
+  // doesn't cool a healthy Gemini/Anthropic fallback. BILLING/credits failures, however, exhaust the
+  // WHOLE OpenRouter credential (every vendor shares that one key) — so keep them on the credential
+  // lane (input.provider, i.e. "openrouter"), which getLlmProviderCooldown checks for EVERY vendor
+  // attempt. Otherwise the planner cools only the openai lane and immediately retries google/anthropic
+  // on the same dead key (Codex P2, PR #1703).
+  const provider = kind === "billing" ? input.provider : cooldownProvider(input.provider, input.model);
   try {
-    cooldowns.set(laneKey(input.provider, input.keySource, input.userId), record);
+    cooldowns.set(laneKey(provider, input.keySource, input.userId), record);
     audit(
       "llm_provider_cooldown_set",
       {
-        provider: input.provider,
+        provider,
         keySource: input.keySource ?? null,
         kind,
         ttlMs,
@@ -172,17 +189,28 @@ export function getLlmProviderCooldown(
   provider: string,
   keySource?: string | null,
   userId?: string | null,
-  now: number = Date.now()
+  now: number = Date.now(),
+  model?: string | null
 ): { record: LlmProviderCooldownRecord; remainingMs: number } | undefined {
   if (llmProviderCooldownDisabled()) return undefined;
-  const key = laneKey(provider, keySource, userId);
-  const record = cooldowns.get(key);
-  if (!record) return undefined;
-  if (now >= record.until) {
-    cooldowns.delete(key); // lazy prune
-    return undefined;
+  // Check BOTH the OpenRouter credential lane (billing/whole-key cooldowns) and the vendor sub-lane
+  // (transient rate/5xx). The credential lane dominates — a billing cooldown on the shared key must
+  // block EVERY vendor attempt, not just the vendor that happened to trip it (Codex P2, PR #1703).
+  const credLane = laneKey(provider, keySource, userId);
+  const vendorLane = laneKey(cooldownProvider(provider, model), keySource, userId);
+  let best: { record: LlmProviderCooldownRecord; remainingMs: number } | undefined;
+  for (const key of vendorLane === credLane ? [credLane] : [credLane, vendorLane]) {
+    const record = cooldowns.get(key);
+    if (!record) continue;
+    if (now >= record.until) {
+      cooldowns.delete(key); // lazy prune
+      continue;
+    }
+    const remainingMs = record.until - now;
+    // Prefer the lane cooling the longest so the caller waits out the dominant block.
+    if (!best || remainingMs > best.remainingMs) best = { record, remainingMs };
   }
-  return { record, remainingMs: record.until - now };
+  return best;
 }
 
 export interface LlmAttemptLane {
@@ -210,7 +238,7 @@ export function planLlmProviderAttempts<T extends LlmAttemptLane>(
     const cooling: Array<{ attempt: T; record: LlmProviderCooldownRecord; remainingMs: number }> = [];
     const live: T[] = [];
     for (const attempt of attempts) {
-      const state = getLlmProviderCooldown(attempt.provider, attempt.keySource, ctx.userId, now);
+      const state = getLlmProviderCooldown(attempt.provider, attempt.keySource, ctx.userId, now, attempt.model);
       if (state) cooling.push({ attempt, record: state.record, remainingMs: state.remainingMs });
       else live.push(attempt);
     }
@@ -223,7 +251,7 @@ export function planLlmProviderAttempts<T extends LlmAttemptLane>(
           "llm_provider_cooldown_skip",
           {
             step: ctx.step,
-            provider: attempt.provider,
+            provider: cooldownProvider(attempt.provider, attempt.model),
             keySource: attempt.keySource ?? null,
             model: attempt.model,
             kind: record.kind,
@@ -238,8 +266,8 @@ export function planLlmProviderAttempts<T extends LlmAttemptLane>(
       return live;
     }
 
-    // EVERY lane is cooling: attempt anyway, least-recently-failed first (best odds of a lucky
-    // recovery), so the cooldown never makes things strictly worse than the pre-cooldown chain.
+    // EVERY lane is cooling: still attempt the full chain (least-recently-failed first) so a
+    // manual billing/credit fix can recover immediately instead of waiting for the cooldown TTL.
     const ordered = [...cooling].sort((a, b) => a.record.failedAt - b.record.failedAt).map((c) => c.attempt);
     const earliestExpiry = Math.min(...cooling.map((c) => c.record.until));
     const suppressUntil = exhaustionAlerts.get(userId) ?? 0;

@@ -1,5 +1,6 @@
-import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent, getDb } from "./db";
+import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent, getDb, reserveOptionAlert, releaseOptionAlertReservation } from "./db";
 import { notify, type NotifyDispatchDeps } from "./notify";
+import { validateWebhookUrl, type HostResolver } from "./egress-guard";
 import type { NotificationEvent, NotificationEventType, NotifyChannelId, NotifyChannelResult, TradingPolicy, OptionPosition } from "./types";
 
 type Fetcher = typeof fetch;
@@ -23,6 +24,9 @@ type SendNotificationOptions = {
   assertActive?: () => void;
   /** Cancellation signal paired with assertActive for in-flight delivery and retry waits. */
   signal?: AbortSignal;
+  /** Injectable DNS resolver for the legacy webhook's egress guard (SSRF hardening — see
+   *  src/lib/egress-guard.ts). Defaults to real DNS; tests inject a stub. */
+  resolveWebhookHost?: HostResolver;
 };
 
 function assertNotificationActive(options: SendNotificationOptions): void {
@@ -182,7 +186,8 @@ export async function sendNotification(
       webhookUrl,
       options.fetcher ?? fetch,
       options.timeoutMs ?? 5000,
-      options.signal
+      options.signal,
+      options.resolveWebhookHost
     );
     assertNotificationActive(options);
     results.push(legacyWebhookResult);
@@ -226,8 +231,14 @@ async function sendLegacyWebhook(
   webhookUrl: string,
   fetcher: Fetcher,
   timeoutMs: number,
-  callerSignal?: AbortSignal
+  callerSignal?: AbortSignal,
+  resolveHost?: HostResolver
 ): Promise<NotifyChannelResult> {
+  // Re-validate on every send (not just when the URL was saved) — see src/lib/egress-guard.ts.
+  const check = await validateWebhookUrl(webhookUrl, { resolveHost });
+  if (!check.ok) {
+    return { channel: "webhook", ok: false, error: check.error ?? "webhook URL is not allowed." };
+  }
   const isDiscord = webhookUrl.includes("discord.com/api/webhooks") || webhookUrl.includes("discordapp.com/api/webhooks");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -244,6 +255,8 @@ async function sendLegacyWebhook(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payloadBody),
+      // Never transparently follow a redirect to an unvalidated target.
+      redirect: "manual",
       signal: combineNotificationSignals(callerSignal, controller.signal)
     });
     if (!response.ok) {
@@ -698,6 +711,34 @@ export async function checkAndDispatchOptionAlerts(
     } catch {}
   }
 
+  // Deliver a single (symbol, alertType) alert AT MOST ONCE across concurrent snapshot builds.
+  // The in-memory `sentAlerts` read above is a fast/historical dedupe (already-delivered alerts),
+  // but it is read once at the top — two concurrent requests both see the alert as unsent and both
+  // would deliver it. `reserveOptionAlert` closes that race with an atomic DB claim; only the winner
+  // sends. If the send does not actually deliver (alert type disabled, or a webhook failure — status
+  // != "sent"), the claim is released so the alert stays deliverable on a later cycle, matching the
+  // historical "only status='sent' dedupes" behavior. On success the claim persists as the dedupe.
+  const deliverAlert = async (
+    symbol: string,
+    alertType: string,
+    input: { type: NotificationEventType; title: string; payload: unknown }
+  ): Promise<void> => {
+    const key = `${symbol}:${alertType}`;
+    if (sentAlerts.has(key)) return;
+    if (!reserveOptionAlert(userId, connectedAccountId, symbol, alertType)) return;
+    let delivered = false;
+    try {
+      const event = await sendNotification(input, { userId, connectedAccountId });
+      delivered = event.status === "sent";
+    } finally {
+      if (delivered) {
+        sentAlerts.add(key);
+      } else {
+        releaseOptionAlertReservation(userId, connectedAccountId, symbol, alertType);
+      }
+    }
+  };
+
   const optionsExpiringSoon = options.filter((p) => {
     if (!p.expirationDate) return false;
     const days = Math.ceil((new Date(p.expirationDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
@@ -724,10 +765,9 @@ export async function checkAndDispatchOptionAlerts(
     const qty = p.quantity;
     
     // 1. Assignment / first appearance alert
-    const appKey = `${symbol}:appearance`;
-    if (!sentAlerts.has(appKey)) {
+    {
       const detail = `New option position detected: ${qty > 0 ? "Long" : "Short"} ${Math.abs(qty)} contracts of ${symbol} at average cost $${p.averageCost}.`;
-      await sendNotification({
+      await deliverAlert(symbol, "appearance", {
         type: "option_alert",
         title: `New Option: ${qty > 0 ? "Bought" : "Sold"} ${Math.abs(qty)}x ${symbol}`,
         payload: {
@@ -742,64 +782,58 @@ export async function checkAndDispatchOptionAlerts(
           alertType: "appearance",
           detail
         }
-      }, { userId, connectedAccountId });
+      });
     }
 
     // 2. Expiry alert (<= 3 days)
     if (p.expirationDate) {
       const days = Math.ceil((new Date(p.expirationDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
       if (days >= 0 && days <= 3) {
-        const expKey = `${symbol}:expiry`;
-        if (!sentAlerts.has(expKey)) {
-          const detail = `Option position ${symbol} expires in ${days} days (on ${p.expirationDate}).`;
-          await sendNotification({
-            type: "option_alert",
-            title: `Option Expiring: ${symbol} (${days}d remaining)`,
-            payload: {
-              symbol,
-              underlyingSymbol: p.underlyingSymbol,
-              expirationDate: p.expirationDate,
-              optionType: p.optionType,
-              strikePrice: p.strikePrice,
-              quantity: qty,
-              averageCost: p.averageCost,
-              marketValue: p.marketValue,
-              alertType: "expiry",
-              daysRemaining: days,
-              detail
-            }
-          }, { userId, connectedAccountId });
-        }
+        const detail = `Option position ${symbol} expires in ${days} days (on ${p.expirationDate}).`;
+        await deliverAlert(symbol, "expiry", {
+          type: "option_alert",
+          title: `Option Expiring: ${symbol} (${days}d remaining)`,
+          payload: {
+            symbol,
+            underlyingSymbol: p.underlyingSymbol,
+            expirationDate: p.expirationDate,
+            optionType: p.optionType,
+            strikePrice: p.strikePrice,
+            quantity: qty,
+            averageCost: p.averageCost,
+            marketValue: p.marketValue,
+            alertType: "expiry",
+            daysRemaining: days,
+            detail
+          }
+        });
 
         // 3. ITM-at-expiry status alert
         const underlyingPrice = underlyingPrices[p.underlyingSymbol];
         if (underlyingPrice !== undefined) {
-          const isItm = p.optionType === "call" 
-            ? underlyingPrice > p.strikePrice 
+          const isItm = p.optionType === "call"
+            ? underlyingPrice > p.strikePrice
             : underlyingPrice < p.strikePrice;
-          
+
           if (isItm) {
-            const itmKey = `${symbol}:itm`;
-            if (!sentAlerts.has(itmKey)) {
-              const detail = `Option ${symbol} is In-the-Money at expiry. Underlying price is $${underlyingPrice}, strike is $${p.strikePrice}.`;
-              await sendNotification({
-                type: "option_alert",
-                title: `Option ITM at Expiry: ${symbol}`,
-                payload: {
-                  symbol,
-                  underlyingSymbol: p.underlyingSymbol,
-                  expirationDate: p.expirationDate,
-                  optionType: p.optionType,
-                  strikePrice: p.strikePrice,
-                  quantity: qty,
-                  averageCost: p.averageCost,
-                  marketValue: p.marketValue,
-                  alertType: "itm",
-                  underlyingPrice,
-                  detail
-                }
-              }, { userId, connectedAccountId });
-            }
+            const detail = `Option ${symbol} is In-the-Money at expiry. Underlying price is $${underlyingPrice}, strike is $${p.strikePrice}.`;
+            await deliverAlert(symbol, "itm", {
+              type: "option_alert",
+              title: `Option ITM at Expiry: ${symbol}`,
+              payload: {
+                symbol,
+                underlyingSymbol: p.underlyingSymbol,
+                expirationDate: p.expirationDate,
+                optionType: p.optionType,
+                strikePrice: p.strikePrice,
+                quantity: qty,
+                averageCost: p.averageCost,
+                marketValue: p.marketValue,
+                alertType: "itm",
+                underlyingPrice,
+                detail
+              }
+            });
           }
         }
       }

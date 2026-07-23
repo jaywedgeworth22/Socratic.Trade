@@ -7,6 +7,8 @@ import { enforceCandidateSetForOpenings, sanitizeProposals } from "../src/lib/st
 import type { TradeProposal } from "../src/lib/types";
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -27,7 +29,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 function proposal(symbol: string, side: TradeProposal["side"]): TradeProposal {
@@ -91,11 +93,11 @@ describe("strict marketScan.topCandidates opening boundary", () => {
   });
 
   it("audits and drops a policy-allowed off-candidate opening before Red review or sizing", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     let bullRequest: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
-      const href = String(url);
-      if (href.includes("api.openai.com")) {
+      const href = typeof url === "string" || url instanceof URL ? url.toString() : (url as Request).url;
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
         expect(JSON.stringify(body)).not.toContain("Red Team Risk Agent");
         bullRequest = body;
@@ -131,7 +133,7 @@ describe("strict marketScan.topCandidates opening boundary", () => {
     });
 
     const { setActiveConnectedAccount, setPolicy, upsertConnectedAccount, upsertUserApiKey, listAudit } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({
       id: accountId,
@@ -147,8 +149,8 @@ describe("strict marketScan.topCandidates opening boundary", () => {
       ...DEFAULT_POLICY,
       systemState: "active",
       accountNumber: "TEST",
-      llmModel: "gpt-4.1-mini",
-      redTeamLlmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
+      redTeamLlmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       // MSFT is policy-allowed but absent from this exact scan result.
       additionalSymbols: ["AAPL", "MSFT"],
@@ -163,11 +165,8 @@ describe("strict marketScan.topCandidates opening boundary", () => {
     const rejection = listAudit(500).find((entry) => entry.kind === "proposal_rejected_off_candidate_opening");
     expect(rejection?.payload).toMatchObject({ runId: result.runId, symbol: "MSFT", side: "buy", candidates: ["AAPL"] });
 
-    const symbolSchema = (
-      bullRequest as {
-        text?: { format?: { schema?: { properties?: { proposals?: { items?: { properties?: { symbol?: { enum?: string[] } } } } } } } };
-      }
-    )?.text?.format?.schema?.properties?.proposals?.items?.properties?.symbol;
+    const schemaObj = (bullRequest as any)?.text?.format?.schema ?? (bullRequest as any)?.response_format?.json_schema?.schema;
+    const symbolSchema = schemaObj?.properties?.proposals?.items?.properties?.symbol;
     expect(symbolSchema?.enum).toEqual(["AAPL"]);
   }, 30_000);
 });

@@ -1,10 +1,12 @@
 "use client";
 
 /** API keys — per-user provider keys over /api/keys. The server NEVER returns
- *  a stored key value (GET is status-only: configured + source), so this UI
- *  never shows one either: a key is written once and thereafter only described.
- *  "Server key" means the operator's env credential is serving you — you can
- *  still store your own, which always wins. */
+ *  a usable key value: GET is status-only (configured + source) PLUS an elided
+ *  first-8/last-4 preview of the key that actually resolves, so you can tell
+ *  WHICH of several keys for one provider is serving you. A key is still
+ *  written once and never shown in full again. "Server key" means the
+ *  operator's env credential is serving you — you can still store your own,
+ *  which always wins. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleApiError } from "../lib/api";
@@ -85,9 +87,13 @@ export function ApiKeysCard() {
   return (
     <Card title="API keys">
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Optional provider keys, stored per user on the server. Keys are write-only: once saved they are never displayed
-        again — only whether one is set and where it came from. Everything works without any of these; each key just
-        unlocks the data or models it names.
+        Provider keys, stored per user on the server. Keys are write-only: once saved the full value is never displayed
+        again — only whether one is set, where it came from, and the first and last few characters of the key that
+        actually resolves. <strong className="font-semibold text-[color:var(--con-muted)]">Required for strategy runs:</strong>{" "}
+        an LLM key (OpenRouter is the production path) so Green/Red team models can propose and debate.{" "}
+        <strong className="font-semibold text-[color:var(--con-muted)]">Optional enrichment:</strong> Finnhub, FMP, FRED,
+        and similar data providers deepen the scan — without them the app still uses free floors (e.g. Yahoo). Market
+        data, positions, and guardrails work without optional keys; autonomous proposals do not.
       </p>
 
       {loadError && (
@@ -129,6 +135,14 @@ export function ApiKeysCard() {
                         <Chip tone={source.tone} title={source.title}>
                           {source.chip}
                         </Chip>
+                        {entry.preview && (
+                          <code
+                            className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5 font-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+                            title={`The ${credName} that actually resolves for you, with the middle elided. First and last characters only — enough to tell this ${credName} apart from another one for the same provider, never enough to use.`}
+                          >
+                            {entry.preview}
+                          </code>
+                        )}
                         {entry.source === "user" && entry.updatedAt && (
                           <span
                             className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
