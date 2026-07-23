@@ -14,7 +14,7 @@ export const viewport: Viewport = {
   // a mismatched themeColor tints the phone status bar a different shade than the app.
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#f1f4f6" },
-    { media: "(prefers-color-scheme: dark)", color: "#0b1114" }
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" }
   ]
 };
 

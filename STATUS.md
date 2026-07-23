@@ -1,3 +1,8 @@
+## 2026-07-22 — Dark mode near-black retint (GROK)
+
+Public + console dark backgrounds retinted from blue/slate/navy to neutral
+near-black `#0a0a0a` for logo contrast on `/login` and cleaner cockpit surfaces.
+Dark mesh orb opacity cut sharply. Docs: `docs/rollouts/2026-07-22-dark-mode-near-black.md`.
 ## 2026-07-22 — Congress market-data alias split via shared package (CURSOR)
 
 Salvaged #1906 kernel only: `canonicalMarketDataSymbol` drops acquisition tickers for market-data

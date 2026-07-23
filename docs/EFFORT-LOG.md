@@ -42,6 +42,7 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
+- **[Socratic.Trade][GROK] Dark mode near-black retint (branch `grok/dark-mode-near-black`) — PR #1956 OPEN / AUTO-MERGE ARMED 2026-07-22.** Public `.dark` + console dark tokens → `#0a0a0a` neutral charcoal; mesh opacity cut for login logo contrast. Local gate green (tsc/test 5196/build). PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/1956. Rollout: `docs/rollouts/2026-07-22-dark-mode-near-black.md`.
 - **[Socratic.Trade][CURSOR] Salvage #1906 market-data rename-vs-acquisition via shared pkg — IN PROGRESS / landing.** Uses classifyTickerAlias/resolveContinuousTicker; no v2 downgrade. #1914 skipped (main already bumps). Rollout: `docs/rollouts/2026-07-22-congress-market-data-alias-split.md`.
 - **[Socratic.Trade][CURSOR] Grok forgotten-PR audit — DONE 2026-07-22.** Closed #1952 + 18 stale reopens; KEEP #1892/#1901/#1902/#1903 (fix then solo) + #1792/#1819/#1842. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 

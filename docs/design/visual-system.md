@@ -62,10 +62,14 @@ collided with price-direction language, and the console system already used
 Contrast is guaranteed at the token level, documented inline where the tokens are
 defined:
 
-- `app/globals.css:18-19` (light) and `:43-44`/`:55-56` (dark) — `--muted` and
-  `--faint` are chosen to meet **4.5:1 (normal text)** on every surface tier.
-  Recorded worst cases: **≥7.3:1** on `surface-3` in light mode, **≥5.5:1** on
-  `surface-3` in dark mode.
+- `app/globals.css` light + `.dark` blocks — `--muted` and `--faint` are chosen
+  to meet **4.5:1 (normal text)** on every surface tier. Recorded worst cases:
+  **≥7.3:1** on `surface-3` in light mode; **≥4.85:1 (faint) / ≥6.6:1 (muted)**
+  on dark `surface-3` (`#2a2a2a`) after the 2026-07-22 near-black retint.
+- **Dark base is neutral near-black** (2026-07-22): public `--bg` and console
+  `--con-bg` are `#0a0a0a` (not slate `#111827` / teal-navy `#0b1114`). Surfaces
+  step up in grey only. Dark mesh orbs are intentionally low-opacity so login
+  and other public pages do not wash blue behind the brand logo.
 - `--neg-fg` exists specifically so danger buttons pass AA in dark mode
   (`text-white` on `--neg` measured ≈4.07:1, below 4.5:1). History:
   `docs/reviews/2026-06-21-ui-ux-issue-register.md:89` (issue A11Y-7) and

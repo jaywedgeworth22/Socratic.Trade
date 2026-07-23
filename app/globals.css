@@ -59,17 +59,20 @@
 }
 
 .dark {
-  --bg: #111827;
-  --surface: rgba(31, 41, 55, 0.65);
-  --surface-2: rgba(55, 65, 81, 0.55);
-  --surface-3: rgba(75, 85, 99, 0.5);
-  --line: rgba(42, 57, 71, 0.4);
-  --line-strong: rgba(42, 57, 71, 0.6);
-  --fg: #e7eef6;
+  /* Near-black neutral greys — no blue/slate cast. Sign-in + public pages sit on
+     --bg alone (logo contrast), so keep chroma near zero. Surfaces are neutral
+     charcoal glass, not slate-800. */
+  --bg: #0a0a0a;
+  --surface: rgba(22, 22, 22, 0.78);
+  --surface-2: rgba(30, 30, 30, 0.72);
+  --surface-3: rgba(42, 42, 42, 0.68);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --fg: #f0f0f0;
   /* WCAG AA: muted/faint must meet 4.5:1 (normal text) on all surface tiers.
-     The values below achieve ≥5.5:1 on surface-3 (worst-case dark-mode background). */
-  --muted: #b8c3d0;
-  --faint: #a0b0c0;
+     Measured ≥4.85:1 (faint) / ≥6.6:1 (muted) on surface-3 (#2a2a2a). */
+  --muted: #b0b0b0;
+  --faint: #969696;
   --accent: var(--brand-accent-dark);
   --accent-fg: #04130d;
   --pos: #34d399;
@@ -78,8 +81,8 @@
   --warn: #fbbf24;
   --info: #60a5fa;
   --ring: color-mix(in oklab, var(--accent) 50%, transparent);
-  --shadow: 0 18px 45px -12px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.08);
-  --shadow-lg: 0 30px 70px -15px rgba(0, 0, 0, 0.7), inset 0 1px 1px rgba(255, 255, 255, 0.12);
+  --shadow: 0 18px 45px -12px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.06);
+  --shadow-lg: 0 30px 70px -15px rgba(0, 0, 0, 0.75), inset 0 1px 1px rgba(255, 255, 255, 0.08);
   color-scheme: dark;
 }
 
@@ -154,7 +157,7 @@ body::before {
     radial-gradient(circle at 85% 15%, color-mix(in oklab, var(--accent) 30%, transparent) 0%, transparent 50%),
     radial-gradient(circle at 15% 85%, color-mix(in oklab, var(--info) 30%, transparent) 0%, transparent 50%);
   animation: orb1 24s ease-in-out infinite;
-  opacity: 0.45; /* subtle in light mode; .dark restores full intensity */
+  opacity: 0.45; /* subtle in light mode */
 }
 
 body::after {
@@ -165,9 +168,10 @@ body::after {
   opacity: 0.3;
 }
 
-/* Dark mode keeps the vivid mesh; light mode stays calm so cards don't wash out. */
-.dark body::before { opacity: 0.9; }
-.dark body::after { opacity: 0.7; }
+/* Dark mode: keep mesh barely-there so --bg stays near-black (not navy/slate).
+   Former opacities 0.9/0.7 washed login + public pages blue and hurt logo contrast. */
+.dark body::before { opacity: 0.22; }
+.dark body::after { opacity: 0.12; }
 
 :focus-visible {
   outline: 2px solid var(--accent);
