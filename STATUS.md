@@ -1,3 +1,11 @@
+## 2026-07-22 — Grok forgotten-PR audit (CURSOR)
+
+Multi-agent review of Grok combined/forgotten lands vs current main. **Closed #1952** (congress
+re-land undoes shared-package + bounded-body hardenings; real verify tsc failure) and **18 stale
+reopens** that were already on main or fought newer main. **Kept open:** fragments #1892 / #1901 /
+#1902 / #1903 (fix then solo-land) and independent #1792 / #1819 / #1842. No product merge/deploy
+from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
+
 # Current Status
 
 ## 2026-07-21 — Fleet multi-app watchdog + disk follow-ups (GROK4, ops on Hetzner)
