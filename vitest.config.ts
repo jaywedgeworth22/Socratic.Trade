@@ -54,7 +54,8 @@ export default defineConfig({
       ".cursor/**",
       ".codex/**",
       "test/e2e/**",
-      "reference/**"
+      "reference/**",
+      ".worktrees/**"
     ]
   }
 });

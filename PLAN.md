@@ -8,6 +8,22 @@
 > Keep the external monitor on public `/api/health`; do not expose authenticated `/api/ready` just for
 > monitoring. Verify the dedicated branch with the ordered lint/tsc/test/build gate, then land via
 > `scripts/land.sh` if the owner wants deployment.
+> **Handoff 2026-07-22 — Robinhood cap resilience deployment.** The implementation is committed
+> (`9c208190`) and latest `origin/main` is merged (`e943e9b9`), but landing stopped in the full
+> Vitest gate because `better-sqlite3` was compiled under Node 26 while the required Node 24 runtime
+> loaded it. Rebuild dependencies under Node 24, rerun `scripts/land.sh`, then complete PR checks,
+> protected merge, Coolify SHA verification, and live Robinhood save/proposal verification. Full
+> command sequence: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
+
+> **2026-07-22 — Robinhood guardrail cap resilience (CODEX, branch
+> `codex/robinhood-cap-fix`).** Make policy saves independent of transient broker account-list
+> failures when account readiness is unchanged, while retaining verification for account selection
+> and autonomy activation. Resolve effective opening order/daily caps against current buying power
+> or NAV so oversized absolute settings cannot produce infeasible proposals; make percentage mode
+> the default for blank dual-mode settings while preserving explicit legacy dollar settings. Focused
+> regressions, lint, TypeScript, and production build are green. Full Vitest completion remains
+> pending because the repo config serializes the suite and the shared host was under concurrent load.
+> Next: land through the normal PR gate and verify the exact production SHA plus a Robinhood save.
 
 > **2026-07-22 — Usage telemetry v2 + shared-package pin-check combined landing (PR #1889).** The
 > reviewed #1890 workflow correction is subsumed into #1889 to avoid two serialized full CI cycles.
