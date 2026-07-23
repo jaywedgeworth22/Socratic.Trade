@@ -400,9 +400,9 @@ export default function OperatorDashboard() {
                     <span className="flex items-center gap-1 text-[color:var(--con-muted)]">
                       <Cpu className="h-3.5 w-3.5" /> CPU load
                     </span>
-                    <span className="con-num font-semibold">{currentCpu.toFixed(1)}%</span>
+                    <span className="con-num font-semibold">{server?.metrics?.cpu ? `${currentCpu.toFixed(1)}%` : "Unavailable"}</span>
                   </div>
-                  <Meter value={currentCpu} max={100} />
+                  {server?.metrics?.cpu ? <Meter value={currentCpu} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
                 </div>
 
                 {/* RAM */}
@@ -410,7 +410,7 @@ export default function OperatorDashboard() {
                   <div className="mb-1 flex items-center justify-between text-[length:var(--con-fs-xs)]">
                     <span className="text-[color:var(--con-muted)]">Total memory (RAM)</span>
                     <span className="con-num font-semibold">
-                      {server?.hostInfo?.memoryTotalBytes ? (server.hostInfo.memoryTotalBytes / 1024 / 1024 / 1024).toFixed(1) : 0} GB
+                      {server?.hostInfo?.memoryTotalBytes ? `${(server.hostInfo.memoryTotalBytes / 1024 / 1024 / 1024).toFixed(1)} GB` : "Unavailable"}
                     </span>
                   </div>
                 </div>
