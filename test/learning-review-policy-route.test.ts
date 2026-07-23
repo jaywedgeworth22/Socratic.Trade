@@ -33,7 +33,7 @@ describe("/api/policy — learningReviewModel blank handling", () => {
     const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
 
     // Pick a non-default model first so a silent revert would be observable.
-    expect((await PUT(putPolicy({ learningReviewModel: "gpt-5.5" }))).status).toBe(200);
+    expect((await PUT(putPolicy({ learningReviewModel: "openai/gpt-5.5" }))).status).toBe(200);
 
     for (const blank of ["", "   "]) {
       const response = await PUT(putPolicy({ learningReviewModel: blank }));
@@ -41,7 +41,7 @@ describe("/api/policy — learningReviewModel blank handling", () => {
       expect(await response.text()).toContain("learningReviewModel must be a non-empty model id.");
     }
     // The stored selection is untouched by the rejected saves.
-    expect(getPolicy(DEFAULT_REQUEST_USER_ID).learningReviewModel).toBe("gpt-5.5");
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).learningReviewModel).toBe("openai/gpt-5.5");
   });
 
   it("rejects a null model clear too, not just a blank string (#4)", async () => {
@@ -52,19 +52,19 @@ describe("/api/policy — learningReviewModel blank handling", () => {
     const { getPolicy } = await import("../src/lib/db");
     const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
 
-    expect((await PUT(putPolicy({ learningReviewModel: "gpt-5.5" }))).status).toBe(200);
+    expect((await PUT(putPolicy({ learningReviewModel: "openai/gpt-5.5" }))).status).toBe(200);
     const response = await PUT(putPolicy({ learningReviewModel: null }));
     expect(response.status).toBe(400);
     expect(await response.text()).toContain("learningReviewModel must be a non-empty model id.");
     // Not silently reverted to the default — the explicit selection stands.
-    expect(getPolicy(DEFAULT_REQUEST_USER_ID).learningReviewModel).toBe("gpt-5.5");
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).learningReviewModel).toBe("openai/gpt-5.5");
   });
 
   it("still accepts a real model change", async () => {
     const { PUT } = await import("../app/api/policy/route");
-    const response = await PUT(putPolicy({ learningReviewModel: "claude-opus-4-8" }));
+    const response = await PUT(putPolicy({ learningReviewModel: "anthropic/claude-opus-4-8" }));
     expect(response.status).toBe(200);
-    expect((await response.json()).learningReviewModel).toBe("claude-opus-4-8");
+    expect((await response.json()).learningReviewModel).toBe("anthropic/claude-opus-4-8");
   });
 });
 

@@ -16,7 +16,7 @@
 
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
-import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
 import {
   interactiveStrategyReasoningEffort,
   LLM_OUTPUT_TOKEN_CAPS,
@@ -261,7 +261,11 @@ export async function debateProposal(
       reasoningEffort: interactiveStrategyReasoningEffort(model, resolveReviewerReasoningEffort(policy)),
       // Per-role sampling: non-zero adversary temperature so a re-run can surface a different
       // objection rather than always the identical (or absent) one. Ignored by reasoning models.
-      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
+      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature,
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "red-team"
     }
   );
 
@@ -289,7 +293,11 @@ export async function debateProposal(
           schema: { name: "red_team_verdict", schema: RED_TEAM_VERDICT_SCHEMA, description: "The Red Team's three-way verdict on the finalized trade." },
           maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.adversaryReview,
           reasoningEffort: interactiveStrategyReasoningEffort(ep.model, resolveReviewerReasoningEffort(policy)),
-          temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
+          temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature,
+          userId,
+          keyRef: ep.keyRef,
+          service: "strategy",
+          feature: "red-team"
         }
       )
     });
@@ -305,13 +313,14 @@ export async function debateProposal(
     connectedAccountId: policy.connectedAccountId
   });
 
-  let finalModel = model;
+  const { model: canonicalModel } = remapOpenRouterTelemetry(provider, model);
+  let finalModel = canonicalModel;
 
   try {
     const traced = await withLlmGeneration(
       {
         name: "trading.red-team.review",
-        model,
+        model: canonicalModel,
         userId,
         connectedAccountId: policy.connectedAccountId,
         input: summarizeOpenAiRequest(body),
@@ -337,7 +346,8 @@ export async function debateProposal(
           const attempt = plannedRedAttempts[i];
           const isLast = i === plannedRedAttempts.length - 1;
           const next = plannedRedAttempts[i + 1];
-          finalModel = attempt.model;
+          const { model: attemptCanonicalModel } = remapOpenRouterTelemetry(attempt.provider, attempt.model);
+          finalModel = attemptCanonicalModel;
 
           try {
             // Bounded same-model retry on transient failures (§4.3): 2 attempts total, fresh
@@ -396,6 +406,7 @@ export async function debateProposal(
               // Per-account usage attribution (PR #1030 coordination): the resolved run policy is
               // account-scoped, so the review's spend lands on the account it reviewed for.
               connectedAccountId: policy.connectedAccountId,
+              providerRequestId: providerRequestIdFromPayload(attempt.provider, payload),
               ...extractLlmUsage(payload)
             });
             const text = extractLlmText(payload);
@@ -408,17 +419,46 @@ export async function debateProposal(
               };
             }
 
+            // AMBIGUITY GUARD (Codex, PR #1696): a malformed reply carrying MORE THAN ONE verdict
+            // block (e.g. `{"verdict":"approve",...} {"verdict":"reject",...}`, or a multi-element
+            // array of conflicting verdicts) must never resolve to whichever block happens to be
+            // extracted first. Counted on the RAW text — first-balanced-block extraction below
+            // would hide the trailing block. A prose false positive (the model echoing the
+            // `"verdict":` key while also emitting real JSON) fails CLOSED to unavailable, which
+            // is the acceptable direction for this gate.
+            // JSON permits \uXXXX escapes inside property names (`{"\u0076erdict":...}` parses
+            // with key "verdict"), so decode them before counting or a second, escaped verdict
+            // block slips past a literal-key regex (Codex P1, round 3). Malformed escape tails
+            // are left as-is — they cannot form a parseable key anyway on this strict gate.
+            const escapeNormalizedText = text.replace(/\\u([0-9a-fA-F]{4})/g, (_whole, hex: string) =>
+              String.fromCharCode(Number.parseInt(hex, 16))
+            );
+            // Quotes OPTIONAL (same class as the Bull guard, Codex round 10): an unquoted JSON5
+            // `{verdict: 'reject'}` trailing block would otherwise evade the count while the
+            // first double-quoted approval parses cleanly.
+            const verdictKeyOccurrences = (escapeNormalizedText.match(/(?<![\w"'])["']?verdict["']?\s*:/g) ?? []).length;
+            if (verdictKeyOccurrences > 1) {
+              console.warn(`Red Team response contained ${verdictKeyOccurrences} verdict blocks; treating the review as ambiguous/unavailable.`);
+              return {
+                text,
+                debate: unavailable(
+                  "Red Team returned multiple conflicting verdict blocks (ambiguous response); treating the review as unavailable.",
+                  "malformed_response",
+                  attempt.model
+                )
+              };
+            }
+
             // Fence/prose-tolerant parse (§4.1 / R9 — the gemini-3.5-flash root cause) + strict shape
             // validation (§4.4): anything that isn't exactly one of the three verdicts fails CLOSED.
+            // DELIBERATELY parsed WITHOUT jsonrepair (extractJsonPayload's repair stays off): repair
+            // would turn a TRUNCATED reply like `{"verdict":"approve"` into a well-formed approval,
+            // converting this fail-closed gate into fail-open on a risk-adding opening (Codex P1,
+            // PR #1696). A response that doesn't parse as-is is UNAVAILABLE, exactly as before.
             let parsed: unknown;
             try {
               parsed = JSON.parse(extractJsonPayload(text));
-            } catch (parseError) {
-              // §4.6: log a raw-text prefix so a safety-filter refusal ("I can't…") is distinguishable
-              // from malformed JSON in the operator log.
-              console.warn(
-                `Red Team response was not valid JSON (${parseError instanceof Error ? parseError.message : String(parseError)}); first 200 chars: ${text.slice(0, 200)}`
-              );
+            } catch {
               const looksLikeRefusal = /^(i can'?t|i cannot|i'?m not able|i am not able|as an ai)/i.test(text.trim());
               return {
                 text,

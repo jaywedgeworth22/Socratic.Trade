@@ -134,6 +134,44 @@ export function insertPortfolioSnapshot(input: {
   return snapshot;
 }
 
+/**
+ * Symbols with a non-zero position in the LATEST portfolio snapshot of every (user, account)
+ * pair, restricted to snapshots recent enough to reflect a live account (default 7 days —
+ * snapshots are written every strategy run, so an older latest-snapshot means the account
+ * isn't actively trading). Broker-call-free holdings read for background producers (e.g. the
+ * EarningsCalls.dev transcript selector) that must not spend broker API calls to learn what
+ * is held. Returns normalized unique symbols, alphabetical.
+ */
+export function listRecentlyHeldSymbolsAllUsers(maxAgeDays = 7, now: number = Date.now()): string[] {
+  const cutoff = new Date(now - maxAgeDays * 86_400_000).toISOString();
+  // SQLite bare-column-with-MAX semantics: with GROUP BY + MAX(created_at), the non-aggregate
+  // `positions` column is taken from the row that supplied the MAX — i.e. each group's latest
+  // snapshot (documented SQLite behavior for a single MAX/MIN aggregate).
+  const rows = getDb()
+    .prepare(
+      `SELECT positions, MAX(created_at) AS created_at
+       FROM portfolio_snapshots
+       GROUP BY user_id, account_number
+       HAVING MAX(created_at) >= ?`
+    )
+    .all(cutoff) as Array<{ positions: string }>;
+  const symbols = new Set<string>();
+  for (const row of rows) {
+    try {
+      const positions = JSON.parse(row.positions) as Array<{ symbol?: unknown; quantity?: unknown }>;
+      if (!Array.isArray(positions)) continue;
+      for (const position of positions) {
+        const symbol = typeof position?.symbol === "string" ? position.symbol.trim().toUpperCase() : "";
+        const quantity = typeof position?.quantity === "number" ? position.quantity : 0;
+        if (symbol && quantity !== 0) symbols.add(symbol);
+      }
+    } catch {
+      // A single malformed snapshot must not break the holdings read.
+    }
+  }
+  return [...symbols].sort();
+}
+
 export function listPortfolioSnapshots(accountNumber: string, source?: FillSource, limit = 100, userId: string = "local"): PortfolioSnapshot[] {
   const rows = source
     ? (getDb()
@@ -189,6 +227,32 @@ export function insertFillEvent(input: Omit<FillEvent, "id" | "filledAt"> & { id
           "SELECT * FROM fill_events WHERE proposal_id = ? AND broker_order_id = ? AND user_id = ? ORDER BY filled_at ASC LIMIT 1"
         )
         .get(fill.proposalId, fill.brokerOrderId, userId) as RawFillEvent | undefined;
+      if (existing) return toFillEvent(existing);
+    }
+    // The broker-held-stop recovery backstop index (see the fill_events_no_proposal_broker_order
+    // migration in db.ts) covers recovered broker-held stop fills specifically — bookBrokerHeldStopFill
+    // (broker-protective-stops.ts) never sets proposal_id, and tags its own inserts with
+    // `raw.brokerHeldProtectiveStop: true`: (user_id, account_number, broker_order_id) WHERE
+    // proposal_id IS NULL AND that marker is set. Scoped that narrowly (not every proposal-less fill)
+    // because order-replacement.ts deliberately books multiple proposal-less rows that can share a
+    // broker_order_id within the same (user, account) — it keys its OWN idempotency off
+    // `raw.replacementRefId` instead, so this backstop must not intercept those. Same
+    // idempotent-replay rationale as above — a retry that re-books the same physical broker order must
+    // return the already-booked fill, not throw or double-book (Item 6, 2026-07-18).
+    if (
+      isUniqueConstraintError(e) &&
+      !fill.proposalId &&
+      fill.brokerOrderId &&
+      (fill.raw as { brokerHeldProtectiveStop?: unknown } | undefined)?.brokerHeldProtectiveStop === true
+    ) {
+      // The lookup repeats the index's marker condition: an UNMARKED proposal-less row (an
+      // order-replacement booking) can legitimately coexist for the same broker id and must never be
+      // returned as "the already-booked recovery fill".
+      const existing = getDb()
+        .prepare(
+          "SELECT * FROM fill_events WHERE user_id = ? AND account_number = ? AND broker_order_id = ? AND proposal_id IS NULL AND json_extract(raw, '$.brokerHeldProtectiveStop') = 1 ORDER BY filled_at ASC LIMIT 1"
+        )
+        .get(userId, fill.accountNumber, fill.brokerOrderId) as RawFillEvent | undefined;
       if (existing) return toFillEvent(existing);
     }
     throw e;

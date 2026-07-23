@@ -19,13 +19,35 @@ const { refreshFmpTranscripts } = await import("../src/lib/web-sources/fmp-trans
 
 const FMP_KEY = "fmp-telemetry-secret-never-log-this";
 
+function usageAck(received = 1): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    schemaVersion: 2,
+    received,
+    persisted: received,
+    duplicates: 0,
+    pruned: 0,
+    rejected: 0,
+  }), { status: 202 });
+}
+
 function resetProviderQuotaState(provider: string): void {
   resetInMemoryProviderQuotaState(provider);
   replay.__resetUsageMonitorReplayState();
   getDb().prepare("DELETE FROM provider_usage_outbox WHERE provider = ?").run(provider);
   getDb().prepare("DELETE FROM provider_dispatch_attempts WHERE provider = ?").run(provider);
-  getDb().prepare("DELETE FROM settings WHERE key = ?")
-    .run(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider);
+  const now = new Date().toISOString();
+  getDb().transaction(() => {
+    getDb().prepare("DELETE FROM settings WHERE key IN (?, ?, ?)").run(
+      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider,
+      replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider,
+      `${replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider}:pre_v2_rows_skipped`
+    );
+    // Production establishes the direct-v2 boundary synchronously during instrumentation startup,
+    // before FMP workers can dispatch. Preserve that ordering in these producer-focused tests.
+    getDb().prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, 'v2-active', ?)")
+      .run(replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider, now);
+  }).immediate();
 }
 
 async function flushUsageTruth(): Promise<void> {
@@ -86,7 +108,7 @@ describe("FMP transcript attempt telemetry", () => {
     const usageRequests: Array<{ url: string; rawBody: string }> = [];
     usage.__setUsageMonitorFetch((async (url: unknown, init?: RequestInit) => {
       usageRequests.push({ url: String(url), rawBody: String(init?.body ?? "") });
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+      return usageAck();
     }) as typeof fetch);
 
     const providerRequests: Array<{ url: string; apiKey: string | null }> = [];
@@ -118,13 +140,16 @@ describe("FMP transcript attempt telemetry", () => {
     expect(usageRequests[0]!.rawBody).not.toContain(FMP_KEY);
     expect(usageRequests[0]!.rawBody).not.toContain("PROVIDER_BODY_MARKER");
     expect(usageRequests[0]!.rawBody).not.toContain("earning-call-transcript-dates");
+    expect(JSON.parse(usageRequests[0]!.rawBody)).toMatchObject({
+      schemaVersion: 2,
+      producerId: "socratic-trade",
+    });
 
     const fmpEvents = emittedEvents(usageRequests).filter((event) => event.provider === "fmp");
     expect(fmpEvents).toHaveLength(2);
     expect(fmpEvents.reduce((sum, event) => sum + Number(event.requests ?? 0), 0)).toBe(2);
     for (const event of fmpEvents) {
       expect(event).toMatchObject({
-        sourceApp: "socratic-trade",
         environment: "test",
         service: "provider-dispatch",
         billingMode: "estimated",
@@ -186,7 +211,7 @@ describe("FMP transcript attempt telemetry", () => {
       const usageRequests: string[] = [];
       usage.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
         usageRequests.push(String(init?.body ?? ""));
-        return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+        return usageAck();
       }) as typeof fetch);
       const providerFetch = vi.fn(async () => new Response(body, { status: 200, headers }));
       vi.stubGlobal("fetch", providerFetch);
@@ -242,7 +267,7 @@ describe("FMP transcript attempt telemetry", () => {
     const usageRequests: string[] = [];
     usage.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
       usageRequests.push(String(init?.body ?? ""));
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+      return usageAck();
     }) as typeof fetch);
     const providerFetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([
@@ -325,7 +350,7 @@ describe("FMP transcript attempt telemetry", () => {
     const usageRequests: string[] = [];
     usage.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
       usageRequests.push(String(init?.body ?? ""));
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+      return usageAck();
     }) as typeof fetch);
 
     let settingsAtLoss: unknown[] = [];
@@ -380,7 +405,7 @@ describe("FMP transcript attempt telemetry", () => {
     const usageRequests: string[] = [];
     usage.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
       usageRequests.push(String(init?.body ?? ""));
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+      return usageAck();
     }) as typeof fetch);
     let settingsAtLoss: unknown[] = [];
     const providerFetch = vi.fn(async () => {
@@ -421,7 +446,7 @@ describe("FMP transcript attempt telemetry", () => {
     async (stage) => {
       usage.__resetUsageMonitorState();
       usage.__setUsageMonitorFetch((async () => (
-        new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 })
+        usageAck()
       )) as typeof fetch);
       resetOperationLeaseForTest();
       resetProviderQuotaState("fmp");

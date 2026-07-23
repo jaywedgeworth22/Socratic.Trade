@@ -1488,3 +1488,27 @@ export function insertChunkOccurrences(occurrences: ChunkOccurrence[]): void {
   });
   insertMany(occurrences);
 }
+
+export function insertDocumentChunkFts(
+  contentHash: string,
+  symbol: string,
+  source: string,
+  accession: string,
+  text: string
+): void {
+  const db = getDb();
+  // FTS5 is a virtual table — INSERT OR REPLACE does not deduplicate on content_hash.
+  // Delete the existing row for THIS occurrence identity (symbol+source+accession+hash) before
+  // inserting, so a retry/re-run stays idempotent. Deliberately NOT keyed on content_hash alone:
+  // identical boilerplate shared across filings/symbols must keep one lexical row per occurrence,
+  // because retrieval filters document_chunks_fts by symbol (a global delete would silently make
+  // the earlier symbol/accession unreachable through FTS).
+  db.prepare(`
+    DELETE FROM document_chunks_fts
+    WHERE content_hash = ? AND symbol = ? AND source = ? AND accession = ?
+  `).run(contentHash, symbol, source, accession);
+  db.prepare(`
+    INSERT INTO document_chunks_fts (content_hash, symbol, source, accession, text)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(contentHash, symbol, source, accession, text);
+}

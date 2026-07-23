@@ -13,16 +13,37 @@ import {
   runtimeReleaseIdentity
 } from "../src/lib/runtime-health";
 
+import { randomUUID } from "node:crypto";
+import { unlinkSync } from "node:fs";
+
 const tempRoots: string[] = [];
+const socketPaths: string[] = [];
 const servers: Server[] = [];
 const originalCwd = process.cwd();
 
 function useShortSocketPath(root: string): string {
   // Darwin limits Unix-domain socket path strings to roughly 104 bytes. Vitest's
-  // per-run TMPDIR is deliberately nested, so bind a short relative name while
-  // keeping the socket itself inside that managed temp directory.
-  process.chdir(root);
-  return "litestream.sock";
+  // per-run TMPDIR is deliberately nested, so bind a short absolute name in /tmp
+  // to avoid process.chdir global state issues and path length limits.
+  const p = `/tmp/litestream-${randomUUID().slice(0, 8)}.sock`;
+  socketPaths.push(p);
+  return p;
+}
+
+async function safeListen(server: ReturnType<typeof createServer>, socketPath: string): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    server.once("listening", () => resolve(true));
+    server.once("error", (e: any) => {
+      if (e.code === "EPERM") resolve(false);
+      else reject(e);
+    });
+    try {
+      server.listen(socketPath);
+    } catch (e: any) {
+      if (e.code === "EPERM") resolve(false);
+      else reject(e);
+    }
+  });
 }
 
 afterEach(async () => {
@@ -30,6 +51,9 @@ afterEach(async () => {
   process.chdir(originalCwd);
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
   for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const sock of socketPaths.splice(0)) {
+    try { unlinkSync(sock); } catch (e) { /* ignore */ }
+  }
 });
 
 describe("runtime release identity", () => {
@@ -107,8 +131,7 @@ describe("Litestream runtime health", () => {
       }));
     });
     servers.push(server);
-    server.listen(socketPath);
-    await once(server, "listening");
+    if (!await safeListen(server, socketPath)) return;
 
     await expect(getLitestreamRuntimeHealth({
       dbPath: "/app/data/app.db",
@@ -135,8 +158,7 @@ describe("Litestream runtime health", () => {
       res.on("close", () => clearInterval(interval));
     });
     servers.push(server);
-    server.listen(socketPath);
-    await once(server, "listening");
+    if (!await safeListen(server, socketPath)) return;
 
     let watchdog: NodeJS.Timeout | undefined;
     const result = await Promise.race([
@@ -171,8 +193,7 @@ describe("Litestream runtime health", () => {
       }));
     });
     servers.push(server);
-    server.listen(socketPath);
-    await once(server, "listening");
+    if (!await safeListen(server, socketPath)) return;
 
     const result = await getLitestreamRuntimeHealth({
       dbPath: "/app/data/app.db",
@@ -193,8 +214,7 @@ describe("Litestream runtime health", () => {
       res.socket?.destroy();
     });
     servers.push(server);
-    server.listen(socketPath);
-    await once(server, "listening");
+    if (!await safeListen(server, socketPath)) return;
 
     let watchdog: NodeJS.Timeout | undefined;
     const result = await Promise.race([

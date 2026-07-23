@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Btn, Card, Chip, Meter, Segmented, Stat, TextInput, type ChipTone } from "../../console/ui/primitives";
+import { describeProbeNetworkError, describeProbeStatus, type ProbeErrorDescription } from "../lib/probe-error";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -237,7 +238,7 @@ export function RagCoverageClient() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ProbeErrorDescription | null>(null);
   const [search, setSearch] = useState("");
 
   const fetchData = useCallback(async () => {
@@ -246,10 +247,13 @@ export function RagCoverageClient() {
     try {
       const params = new URLSearchParams({ sinceDays: String(days) });
       const res = await fetch(`/api/admin/rag-coverage?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        setError(describeProbeStatus(res.status));
+        return;
+      }
       setData(await res.json());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load");
+    } catch {
+      setError(describeProbeNetworkError());
     } finally {
       setLoading(false);
     }
@@ -266,7 +270,7 @@ export function RagCoverageClient() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">RAG coverage</h1>
+        <h1 className="text-xl font-semibold">RAG Coverage</h1>
         <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
           What&apos;s in the vector index per ticker — chunk counts, freshness, and coverage gaps.
         </p>
@@ -295,8 +299,11 @@ export function RagCoverageClient() {
       </div>
 
       {error && (
-        <div className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]">
-          {error}
+        <div
+          className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]"
+          title={error.rawLabel}
+        >
+          {error.message}
         </div>
       )}
 
@@ -305,27 +312,34 @@ export function RagCoverageClient() {
           {/* Summary row */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="con-tile">
-              <Stat label="Tickers indexed" value={String(data.totalTickers)} />
+              <Stat
+                label="Tickers with coverage"
+                value={String(data.totalTickers)}
+                title="Distinct symbols with at least one indexed chunk in this app's local document_chunks ledger."
+              />
             </div>
             <div className="con-tile">
               <Stat
-                label="Total chunks"
+                label="Chunks (local ledger)"
                 value={String(data.totalChunks)}
                 sub={`${data.totalFilings} filing${data.totalFilings !== 1 ? "s" : ""}`}
+                title="Text chunks recorded in this app's own document_chunks table — the ledger the per-ticker coverage list below reads from, not Pinecone's own count."
               />
             </div>
             <div className="con-tile">
               <Stat
-                label="Pinecone vectors"
+                label="Vectors (Pinecone index)"
                 value={String(data.vectorStoreTotalVectors)}
                 sub={data.vectorStore?.indexName ?? "No index"}
+                title="Pinecone's own reported vector count for the configured index — a separate system from the local chunk ledger; the two can legitimately differ."
               />
             </div>
             <div className="con-tile">
               <Stat
-                label="App-recorded RAG"
+                label="App-recorded RAG spend"
                 value={fmtTotalCost(data.ragUsage.totalCostUsd)}
                 sub={`estimated Voyage cost, last ${data.sinceDays}d`}
+                title="Estimated Voyage embedding cost this app recorded for RAG ingestion — not a chunk or vector count."
               />
             </div>
           </div>

@@ -178,7 +178,7 @@ describe("aggregateModelStats — strategist (AI review / strategy-tune) rollup"
 
   it("reports zero calls and null cost for a strategist row with no strategy-tuning usage", () => {
     const stats = aggregateModelStats({
-      usageRows: [{ model: "grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
+      usageRows: [{ model: "xai/grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
       latencyEvents: [],
       benchmarkSummaries: NO_BENCH,
       closedLots: []
@@ -230,7 +230,7 @@ describe("aggregateModelStats — performance gating", () => {
 
   it("reports zero closed trades + null perf for a model with no attributed lots", () => {
     const stats = aggregateModelStats({
-      usageRows: [{ model: "grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
+      usageRows: [{ model: "xai/grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
       latencyEvents: [],
       benchmarkSummaries: NO_BENCH,
       closedLots: []
@@ -334,7 +334,7 @@ describe("aggregateModelStats — reviewer veto value-add", () => {
 
   it("leaves reviewerPerf null on RED rows without matching veto data (and defaults to null with no input)", () => {
     const stats = aggregateModelStats({
-      usageRows: [{ model: "grok-4.3", context: "strategy", calls: 1, costUsd: 0.01 }],
+      usageRows: [{ model: "xai/grok-4.3", context: "strategy", calls: 1, costUsd: 0.01 }],
       latencyEvents: [],
       benchmarkSummaries: NO_BENCH,
       closedLots: [],

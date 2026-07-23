@@ -131,7 +131,11 @@ export const DEFAULT_POLICY: TradingPolicy = {
   sectorCaps: {},
   riskRules: DEFAULT_RISK_RULES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
-  taxSettings: DEFAULT_TAX_SETTINGS
+  taxSettings: DEFAULT_TAX_SETTINGS,
+  fmpRealTimeDataEnabled: true,
+  fmpMacroDataEnabled: true,
+  fmpEventsDataEnabled: true,
+  fmpFundamentalsDataEnabled: true
   // No default broker: a fresh policy is broker-neutral. activeBroker is set when a real broker is
   // connected (see db-profiles.ts). With no connected account the app cannot place orders — there is
   // no local-sim fallback.

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Btn, Card } from "../../console/ui/primitives";
 import { Markdown } from "./markdown";
+import { describeProbeNetworkError, describeProbeStatus, type ProbeErrorDescription } from "../lib/probe-error";
 
 interface Turn {
   id: string;
@@ -20,18 +21,21 @@ interface Turn {
 export function TranscriptClient() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ProbeErrorDescription | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/chat-history?limit=200");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        setError(describeProbeStatus(res.status));
+        return;
+      }
       const body = (await res.json()) as { turns: Turn[] };
       setTurns(body.turns ?? []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load transcript");
+    } catch {
+      setError(describeProbeNetworkError());
     } finally {
       setLoading(false);
     }
@@ -45,7 +49,7 @@ export function TranscriptClient() {
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Chat transcript</h1>
+          <h1 className="text-xl font-semibold">Chat Transcript</h1>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">Every chat turn, with the model that produced each assistant reply.</p>
         </div>
         <Btn variant="outline" size="sm" onClick={() => void load()}>
@@ -54,7 +58,11 @@ export function TranscriptClient() {
       </div>
 
       {loading && <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">Loading…</p>}
-      {error && <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]">{error}</p>}
+      {error && (
+        <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]" title={error.rawLabel}>
+          {error.message}
+        </p>
+      )}
       {!loading && !error && turns.length === 0 && (
         <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">No chat turns yet.</p>
       )}

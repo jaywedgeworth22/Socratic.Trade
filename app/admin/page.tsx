@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Cpu, RefreshCw, AlertTriangle } from "lucide-react";
 import { Card, Chip, Dot, Btn, Stat, Meter, type ChipTone } from "../console/ui/primitives";
+import { describeProbeStatus } from "./lib/probe-error";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -55,7 +56,10 @@ export default function OperatorDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [probeErrors, setProbeErrors] = useState<Record<string, string>>({});
+  // Each probe's failure as its raw HTTP status, or "network" when the fetch itself never
+  // got a response. Kept raw here (not pre-formatted into "HTTP 403" strings) so render sites
+  // can turn it into human copy via describeProbeStatus — see ./lib/probe-error.
+  const [probeErrors, setProbeErrors] = useState<Record<string, number | "network">>({});
 
   const fetchDashboardData = async () => {
     setError(null);
@@ -70,32 +74,32 @@ export default function OperatorDashboard() {
       ]);
 
       const [resConn, resLlm, resRag, resServ, resTrans] = results;
-      const errs: Record<string, string> = {};
+      const errs: Record<string, number | "network"> = {};
 
       if (resConn.status === "fulfilled") {
         if (resConn.value.ok) setConnections(await resConn.value.json());
-        else errs.connections = `HTTP ${resConn.value.status}`;
-      } else errs.connections = "Request failed";
+        else errs.connections = resConn.value.status;
+      } else errs.connections = "network";
 
       if (resLlm.status === "fulfilled") {
         if (resLlm.value.ok) setLlm(await resLlm.value.json());
-        else errs.llm = `HTTP ${resLlm.value.status}`;
-      } else errs.llm = "Request failed";
+        else errs.llm = resLlm.value.status;
+      } else errs.llm = "network";
 
       if (resRag.status === "fulfilled") {
         if (resRag.value.ok) setRag(await resRag.value.json());
-        else errs.rag = `HTTP ${resRag.value.status}`;
-      } else errs.rag = "Request failed";
+        else errs.rag = resRag.value.status;
+      } else errs.rag = "network";
 
       if (resServ.status === "fulfilled") {
         if (resServ.value.ok) setServer(await resServ.value.json());
-        else errs.server = `HTTP ${resServ.value.status}`;
-      } else errs.server = "Request failed";
+        else errs.server = resServ.value.status;
+      } else errs.server = "network";
 
       if (resTrans.status === "fulfilled") {
         if (resTrans.value.ok) setTranscript(await resTrans.value.json());
-        else errs.transcript = `HTTP ${resTrans.value.status}`;
-      } else errs.transcript = "Request failed";
+        else errs.transcript = resTrans.value.status;
+      } else errs.transcript = "network";
 
       setProbeErrors(errs);
     } catch (e) {
@@ -165,7 +169,12 @@ export default function OperatorDashboard() {
   // instead of five per-card probe errors (presentation of a real 403, not a gate).
   const allForbidden =
     Object.keys(probeErrors).length === 5 &&
-    Object.values(probeErrors).every((e) => e === "HTTP 403");
+    Object.values(probeErrors).every((e) => e === 403);
+
+  // Short, human chip/badge text for a single probe's failure — see ./lib/probe-error for the
+  // "why" (this presents a real 403 from requireAdmin, it doesn't paper over it).
+  const probeErrorLabel = (entry: number | "network" | undefined): string | null =>
+    entry === undefined ? null : entry === "network" ? "Request failed" : describeProbeStatus(entry).shortMessage;
 
   const currentCpu = server?.metrics?.cpu?.slice(-1)[0]?.value ?? 0;
 
@@ -174,7 +183,7 @@ export default function OperatorDashboard() {
       {/* Page Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Operator overview</h1>
+          <h1 className="text-xl font-bold tracking-tight">Operator Overview</h1>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             Real-time status, diagnostics, and metrics across the Socratic Trade environment.
           </p>
@@ -217,9 +226,9 @@ export default function OperatorDashboard() {
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          {/* ── 1. API connections ───────────────────────────────────────────── */}
+          {/* ── 1. API Connections ───────────────────────────────────────────── */}
           <Card
-            title="API connections"
+            title="API Connections"
             action={
               <Link href="/admin/connections" className="con-btn con-btn-ghost con-btn-sm">
                 Open →
@@ -231,8 +240,10 @@ export default function OperatorDashboard() {
               <div className="flex items-center justify-between">
                 <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Overall health</span>
                 <Chip tone={failedConnections.length > 0 ? "neg" : probeErrors.connections ? "warn" : "pos"}>
-                  {failedConnections.length > 0 ? `${failedConnections.length} Offline` :
-                   probeErrors.connections ? `Probe error (${probeErrors.connections})` : "All Operations Online"}
+                  <span title={typeof probeErrors.connections === "number" ? `HTTP ${probeErrors.connections}` : undefined}>
+                    {failedConnections.length > 0 ? `${failedConnections.length} Offline` :
+                     probeErrors.connections ? probeErrorLabel(probeErrors.connections) : "All Operations Online"}
+                  </span>
                 </Chip>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -249,9 +260,9 @@ export default function OperatorDashboard() {
             </div>
           </Card>
 
-          {/* ── 2. LLM usage & cost ──────────────────────────────────────────── */}
+          {/* ── 2. LLM Usage & Cost ──────────────────────────────────────────── */}
           <Card
-            title="LLM usage & cost"
+            title="LLM Usage & Cost"
             action={
               <Link href="/admin/llm-usage" className="con-btn con-btn-ghost con-btn-sm">
                 Open →
@@ -262,8 +273,11 @@ export default function OperatorDashboard() {
             <div className="flex h-full flex-col justify-between">
               <div className="mb-4">
                 {probeErrors.llm ? (
-                  <span className="text-[length:var(--con-fs-sm)] text-[color:var(--con-warn)]">
-                    Probe error ({probeErrors.llm})
+                  <span
+                    className="text-[length:var(--con-fs-sm)] text-[color:var(--con-warn)]"
+                    title={typeof probeErrors.llm === "number" ? `HTTP ${probeErrors.llm}` : undefined}
+                  >
+                    {probeErrorLabel(probeErrors.llm)}
                   </span>
                 ) : (
                   <Stat label="Last 30 days spend" value={llm ? fmtCost(llm.totalCostUsd) : "$0.00"} />
@@ -296,9 +310,9 @@ export default function OperatorDashboard() {
             </div>
           </Card>
 
-          {/* ── 3. RAG coverage ──────────────────────────────────────────────── */}
+          {/* ── 3. RAG Coverage ──────────────────────────────────────────────── */}
           <Card
-            title="RAG coverage"
+            title="RAG Coverage"
             action={
               <Link href="/admin/rag-coverage" className="con-btn con-btn-ghost con-btn-sm">
                 Open →
@@ -308,9 +322,12 @@ export default function OperatorDashboard() {
           >
             <div className="space-y-4">
               {probeErrors.rag && (
-                <div className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+                <div
+                  className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
+                  title={typeof probeErrors.rag === "number" ? `HTTP ${probeErrors.rag}` : undefined}
+                >
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  Probe error ({probeErrors.rag})
+                  {probeErrorLabel(probeErrors.rag)}
                 </div>
               )}
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -356,9 +373,9 @@ export default function OperatorDashboard() {
             </div>
           </Card>
 
-          {/* ── 4. Server & infrastructure ───────────────────────────────────── */}
+          {/* ── 4. Server Stats ───────────────────────────────────────────────── */}
           <Card
-            title="Server & infrastructure"
+            title="Server Stats"
             action={
               <Link href="/admin/server" className="con-btn con-btn-ghost con-btn-sm">
                 Open →
@@ -368,9 +385,12 @@ export default function OperatorDashboard() {
           >
             <div className="space-y-4">
               {probeErrors.server && (
-                <div className="mb-2 flex items-center gap-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+                <div
+                  className="mb-2 flex items-center gap-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
+                  title={typeof probeErrors.server === "number" ? `HTTP ${probeErrors.server}` : undefined}
+                >
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  Probe error ({probeErrors.server})
+                  {probeErrorLabel(probeErrors.server)}
                 </div>
               )}
               <div className="space-y-3">
@@ -406,9 +426,9 @@ export default function OperatorDashboard() {
             </div>
           </Card>
 
-          {/* ── 5. Chat transcript (full-width span) ─────────────────────────── */}
+          {/* ── 5. Chat Transcript (full-width span) ──────────────────────────── */}
           <Card
-            title="Chat transcript"
+            title="Chat Transcript"
             action={
               <Link href="/admin/transcript" className="con-btn con-btn-ghost con-btn-sm">
                 Open →
@@ -418,9 +438,12 @@ export default function OperatorDashboard() {
           >
             <div className="divide-y divide-[color:var(--con-line)]">
               {probeErrors.transcript && (
-                <div className="flex items-center gap-1.5 pb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+                <div
+                  className="flex items-center gap-1.5 pb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
+                  title={typeof probeErrors.transcript === "number" ? `HTTP ${probeErrors.transcript}` : undefined}
+                >
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  Probe error ({probeErrors.transcript})
+                  {probeErrorLabel(probeErrors.transcript)}
                 </div>
               )}
               {transcript?.turns.filter((t) => t.role === "assistant").reverse().slice(0, 2).map((t, i) => (

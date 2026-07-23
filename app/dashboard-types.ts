@@ -24,7 +24,7 @@ import type {
     StrategyProfile,
     StrategyRunRow,
     TradeProposal,
-    TradingPolicy, MarketQuote } from "@/lib/types";
+    TradingPolicy, MarketQuote, OptionPosition } from "@/lib/types";
 export type { AuditFeedItem, SymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 
 export interface AuditEvent {
@@ -38,7 +38,7 @@ export interface AuditEvent {
 export interface StrategyDecision {
   runId: string;
   createdAt?: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "skipped";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
@@ -62,17 +62,26 @@ export interface DashboardSnapshot {
   accounts: BrokerageAccount[];
   accountReadiness?: AccountReadiness;
   connectedAccounts: ConnectedAccount[];
-  connectedAccountPolicies?: Record<string, Pick<TradingPolicy, "systemState" | "strategyAuthority">>;
+  /** Per-account run-state projection for the account switcher. `runDuringExtendedHours` is
+   *  optional (older payloads predate it): deriveStateInfo treats undefined as "can't know" and
+   *  skips the market-open/paused split rather than mislabeling an extended-hours account. */
+  connectedAccountPolicies?: Record<
+    string,
+    Pick<TradingPolicy, "systemState" | "strategyAuthority"> & Partial<Pick<TradingPolicy, "runDuringExtendedHours">>
+  >;
   portfolio?: Portfolio;
   positions: EquityPosition[];
+  options?: OptionPosition[];
   symbolMetaBySymbol: Record<string, DashboardSymbolMeta>;
   /** Per-position stop PLAN (LLM-chosen stop TYPE, persisted at fill time), keyed by symbol — see
    *  StopPlanStyle/position_stop_plans. Absent entry = "default" (account's own precedence). */
   stopPlanBySymbol?: Record<string, PositionStopPlan>;
   livePortfolio?: Portfolio;
   livePositions?: EquityPosition[];
+  liveOptions?: OptionPosition[];
   paperPortfolio?: Portfolio;
   paperPositions?: EquityPosition[];
+  paperOptions?: OptionPosition[];
   orders: EquityOrder[];
   audit: AuditEvent[];
   auditFeed: DashboardAuditFeedItem[];

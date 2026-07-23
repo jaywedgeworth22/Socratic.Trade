@@ -45,9 +45,10 @@ import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
 import type { PrefetchedFills } from "./performance";
-import type { BrokerageAccount, BrokerQuote, ConnectedAccount, EquityOrder, EquityPosition, FillEvent, MarketQuote, MarketScan, NotificationEvent, NotificationEventType, Portfolio, TradeProposal, TradingPolicy } from "./types";
+import type { BrokerageAccount, BrokerQuote, ConnectedAccount, EquityOrder, EquityPosition, OptionPosition, FillEvent, MarketQuote, MarketScan, NotificationEvent, NotificationEventType, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
+import { checkAndDispatchOptionAlerts } from "./notifications";
 
 const PROPOSAL_PERFORMANCE_MIN_AGE_MS = 15 * 60_000;
 const RED_TEAM_EFFICACY_AUDIT_LIMIT = 500;
@@ -274,7 +275,17 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const connectedAccountPolicies = Object.fromEntries(
     connectedAccounts.map((account) => {
       const pol = peekPolicy(userId, account.id);
-      return [account.id, { systemState: pol.systemState, strategyAuthority: pol.strategyAuthority }];
+      // runDuringExtendedHours rides along so the account-switcher's market-aware run-state chip
+      // can honor each account's extended-hours setting — without it, an extended-hours account
+      // would read "Paused · market closed" during pre/post sessions while genuinely running.
+      return [
+        account.id,
+        {
+          systemState: pol.systemState,
+          strategyAuthority: pol.strategyAuthority,
+          runDuringExtendedHours: pol.runDuringExtendedHours
+        }
+      ];
     })
   );
   const accountLabelById = Object.fromEntries(connectedAccounts.map((account) => [account.id, account.label || account.broker]));
@@ -293,17 +304,18 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   // performance summary built from quotes. Everything else — Robinhood MCP health and the whole
   // macro board (macro/signals/history/news) — has no dependency on the broker chain or on each
   // other, so all of it is raced against the chain with one Promise.all.
-  const brokerChainPromise = (async (): Promise<{
+  const brokerChainPromise: Promise<{
     accounts: BrokerageAccount[];
     liveAccounts: BrokerageAccount[];
     brokerAccountReadError?: string;
+    options: OptionPosition[];
     accountNumber?: string;
     portfolio?: Portfolio;
     positions: EquityPosition[];
     orders: EquityOrder[];
     portfolioReadError?: string;
     currentPrices: Record<string, number>;
-  }> => {
+  }> = (async () => {
     let accounts: BrokerageAccount[] = [];
     let brokerAccountReadError: string | undefined;
     const handleAccountsReadFailure = (message: string) => {
@@ -378,6 +390,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     const accountNumber = policy.accountNumber ?? accounts.find((account) => account.agenticAllowed)?.accountNumber;
     let portfolio: Portfolio | undefined;
     let positions: EquityPosition[] = [];
+    let options: OptionPosition[] = [];
     let orders: EquityOrder[] = [];
     let portfolioReadError: string | undefined;
     const handlePortfolioReadFailure = (message: string) => {
@@ -388,7 +401,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
         operation: "dashboard.getPortfolioBundle",
         severity: "error",
         message,
-        fallback: "Dashboard snapshot continues without live portfolio, positions, and orders.",
+        fallback: "Dashboard snapshot continues without live portfolio, positions, options, and orders.",
         userId,
         connectedAccountId: policy.connectedAccountId,
         broker: policy.activeBroker,
@@ -413,6 +426,30 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
         );
       } catch (error) {
         handlePortfolioReadFailure(messageFromUnknownError(error));
+      }
+      // Option positions are best-effort: a transient failure (notably an MCP
+      // tool error) must not crash the whole dashboard bundle. Wrap the fetch in
+      // the same withDeadline guard the portfolio/positions/orders legs use — the
+      // try/catch only handles a REJECTION, so a HUNG options/MCP endpoint would
+      // otherwise hang the whole snapshot forever (the catch never runs and the
+      // dashboard never renders). Time out to an empty list like the other legs.
+      if (gateway.getOptionPositions) {
+        try {
+          options = await withDeadline<OptionPosition[]>(
+            gateway.getOptionPositions(accountNumber),
+            8000,
+            () => [],
+            "gateway.getOptionPositions",
+            timedOutSections
+          );
+        } catch (err) {
+          console.warn("[Dashboard] options positions unavailable (non-fatal):", err);
+        }
+      }
+      if (options.length > 0) {
+        checkAndDispatchOptionAlerts(userId, policy.connectedAccountId || "", accountNumber, options, gateway).catch((err) =>
+          console.warn("[OptionAlerts] failed:", err)
+        );
       }
     }
 
@@ -443,7 +480,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       }
     }
 
-    return { accounts, liveAccounts, brokerAccountReadError, accountNumber, portfolio, positions, orders, portfolioReadError, currentPrices };
+    return { accounts, liveAccounts, brokerAccountReadError, accountNumber, portfolio, positions, options, orders, portfolioReadError, currentPrices };
   })();
 
   const robinhoodMcpHealthPromise: Promise<RobinhoodMcpHealth | undefined> =
@@ -506,6 +543,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     accountNumber,
     portfolio,
     positions,
+    options,
     orders,
     portfolioReadError,
     currentPrices
@@ -790,6 +828,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     connectedAccountPolicies,
     portfolio: displayPortfolio,
     positions: displayPositions,
+    options,
     symbolMetaBySymbol,
     stopPlanBySymbol,
     orders,

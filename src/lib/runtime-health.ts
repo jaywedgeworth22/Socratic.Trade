@@ -1,6 +1,7 @@
 import { request } from "node:http";
 import { readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { getGitSha } from "./git-sha";
 
 export interface RuntimeReleaseIdentity {
   sha: string | null;
@@ -43,30 +44,13 @@ const LITESTREAM_FILE_SCAN_MAX_DEPTH = 8;
 const LITESTREAM_CLOCK_SKEW_MS = 60_000;
 
 const PROCESS_STARTED_AT_MS = Date.now() - Math.round(process.uptime() * 1000);
-const RELEASE_SHA_KEYS = [
-  "APP_RELEASE_SHA",
-  "SOURCE_COMMIT",
-  "COOLIFY_COMMIT_SHA",
-  "GIT_COMMIT_SHA",
-  "GITHUB_SHA",
-  "VERCEL_GIT_COMMIT_SHA"
-] as const;
-
 /** Public-safe release metadata. Only hexadecimal commit ids are exposed. */
 export function runtimeReleaseIdentity(
   env: Readonly<Record<string, string | undefined>> = process.env,
   nowMs: number = Date.now()
 ): RuntimeReleaseIdentity {
-  let sha: string | null = null;
-  for (const key of RELEASE_SHA_KEYS) {
-    const value = env[key]?.trim();
-    if (value && /^[a-f0-9]{7,64}$/i.test(value)) {
-      sha = value.toLowerCase();
-      break;
-    }
-  }
   return {
-    sha,
+    sha: getGitSha(env as Record<string, string | undefined>) ?? null,
     processStartedAt: new Date(PROCESS_STARTED_AT_MS).toISOString(),
     processUptimeSeconds: Math.max(0, Math.round((nowMs - PROCESS_STARTED_AT_MS) / 1000))
   };

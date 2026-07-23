@@ -7,6 +7,7 @@
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
 import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getInternalSetting, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
+import { isEarningsCallsRefreshDue, refreshEarningsCallsTranscriptsIfDue } from "./earningscalls-transcripts";
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
@@ -23,7 +24,8 @@ import { maybeAutoTuneWeights } from "./auto-tune-scheduler";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
-import type { TradingPolicy } from "./types";
+import { isLiveOrderState } from "./broker-side";
+import type { EquityOrder, TradingPolicy } from "./types";
 import { drainMaterialEventQueue, triggerEngineEnabled, triggerMode } from "./triggers";
 import {
   getTechnicalWatchlist,
@@ -74,6 +76,10 @@ export type ManagedVectorReconcileRun = {
   status: "success" | "busy" | "failed";
   result?: { skipped?: boolean };
 };
+
+export function drainingAccountLiveOrders(orders: readonly EquityOrder[]): EquityOrder[] {
+  return orders.filter((order) => isLiveOrderState(order.state));
+}
 
 const managedVectorReconcileGuardHost = globalThis as unknown as {
   __schedulerManagedVectorReconcileInFlight?: Promise<ManagedVectorReconcileRun | null>;
@@ -534,6 +540,20 @@ async function tick(): Promise<void> {
     })();
   }
 
+  // Once-per-UTC-day EarningsCalls.dev transcript pass (dormant without EARNINGSCALLS_API_KEY;
+  // kill-switch EARNINGSCALLS_DISABLED=1). Holdings-first selection, durable 180/month
+  // reserve-before-call budget under the plan's HARD 200/month — see
+  // src/lib/earningscalls-transcripts.ts. Gated on the monthly LLM/RAG spend ceiling like the
+  // filing/FMP-transcript producers above (its ingest spends Voyage/Pinecone), and serialized
+  // with them via the shared durable RAG_REINDEX operation lease (acquired inside the producer,
+  // like refreshFilingBodies/refreshFmpTranscripts; a busy lease is a benign deferred pass —
+  // the daily watermark is untouched, so a later tick retries). Self-guarded.
+  if (isEarningsCallsRefreshDue() && checkMonthlyLlmSpendCeiling().ok) {
+    void refreshEarningsCallsTranscriptsIfDue().catch((err) =>
+      console.error("[scheduler] earningscalls transcript refresh error:", err instanceof Error ? err.message : err)
+    );
+  }
+
   // Once-per-day share of company refs + daily closes + the S&P-500 series to congress.trade
   // (App A) so it can avoid spending the shared FMP quota. No-op unless CONGRESS_TRADE_TOKEN +
   // CONGRESS_SHARE_ENABLED are set and the batch hasn't already run today. Fully self-guarded.
@@ -647,7 +667,7 @@ async function tick(): Promise<void> {
         if (account.isDraining) {
           if (brokerGateway && policy.accountNumber) {
             void brokerGateway.getEquityOrders(policy.accountNumber).then(async (orders) => {
-              const openOrders = orders.filter(o => o.state === "open" || o.state === "partially_filled");
+              const openOrders = drainingAccountLiveOrders(orders);
               for (const o of openOrders) {
                 await brokerGateway.cancelEquityOrder(policy.accountNumber!, o.id).catch((err: unknown) => {
                   console.error(`[scheduler] draining account cancel error for order ${o.id}:`, err);
@@ -683,11 +703,12 @@ async function tick(): Promise<void> {
         const protectiveState =
           policy.systemState === "active" ||
           policy.systemState === "close_only" ||
-          policy.systemState === "liquidating";
+          policy.systemState === "liquidating" ||
+          (policy.systemState === "halted" && policy.riskRules?.protectWhileHalted === true);
 
         // R2: synthetic trailing-stop monitor — runs every tick in states where risk-reducing exits
         // are allowed. `close_only` and `liquidating` must not disable the very protection that can
-        // reduce exposure after a breaker trips. `halted` remains the only no-order state.
+        // reduce exposure after a breaker trips. `halted` remains the only no-order state unless protectWhileHalted is active.
         if (protectiveState && !stopMonitorInFlight.has(key)) {
           stopMonitorInFlight.add(key);
           void runSyntheticStopMonitor(userId, policy, true)

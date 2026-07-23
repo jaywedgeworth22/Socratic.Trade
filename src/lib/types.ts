@@ -83,7 +83,8 @@ export const NOTIFICATION_EVENT_TYPES = [
   "prompt_injection_suspected",
   "evidence_age_anomaly",
   "storage_warning",
-  "autonomy_halted_on_boot"
+  "autonomy_halted_on_boot",
+  "option_alert"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
@@ -639,6 +640,11 @@ export interface RiskRules {
    * The breaker itself is still opt-in via the thresholds above (unset ⇒ no breaker at all).
    */
   drawdownBreakerAction?: "advisory" | "close_only" | "halt";
+  /**
+   * Allow synthetic trailing-stops to fire exits even when systemState is 'halted'.
+   * Never registers or updates to looser stops, but will trigger existing ones.
+   */
+  protectWhileHalted?: boolean;
 }
 
 export interface NotificationSettings {
@@ -702,6 +708,17 @@ export interface EquityPosition {
   marketValue: number;
   sector?: string;
   industry?: string;
+}
+
+export interface OptionPosition {
+  symbol: string;
+  underlyingSymbol: string;
+  expirationDate: string;
+  optionType: "call" | "put";
+  strikePrice: number;
+  quantity: number;
+  averageCost: number;
+  marketValue: number;
 }
 
 export interface EquityOrder {
@@ -1104,6 +1121,14 @@ export interface TradingPolicy {
   /** Max age (seconds) of the scan's fundamentals/enrichment data, using MarketScan.generatedAt as the
    *  available proxy (no per-symbol fundamentals timestamp is surfaced on the quote). Undefined/<=0 disables. */
   maxFundamentalsAgeSec?: number;
+  /** Whether the FMP Real-Time Quotes and ETF data integration is enabled. */
+  fmpRealTimeDataEnabled?: boolean;
+  /** Whether the FMP Macro & Commodities data integration is enabled. */
+  fmpMacroDataEnabled?: boolean;
+  /** Whether the FMP Events & News data integration is enabled. */
+  fmpEventsDataEnabled?: boolean;
+  /** Whether the FMP Deep Fundamentals data integration is enabled. */
+  fmpFundamentalsDataEnabled?: boolean;
 }
 
 export interface ProposalSizingSnapshot {
@@ -1660,6 +1685,12 @@ export interface MarketScan {
   outlierReserve?: number;
   /** Number of notable below-cutoff candidates included in `topCandidates`. */
   outlierCandidateCount?: number;
+  /** Number of forced-held-position candidates in `topCandidates` beyond the ranked cut and the
+   *  outlier reserve — held positions are never hidden regardless of rank, so `topCandidates.length`
+   *  can legitimately exceed `candidateLimit` by this much (plus outliers). Undefined on scans
+   *  persisted before this field existed; the UI falls back to a coarser breakdown rather than
+   *  guessing a count. */
+  heldCandidateCount?: number;
   /** Market breadth: % of the full screener advancing today (risk-on/off gauge). */
   breadthPct?: number;
   topCandidates: MarketQuote[];
@@ -2065,6 +2096,7 @@ export interface BrokerGateway {
   getAccounts(): Promise<BrokerageAccount[]>;
   getPortfolio(accountNumber: string): Promise<Portfolio>;
   getEquityPositions(accountNumber: string): Promise<EquityPosition[]>;
+  getOptionPositions?(accountNumber: string): Promise<OptionPosition[]>;
   getEquityOrders(accountNumber: string): Promise<EquityOrder[]>;
   getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>>;
   getEquityTradability(accountNumber: string, symbols: string[]): Promise<Record<string, { tradable: boolean; fractional: boolean; reason?: string }>>;
@@ -2087,7 +2119,8 @@ export interface StrategyRun {
   id: string;
   startedAt: string;
   finishedAt?: string;
-  status: "running" | "completed" | "failed";
+  /** skipped = pre-decision gate (budget/market/broker); not a successful evaluation */
+  status: "running" | "completed" | "failed" | "skipped";
   summary?: string;
 }
 
@@ -2095,7 +2128,7 @@ export interface StrategyRunRow {
   id: string;
   startedAt: string;
   finishedAt?: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "skipped";
   summary?: string;
   connectedAccountId?: string;
   placedCount: number;

@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetDbForTesting } from "../src/lib/db";
+import { resetTriggersForTesting } from "../src/lib/triggers";
 
 const runStrategyOnceMock = vi.fn().mockResolvedValue({
   runId: "test-run",
@@ -13,9 +15,11 @@ const runStrategyOnceMock = vi.fn().mockResolvedValue({
   summary: "test strategy run completed",
   proposals: []
 });
-vi.mock("../src/lib/strategy", () => ({
-  runStrategyOnce: (...args: unknown[]) => runStrategyOnceMock(...args)
-}));
+vi.mock("../src/lib/strategy", () => {
+  return {
+    runStrategyOnce: (...args: unknown[]) => runStrategyOnceMock(...args)
+  };
+});
 
 // Market hours are wall-clock dependent; force "always open" so admitRun's market-hours check never
 // blocks the budget-ceiling assertions below (that gate has its own coverage elsewhere).
@@ -24,6 +28,8 @@ vi.mock("../src/lib/market-hours", () => ({
 }));
 
 beforeAll(() => {
+  resetDbForTesting();
+  vi.resetModules();
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-test-${randomUUID()}.db`)}`;
 });
 
@@ -34,6 +40,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetDbForTesting();
+  resetTriggersForTesting();
+  vi.resetModules();
+  vi.unstubAllEnvs();
   for (const k of ENV_KEYS) delete process.env[k];
 });
 

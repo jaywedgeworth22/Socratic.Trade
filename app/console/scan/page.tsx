@@ -21,6 +21,7 @@ import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT } from "@/lib/scan-settings";
 import { activeConnectedAccount } from "../lib/derive";
 import { cx, fmtExact, EM_DASH } from "../lib/format";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
+import { formatScanCandidateBreakdown, scanCandidateBreakdown } from "../lib/scan";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Btn, Card, Chip, Empty, type ChipTone } from "../ui/primitives";
 import { useToast } from "../ui/toast";
@@ -216,7 +217,7 @@ function MarketScanTab({
             )}
             <Empty>
               No market scan yet. Run one now with the button below, or it appears automatically after the next strategy
-              run. If your universe is empty, add symbols or choose a base index in Settings first.
+              run. If your universe is empty, add symbols or choose a base index in Guardrails first.
             </Empty>
             <div className="flex justify-center pb-2">
               <Btn variant="primary" onClick={onRefresh} title="Run a fresh market scan now. Read-only: it never places trades.">
@@ -230,7 +231,12 @@ function MarketScanTab({
   }
 
   const limit = scan.candidateLimit ?? policyLimit ?? DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT;
-  const outliers = scan.outlierCandidateCount ?? 0;
+  const breakdown = scanCandidateBreakdown({
+    totalCandidates: scan.topCandidates.length,
+    limit,
+    outlierCandidateCount: scan.outlierCandidateCount,
+    heldCandidateCount: scan.heldCandidateCount
+  });
   const sources = formatSourceList(scan.source);
   const warningText =
     scan.warnings.length > 1 ? `${scan.warnings[0]} (+${scan.warnings.length - 1} more — hover for all)` : scan.warnings[0];
@@ -343,10 +349,9 @@ function MarketScanTab({
       >
         <p
           className="cursor-default px-4 pb-2 pt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-          title={`Scanned ${typeof scan.scannedSymbols === "number" ? scan.scannedSymbols : "an unrecorded number of"} symbols; ${typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : "an unrecorded number of"} returned quotes${sources ? ` from ${sources}` : ""}; the top ${scan.topCandidates.length} (cap ${limit}) were enriched and scored${outliers > 0 ? `, including ${outliers} below-cutoff outlier${outliers === 1 ? "" : "s"} kept for notability` : ""}.`}
+          title={`Scanned ${typeof scan.scannedSymbols === "number" ? scan.scannedSymbols : "an unrecorded number of"} symbols; ${typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : "an unrecorded number of"} returned quotes${sources ? ` from ${sources}` : ""}; ${scan.topCandidates.length} candidates total (cap ${limit}) decomposed as ${formatScanCandidateBreakdown(breakdown)}${breakdown.hasHeldBreakdown ? " — held positions are never hidden regardless of rank, so the total can exceed the cap" : ""}.`}
         >
-          {typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : EM_DASH} quotes · {scan.topCandidates.length}/{limit} candidates
-          {outliers > 0 ? ` · ${outliers} outlier${outliers === 1 ? "" : "s"}` : ""}
+          {typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : EM_DASH} quotes · {formatScanCandidateBreakdown(breakdown)}
           {typeof scan.breadthPct === "number" && (
             <span title="Market breadth — the share of the full screened universe advancing today. A quick risk-on/risk-off gauge.">
               {" "}
@@ -357,7 +362,7 @@ function MarketScanTab({
         {scan.topCandidates.length === 0 ? (
           <Empty>
             The scan ran but returned no candidates — the universe may be empty or no provider returned quotes. Add
-            symbols or choose a base index in Settings, then refresh.
+            symbols or choose a base index in Guardrails, then refresh.
           </Empty>
         ) : (
           <ScanTable scan={scan} />
