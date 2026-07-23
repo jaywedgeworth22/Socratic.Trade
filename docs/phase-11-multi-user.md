@@ -1,5 +1,11 @@
 # Phase 11 - Multi-user & API-key management (plan)
 
+## CI pin-check reliability (2026-07-22)
+
+The shared-package pin workflow runs on every pull request so the status cannot disappear for
+unrelated code changes. It installs the pinned Node 24 toolchain before the comparison script,
+which uses Node for GitHub API JSON parsing.
+
 Goal: let multiple users use the app — logging in at the same or different times —
 each getting analysis and trade proposals tailored to **their own preferences and
 their own API keys**. With no connected broker account the app cannot place any
@@ -120,8 +126,13 @@ per-user via `upsertUserApiKey` under the default user.
 
 Current implementation: Settings -> Connections lists OpenAI, Anthropic,
 xAI/Grok, Google Gemini, Mistral, DeepSeek, Finnhub, FMP, Alpha Vantage,
-Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set / Using
+Marketstack, FRED, SEC EDGAR User-Agent, and Massive with Set / Using
 env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
+**Tradier was removed from this generic key catalog on 2026-07-16** — it is
+sourced from the connected Tradier BROKER account (Settings -> Accounts)
+instead, per owner direction that a broker-connection-only source shouldn't
+also appear as a separate, duplicate "API key" (see
+`docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`).
 Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
 secret values. Strategy lets the selected account strategy choose a Green
 Team model for proposal generation and an optional separate Red Team model for

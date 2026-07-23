@@ -24,10 +24,10 @@ describe("llm-request — model resolution", () => {
 
   it("classifies reasoning vs classic models", () => {
     expect(isReasoningModel("gpt-5.4-mini")).toBe(true);
-    expect(isReasoningModel("gpt-5.5")).toBe(true);
+    expect(isReasoningModel("openai/gpt-5.5")).toBe(true);
     expect(isReasoningModel("o4-mini")).toBe(true);
-    expect(isReasoningModel("gpt-4.1-mini")).toBe(false);
-    expect(isReasoningModel("gpt-4o")).toBe(false);
+    expect(isReasoningModel("openai/gpt-4.1-mini")).toBe(false);
+    expect(isReasoningModel("openai/gpt-4o")).toBe(false);
     expect(isReasoningModel(undefined)).toBe(false);
   });
 
@@ -35,8 +35,8 @@ describe("llm-request — model resolution", () => {
     // No model is a default for anything, ever. An explicit choice is used verbatim; a blank/unset
     // policy resolves to "" (unconfigured — callers fail closed), NOT the OPENAI_MODEL env and NOT
     // any hardcoded default.
-    vi.stubEnv("OPENAI_MODEL", "gpt-4.1-mini");
-    expect(resolveOpenAiModel({ llmModel: "gpt-5.5" })).toBe("gpt-5.5");
+    vi.stubEnv("OPENAI_MODEL", "openai/gpt-4.1-mini");
+    expect(resolveOpenAiModel({ llmModel: "openai/gpt-5.5" })).toBe("openai/gpt-5.5");
     expect(resolveOpenAiModel({ llmModel: "  " })).toBe("");
     expect(resolveOpenAiModel(null)).toBe("");
     vi.unstubAllEnvs();
@@ -44,14 +44,14 @@ describe("llm-request — model resolution", () => {
   });
 
   it("disallows the slowest gpt-5.5 high-reasoning combo for interactive strategy runs", () => {
-    expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.5", "high")).toBe(true);
-    expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.5", "xhigh")).toBe(true);
-    expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.5", "medium")).toBe(false);
+    expect(isDisallowedInteractiveStrategyReasoningConfig("openai/gpt-5.5", "high")).toBe(true);
+    expect(isDisallowedInteractiveStrategyReasoningConfig("openai/gpt-5.5", "xhigh")).toBe(true);
+    expect(isDisallowedInteractiveStrategyReasoningConfig("openai/gpt-5.5", "medium")).toBe(false);
     expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.4-mini", "high")).toBe(false);
-    expect(interactiveStrategyReasoningEffort("gpt-5.5", "high")).toBe("medium");
-    expect(interactiveStrategyReasoningEffort("gpt-5.5", "xhigh")).toBe("medium");
-    expect(interactiveStrategyReasoningEffort("gpt-5.5", "low")).toBe("low");
-    expect(interactiveStrategyReasoningEffort("gpt-4.1-mini", "high")).toBeUndefined();
+    expect(interactiveStrategyReasoningEffort("openai/gpt-5.5", "high")).toBe("medium");
+    expect(interactiveStrategyReasoningEffort("openai/gpt-5.5", "xhigh")).toBe("medium");
+    expect(interactiveStrategyReasoningEffort("openai/gpt-5.5", "low")).toBe("low");
+    expect(interactiveStrategyReasoningEffort("openai/gpt-4.1-mini", "high")).toBeUndefined();
   });
 
   it("maps provider-specific reasoning controls by model family", () => {
@@ -60,7 +60,7 @@ describe("llm-request — model resolution", () => {
     expect(reasoningCapabilityForModel("gpt-5.6-luna")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
     expect(reasoningCapabilityForModel("gpt-5.4-mini")?.options.map((o) => o.value)).toEqual(["low", "medium", "high"]);
     expect(reasoningCapabilityForModel("claude-fable-5")?.options.map((o) => o.value)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-    expect(reasoningCapabilityForModel("grok-4.3")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high"]);
+    expect(reasoningCapabilityForModel("xai/grok-4.3")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high"]);
     expect(reasoningCapabilityForModel("gemini-2.5-flash")?.options.map((o) => o.value)).toEqual(["none", "minimal", "low", "medium", "high"]);
     expect(reasoningCapabilityForModel("gemini-3.1-pro-preview")?.options.map((o) => o.value)).toEqual(["minimal", "low", "medium", "high"]);
     // Mistral (benchmark 2026-07-08 provider 400s): ONLY medium-3-5 has a reasoning
@@ -78,7 +78,7 @@ describe("llm-request — model resolution", () => {
     expect(normalizeReasoningEffortForModel("gpt-5.6-luna", "minimal")).toBe("none");
     expect(normalizeReasoningEffortForModel("gpt-5.4-mini", "xhigh")).toBe("high");
     expect(normalizeReasoningEffortForModel("gemini-3.1-pro-preview", "none")).toBe("minimal");
-    expect(normalizeReasoningEffortForModel("claude-opus-4-8", undefined)).toBe("medium");
+    expect(normalizeReasoningEffortForModel("anthropic/claude-opus-4-8", undefined)).toBe("medium");
     // DeepSeek high-effort thinking is OPT-IN: a sub-high request (incl. the undefined default and the
     // app's "medium") resolves to the FAST "none" tier, NOT a silent upgrade to the slow "high" tier
     // that spends a long hidden-reasoning phase and blew the 60s request timeout. Only an explicit
@@ -126,34 +126,34 @@ describe("llm-request — model resolution", () => {
 
   it("widens the strategy LLM timeout only for thinking-enabled reasoning models", () => {
     // Non-reasoning model: base bound regardless of the requested effort.
-    expect(strategyLlmTimeoutMs("gpt-4.1-mini", "high")).toBe(LLM_TIMEOUT_MS);
+    expect(strategyLlmTimeoutMs("openai/gpt-4.1-mini", "high")).toBe(LLM_TIMEOUT_MS);
     // DeepSeek at the default (medium => none, thinking OFF): base bound (fast, no widening).
     expect(strategyLlmTimeoutMs("deepseek-v4-pro", "medium")).toBe(LLM_TIMEOUT_MS);
     // DeepSeek with an explicit high effort (thinking ON): widened past the base.
     expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBeGreaterThan(LLM_TIMEOUT_MS);
     // OpenAI reasoning model actually thinking at medium: widened.
-    expect(strategyLlmTimeoutMs("gpt-5.5", "medium")).toBeGreaterThan(LLM_TIMEOUT_MS);
+    expect(strategyLlmTimeoutMs("openai/gpt-5.5", "medium")).toBeGreaterThan(LLM_TIMEOUT_MS);
     // Both bounds are env-tunable.
     vi.stubEnv("STRATEGY_LLM_TIMEOUT_MS", "30000");
     vi.stubEnv("STRATEGY_LLM_REASONING_TIMEOUT_MS", "200000");
-    expect(strategyLlmTimeoutMs("gpt-4.1-mini", "high")).toBe(30000);
+    expect(strategyLlmTimeoutMs("openai/gpt-4.1-mini", "high")).toBe(30000);
     expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBe(200000);
   });
 });
 
 describe("llm-request — withLlmRequestBounds", () => {
   it("classic models keep temperature and exact token cap (no reasoning_effort)", () => {
-    const chat = withLlmRequestBounds({ model: "gpt-4.1-mini" }, "chat-completions", {
+    const chat = withLlmRequestBounds({ model: "openai/gpt-4.1-mini" }, "chat-completions", {
       maxOutputTokens: 1500,
-      model: "gpt-4.1-mini"
+      model: "openai/gpt-4.1-mini"
     });
     expect(chat.temperature).toBe(0);
     expect(chat.max_completion_tokens).toBe(1500);
     expect("reasoning_effort" in chat).toBe(false);
 
-    const resp = withLlmRequestBounds({ model: "gpt-4.1-mini" }, "responses", {
+    const resp = withLlmRequestBounds({ model: "openai/gpt-4.1-mini" }, "responses", {
       maxOutputTokens: 1500,
-      model: "gpt-4.1-mini"
+      model: "openai/gpt-4.1-mini"
     });
     expect(resp.temperature).toBe(0);
     expect(resp.max_output_tokens).toBe(1500);
@@ -170,9 +170,9 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect(chat.reasoning_effort).toBe("medium");
     expect(chat.max_completion_tokens).toBe(1500 + 4000); // medium headroom
 
-    const resp = withLlmRequestBounds({ model: "gpt-5.5" }, "responses", {
+    const resp = withLlmRequestBounds({ model: "openai/gpt-5.5" }, "responses", {
       maxOutputTokens: 1500,
-      model: "gpt-5.5",
+      model: "openai/gpt-5.5",
       reasoningEffort: "low"
     });
     expect("temperature" in resp).toBe(false);
@@ -189,9 +189,24 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect(gemini.reasoning_effort).toBe("none");
     expect(gemini.max_completion_tokens).toBe(1500);
 
-    const xai = withLlmRequestBounds({ model: "grok-4.3" }, "chat-completions", {
+    // Claude via OpenRouter (anthropic/... on chat-completions): OpenRouter's UNIFIED `reasoning`
+    // param, NOT reasoning_effort, and no temperature (Anthropic reasoning rejects it) (Codex P1 #1703).
+    // The thinking budget is EXPLICIT (= the reasoning headroom, medium=4000) so the VISIBLE slice
+    // stays == the requested maxOutputTokens (1500), not a fraction of the cap that would truncate
+    // the JSON at high effort (Codex P2 #1733).
+    const claude = withLlmRequestBounds({ model: "anthropic/claude-sonnet-5" }, "chat-completions", {
       maxOutputTokens: 1500,
-      model: "grok-4.3",
+      model: "anthropic/claude-sonnet-5",
+      reasoningEffort: "medium"
+    });
+    expect(claude.reasoning).toEqual({ max_tokens: 4000 });
+    expect((claude.max_completion_tokens as number) - (claude.reasoning as { max_tokens: number }).max_tokens).toBe(1500);
+    expect("reasoning_effort" in claude).toBe(false);
+    expect("temperature" in claude).toBe(false);
+
+    const xai = withLlmRequestBounds({ model: "xai/grok-4.3" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "xai/grok-4.3",
       reasoningEffort: "high"
     });
     expect(xai.reasoning_effort).toBe("high");
@@ -256,9 +271,9 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect(deepseekOff.thinking).toEqual({ type: "disabled" });
     expect(deepseekOff.temperature).toBe(0);
 
-    const anthropic = withLlmRequestBounds({ model: "claude-opus-4-8" }, "anthropic-messages", {
+    const anthropic = withLlmRequestBounds({ model: "anthropic/claude-opus-4-8" }, "anthropic-messages", {
       maxOutputTokens: 1500,
-      model: "claude-opus-4-8",
+      model: "anthropic/claude-opus-4-8",
       reasoningEffort: "max"
     });
     expect(anthropic.thinking).toEqual({ type: "adaptive" });
@@ -290,7 +305,7 @@ describe("llm-request — withLlmRequestBounds", () => {
 
   it("resolveLlmWireOutputCap exposes the ACTUAL wire cap for LLM_OUTPUT_TOKEN_CAPS.strategyProposal, matching what withLlmRequestBounds embeds in the body", () => {
     // Non-reasoning: no headroom, wire cap == the raw strategyProposal cap.
-    expect(resolveLlmWireOutputCap("chat-completions", { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "gpt-4.1-mini" }))
+    expect(resolveLlmWireOutputCap("chat-completions", { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "openai/gpt-4.1-mini" }))
       .toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal);
 
     // Gemini at medium reasoning effort: +4000 headroom on top of the 4000 base cap — the exact
@@ -303,7 +318,7 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect(geminiBody.max_completion_tokens).toBe(geminiWireCap);
 
     // Anthropic messages: floored at ANTHROPIC_MIN_MAX_TOKENS (4096), not raw headroom math.
-    expect(resolveLlmWireOutputCap("anthropic-messages", { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "claude-opus-4-8" }))
+    expect(resolveLlmWireOutputCap("anthropic-messages", { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "anthropic/claude-opus-4-8" }))
       .toBe(4096);
   });
 
@@ -316,11 +331,11 @@ describe("llm-request — withLlmRequestBounds", () => {
     const requestedCap = 1500;
     const modelsByProvider: Record<string, string> = {
       openai: "gpt-5.4-mini",
-      xai: "grok-4.3",
+      xai: "xai/grok-4.3",
       gemini: "gemini-2.5-flash",
       mistral: "mistral-medium-3-5",
       deepseek: "deepseek-v4-pro",
-      anthropic: "claude-opus-4-8"
+      anthropic: "anthropic/claude-opus-4-8"
     };
 
     for (const [provider, model] of Object.entries(modelsByProvider)) {

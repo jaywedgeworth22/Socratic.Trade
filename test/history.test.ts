@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { clearHistoryCache, fetchDailyOHLC, parseStooqCsv, toBusinessDay } from "../src/lib/history";
 import { clearMassiveRestBudgetForTests } from "../src/lib/market-signals/massive";
-import { clearMarketDataDemandsForTests, upsertUserApiKey } from "../src/lib/db";
+import { clearMarketDataDemandsForTests, getDb, upsertConnectedAccount, upsertUserApiKey } from "../src/lib/db";
 import { subscribeDashboardEvents, type DashboardEvent } from "../src/lib/events";
 
 const historyTestDb = `file:${join(tmpdir(), `agentic-history-cache-test-${randomUUID()}.db`)}`;
@@ -18,11 +18,30 @@ beforeEach(() => {
   delete process.env.MASSIVE_API_KEY;
   delete process.env.MASSIVE_REST_MAX_CALLS_PER_MINUTE;
   delete process.env.MASSIVE_HISTORY_ENABLED;
-  delete process.env.TRADIER_API_KEY;
   delete process.env.MARKETSTACK_API_KEY;
   delete process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY;
+  // Tradier's credential now comes from a connected_accounts row, not an env var — a prior test's
+  // connectTradier() call would otherwise persist across tests sharing historyTestDb (unlike the
+  // deleted env vars above, which reset per-test on their own).
+  getDb().exec("DELETE FROM connected_accounts WHERE broker = 'tradier'");
 });
 afterEach(() => vi.unstubAllGlobals());
+
+// Tradier's price-history credential comes from the "local" (owner's) connected broker account, not
+// a stored API key — see resolveTradierHistoryCredential in src/lib/history.ts. Connects a fresh
+// account each call; upsertConnectedAccount deactivates any prior active row for the user first, so
+// this is safe to call repeatedly across tests sharing historyTestDb.
+function connectTradier(token: string, environment: "paper" | "live" = "live", isActive = true): void {
+  upsertConnectedAccount({
+    id: `trd-history-${randomUUID()}`,
+    userId: "local",
+    broker: "tradier",
+    environment,
+    label: "Tradier Brokerage",
+    apiKey: token,
+    isActive
+  });
+}
 
 describe("toBusinessDay", () => {
   it("normalizes ms-epoch, seconds-epoch, and date strings to YYYY-MM-DD", () => {
@@ -71,7 +90,7 @@ describe("fetchDailyOHLC", () => {
   };
 
   it("uses Tradier before free history sources when the key is set", async () => {
-    process.env.TRADIER_API_KEY = "tradier-test-key";
+    connectTradier("tradier-test-key");
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
       String(url).includes("api.tradier.com")
         ? new Response(tradierBody, { status: 200 })
@@ -88,8 +107,37 @@ describe("fetchDailyOHLC", () => {
     expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer tradier-test-key" });
   });
 
+  it("still uses Tradier for history when it's connected but NOT the active execution broker (Codex review, PR #1673)", async () => {
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    // Alpaca is the account the user actually trades through (active); Tradier is connected
+    // purely as a shared data source. "isActive" means "the currently loaded execution broker,"
+    // an orthogonal concept to "this credential exists and can source history" — requiring
+    // Tradier to ALSO be the active broker would silently disable this exact, intended setup.
+    upsertConnectedAccount({
+      id: `alpaca-history-${randomUUID()}`,
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      label: "Alpaca Paper",
+      apiKey: "alpaca-key",
+      apiSecret: "alpaca-secret",
+      isActive: true
+    });
+    connectTradier("tradier-inactive-key", "live", false); // connected, but not active
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).includes("api.tradier.com")
+        ? new Response(tradierBody, { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL");
+    expect(bars).not.toBeNull();
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer tradier-inactive-key" });
+  });
+
   it("falls back from Tradier to Marketstack before free sources", async () => {
-    process.env.TRADIER_API_KEY = "tradier-test-key";
+    connectTradier("tradier-test-key");
     process.env.MARKETSTACK_API_KEY = "marketstack-test-key";
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       if (String(url).includes("api.tradier.com")) return new Response("tradier down", { status: 500 });
@@ -141,8 +189,8 @@ describe("fetchDailyOHLC", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("shares env-keyed history cache entries across users", async () => {
-    process.env.TRADIER_API_KEY = "env-tradier-key";
+  it("shares Tradier's connected-account-sourced history across users (always shared, not per-user)", async () => {
+    connectTradier("env-tradier-key");
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
       String(url).includes("api.tradier.com")
         ? new Response(tradierBody, { status: 200 })
@@ -162,11 +210,11 @@ describe("fetchDailyOHLC", () => {
   it("keeps user-keyed history cache entries private by default", async () => {
     const userA = `history-user-a-${randomUUID()}`;
     const userB = `history-user-b-${randomUUID()}`;
-    upsertUserApiKey(userA, "tradier", "user-a-tradier-key");
-    upsertUserApiKey(userB, "tradier", "user-b-tradier-key");
+    upsertUserApiKey(userA, "marketstack", "user-a-marketstack-key");
+    upsertUserApiKey(userB, "marketstack", "user-b-marketstack-key");
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
-      String(url).includes("api.tradier.com")
-        ? new Response(tradierBody, { status: 200 })
+      String(url).includes("api.marketstack.com")
+        ? new Response(marketstackBody, { status: 200 })
         : new Response("unexpected source", { status: 500 })
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -176,9 +224,9 @@ describe("fetchDailyOHLC", () => {
     await fetchDailyOHLC("AAPL", now + 1000, userB);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls.map((call) => call[1]?.headers)).toEqual([
-      expect.objectContaining({ Authorization: "Bearer user-a-tradier-key" }),
-      expect.objectContaining({ Authorization: "Bearer user-b-tradier-key" })
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+      expect.stringContaining("access_key=user-a-marketstack-key"),
+      expect.stringContaining("access_key=user-b-marketstack-key")
     ]);
   });
 
@@ -186,11 +234,11 @@ describe("fetchDailyOHLC", () => {
     process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY = "on";
     const userA = `history-shared-a-${randomUUID()}`;
     const userB = `history-shared-b-${randomUUID()}`;
-    upsertUserApiKey(userA, "tradier", "user-a-tradier-key");
-    upsertUserApiKey(userB, "tradier", "user-b-tradier-key");
+    upsertUserApiKey(userA, "marketstack", "user-a-marketstack-key");
+    upsertUserApiKey(userB, "marketstack", "user-b-marketstack-key");
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
-      String(url).includes("api.tradier.com")
-        ? new Response(tradierBody, { status: 200 })
+      String(url).includes("api.marketstack.com")
+        ? new Response(marketstackBody, { status: 200 })
         : new Response("unexpected source", { status: 500 })
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -201,7 +249,7 @@ describe("fetchDailyOHLC", () => {
 
     expect(second).toBe(first);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer user-a-tradier-key" });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("access_key=user-a-marketstack-key");
   });
 
   it("fulfills old shared history misses when a later shared cache fill succeeds", async () => {
@@ -212,7 +260,7 @@ describe("fetchDailyOHLC", () => {
 
     await expect(fetchDailyOHLC("XYZ", now, `alice-${randomUUID()}`)).resolves.toBeNull();
 
-    process.env.TRADIER_API_KEY = "env-tradier-key";
+    connectTradier("env-tradier-key");
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
       String(url).includes("api.tradier.com")
         ? new Response(tradierBody, { status: 200 })
@@ -240,10 +288,10 @@ describe("fetchDailyOHLC", () => {
     await expect(fetchDailyOHLC("XYZ", now, `alice-${randomUUID()}`)).resolves.toBeNull();
 
     const frank = `frank-${randomUUID()}`;
-    upsertUserApiKey(frank, "tradier", "frank-tradier-key");
+    upsertUserApiKey(frank, "marketstack", "frank-marketstack-key");
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
-      String(url).includes("api.tradier.com")
-        ? new Response(tradierBody, { status: 200 })
+      String(url).includes("api.marketstack.com")
+        ? new Response(marketstackBody, { status: 200 })
         : new Response("unexpected source", { status: 500 })
     );
     vi.stubGlobal("fetch", fetchMock);

@@ -172,7 +172,7 @@ function ApprovalEffect({ item, withPreview }: { item: PendingLearnedItem; withP
         {withPreview && (
           <pre
             title="The exact block approval appends to your strategy prompt. The date is stamped at approval time."
-            className="con-mono overflow-x-auto whitespace-pre-wrap break-words rounded-[var(--con-radius-sm)] border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[11px] leading-relaxed text-[color:var(--con-muted)]"
+            className="con-mono overflow-x-auto whitespace-pre-wrap break-words rounded-[var(--con-radius-sm)] border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]"
           >
             {directiveBlockPreview(item)}
           </pre>

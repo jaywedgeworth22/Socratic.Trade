@@ -11,7 +11,8 @@ import type {
   Portfolio,
   ReviewedOrder,
   BrokerGateway,
-  EquityOrderInput
+  EquityOrderInput,
+  OptionPosition
 } from "./types";
 import { normalizeSymbol } from "./money";
 import { isRejectedOrCanceledState } from "./broker-side";
@@ -267,7 +268,7 @@ class TradierBrokerGateway implements BrokerGateway {
     const token = keys.apiKey?.trim();
     if (!token) {
       throw new Error(
-        `Tradier access token is missing for ${keys.label}. Open Settings -> Accounts and re-save the token.`
+        `Tradier access token is missing for ${keys.label}. Open Connections and re-save the token.`
       );
     }
     this.token = token;
@@ -405,7 +406,7 @@ class TradierBrokerGateway implements BrokerGateway {
       const wantNum = String(accountNumber ?? "").trim();
       if (wantNum && liveNum && liveNum.toLowerCase() !== wantNum.toLowerCase()) {
         throw new Error(
-          `Account Mismatch: the connected Tradier credentials are for account ${liveNum}, but this profile is configured for ${wantNum}. Update the account number in Settings -> Accounts.`
+          `Account Mismatch: the connected Tradier credentials are for account ${liveNum}, but this profile is configured for ${wantNum}. Update the account number in Connections.`
         );
       }
       const margin = b.margin as Record<string, unknown> | undefined;
@@ -530,6 +531,42 @@ class TradierBrokerGateway implements BrokerGateway {
           sector: undefined,
           industry: undefined
         } satisfies EquityPosition;
+      });
+    });
+  }
+
+  async getOptionPositions(accountNumber: string): Promise<OptionPosition[]> {
+    return this.trackHealth(async () => {
+      const body = await this.request<{ positions?: { position?: unknown } | string }>("GET", `/accounts/${accountNumber}/positions`);
+      const positionsField = typeof body.positions === "object" && body.positions ? (body.positions as Record<string, unknown>).position : undefined;
+      const rows = arr<Record<string, unknown>>(positionsField);
+      if (rows.length === 0) return [];
+      
+      const optionRows = rows.filter((p) => /\d{6}[CP]\d{8}$/.test(String(p.symbol ?? "").trim().toUpperCase()));
+      if (optionRows.length === 0) return [];
+
+      const symbols = optionRows.map((p) => String(p.symbol).trim().toUpperCase().replace(/\s+/g, ""));
+      const quotes = await this.getEquityQuotes(accountNumber, symbols).catch(() => ({} as Record<string, BrokerQuote>));
+
+      return optionRows.map((p) => {
+        const symbol = String(p.symbol).trim().toUpperCase().replace(/\s+/g, "");
+        const parsed = parseOccSymbol(symbol);
+        const qty = number(p.quantity);
+        const costBasis = number(p.cost_basis);
+        const averageCost = qty !== 0 ? Math.abs(costBasis / (qty * 100)) : 0;
+        const price = quotes[symbol]?.price;
+        const marketValue = price !== undefined && price > 0 ? qty * price * 100 : costBasis;
+
+        return {
+          symbol,
+          underlyingSymbol: parsed.underlyingSymbol,
+          expirationDate: parsed.expirationDate,
+          optionType: parsed.optionType,
+          strikePrice: parsed.strikePrice,
+          quantity: qty,
+          averageCost: Number(averageCost.toFixed(2)),
+          marketValue: Number(marketValue.toFixed(2))
+        } satisfies OptionPosition;
       });
     });
   }
@@ -681,12 +718,9 @@ class TradierBrokerGateway implements BrokerGateway {
     // simpler 2-leg class instead of padding a phantom second leg. Leg 0 (entry) only accepts
     // limit/stop/stop_limit per Tradier's schema — no market-type entry leg exists for a multi-leg
     // order — so a market-type bracket request falls through to the plain single-leg order below
-    // (no bracket attached; the synthetic-stop monitor remains the protection lane for it, same as
-    // before this native-bracket support existed). UNVERIFIED against a live/sandbox Tradier
-    // account — Tradier's public docs confirm the class/indexed-leg-parameter request shape but
-    // not the exact multi-leg response envelope; the response is assumed to mirror the documented
-    // "combo" class shape (single top-level order id, `leg` array on GET) since OTOCO/OTO share the
-    // same general multi-leg order family in Tradier's own documentation.
+    // (no bracket attached). Note: because fixed and atr plans are not registered in the synthetic-stop
+    // monitor, a market entry on Tradier with fixed/atr leaves the position unprotected between
+    // hourly proactive strategy runs.
     const isBracket = input.bracketTakeProfit != null || input.bracketStopLoss != null;
     const entryTypeSupportsBracket = input.type === "limit" || input.type === "stop_market" || input.type === "stop_limit";
     if (isBracket && entryTypeSupportsBracket) {
@@ -822,20 +856,44 @@ class TradierBrokerGateway implements BrokerGateway {
   // entry order's own container ID. Reuses equityRowsFromTradierOrder — the SAME leg-flattening
   // helper getEquityOrders already relies on for coverage — so this shares its exact (and, per that
   // function's own note, still webhook/live-unverified) understanding of Tradier's multi-leg
-  // response shape. The entry leg itself is naturally skipped by the terminal-state check below
-  // (it has necessarily already filled, since a bracket-teardown only ever runs against a plan
-  // that already committed from a completed opening fill).
+  // response shape: a resting otoco/oto container's `leg` array holds ONLY the take-profit/stop-loss
+  // EXIT legs (per that function's own doc comment and its pre-existing getEquityOrders test) — the
+  // entry itself is not one of the container's enumerated legs, so no entry-vs-sibling disambiguation
+  // is needed here; the terminal-state check below is sufficient.
+  //
+  // A container whose own `class` IS "equity" means no bracket was ever attached to this order in
+  // the first place (e.g. Tradier's market-type-entry fallback in placeEquityOrder, where the
+  // tracked `opening_order_id` still gets recorded even though no bracket exists — see
+  // performance.ts's comment on that). In that case equityRowsFromTradierOrder would return the
+  // entry order ITSELF as a pseudo-"leg" (its `[itself]` fallback for plain equity orders) — treating
+  // that as a cancellable sibling would wrongly cancel the entry order, so this is special-cased to
+  // a no-op (adversarial review of PR #1661, 2026-07-16).
   async cancelBracketSiblingLegs(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }> {
     let body: { order?: Record<string, unknown> };
     try {
       body = await this.trackHealth(() =>
         this.request<{ order?: Record<string, unknown> }>("GET", `/accounts/${accountNumber}/orders/${originalOrderId}`)
       );
-    } catch {
-      return { cancelledOrderIds: [] };
+    } catch (error) {
+      // "Order gone" means nothing to tear down, safe to resolve as done — Tradier surfaces this
+      // TWO ways: a genuine HTTP 404 (this.request's `!response.ok` branch), or a 200 response with
+      // its own `{errors: {error: "not found"}}` validation envelope (this.request's second throw
+      // path, which carries no HTTP-status prefix at all — see formatTradierError). Any OTHER
+      // failure (network, rate-limit, 5xx, an unrelated validation error) is transient/real and must
+      // propagate so reconcilePendingBracketTeardowns' bounded-retry sweep actually retries it,
+      // instead of the row being silently and permanently dropped on the first hiccup.
+      if (error instanceof Error && (/Tradier HTTP 404/.test(error.message) || /not found/i.test(error.message))) {
+        return { cancelledOrderIds: [] };
+      }
+      throw error;
     }
     const container = body.order;
     if (!container) return { cancelledOrderIds: [] };
+    if (String(container.class ?? "").toLowerCase() === "equity") {
+      // No bracket was ever attached to this order — nothing to tear down, and this must never be
+      // treated as "cancel the entry itself."
+      return { cancelledOrderIds: [] };
+    }
     const cancelledOrderIds: string[] = [];
     for (const legRow of equityRowsFromTradierOrder(container)) {
       const legId = legRow.id != null ? String(legRow.id) : undefined;
@@ -919,4 +977,30 @@ function formatTradierError(parsed: unknown): string {
     if (err != null) return String(err);
   }
   return "";
+}
+
+export function parseOccSymbol(occ: string): {
+  underlyingSymbol: string;
+  expirationDate: string;
+  optionType: "call" | "put";
+  strikePrice: number;
+} {
+  const clean = occ.replace(/\s+/g, "").toUpperCase();
+  const match = clean.match(/^([A-Z]+)(\d{6})([CP])(\d{8})$/);
+  if (!match) {
+    return {
+      underlyingSymbol: clean,
+      expirationDate: "",
+      optionType: "call",
+      strikePrice: 0
+    };
+  }
+  const [, underlying, yymmdd, cp, strikeDigits] = match;
+  const yy = yymmdd.slice(0, 2);
+  const mm = yymmdd.slice(2, 4);
+  const dd = yymmdd.slice(4, 6);
+  const expirationDate = `20${yy}-${mm}-${dd}`;
+  const optionType = cp === "P" ? ("put" as const) : ("call" as const);
+  const strikePrice = Number(strikeDigits) / 1000;
+  return { underlyingSymbol: underlying, expirationDate, optionType, strikePrice };
 }

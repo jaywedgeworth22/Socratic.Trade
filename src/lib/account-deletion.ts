@@ -49,6 +49,9 @@ const DELETE_TABLES_BY_USER_ID = [
   "llm_usage",
   "user_memory",
   "learned_context_pending",
+  // Added 2026-07-19: append-only archive of coach notes aged off the live socratic_decisions
+  // window (migration 53, db-socratic.ts). User-scoped like socratic_decisions itself.
+  "socratic_coach_note_archive",
   "socratic_decisions",
   "socratic_framework_proposals",
   "synthetic_trailing_stops",
@@ -86,7 +89,15 @@ const DELETE_TABLES_BY_USER_ID = [
   "retrieval_usefulness_credited",
   // Added 2026-07-16: pending_bracket_teardowns (src/lib/db.ts) — queued bracket sibling-leg
   // teardowns are user-scoped like position_stop_plans.
-  "pending_bracket_teardowns"
+  "pending_bracket_teardowns",
+  // Added 2026-07-16: position_stop_plan_open_brackets (src/lib/db.ts) — tracked, not-yet-torn-down
+  // bracket orders are user-scoped like pending_bracket_teardowns.
+  "position_stop_plan_open_brackets",
+  // Added 2026-07-18: option_alert_reservations (src/lib/db.ts) — atomic option-alert dedupe claims
+  // are user-scoped (user_id column) like notification_events.
+  "option_alert_reservations",
+  // Added 2026-07-20: broker_stop_placement_intents (src/lib/db.ts) — user-scoped stop placement intents.
+  "broker_stop_placement_intents"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];

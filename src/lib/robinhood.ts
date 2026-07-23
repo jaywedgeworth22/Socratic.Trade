@@ -12,7 +12,8 @@ import type {
   ReviewedOrder,
   TimeInForce,
   BrokerGateway,
-  EquityOrderInput
+  EquityOrderInput,
+  OptionPosition
 } from "./types";
 import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
@@ -309,6 +310,34 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
     return positions;
   }
 
+  async getOptionPositions(accountNumber: string): Promise<OptionPosition[]> {
+    const raw = await this.callTool("get_option_positions", { account_number: accountNumber }) as Record<string, unknown>;
+    const rows = Array.isArray(raw?.positions) ? raw.positions : Array.isArray(raw?.results) ? raw.results : Array.isArray(raw) ? raw : [];
+    
+    return rows.map((item: any) => {
+      const underlying = String(item.chain_symbol ?? item.symbol ?? "");
+      const expDate = String(item.expiration_date ?? item.expiry_date ?? "");
+      const type = String(item.option_type ?? item.type ?? "call").toLowerCase() === "put" ? "put" as const : "call" as const;
+      const strike = number(item.strike_price ?? item.strike ?? 0);
+      const qty = number(item.quantity ?? 0);
+      const avgPrice = number(item.average_price ?? item.average_buy_price ?? item.averageCost ?? 0);
+      
+      const symbol = buildOccSymbol(underlying, expDate, type, strike);
+      const marketValue = number(item.market_value ?? item.marketValue ?? (qty * avgPrice * 100));
+
+      return {
+        symbol,
+        underlyingSymbol: normalizeSymbol(underlying),
+        expirationDate: expDate,
+        optionType: type,
+        strikePrice: strike,
+        quantity: qty,
+        averageCost: avgPrice,
+        marketValue: marketValue
+      } satisfies OptionPosition;
+    }).filter((p) => p.underlyingSymbol && p.expirationDate && p.quantity !== 0);
+  }
+
   async getEquityOrders(accountNumber: string): Promise<EquityOrder[]> {
     const raw = await this.callTool("get_equity_orders", { account_number: accountNumber });
     const orders = extractRobinhoodOrderCollection(raw);
@@ -550,7 +579,7 @@ export async function callRobinhoodMcpTool(userId: string, name: string, args: R
 export async function callRobinhoodMcpMethod(userId: string, method: string, params: Record<string, unknown>): Promise<unknown> {
   const token = await getMcpAccessToken(userId);
   if (!token) {
-    throw new Error("Robinhood not connected — reconnect your account in Settings → Connections");
+    throw new Error("Robinhood not connected — reconnect your account in Connections");
   }
   const response = await fetch(getRobinhoodMcpUrl(), {
     method: "POST",
@@ -573,7 +602,7 @@ export async function callRobinhoodMcpMethod(userId: string, method: string, par
 
   if (response.status === 401) {
     clearMcpOAuthTokens(userId);
-    throw new Error("Robinhood session expired — reconnect your account in Settings → Connections");
+    throw new Error("Robinhood session expired — reconnect your account in Connections");
   }
 
   const body = await response.text();
@@ -1228,3 +1257,16 @@ function optionalString(value: unknown): string | undefined {
 }
 
 export { fetchYahooFinanceQuote } from "./yahoo-finance";
+
+export function buildOccSymbol(underlying: string, expirationDate: string, type: "call" | "put", strike: number): string {
+  const parts = expirationDate.split("-");
+  if (parts.length !== 3) {
+    return underlying.toUpperCase() + expirationDate;
+  }
+  const yy = parts[0].slice(2, 4);
+  const mm = parts[1].padStart(2, "0");
+  const dd = parts[2].padStart(2, "0");
+  const cp = type === "put" ? "P" : "C";
+  const strikeDigits = Math.round(strike * 1000).toString().padStart(8, "0");
+  return `${underlying.toUpperCase()}${yy}${mm}${dd}${cp}${strikeDigits}`;
+}

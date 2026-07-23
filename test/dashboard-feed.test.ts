@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AuditEvent, StrategyDecision } from "../app/dashboard-types";
-import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed, UNIFIED_FEED_MAX_GROUPS } from "../src/lib/dashboard-feed";
+import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed, OPS_AUDIT_KINDS, UNIFIED_FEED_MAX_GROUPS } from "../src/lib/dashboard-feed";
 import type { FillEvent } from "../src/lib/types";
 import { enrichPositionsForDisplay, formatNotificationDisplay, formatShareQuantity, ratingTitle, sentimentTitle } from "../src/lib/dashboard-ui";
 import type { EquityPosition, MarketQuote, NotificationEvent } from "../src/lib/types";
@@ -198,7 +198,7 @@ describe("dashboard feed helpers", () => {
       ]
     });
 
-    expect(feed[0]?.title).toBe("Notify.prefs.set");
+    expect(feed[0]?.title).toBe("Notify prefs set");
     expect(feed[0]?.detail).toBe("Event recorded");
     // The raw payload stays available via the existing fullText/RawToggle affordance.
     expect(feed[0]?.fullText).toBe('{"channels":["push","email"]}');
@@ -223,7 +223,7 @@ describe("dashboard feed helpers", () => {
       ]
     });
 
-    expect(feed[0]?.title).toBe("Notify.prefs.set");
+    expect(feed[0]?.title).toBe("Notify prefs set");
     expect(feed[0]?.detail).toBe("Webhook Configured: false · Retry Attempts: 2 · Target: push");
     // The 4th field is dropped from the compact detail but nothing is lost — it's still in fullText.
     expect(feed[0]?.detail).not.toContain("note");
@@ -460,18 +460,27 @@ describe("dashboard feed helpers", () => {
       getProposalById: () => ({ proposal: proposal({ symbol: "PLTR", side: "buy" }) })
     });
 
+    // Tags are ONLY what the events earned (2026-07-16): the old blanket blocks that
+    // pushed "notification disabled" onto policy groups, "notification failed" onto
+    // every other group, and a forced "paper" tag onto ALL groups were fabricated
+    // labels on real data and were removed.
     const policyGroup = feed.find(g => g.tags.includes("policy change"));
     expect(policyGroup).toBeDefined();
-    expect(policyGroup!.tags).toContain("notification disabled");
+    expect(policyGroup!.tags).not.toContain("notification disabled");
     expect(policyGroup!.tags).not.toContain("notification failed");
+    expect(policyGroup!.tags).not.toContain("paper");
 
     const tradeGroup = feed.find(g => g.proposalId === "p1");
     expect(tradeGroup).toBeDefined();
     // fill.source "paper" is always a genuine broker-paper fill now (no local-simulation execution
     // path exists anymore), so the group title reads "Paper", not "Test".
     expect(tradeGroup!.title).toBe("Paper BUY PLTR");
-    expect(tradeGroup!.tags).toContain("notification failed");
-    expect(tradeGroup!.tags).not.toContain("notification disabled");
+    // "notification disabled" here is EARNED: the group's own n1 notification has
+    // status "skipped" (webhook not configured). "notification failed" would be a
+    // fabrication — nothing in this group failed to send.
+    expect(tradeGroup!.tags).toContain("notification disabled");
+    expect(tradeGroup!.tags).not.toContain("notification failed");
+    expect(tradeGroup!.tags).not.toContain("paper");
 
     const pendingApprovalEvent = tradeGroup!.events.find(ev => ev.id === "n1");
     expect(pendingApprovalEvent).toBeDefined();
@@ -764,6 +773,57 @@ describe("dashboard feed helpers", () => {
     expect(feed[0]?.title).toBe("Notification delivery failed");
     expect(feed[0]?.detail).toBe("Could not deliver pending_approval notification · ECONNREFUSED: bridge unreachable");
     expect(feed[0]?.fullText).toContain('"error":"ECONNREFUSED: bridge unreachable"'); // raw JSON stays available behind a toggle
+  });
+
+  it("never renders a raw dotted kind like 'notification.delivery' as its own title (humanized fallback)", () => {
+    // notification.delivery is the per-alert delivery-mechanics audit event every notify() call
+    // writes alongside the notification itself (src/lib/notifications.ts) — with no dedicated
+    // formatAuditEvent branch it used to fall through to the catch-all as the raw string
+    // "Notification.delivery" (humanizeKind only de-underscored, never de-dotted).
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "nd-1",
+          createdAt: "2026-07-17T00:00:00.000Z",
+          kind: "notification.delivery",
+          payload: { notificationEventId: "n-1", type: "fill", status: "skipped" }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Notification delivery");
+    expect(feed[0]?.title).not.toContain(".");
+  });
+
+  it("classifies notification.delivery as an ops kind so it folds into System instead of duplicating the alert row", () => {
+    // Same treatment as notify.sent/notify.error/notify.bridge.error (see OPS_AUDIT_KINDS comment):
+    // the notification's own row already carries the alert's content + status in the main feed,
+    // so this per-channel delivery-mechanics event must not also render as a standalone top-level
+    // card next to it.
+    expect(OPS_AUDIT_KINDS.has("notification.delivery")).toBe(true);
+  });
+
+  it("gives a settings/preference log entry (e.g. data pool consent) no status chip instead of a fabricated 'Completed'", () => {
+    const feed = buildUnifiedFeed({
+      audit: [
+        {
+          id: "consent-1",
+          createdAt: "2026-07-17T00:00:00.000Z",
+          kind: "data_pool_consent",
+          payload: { userId: "local", accepted: true, version: 1 }
+        }
+      ],
+      notifications: [],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {}
+    });
+
+    const group = feed.find((g) => g.id === "audit-consent-1");
+    expect(group).toBeDefined();
+    expect(group!.title).toBe("Data pool consent");
+    // Empty (falsy) status means the console renders no chip at all — never a false "Completed".
+    expect(group!.status).toBe("");
   });
 
   it("labels the notification-audit catch-all with the decided NotificationEventType/Status vocabulary", () => {

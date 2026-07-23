@@ -1000,7 +1000,32 @@ describe("Tradier adapter — cancelBracketSiblingLegs (bracket sibling-leg tear
     expect(result.cancelledOrderIds).toEqual([]);
   });
 
-  it("fails closed (empty result, never throws) when the order lookup itself fails", async () => {
+  it("never cancels the entry order itself when no bracket was ever attached, even if it's still OPEN (not just filled)", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      // A market-type entry (Tradier can't carry a bracket leg[0] of type market) falls through to a
+      // plain single-leg order in placeEquityOrder, but openingOrderId is still recorded on the plan
+      // (see performance.ts) — this order is class "equity" and still resting (partial fill), which
+      // must NOT be treated as a cancellable "sibling" of itself (adversarial review of PR #1661).
+      { match: (u, m) => m === "GET" && u.includes("/orders/801"), body: { order: { id: 801, class: "equity", symbol: "AAPL", status: "open" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "801");
+    expect(result.cancelledOrderIds).toEqual([]);
+    expect(records.some((r) => r.method === "DELETE")).toBe(false);
+  });
+
+  it("resolves as done (empty result) when the order is gone via a genuine HTTP 404", async () => {
+    await seedTradier();
+    installFetchMock([
+      { match: (u, m) => m === "GET" && u.includes("/orders/never-existed"), body: { errors: { error: "no such order" } }, status: 404 }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "never-existed");
+    expect(result.cancelledOrderIds).toEqual([]);
+  });
+
+  it("resolves as done (empty result) when Tradier's own 200-with-errors-envelope reports the order not found", async () => {
     await seedTradier();
     installFetchMock([
       { match: (u, m) => m === "GET" && u.includes("/orders/gone"), body: { errors: { error: "not found" } }, status: 200 }
@@ -1009,4 +1034,68 @@ describe("Tradier adapter — cancelBracketSiblingLegs (bracket sibling-leg tear
     const result = await getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "gone");
     expect(result.cancelledOrderIds).toEqual([]);
   });
+
+  it("propagates a NON-not-found lookup failure so the caller's bounded-retry sweep actually retries it", async () => {
+    await seedTradier();
+    installFetchMock([
+      { match: (u, m) => m === "GET" && u.includes("/orders/901-transient"), body: { errors: { error: "internal server error" } }, status: 503 }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await expect(getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "901-transient")).rejects.toThrow();
+  });
 });
+
+describe("Tradier adapter — option positions", () => {
+  it("fetches and maps option positions, parses OCC symbols, and prices them via getEquityQuotes", async () => {
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/positions`),
+        body: {
+          positions: {
+            position: [
+              {
+                symbol: "DELL  260717C00150000",
+                quantity: 2,
+                cost_basis: 500.0,
+                date_acquired: "2026-07-01T00:00:00Z"
+              },
+              {
+                symbol: "AAPL",
+                quantity: 10,
+                cost_basis: 1500.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        match: (u, m) => m === "GET" && u.includes("/markets/quotes") && u.includes("DELL260717C00150000"),
+        body: {
+          quotes: {
+            quote: {
+              symbol: "DELL260717C00150000",
+              last: 3.5,
+              volume: 100
+            }
+          }
+        }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const gateway = getTradierGateway("local");
+    const result = await gateway.getOptionPositions!(ACCT);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      symbol: "DELL260717C00150000",
+      underlyingSymbol: "DELL",
+      expirationDate: "2026-07-17",
+      optionType: "call",
+      strikePrice: 150.0,
+      quantity: 2,
+      averageCost: 2.5,
+      marketValue: 700.0
+    });
+  });
+});
+

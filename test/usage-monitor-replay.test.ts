@@ -20,8 +20,24 @@ const {
 const BASE_URL = "https://usage.example.test";
 
 interface CapturedRequest {
-  body: { events: Array<Record<string, unknown>> };
+  body: {
+    schemaVersion?: number;
+    producerId?: string;
+    events: Array<Record<string, unknown>>;
+  };
   rawBody: string;
+}
+
+function ack(received: number): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    schemaVersion: 2,
+    received,
+    persisted: received,
+    duplicates: 0,
+    pruned: 0,
+    rejected: 0,
+  }), { status: 202 });
 }
 
 function telemetryKey(kind: "llm" | "rag" | "provider-dispatch", sourceId: string): string {
@@ -37,7 +53,11 @@ function fetchStub(captured: CapturedRequest[], ok = true): typeof fetch {
     captured.push({ rawBody, body: JSON.parse(rawBody) });
     if (!ok) return new Response("unavailable", { status: 503 });
     const eventCount = captured.at(-1)?.body.events.length ?? 0;
-    return new Response(JSON.stringify({ ok: true, accepted: eventCount }), { status: 202 });
+    return captured.at(-1)?.body.schemaVersion === 2
+      ? ack(eventCount)
+      : new Response(JSON.stringify({ ok: true, accepted: eventCount, ignoredPruned: 0 }), {
+          status: 202,
+        });
   }) as unknown as typeof fetch;
 }
 
@@ -90,13 +110,13 @@ beforeEach(() => {
     "DELETE FROM llm_usage; DELETE FROM rag_usage; " +
     "DELETE FROM provider_usage_outbox; DELETE FROM provider_dispatch_attempts;"
   );
-  getDb()
-    .prepare("DELETE FROM settings WHERE key IN (?, ?, ?)")
-    .run(
-      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm,
-      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.rag,
-      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider
-    );
+  getDb().prepare("DELETE FROM settings WHERE key LIKE 'usage_monitor_replay:%'").run();
+  const now = new Date().toISOString();
+  const insertCutover = getDb()
+    .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, 'v2-active', ?)");
+  insertCutover.run(replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm, now);
+  insertCutover.run(replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.rag, now);
+  insertCutover.run(replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider, now);
 });
 
 afterEach(() => {
@@ -105,6 +125,9 @@ afterEach(() => {
   delete process.env.USAGE_MONITOR_BASE_URL;
   delete process.env.USAGE_INGEST_TOKEN;
   delete process.env.USAGE_MONITOR_ENV;
+  delete process.env.USAGE_MONITOR_BREAKER_THRESHOLD;
+  delete process.env.USAGE_MONITOR_BREAKER_BASE_MS;
+  delete process.env.USAGE_MONITOR_BREAKER_MAX_MS;
   vi.restoreAllMocks();
 });
 
@@ -141,15 +164,16 @@ describe("usage monitor durable replay", () => {
     });
     const events = captured.flatMap((request) => request.body.events);
     expect(events).toHaveLength(2);
+    expect(captured.every((request) => request.body.schemaVersion === 2)).toBe(true);
+    expect(captured.every((request) => request.body.producerId === "socratic-trade")).toBe(true);
     const llm = events.find((event) => event.service === "llm")!;
     expect(llm).toMatchObject({
-      sourceApp: "socratic-trade",
       project: "socratic-trade",
       provider: "gemini",
       costUsd: 0.42,
       metricType: "cost",
       occurredAt: "2026-07-10T12:00:00.000Z",
-      idempotencyKey: telemetryKey("llm", "llm-gemini-paid"),
+      eventId: telemetryKey("llm", "llm-gemini-paid"),
     });
     const rag = events.find((event) => event.service === "rag")!;
     expect(rag).toMatchObject({
@@ -157,7 +181,7 @@ describe("usage monitor durable replay", () => {
       provider: "voyage",
       costUsd: 0.003,
       occurredAt: "2026-07-10T12:01:00.000Z",
-      idempotencyKey: telemetryKey("rag", "rag-voyage-paid"),
+      eventId: telemetryKey("rag", "rag-voyage-paid"),
     });
     expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toEqual({
       createdAt: "2026-07-10T12:00:00.000Z",
@@ -178,13 +202,13 @@ describe("usage monitor durable replay", () => {
 
     const first = await replay.runUsageMonitorReplay({ pageSize: 1, maxPagesPerLedger: 1 });
     expect(first.llm).toEqual({ sent: 1, complete: false, failed: false });
-    expect(captured[0]!.body.events[0]!.idempotencyKey).toBe(telemetryKey("llm", "llm-a"));
+    expect(captured[0]!.body.events[0]!.eventId).toBe(telemetryKey("llm", "llm-a"));
     expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)?.id).toBe("llm-a");
 
     captured.length = 0;
     const second = await replay.runUsageMonitorReplay({ pageSize: 2, maxPagesPerLedger: 2 });
     expect(second.llm).toEqual({ sent: 2, complete: true, failed: false });
-    expect(captured[0]!.body.events.map((event) => event.idempotencyKey)).toEqual([
+    expect(captured[0]!.body.events.map((event) => event.eventId)).toEqual([
       telemetryKey("llm", "llm-a"),
       telemetryKey("llm", "llm-b"),
     ]);
@@ -193,7 +217,154 @@ describe("usage monitor durable replay", () => {
     captured.length = 0;
     const third = await replay.runUsageMonitorReplay();
     expect(third.llm).toEqual({ sent: 1, complete: true, failed: false });
-    expect(captured[0]!.body.events[0]!.idempotencyKey).toBe(telemetryKey("llm", "llm-b"));
+    expect(captured[0]!.body.events[0]!.eventId).toBe(telemetryKey("llm", "llm-b"));
+  });
+
+  it("atomically seeds all ledgers at direct-v2 cutover and records skipped rows", async () => {
+    getDb().prepare("DELETE FROM settings WHERE key LIKE 'usage_monitor_replay:%'").run();
+    insertLlm({ id: "llm-pre-v2", createdAt: "2026-07-10T13:30:00.000Z", costUsd: 0.01 });
+    insertRag({ id: "rag-pre-v2", createdAt: "2026-07-10T13:31:00.000Z", costUsd: 0.02 });
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    const first = await replay.runUsageMonitorReplay();
+
+    expect(first).toEqual({
+      configured: true,
+      llm: { sent: 0, complete: true, failed: false },
+      rag: { sent: 0, complete: true, failed: false },
+      provider: { sent: 0, complete: true, failed: false },
+    });
+    expect(captured).toHaveLength(0);
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)?.id)
+      .toBe("llm-pre-v2");
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.rag)?.id)
+      .toBe("rag-pre-v2");
+    for (const lane of ["llm", "rag"] as const) {
+      const key = replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS[lane];
+      expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(key))
+        .toEqual({ value: "v2-seeded" });
+      expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(
+        `${key}:pre_v2_rows_skipped`
+      )).toEqual({ value: "1" });
+    }
+
+    insertLlm({ id: "llm-first-v2", createdAt: "2026-07-10T13:32:00.000Z", costUsd: 0.03 });
+    const second = await replay.runUsageMonitorReplay();
+    expect(second.llm).toEqual({ sent: 1, complete: true, failed: false });
+    expect(captured[0]!.body.schemaVersion).toBe(2);
+    expect(captured[0]!.body.producerId).toBe("socratic-trade");
+    expect(captured[0]!.body.events.map((event) => event.eventId)).toEqual([
+      telemetryKey("llm", "llm-first-v2"),
+    ]);
+    expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(
+      replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm
+    )).toEqual({ value: "v2-active" });
+
+    captured.length = 0;
+    const third = await replay.runUsageMonitorReplay();
+    expect(third.llm).toEqual({ sent: 1, complete: true, failed: false });
+    expect(captured[0]!.body.events[0]!.eventId).toBe(
+      telemetryKey("llm", "llm-first-v2")
+    );
+  });
+
+  it("seeds every ledger before the first network await", async () => {
+    const ragCutoverKey = replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.rag;
+    getDb().prepare("DELETE FROM settings WHERE key = ?").run(ragCutoverKey);
+    insertLlm({ id: "llm-new", createdAt: "2026-07-10T13:40:00.000Z", costUsd: 0.01 });
+    insertRag({ id: "rag-old", createdAt: "2026-07-10T13:41:00.000Z", costUsd: 0.02 });
+    const captured: CapturedRequest[] = [];
+    let insertedFreshRag = false;
+    push.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as CapturedRequest["body"];
+      captured.push({ body, rawBody: String(init?.body ?? "{}") });
+      if (body.events.some((event) => event.service === "llm")) {
+        expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(
+          ragCutoverKey
+        )).toEqual({ value: "v2-seeded" });
+        expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.rag)?.id)
+          .toBe("rag-old");
+        if (!insertedFreshRag) {
+          insertedFreshRag = true;
+          // Simulate a fresh row/live-v2 ACK while the earlier LLM POST is awaiting its ACK.
+          insertRag({ id: "rag-new", createdAt: "2026-07-10T13:42:00.000Z", costUsd: 0.03 });
+        }
+      }
+      return ack(body.events.length);
+    }) as unknown as typeof fetch);
+
+    const result = await replay.runUsageMonitorReplay();
+
+    expect(result.llm.sent).toBe(1);
+    expect(result.rag.sent).toBe(1);
+    expect(captured.every((request) => request.body.schemaVersion === 2)).toBe(true);
+    expect(captured.flatMap((request) => request.body.events).map((event) => event.eventId))
+      .toEqual([
+        telemetryKey("llm", "llm-new"),
+        telemetryKey("rag", "rag-new"),
+      ]);
+  });
+
+  it("halts a corrupt cutover lane without network or state writes", async () => {
+    const cursor = { createdAt: "2026-07-10T13:50:00.000Z", id: "llm-v2-boundary" };
+    insertLlm({ id: cursor.id, createdAt: cursor.createdAt, costUsd: 0.01 });
+    insertLlm({ id: "llm-after-corruption", createdAt: "2026-07-10T13:51:00.000Z", costUsd: 0.02 });
+    const cutoverKey = replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm;
+    const now = new Date().toISOString();
+    getDb().prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+      .run(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm, JSON.stringify(cursor), now);
+    getDb().prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = ?")
+      .run("v2-actve-typo", now, cutoverKey);
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    const result = await replay.runUsageMonitorReplay();
+
+    expect(result.llm).toEqual({ sent: 0, complete: false, failed: true });
+    expect(captured).toHaveLength(0);
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toEqual(cursor);
+    expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(cutoverKey))
+      .toEqual({ value: "v2-actve-typo" });
+    expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(
+      `${cutoverKey}:pre_v2_rows_skipped`
+    )).toBeUndefined();
+  });
+
+  it("rejects malformed pre-cutover watermarks without partially seeding any lane", async () => {
+    const now = new Date().toISOString();
+    const llmCutover = replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm;
+    const ragCutover = replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.rag;
+    const providerCutover = replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider;
+    getDb().prepare("DELETE FROM settings WHERE key IN (?, ?, ?)")
+      .run(llmCutover, ragCutover, providerCutover);
+    getDb().prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+      .run(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm, "not-json", now);
+    getDb().prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+      .run(
+        replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.rag,
+        JSON.stringify({ createdAt: "definitely-not-a-ledger-time", id: "rag-bad" }),
+        now
+      );
+    insertLlm({ id: "llm-would-be-seeded", createdAt: "2026-07-10T13:55:00.000Z" });
+    insertRag({ id: "rag-would-be-seeded", createdAt: "2026-07-10T13:56:00.000Z" });
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    const result = await replay.runUsageMonitorReplay();
+
+    expect(result.llm.failed).toBe(true);
+    expect(result.rag.failed).toBe(true);
+    expect(result.provider.failed).toBe(true);
+    expect(captured).toHaveLength(0);
+    expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(
+      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm
+    )).toEqual({ value: "not-json" });
+    expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(providerCutover))
+      .toBeUndefined();
+    expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(
+      `${providerCutover}:pre_v2_rows_skipped`
+    )).toBeUndefined();
   });
 
   it("does not advance a watermark on ambiguous failure and reconstructs the same payload", async () => {
@@ -242,7 +413,7 @@ describe("usage monitor durable replay", () => {
       requests: 1,
       confidence: "estimated",
       metadata: { outcome: "unknown", unknownOutcome: true, userId: "local" },
-      idempotencyKey: telemetryKey(
+      eventId: telemetryKey(
         "provider-dispatch",
         `provider-attempt:${reserved.attemptId}`
       )
@@ -257,6 +428,10 @@ describe("usage monitor durable replay", () => {
     const firstRaw = captured[0]!.rawBody;
     captured.length = 0;
     const second = await replay.runUsageMonitorReplay();
+    expect(firstRaw).toContain(telemetryKey(
+      "provider-dispatch",
+      `provider-attempt:${reserved.attemptId}`
+    ));
     expect(second.provider).toEqual({ sent: 1, complete: true, failed: false });
     expect(captured[0]!.rawBody).toBe(firstRaw);
   });
@@ -278,7 +453,7 @@ describe("usage monitor durable replay", () => {
           JSON.stringify({ createdAt: newer, id: "llm-newer" }),
           new Date().toISOString()
         );
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+      return ack(1);
     }) as unknown as typeof fetch);
 
     const result = await replay.runUsageMonitorReplay({ pageSize: 1, maxPagesPerLedger: 1 });
@@ -309,5 +484,146 @@ describe("usage monitor durable replay", () => {
     delete process.env.USAGE_INGEST_TOKEN;
     replay.startUsageMonitorReplay();
     expect(intervalSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears a stale v2 HMR timer and installs fresh direct-v2 replay state", async () => {
+    const host = globalThis as unknown as {
+      __usageMonitorReplay?: {
+        version: number;
+        timer: ReturnType<typeof setInterval> | null;
+        inFlight: Promise<unknown> | null;
+      };
+    };
+    const staleTimer = setInterval(() => undefined, 60_000);
+    staleTimer.unref?.();
+    host.__usageMonitorReplay = {
+      version: 2,
+      timer: staleTimer,
+      inFlight: Promise.resolve({ stale: true }),
+    };
+    const clearSpy = vi.spyOn(globalThis, "clearInterval");
+    vi.resetModules();
+
+    const freshReplay = await import("../src/lib/usage-monitor-replay");
+
+    expect(clearSpy).toHaveBeenCalledWith(staleTimer);
+    expect(host.__usageMonitorReplay).toMatchObject({
+      version: 3,
+      timer: null,
+      inFlight: null,
+    });
+    freshReplay.__resetUsageMonitorReplayState();
+    delete host.__usageMonitorReplay;
+  });
+
+  it("shares the live-push circuit breaker: a tripped breaker suppresses replay's own delivery attempts too", async () => {
+    process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+    process.env.USAGE_MONITOR_BREAKER_BASE_MS = "60000";
+    process.env.USAGE_MONITOR_BREAKER_MAX_MS = "60000";
+    insertLlm({ id: "llm-breaker-shared", createdAt: "2026-07-10T16:00:00.000Z", costUsd: 0.1 });
+
+    // Trip the breaker via the live-push lane (a plain failed flush, not replay).
+    let liveAttempts = 0;
+    push.__setUsageMonitorFetch((async () => {
+      liveAttempts += 1;
+      throw new Error("connection refused");
+    }) as unknown as typeof fetch);
+    push.pushLlmUsage({ sourceEventId: "trip-it", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+    await push.flushUsageMonitor();
+    expect(liveAttempts).toBe(1);
+
+    // Now point at a fetch stub that would succeed if called — the open breaker must stop replay
+    // from ever reaching it, proving the two lanes share one breaker instead of hammering
+    // independently (replay's fixed 60s interval would otherwise keep probing on its own cadence).
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    const result = await replay.runUsageMonitorReplay();
+    expect(result.llm.failed).toBe(true);
+    expect(captured).toHaveLength(0);
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toBeNull();
+  });
+
+  it("records usage-monitor health from the replay lane on failure AND recovery (not just a breaker trip)", async () => {
+    // Scope health assertions to this test's rows.
+    getDb().prepare("DELETE FROM api_health_log WHERE service = 'usage-monitor'").run();
+    insertLlm({ id: "llm-health-truth", createdAt: "2026-07-10T17:00:00.000Z", costUsd: 0.05 });
+
+    const healthRows = () =>
+      getDb()
+        .prepare("SELECT ok FROM api_health_log WHERE service = 'usage-monitor' ORDER BY ts DESC, rowid DESC")
+        .all() as Array<{ ok: number }>;
+
+    // Replay is the FIRST/only lane to hit a down monitor — without the fix this would open the
+    // shared breaker but leave the admin health row stale-healthy.
+    const failed: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(failed, false));
+    const first = await replay.runUsageMonitorReplay();
+    expect(first.llm.failed).toBe(true);
+    expect(failed.length).toBeGreaterThan(0); // it actually attempted the send
+    const afterFail = healthRows();
+    expect(afterFail.length).toBeGreaterThan(0);
+    expect(afterFail[0]!.ok).toBe(0); // a real FAILURE was recorded, not just a silent breaker trip
+
+    // Monitor recovers. The watermark never advanced on failure, so replay re-sends the same row and
+    // records recovery from the replay lane.
+    const okReq: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(okReq));
+    const second = await replay.runUsageMonitorReplay();
+    expect(second.llm.failed).toBe(false);
+    const afterOk = healthRows();
+    expect(afterOk[0]!.ok).toBe(1); // recovery recorded from the replay lane
+  });
+
+  it("does not advance a durable watermark when a valid v2 ACK rejects an event", async () => {
+    insertLlm({
+      id: "llm-partial-ack",
+      createdAt: "2026-07-10T17:30:00.000Z",
+      costUsd: 0.05,
+    });
+    push.__setUsageMonitorFetch((async () => new Response(JSON.stringify({
+      ok: true,
+      schemaVersion: 2,
+      received: 1,
+      persisted: 0,
+      duplicates: 0,
+      pruned: 0,
+      rejected: 1,
+    }), { status: 202 })) as unknown as typeof fetch);
+
+    const result = await replay.runUsageMonitorReplay();
+
+    expect(result.llm).toEqual({ sent: 0, complete: false, failed: true });
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toBeNull();
+  });
+
+  it("drops a schema-invalid replay event without tripping the breaker and acks it (quarantine, not receiver-down)", async () => {
+    process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    // An all-poison batch (Infinity quantity fails the shared schema's .finite()). client.send would
+    // reject it before any fetch; sendUsageMonitorBatch must NOT read that as a receiver outage.
+    const poison = {
+      environment: "test",
+      provider: "poison-replay",
+      service: "broker",
+      project: "socratic-trade",
+      metricType: "balance",
+      quantity: Number.POSITIVE_INFINITY,
+      unit: "usd",
+      confidence: "actual",
+      occurredAt: "2026-07-10T18:00:00.000Z",
+      eventId: "socratic-trade:poison:replay-1",
+    };
+
+    const ok = await push.sendUsageMonitorBatch(
+      [poison] as unknown as Parameters<typeof push.sendUsageMonitorBatch>[0]
+    );
+    expect(ok).toBe(true); // acknowledged so a durable caller advances its watermark past the bad row
+    expect(captured).toHaveLength(0); // never contacted the receiver
+    const breaker = push.__usageMonitorDebugState().breaker;
+    expect(breaker.consecutiveFailures).toBe(0); // breaker untouched by the local validation reject
+    expect(breaker.openUntil).toBe(0);
   });
 });

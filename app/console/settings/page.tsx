@@ -1,17 +1,21 @@
 "use client";
 
 /** Settings — GLOBAL-ONLY since the 2026-07-10 IA restructure: everything here
- *  is either ALL YOUR ACCOUNTS (broker connections, API keys, event
- *  notifications, delivery channels, scan shape, learning review, typed
- *  confirmation, boot behavior — user-level, overlaid on every account),
- *  THIS BROWSER (appearance), OPERATOR (admin links), REFERENCE (glossary),
- *  or DANGER (deletion). Nothing account-scoped lives here anymore:
- *  per-account config (models, tax treatment, prompt, weights, guardrails)
- *  belongs to Framework (/console/strategy) and Mandates. Sub-sections live
- *  in sibling modules (brokers/api-keys/delivery/help) with their fetch
- *  helpers in ./lib. */
+ *  is either ALL YOUR ACCOUNTS (event notifications, delivery channels, scan
+ *  shape, learning review, typed confirmation, boot behavior — user-level,
+ *  overlaid on every account), THIS BROWSER (appearance), OPERATOR (admin
+ *  links), REFERENCE (glossary), or DANGER (deletion). Nothing account-scoped
+ *  lives here: per-account config (models, prompt, weights) belongs to
+ *  Strategy (/console/strategy) and Guardrails (/console/guardrails,
+ *  including tax treatment). The one-time-setup half of the old Settings page
+ *  — broker connections and API keys — split out to Connections
+ *  (/console/connections) in the 2026-07-16 IA restructure; a 3-line hash
+ *  safety net below redirects any old #brokers/#api-keys bookmark there.
+ *  Sub-sections live in sibling modules (delivery/danger/help/sharing/
+ *  learning-review) with their fetch helpers in ./lib. */
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Check, ExternalLink } from "lucide-react";
 import type { NotificationEventType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
@@ -23,18 +27,22 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { CONSOLE_FONT_OPTIONS, useConsoleFont } from "../lib/useConsoleFont";
 import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useToast } from "../ui/toast";
-import { Card, Chip, Field, RawNumInput, TextInput, Toggle } from "../ui/primitives";
-import { List, ListSection, ListRow, LabeledContent, SettingsGroup } from "../../ui/ios-components";
+import { Card, Chip, Field, RawNumInput, Toggle } from "../ui/primitives";
 import { SaveStatus } from "../ui/save-status";
-import { ApiKeysCard } from "./api-keys";
-import { BrokerAccountsCard } from "./brokers";
 import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
 import { LearningReviewCard } from "./learning-review";
 import { DataSharingCard } from "./sharing";
 
-const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
+/** One-line meaning for every notification event, completing the sentence
+ *  "you get a notification whenever ...". VISIBLE LABELS come from the shared
+ *  NOTIFICATION_EVENT_TYPE_LABELS map in src/lib/dashboard-ui.ts, so this page
+ *  names events exactly the way the Alert Center and delivered notifications
+ *  do. Both maps are full Records (not Partial): adding a NotificationEventType
+ *  without copy is a compile error instead of a raw "run_failed" leaking into
+ *  production UI. */
+const EVENT_HINT: Record<NotificationEventType, string> = {
   fill: "an order filled",
   block: "the policy gate blocked an order",
   run_failed: "a strategy run failed",
@@ -45,86 +53,146 @@ const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
   limit_order_stale: "a limit order has been working too long",
   provider_degraded: "a data provider is failing",
   budget_alert: "a usage budget threshold was crossed",
-  learning_review: "the daily learning review posted its findings"
+  learning_review: "the daily learning review posted its findings",
+  deterministic_bear_veto: "the rule-based bear check vetoed a trade idea",
+  red_team_veto_override_requested: "an override of a Red Team veto was requested",
+  red_team_veto_overridden: "a human overrode a Red Team veto",
+  prompt_injection_suspected: "injection-like text was found in the evidence sent to the model",
+  evidence_age_anomaly: "a run leaned on evidence older than it should be",
+  storage_warning: "the server's database storage crossed a warning threshold",
+  autonomy_halted_on_boot: "a restart halted trading autonomy until you re-arm it",
+  option_alert: "an option contract changed status or expired"
 };
 
 export default function SettingsPage() {
   const { snapshot } = useConsoleData();
   const ready = snapshot !== null;
 
-  // Deep links (e.g. the Run-once blocked sheet routes to /console/settings#api-keys):
+  const router = useRouter();
+
+  // Deep links (e.g. #sharing, #learning-review, #confirmation, #admin, #danger):
   // the page renders only after the snapshot arrives, so the native anchor jump
-  // misses — scroll once the target section actually exists.
+  // misses — scroll once the target section actually exists. Safety net: #brokers
+  // and #api-keys moved to /console/connections in the 2026-07-16 IA restructure —
+  // an old bookmark or stale link redirects there instead of scrolling to nothing.
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
     const hash = window.location.hash.slice(1);
     if (!hash) return;
+    if (hash === "brokers" || hash === "api-keys") {
+      router.replace(`/console/connections#${hash}`);
+      return;
+    }
     const timer = setTimeout(() => document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
     return () => clearTimeout(timer);
-  }, [ready]);
+  }, [ready, router]);
 
   if (!snapshot) return null;
 
   return (
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-6`}>
-      <h1 className="text-[length:var(--con-fs-lg)] font-bold px-4 lg:px-0">Settings</h1>
+      <h1 className="text-[length:var(--con-fs-lg)] font-bold">Settings</h1>
 
-      {/* Account-scoped config (models, tax treatment, prompt, weights) lives on
-          Framework (/console/strategy) and Mandates — Settings is global-only. */}
+      {/* Account-scoped config (models, prompt, weights) lives on Strategy
+          (/console/strategy); Guardrails (/console/guardrails) carries the caps,
+          protective stops, tax treatment, and rulebook — Settings is global-only. */}
 
-      <List>
-        {/* ── ALL ACCOUNTS ── */}
-        <SettingsGroup label="ALL YOUR ACCOUNTS" footer="Settings tagged ALL YOUR ACCOUNTS are stored per user — they overlay every account you connect, in every scope.">
-          {/* Anchor ids (#brokers/#api-keys) are deep-link targets used by the
-              Run-once blocked-reason sheet; scroll-mt clears the sticky chrome. */}
-          <div id="brokers" className="scroll-mt-28">
-            <BrokerAccountsCard />
-          </div>
-          <div id="api-keys" className="scroll-mt-28">
-            <ApiKeysCard />
-          </div>
-          <EventNotificationsCard />
-          <DeliveryChannelsCard />
-          <div id="sharing" className="scroll-mt-28">
-            <DataSharingCard />
-          </div>
-          <ScanShapeCard />
-          <div id="learning-review" className="scroll-mt-28">
-            <LearningReviewCard />
-          </div>
-          <div id="confirmation" className="scroll-mt-28">
-            <AdvancedActionConfirmationCard />
-          </div>
-          <BootBehaviorCard />
-          <YouCard />
-        </SettingsGroup>
-
-        {/* ── THIS BROWSER ── */}
-        <SettingsGroup label="THIS BROWSER" footer="Settings tagged THIS BROWSER are stored in this browser only. They change how the console looks here, not how the strategy trades.">
-          <AppearanceCard />
-        </SettingsGroup>
-
-        {/* ── OPERATOR (admin only: links, no new admin UI) ── */}
-        {snapshot.currentUser?.isAdmin && (
-          <div id="admin" className="scroll-mt-28">
-            <SettingsGroup label="OPERATOR" footer="Visible because this login has operator/admin rights on the server. Server-wide diagnostics, outside the console.">
-              <AdminLinksCard />
-            </SettingsGroup>
-          </div>
-        )}
-
-        {/* ── REFERENCE ── */}
-        <SettingsGroup label="REFERENCE" footer="Nothing here changes any setting — it's the app's vocabulary, searchable.">
-          <HelpGlossaryCard />
-        </SettingsGroup>
-
-        {/* ── DANGER ── */}
-        <div id="danger" className="scroll-mt-28">
-          <SettingsGroup label="DANGER" footer="Irreversible actions live here, behind typed confirmations — nothing in this section happens by accident.">
-            <AccountDeletionCard />
-          </SettingsGroup>
+      {/* ── ALL ACCOUNTS ── */}
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center gap-2">
+          <Chip
+            tone="accent"
+            title="Settings tagged ALL YOUR ACCOUNTS are stored per user — they overlay every account you connect, in every scope."
+          >
+            ALL YOUR ACCOUNTS
+          </Chip>
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            applies everywhere, for you
+          </span>
         </div>
-      </List>
+        {/* notificationSettings is a USER-level policy field (USER_LEVEL_POLICY_FIELDS
+            in db-profiles): one event list + webhook overlaid on every account —
+            so the card lives under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
+        <EventNotificationsCard />
+        <DeliveryChannelsCard />
+        <div id="sharing" className="scroll-mt-28">
+          <DataSharingCard />
+        </div>
+        {/* learningReviewEnabled/Mode/Model are USER-level policy fields
+            (USER_LEVEL_POLICY_FIELDS in db-profiles): the review runs once per
+            user per day over user-level learned context, so its config overlays
+            every account — it belongs under ALL YOUR ACCOUNTS, not THIS ACCOUNT.
+            The anchor id is a deep-link target (the Learning Review blocks on
+            /console/approvals link here as "Model settings"). */}
+        <div id="learning-review" className="scroll-mt-28">
+          <LearningReviewCard />
+        </div>
+        <ScanShapeCard />
+        <FmpFeaturesCard />
+        {/* requireTypedConfirmation is a USER-level policy field
+            (USER_LEVEL_POLICY_FIELDS in db-profiles, promoted 2026-07-10): the
+            phrase ceremony is an owner preference, not a per-account guardrail,
+            so one switch applies across every account. */}
+        <div id="confirmation" className="scroll-mt-28">
+          <AdvancedActionConfirmationCard />
+        </div>
+        <BootBehaviorCard />
+        <YouCard />
+      </section>
+
+      {/* ── THIS BROWSER ── */}
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center gap-2">
+          <Chip tone="muted" title="Settings tagged THIS BROWSER are stored in this browser only. They change how the console looks here, not how the strategy trades.">
+            THIS BROWSER
+          </Chip>
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            local display preferences
+          </span>
+        </div>
+        <AppearanceCard />
+      </section>
+
+      {/* ── OPERATOR (admin only: links, no new admin UI) ── */}
+      {snapshot.currentUser?.isAdmin && (
+        <section id="admin" className="flex scroll-mt-28 flex-col gap-4">
+          <div className="flex items-center gap-2">
+            <Chip tone="accent" title="Visible because this login has operator/admin rights on the server.">
+              OPERATOR
+            </Chip>
+            <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              server-wide diagnostics, outside the console
+            </span>
+          </div>
+          <AdminLinksCard />
+        </section>
+      )}
+
+      {/* ── REFERENCE ── */}
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center gap-2">
+          <Chip tone="muted" title="Nothing here changes any setting — it's the app's vocabulary, searchable.">
+            REFERENCE
+          </Chip>
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            nothing here changes any setting — it&apos;s the app&apos;s vocabulary, searchable
+          </span>
+        </div>
+        <HelpGlossaryCard />
+      </section>
+
+      {/* ── DANGER ── */}
+      <section id="danger" className="flex scroll-mt-28 flex-col gap-4">
+        <div className="flex items-center gap-2">
+          <Chip tone="neg" title="Irreversible actions live here, behind typed confirmations — nothing in this section happens by accident.">
+            DANGER
+          </Chip>
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            irreversible actions, behind typed confirmations
+          </span>
+        </div>
+        <AccountDeletionCard />
+      </section>
     </div>
   );
 }
@@ -157,17 +225,24 @@ function AdvancedActionConfirmationCard() {
     }
   };
   return (
-    <ListSection title="Advanced action confirmation" footer="One switch for your whole login — it applies across every account you connect. On: approving a broker order, replacing a live order at market, and loosening a guardrail on a live account each ask you to type a short phrase (e.g. APPROVE LIVE NVDA) first. Off: they are one click. Winding down (which SELLS) and deleting an account always keep their own typed confirmation regardless.">
-      <ListRow>
-        <LabeledContent label="Require typed confirmation" hint={required ? "On — type to confirm" : "Off — one click"}>
+    <Card title="Advanced action confirmation">
+      <Field
+        label="Type a phrase to confirm high-impact live actions"
+        hint="One switch for your whole login — it applies across every account you connect. On: approving a broker order, replacing a live order at market, and loosening a guardrail on a live account each ask you to type a short phrase (e.g. APPROVE LIVE NVDA) first. Off: they are one click. Winding down (which SELLS) and deleting an account always keep their own typed confirmation regardless."
+      >
+        <div className="flex items-center gap-3">
           <Toggle
             checked={required}
             onChange={(next) => void setRequired(next)}
             disabled={saving}
+            label="Require typed confirmation for high-impact live actions"
           />
-        </LabeledContent>
-      </ListRow>
-    </ListSection>
+          <span className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+            {required ? "On — type to confirm" : "Off — one click"}
+          </span>
+        </div>
+      </Field>
+    </Card>
   );
 }
 
@@ -195,7 +270,7 @@ function FontOptionGrid<F extends string>({
             aria-pressed={isSelected}
             title={option.description}
             onClick={() => onSelect(option.value)}
-            className={`min-h-[88px] rounded-lg border px-3 py-2 text-left transition-colors ${
+            className={`min-h-[88px] rounded-control border px-3 py-2 text-left transition-colors ${
               isSelected
                 ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)]"
                 : "border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] hover:border-[color:var(--con-accent-border)]"
@@ -222,51 +297,51 @@ function AppearanceCard() {
   const { textBoxFont, setTextBoxFont } = useConsoleTextBoxFont();
   const { consoleFont, setConsoleFont } = useConsoleFont();
   return (
-    <ListSection title="Appearance" footer="The whole console uses this font in this browser.">
-      <ListRow>
-        <div className="flex flex-col gap-3 w-full py-2">
-          <div className="text-[length:var(--con-fs-sm)] font-semibold">Console Font</div>
-          <FontOptionGrid options={CONSOLE_FONT_OPTIONS} selected={consoleFont} onSelect={setConsoleFont} />
-        </div>
-      </ListRow>
-      <ListRow>
-        <div className="flex flex-col gap-3 w-full py-2">
-          <div className="text-[length:var(--con-fs-sm)] font-semibold">Text Box Font</div>
+    <Card title="Appearance">
+      <Field label="Console Font" hint="The whole console (nav, cards, copy) uses this font in this browser.">
+        <FontOptionGrid options={CONSOLE_FONT_OPTIONS} selected={consoleFont} onSelect={setConsoleFont} />
+      </Field>
+      <div className="mt-4">
+        <Field label="Text Box Font" hint="Editable text boxes use this font in this browser.">
           <FontOptionGrid options={CONSOLE_TEXT_BOX_FONT_OPTIONS} selected={textBoxFont} onSelect={setTextBoxFont} />
-        </div>
-      </ListRow>
-    </ListSection>
+        </Field>
+      </div>
+    </Card>
   );
 }
 
 // ── Operator/admin links (links only — the pages themselves live at /admin) ──
 
 const ADMIN_LINKS: Array<{ href: string; label: string; desc: string }> = [
-  { href: "/admin/connections", label: "API connections health", desc: "Live status of every upstream data/broker connection the server uses." },
-  { href: "/admin/llm-usage", label: "LLM usage & cost", desc: "Token and dollar spend per model and per day, across all users." },
-  { href: "/admin/rag-coverage", label: "RAG coverage", desc: "What the retrieval index covers and where it is thin." },
-  { href: "/admin/transcript", label: "Chat transcript", desc: "Raw assistant transcript view for debugging conversations." }
+  { href: "/admin/connections", label: "API Connections", desc: "Live status of every upstream data/broker connection the server uses." },
+  { href: "/admin/llm-usage", label: "LLM Usage & Cost", desc: "Token and dollar spend per model and per day, across all users." },
+  { href: "/admin/rag-coverage", label: "RAG Coverage", desc: "What the retrieval index covers and where it is thin." },
+  { href: "/admin/transcript", label: "Chat Transcript", desc: "Raw assistant transcript view for debugging conversations." }
 ];
 
 function AdminLinksCard() {
   return (
-    <ListSection title="Admin pages" footer="Operator diagnostics from the legacy app — they open outside the console and keep their own styling.">
-      {ADMIN_LINKS.map((link) => (
-        <ListRow key={link.href}>
+    <Card title="Admin pages">
+      <p className="mb-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+        Server-wide operator diagnostics — also reachable any time from the Admin link in the top bar.
+      </p>
+      <div className="flex flex-col gap-1">
+        {ADMIN_LINKS.map((link) => (
           <a
+            key={link.href}
             href={link.href}
-            className="flex items-center justify-between w-full text-[length:var(--con-fs-sm)] py-1"
+            className="con-row flex items-center justify-between gap-3 rounded-control px-1.5 py-1.5 text-[length:var(--con-fs-sm)]"
             title={`${link.desc} Opens outside the console.`}
           >
-            <div className="flex flex-col min-w-0">
-              <span className="font-medium text-[color:var(--con-fg)]">{link.label}</span>
-              <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)] truncate">{link.desc}</span>
-            </div>
-            <ExternalLink size={16} className="shrink-0 text-[color:var(--con-muted)] ml-3" />
+            <span>
+              <span className="font-semibold">{link.label}</span>
+              <span className="ml-2 hidden text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] sm:inline">{link.desc}</span>
+            </span>
+            <ExternalLink size={13} className="shrink-0 text-[color:var(--con-faint)]" />
           </a>
-        </ListRow>
-      ))}
-    </ListSection>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -279,12 +354,10 @@ function EventNotificationsCard() {
   // change for instant feedback, reverted by useAutoSave's onError if the write
   // fails. refresh() keeps the shared snapshot current for the rest of the app.
   const [localEvents, setLocalEvents] = useState<NotificationEventType[] | null>(null);
-  const [localWebhook, setLocalWebhook] = useState<string | null>(null);
   if (!snapshot) return null;
 
   const current = snapshot.policy.notificationSettings;
   const events = localEvents ?? current.enabledEvents;
-  const webhook = localWebhook ?? current.webhookUrl ?? "";
 
   const toggleEvent = (type: NotificationEventType, on: boolean) => {
     const prev = events;
@@ -295,57 +368,40 @@ function EventNotificationsCard() {
     });
   };
 
-  const commitWebhook = () => {
-    const next = webhook.trim();
-    if (next === (current.webhookUrl ?? "")) return; // unchanged → no write
-    const prev = webhook;
-    // Server validates (400 on a non-URL); revert the field on failure.
-    autoSave.save(() => savePolicy({ notificationSettings: { webhookUrl: next } }).then(() => refresh()), {
-      onError: () => setLocalWebhook(prev),
-      errorTitle: "Webhook not saved"
-    });
-  };
-
   return (
-    <ListSection 
-      title="Event notifications" 
-      footer="Which events send notifications, and the webhook they go to. One list for your whole login — it applies across every account."
-      action={<SaveStatus status={autoSave.status} />}
-    >
-      {NOTIFICATION_EVENT_TYPES.map((type) => {
-        const on = events.includes(type);
-        // Human-readable label — the raw snake_case enum (e.g. "red_team_veto_override_requested")
-        // must never be shown as visible text or read aloud by a screen reader (Toggle's `label`
-        // prop becomes its aria-label). Fall back to the raw type only if a key were somehow
-        // missing from the map.
-        const eventLabel = NOTIFICATION_EVENT_TYPE_LABELS[type] ?? type;
-        return (
-          <ListRow key={type}>
-            <LabeledContent label={eventLabel} hint={EVENT_HINT[type]}>
-              <Toggle
+    <Card title="Event notifications" action={<SaveStatus status={autoSave.status} />}>
+      <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        Which events send notifications. One list for your whole login — it applies across every account, not just the
+        one you&apos;re viewing. Where they go (webhook URL, push/email/SMS) is configured in Delivery channels, below.
+      </p>
+      <div className="grid gap-1.5 sm:grid-cols-2">
+        {NOTIFICATION_EVENT_TYPES.map((type) => {
+          const on = events.includes(type);
+          const hint = EVENT_HINT[type];
+          return (
+            <label
+              key={type}
+              title={`${type} — when on, you get a notification whenever ${hint}. (${type} is the event's id in webhook payloads and the audit log.)`}
+              className="flex cursor-pointer items-start gap-2 rounded-control px-1.5 py-1 text-[length:var(--con-fs-sm)] transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
+            >
+              {/* Native checkbox inside its <label>: the visible text IS the accessible
+                  name — no aria-label needed (unlike the Toggle primitive elsewhere). */}
+              <input
+                type="checkbox"
+                className="mt-1"
                 checked={on}
                 disabled={autoSave.saving}
                 onChange={() => toggleEvent(type, on)}
-                label={eventLabel}
               />
-            </LabeledContent>
-          </ListRow>
-        );
-      })}
-      <ListRow>
-        <LabeledContent label="Webhook URL" hint="Rich embeds for chat webhooks; generic JSON otherwise.">
-          <input
-            id="webhook"
-            className="w-48 text-right bg-transparent text-[length:var(--con-fs-sm)] focus:outline-none placeholder:text-[color:var(--con-muted)]"
-            value={webhook}
-            placeholder="https://…"
-            title="Every enabled event is also POSTed to this URL."
-            onChange={(e) => setLocalWebhook(e.target.value)}
-            onBlur={commitWebhook}
-          />
-        </LabeledContent>
-      </ListRow>
-    </ListSection>
+              <span className="min-w-0">
+                <span className="font-semibold">{NOTIFICATION_EVENT_TYPE_LABELS[type]}</span>{" "}
+                <span className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{hint}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
 
@@ -371,36 +427,34 @@ function ScanShapeCard() {
   };
 
   return (
-    <ListSection 
-      title="Market-scan shape" 
-      footer="How wide every account's market scan looks. These two are user-level."
-      action={<SaveStatus status={autoSave.status} />}
-    >
-      <ListRow>
-        <LabeledContent label="Enriched candidates" hint="Ranked names that get full enrichment per run.">
+    <Card title="Market-scan shape" action={<SaveStatus status={autoSave.status} />}>
+      <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        How wide every account&apos;s market scan looks. These two are user-level, like everything on this page: they
+        overlay all your accounts.
+      </p>
+      <div className="grid max-w-md grid-cols-2 gap-3">
+        <Field label="Enriched candidates" hint="Ranked names that get full enrichment per run." htmlFor="scan-limit">
           <RawNumInput
             id="scan-limit"
-            className="w-20 text-right bg-transparent border-0 px-0 text-[length:var(--con-fs-sm)] focus:ring-0"
             value={String(candidateLimit ?? "")}
             emptyValue={0}
+            title="How many top-ranked symbols get full enrichment (fundamentals, news, technicals) each run. More = wider view, slower and costlier runs. Saves when you click away."
             onValueChange={(parsed) => setDraft((d) => ({ ...d, marketScanCandidateLimit: parsed }))}
             onBlur={() => commitNumber("marketScanCandidateLimit", candidateLimit, policy.marketScanCandidateLimit)}
           />
-        </LabeledContent>
-      </ListRow>
-      <ListRow>
-        <LabeledContent label="Outlier reserve" hint="Below-cutoff slots reserved for notable web signals.">
+        </Field>
+        <Field label="Outlier reserve" hint="Below-cutoff slots reserved for notable web signals." htmlFor="scan-reserve">
           <RawNumInput
             id="scan-reserve"
-            className="w-20 text-right bg-transparent border-0 px-0 text-[length:var(--con-fs-sm)] focus:ring-0"
             value={String(outlierReserve ?? "")}
             emptyValue={0}
+            title="Of the candidate slots, how many are held for symbols that rank below the cutoff but carry a notable web signal (news spike, unusual activity). Saves when you click away."
             onValueChange={(parsed) => setDraft((d) => ({ ...d, marketScanOutlierReserve: parsed }))}
             onBlur={() => commitNumber("marketScanOutlierReserve", outlierReserve, policy.marketScanOutlierReserve)}
           />
-        </LabeledContent>
-      </ListRow>
-    </ListSection>
+        </Field>
+      </div>
+    </Card>
   );
 }
 
@@ -413,29 +467,38 @@ function BootBehaviorCard() {
   if (!snapshot) return null;
 
   return (
-    <ListSection title="After a restart" footer="Off (recommended): whenever the server restarts, any Running account is stopped until a person starts it again. Turning this ON removes that safety net.">
-      <ListRow>
-        <LabeledContent label="Auto-resume on boot">
-          <Toggle
-            checked={snapshot.autoResumeOnBoot}
-            label="Auto-resume on boot"
-            onChange={async (next) => {
-              setBusy(true);
-              try {
-                await setAutoResume(next);
-                await refresh();
-                toast.push(next ? "warn" : "pos", next ? "Auto-resume ON" : "Auto-resume off", next ? "Accounts left Running will resume by themselves after a restart." : "Restarts stop everything until you start it again.");
-              } catch (error) {
-                toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
-              } finally {
-                setBusy(false);
-              }
-            }}
-            disabled={busy}
-          />
-        </LabeledContent>
-      </ListRow>
-    </ListSection>
+    <Card title="After a restart">
+      <div
+        className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+        title="Controls what happens to Running accounts when the server process restarts. Off keeps the safety net: a human must start trading again."
+      >
+        <div>
+          <div className="text-[length:var(--con-fs-sm)] font-semibold">Auto-resume on boot</div>
+          <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+            Off (recommended): whenever the server restarts, any Running account is stopped until a person starts it
+            again — a restored backup or crash-loop can never silently resume trading. Turning this ON removes that
+            safety net.
+          </p>
+        </div>
+        <Toggle
+          checked={snapshot.autoResumeOnBoot}
+          onChange={async (next) => {
+            setBusy(true);
+            try {
+              await setAutoResume(next);
+              await refresh();
+              toast.push(next ? "warn" : "pos", next ? "Auto-resume ON" : "Auto-resume off", next ? "Accounts left Running will resume by themselves after a restart." : "Restarts stop everything until you start it again.");
+            } catch (error) {
+              toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
+            } finally {
+              setBusy(false);
+            }
+          }}
+          disabled={busy}
+          label="Auto-resume on boot"
+        />
+      </div>
+    </Card>
   );
 }
 
@@ -446,23 +509,94 @@ function YouCard() {
   if (!snapshot?.currentUser) return null;
   const user = snapshot.currentUser;
   return (
-    <ListSection title="You">
-      <ListRow>
-        <LabeledContent label={user.name ?? user.email ?? user.userId} hint={user.email && user.name ? user.email : undefined}>
-          <div className="flex items-center gap-2">
-            {user.isAdmin && (
-              <Chip tone="accent">
-                admin
-              </Chip>
-            )}
-            {user.loginProvider && (
-              <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-                via {user.loginProvider}
-              </span>
-            )}
+    <Card title="You">
+      <div className="flex flex-wrap items-center gap-2 text-[length:var(--con-fs-sm)]">
+        <span className="font-semibold" title="The signed-in user every ALL YOUR ACCOUNTS setting belongs to.">
+          {user.name ?? user.email ?? user.userId}
+        </span>
+        {user.email && user.name && <span className="text-[color:var(--con-faint)]">{user.email}</span>}
+        {user.isAdmin && (
+          <Chip tone="accent" title="This login has operator/admin rights on the server.">
+            admin
+          </Chip>
+        )}
+        {user.loginProvider && (
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title="Which identity provider authenticated this session.">
+            via {user.loginProvider}
+          </span>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ── All accounts: FMP Features ───────────────────────────────────────────────
+
+function FmpFeaturesCard() {
+  const { snapshot, refresh } = useConsoleData();
+  const autoSave = useAutoSave();
+  if (!snapshot) return null;
+
+  const policy = snapshot.policy;
+
+  return (
+    <Card title="Financial Modeling Prep (FMP) Features" action={<SaveStatus status={autoSave.status} />}>
+      <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        Toggle which FMP data modules are active. These settings are user-level and apply across all your accounts. Defaults to ON.
+      </p>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Real-Time & Index Data</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Real-time quotes, ETF holdings, sector weightings, and index market data.</p>
           </div>
-        </LabeledContent>
-      </ListRow>
-    </ListSection>
+          <Toggle
+            checked={policy.fmpRealTimeDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpRealTimeDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Real-Time Data"
+          />
+        </div>
+        
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Macro & Commodities</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">BTC/ETH, VIX, Treasury Yields, GDP, CPI, Crude Oil, and Gold data.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpMacroDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpMacroDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Macro Data"
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Events & News</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Earnings calendars, economic calendars, and FMP market news.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpEventsDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpEventsDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Events Data"
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Deep Fundamentals</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Advanced Market Metrics (DCF, Piotroski, Altman Z-Scores) and Analyst Ratings.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpFundamentalsDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpFundamentalsDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Fundamentals Data"
+          />
+        </div>
+      </div>
+    </Card>
   );
 }

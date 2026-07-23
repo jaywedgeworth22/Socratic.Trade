@@ -39,7 +39,11 @@ const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
   // per-account values — reads strip it from account rows, and with no user-level
   // value stored yet it falls back to the DEFAULT_POLICY value (true = required),
   // the safe direction. No legacy seed on purpose (sole-user, no compat tax).
-  "requireTypedConfirmation"
+  "requireTypedConfirmation",
+  "fmpRealTimeDataEnabled",
+  "fmpMacroDataEnabled",
+  "fmpEventsDataEnabled",
+  "fmpFundamentalsDataEnabled"
 ]);
 
 const LEGACY_STRATEGY_MODEL_FIELDS: Array<keyof TradingPolicy> = ["llmModel", "redTeamLlmModel", "llmReasoningEffort"];

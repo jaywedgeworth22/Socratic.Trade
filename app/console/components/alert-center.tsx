@@ -152,7 +152,7 @@ export function AlertCenter({
       hint: "Events that likely need you: kill switch, failed runs, budget alerts, degraded providers, failed deliveries."
     },
     { id: "deliveries", label: "Deliveries", count: summary.deliveries, hint: "Notification deliveries that failed or were skipped." },
-    { id: "approvals", label: "Approvals", count: summary.approvals, hint: "Pending approvals, policy blocks, and withdrawn proposals." },
+    { id: "approvals", label: "Proposals", count: summary.approvals, hint: "Proposals waiting for you, policy blocks, and withdrawn ideas." },
     { id: "all", label: "All", count: summary.total, hint: "Every alert in the current account scope." }
   ];
 
@@ -259,7 +259,7 @@ export function AlertCenter({
                 <article
                   key={row.event.id}
                   className={cx(
-                    "rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-3",
+                    "rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-3",
                     acknowledged && "opacity-60"
                   )}
                 >

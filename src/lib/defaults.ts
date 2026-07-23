@@ -68,7 +68,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // NO llmModel / redTeamLlmModel here (owner directive 2026-07-07: no model default for anything,
   // ever). A seeded default here would resurrect the exact silent-default the model layer removed —
   // every new policy would "choose" gpt-5.4-mini without the user ever picking it. Both team models
-  // are REQUIRED explicit picks in Framework → Models; unset fails closed with an actionable
+  // are REQUIRED explicit picks in Strategy → Models; unset fails closed with an actionable
   // message (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE / the Red reviewer's not_configured routing).
   // The PROPOSER's reasoning effort (per-team split 2026-07-10). NO redTeamReasoningEffort default
   // on purpose: absent means "inherit the proposer's" (resolveReviewerReasoningEffort) — seeding a
@@ -131,7 +131,11 @@ export const DEFAULT_POLICY: TradingPolicy = {
   sectorCaps: {},
   riskRules: DEFAULT_RISK_RULES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
-  taxSettings: DEFAULT_TAX_SETTINGS
+  taxSettings: DEFAULT_TAX_SETTINGS,
+  fmpRealTimeDataEnabled: true,
+  fmpMacroDataEnabled: true,
+  fmpEventsDataEnabled: true,
+  fmpFundamentalsDataEnabled: true
   // No default broker: a fresh policy is broker-neutral. activeBroker is set when a real broker is
   // connected (see db-profiles.ts). With no connected account the app cannot place orders — there is
   // no local-sim fallback.

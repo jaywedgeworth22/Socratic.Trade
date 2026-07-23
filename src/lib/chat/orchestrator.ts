@@ -30,6 +30,7 @@ import { ingestLearned, retrieveLearnedContext } from "../learned-context/store"
 import { applyEvidenceBudget } from "../evidence-budget";
 import { createEvidencePack, createEvidenceRef, type EvidenceSourceFamily } from "../evidence-pack";
 import { containPromptText, type PromptContainmentResult, type PromptTextSource } from "../prompt-safety";
+import { captureCoachLearning } from "./coach-learning";
 import { classifyIntent, getLLM } from "./llm";
 import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
 import { buildTools, type ToolDeps } from "./tools";
@@ -49,6 +50,10 @@ import {
   recordFmpTranscriptDerivedAudit,
   type FmpTranscriptDerivedProvenance
 } from "../web-sources/fmp-transcripts";
+import {
+  EARNINGSCALLS_TRANSCRIPT_SOURCE,
+  earningsCallsTranscriptsEnabled
+} from "../earningscalls-gate";
 
 function toolEvidenceFamily(name: string): EvidenceSourceFamily {
   if (name === "kb_search") return "filings";
@@ -129,6 +134,41 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     if (!alreadyRecorded) appendTurn(userId, { role: "user", text: message, clientTurnId: clientTurnId ?? null }, writeEpoch);
 
     const mem = ingestMessage(userId, message, writeEpoch);
+    // Coach → durable learning: explicit strategy directives ("from now on…") and pasted article
+    // URLs are captured into learned_context / the approval queue (and optionally lesson vectors).
+    // Awaited so the reply can honestly say what was written vs queued for approval. SSRF-safe for URLs.
+    let learningCapture: ChatReply["learningCapture"] = null;
+    try {
+      const capture = await captureCoachLearning({
+        userId,
+        message,
+        writeEpoch,
+        connectedAccountId,
+        indexVectors: true
+      });
+      assertTurnActive();
+      if (capture.detected && capture.receipt) {
+        learningCapture = {
+          kind: capture.kind ?? "directive",
+          tier: capture.tier,
+          pendingId: capture.pendingId,
+          writtenId: capture.writtenId,
+          receipt: capture.receipt
+        };
+        writeAudit("chat.coach_learning", {
+          userId,
+          turnKey,
+          kind: capture.kind,
+          tier: capture.tier,
+          pendingId: capture.pendingId,
+          writtenId: capture.writtenId,
+          url: capture.url ?? null,
+          dropped: capture.dropped
+        });
+      }
+    } catch (e) {
+      console.warn("[orchestrator] coach learning capture failed:", e);
+    }
     // Extract learned-context candidates from the message for both the write path (ingest) and
     // the read path (retrieve facts already in store to inject into the system prompt).
     // extractLearnedCandidatesLLM is regex (extractLearnedCandidates) unless LLM_SALIENCE_EXTRACTOR=on
@@ -262,10 +302,14 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
           }
           if (!generationActive) {
             // Retrieval may have started just before revocation. Do not expose licensed chunks to
-            // the model once the durable generation is stale.
+            // the model once the durable generation is stale. EarningsCalls.dev-sourced transcript
+            // rows share the doc type but are gated by their OWN predicate (key + kill-switch,
+            // already enforced by vector-db's post-fetch guard) — a stale FMP generation must not
+            // collaterally strip them.
             sanitized = sanitized.filter((item) => {
               if (!item || typeof item !== "object" || Array.isArray(item)) return true;
               const row = item as Record<string, unknown>;
+              if (row.source === EARNINGSCALLS_TRANSCRIPT_SOURCE) return earningsCallsTranscriptsEnabled();
               return row.source !== FMP_TRANSCRIPT_SOURCE &&
                 String(row.doc_type ?? "").toLowerCase() !== FMP_TRANSCRIPT_DOC_TYPE;
             });
@@ -331,7 +375,15 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
 
     // Server-side disclaimer guarantee (provider-independent): the system prompt asks for it, but we
     // never rely on the model to remember it — append if missing so compliance holds on every provider.
-    const text = result.text.includes(DISCLAIMER) ? result.text : `${result.text}\n\n${DISCLAIMER}`;
+    let text = result.text.includes(DISCLAIMER) ? result.text : `${result.text}\n\n${DISCLAIMER}`;
+    // Prepend an honest durable-learning receipt when coach capture fired (before the disclaimer).
+    if (learningCapture?.receipt) {
+      const body = text.includes(DISCLAIMER)
+        ? text.slice(0, text.lastIndexOf(DISCLAIMER)).trimEnd()
+        : text.trimEnd();
+      const disclaimer = text.includes(DISCLAIMER) ? `\n\n${DISCLAIMER}` : "";
+      text = `${learningCapture.receipt}\n\n${body}${disclaimer}`;
+    }
 
     // Extract a draft (if any) for the UI; the assistant never executes.
     const draftCall = result.toolCalls?.find((c) => c.name === "draft_order" && c.result && !c.result.error);
@@ -346,7 +398,8 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
       memory: { written: mem.written.length, held: mem.held.length },
       intent: classifyIntent(message).intent,
       promptVersion: PROMPT_VERSION,
-      model: usedModel
+      model: usedModel,
+      learningCapture
     };
     const persistAssistantTurn = () => appendTurn(userId, {
       role: "assistant",
@@ -626,11 +679,11 @@ export function buildProductionDeps(): ToolDeps {
 // stored token — so the research tools return a plain message the model can relay to the user.
 async function robinhoodNotConnected(userId: string): Promise<{ error: string; message: string } | null> {
   if (!robinhoodMcpDataEnabled()) {
-    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Settings → Connections to enable this." };
+    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Connections to enable this." };
   }
   const token = await getMcpAccessToken(userId);
   if (!token) {
-    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Settings → Connections to enable this." };
+    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Connections to enable this." };
   }
   return null;
 }

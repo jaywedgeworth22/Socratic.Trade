@@ -8,7 +8,7 @@
 
 import crypto from "crypto";
 import { audit, getDb } from "./db";
-import { apiKeyEnvVarForService, getUserApiKey, keyFingerprint, LOCAL_USER, type LlmKeySource } from "./db-api-keys";
+import { apiKeyEnvVarForService, getUserApiKey, keyFingerprint, LOCAL_USER, maskApiKeyPreview, type LlmKeySource } from "./db-api-keys";
 import { pushLlmUsage } from "./usage-monitor-push";
 export { keyFingerprint };
 
@@ -33,6 +33,10 @@ export interface LlmUsageEntry {
   cachedPromptTokens?: number;
   /** Anthropic-only: tokens WRITTEN to the cache this call (bill at ~1.25× input). */
   cacheCreationTokens?: number;
+  /** OpenRouter's per-generation id (response `id`), so the monitor can call GET
+   *  /api/v1/generation?id=... to verify reported cost against the provider's own ledger. Only
+   *  meaningful when `provider === "openrouter"` — see `providerRequestIdFromPayload`. */
+  providerRequestId?: string;
 }
 
 export interface LlmTokenUsage {
@@ -105,7 +109,16 @@ function defaultModelPricePerM(): [number, number] {
 
 function priceForModel(model: string | undefined): [number, number] {
   if (!model) return defaultModelPricePerM();
-  const m = model.toLowerCase();
+  // Strip the full OpenRouter routing prefix so price-table bare IDs match outbound model names.
+  // Handles three forms:
+  //   "gpt-5.4-mini"                → unchanged
+  //   "openai/gpt-5.4-mini"         → "gpt-5.4-mini"  (vendor/model)
+  //   "openrouter/openai/gpt-5.4-mini" → "gpt-5.4-mini"  (full 3-part OR prefix)
+  // Mirrors stripRoutingPrefix() in app/admin/llm-usage/model-merge.ts.
+  let m = model.toLowerCase();
+  m = m.replace(/^openrouter\//, ""); // strip leading "openrouter/" if present
+  const slashIdx = m.indexOf("/");
+  if (slashIdx !== -1) m = m.slice(slashIdx + 1); // strip one vendor segment (e.g. "openai/")
   if (MODEL_PRICE_PER_M[m]) return MODEL_PRICE_PER_M[m];
   // Prefix match (e.g. dated suffixes like claude-haiku-4-5-20251001).
   // Longest-prefix wins so family aliases cannot shadow a more specific tier snapshot
@@ -175,22 +188,63 @@ export function extractLlmUsage(responseJson: unknown): LlmTokenUsage {
   };
 }
 
+/**
+ * Extracts a provider-generation id from a raw LLM response body, but ONLY when the transport that
+ * actually served the call was OpenRouter — every provider's response envelope carries a top-level
+ * `id` (OpenAI `chatcmpl-...`, Anthropic `msg_...`, OpenRouter `gen-...`), and only OpenRouter's is
+ * useful downstream (the monitor calls `GET /api/v1/generation?id=...` to verify reported cost).
+ * Returns `undefined` (never `""`) for any other provider or a malformed/absent id — callers push
+ * this straight through as `providerRequestId`.
+ */
+export function providerRequestIdFromPayload(provider: string, payload: unknown): string | undefined {
+  if (provider !== "openrouter") return undefined;
+  const id = (payload as { id?: unknown } | null | undefined)?.id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+/**
+ * Strips the routing prefix (e.g. "openai/") from OpenRouter models to yield the canonical model
+ * identity for usage and benchmark persistence, so that historical stats aren't fragmented when
+ * routing through OpenRouter.
+ */
+export function remapOpenRouterTelemetry(provider: string, model: string): { provider: string; model: string };
+export function remapOpenRouterTelemetry(provider: string, model: string | undefined): { provider: string; model: string | undefined };
+export function remapOpenRouterTelemetry(provider: string, model: string | undefined): { provider: string; model: string | undefined } {
+  if (provider === "openrouter" && model) {
+    const slashIdx = model.indexOf("/");
+    if (slashIdx !== -1) {
+      let p = model.slice(0, slashIdx);
+      if (p === "google") p = "gemini";
+      if (p === "mistralai") p = "mistral";
+      if (p === "x-ai") p = "xai";
+      return { provider: p, model: model.slice(slashIdx + 1) };
+    }
+  }
+  return { provider, model };
+}
+
 /** Record one LLM call against a user. Never throws — usage accounting must not break an LLM run. */
 export function recordLlmUsage(entry: LlmUsageEntry): void {
   try {
+    const canonical = remapOpenRouterTelemetry(entry.provider, entry.model);
+    // Keep the transport route in the ledger and telemetry. OpenRouter is
+    // the credential/key namespace that actually served the call; the
+    // canonical vendor model is only for pricing and model statistics.
+    const provider = entry.provider;
+    const model = entry.model;
     const usageId = crypto.randomUUID();
     const occurredAt = new Date().toISOString();
     const total =
       entry.promptTokens !== undefined || entry.completionTokens !== undefined ? (entry.promptTokens ?? 0) + (entry.completionTokens ?? 0) : undefined;
-    const cost = estimateLlmCostUsd(entry.model, entry.promptTokens, entry.completionTokens, entry.cachedPromptTokens, entry.cacheCreationTokens);
+    const cost = estimateLlmCostUsd(canonical.model, entry.promptTokens, entry.completionTokens, entry.cachedPromptTokens, entry.cacheCreationTokens);
     // Prompt-cache visibility (no schema change): when the provider served part of the prompt from
     // cache, write an audit row so cache hit rates + savings are observable per provider/model/context.
     if ((entry.cachedPromptTokens ?? 0) > 0 || (entry.cacheCreationTokens ?? 0) > 0) {
       audit(
         "llm_cache_usage",
         {
-          provider: entry.provider,
-          model: entry.model,
+          provider,
+          model,
           context: entry.context,
           promptTokens: entry.promptTokens,
           cachedPromptTokens: entry.cachedPromptTokens,
@@ -209,8 +263,8 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
       .run(
         usageId,
         entry.userId,
-        entry.provider,
-        entry.model ?? null,
+        provider,
+        model ?? null,
         entry.context ?? "unknown",
         entry.keySource,
         entry.keyRef ?? null,
@@ -225,8 +279,8 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
     pushLlmUsage({
       sourceEventId: usageId,
       occurredAt,
-      provider: entry.provider,
-      model: entry.model,
+      provider,
+      model,
       context: entry.context,
       userId: entry.userId,
       keySource: entry.keySource,
@@ -235,6 +289,7 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
       completionTokens: entry.completionTokens,
       totalTokens: total,
       costUsd: cost,
+      providerRequestId: entry.providerRequestId,
     });
   } catch {
     /* ledger is best-effort; never break the caller */
@@ -345,25 +400,38 @@ export function getLlmUsageSummary(opts: {
 }
 
 export interface KeyDescriptor {
-  /** Last 4 chars of the key — a safe display convention (computed at read time, never persisted). */
-  last4: string;
-  /** Display-safe mask: first 8 chars + "..." + last 4 chars (e.g. "sk-proj-...abcd"). */
-  masked: string;
+  /** Irreversible, non-secret short fingerprint (first 8 hex chars of SHA-256(key)) — safe to ship
+   *  to the client. NEVER a prefix/suffix of the raw key: Connections promises a key is never
+   *  displayed again once stored, and this must hold for the usage/admin surfaces too. */
+  fingerprint: string;
   /** Human label, e.g. "operator (openai)", "u_abc (anthropic)", "operator env (openai)". */
   label: string;
 }
 
-/** Produce a display-safe masked representation of a raw API key. */
+/**
+ * A short, irreversible display fingerprint for a raw API key: the first 8 hex chars of
+ * SHA-256(key). Distinct from `keyFingerprint` in db-api-keys.ts (16 hex chars, used as the
+ * usage-ledger's `key_ref` grouping key) — this one exists purely so a human can recognize "is
+ * this the same key" in the UI without ever reconstructing or partially exposing the secret.
+ */
+export function displayKeyFingerprint(rawKey: string): string {
+  return crypto.createHash("sha256").update(rawKey).digest("hex").slice(0, 8);
+}
+
+/** Produce a display-safe masked representation of a raw API key. Delegates to the canonical
+ *  `maskApiKeyPreview` (db-api-keys.ts) — the same mask the Connections page shows — and degrades to
+ *  a head-only form for a key too short to elide, since this descriptor always needs a string.
+ *  Usage/admin descriptors use `displayKeyFingerprint` instead; this remains for Connections-style
+ *  previews and tests that share the same mask helper. */
 export function maskApiKey(rawKey: string): string {
-  if (rawKey.length <= 12) return `${rawKey.slice(0, 4)}...`;
-  return `${rawKey.slice(0, 8)}...${rawKey.slice(-4)}`;
+  return maskApiKeyPreview(rawKey) ?? `${rawKey.slice(0, 4)}...`;
 }
 
 /**
- * Resolve a non-secret, human-readable descriptor (last-4 + label) for a usage row's opaque
+ * Resolve a non-secret, human-readable descriptor (fingerprint + label) for a usage row's opaque
  * `keyRef`, by matching the fingerprint against the LIVE key stores. Returns undefined once the key
  * is detached — the ledger keeps the fingerprint, but a friendly label is only available while the
- * key is still attached. The last-4 is computed at read time and never stored.
+ * key is still attached. Never returns any prefix/suffix of the raw key.
  */
 export function describeUsageKey(row: { keyRef: string | null; userId: string; provider: string }): KeyDescriptor | undefined {
   if (!row.keyRef) return undefined;
@@ -371,13 +439,13 @@ export function describeUsageKey(row: { keyRef: string | null; userId: string; p
   const own = getUserApiKey(row.userId, row.provider)?.apiKey;
   if (own && keyFingerprint(own) === row.keyRef) {
     const label = row.userId === LOCAL_USER ? `primary user (${row.provider})` : `${row.userId} (${row.provider})`;
-    return { last4: own.slice(-4), masked: maskApiKey(own), label };
+    return { fingerprint: displayKeyFingerprint(own), label };
   }
   // The operator's env key (the failover that served a tenant).
   const envVar = apiKeyEnvVarForService(row.provider);
   const envKey = envVar ? process.env[envVar]?.trim() : undefined;
   if (envKey && keyFingerprint(envKey) === row.keyRef) {
-    return { last4: envKey.slice(-4), masked: maskApiKey(envKey), label: `server failover (${row.provider})` };
+    return { fingerprint: displayKeyFingerprint(envKey), label: `server failover (${row.provider})` };
   }
   return undefined;
 }

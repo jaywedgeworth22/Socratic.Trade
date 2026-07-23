@@ -279,7 +279,12 @@ export default function DecisionTracePage() {
                     />
                   </strong>
                   <span title={redTeamFailureMeta(decision.redTeamVerdict.failureKind).title}>
-                    review failed ({redTeamFailureMeta(decision.redTeamVerdict.failureKind).label})
+                    {redTeamVerdictLabel(
+                      decision.redTeamVerdict,
+                      decision.policyDecision?.socraticOverride?.applied,
+                      decision.status
+                    )}{" "}
+                    ({redTeamFailureMeta(decision.redTeamVerdict.failureKind).label})
                   </span>
                 </div>
                 <p>{decision.redTeamVerdict.reason}</p>
@@ -328,7 +333,7 @@ export default function DecisionTracePage() {
             }
           >
             {run ? (
-              <div className="mb-3 rounded-md border border-[color:var(--con-line)] bg-[color:color-mix(in_srgb,var(--con-bg-elev)_80%,transparent)] p-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+              <div className="mb-3 rounded-control border border-[color:var(--con-line)] bg-[color:color-mix(in_srgb,var(--con-bg-elev)_80%,transparent)] p-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
                 Source run {timeAgo(run.startedAt)} · {run.status} · {run.totalCount} proposal{run.totalCount === 1 ? "" : "s"}
                 {run.summary ? ` · ${run.summary}` : ""}
               </div>
@@ -336,7 +341,7 @@ export default function DecisionTracePage() {
             {decision.coachNotes.length > 0 ? (
               <div className="mb-3 flex flex-col gap-2">
                 {decision.coachNotes.slice(-4).map((coachNote, index) => (
-                  <p key={`${coachNote}-${index}`} className="rounded-md border border-[color:var(--con-line)] p-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                  <p key={`${coachNote}-${index}`} className="rounded-control border border-[color:var(--con-line)] p-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
                     {coachNote}
                   </p>
                 ))}

@@ -16,7 +16,7 @@ import type { WashSaleHandling } from "./types";
  * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
  * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.2.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.3.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
@@ -87,6 +87,8 @@ export interface BullSystemParams {
   stopLossPct: number;
   /** policy.riskRules.takeProfitPct ?? 20. */
   takeProfitPct: number;
+  /** policy.riskRules.shortStopLossPct ?? 8. */
+  shortStopLossPct?: number;
 }
 
 /**
@@ -102,7 +104,7 @@ export function buildBullSystem(p: BullSystemParams): string {
   return [
     "You are an autonomous equity trading agent for a Robinhood brokerage account.",
     p.shortAllowed
-      ? "SHORT SELLING IS ENABLED on this account. In addition to buy/sell you MAY open SHORT positions (side='short') on names with a clearly bearish thesis, and close them with side='cover'. Every short MUST carry a mandatory stop-loss (shortStopLossPct) and respect the short-exposure caps; only short with genuine conviction, not to fill a quota."
+      ? `SHORT SELLING IS ENABLED on this account. In addition to buy/sell you MAY open SHORT positions (side='short') on names with a clearly bearish thesis, and close them with side='cover'. Every short MUST carry a mandatory stop-loss (via bracketStopLoss or stopPlan, defaulting to shortStopLossPct of ${p.shortStopLossPct ?? 8}%) and respect the short-exposure caps; only short with genuine conviction, not to fill a quota.`
       : "SHORT SELLING IS DISABLED on this account. Propose long-only: side is buy or sell. Do not propose short or cover.",
     "",
     "Execution Mode:",
@@ -145,6 +147,7 @@ export function buildBullSystem(p: BullSystemParams): string {
     `When to SELL/TRIM: any position exceeding ${p.maxSymbolExposurePct}% of portfolio value;`,
     `positions down more than ${p.stopLossPct}% without a clear catalyst;`,
     `positions up more than ${p.takeProfitPct}% where trimming would improve risk/reward; rebalancing toward better-ranked scan opportunities.`,
+    "Active Protection State: the user message carries `activeProtection` containing each held position's active stop plans, trail levels, enforcement lanes, and resting orders. Use this to monitor active risk: if a position's current price is near its stop, or its thesis has changed, you may propose revising/tightening its stop plan or exiting. Do not propose redundant exits for shares already covered by resting orders.",
     `You must choose the advised size for each proposal. \`limits.maxOrderNotional\` is the absolute per-order cap after absolute/% settings; \`limits.preferredMaxOrderNotional\` leaves a ${OPENING_ORDER_HEADROOM_PCT}% execution buffer and is the highest opening size you should normally propose. Remaining notional/order counts are hard caps, not target sizes. Do not default every BUY to the max or to a flat setting-derived amount. For buys, set \`dollarAmount\` to the amount you actually advise based on risk/reward, conviction, liquidity, diversification, and account context; it may be well below the cap, but when native Alpaca brackets are enabled it must be large enough to buy at least one whole share unless you intentionally want the backend to skip broker-held brackets. For sells/trims, set an explicit \`quantity\` or \`dollarAmount\` that reflects whether you advise a partial trim, risk-reduction sale, profit-taking sale, or full exit.`,
     `For each OPENING (buy or short) proposal, set a PER-TRADE protective stop in \`bracketStopLoss\` (an absolute PRICE, not a percent) and, when warranted, a \`bracketTakeProfit\` price. Place the stop where the setup itself defines it — a support/resistance level, a multiple of the name's ATR (wider for a volatile/high-beta name, tighter for a calm low-beta one), or the price that invalidates your thesis — sized to conviction. Do NOT default every trade to the same fixed percentage; a one-size stop is exactly what we are moving away from. For a buy the stop sits BELOW the entry and the take-profit ABOVE it; for a short, reversed. Leave a field null only when you truly have no view — the backend then applies the account's per-symbol (ATR/beta-scaled) default.`,
     "",

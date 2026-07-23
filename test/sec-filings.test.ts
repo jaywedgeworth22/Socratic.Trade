@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { RagEmbedRerankProvider } from "../src/lib/rag-metering";
 
 // ── Set up an isolated per-run SQLite DB before anything else ─────────────────
 beforeAll(() => {
@@ -45,7 +46,12 @@ const mocks = vi.hoisted(() => ({
   insertSecArtifact: vi.fn(),
   audit: vi.fn(),
   setInternalSetting: vi.fn(),
-  getInternalSetting: vi.fn()
+  getInternalSetting: vi.fn(),
+  // Defaults to "voyage" so every pre-existing VECTOR_EMBED_BATCH_DELAY_MS-driven test below is
+  // unaffected; only the provider-aware-gate tests override this. Typed explicitly as the full
+  // union (not narrowed by inference to the literal "voyage") so mockReturnValue accepts the
+  // other providers.
+  activeEmbeddingProvider: vi.fn<(userId?: string) => RagEmbedRerankProvider>(() => "voyage")
 }));
 
 vi.mock("../src/lib/web-sources/http", () => ({
@@ -61,7 +67,7 @@ vi.mock("../src/lib/web-sources/sec8k", () => ({
 
 vi.mock("../src/lib/data-providers", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/data-providers")>();
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     ...actual,
     getEnrichmentProvider: mocks.getEnrichmentProvider
   };
@@ -71,7 +77,7 @@ vi.mock("../src/lib/data-providers", async (importOriginal) => {
 // so hasIngestedAccession / insertIngestedAccession go through the real schema.
 vi.mock("../src/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/db")>();
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     ...actual,
     insertSecArtifact: mocks.insertSecArtifact,
     runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
@@ -80,7 +86,7 @@ vi.mock("../src/lib/db", async (importOriginal) => {
 
 vi.mock("../src/lib/db-vector-commits", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/db-vector-commits")>();
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     ...actual,
     runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
   };
@@ -92,6 +98,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
   return {
     ...actual,
+    managedVectorLedgerAuthority: vi.fn(),
     storeDocument: async (...args: Parameters<typeof actual.storeDocument>) => {
       const result = await mocks.storeDocument(...args);
       return result?.documentComplete === true
@@ -99,11 +106,12 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
         : result;
     },
     storeContexts: mocks.storeContexts,
-    hasIngestTextBudget: mocks.hasIngestTextBudget
+    hasIngestTextBudget: mocks.hasIngestTextBudget,
+    activeEmbeddingProvider: mocks.activeEmbeddingProvider
   };
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.clearAllMocks();
   mocks.hasIngestTextBudget.mockImplementation(() => true);
   mocks.insertSecArtifact.mockImplementation(() => undefined);
@@ -119,7 +127,20 @@ afterEach(() => {
       }])
     ))
   }));
+  mocks.activeEmbeddingProvider.mockReturnValue("voyage");
   delete process.env.VECTOR_EMBED_BATCH_DELAY_MS;
+
+  try {
+    const { getDb } = await import("../src/lib/db");
+    const db = getDb();
+    db.prepare("DELETE FROM sec_filings").run();
+    db.prepare("DELETE FROM sec_artifacts").run();
+    db.prepare("DELETE FROM ingested_accessions").run();
+    db.prepare("DELETE FROM settings WHERE key LIKE 'operation_lease:%'").run();
+    db.prepare("DELETE FROM settings WHERE key LIKE 'webSource:%'").run();
+  } catch (err) {
+    // Ignore database clean-up errors before DB is initialized
+  }
 });
 
 // ── 1. Pure parser tests ──────────────────────────────────────────────────────
@@ -320,7 +341,7 @@ describe("ingestFiling", () => {
         acceptance_datetime: ref.acceptanceDateTime
       }),
       "local",
-      { parserRevision: "sec-edgar-filing-v1" }
+      { parserRevision: "sec-edgar-filing-v2" }
     );
   });
 
@@ -359,7 +380,7 @@ describe("ingestFiling", () => {
     expect(mocks.storeDocument).toHaveBeenCalledWith(
       expect.objectContaining({ source: "sec-edgar", doc_id: `AAPL:${ref.accession}:${ref.docType}` }),
       "local",
-      { leaseGuard: guard, parserRevision: "sec-edgar-filing-v1" }
+      { leaseGuard: guard, parserRevision: "sec-edgar-filing-v2" }
     );
   });
 
@@ -467,6 +488,55 @@ describe("refreshFilingBodies free-tier cap", () => {
     expect(result.attempted).toBeLessThanOrEqual(1);
   });
 
+  it("does NOT apply the free-tier cap when the active provider is bge-m3 (openrouter), even with a stale free-tier-looking VECTOR_EMBED_BATCH_DELAY_MS", async () => {
+    // Regression test for the 2026-07-19 fix: isFreeTier() used to be keyed purely off
+    // VECTOR_EMBED_BATCH_DELAY_MS (a Voyage-pricing-era signal), so migrating RAG_EMBED_PROVIDER
+    // to openrouter/siliconflow without also remembering to zero out this unrelated env var left
+    // ingestion silently pinned to 1 filing/run regardless of the new provider's real capacity.
+    process.env.VECTOR_EMBED_BATCH_DELAY_MS = "21000"; // free-tier-looking value, left over from Voyage
+    mocks.activeEmbeddingProvider.mockReturnValue("openrouter");
+
+    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL", "789019": "MSFT" });
+    mocks.politeFetchText
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          filings: {
+            recent: {
+              accessionNumber: [`0000320193-24-${randomUUID().slice(0, 6)}`, `0000320193-24-${randomUUID().slice(0, 6)}`],
+              form: ["10-K", "10-Q"],
+              filingDate: ["2024-11-01", "2024-08-02"],
+              acceptanceDateTime: ["2024-11-01T00:00:00.000Z", "2024-08-02T00:00:00.000Z"],
+              primaryDocument: ["aapl-10k.htm", "aapl-10q.htm"]
+            }
+          }
+        })
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          filings: {
+            recent: {
+              accessionNumber: [`0000789019-24-${randomUUID().slice(0, 6)}`, `0000789019-24-${randomUUID().slice(0, 6)}`],
+              form: ["10-K", "10-Q"],
+              filingDate: ["2024-11-02", "2024-08-03"],
+              acceptanceDateTime: ["2024-11-02T00:00:00.000Z", "2024-08-03T00:00:00.000Z"],
+              primaryDocument: ["msft-10k.htm", "msft-10q.htm"]
+            }
+          }
+        })
+      )
+      .mockResolvedValue("<p>".concat("Annual report content. ".repeat(20)).concat("</p>"));
+
+    mocks.storeDocument.mockResolvedValue({ attempted: 5, indexed: 5, error: undefined, documentComplete: true });
+
+    const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
+    const result = await refreshFilingBodies(["AAPL", "MSFT"], Date.now(), undefined, { force: true });
+
+    // Paid-tier cap (200/run default) applies despite the stale free-tier env var — all 4
+    // available filings (2 symbols x 2 filings each) get attempted, not capped at 1.
+    expect(result.attempted).toBeGreaterThan(1);
+    expect(result.attempted).toBe(4);
+  });
+
   it("is a no-op when isFilingIngestDue returns false", async () => {
     // Set a recent lastAttempt stamp so the TTL gate fires
     const { setInternalSetting } = await import("../src/lib/db");
@@ -489,7 +559,7 @@ describe("refreshFilingBodies free-tier cap", () => {
       configured: true,
       enrich: vi.fn(async () => {
         deleteInternalSetting("operation_lease:rag-reindex");
-        return { AAPL: { companyName: "Apple Inc." } };
+        return { managedVectorLedgerAuthority: vi.fn(), AAPL: { companyName: "Apple Inc." } };
       })
     });
     const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
@@ -843,7 +913,7 @@ describe("Blended Fundamentals Profile Card Ingest", () => {
       configured: true,
       enrich: vi.fn(async () => {
         lost = true;
-        return { AAPL: { companyName: "Apple Inc." } };
+        return { managedVectorLedgerAuthority: vi.fn(), AAPL: { companyName: "Apple Inc." } };
       })
     });
     const guard = {

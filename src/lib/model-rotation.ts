@@ -35,7 +35,7 @@
 // generated no proposal (no `proposedByModel` to match). Per-account run locks serialize same-account
 // runs, so the read-early / commit-late window has no TOCTOU.
 import { audit, getInternalSetting, resolveLlmCredential, setInternalSetting } from "./db";
-import { llmModelFamily } from "./llm-provider";
+import { modelCredentialService } from "./llm-provider";
 import { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL } from "./llm-request";
 import { recommendedReasoningEffortForModel } from "./model-reasoning-recommendations";
 import type { LlmReasoningEffort } from "./types";
@@ -75,7 +75,15 @@ export const MODEL_ROTATION_POOL: readonly string[] = [
   "mistral-medium-3-5",
   "gpt-5.6-sol",
   "gpt-5.4-nano",
-  "claude-fable-5"
+  "claude-fable-5",
+  "openrouter/openai/gpt-4o",
+  "openrouter/openai/gpt-4o-mini",
+  "openrouter/~anthropic/claude-sonnet-latest",
+  "openrouter/~anthropic/claude-haiku-latest",
+  "openrouter/google/gemini-2.5-pro",
+  "openrouter/google/gemini-2.5-flash",
+  "openrouter/meta-llama/llama-3.3-70b-instruct",
+  "openrouter/deepseek/deepseek-r1"
 ];
 
 /** One seat's pick: the model served this run plus the pointer bookkeeping that produced it. */
@@ -153,8 +161,12 @@ export function advanceRotationPointers(input: {
 export function eligibleRotationPool(userId: string): { pool: string[]; skipped: string[] } {
   const pool: string[] = [];
   const skipped: string[] = [];
+  const isTest = process.env.NODE_ENV === "test";
   for (const model of MODEL_ROTATION_POOL) {
-    if (resolveLlmCredential(llmModelFamily(model), userId).key) pool.push(model);
+    // Gate on the SAME credential resolveLlmEndpoint uses to serve each model — the OpenRouter key
+    // in production (an OpenRouter-only account must get the full curated pool, not an empty one),
+    // the native family under NODE_ENV=test (keeps native-key fixtures working). #1703 follow-up.
+    if (resolveLlmCredential(modelCredentialService(model), userId).key) pool.push(model);
     else skipped.push(model);
   }
   return { pool, skipped };

@@ -2,19 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  Activity,
-  Brain,
-  Database,
-  Server,
-  FileText,
-  Cpu,
-  RefreshCw,
-  ArrowRight,
-  ShieldCheck,
-  AlertTriangle
-} from "lucide-react";
-import { Card, Chip, Dot, Button } from "../ui/primitives";
+import { Cpu, RefreshCw, AlertTriangle } from "lucide-react";
+import { Card, Chip, Dot, Btn, Stat, Meter, type ChipTone } from "../console/ui/primitives";
+import { describeProbeStatus } from "./lib/probe-error";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -66,7 +56,10 @@ export default function OperatorDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [probeErrors, setProbeErrors] = useState<Record<string, string>>({});
+  // Each probe's failure as its raw HTTP status, or "network" when the fetch itself never
+  // got a response. Kept raw here (not pre-formatted into "HTTP 403" strings) so render sites
+  // can turn it into human copy via describeProbeStatus — see ./lib/probe-error.
+  const [probeErrors, setProbeErrors] = useState<Record<string, number | "network">>({});
 
   const fetchDashboardData = async () => {
     setError(null);
@@ -81,32 +74,32 @@ export default function OperatorDashboard() {
       ]);
 
       const [resConn, resLlm, resRag, resServ, resTrans] = results;
-      const errs: Record<string, string> = {};
+      const errs: Record<string, number | "network"> = {};
 
       if (resConn.status === "fulfilled") {
         if (resConn.value.ok) setConnections(await resConn.value.json());
-        else errs.connections = `HTTP ${resConn.value.status}`;
-      } else errs.connections = "Request failed";
+        else errs.connections = resConn.value.status;
+      } else errs.connections = "network";
 
       if (resLlm.status === "fulfilled") {
         if (resLlm.value.ok) setLlm(await resLlm.value.json());
-        else errs.llm = `HTTP ${resLlm.value.status}`;
-      } else errs.llm = "Request failed";
+        else errs.llm = resLlm.value.status;
+      } else errs.llm = "network";
 
       if (resRag.status === "fulfilled") {
         if (resRag.value.ok) setRag(await resRag.value.json());
-        else errs.rag = `HTTP ${resRag.value.status}`;
-      } else errs.rag = "Request failed";
+        else errs.rag = resRag.value.status;
+      } else errs.rag = "network";
 
       if (resServ.status === "fulfilled") {
         if (resServ.value.ok) setServer(await resServ.value.json());
-        else errs.server = `HTTP ${resServ.value.status}`;
-      } else errs.server = "Request failed";
+        else errs.server = resServ.value.status;
+      } else errs.server = "network";
 
       if (resTrans.status === "fulfilled") {
         if (resTrans.value.ok) setTranscript(await resTrans.value.json());
-        else errs.transcript = `HTTP ${resTrans.value.status}`;
-      } else errs.transcript = "Request failed";
+        else errs.transcript = resTrans.value.status;
+      } else errs.transcript = "network";
 
       setProbeErrors(errs);
     } catch (e) {
@@ -144,21 +137,21 @@ export default function OperatorDashboard() {
     return src.split(":").pop() || src;
   };
 
-  const getSourceTone = (src: string): "neutral" | "pos" | "neg" | "warn" | "info" | "accent" => {
+  const getSourceTone = (src: string): ChipTone => {
     if (src === "sec-edgar") return "accent";
     if (src.startsWith("fundamentals:")) return "info";
     if (src.startsWith("disclosure:congress")) return "warn";
-    if (src.startsWith("disclosure:insider")) return "neutral";
+    if (src.startsWith("disclosure:insider")) return "muted";
     if (src.includes("socratic-memory")) return "pos";
     if (src.startsWith("sec8k-summary")) return "neg";
     if (src === "fmp-earnings-transcript") return "info";
-    return "neutral";
+    return "muted";
   };
 
   const failedConnections = connections?.services.filter((s) => s.stoppedWorking) ?? [];
   const earningsStatus = rag?.earningsTranscripts;
   const earningsStatusView = !earningsStatus?.featureEnabled
-    ? { label: "Off", tone: "neutral" as const }
+    ? { label: "Off", tone: "muted" as const }
     : !earningsStatus.storageRightsConfirmed
       ? { label: "Rights unconfirmed", tone: "warn" as const }
       : earningsStatus.capability === "endpoint_not_entitled"
@@ -170,106 +163,130 @@ export default function OperatorDashboard() {
             }
         : earningsStatus.capability === "available"
           ? { label: "Available", tone: "pos" as const }
-          : { label: "Not checked", tone: "neutral" as const };
+          : { label: "Not checked", tone: "muted" as const };
+
+  // All five probes 403'd → this login isn't an operator. One honest notice
+  // instead of five per-card probe errors (presentation of a real 403, not a gate).
+  const allForbidden =
+    Object.keys(probeErrors).length === 5 &&
+    Object.values(probeErrors).every((e) => e === 403);
+
+  // Short, human chip/badge text for a single probe's failure — see ./lib/probe-error for the
+  // "why" (this presents a real 403 from requireAdmin, it doesn't paper over it).
+  const probeErrorLabel = (entry: number | "network" | undefined): string | null =>
+    entry === undefined ? null : entry === "network" ? "Request failed" : describeProbeStatus(entry).shortMessage;
+
+  const currentCpu = server?.metrics?.cpu?.slice(-1)[0]?.value ?? 0;
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-fg flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-accent" />
-            Operator Overview
-          </h1>
-          <p className="text-sm text-muted mt-1">
+          <h1 className="text-xl font-bold tracking-tight">Operator Overview</h1>
+          <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             Real-time status, diagnostics, and metrics across the Socratic Trade environment.
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={loading || refreshing}
-          onClick={handleRefresh}
-          className="border border-line/40 rounded-xl"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${refreshing ? "animate-spin" : ""}`} />
+        <Btn variant="outline" size="sm" disabled={loading || refreshing} onClick={handleRefresh}>
+          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
           {refreshing ? "Refreshing..." : "Refresh"}
-        </Button>
+        </Btn>
       </div>
 
       {error && (
-        <Card className="p-4 border-neg/20 bg-neg/5 text-neg text-sm flex items-start gap-3 rounded-2xl">
-          <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
-          <div>
-            <span className="font-semibold">Operator access required</span>
-            <p className="mt-1 text-xs opacity-90">{error}</p>
+        /* Plain div, not Card: con-card's unlayered background/border beat
+           Tailwind's layered utilities, so a tinted Card never actually tints. */
+        <div className="rounded-[var(--con-radius)] border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-4">
+          <div className="flex items-start gap-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <span className="font-semibold">Operator access required</span>
+              <p className="mt-1 text-[length:var(--con-fs-xs)] opacity-90">{error}</p>
+            </div>
           </div>
-        </Card>
+        </div>
       )}
 
       {loading ? (
-        <div className="py-20 text-center text-sm text-muted">Loading dashboard...</div>
-      ) : (
-        <div className="grid gap-6 sm:grid-cols-2">
-          {/* ── 1. API Connections Card ──────────────────────────────────────── */}
-          <Card className="flex flex-col h-full rounded-2xl overflow-hidden border-line/40">
-            <div className="p-5 flex items-center justify-between border-b border-line/20">
-              <div className="flex items-center gap-2.5">
-                <Activity className="h-4 w-4 text-accent" />
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted">API Connections</h2>
-              </div>
-              <Link href="/admin/connections" className="text-xs text-accent hover:underline flex items-center gap-0.5">
-                Manage <ArrowRight className="h-3 w-3" />
-              </Link>
+        <div className="py-20 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+          Loading dashboard...
+        </div>
+      ) : allForbidden ? (
+        <Card>
+          <div className="flex items-start gap-3 text-[length:var(--con-fs-sm)]">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[color:var(--con-warn)]" />
+            <div>
+              <div className="font-semibold">Operator access required</div>
+              <p className="mt-1 text-[color:var(--con-muted)]">
+                This login does not have admin rights on the server.
+              </p>
             </div>
-            <div className="p-5 flex-1 space-y-4">
+          </div>
+        </Card>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {/* ── 1. API Connections ───────────────────────────────────────────── */}
+          <Card
+            title="API Connections"
+            action={
+              <Link href="/admin/connections" className="con-btn con-btn-ghost con-btn-sm">
+                Open →
+              </Link>
+            }
+            className="flex h-full flex-col"
+          >
+            <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-muted">Overall Health</span>
+                <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Overall health</span>
                 <Chip tone={failedConnections.length > 0 ? "neg" : probeErrors.connections ? "warn" : "pos"}>
-                  {failedConnections.length > 0 ? `${failedConnections.length} Offline` :
-                   probeErrors.connections ? `Probe error (${probeErrors.connections})` : "All Operations Online"}
+                  <span title={typeof probeErrors.connections === "number" ? `HTTP ${probeErrors.connections}` : undefined}>
+                    {failedConnections.length > 0 ? `${failedConnections.length} Offline` :
+                     probeErrors.connections ? probeErrorLabel(probeErrors.connections) : "All Operations Online"}
+                  </span>
                 </Chip>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {connections?.services.slice(0, 6).map((srv) => (
-                  <div key={`${srv.service}:${srv.keySource ?? ""}`} className="bg-surface-2/40 border border-line/20 rounded-xl p-3 flex items-center justify-between">
-                    <span className="text-xs font-medium font-mono truncate mr-2" title={`${srv.service}${srv.keySource ? ` (${srv.keySource})` : ""}`}>
+                  <div key={`${srv.service}:${srv.keySource ?? ""}`} className="con-tile flex items-center justify-between">
+                    <span className="con-mono mr-2 truncate text-[length:var(--con-fs-xs)] font-medium" title={`${srv.service}${srv.keySource ? ` (${srv.keySource})` : ""}`}>
                       {srv.service}
-                      {srv.keySource && <span className="text-faint ml-1">({srv.keySource})</span>}
+                      {srv.keySource && <span className="ml-1 text-[color:var(--con-faint)]">({srv.keySource})</span>}
                     </span>
-                    <Dot tone={srv.stoppedWorking ? "neg" : srv.callsLast24h > 0 ? "pos" : "neutral"} pulse={srv.stoppedWorking} />
+                    <Dot tone={srv.stoppedWorking ? "neg" : srv.callsLast24h > 0 ? "pos" : "muted"} pulse={srv.stoppedWorking} />
                   </div>
                 ))}
               </div>
             </div>
           </Card>
 
-          {/* ── 2. LLM Spend Card ────────────────────────────────────────────── */}
-          <Card className="flex flex-col h-full rounded-2xl overflow-hidden border-line/40">
-            <div className="p-5 flex items-center justify-between border-b border-line/20">
-              <div className="flex items-center gap-2.5">
-                <Brain className="h-4 w-4 text-accent" />
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted">LLM Telemetry</h2>
-              </div>
-              <Link href="/admin/llm-usage" className="text-xs text-accent hover:underline flex items-center gap-0.5">
-                Details <ArrowRight className="h-3 w-3" />
+          {/* ── 2. LLM Usage & Cost ──────────────────────────────────────────── */}
+          <Card
+            title="LLM Usage & Cost"
+            action={
+              <Link href="/admin/llm-usage" className="con-btn con-btn-ghost con-btn-sm">
+                Open →
               </Link>
-            </div>
-            <div className="p-5 flex-1 flex flex-col justify-between">
-              <div className="flex items-baseline justify-between mb-4">
-                <span className="text-xs text-muted">Last 30 Days Spend</span>
+            }
+            className="flex h-full flex-col"
+          >
+            <div className="flex h-full flex-col justify-between">
+              <div className="mb-4">
                 {probeErrors.llm ? (
-                  <span className="text-sm text-warn">Probe error ({probeErrors.llm})</span>
-                ) : (
-                  <span className="text-3xl font-extrabold tracking-tight text-fg">
-                    {llm ? fmtCost(llm.totalCostUsd) : "$0.00"}
+                  <span
+                    className="text-[length:var(--con-fs-sm)] text-[color:var(--con-warn)]"
+                    title={typeof probeErrors.llm === "number" ? `HTTP ${probeErrors.llm}` : undefined}
+                  >
+                    {probeErrorLabel(probeErrors.llm)}
                   </span>
+                ) : (
+                  <Stat label="Last 30 days spend" value={llm ? fmtCost(llm.totalCostUsd) : "$0.00"} />
                 )}
               </div>
-              <div className="space-y-2 border-t border-line/20 pt-4 flex-1">
-                <span className="text-[11px] uppercase tracking-wider text-muted block mb-2">
-                  Cost By Model
-                  {probeErrors.llm && <span className="ml-1.5 text-warn font-normal normal-case">(unavailable)</span>}
+              <div className="flex-1 space-y-2 border-t border-[color:var(--con-line)] pt-4">
+                <span className="con-card-title mb-2 block">
+                  Cost by model
+                  {probeErrors.llm && <span className="ml-1.5 font-normal normal-case text-[color:var(--con-warn)]">(unavailable)</span>}
                 </span>
                 {(() => {
                   const agg = (llm?.rows ?? []).reduce<Record<string, number>>((acc, row) => {
@@ -281,11 +298,11 @@ export default function OperatorDashboard() {
                     .sort(([, a], [, b]) => b - a)
                     .slice(0, 3)
                     .map(([model, cost]) => (
-                      <div key={model} className="flex items-center justify-between text-xs">
-                        <span className="font-mono text-muted truncate max-w-[180px]" title={model}>
+                      <div key={model} className="flex items-center justify-between text-[length:var(--con-fs-xs)]">
+                        <span className="con-mono max-w-[180px] truncate text-[color:var(--con-muted)]" title={model}>
                           {model}
                         </span>
-                        <span className="font-semibold text-fg">{fmtCost(cost)}</span>
+                        <span className="con-num font-semibold">{fmtCost(cost)}</span>
                       </div>
                     ));
                 })()}
@@ -293,47 +310,49 @@ export default function OperatorDashboard() {
             </div>
           </Card>
 
-          {/* ── 3. RAG Corpus Card ───────────────────────────────────────────── */}
-          <Card className="flex flex-col h-full rounded-2xl overflow-hidden border-line/40">
-            <div className="p-5 flex items-center justify-between border-b border-line/20">
-              <div className="flex items-center gap-2.5">
-                <Database className="h-4 w-4 text-accent" />
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted">RAG Corpus</h2>
-              </div>
-              <Link href="/admin/rag-coverage" className="text-xs text-accent hover:underline flex items-center gap-0.5">
-                Coverage <ArrowRight className="h-3 w-3" />
+          {/* ── 3. RAG Coverage ──────────────────────────────────────────────── */}
+          <Card
+            title="RAG Coverage"
+            action={
+              <Link href="/admin/rag-coverage" className="con-btn con-btn-ghost con-btn-sm">
+                Open →
               </Link>
-            </div>
-            <div className="p-5 flex-1 space-y-4">
+            }
+            className="flex h-full flex-col"
+          >
+            <div className="space-y-4">
               {probeErrors.rag && (
-                <div className="text-xs text-warn flex items-center gap-1.5">
+                <div
+                  className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
+                  title={typeof probeErrors.rag === "number" ? `HTTP ${probeErrors.rag}` : undefined}
+                >
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  Probe error ({probeErrors.rag})
+                  {probeErrorLabel(probeErrors.rag)}
                 </div>
               )}
               <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="bg-surface-2/40 border border-line/20 rounded-xl p-2.5">
-                  <div className="text-[11px] text-muted">Tickers</div>
-                  <div className="text-lg font-bold mt-0.5 text-fg">{rag?.totalTickers ?? 0}</div>
+                <div className="con-tile">
+                  <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Tickers</div>
+                  <div className="con-num mt-0.5 text-lg font-bold">{rag?.totalTickers ?? 0}</div>
                 </div>
-                <div className="bg-surface-2/40 border border-line/20 rounded-xl p-2.5">
-                  <div className="text-[11px] text-muted">Chunks</div>
-                  <div className="text-lg font-bold mt-0.5 text-fg">{rag?.totalChunks ?? 0}</div>
+                <div className="con-tile">
+                  <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Chunks</div>
+                  <div className="con-num mt-0.5 text-lg font-bold">{rag?.totalChunks ?? 0}</div>
                 </div>
-                <div className="bg-surface-2/40 border border-line/20 rounded-xl p-2.5">
-                  <div className="text-[11px] text-muted">Vectors</div>
-                  <div className="text-lg font-bold mt-0.5 text-fg">{rag?.vectorStoreTotalVectors ?? 0}</div>
+                <div className="con-tile">
+                  <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Vectors</div>
+                  <div className="con-num mt-0.5 text-lg font-bold">{rag?.vectorStoreTotalVectors ?? 0}</div>
                 </div>
               </div>
 
               {rag?.globalBreakdown && Object.keys(rag.globalBreakdown).length > 0 && (
-                <div className="space-y-1.5 border-t border-line/20 pt-3">
-                  <span className="text-[11px] uppercase tracking-wider text-muted block mb-1">Index Breakdown</span>
+                <div className="space-y-1.5 border-t border-[color:var(--con-line)] pt-3">
+                  <span className="con-card-title mb-1 block">Index breakdown</span>
                   <div className="flex flex-wrap gap-1.5">
                     {Object.entries(rag.globalBreakdown)
                       .slice(0, 4)
                       .map(([src, count]) => (
-                        <Chip key={src} tone={getSourceTone(src)} className="text-[10px] px-2 py-0.5 font-mono">
+                        <Chip key={src} tone={getSourceTone(src)} className="con-mono">
                           {count} {getSourceLabel(src)}
                         </Chip>
                       ))}
@@ -341,10 +360,10 @@ export default function OperatorDashboard() {
                 </div>
               )}
               {earningsStatus && (
-                <div className="border-t border-line/20 pt-3 flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center justify-between gap-3 border-t border-[color:var(--con-line)] pt-3 text-[length:var(--con-fs-xs)]">
                   <div>
-                    <div className="text-muted">Earnings transcripts</div>
-                    <div className="text-[11px] text-faint mt-0.5">
+                    <div className="text-[color:var(--con-muted)]">Earnings transcripts</div>
+                    <div className="mt-0.5 text-[color:var(--con-faint)]">
                       {earningsStatus.ingestedCount.toLocaleString()} periods indexed
                     </div>
                   </div>
@@ -354,48 +373,43 @@ export default function OperatorDashboard() {
             </div>
           </Card>
 
-          {/* ── 4. Server & Infrastructure Card ──────────────────────────────── */}
-          <Card className="flex flex-col h-full rounded-2xl overflow-hidden border-line/40">
-            <div className="p-5 flex items-center justify-between border-b border-line/20">
-              <div className="flex items-center gap-2.5">
-                <Server className="h-4 w-4 text-accent" />
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted">Server & Infra</h2>
-              </div>
-              <Link href="/admin/server" className="text-xs text-accent hover:underline flex items-center gap-0.5">
-                Infra <ArrowRight className="h-3 w-3" />
+          {/* ── 4. Server Stats ───────────────────────────────────────────────── */}
+          <Card
+            title="Server Stats"
+            action={
+              <Link href="/admin/server" className="con-btn con-btn-ghost con-btn-sm">
+                Open →
               </Link>
-            </div>
-            <div className="p-5 flex-1 space-y-4">
+            }
+            className="flex h-full flex-col"
+          >
+            <div className="space-y-4">
               {probeErrors.server && (
-                <div className="text-xs text-warn flex items-center gap-1.5 mb-2">
+                <div
+                  className="mb-2 flex items-center gap-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
+                  title={typeof probeErrors.server === "number" ? `HTTP ${probeErrors.server}` : undefined}
+                >
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  Probe error ({probeErrors.server})
+                  {probeErrorLabel(probeErrors.server)}
                 </div>
               )}
               <div className="space-y-3">
-                {/* CPU Progress */}
+                {/* CPU Load */}
                 <div>
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-muted flex items-center gap-1">
-                      <Cpu className="h-3.5 w-3.5" /> CPU Load
+                  <div className="mb-1 flex items-center justify-between text-[length:var(--con-fs-xs)]">
+                    <span className="flex items-center gap-1 text-[color:var(--con-muted)]">
+                      <Cpu className="h-3.5 w-3.5" /> CPU load
                     </span>
-                    <span className="font-semibold text-fg">
-                      {(server?.metrics?.cpu?.slice(-1)[0]?.value ?? 0).toFixed(1)}%
-                    </span>
+                    <span className="con-num font-semibold">{currentCpu.toFixed(1)}%</span>
                   </div>
-                  <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-accent transition-all duration-300"
-                      style={{ width: `${server?.metrics?.cpu?.slice(-1)[0]?.value ?? 0}%` }}
-                    />
-                  </div>
+                  <Meter value={currentCpu} max={100} />
                 </div>
 
-                {/* RAM Progress */}
+                {/* RAM */}
                 <div>
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-muted">Total Memory (RAM)</span>
-                    <span className="font-semibold text-fg">
+                  <div className="mb-1 flex items-center justify-between text-[length:var(--con-fs-xs)]">
+                    <span className="text-[color:var(--con-muted)]">Total memory (RAM)</span>
+                    <span className="con-num font-semibold">
                       {server?.hostInfo?.memoryTotalBytes ? (server.hostInfo.memoryTotalBytes / 1024 / 1024 / 1024).toFixed(1) : 0} GB
                     </span>
                   </div>
@@ -403,50 +417,54 @@ export default function OperatorDashboard() {
               </div>
 
               {/* Containers list */}
-              <div className="border-t border-line/20 pt-3 flex items-center justify-between text-xs">
-                <span className="text-muted">Docker Containers</span>
-                <span className="font-mono text-fg font-semibold">
+              <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-3 text-[length:var(--con-fs-xs)]">
+                <span className="text-[color:var(--con-muted)]">Docker containers</span>
+                <span className="con-mono font-semibold">
                   {server?.resources?.filter((c) => { const s = c.status ?? ""; return (s.includes("running") || s.includes("healthy")) && !s.includes("unhealthy"); }).length ?? 0} Running
                 </span>
               </div>
             </div>
           </Card>
 
-          {/* ── 5. Chat Transcript Card (Full Width Span) ────────────────────── */}
-          <Card className="flex flex-col sm:col-span-2 rounded-2xl overflow-hidden border-line/40">
-            <div className="p-5 flex items-center justify-between border-b border-line/20">
-              <div className="flex items-center gap-2.5">
-                <FileText className="h-4 w-4 text-accent" />
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted">Latest Assistant Turns</h2>
-              </div>
-              <Link href="/admin/transcript" className="text-xs text-accent hover:underline flex items-center gap-0.5">
-                Transcripts <ArrowRight className="h-3 w-3" />
+          {/* ── 5. Chat Transcript (full-width span) ──────────────────────────── */}
+          <Card
+            title="Chat Transcript"
+            action={
+              <Link href="/admin/transcript" className="con-btn con-btn-ghost con-btn-sm">
+                Open →
               </Link>
-            </div>
-            <div className="p-5 flex-1 divide-y divide-line/20">
+            }
+            className="sm:col-span-2"
+          >
+            <div className="divide-y divide-[color:var(--con-line)]">
               {probeErrors.transcript && (
-                <div className="pb-3 text-xs text-warn flex items-center gap-1.5">
+                <div
+                  className="flex items-center gap-1.5 pb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
+                  title={typeof probeErrors.transcript === "number" ? `HTTP ${probeErrors.transcript}` : undefined}
+                >
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  Probe error ({probeErrors.transcript})
+                  {probeErrorLabel(probeErrors.transcript)}
                 </div>
               )}
               {transcript?.turns.filter((t) => t.role === "assistant").reverse().slice(0, 2).map((t, i) => (
-                <div key={t.id} className={`${i > 0 ? "pt-3.5" : ""} pb-3.5 flex flex-col gap-1.5`}>
-                  <div className="flex items-center justify-between text-xs">
-                    <Chip tone="accent" className="font-mono text-[10px] px-2 py-0.5">
+                <div key={t.id} className={`${i > 0 ? "pt-3.5" : ""} flex flex-col gap-1.5 pb-3.5`}>
+                  <div className="flex items-center justify-between text-[length:var(--con-fs-xs)]">
+                    <Chip tone="accent" className="con-mono">
                       {t.model ?? "Unknown Model"}
                     </Chip>
-                    <span className="text-[11px] text-faint font-mono">
+                    <span className="con-mono text-[color:var(--con-faint)]">
                       {new Date(t.createdAt).toLocaleString()}
                     </span>
                   </div>
-                  <p className="text-xs text-muted line-clamp-2 italic font-mono bg-surface-2/20 border border-line/10 p-2 rounded-xl">
+                  <p className="con-tile con-mono line-clamp-2 text-[length:var(--con-fs-xs)] italic text-[color:var(--con-muted)]">
                     {t.text}
                   </p>
                 </div>
               ))}
               {transcript?.turns.filter((t) => t.role === "assistant").length === 0 && (
-                <div className="text-center py-4 text-xs text-muted">No transcripts recorded yet.</div>
+                <div className="py-4 text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                  No transcripts recorded yet.
+                </div>
               )}
             </div>
           </Card>

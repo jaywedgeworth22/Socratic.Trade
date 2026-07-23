@@ -96,7 +96,7 @@ export function humanizeLlmError(raw: string | undefined | null, opts: { provide
   })();
 
   if (status === 401 || has("incorrect api key", "invalid_api_key", "invalid api key", "api key not valid", "unauthorized", "no auth credential", "authentication_error", "x-api-key"))
-    return `${provider} rejected the API key. Add or update the ${provider} key in Settings → Connections.`;
+    return `${provider} rejected the API key. Add or update the ${provider} key in Connections.`;
 
   if (status === 403 || has("permission", "do not have access", "does not have access", "not allowed", "forbidden", "unsupported_country", "region"))
     return `Your ${provider} key doesn't have access to this model or region. Pick a different model, or check your ${provider} plan.`;
@@ -173,7 +173,10 @@ export function humanizeLlmTransportError(
   opts: { provider?: string; model?: string; stepLabel?: string; timeoutMs?: number } = {}
 ): string {
   const provider = providerLabel(opts.provider);
-  const model = opts.model?.trim();
+  let model = opts.model?.trim();
+  if (model && model.includes("/")) {
+    model = model.split("/").pop();
+  }
   const modelPart = model ? ` ${model}` : "";
   const step = opts.stepLabel?.trim() || "LLM request";
   const raw = errorText(error);

@@ -13,6 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+let sendNotificationSpy: any;
+
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-av-quota-alert-cooldown-${randomUUID()}.db`)}`;
 });
@@ -22,10 +24,26 @@ beforeAll(() => {
 // alert's own chain of `await import(...)` + setInternalSetting has a chance to land before the
 // test asserts on it.
 async function flushBackgroundAlert(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // A fixed 50ms nap raced the fire-and-forget alert chain when the FULL suite saturates every
+  // core (observed 2026-07-18 in two consecutive land.sh gates, while solo/pairwise runs always
+  // passed): the sendNotification spy had fired but the cooldown SETTING write behind it had not
+  // landed yet, so the "7h later" enrich saw no stored cooldown and double-alerted. Keep the
+  // 50ms real-event-loop yield as the floor, then poll (bounded ~5s of REAL time — counted in
+  // iterations because Date is faked) until the stored cooldown key exists. Second/subsequent
+  // calls see the key immediately and exit after the original single yield, preserving the old
+  // timing for the no-new-alert assertions.
+  const { getDb } = await import("../src/lib/db");
+  for (let i = 0; i < 100; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const row = getDb()
+      .prepare("SELECT 1 FROM settings WHERE key LIKE 'healthAlertSent:%' LIMIT 1")
+      .get();
+    if (row) return;
+  }
 }
 
 describe("Alpha Vantage quota exhaustion -> alertConnectionFailure cooldown plumbing", () => {
+
   beforeEach(async () => {
     // Isolate from real-world pacing/circuit-breaker behavior — mirrors
     // test/alpha-vantage-key-pool.test.ts's "AlphaVantageEnrichmentProvider multi-key integration".
@@ -88,16 +106,15 @@ describe("Alpha Vantage quota exhaustion -> alertConnectionFailure cooldown plum
     const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const { AlphaVantageKeyPool } = await import("../src/lib/alpha-vantage-key-pool");
     const { getInternalSetting } = await import("../src/lib/db");
-    const notificationsMod = await import("../src/lib/notifications");
     clearEnrichmentCache();
-    const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
 
     const start = Date.parse("2026-07-15T05:31:00Z");
-    // Fake ONLY Date (not setTimeout et al.) so the fire-and-forget alert chain still gets to
-    // flush on the real event loop via flushBackgroundAlert() below.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(start);
     vi.stubGlobal("fetch", vi.fn());
+
+    const notificationsMod = await import("../src/lib/notifications");
+    const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
 
     const pool = new AlphaVantageKeyPool();
     pool.configure(["dead-key-2"]);
@@ -107,6 +124,7 @@ describe("Alpha Vantage quota exhaustion -> alertConnectionFailure cooldown plum
     await provider.enrich(["MSFT"]);
     await flushBackgroundAlert();
     expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
     const firstCooldown = getInternalSetting<string>("healthAlertSent:alpha-vantage:env");
 
     // 7h later — the 8:02 AM repeat from the real incident — still same cap-day, well before reset.

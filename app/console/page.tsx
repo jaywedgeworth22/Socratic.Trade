@@ -23,7 +23,7 @@ import type { MarketQuote, PendingProposal, SocraticDecisionCase, SocraticFramew
 import { EquityChart } from "./components/equity-chart";
 import { PositionsCard } from "./components/positions";
 import { deriveDayPnl, deriveMarkToMarket, deriveReality, deriveRiskUtilization, deriveSpend, deriveStateInfo, selectEquityWindow } from "./lib/derive";
-import { EM_DASH, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
+import { cx, EM_DASH, fmtDay, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
 import {
   decisionStatusLabel,
   evidenceKindLabel,
@@ -89,7 +89,7 @@ export default function ConsoleHomePage() {
             status={primaryDecision?.status ?? primaryTrace?.status}
           />
           <div className="mt-4 flex flex-wrap gap-2">
-            <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : "pos"} title={state.detail}>
+            <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"} title={state.detail}>
               {state.label}
             </Chip>
             <Chip tone={reality.tone} title={reality.clarification}>
@@ -169,7 +169,7 @@ export default function ConsoleHomePage() {
             }
             action={
               <Link href="/console/scan" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                Evidence board <ArrowRight size={12} />
+                Evidence <ArrowRight size={12} />
               </Link>
             }
           >
@@ -217,10 +217,23 @@ export default function ConsoleHomePage() {
                   )}
                 </div>
                 <div
-                  className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                  title={dayPnl ? `Baseline: ${fmtMoney(dayPnl.baselineEquity)} at ${fmtExact(dayPnl.baselineAt)}` : undefined}
+                  className={cx(
+                    "mt-0.5 text-[length:var(--con-fs-xs)]",
+                    dayPnl?.isStaleBaseline ? "font-semibold text-[color:var(--con-warn)]" : "text-[color:var(--con-faint)]"
+                  )}
+                  title={
+                    dayPnl
+                      ? dayPnl.isStaleBaseline
+                        ? `Baseline: ${fmtMoney(dayPnl.baselineEquity)} at ${fmtExact(dayPnl.baselineAt)}. No snapshot was persisted between then and today, so this compares across a real gap, not just "yesterday" — treat it as directional only.`
+                        : `Baseline: ${fmtMoney(dayPnl.baselineEquity)} at ${fmtExact(dayPnl.baselineAt)}`
+                      : undefined
+                  }
                 >
-                  {dayPnl ? "vs last snapshot before today" : "no prior-day snapshot yet"}
+                  {dayPnl
+                    ? dayPnl.isStaleBaseline
+                      ? `No recent baseline — comparing to ${fmtDay(dayPnl.baselineAt)}`
+                      : "vs last snapshot before today"
+                    : "no prior-day snapshot yet"}
                 </div>
               </div>
               <Stat label="Cash" value={fmtMoney(portfolio?.cash)} sub={`Buying power ${fmtMoney(portfolio?.buyingPower)}`} />
@@ -294,7 +307,7 @@ export default function ConsoleHomePage() {
                 href={hasFrameworkProposals ? "/console/strategy" : "/console/results#thesis-regime"}
                 className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]"
               >
-                {hasFrameworkProposals ? "Framework" : "Results"} <ArrowRight size={12} />
+                {hasFrameworkProposals ? "Strategy" : "Results"} <ArrowRight size={12} />
               </Link>
             }
           >
@@ -314,7 +327,7 @@ export default function ConsoleHomePage() {
               <div className="sm:hidden">
                 <RunOnceButton snapshot={snapshot} size="sm" />
               </div>
-              <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : "pos"}>{state.label}</Chip>
+              <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"}>{state.label}</Chip>
               {latestRow && (
                 <Chip tone={latestRow.status === "failed" ? "neg" : "muted"}>
                   latest {latestRow.status} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
@@ -322,7 +335,9 @@ export default function ConsoleHomePage() {
               )}
             </div>
             <div className="mt-3 border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              {state.state === "active" && nextRun ? (
+              {state.state === "active" && state.marketOpen === false ? (
+                <span title={state.detail}>{state.detail}</span>
+              ) : state.state === "active" && nextRun ? (
                 <span title={fmtExact(nextRun)}>Next scheduled run {timeUntil(nextRun)} · cadence {snapshot.policy.runCadenceMinutes} min</span>
               ) : state.state === "active" ? (
                 <span title={`Configured cadence: every ${snapshot.policy.runCadenceMinutes} minutes.`}>
@@ -510,7 +525,7 @@ function ThesisNarrative({
 
   return (
     <div className="mt-3 grid gap-3 text-[length:var(--con-fs-sm)] leading-relaxed">
-      <section className="rounded-lg border border-[color:var(--con-pos-border)] border-l-4 border-l-[color:var(--con-pos)] bg-[color:var(--con-pos-soft)] px-3 py-2.5">
+      <section className="rounded-control border border-[color:var(--con-pos-border)] border-l-4 border-l-[color:var(--con-pos)] bg-[color:var(--con-pos-soft)] px-3 py-2.5">
         <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-pos)]">
           Green Team proposal
         </div>
@@ -518,7 +533,7 @@ function ThesisNarrative({
       </section>
 
       {(parts.checks || sizing) && (
-        <section className="rounded-lg border border-[color:var(--con-line)] px-3 py-2.5">
+        <section className="rounded-control border border-[color:var(--con-line)] px-3 py-2.5">
           <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-faint)]">
             Deterministic sizing &amp; risk receipts
           </div>
@@ -551,13 +566,13 @@ function ThesisNarrative({
       )}
 
       {redTeam && (
-        <section className="rounded-lg border border-[color:var(--con-neg-border)] border-l-4 border-l-[color:var(--con-neg)] bg-[color:var(--con-neg-soft)] px-3 py-2.5">
+        <section className="rounded-control border border-[color:var(--con-neg-border)] border-l-4 border-l-[color:var(--con-neg)] bg-[color:var(--con-neg-soft)] px-3 py-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-neg)]">
               Red Team review
             </div>
             <Chip tone={!redTeam.available ? "warn" : redTeam.rejected ? "neg" : "pos"}>
-              {redTeamVerdictLabel(redTeam, decision?.policyDecision?.socraticOverride?.applied)}
+              {redTeamVerdictLabel(redTeam, decision?.policyDecision?.socraticOverride?.applied, status)}
             </Chip>
           </div>
           <p className="mt-1">{redTeam.reason}</p>
@@ -566,7 +581,7 @@ function ThesisNarrative({
 
       {outcome && (
         <section
-          className={`rounded-lg border px-3 py-2.5 ${
+          className={`rounded-control border px-3 py-2.5 ${
             outcome.tone === "pos"
               ? "border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)]"
               : outcome.tone === "neg"
@@ -1025,7 +1040,7 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
           </div>
           <p>{proposal.proposedChange}</p>
           {proposal.aiReview && (
-            <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
+            <div className="mt-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
               <div className="flex items-center gap-2 font-semibold">
                 <Brain size={13} /> AI recommends: {proposal.aiReview.verdict}
               </div>

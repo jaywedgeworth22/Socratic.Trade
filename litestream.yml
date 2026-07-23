@@ -14,7 +14,9 @@ dbs:
       - type: s3
         bucket: ${LITESTREAM_S3_BUCKET}
         path: trading-live/app.db
-        region: ${LITESTREAM_S3_REGION:-auto}
+        # Literal: litestream does its own ${VAR} substitution and does NOT support
+        # bash `:-` defaults — that form resolves to an EMPTY region. R2 wants "auto".
+        region: auto
         endpoint: ${LITESTREAM_S3_ENDPOINT}
         access-key-id: ${LITESTREAM_S3_ACCESS_KEY_ID}
         secret-access-key: ${LITESTREAM_S3_SECRET_ACCESS_KEY}

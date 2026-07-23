@@ -28,7 +28,23 @@ interface CapturedRequest {
   url: string;
   auth: string | null;
   rawBody: string;
-  body: { events: Array<Record<string, unknown>> };
+  body: {
+    schemaVersion: number;
+    producerId: string;
+    events: Array<Record<string, unknown>>;
+  };
+}
+
+function ack(received: number): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    schemaVersion: 2,
+    received,
+    persisted: received,
+    duplicates: 0,
+    pruned: 0,
+    rejected: 0,
+  }), { status: 202 });
 }
 
 function makeFetchStub(captured: CapturedRequest[]) {
@@ -41,7 +57,7 @@ function makeFetchStub(captured: CapturedRequest[]) {
       rawBody,
       body: JSON.parse(rawBody),
     });
-    return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+    return ack(JSON.parse(rawBody).events.length);
   }) as unknown as typeof fetch;
 }
 
@@ -64,6 +80,14 @@ describe("usage-monitor-push", () => {
     delete process.env.USAGE_MONITOR_BASE_URL;
     delete process.env.USAGE_INGEST_TOKEN;
     delete process.env.USAGE_MONITOR_ENV;
+    delete process.env.USAGE_MONITOR_BREAKER_THRESHOLD;
+    delete process.env.USAGE_MONITOR_BREAKER_BASE_MS;
+    delete process.env.USAGE_MONITOR_BREAKER_MAX_MS;
+    delete process.env.USAGE_MONITOR_QUEUE_MAX_EVENTS;
+    delete process.env.USAGE_MONITOR_QUEUE_TTL_MS;
+    delete process.env.USAGE_MONITOR_CALLVOLUME_MAX_KEYS;
+    delete process.env.USAGE_MONITOR_PUSH_TIMEOUT_MS;
+    delete process.env.USAGE_MONITOR_FLUSH_MS;
   });
 
   it("is a no-op when unconfigured (no network calls)", async () => {
@@ -83,7 +107,7 @@ describe("usage-monitor-push", () => {
     push.pushLlmUsage({
       sourceEventId: "llm-row-123",
       provider: "anthropic",
-      model: "claude-opus-4-8",
+      model: "anthropic/claude-opus-4-8",
       context: "strategy",
       userId: "local",
       keySource: "operator",
@@ -101,19 +125,23 @@ describe("usage-monitor-push", () => {
     const events = captured[0]!.body.events;
     expect(events).toHaveLength(1);
     const e = events[0]!;
-    expect(e.sourceApp).toBe("socratic-trade");
+    expect(captured[0]!.body.schemaVersion).toBe(2);
+    expect(captured[0]!.body.producerId).toBe("socratic-trade");
+    expect(e.sourceApp).toBeUndefined();
     expect(e.project).toBe("socratic-trade");
     expect(e.environment).toBe("test");
     expect(e.provider).toBe("anthropic");
+    expect(e.producerKeyRef).toBe("abcd");
+    expect(e.keyRef).toBeUndefined();
     expect(e.service).toBe("llm");
     expect(e.metricType).toBe("cost");
     expect(e.unit).toBe("token");
     expect(e.quantity).toBe(1000);
     expect(e.costUsd).toBe(0.03);
     expect(e.requests).toBe(1);
-    expect(e.idempotencyKey).toBe(expectedTelemetryKey("llm", "llm-row-123"));
+    expect(e.eventId).toBe(expectedTelemetryKey("llm", "llm-row-123"));
     expect(typeof e.occurredAt).toBe("string");
-    expect((e.metadata as Record<string, unknown>).model).toBe("claude-opus-4-8");
+    expect((e.metadata as Record<string, unknown>).model).toBe("anthropic/claude-opus-4-8");
   });
 
   it("pushes a RAG event and aggregates market-data call-volume in one flush", async () => {
@@ -132,14 +160,14 @@ describe("usage-monitor-push", () => {
     expect(rag).toBeDefined();
     expect(rag!.provider).toBe("voyage");
     expect(rag!.unit).toBe("token");
-    expect(rag!.idempotencyKey).toBe(expectedTelemetryKey("rag", "rag-row-123"));
+    expect(rag!.eventId).toBe(expectedTelemetryKey("rag", "rag-row-123"));
 
     const vol = events.find((e) => e.provider === "finnhub");
     expect(vol).toBeDefined();
     expect(vol!.metricType).toBe("usage");
     expect(vol!.unit).toBe("request");
     expect(vol!.requests).toBe(3);
-    expect(vol!.idempotencyKey).toMatch(
+    expect(vol!.eventId).toMatch(
       /^socratic-trade:provider-call-volume:/
     );
     expect((vol!.metadata as Record<string, unknown>).successes).toBe(2);
@@ -163,7 +191,7 @@ describe("usage-monitor-push", () => {
     // Two different credential lanes → two separate finnhub events, not one merged count.
     const finnhub = events.filter((e) => e.provider === "finnhub");
     expect(finnhub).toHaveLength(2);
-    const laneKeys = finnhub.map((event) => event.idempotencyKey);
+    const laneKeys = finnhub.map((event) => event.eventId);
     expect(laneKeys.every((key) => typeof key === "string")).toBe(true);
     expect(new Set(laneKeys).size).toBe(2);
     const userLane = finnhub.find((e) => (e.metadata as Record<string, unknown>).keySource === "user");
@@ -185,10 +213,10 @@ describe("usage-monitor-push", () => {
       });
       attempt += 1;
       if (attempt === 1) throw new Error("connection closed after request write");
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+      return ack(JSON.parse(rawBody).events.length);
     }) as unknown as typeof fetch);
     expect(() =>
-      recordLlmUsage({ provider: "openai", model: "gpt-4o-mini", context: "chat", userId: "local", keySource: "operator", promptTokens: 10, completionTokens: 5 })
+      recordLlmUsage({ provider: "openai", model: "openai/gpt-4o-mini", context: "chat", userId: "local", keySource: "operator", promptTokens: 10, completionTokens: 5 })
     ).not.toThrow();
     await expect(push.flushUsageMonitor()).resolves.toBeUndefined();
     expect(attempts).toHaveLength(1);
@@ -204,12 +232,36 @@ describe("usage-monitor-push", () => {
     expect(getLlmUsageSummary().length).toBeGreaterThan(0);
   });
 
+  it("retries the exact live batch when a valid v2 ACK under-reports acceptance", async () => {
+    const attempts: string[] = [];
+    push.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
+      const rawBody = String(init?.body ?? "{}");
+      attempts.push(rawBody);
+      const sent = (JSON.parse(rawBody) as { events: unknown[] }).events.length;
+      return attempts.length === 1 ? ack(sent - 1) : ack(sent);
+    }) as unknown as typeof fetch);
+    push.pushLlmUsage({
+      sourceEventId: "partial-live-ack",
+      provider: "openai",
+      userId: "local",
+      keySource: "operator",
+      totalTokens: 1,
+    });
+
+    await push.flushUsageMonitor();
+    expect(attempts).toHaveLength(1);
+    await push.flushUsageMonitor();
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toBe(attempts[0]);
+  });
+
   it("uses one durable LLM ledger identity and timestamp for persistence and delivery", async () => {
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured));
     recordLlmUsage({
       provider: "openai",
-      model: "gpt-4o-mini",
+      model: "openai/gpt-4o-mini",
       context: "telemetry-id-test",
       userId: "local",
       keySource: "operator",
@@ -224,7 +276,7 @@ describe("usage-monitor-push", () => {
       )
       .get("telemetry-id-test") as { id: string; created_at: string };
     const event = captured[0]!.body.events[0]!;
-    expect(event.idempotencyKey).toBe(expectedTelemetryKey("llm", row.id));
+    expect(event.eventId).toBe(expectedTelemetryKey("llm", row.id));
     expect(event.occurredAt).toBe(row.created_at);
   });
 
@@ -247,7 +299,7 @@ describe("usage-monitor-push", () => {
       )
       .get("telemetry-rag-user") as { id: string; created_at: string };
     const event = captured[0]!.body.events[0]!;
-    expect(event.idempotencyKey).toBe(expectedTelemetryKey("rag", row.id));
+    expect(event.eventId).toBe(expectedTelemetryKey("rag", row.id));
     expect(event.occurredAt).toBe(row.created_at);
   });
 
@@ -272,7 +324,7 @@ describe("usage-monitor-push", () => {
     const events = captured[0]!.body.events;
     expect(events).toHaveLength(2);
     expect(events[1]).toEqual(events[0]);
-    expect(events[0]!.idempotencyKey).toBe(
+    expect(events[0]!.eventId).toBe(
       expectedTelemetryKey("llm", entry.sourceEventId)
     );
     expect(events[0]!.occurredAt).toBe(entry.occurredAt);
@@ -295,7 +347,7 @@ describe("usage-monitor-push", () => {
     push.pushLlmUsage({ ...base, sourceEventId: "" });
     await push.flushUsageMonitor();
 
-    const keys = captured[0]!.body.events.map((event) => String(event.idempotencyKey));
+    const keys = captured[0]!.body.events.map((event) => String(event.eventId));
     expect(keys[0]).toBe(expectedTelemetryKey("llm", oversized));
     expect(keys.every((key) => key.length <= 200)).toBe(true);
     expect(keys.every((key) => /^socratic-trade:llm:[a-f0-9]{64}$/.test(key))).toBe(true);
@@ -335,7 +387,7 @@ describe("usage-monitor-push", () => {
 
     await reloaded.flushUsageMonitor();
     expect(captured).toHaveLength(1);
-    expect(captured[0]!.body.events[0]!.idempotencyKey).toBe(
+    expect(captured[0]!.body.events[0]!.eventId).toBe(
       expectedTelemetryKey("llm", "hmr-buffered-event")
     );
   });
@@ -350,10 +402,375 @@ describe("usage-monitor-push", () => {
     await push.flushUsageMonitor();
 
     expect(captured).toHaveLength(2);
-    const firstKey = captured[0]!.body.events[0]!.idempotencyKey;
-    const secondKey = captured[1]!.body.events[0]!.idempotencyKey;
+    const firstKey = captured[0]!.body.events[0]!.eventId;
+    const secondKey = captured[1]!.body.events[0]!.eventId;
     expect(firstKey).toMatch(/^socratic-trade:provider-call-volume:/);
     expect(secondKey).toMatch(/^socratic-trade:provider-call-volume:/);
     expect(secondKey).not.toBe(firstKey);
+  });
+
+  describe("circuit breaker (dead-receiver protection)", () => {
+    it("opens after N consecutive failures and fully suppresses further attempts (no network call)", async () => {
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "2";
+      process.env.USAGE_MONITOR_BREAKER_BASE_MS = "60000";
+      process.env.USAGE_MONITOR_BREAKER_MAX_MS = "60000";
+      let attempts = 0;
+      push.__setUsageMonitorFetch((async () => {
+        attempts += 1;
+        throw new Error("connection refused");
+      }) as unknown as typeof fetch);
+
+      push.pushLlmUsage({ sourceEventId: "breaker-1", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      await push.flushUsageMonitor(); // failure #1 — below threshold, breaker stays closed
+      expect(attempts).toBe(1);
+      expect(push.__usageMonitorDebugState().breaker.openUntil).toBe(0);
+
+      await push.flushUsageMonitor(); // failure #2 — trips the breaker
+      expect(attempts).toBe(2);
+      expect(push.__usageMonitorDebugState().breaker.openUntil).toBeGreaterThan(Date.now());
+
+      // A third flush must not touch the network at all while the circuit is open.
+      push.pushLlmUsage({ sourceEventId: "breaker-2", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      await push.flushUsageMonitor();
+      expect(attempts).toBe(2);
+    });
+
+    it("recovers via a single half-open probe once the backoff window elapses", async () => {
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+      process.env.USAGE_MONITOR_BREAKER_BASE_MS = "40";
+      process.env.USAGE_MONITOR_BREAKER_MAX_MS = "40";
+      let attempts = 0;
+      push.__setUsageMonitorFetch((async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("connection refused");
+        return ack(1);
+      }) as unknown as typeof fetch);
+
+      push.pushLlmUsage({ sourceEventId: "probe-1", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      await push.flushUsageMonitor(); // trips the breaker immediately (threshold = 1)
+      expect(attempts).toBe(1);
+      expect(push.__usageMonitorDebugState().breaker.openUntil).toBeGreaterThan(Date.now());
+
+      // Still inside the open window: suppressed, no second network call.
+      await push.flushUsageMonitor();
+      expect(attempts).toBe(1);
+
+      // Wait out the (short, test-only) backoff window, then the next attempt is the half-open probe.
+      await new Promise((resolve) => setTimeout(resolve, 70));
+      await push.flushUsageMonitor();
+      expect(attempts).toBe(2);
+      const debug = push.__usageMonitorDebugState();
+      expect(debug.breaker.openUntil).toBe(0);
+      expect(debug.breaker.consecutiveFailures).toBe(0);
+    });
+
+    it("never blocks the user-facing ledger call sites, even while the circuit is open", async () => {
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+      push.__setUsageMonitorFetch((async () => {
+        throw new Error("connection refused");
+      }) as unknown as typeof fetch);
+      push.pushLlmUsage({ sourceEventId: "block-check-1", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      await push.flushUsageMonitor(); // trips the breaker
+      expect(push.__usageMonitorDebugState().breaker.openUntil).toBeGreaterThan(Date.now());
+
+      // Swap in a fetch that would hang forever if it were ever called — proves the breaker gates
+      // BEFORE any network I/O, and proves the sync call sites never await it either way.
+      let fetchCalled = false;
+      push.__setUsageMonitorFetch((() => {
+        fetchCalled = true;
+        return new Promise<Response>(() => {});
+      }) as unknown as typeof fetch);
+
+      const start = Date.now();
+      expect(() =>
+        push.pushLlmUsage({ provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 })
+      ).not.toThrow();
+      expect(() => push.recordProviderCall("finnhub", { ok: true })).not.toThrow();
+      expect(Date.now() - start).toBeLessThan(20);
+
+      await push.flushUsageMonitor();
+      expect(fetchCalled).toBe(false);
+    });
+  });
+
+  describe("bounded in-memory buffer", () => {
+    it("caps total buffered events so a sustained outage can't grow memory without limit", () => {
+      process.env.USAGE_MONITOR_QUEUE_MAX_EVENTS = "5";
+      for (let i = 0; i < 20; i += 1) {
+        push.pushLlmUsage({
+          sourceEventId: `bulk-${i}`,
+          provider: "openai",
+          userId: "local",
+          keySource: "operator",
+          totalTokens: 1,
+        });
+      }
+      expect(push.__usageMonitorDebugState().queueDepth).toBeLessThanOrEqual(5);
+    });
+
+    it("TTL-expires events that have sat unsent past the configured window", async () => {
+      process.env.USAGE_MONITOR_QUEUE_TTL_MS = "50";
+      push.pushLlmUsage({ sourceEventId: "ttl-old", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(1);
+
+      await new Promise((resolve) => setTimeout(resolve, 90));
+      push.pushLlmUsage({ sourceEventId: "ttl-fresh", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(1);
+    });
+
+    it("TTLs by buffer residency time, not by the event's own business occurredAt", async () => {
+      const captured: CapturedRequest[] = [];
+      push.__setUsageMonitorFetch(makeFetchStub(captured));
+      process.env.USAGE_MONITOR_QUEUE_TTL_MS = "1000";
+      push.pushLlmUsage({
+        sourceEventId: "ancient-occurred-at",
+        occurredAt: "2020-01-01T00:00:00.000Z",
+        provider: "openai",
+        userId: "local",
+        keySource: "operator",
+        totalTokens: 1,
+      });
+      await push.flushUsageMonitor();
+      expect(captured).toHaveLength(1);
+      expect(captured[0]!.body.events[0]!.occurredAt).toBe("2020-01-01T00:00:00.000Z");
+    });
+
+    it("drops a TTL-expired event at flush entry even when no new telemetry arrives", async () => {
+      const captured: CapturedRequest[] = [];
+      push.__setUsageMonitorFetch(makeFetchStub(captured));
+      process.env.USAGE_MONITOR_QUEUE_TTL_MS = "50";
+      push.pushLlmUsage({ sourceEventId: "flush-ttl", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(1);
+
+      // No further pushes — the only trim opportunity is flush entry itself.
+      await new Promise((resolve) => setTimeout(resolve, 90));
+      await push.flushUsageMonitor();
+      expect(captured).toHaveLength(0);
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(0);
+    });
+
+    it("caps the callVolume aggregation map by distinct lane count", () => {
+      process.env.USAGE_MONITOR_CALLVOLUME_MAX_KEYS = "3";
+      // 10 distinct user lanes for the same provider → 10 distinct callVolume keys without a cap.
+      for (let i = 0; i < 10; i += 1) {
+        push.recordProviderCall("finnhub", { ok: true, keySource: "user", userId: `u_${i}` });
+      }
+      expect(push.__usageMonitorDebugState().callVolumeKeys).toBeLessThanOrEqual(3);
+    });
+  });
+
+  describe("live-push per-attempt timeout (half-up receiver)", () => {
+    it("times out a hung send, records a failure, and feeds the breaker", async () => {
+      process.env.USAGE_MONITOR_PUSH_TIMEOUT_MS = "40";
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+      let abortObserved = false;
+      // A monitor that accepts the connection but never responds — resolves only if aborted.
+      push.__setUsageMonitorFetch(((_url: unknown, init?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (signal) {
+            signal.addEventListener("abort", () => {
+              abortObserved = true;
+              reject(new DOMException("The operation was aborted", "AbortError"));
+            });
+          }
+        });
+      }) as unknown as typeof fetch);
+
+      push.pushLlmUsage({ sourceEventId: "hung-1", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      const started = Date.now();
+      await push.flushUsageMonitor();
+      // Bounded: the flush returned near the timeout, not hung indefinitely.
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(abortObserved).toBe(true);
+      const debug = push.__usageMonitorDebugState();
+      expect(debug.breaker.consecutiveFailures).toBe(1);
+      expect(debug.breaker.openUntil).toBeGreaterThan(Date.now());
+    });
+
+    it("single-flights the send: a hung receiver never accumulates more than one concurrent POST", async () => {
+      process.env.USAGE_MONITOR_FLUSH_MS = "10"; // fast re-arm cadence, so multiple flushes are attempted
+      process.env.USAGE_MONITOR_PUSH_TIMEOUT_MS = "80"; // each hung send aborts after 80ms
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1"; // one recorded failure opens the breaker
+
+      let inFlight = 0;
+      let maxInFlight = 0;
+      let totalStarts = 0;
+      // A receiver that accepts the connection but never responds — the request only settles on abort.
+      push.__setUsageMonitorFetch(((_url: unknown, init?: RequestInit) => {
+        totalStarts += 1;
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (signal) {
+            signal.addEventListener("abort", () => {
+              inFlight -= 1;
+              reject(new DOMException("The operation was aborted", "AbortError"));
+            });
+          }
+        });
+      }) as unknown as typeof fetch);
+
+      // Enqueue several events spread ACROSS the flush cadence while the first send hangs. Without
+      // single-flight, each would schedule its own concurrent live send → a burst of hanging POSTs.
+      for (let i = 0; i < 5; i += 1) {
+        push.pushLlmUsage({ sourceEventId: `burst-${i}`, provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+        await new Promise((r) => setTimeout(r, 15)); // longer than the 10ms cadence
+      }
+      // Let the first hung send abort (80ms) and the breaker open.
+      await new Promise((r) => setTimeout(r, 150));
+
+      // At no point were two POSTs outstanding at once, even though 5 flushes were attempted.
+      expect(maxInFlight).toBe(1);
+      expect(push.__usageMonitorDebugState().breaker.openUntil).toBeGreaterThan(Date.now());
+
+      // With the breaker now open, a further flush makes NO new network attempt (suppressed before fetch).
+      const startsBeforeOpenFlush = totalStarts;
+      await push.flushUsageMonitor();
+      expect(totalStarts).toBe(startsBeforeOpenFlush);
+    });
+  });
+
+  describe("HMR queue shape migration", () => {
+    it("coerces a retained pre-v4 raw-event queue into the wrapper shape on reload", async () => {
+      const captured: CapturedRequest[] = [];
+      push.__setUsageMonitorFetch(makeFetchStub(captured));
+
+      // Simulate a pre-v4 module having left a raw UsageMonitorEvent[] (no receivedAt wrapper) plus
+      // a pendingQueue entry without receivedAt, tagged with the old version so reload sees it stale.
+      const shared = globalThis as unknown as {
+        __usageMonitorPush?: {
+          version: number;
+          queue: unknown[];
+          pendingQueue: unknown[];
+          flushTimer: ReturnType<typeof setTimeout> | null;
+        };
+      };
+      const st = shared.__usageMonitorPush!;
+      if (st.flushTimer) clearTimeout(st.flushTimer);
+      st.flushTimer = null;
+      st.version = 3;
+      // Old-shape queue entry = a RAW event object (no `.event`, no `.receivedAt`).
+      st.queue = [{
+        sourceApp: "socratic-trade",
+        environment: "test",
+        provider: "legacy-hmr",
+        service: "llm",
+        project: "socratic-trade",
+        metricType: "usage",
+        unit: "token",
+        requests: 1,
+        confidence: "estimated",
+        occurredAt: "2026-07-11T00:00:00.000Z",
+        idempotencyKey: "socratic-trade:llm:legacyhmr",
+      }];
+      // Old-shape pendingQueue entry = { event, kind, sourceId } with NO receivedAt.
+      st.pendingQueue = [{
+        kind: "llm",
+        sourceId: "legacy-pending",
+        event: {
+          sourceApp: "socratic-trade",
+          environment: "test",
+          provider: "legacy-pending-provider",
+          service: "llm",
+          project: "socratic-trade",
+          metricType: "usage",
+          unit: "token",
+          requests: 1,
+          confidence: "estimated",
+          occurredAt: "2026-07-11T00:00:00.000Z",
+        },
+      }];
+
+      vi.resetModules();
+      const reloaded = await import("../src/lib/usage-monitor-push");
+
+      // The migrated queues must flush cleanly — no shape crash, both entries delivered.
+      await reloaded.flushUsageMonitor();
+      const providers = captured.flatMap((r) => r.body.events).map((e) => e.provider);
+      expect(providers).toContain("legacy-hmr");
+      expect(providers).toContain("legacy-pending-provider");
+    });
+  });
+
+  describe("poison-event isolation (local validation error is NOT a receiver outage)", () => {
+    it("rejects NaN/Infinity broker balances at admission so they never enter the buffer", () => {
+      push.pushBrokerBalance({
+        provider: "alpaca",
+        userId: "local",
+        accountNumber: "1234567890",
+        cash: Number.NaN,
+        buyingPower: Number.POSITIVE_INFINITY,
+        equity: Number.NEGATIVE_INFINITY,
+      });
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(0);
+
+      // A finite reading in the same shape is still admitted; only the non-finite fields are dropped.
+      push.pushBrokerBalance({
+        provider: "alpaca",
+        userId: "local",
+        accountNumber: "1234567890",
+        cash: Number.NaN,
+        equity: 1000,
+      });
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(1);
+    });
+
+    it("discards a schema-invalid event at flush WITHOUT tripping the breaker; valid events still send", async () => {
+      const captured: CapturedRequest[] = [];
+      push.__setUsageMonitorFetch(makeFetchStub(captured));
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+
+      // A valid event through the normal path...
+      push.pushLlmUsage({ sourceEventId: "valid-alongside-poison", provider: "openai", userId: "local", keySource: "operator", totalTokens: 5, costUsd: 0.01 });
+      // ...plus a poison event injected straight into the buffer (bypassing admission guards) to
+      // simulate a NaN quantity that slipped past some producer. client.send would reject the whole
+      // batch BEFORE any fetch, so counting it as a delivery failure would falsely trip the breaker.
+      const shared = (globalThis as unknown as {
+        __usageMonitorPush?: { pendingQueue: Array<Record<string, unknown>> };
+      }).__usageMonitorPush!;
+      shared.pendingQueue.push({
+        kind: "poison",
+        sourceId: "poison-1",
+        receivedAt: Date.now(),
+        event: {
+          sourceApp: "socratic-trade",
+          environment: "test",
+          provider: "poison-provider",
+          service: "broker",
+          project: "socratic-trade",
+          metricType: "balance",
+          quantity: Number.NaN, // schema .finite() rejects this
+          unit: "usd",
+          confidence: "actual",
+          occurredAt: "2026-07-11T00:00:00.000Z",
+          idempotencyKey: "socratic-trade:poison:poison-1",
+        },
+      });
+
+      await push.flushUsageMonitor();
+
+      const sentProviders = captured.flatMap((r) => r.body.events).map((e) => e.provider);
+      expect(sentProviders).toContain("openai"); // the valid event was delivered
+      expect(sentProviders).not.toContain("poison-provider"); // poison never sent
+      const debug = push.__usageMonitorDebugState();
+      expect(debug.breaker.consecutiveFailures).toBe(0); // breaker untouched by the local bad data
+      expect(debug.breaker.openUntil).toBe(0);
+      expect(debug.queueDepth).toBe(0); // poison quarantined out of the buffer, not re-queued
+    });
+
+    it("still trips the breaker on a genuine receiver failure (delivery error, not validation)", async () => {
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+      push.__setUsageMonitorFetch((async () => {
+        throw new Error("ECONNREFUSED");
+      }) as unknown as typeof fetch);
+      // A fully valid event whose SEND fails at the network layer.
+      push.pushLlmUsage({ sourceEventId: "genuine-fail", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      await push.flushUsageMonitor();
+      const debug = push.__usageMonitorDebugState();
+      expect(debug.breaker.consecutiveFailures).toBe(1);
+      expect(debug.breaker.openUntil).toBeGreaterThan(Date.now());
+    });
   });
 });

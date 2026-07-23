@@ -241,13 +241,13 @@ export const SCAN_COLUMNS: ScanColumn[] = [
         <div className="flex flex-col">
           <SignedText value={q.senateTrades}>{q.senateTrades > 0 ? `+${q.senateTrades}` : String(q.senateTrades)}</SignedText>
           {q.congressCompositeScore !== undefined && q.congressCompositeScore > 0 && (
-            <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+            <span className="text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)] whitespace-nowrap">
               Score: {q.congressCompositeSignedScore ?? q.congressCompositeScore}
             </span>
           )}
         </div>
       ) : q.congressCompositeScore !== undefined && q.congressCompositeScore > 0 ? (
-        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+        <span className="text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)] whitespace-nowrap">
           {q.congressCompositeDirection === "SELL" ? "SELL" : "BUY"} · {q.congressCompositeSignedScore ?? q.congressCompositeScore}
         </span>
       ) : (
