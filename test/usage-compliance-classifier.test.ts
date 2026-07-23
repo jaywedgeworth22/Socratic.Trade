@@ -383,7 +383,7 @@ describe("WS1 gap #2: query-deconstruct meters its LLM call + enriches the OpenR
 
   it("records usage with the OpenRouter generation id and sends a flat-trace-enriched body", async () => {
     const { upsertUserApiKey } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "sk-test-deconstruct");
+    upsertUserApiKey("local", "openrouter", "sk-test-deconstruct");
 
     const monitorCaptured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeMonitorFetchStub(monitorCaptured));

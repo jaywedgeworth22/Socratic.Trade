@@ -51,57 +51,55 @@ const MISTRAL_MEDIUM_ADVICE =
   "per call, and one of two benchmarked calls exceeded even the widened reasoning timeout.";
 
 export const MODEL_REASONING_RECOMMENDATIONS: Record<string, ModelReasoningRecommendation> = {
-  // GPT-5.6: Terra is the default Green/Coach balance; Sol earns deeper compute for adversarial and
-  // learning reviews; Luna stays deliberately lean for high-volume work.
+  // GPT-5.6 / latest OpenAI
   "gpt-5.6": {
     effort: "medium",
     roleEfforts: { red: "high", review: "high", chat: "medium" },
-    advice: "Sol: Medium for Green/Coach; High for Red Team or one-off strategy/learning review. XHigh/Max are available for deliberate manual deep dives."
+    advice: "Sol: Medium for Green/Coach; High for Red Team or one-off strategy/learning review."
   },
-  "gpt-5.6-sol": {
+  "gpt-sol-latest": {
     effort: "medium",
     roleEfforts: { red: "high", review: "high", chat: "medium" },
-    advice: "Sol: Medium for Green/Coach; High for Red Team or one-off strategy/learning review. XHigh/Max are available for deliberate manual deep dives."
+    advice: "Sol: Medium for Green/Coach; High for Red Team or one-off strategy/learning review."
   },
-  "gpt-5.6-terra": {
+  "gpt-terra-latest": {
     effort: "medium",
     roleEfforts: { red: "high", review: "high", chat: "medium" },
-    advice: "Terra: Medium is the recommended Green Team and Coach balance. High is advisable for Red Team and AI strategy review when the extra latency is acceptable."
+    advice: "Terra: Medium is recommended for Green Team and Coach balance."
   },
-  "gpt-5.6-luna": {
+  "gpt-luna-latest": {
     effort: "medium",
     roleEfforts: { red: "medium", review: "medium", chat: "low" },
-    advice: "Luna: Low for chat/high-volume synthesis; Medium for Green. Use Terra or Sol for the Red Team and consequential strategy review when possible."
+    advice: "Luna: Low for chat/high-volume synthesis; Medium for Green."
   },
-  // Retained lower-cost OpenAI models. Nano is best for mechanical work; Mini remains the cheapest
-  // proven full decision option in this catalog.
-  "gpt-5.4-nano": { effort: "low", advice: "Nano at Low: best for extraction, classification, and cheap chat; not advisable as the sole Green or Red Team decision model." },
-  "gpt-5.4-mini": {
+  "gpt-nano-latest": { effort: "low", advice: "Nano at Low: best for extraction and cheap chat." },
+  "gpt-mini-latest": {
     effort: "medium",
     roleEfforts: { chat: "low", red: "high", review: "high" },
-    advice: "Mini: Low for Coach/chat, Medium for a low-cost Green Team, High if deliberately used for Red Team or strategy review. Keep it when cost matters; Luna is newer but not cheaper."
+    advice: "Mini: Low for Coach/chat, Medium for a low-cost Green Team."
   },
-  "gpt-5.4": { effort: "medium", roleEfforts: { red: "high", review: "high" }, advice: "Legacy full GPT-5.4: Medium for Green, High for review. Terra is the same list price and the preferable curated successor." },
-  "gpt-5.5": { effort: "medium", advice: GPT_55_INTERACTIVE_HIGH_ADVICE },
-  // Anthropic adaptive thinking (low..max) — medium balances depth vs the run-lock latency.
-  "claude-haiku-4-5": { effort: "medium" },
-  "claude-sonnet-5": { effort: "medium" },
-  "claude-opus-4-8": { effort: "medium" },
-  "claude-fable-5": { effort: "medium" },
-  // xAI (none/low/medium/high).
-  "grok-4.3": { effort: "medium" },
-  // Gemini thinking (minimal..high; selected Flash models also allow off).
-  "gemini-3.1-flash-lite": { effort: "medium" },
-  "gemini-3.5-flash": { effort: "medium" },
-  "gemini-3.1-pro-preview": { effort: "medium" },
-  // Opt-in thinking providers: sub-high resolves to thinking OFF by design (llm-request.ts) —
-  // recommend the fast tier explicitly so rotation and the UI say what actually runs.
-  "deepseek-v4-flash": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
-  "deepseek-v4-pro": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
-  "mistral-medium-3-5": { effort: "none", advice: MISTRAL_MEDIUM_ADVICE }
-  // mistral-small-2603 / grok-build-0.1: no reasoning capability at all
-  // (reasoningCapabilityForModel returns undefined) — no entry on purpose; the unknown-model
-  // default is harmless because the call-time clamp sends no reasoning params for them.
+  "gpt-4o-latest": { effort: "medium" },
+  // Anthropic
+  "claude-haiku-latest": { effort: "medium" },
+  "claude-sonnet-latest": { effort: "medium" },
+  "claude-opus-latest": { effort: "medium" },
+  "claude-fable-latest": { effort: "medium" },
+  // xAI
+  "grok-latest": { effort: "medium" },
+  "grok-build-latest": { effort: "medium" },
+  // Gemini
+  "gemini-flash-lite-latest": { effort: "medium" },
+  "gemini-flash-latest": { effort: "medium" },
+  "gemini-pro-latest": { effort: "medium" },
+  // DeepSeek
+  "deepseek-flash-latest": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
+  "deepseek-pro-latest": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
+  "deepseek-r1-latest": { effort: "high" },
+  // Mistral
+  "mistral-small-latest": { effort: "none" },
+  "mistral-medium-latest": { effort: "none", advice: MISTRAL_MEDIUM_ADVICE },
+  // Meta
+  "llama-70b-latest": { effort: "medium" }
 };
 
 function lookup(model: string | undefined): ModelReasoningRecommendation | undefined {

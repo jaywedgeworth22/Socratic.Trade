@@ -314,12 +314,14 @@ export class SecIngestWorker {
       const ftsChunks = chunksJson
         ? JSON.parse(chunksJson)
         : chunkDocument(doc, { maxTokens: 400, overlapRatio: 0.15 });
+      // Match storeDocument's doc_id / chunk_occurrences.accession (vectorDocId), not the bare
+      // SEC accession, so corpus-wide lexical joins succeed for worker-ingested filings.
       for (const chunk of ftsChunks) {
         insertDocumentChunkFts(
           chunk.content_hash,
           task.symbol,
           "sec-edgar",
-          task.accession,
+          vectorDocId,
           chunk.text
         );
       }
