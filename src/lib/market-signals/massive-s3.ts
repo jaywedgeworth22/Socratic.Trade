@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import zlib from "zlib";
 import { resolveApiKey } from "../db";
+import type { OHLCBar } from "../indicators";
 
 /**
  * Massive S3 "flat files" (files.massive.com, Polygon-style bucket) — bulk historical market
@@ -38,7 +39,9 @@ function cfg(userId?: string) {
   return { accessKey, secret, host, bucket, region };
 }
 
-const sha256hex = (s: crypto.BinaryLike): string => crypto.createHash("sha256").update(s).digest("hex");
+// `s` is narrowed to string (both callers pass strings): @types/node 26's Hash.update()
+// no longer accepts the full BinaryLike (ArrayBuffer is excluded).
+const sha256hex = (s: string): string => crypto.createHash("sha256").update(s).digest("hex");
 const hmac = (key: crypto.BinaryLike, s: string): Buffer => crypto.createHmac("sha256", key).update(s).digest();
 
 /** GET a single S3 object via SigV4 (path-style). Returns the raw bytes, or null on any failure. */
@@ -131,4 +134,82 @@ export async function fetchGroupedDailyBars(date: string, asset: keyof typeof KE
   } catch {
     return null;
   }
+}
+
+// ── Bulk range backfill (flat files) ────────────────────────────────────────
+// One flat file = a whole day of the market. To backfill a BROAD universe efficiently we download one
+// file per business day in a range (concurrently, bounded) and pivot into per-ticker series — far fewer
+// requests than N per-ticker REST calls when the universe is large. For a small universe (~hundreds)
+// per-ticker is comparable; this is the scalable path for "all indexes / market-cap-floored" backfills.
+
+/** Inclusive YYYY-MM-DD weekdays from `from`..`to` (skips Sat/Sun; market holidays 404 and are skipped at fetch). Pure. */
+export function businessDaysBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  const start = new Date(`${from}T00:00:00Z`).getTime();
+  const end = new Date(`${to}T00:00:00Z`).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return out;
+  for (let t = start; t <= end; t += 86_400_000) {
+    const dow = new Date(t).getUTCDay();
+    if (dow === 0 || dow === 6) continue; // Sun/Sat
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/** Pivot per-day grouped bars into per-ticker ascending OHLC series (days must be passed ascending). Pure. */
+export function pivotDayAggsToSeries(
+  days: Array<{ date: string; bars: FlatFileBar[] }>,
+  tickers?: Set<string>
+): Map<string, OHLCBar[]> {
+  const series = new Map<string, OHLCBar[]>();
+  for (const { date, bars } of days) {
+    for (const b of bars) {
+      const t = b.ticker?.toUpperCase();
+      if (!t || (tickers && !tickers.has(t))) continue;
+      const bar: OHLCBar = { time: date, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
+      const arr = series.get(t);
+      if (arr) arr.push(bar);
+      else series.set(t, [bar]);
+    }
+  }
+  return series;
+}
+
+/**
+ * Download the day-aggregate flat files across [from, to] (YYYY-MM-DD) and return per-ticker ascending
+ * OHLC series. Filters to `tickers` (recommended — bounds memory to universe×days). Bounded by `maxFiles`
+ * (keeps the most-recent days when exceeded) and fetched with limited concurrency. Returns an empty map
+ * when flat files are unavailable/ungranted (callers fall back to the per-ticker source).
+ */
+export async function fetchGroupedDailyBarsRange(
+  from: string,
+  to: string,
+  opts: { tickers?: Iterable<string>; userId?: string; maxFiles?: number; concurrency?: number } = {}
+): Promise<Map<string, OHLCBar[]>> {
+  const tickerSet = opts.tickers ? new Set(Array.from(opts.tickers, (s) => s.toUpperCase())) : undefined;
+  const allDays = businessDaysBetween(from, to);
+  const maxFiles = Math.max(1, opts.maxFiles ?? 2000);
+  const days = allDays.length > maxFiles ? allDays.slice(-maxFiles) : allDays; // most-recent window if over cap
+  const concurrency = Math.max(1, Math.min(opts.concurrency ?? 6, 12));
+
+  const collected: Array<{ date: string; bars: FlatFileBar[] }> = [];
+  let idx = 0;
+  async function worker(): Promise<void> {
+    while (idx < days.length) {
+      const date = days[idx++];
+      try {
+        const bars = await fetchGroupedDailyBars(date, "stocks", opts.userId);
+        if (!bars || bars.length === 0) continue;
+        // Filter to the universe at fetch time so memory stays bounded to universe×days, not market×days.
+        const kept = tickerSet ? bars.filter((b) => b.ticker && tickerSet.has(b.ticker.toUpperCase())) : bars;
+        if (kept.length) collected.push({ date, bars: kept });
+      } catch {
+        // missing/holiday/failed day → skip (never fabricate)
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  // Concurrency means collected is unordered — sort ascending by date before pivoting so series are ordered.
+  collected.sort((a, b) => a.date.localeCompare(b.date));
+  return pivotDayAggsToSeries(collected, tickerSet);
 }

@@ -37,10 +37,13 @@ still forces keyed data to `shared` for all (operator escape hatch).
 ## Surfaces
 - `GET /api/consent` → status + `needsConsent`. `POST /api/consent {accepted}` → record the choice.
 - A blocking consent modal on the dashboard gates first use; can be revisited in Settings.
+  The client now fails closed: if consent status cannot be loaded or a consent write fails, the
+  modal/settings control stays locked and the app does not silently proceed as opted in.
 
 ## Status / follow-ups
 - **Implemented:** consent record + API + the `pool` tier wired into the OHLC/history path
-  (`history.ts`) + the dashboard consent gate.
+  (`history.ts`) + the dashboard consent gate + fail-closed client behavior when consent
+  GET/POST fails.
 - **Finding (important):** the enrichment cache in `data-providers.ts` (Finnhub/FMP/Alpha Vantage/
   Yahoo/Alpaca-news/Robinhood-fundamentals) is keyed by `provider:symbol` with NO user scope — so a
   user's key-pulled fundamentals/news/quotes are **already pooled globally across all users, today,

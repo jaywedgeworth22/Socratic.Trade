@@ -15,7 +15,7 @@ LARGELY ALREADY DONE — the functional per-user path is complete; only three le
 - `reflection_summary` is stored via `setUserSetting(userId, "reflection_summary", ...)` (post-mortem.ts:151) and read via `getUserSetting(input.userId, ...)` (strategy.ts:926) — per-user.
 - All API routes already call `resolveRequestUserId(request)` and pass userId downstream: policy/route.ts:13, profiles/route.ts:8, profiles/[id]/route.ts:9, profiles/[id]/activate/route.ts:10, strategy/tune/route.ts:9, strategy/enable/route.ts:9, strategy/pause/route.ts:8.
 - All lib callers already accept userId: strategy.ts:90, strategy-tuning.ts:122, red-team.ts:24, post-mortem.ts:59, scheduler.ts:47/118, triggers.ts:114/151, alerts.ts:68, notifications.ts:15, dashboard.ts:37/151, fills.ts:17, performance.ts:783, chat/orchestrator.ts:94/125/134/149.
-- Auth trust is live: middleware.ts enforces Cloudflare Access email verification and strips spoofable headers; request-user.ts maps verified email to userId via identity.ts.
+- Auth trust is live: middleware.ts enforces Auth.js Google session verification and strips spoofable headers; request-user.ts maps verified email to userId via identity.ts.
 
 **Three legacy artifacts in db.ts that are the actual remaining gap:**
 

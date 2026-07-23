@@ -14,6 +14,21 @@ export function normalizeSymbol(symbol: string): string {
   return symbol.trim().toUpperCase();
 }
 
+// Our canonical symbol format uses a hyphen for share classes (e.g. "BRK-B", the Robinhood
+// convention — see sp500.ts). Alpaca's asset/order/quote/news/snapshot APIs reject that and
+// require a dot ("BRK.B") — an unconverted hyphen produces an HTTP 422/400 depending on the
+// endpoint. Convert at the Alpaca boundary only — internal state stays hyphenated.
+export function toAlpacaSymbol(symbol: string): string {
+  return normalizeSymbol(symbol).replace(/-/g, ".");
+}
+
+// Inverse of toAlpacaSymbol — normalize symbols coming back from Alpaca (orders, positions,
+// quotes, news, streams) to our canonical hyphenated format so they match watchlist/proposal
+// symbols elsewhere.
+export function fromAlpacaSymbol(symbol: string): string {
+  return normalizeSymbol(symbol).replace(/\./g, "-");
+}
+
 export function formatQuantity(value: number | undefined | null, _symbol?: string): string {
   if (value == null) return "0";
   const abs = Math.abs(value);

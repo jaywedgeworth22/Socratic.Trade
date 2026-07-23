@@ -15,9 +15,22 @@
 //      currently CDN-blocked server-side, kept best-effort/configurable.
 //
 // All adapters degrade to nothing on failure — we never invent a trade.
+//
+// Note: The `CongressTrade` type used here is App B's internal representation.
+// The shared package's `CongressTransaction` (@jaywedgeworth22/congress-trading-shared)
+// is App A's wire format; `coerceCongressTrade()` converts between them.
 
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting } from "../db";
+import { congressAsCongressSourceEnabled, getCongressTradeClient } from "../api-clients/congress";
 import { normalizeSymbol } from "../money";
+import {
+  assertOperationLeaseOwnership,
+  OPERATION_LEASE_GROUPS,
+  runWithOperationLease,
+  throwIfOperationLeaseCancelled,
+  type OperationLeaseAware,
+  type OperationLeaseClaim
+} from "../operation-lease";
 import type { CongressSignal, CongressTrade } from "./types";
 import {
   BROWSER_UA,
@@ -219,12 +232,38 @@ const OWNER_LABELS: Record<string, string> = { sp: "Spouse", se: "Self", jt: "Jo
 function saneIsoDate(value: string, now: number): string | undefined {
   const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return undefined;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  // Reject impossible calendar dates that would otherwise roll over to a valid timestamp (e.g.
+  // "2026-02-30" -> Mar 2): build the UTC date from the components and require it to round-trip.
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return undefined;
   const iso = `${m[1]}-${m[2]}-${m[3]}`;
-  const ts = Date.parse(iso);
+  const ts = d.getTime();
   if (!Number.isFinite(ts)) return undefined;
   if (ts > now + 3 * 24 * 60 * 60_000) return undefined; // absurd future (allow small skew)
   if (ts < Date.parse("2000-01-01")) return undefined; // absurd past
   return iso;
+}
+
+/**
+ * Normalize a raw trade-date string to a sane ISO date, REJECTING future-dated values. A trade
+ * cannot occur after today, so a future date (e.g. a "12/26/2026" parsed from a corrupt source) is
+ * an unambiguous data-quality error — we drop it rather than let it poison the recency window or
+ * surface an impossible date in the UI. Accepts ISO directly or a US MM/DD/YYYY value.
+ */
+function normalizeTradeDate(value: string | undefined, now: number): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const mdy = toIsoDate(trimmed);
+  const iso = saneIsoDate(trimmed, now) ?? (mdy ? saneIsoDate(mdy, now) : undefined);
+  if (!iso) return undefined;
+  // A congressional trade/disclosure DATE is a timezone-less calendar date, so `saneIsoDate`'s small
+  // (±3 day) future skew — meant for timestamps — is too lax here: even tomorrow is impossible.
+  // Reject anything strictly after today (lexicographic compare is valid for YYYY-MM-DD).
+  const todayIso = new Date(now).toISOString().slice(0, 10);
+  return iso > todayIso ? undefined : iso;
 }
 
 /** Parse the Apify `johnvc` actor's dataset items into CongressTrade rows (pure). */
@@ -488,11 +527,15 @@ export async function fetchCapitolTrades(): Promise<CongressTrade[]> {
 
 // ── Refresh orchestration ────────────────────────────────────────────────────
 
+function tradeKey(t: CongressTrade): string {
+  return `${t.symbol}|${t.member}|${t.side}|${t.tradedAt}|${t.amountLow ?? ""}`;
+}
+
 function dedupeTrades(trades: CongressTrade[]): CongressTrade[] {
   const seen = new Set<string>();
   const out: CongressTrade[] = [];
   for (const t of trades) {
-    const key = `${t.symbol}|${t.member}|${t.side}|${t.tradedAt}|${t.amountLow ?? ""}`;
+    const key = tradeKey(t);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(t);
@@ -521,11 +564,53 @@ export function isCongressRefreshDue(now: number = Date.now()): boolean {
  * gathered; on total failure leaves the previous dataset untouched (never wipes to
  * fake/empty mid-trading-day). Returns a result for auditing.
  */
-export async function refreshCongress(now: number = Date.now(), force = false): Promise<import("./types").WebSourceRefreshResult> {
+export async function refreshCongress(
+  now: number = Date.now(),
+  force = false,
+  operationLeaseClaim?: OperationLeaseClaim
+): Promise<OperationLeaseAware<import("./types").WebSourceRefreshResult>> {
   if (!force && !isCongressRefreshDue(now)) {
     const ds = getCongressDataset();
     return { id: "congress", ok: true, recordCount: ds?.recordCount ?? 0, sources: ds?.sources ?? [], fetchedAt: ds?.fetchedAt ?? "", skipped: true };
   }
+
+  const guarded = await runWithOperationLease(
+    {
+      group: OPERATION_LEASE_GROUPS.CONGRESS_WEB_SOURCE,
+      operation: "refresh-websource:congress",
+      claim: operationLeaseClaim
+    },
+    async (claim, signal) => refreshCongressUnlocked(now, force, claim, signal)
+  );
+  if (!guarded.acquired) {
+    const ds = getCongressDataset();
+    return {
+      id: "congress",
+      ok: true,
+      recordCount: ds?.recordCount ?? 0,
+      sources: ds?.sources ?? [],
+      fetchedAt: ds?.fetchedAt ?? "",
+      skipped: true,
+      warning: `Skipped because ${guarded.busy.activeOperation} is already refreshing the congressional dataset.`,
+      operationLease: guarded.busy
+    };
+  }
+  return guarded.value;
+}
+
+async function refreshCongressUnlocked(
+  now: number,
+  force: boolean,
+  operationLeaseClaim: OperationLeaseClaim,
+  operationLeaseSignal: AbortSignal
+): Promise<import("./types").WebSourceRefreshResult> {
+  // Recheck after durable acquisition: a different process may have refreshed the dataset and
+  // advanced its timestamps after this caller's fast pre-check.
+  if (!force && !isCongressRefreshDue(now)) {
+    const ds = getCongressDataset();
+    return { id: "congress", ok: true, recordCount: ds?.recordCount ?? 0, sources: ds?.sources ?? [], fetchedAt: ds?.fetchedAt ?? "", skipped: true };
+  }
+  assertOperationLeaseOwnership(operationLeaseClaim);
 
   // Record the attempt up front so a failure backs off (retryBackoffMs) instead of
   // re-firing every tick; the dataset's fetchedAt still only advances on success.
@@ -535,22 +620,33 @@ export async function refreshCongress(now: number = Date.now(), force = false): 
   const sources: string[] = [];
   const warnings: string[] = [];
 
-  for (const adapter of [
-    { id: "senate-efd", run: () => scrapeSenateEfd(now) },
-    { id: "apify-congress", run: () => fetchApifyCongress(now) },
-    { id: "capitol-trades", run: fetchCapitolTrades }
-  ]) {
+  // When App A (congress.trade) is the configured source of truth, pull from it and skip the
+  // local scrapers entirely (it IS the authority on congressional disclosures). Otherwise run
+  // App B's own adapter cascade.
+  const adapters = congressAsCongressSourceEnabled()
+    ? [{ id: "congress-trade", run: () => fetchAppACongressTrades(now) }]
+    : [
+        { id: "senate-efd", run: () => scrapeSenateEfd(now) },
+        { id: "apify-congress", run: () => fetchApifyCongress(now) },
+        { id: "capitol-trades", run: fetchCapitolTrades }
+      ];
+
+  for (const adapter of adapters) {
+    throwIfOperationLeaseCancelled(operationLeaseSignal);
     try {
       const trades = await adapter.run();
+      throwIfOperationLeaseCancelled(operationLeaseSignal);
       if (trades.length > 0) {
         collected.push(...trades);
         sources.push(adapter.id);
       }
     } catch (error) {
+      throwIfOperationLeaseCancelled(operationLeaseSignal);
       warnings.push(`${adapter.id}: ${error instanceof Error ? error.message : "failed"}`);
     }
   }
 
+  assertOperationLeaseOwnership(operationLeaseClaim);
   const fetchedAt = new Date(now).toISOString();
   if (collected.length === 0) {
     // Don't overwrite a good prior dataset with nothing on a transient outage.
@@ -561,7 +657,161 @@ export async function refreshCongress(now: number = Date.now(), force = false): 
 
   const trades = dedupeTrades(collected);
   const dataset: CongressDataset = { trades, fetchedAt, sources, recordCount: trades.length };
+  assertOperationLeaseOwnership(operationLeaseClaim);
   setInternalSetting(DATASET_KEY, dataset);
   audit("web_source_refresh", { id: "congress", ok: true, recordCount: trades.length, sources, warnings });
   return { id: "congress", ok: true, recordCount: trades.length, sources, fetchedAt, warning: warnings.join("; ") || undefined };
+}
+
+// ── App A (congress.trade) as the congressional source ───────────────────────
+// When CONGRESS_TRADE_AS_CONGRESS_SOURCE is on, App A is the system-of-record for disclosures.
+// We pull its /api/transactions feed and coerce rows into App B's CongressTrade shape. App A's
+// exact per-row field names are not finalized, so the coercer is tolerant (accepts common aliases).
+
+const APP_A_MAX_PAGES = 40;
+const APP_A_PAGE_SIZE = 500;
+const APP_A_MAX_TRADES = 20000;
+const APP_A_RETENTION_DAYS = 120; // bound the push-merged dataset (> the 60-day signal window)
+const APP_A_SOURCE = "congress.trade";
+
+/** Min extraction confidence (App A stamps 0–1 per row) below which we drop a disclosure as noise. */
+function appAMinConfidence(): number {
+  const v = Number(process.env.CONGRESS_TRADE_MIN_CONFIDENCE ?? 0.3);
+  return Number.isFinite(v) ? v : 0.3;
+}
+
+function pickStr(o: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  }
+  return undefined;
+}
+
+function pickNum(o: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const k of keys) {
+    const v = o[k];
+    const n = typeof v === "number" ? v : typeof v === "string" ? Number(v.replace(/[$,]/g, "")) : NaN;
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+/** Tolerantly coerce an App A transaction row (or a pushed CongressTrade) into a CongressTrade. */
+export function coerceCongressTrade(raw: unknown): CongressTrade | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+
+  // App B is equity-focused: skip option disclosures (a P/S txType can't express call/put direction,
+  // so an option trade's directional meaning is ambiguous), and drop very-low-confidence extractions
+  // (App A stamps a 0–1 `confidence` on every transaction row).
+  if (o.isOption === true) return null;
+  const confidence = pickNum(o, ["confidence"]);
+  if (confidence !== undefined && confidence < appAMinConfidence()) return null;
+
+  const symbol = normalizeSymbol(pickStr(o, ["symbol", "ticker", "asset", "assetTicker", "issuerTicker"]) ?? "");
+  if (!symbol) return null;
+
+  // App A's /api/transactions uses single-letter SEC codes: P=purchase(buy), S / S_partial=sale(sell);
+  // other codes (E exchange, G gift, …) are intentionally ignored. Also accept word forms from
+  // other sources.
+  const sideRaw = (pickStr(o, ["side", "type", "transactionType", "txType", "action"]) ?? "").toLowerCase();
+  let side: "buy" | "sell" | undefined;
+  if (sideRaw === "p" || /(buy|purchase|acqui)/.test(sideRaw)) side = "buy";
+  else if (sideRaw === "s" || sideRaw.startsWith("s_") || /(sell|sale|dispos)/.test(sideRaw)) side = "sell";
+  if (!side) return null;
+
+  const now = Date.now();
+  const rawTradedAt = pickStr(o, ["tradedAt", "txDate", "transactionDate", "tradeDate", "date"]);
+  const rawDisclosedAt = pickStr(o, ["disclosedAt", "filedDate", "filedAt", "reportDate", "disclosureDate", "publishedAt", "pubDate"]);
+  const tradedAt = normalizeTradeDate(rawTradedAt, now);
+  const disclosedAt = normalizeTradeDate(rawDisclosedAt, now);
+  // A date field that was SUPPLIED but is unparseable ("2026-13-45") or FUTURE-dated is a
+  // data-quality error — reject the whole row rather than silently falling back to the other date,
+  // which would otherwise let a future-dated trade in under its disclosure date. Only fall back when
+  // a field was simply absent.
+  if (rawTradedAt && !tradedAt) return null;
+  if (rawDisclosedAt && !disclosedAt) return null;
+  const anchor = tradedAt ?? disclosedAt;
+  // Reject a trade with no usable date at all so garbage never accumulates and the
+  // disclosedAt-windowed signal stays correct.
+  if (!anchor) return null;
+
+  // Match the senate prefix (senate/senator) at the START — substring .includes("sen") would
+  // misclassify "representative". Anything else (house/rep/unknown) → house.
+  const chamberRaw = (pickStr(o, ["chamber", "house", "body"]) ?? "").toLowerCase();
+  const chamber: "senate" | "house" = chamberRaw.startsWith("sen") ? "senate" : "house";
+
+  const trade: CongressTrade = {
+    symbol,
+    member: pickStr(o, ["memberName", "member", "politician", "fullName", "name", "representative", "senator"]) ?? "Unknown",
+    chamber,
+    side,
+    tradedAt: anchor,
+    disclosedAt: disclosedAt ?? tradedAt,
+    source: APP_A_SOURCE
+  };
+  const amountLow = pickNum(o, ["amountLow", "amount_min", "minAmount", "sizeRangeLow", "valueLow", "amountMin"]);
+  const amountHigh = pickNum(o, ["amountHigh", "amount_max", "maxAmount", "sizeRangeHigh", "valueHigh", "amountMax"]);
+  if (amountLow !== undefined) trade.amountLow = amountLow;
+  if (amountHigh !== undefined) trade.amountHigh = amountHigh;
+  const owner = pickStr(o, ["owner", "ownerType", "holder"]);
+  if (owner) trade.owner = owner;
+  return trade;
+}
+
+/**
+ * Pull the rolling congressional window from App A's public /api/transactions feed. App A's feed is
+ * oldest-first by `cursor_seq`, so we bound it server-side with `from=<window start>` (the documented
+ * rolling-window param) and page forward via `cursor` until the window is exhausted. Without `from`
+ * a recent-window pull would have to walk all historical rows to reach today's disclosures.
+ */
+export async function fetchAppACongressTrades(now: number = Date.now()): Promise<CongressTrade[]> {
+  const out: CongressTrade[] = [];
+  const from = new Date(now - (windowDays() + 7) * 24 * 60 * 60_000).toISOString().slice(0, 10);
+  let since: string | undefined;
+  for (let page = 0; page < APP_A_MAX_PAGES; page++) {
+    const client = getCongressTradeClient();
+    const res = await client.getTransactions({ from, limit: APP_A_PAGE_SIZE, ...(since ? { since } : {}) }).catch(e => { console.error("getTransactions error:", e); return null; });
+    if (!res || res.transactions.length === 0) break;
+    for (const raw of res.transactions) {
+      const t = coerceCongressTrade(raw);
+      if (t) out.push(t);
+      if (out.length >= APP_A_MAX_TRADES) return out;
+    }
+    const next = res.cursor === undefined || res.cursor === null ? undefined : String(res.cursor);
+    if (!next || next === since) break; // no more pages / no forward progress
+    since = next;
+  }
+  return out;
+}
+
+/**
+ * Merge externally-received congressional trades (push webhook / SSE) into the persisted dataset,
+ * deduped and pruned to APP_A_RETENTION_DAYS. Returns how many net-new rows landed. Idempotent:
+ * re-sending the same trades is a no-op (dedupeTrades keeps the first occurrence).
+ */
+export function upsertCongressTrades(incoming: CongressTrade[], now: number = Date.now()): { added: number; total: number } {
+  const clean = incoming.filter((t): t is CongressTrade => Boolean(t && t.symbol && t.side && t.tradedAt));
+  const prior = getCongressDataset();
+  if (clean.length === 0) return { added: 0, total: prior?.recordCount ?? 0 };
+  // `added` = distinct incoming keys not already present, computed BEFORE retention pruning so the
+  // count is accurate even when pruning drops unrelated old prior rows.
+  const priorKeys = new Set((prior?.trades ?? []).map(tradeKey));
+  const added = new Set(clean.map(tradeKey).filter((k) => !priorKeys.has(k))).size;
+  const cutoff = now - APP_A_RETENTION_DAYS * 24 * 60 * 60_000;
+  const merged = dedupeTrades([...(prior?.trades ?? []), ...clean]).filter((t) => {
+    const ts = Date.parse(t.disclosedAt ?? t.tradedAt);
+    return Number.isFinite(ts) && ts >= cutoff; // keep only parseable + within-retention rows
+  });
+  const sources = Array.from(new Set([...(prior?.sources ?? []), APP_A_SOURCE]));
+  const dataset: CongressDataset = {
+    trades: merged,
+    fetchedAt: new Date(now).toISOString(),
+    sources,
+    recordCount: merged.length
+  };
+  setInternalSetting(DATASET_KEY, dataset);
+  return { added, total: merged.length };
 }
