@@ -616,6 +616,31 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[fleet/Hetzner][GROK] Multi-app fleet-watchdog + litestream 7d + runner EPHEMERAL (2026-07-21) — COMPLETED (ops on host; docs in ST rollout).** Not Mac-local. `fleet-watchdog.service` enabled on boot watches socratictrade.com (container restart only), congress.trade + usage.jays.services (alert only). Host reboot OFF (ALLOW_HOST_REBOOT=0); skips remediations during Coolify builds; old socratic-watchdog stays parked. Usage-Monitor PR #714 merged (snapshot retention 168h). All github-runners EPHEMERAL=true + restart always + daily disk-guard prune. Rollout: `docs/rollouts/2026-07-21-fleet-watchdog-disk-followups.md`.
+
+
+- **[Socratic.Trade][CLAUDE] Durable pre-network stop-placement intent + atomic idempotent
+  recovered fills — Codex findings 5/6 (branch `claude/stop-intent-idempotency`, head `761b524b`
+  = gate-verified merge of `8f6160bd` + main `b4dd8a54`) — LANDING 2026-07-18, lane 6 (final) of
+  a serial landing train.** Item 5: `reconcileBrokerProtectiveStops` writes a durable intent row
+  (new table `broker_stop_placement_intents`, migration **v53**, keyed by the submitted
+  client_order_id) BEFORE `placeEquityOrder`, deletes it on every definite outcome, and on a
+  lost reply adopts the already-accepted live order by clientOrderId instead of placing a
+  duplicate full-size stop (evidence rules: adopt on live match; clear only when a REAL order
+  list shows no match; skip the symbol when the list is unavailable). Item 6: all delete+book
+  recovered-stop-fill pairs (9 sites post-merge, incl. main's #1738 marker-lane pair) go through
+  one `deleteAndBookBrokerStopFill` transaction, plus migration **v54**'s partial UNIQUE index
+  scoped to `raw.brokerHeldProtectiveStop=1` proposal-less fills with idempotent-replay handling
+  in `insertFillEvent`. Adversarially verified with the filled-order fill-loss MUST-FIX applied +
+  regression-tested: a visible-but-TERMINAL intent order WITH executed quantity was previously
+  treated as dead (fill lost + stale-sized re-place/over-sell); now
+  `deleteIntentAndBookStopFill` books it atomically and placement defers to a fresh position
+  read; 8 suites / 250 tests green on the merged tree. Verifier advisories: intent table not yet
+  in account-deletion sweeps (rows self-clean, orphans inert — kept off #1738-touched
+  account-deletion.ts deliberately); `bookBrokerHeldStopFill` is side-agnostic-by-test but the
+  reconciler is long-only today. v53/v54 numbering re-verified at merge. Rollout:
+  `docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
+- **[Socratic.Trade][AG] BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`) — COMPLETED 2026-07-18; deployed to production via auto-deploy-on-merge.** Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `all: true` or `symbols: ["*"]` which resolves all tickers in the database and cleans their local RAG chunk cache rows in batches of 50. Created `scripts/reindex-all.ts` command-line reindexing tool. Fixed pre-existing unit test failures in `securities-import.test.ts` and `token-budget-ceiling.test.ts` (race conditions resolved using fake timers). Installed missing `@opentelemetry` packages to resolve Next.js webpack production build loading issues. Fully verified with typechecks, 100% green tests, and production build.
 - **[Socratic.Trade][CURSOR] LLM cooldown + draining-account purge safety (PR #1845, branch `cursor/critical-bug-management-2b05`) — IN PROGRESS → landing.** Code + rollout present; STATUS/EFFORT-LOG filled for handoff gate. Commit author identity: subsequent commits use noreply; squash-merge lands under PR merge identity.
 
 
