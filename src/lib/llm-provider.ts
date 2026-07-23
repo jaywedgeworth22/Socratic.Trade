@@ -143,41 +143,33 @@ export function resolveLlmEndpoint(
     let model = rawModel;
     if (!model.includes("/")) {
       if (/^claude-sonnet-latest$/i.test(model)) {
-        model = "anthropic/claude-sonnet-5";
+        model = "~anthropic/claude-sonnet-latest";
       } else if (/^claude-haiku-latest$/i.test(model)) {
-        model = "anthropic/claude-haiku-4.5";
+        model = "~anthropic/claude-haiku-latest";
       } else if (/^claude-opus-latest$/i.test(model)) {
-        model = "anthropic/claude-opus-4.8";
+        model = "~anthropic/claude-opus-latest";
       } else if (/^claude-fable-latest$/i.test(model)) {
-        model = "anthropic/claude-fable-5";
+        model = "~anthropic/claude-fable-latest";
       } else if (/^claude/i.test(model)) {
         model = `anthropic/${model}`;
       } else if (/^grok-build-latest$/i.test(model)) {
         model = "x-ai/grok-build-0.1";
       } else if (/^grok-latest$/i.test(model)) {
-        model = "x-ai/grok-4.5";
+        model = "~x-ai/grok-latest";
       } else if (/^grok/i.test(model)) {
         model = `x-ai/${model}`;
       } else if (/^gemini-flash-latest$/i.test(model)) {
-        model = "google/gemini-3.6-flash";
+        model = "~google/gemini-flash-latest";
       } else if (/^gemini-flash-lite-latest$/i.test(model)) {
         model = "google/gemini-3.5-flash-lite";
       } else if (/^gemini-pro-latest$/i.test(model)) {
-        model = "google/gemini-3.1-pro-preview";
+        model = "~google/gemini-pro-latest";
       } else if (/^gemini/i.test(model)) {
         model = `google/${model}`;
-      } else if (/^gpt-sol-latest$/i.test(model)) {
-        model = "openai/gpt-5.6-sol";
-      } else if (/^gpt-terra-latest$/i.test(model)) {
-        model = "openai/gpt-5.6-terra";
-      } else if (/^gpt-luna-latest$/i.test(model)) {
-        model = "openai/gpt-5.6-luna";
-      } else if (/^gpt-mini-latest$/i.test(model)) {
-        model = "openai/gpt-5.4-mini";
-      } else if (/^gpt-nano-latest$/i.test(model)) {
-        model = "openai/gpt-5.4-nano";
-      } else if (/^gpt-4o-latest$/i.test(model)) {
-        model = "openai/gpt-4o";
+      } else if (/^gpt-sol-latest$/i.test(model) || /^gpt-terra-latest$/i.test(model) || /^gpt-4o-latest$/i.test(model)) {
+        model = "~openai/gpt-latest";
+      } else if (/^gpt-luna-latest$/i.test(model) || /^gpt-mini-latest$/i.test(model) || /^gpt-nano-latest$/i.test(model)) {
+        model = "~openai/gpt-mini-latest";
       } else if (/^mistral-medium-latest$/i.test(model)) {
         model = "mistralai/mistral-medium-3.5";
       } else if (/^mistral-small-latest$/i.test(model)) {
