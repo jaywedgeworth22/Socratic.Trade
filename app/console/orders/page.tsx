@@ -9,19 +9,23 @@
  *  snapshot actually has — missing data is "—", never invented. */
 
 import { useEffect, useMemo, useState } from "react";
-import type { EquityOrder } from "@/lib/types";
+import type { EquityOrder, EquityPosition } from "@/lib/types";
 import { deriveReality } from "../lib/derive";
-import { fmtExact, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
+import { cx, fmtExact, fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
-import { Ago, Btn, Card, Chip, Dash, Empty, type ChipTone } from "../ui/primitives";
+import { Ago, Btn, Card, Chip, Dash, Empty, SignedText, type ChipTone } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
 import { CancelOrderSheet } from "./cancel-sheet";
 import { ReplaceMarketSheet } from "./replace-market-sheet";
 import {
+  closingOrderPnl,
   deriveOpenOrders,
+  effectiveOrderPrice,
   fmtMinutes,
   isReplaceableType,
   lastScanPrice,
+  matchPosition,
   orderTypeLabel,
   readableState,
   staleThresholdMinutes,
@@ -68,6 +72,116 @@ function finiteNum(v: number | undefined): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
+/** Every piece derived once per row and shared between the desktop table row
+ *  and the mobile card, so the two surfaces can never drift apart. */
+function deriveOrderRowView(
+  row: OpenOrderRow,
+  quotes: Parameters<typeof lastScanPrice>[0],
+  positions: EquityPosition[] | undefined,
+  halted: boolean,
+  noAccount: boolean,
+  live: boolean
+) {
+  const order = row.order;
+  const scan = lastScanPrice(quotes, order.symbol);
+  const position = matchPosition(positions, order.symbol);
+  // "Last price" prefers the held position's own mark over the market-scan cache — see
+  // effectiveOrderPrice for why (same snapshot, can't be stale in a way the scan isn't).
+  const price = effectiveOrderPrice(position, scan);
+  const limit = finiteNum(order.limitPrice);
+  const stop = finiteNum(order.stopPrice);
+  // Gap between the latest known price and the resting limit — how far the market
+  // sits from the order. Positive = market above the limit.
+  const limitGapPct = limit !== undefined && limit > 0 && price ? ((price.price - limit) / limit) * 100 : undefined;
+  const tif = tifLabel(order.timeInForce);
+  const filled = order.filledQuantity ?? 0;
+  const showReplace = isReplaceableType(order.type) && row.remaining > 0;
+  const replaceEnabled = row.stale && !halted && !noAccount;
+  const replaceTitle = !row.stale
+    ? row.thresholdMinutes > 0
+      ? `Becomes available once the order has been working ${row.thresholdMinutes} minutes without filling (your policy's stale threshold) — currently ${fmtMinutes(row.ageMinutes)}.`
+      : "Stale-limit detection is disabled (policy stale threshold is 0), so the server refuses market replacements."
+    : halted
+      ? "Start the system first — replacing places a NEW order, which the server refuses while everything is stopped. Cancelling stays available."
+      : noAccount
+        ? "Market replacement needs a broker-backed Paper or Live account; no account is connected."
+        : `Cancel this stale ${orderTypeLabel(order.type)} order and submit the remaining ${fmtQty(row.remaining)} shares as a market order${live ? " — typed broker confirmation required" : ""}.`;
+  // Only rows that would CLOSE/REDUCE a held position (sell-of-long, cover-of-short, a
+  // bracket "held" exit leg that matches) get an estimate; opening orders never do.
+  const estPnl = closingOrderPnl(order, row.remaining, position, price);
+  return { order, scan, price, limit, stop, limitGapPct, tif, filled, showReplace, replaceEnabled, replaceTitle, estPnl };
+}
+
+/** Price + a source/age suffix (the td/div's own title keeps the fuller hover
+ *  explanation; Ago adds the exact timestamp on its own hover). A held
+ *  position's own mark carries no separate "as of" — it's the same snapshot
+ *  the rest of the row came from — so it gets a "held mark" tag instead of a
+ *  quote age. The vs-limit gap, when there is one, stays on its own line. */
+function OrderPriceInfo({ view }: { view: ReturnType<typeof deriveOrderRowView> }) {
+  return (
+    <>
+      {view.price ? fmtMoney(view.price.price) : <Dash />}
+      {view.price?.source === "position" && (
+        <span className="ml-1 text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">· held mark</span>
+      )}
+      {view.price?.source === "scan" && view.price.asOf && (
+        <span className="ml-1 text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+          · quote <Ago iso={view.price.asOf} />
+        </span>
+      )}
+      {view.limitGapPct !== undefined && (
+        <span
+          className="block text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+          title="How far the latest known price sits from the resting limit price. Positive = market above the limit."
+        >
+          {fmtPct(view.limitGapPct, 1, true)} vs limit
+        </span>
+      )}
+    </>
+  );
+}
+
+/** Replace/Cancel buttons, shared by the table row and the mobile card. The
+ *  max-lg bump gives the ~26px desktop buttons a ~40px tap target below the
+ *  lg breakpoint — the width the mobile card list takes over at. */
+function OrderRowActions({
+  view,
+  onReplace,
+  onCancel
+}: {
+  view: ReturnType<typeof deriveOrderRowView>;
+  onReplace: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="flex justify-end gap-1.5 whitespace-nowrap">
+      {view.showReplace && (
+        <Btn
+          size="sm"
+          variant="outline"
+          disabled={!view.replaceEnabled}
+          onClick={onReplace}
+          title={view.replaceTitle}
+          className="max-lg:min-h-10"
+          align="right"
+        >
+          Replace at market
+        </Btn>
+      )}
+      <Btn
+        size="sm"
+        variant="dangerOutline"
+        onClick={onCancel}
+        title="Ask the broker to cancel this order. Risk-reducing — allowed even while the system is stopped; fills that already happened stand."
+        className="max-lg:min-h-10"
+        align="right"
+      >
+        Cancel
+      </Btn>
+    </div>
+  );
+}
+
 const STATE_TONE: Record<string, ChipTone> = {
   filled: "pos",
   partially_filled: "accent",
@@ -108,6 +222,18 @@ function sizeText(order: EquityOrder): string {
   if (typeof order.dollarAmount === "number" && Number.isFinite(order.dollarAmount))
     return `~${fmtMoney(order.dollarAmount)}`;
   return EM_DASH;
+}
+
+/** What actually EXECUTED, distinct from sizeText (what was PLACED) — "8 sh · $412.16" when the
+ *  broker reports both a filled quantity and an average price, "8 sh" alone when only the
+ *  quantity is known. Undefined (never rendered) when nothing filled — rejected, expired, or
+ *  cancelled before any execution — so the finished-orders list never shows a false "0 sh". */
+function executedText(order: EquityOrder): string | undefined {
+  const filled = order.filledQuantity;
+  if (typeof filled !== "number" || !Number.isFinite(filled) || filled <= 0) return undefined;
+  const avg = order.averagePrice;
+  const notional = typeof avg === "number" && Number.isFinite(avg) ? fmtMoney(avg * filled) : undefined;
+  return notional ? `${fmtQty(filled)} sh · ${notional} executed` : `${fmtQty(filled)} sh executed`;
 }
 
 export default function OrdersPage() {
@@ -152,7 +278,7 @@ export default function OrdersPage() {
   };
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-4">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Orders</h1>
         <Chip tone={reality.tone} title={reality.clarification}>
@@ -174,6 +300,10 @@ export default function OrdersPage() {
         </Btn>
       </div>
 
+      <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        Orders originate from approved proposals — there is no manual order-entry here.
+      </p>
+
       {multiAccount && (
         <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Showing the active account only — switch the account scope (top bar) to see another account&apos;s orders.
@@ -182,7 +312,7 @@ export default function OrdersPage() {
 
       {staleCount > 0 && (
         <div
-          className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-sm)]"
+          className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-sm)]"
           title={`Your policy's stale threshold is ${thresholdMinutes} minutes (Settings → "Stale limit alert").`}
         >
           <span className="font-semibold text-[color:var(--con-warn)]">
@@ -204,59 +334,81 @@ export default function OrdersPage() {
               : "No working orders at the broker. When you or the strategy place a limit or stop order, it appears here until it fills, expires, or is cancelled."}
           </Empty>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="con-table">
-              <thead>
-                <tr>
-                  <th title="Ticker — click a symbol to open its price history and details.">Symbol</th>
-                  <th title="Order direction: buy, sell, short, or cover.">Side</th>
-                  <th title="Order type. Limit and stop-limit orders can sit unfilled and go stale; market orders execute immediately.">
-                    Type
-                  </th>
-                  <th className="num" title="Order size as the broker holds it: share quantity, or an approximate dollar amount for notional orders. Partial fills show how much already executed.">
-                    Size
-                  </th>
-                  <th className="num" title="Resting limit price and/or stop trigger price the broker holds for this order. '—' when the broker reported neither (e.g. a market order).">
-                    Limit / Stop
-                  </th>
-                  <th className="num" title="Latest price this app has for the symbol — from the most recent market scan, so it can be minutes old. '—' when the last scan didn't cover it. Where the order has a limit price, the gap between this price and the limit is shown underneath.">
-                    Last price
-                  </th>
-                  <th title="Time-in-force: how long the order stays working. DAY/GFD expires at market close; GTC rests until cancelled.">
-                    TIF
-                  </th>
-                  <th
-                    title={
-                      thresholdMinutes > 0
-                        ? `How long the order has been working. Limit/stop-limit orders older than your ${thresholdMinutes}-minute policy threshold with an unfilled remainder are flagged stale.`
-                        : "How long the order has been working. Stale-limit detection is disabled (policy stale threshold is 0)."
-                    }
-                  >
-                    Age
-                  </th>
-                  <th title="The order's state as last reported by the broker.">Status</th>
-                  <th title="Actions: replace a stale limit order's remainder at market, or cancel the order.">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <OpenOrderTr
-                    key={row.order.id}
-                    row={row}
-                    quotes={quotes}
-                    companyName={snapshot.symbolMetaBySymbol?.[row.order.symbol]?.companyName}
-                    halted={halted}
-                    noAccount={noAccount}
-                    live={live}
-                    onReplace={() => setReplaceRow(row)}
-                    onCancel={() => setCancelRow(row)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="hidden overflow-x-auto lg:block">
+              <table className="con-table">
+                <thead>
+                  <tr>
+                    <th title="Ticker — click a symbol to open its price history and details.">Symbol</th>
+                    <th title="Order direction: buy, sell, short, or cover.">Side</th>
+                    <th title="Order type. Limit and stop-limit orders can sit unfilled and go stale; market orders execute immediately.">
+                      Type
+                    </th>
+                    <th className="num" title="Order size as the broker holds it: share quantity, or an approximate dollar amount for notional orders. Partial fills show how much already executed.">
+                      Size
+                    </th>
+                    <th className="num" title="Resting limit price and/or stop trigger price the broker holds for this order. '—' when the broker reported neither (e.g. a market order).">
+                      Limit / Stop
+                    </th>
+                    <th className="num" title="Latest price this app has for the symbol: this account's OWN held mark (from the same snapshot as the order) when the symbol is currently held, else the most recent market scan, which can be minutes old. '—' when neither is available. Where the order has a limit price, the gap between this price and the limit is shown underneath.">
+                      Last price
+                    </th>
+                    <th title="Time-in-force: how long the order stays working. DAY/GFD expires at market close; GTC rests until cancelled.">
+                      TIF
+                    </th>
+                    <th
+                      title={
+                        thresholdMinutes > 0
+                          ? `How long the order has been working. Limit/stop-limit orders older than your ${thresholdMinutes}-minute policy threshold with an unfilled remainder are flagged stale.`
+                          : "How long the order has been working. Stale-limit detection is disabled (policy stale threshold is 0)."
+                      }
+                    >
+                      Age
+                    </th>
+                    <th title="The order's state as last reported by the broker.">Status</th>
+                    <th className="num" title="Estimated realized P/L if this order's unfilled remainder closed right now at the last known price: only shown for orders that would REDUCE or CLOSE a held position (sell-of-long, cover-of-short, a bracket exit leg) — never for an order that opens or adds to a position.">
+                      Est. P/L
+                    </th>
+                    <th title="Actions: replace a stale limit order's remainder at market, or cancel the order.">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <OpenOrderTr
+                      key={row.order.id}
+                      row={row}
+                      quotes={quotes}
+                      positions={snapshot.positions}
+                      companyName={snapshot.symbolMetaBySymbol?.[row.order.symbol]?.companyName}
+                      halted={halted}
+                      noAccount={noAccount}
+                      live={live}
+                      onReplace={() => setReplaceRow(row)}
+                      onCancel={() => setCancelRow(row)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex flex-col gap-2 px-2 pb-3 pt-2 lg:hidden">
+              {rows.map((row) => (
+                <OpenOrderCard
+                  key={row.order.id}
+                  row={row}
+                  quotes={quotes}
+                  positions={snapshot.positions}
+                  companyName={snapshot.symbolMetaBySymbol?.[row.order.symbol]?.companyName}
+                  halted={halted}
+                  noAccount={noAccount}
+                  live={live}
+                  onReplace={() => setReplaceRow(row)}
+                  onCancel={() => setCancelRow(row)}
+                />
+              ))}
+            </div>
+          </>
         )}
       </Card>
 
@@ -269,7 +421,7 @@ export default function OrdersPage() {
           </Empty>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            <div className="hidden overflow-x-auto lg:block">
               <table className="con-table">
                 <thead>
                   <tr>
@@ -301,6 +453,11 @@ export default function OrdersPage() {
                       <td title={tifTitle(order.timeInForce)}>{tifLabel(order.timeInForce) ?? <Dash />}</td>
                       <td className="num con-num" title="Order size as placed.">
                         {sizeText(order)}
+                        {executedText(order) && (
+                          <span className="block text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                            {executedText(order)}
+                          </span>
+                        )}
                       </td>
                       <td className="num con-num" title="Average executed price reported by the broker.">
                         {typeof order.averagePrice === "number" && Number.isFinite(order.averagePrice) ? (
@@ -322,6 +479,11 @@ export default function OrdersPage() {
                 </tbody>
               </table>
             </div>
+            <div className="flex flex-col gap-2 px-2 pb-3 pt-2 lg:hidden">
+              {history.map((order) => (
+                <FinishedOrderCard key={order.id} order={order} />
+              ))}
+            </div>
             <p className="px-4 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
               Latest {history.length} finished orders, straight from the broker&apos;s order list. The full story —
               fills, runs, and alerts — lives on the Activity screen.
@@ -338,45 +500,21 @@ export default function OrdersPage() {
   );
 }
 
-function OpenOrderTr({
-  row,
-  quotes,
-  companyName,
-  halted,
-  noAccount,
-  live,
-  onReplace,
-  onCancel
-}: {
+interface OrderRowProps {
   row: OpenOrderRow;
   quotes: Parameters<typeof lastScanPrice>[0];
+  positions: EquityPosition[] | undefined;
   companyName?: string;
   halted: boolean;
   noAccount: boolean;
   live: boolean;
   onReplace: () => void;
   onCancel: () => void;
-}) {
-  const order = row.order;
-  const scan = lastScanPrice(quotes, order.symbol);
-  const limit = finiteNum(order.limitPrice);
-  const stop = finiteNum(order.stopPrice);
-  // Gap between the latest scan price and the resting limit — how far the market
-  // sits from the order. Positive = market above the limit.
-  const limitGapPct = limit !== undefined && limit > 0 && scan ? ((scan.price - limit) / limit) * 100 : undefined;
-  const tif = tifLabel(order.timeInForce);
-  const filled = order.filledQuantity ?? 0;
-  const showReplace = isReplaceableType(order.type) && row.remaining > 0;
-  const replaceEnabled = row.stale && !halted && !noAccount;
-  const replaceTitle = !row.stale
-    ? row.thresholdMinutes > 0
-      ? `Becomes available once the order has been working ${row.thresholdMinutes} minutes without filling (your policy's stale threshold) — currently ${fmtMinutes(row.ageMinutes)}.`
-      : "Stale-limit detection is disabled (policy stale threshold is 0), so the server refuses market replacements."
-    : halted
-      ? "Start the system first — replacing places a NEW order, which the server refuses while everything is stopped. Cancelling stays available."
-      : noAccount
-        ? "Market replacement needs a broker-backed Paper or Live account; no account is connected."
-        : `Cancel this stale ${orderTypeLabel(order.type)} order and submit the remaining ${fmtQty(row.remaining)} shares as a market order${live ? " — typed broker confirmation required" : ""}.`;
+}
+
+function OpenOrderTr({ row, quotes, positions, companyName, halted, noAccount, live, onReplace, onCancel }: OrderRowProps) {
+  const view = deriveOrderRowView(row, quotes, positions, halted, noAccount, live);
+  const order = view.order;
 
   return (
     <tr className={row.stale ? "bg-[color:var(--con-warn-soft)]" : undefined}>
@@ -397,32 +535,32 @@ function OpenOrderTr({
       <td title={TYPE_TITLE[String(order.type)] ?? "Order type."}>{orderTypeLabel(order.type)}</td>
       <td className="num con-num" title="Order size as the broker holds it; partial fills shown underneath.">
         {sizeText(order)}
-        {filled > 0 && row.remaining > 0 && (
+        {view.filled > 0 && row.remaining > 0 && (
           <span className="block text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-            {fmtQty(filled)} filled · {fmtQty(row.remaining)} left
+            {fmtQty(view.filled)} filled · {fmtQty(row.remaining)} left
           </span>
         )}
       </td>
       <td
         className="num con-num"
         title={
-          limit !== undefined && stop !== undefined
-            ? `Stop-limit: triggers at the ${fmtMoney(stop)} stop, then rests as a ${fmtMoney(limit)} limit.`
-            : limit !== undefined
+          view.limit !== undefined && view.stop !== undefined
+            ? `Stop-limit: triggers at the ${fmtMoney(view.stop)} stop, then rests as a ${fmtMoney(view.limit)} limit.`
+            : view.limit !== undefined
               ? "The limit price this order rests at, as the broker holds it."
-              : stop !== undefined
+              : view.stop !== undefined
                 ? "The stop trigger price, as the broker holds it."
                 : "The broker reported no limit or stop price for this order."
         }
       >
-        {limit === undefined && stop === undefined ? (
+        {view.limit === undefined && view.stop === undefined ? (
           <Dash />
         ) : (
           <>
-            {fmtMoney(limit ?? stop)}
-            {limit !== undefined && stop !== undefined && (
+            {fmtMoney(view.limit ?? view.stop)}
+            {view.limit !== undefined && view.stop !== undefined && (
               <span className="block text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                stop {fmtMoney(stop)}
+                stop {fmtMoney(view.stop)}
               </span>
             )}
           </>
@@ -431,22 +569,16 @@ function OpenOrderTr({
       <td
         className="num con-num"
         title={
-          scan
-            ? `From the latest market scan${scan.provider ? ` (${scan.provider})` : ""}${scan.asOf ? `, as of ${fmtExact(scan.asOf)}` : ""} — not a live broker quote.`
-            : "The latest market scan didn't cover this symbol, so no recent price is available here."
+          view.price?.source === "position"
+            ? "This account's own held mark for the symbol (marketValue / quantity), from the same snapshot as this order — not a live broker quote."
+            : view.price
+              ? `From the latest market scan${view.price.provider ? ` (${view.price.provider})` : ""}${view.price.asOf ? `, as of ${fmtExact(view.price.asOf)}` : ""} — not a live broker quote.`
+              : "Neither a held position nor the latest market scan covers this symbol, so no recent price is available here."
         }
       >
-        {scan ? fmtMoney(scan.price) : <Dash />}
-        {limitGapPct !== undefined && (
-          <span
-            className="block text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-            title="How far the latest scan price sits from the resting limit price. Positive = market above the limit."
-          >
-            {fmtPct(limitGapPct, 1, true)} vs limit
-          </span>
-        )}
+        <OrderPriceInfo view={view} />
       </td>
-      <td title={tifTitle(order.timeInForce)}>{tif ?? <Dash />}</td>
+      <td title={tifTitle(order.timeInForce)}>{view.tif ?? <Dash />}</td>
       <td className="whitespace-nowrap">
         <Ago iso={order.createdAt} />
         {row.stale && (
@@ -464,23 +596,187 @@ function OpenOrderTr({
           {readableState(order.state)}
         </Chip>
       </td>
+      <td className="num con-num" title="Estimated realized P/L if this order's unfilled remainder closed right now at the last known price.">
+        {view.estPnl ? (
+          <SignedText value={view.estPnl.pnl}>
+            {fmtSignedMoney(view.estPnl.pnl)}
+            <span className="block text-[length:var(--con-fs-xs)] font-normal">{fmtPct(view.estPnl.pnlPct, 1, true)}</span>
+          </SignedText>
+        ) : (
+          <Dash />
+        )}
+      </td>
       <td>
-        <div className="flex justify-end gap-1.5 whitespace-nowrap">
-          {showReplace && (
-            <Btn size="sm" variant="outline" disabled={!replaceEnabled} onClick={onReplace} title={replaceTitle}>
-              Replace at market
-            </Btn>
-          )}
-          <Btn
-            size="sm"
-            variant="dangerOutline"
-            onClick={onCancel}
-            title="Ask the broker to cancel this order. Risk-reducing — allowed even while the system is stopped; fills that already happened stand."
-          >
-            Cancel
-          </Btn>
-        </div>
+        <OrderRowActions view={view} onReplace={onReplace} onCancel={onCancel} />
       </td>
     </tr>
+  );
+}
+
+/** Mobile counterpart to `OpenOrderTr` — same derived view, same actions,
+ *  laid out as a card: symbol/side/status up top, the load-bearing fields
+ *  (size, limit/stop, last price, age) in a small grid, actions at the
+ *  bottom. Shown lg:hidden while the table above is hidden below lg. */
+function OpenOrderCard({ row, quotes, positions, companyName, halted, noAccount, live, onReplace, onCancel }: OrderRowProps) {
+  const view = deriveOrderRowView(row, quotes, positions, halted, noAccount, live);
+  const order = view.order;
+  return (
+    <div
+      className={cx(
+        "con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3",
+        row.stale && "bg-[color:var(--con-warn-soft)]"
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <SymbolButton symbol={order.symbol} />
+          {companyName && <span className="block truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{companyName}</span>}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span
+            className={isExit(order.side) ? "font-semibold text-[color:var(--con-warn)]" : "font-semibold"}
+            title={SIDE_TITLE[order.side] ?? "Order direction."}
+          >
+            {SIDE_LABEL[order.side] ?? String(order.side).toUpperCase()}
+          </span>
+          <Chip tone={stateTone(order.state)} title="The order's state as last reported by the broker.">
+            {readableState(order.state)}
+          </Chip>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-[length:var(--con-fs-sm)]">
+        <div className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Order size as the broker holds it; partial fills shown underneath.">
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Size</span>
+            <div className="con-num truncate">
+              {sizeText(order)}
+              {view.filled > 0 && row.remaining > 0 && (
+                <span className="ml-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">({fmtQty(view.filled)} filled)</span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div
+          className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
+          title={
+            view.limit !== undefined && view.stop !== undefined
+              ? `Stop-limit: triggers at the ${fmtMoney(view.stop)} stop, then rests as a ${fmtMoney(view.limit)} limit.`
+              : view.limit !== undefined
+                ? "The limit price this order rests at, as the broker holds it."
+                : view.stop !== undefined
+                  ? "The stop trigger price, as the broker holds it."
+                  : "The broker reported no limit or stop price for this order."
+          }
+        >
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Limit / Stop</span>
+            <div className="con-num truncate">{view.limit === undefined && view.stop === undefined ? <Dash /> : fmtMoney(view.limit ?? view.stop)}</div>
+          </div>
+        </div>
+        <div
+          className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
+          title={
+            view.price?.source === "position"
+              ? "This account's own held mark for the symbol (marketValue / quantity), from the same snapshot as this order — not a live broker quote."
+              : view.price
+                ? `From the latest market scan${view.price.provider ? ` (${view.price.provider})` : ""}${view.price.asOf ? `, as of ${fmtExact(view.price.asOf)}` : ""} — not a live broker quote.`
+                : "Neither a held position nor the latest market scan covers this symbol, so no recent price is available here."
+          }
+        >
+          <div className="flex justify-between items-start gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Last price</span>
+            <div className="con-num text-right">
+              <OrderPriceInfo view={view} />
+            </div>
+          </div>
+        </div>
+        <div
+          className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
+          title={
+            row.thresholdMinutes > 0
+              ? `How long the order has been working. Limit/stop-limit orders older than your ${row.thresholdMinutes}-minute policy threshold with an unfilled remainder are flagged stale.`
+              : "How long the order has been working. Stale-limit detection is disabled (policy stale threshold is 0)."
+          }
+        >
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Age</span>
+            <div className="con-num text-right">
+              <Ago iso={order.createdAt} />
+              {row.stale && (
+                <Chip tone="warn" className="ml-1" title={`Working ${fmtMinutes(row.ageMinutes)} without filling — past your ${row.thresholdMinutes}-minute stale threshold.`}>
+                  stale
+                </Chip>
+              )}
+            </div>
+          </div>
+        </div>
+        {view.estPnl && (
+          <div
+            className="col-span-2 rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
+            title="Estimated realized P/L if this order's unfilled remainder closed right now at the last known price."
+          >
+            <div className="flex justify-between items-baseline gap-0.5">
+              <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Est. P/L</span>
+              <SignedText value={view.estPnl.pnl}>
+                {fmtSignedMoney(view.estPnl.pnl)} ({fmtPct(view.estPnl.pnlPct, 1, true)})
+              </SignedText>
+            </div>
+          </div>
+        )}
+      </div>
+      <OrderRowActions view={view} onReplace={onReplace} onCancel={onCancel} />
+    </div>
+  );
+}
+
+/** Mobile counterpart to the finished-orders table row — read-only, so no
+ *  actions row. */
+function FinishedOrderCard({ order }: { order: EquityOrder }) {
+  return (
+    <div className="con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3">
+      <div className="flex items-center justify-between gap-2">
+        <SymbolButton symbol={order.symbol} />
+        <Chip tone={stateTone(order.state)} title="Final state the broker reported for this order.">
+          {readableState(order.state)}
+        </Chip>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-[length:var(--con-fs-sm)]">
+        <div className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title={SIDE_TITLE[order.side] ?? "Order direction."}>
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Side</span>
+            <div className={cx("con-num truncate", isExit(order.side) ? "font-semibold text-[color:var(--con-warn)]" : "font-semibold")}>
+              {SIDE_LABEL[order.side] ?? String(order.side).toUpperCase()}
+            </div>
+          </div>
+        </div>
+        <div className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Order size: share quantity or approximate dollar amount.">
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Size</span>
+            <div className="con-num truncate">
+              {sizeText(order)}
+              {executedText(order) && (
+                <span className="block text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{executedText(order)}</span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Average price the broker reports for the executed part; '—' when nothing executed.">
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Avg fill</span>
+            <div className="con-num truncate">
+              {typeof order.averagePrice === "number" && Number.isFinite(order.averagePrice) ? fmtMoney(order.averagePrice) : <Dash />}
+            </div>
+          </div>
+        </div>
+        <div className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="When the broker last updated the order.">
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Updated</span>
+            <div className="con-num text-right">
+              <Ago iso={order.updatedAt ?? order.createdAt} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

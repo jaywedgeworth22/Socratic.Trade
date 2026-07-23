@@ -39,12 +39,21 @@ export interface FetchOptions {
 export async function politeFetch(url: string, options: FetchOptions = {}): Promise<Response> {
   const { headers, method = "GET", body, timeoutMs = 9000, retries = 1, redirect = "follow" } = options;
   let lastError: unknown;
+  const isSec = url.includes(".sec.gov");
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (isSec) {
+      const { secLimiter } = await import("./sec-limiter");
+      await secLimiter.acquire();
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(url, { method, body, headers, redirect, cache: "no-store", signal: controller.signal });
       clearTimeout(timer);
+      if (res.status === 429 && isSec) {
+        const { secLimiter } = await import("./sec-limiter");
+        secLimiter.report429(res.headers.get("retry-after"));
+      }
       if ((res.status === 429 || res.status >= 500) && attempt < retries) {
         await sleep(600 * (attempt + 1));
         continue;
