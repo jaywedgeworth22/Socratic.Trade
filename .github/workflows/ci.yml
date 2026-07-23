@@ -84,7 +84,7 @@ jobs:
       route: ${{ steps.route.outputs.route }}
     steps:
       - name: Disable lingering sparse-checkout
-        run: git sparse-checkout disable || true
+        run: rm -rf ./* ./.git || true
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request'
         with:
@@ -259,7 +259,7 @@ jobs:
           esac
           echo "node: v$version"
       - name: Disable lingering sparse-checkout
-        run: git sparse-checkout disable || true
+        run: rm -rf ./* ./.git || true
       - uses: actions/checkout@v4
       # NOTE: deliberately NO actions/setup-node here. The self-hosted Mac uses the Homebrew
       # Node 24 installation selected above; setup-node's npm cache post-action wedges on
@@ -327,7 +327,7 @@ jobs:
             esac
           fi
       - name: Disable lingering sparse-checkout
-        run: git sparse-checkout disable || true
+        run: rm -rf ./* ./.git || true
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -350,7 +350,7 @@ jobs:
       # a stale workspace. Re-checkout at the package-operation boundary so a
       # transient cleanup cannot turn into a false ENOENT failure.
       - name: Disable lingering sparse-checkout
-        run: git sparse-checkout disable || true
+        run: rm -rf ./* ./.git || true
       - name: Refresh checkout before package operations
         uses: actions/checkout@v4
       # verify-hosted only runs when docs-only is false (job-level `if` above), so per-step
