@@ -88,7 +88,7 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
       if (/haiku/i.test(lower)) return "claude-3-5-haiku-20241022";
       if (/opus/i.test(lower)) return "claude-3-opus-20240229";
       if (/fable/i.test(lower)) return "claude-3-5-sonnet-20241022";
-      return "claude-3-5-sonnet-20241022";
+      return "claude-sonnet-5";
 
     case "xai":
       if (/build/i.test(lower)) return "grok-beta";

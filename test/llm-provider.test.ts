@@ -43,7 +43,7 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.provider).toBe("anthropic");
     expect(endpoint.url).toBe("https://api.anthropic.com/v1/messages");
     expect(endpoint.key).toBe("sk-ant-test-key");
-    expect(endpoint.model).toBe("claude-3-5-sonnet-20241022");
+    expect(endpoint.model).toBe("claude-sonnet-5");
     expect(endpoint.transport).toBe("anthropic-messages");
   });
 
