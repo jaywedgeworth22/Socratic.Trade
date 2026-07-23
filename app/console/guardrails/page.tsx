@@ -1,12 +1,14 @@
 "use client";
 
 /** Guardrails — the deterministic cage: essentials first (max order, daily
- *  caps, daily-loss breaker, autonomy, extended hours), then EVERY protective
- *  stop rule together under the stop-flow diagram (distance fallback chain,
- *  trailing overlay, broker-held → app-monitor enforcement), then the advanced
- *  rulebook grouped the way the domain groups it. Editing uses a
- *  review-and-commit model with asymmetric friction: tightening is one click,
- *  loosening brokerage-account authority requires typing CONFIRM. Autonomy has its own
+ *  caps, daily-loss breaker, autonomy, schedule, short selling), then EVERY
+ *  protective stop rule together under the stop-flow diagram (distance
+ *  fallback chain, trailing overlay, broker-held → app-monitor enforcement),
+ *  then Tax treatment (moved here from Strategy in the 2026-07-16 IA
+ *  restructure — self-contained, own auto-save), then the advanced rulebook
+ *  grouped the way the domain groups it. Editing uses a review-and-commit
+ *  model with asymmetric friction: tightening is one click, loosening
+ *  brokerage-account authority requires typing CONFIRM. Autonomy has its own
  *  ritual: Autopilot costs a typed word, going back to Ask-first is one tap. */
 
 import { useMemo, useState } from "react";
@@ -30,6 +32,7 @@ import {
   PolicySaveBar,
   usePolicyDraft
 } from "../components/policy-form";
+import { TaxSettingsCard } from "../strategy/tax-settings";
 import {
   ALL_DEFS,
   ENTRY_QUALITY,
@@ -158,10 +161,24 @@ function CapUtilization({
 }
 
 const DEF_BY_PATH = new Map(ALL_DEFS.map((def) => [def.path, def]));
-const ESSENTIAL_FIELD_PATHS = new Set(["maxOrderNotional", "maxOrderPctOfNav"]);
+const ESSENTIAL_FIELD_PATHS = new Set([
+  "maxOrderNotional",
+  "maxOrderPctOfNav",
+  "maxDailyNotional",
+  "maxDailyPctOfNav"
+]);
+// Splits the tail of ESSENTIALS (§field-defs) into its own "Schedule" sub-heading —
+// purely visual regrouping, no field-def or behavior changes (see PR notes 2026-07-16).
+const SCHEDULE_FIELD_PATHS = new Set(["runCadenceMinutes", "runDuringExtendedHours", "permitExtendedHours"]);
 const EXPOSURE_FIELD_PATHS = new Set(["maxSymbolExposureNotional", "maxSymbolExposurePct"]);
 
 export default function GuardrailsPage() {
+  const { snapshot } = useConsoleData();
+  if (!snapshot) return null;
+  return <AccountScopedGuardrailsPage key={snapshot.policy.connectedAccountId ?? "no-account"} />;
+}
+
+function AccountScopedGuardrailsPage() {
   const { snapshot } = useConsoleData();
   const draft = usePolicyDraft();
   const [universeDraft, setUniverseDraft] = useState<{
@@ -213,13 +230,13 @@ export default function GuardrailsPage() {
           {reality.word} · {reality.phrase}
         </Chip>
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          for {reality.account?.label ?? "no connected account"} — mandates, preference gates, and hard execution constraints
+          for {reality.account?.label ?? "no connected account"} — authority, caps, and hard execution constraints
         </span>
       </div>
 
       <AutonomyCard />
 
-      <Card title="Essentials">
+      <Card title="Essentials" collapsible defaultOpen>
         <div className="divide-y divide-[color:var(--con-line)]">
           <div>
             <PolicyDualModeRow
@@ -236,13 +253,30 @@ export default function GuardrailsPage() {
               note="Per-order caps apply to each order individually — no cumulative usage is tracked against this limit."
             />
           </div>
-          {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path)).map((def) => (
+          <div>
+            <PolicyDualModeRow
+              label="Max Spend Per Day"
+              moneyDef={DEF_BY_PATH.get("maxDailyNotional")!}
+              pctDef={DEF_BY_PATH.get("maxDailyPctOfNav")!}
+              policy={policy}
+              draft={draft}
+              hint="Choose one daily opening budget. Percent is the account-relative default; switching modes clears the other value before save."
+            />
+            <CapUtilization band={risk.dailyNotional} kind="money" daily />
+          </div>
+          {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path) && !SCHEDULE_FIELD_PATHS.has(def.path)).map((def) => (
             <div key={def.path}>
               <PolicyFieldRow def={def} policy={policy} draft={draft} />
-              {def.path === "maxDailyNotional" && <CapUtilization band={risk.dailyNotional} kind="money" daily />}
               {def.path === "maxDailyOrders" && <CapUtilization band={risk.dailyOrders} kind="count" daily />}
             </div>
           ))}
+          <div className="con-card-title pt-3">Schedule</div>
+          {ESSENTIALS.filter((def) => SCHEDULE_FIELD_PATHS.has(def.path)).map((def) => (
+            <div key={def.path}>
+              <PolicyFieldRow def={def} policy={policy} draft={draft} />
+            </div>
+          ))}
+          <div className="con-card-title pt-3">Short selling</div>
           {SHORTS.map((def) => (
             <div key={def.path}>
               <PolicyFieldRow def={def} policy={policy} draft={draft} />
@@ -252,7 +286,7 @@ export default function GuardrailsPage() {
         </div>
       </Card>
 
-      <Card title="Protective stops">
+      <Card title="Protective stops" collapsible defaultOpen>
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Every rule that exits a losing (or protects a winning) position, in one place. The diagram shows how they
           compose for this account right now: each lane falls back left → right, trailing runs alongside, and the app
@@ -266,7 +300,16 @@ export default function GuardrailsPage() {
         </div>
       </Card>
 
-      <Card title="Advanced rulebook" padded={false}>
+      {/* Tax treatment — account-scoped like the rest of this page; moved here from
+          Strategy in the 2026-07-16 IA restructure, directly above the Advanced
+          rulebook's Tax rules group that references it. Self-contained (own
+          auto-save) — not wired into the PolicySaveBar draft machinery below.
+          The id anchor is a deep-link target. */}
+      <div id="tax" className="scroll-mt-28">
+        <TaxSettingsCard />
+      </div>
+
+      <Card title="Advanced rulebook" padded={false} collapsible defaultOpen>
         <div className="px-4 pb-2">
           <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             Everything below ships with safe defaults — you never have to touch it. One rule everywhere: a cap that
@@ -317,10 +360,10 @@ export default function GuardrailsPage() {
           </AdvancedGroup>
           <AdvancedGroup title="Tax rules">
             <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              The wash-sale guard itself (on/off, account type, rates) lives in Framework → Tax treatment. These rules
-              tune what a rebuy lockout means for this account and how strict it is.
+              The wash-sale guard itself (on/off, account type, rates) lives in the Tax treatment card above. These
+              rules tune what a rebuy lockout means for this account and how strict it is.
             </p>
-            <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+            <div className="mt-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
               {isIra ? (
                 <>
                   <strong className="text-[color:var(--con-fg)]">IRA mode:</strong> same-account wash sales are not a
@@ -469,7 +512,7 @@ function AutonomyCard() {
   const setAuthority = async (authority: "propose" | "decide") => {
     setBusy(true);
     try {
-      await savePolicy({ strategyAuthority: authority });
+      await savePolicy({ strategyAuthority: authority }, snapshot.policy.connectedAccountId);
       await refresh();
       setArming(false);
       setTyped("");

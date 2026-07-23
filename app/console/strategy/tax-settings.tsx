@@ -1,11 +1,16 @@
 "use client";
 
 /** Tax treatment — account-scoped tax configuration (taxation type, wash-sale
- *  handling, estimated rates, net-of-tax display). Lives on the Framework page
- *  because it is per-account, like everything else here: policy.taxSettings is
- *  an account-level policy field, so the values follow the account you're
- *  viewing, not your login. Moved out of Settings in the 2026-07-10 IA
- *  restructure (Settings is global-only now). */
+ *  handling, estimated rates, net-of-tax display). Rendered on the Guardrails
+ *  page (app/console/guardrails/page.tsx), directly above the Advanced
+ *  rulebook's Tax rules group that references it, because it is per-account
+ *  like everything else there: policy.taxSettings is an account-level policy
+ *  field, so the values follow the account you're viewing, not your login.
+ *  Moved out of Settings in the 2026-07-10 IA restructure (Settings is
+ *  global-only), then from Strategy to Guardrails in the 2026-07-16 IA
+ *  restructure. This module itself stays put — only the page that imports it
+ *  changed. Self-contained (own auto-save) — never wired into the
+ *  PolicySaveBar draft machinery Guardrails uses for everything else. */
 
 import { useState } from "react";
 import type { IraWashSaleHandling, TaxationType } from "@/lib/types";
@@ -45,7 +50,7 @@ export function TaxSettingsCard() {
   // (their transient text lives in `draft` until then). `next` is the value already
   // applied to `draft` optimistically; `prev` is what to restore if the write fails.
   const commit = <K extends keyof TaxDraft>(key: K, next: TaxDraft[K], prev: TaxDraft[K]) => {
-    autoSave.save(() => savePolicy({ taxSettings: { [key]: next } }).then(() => refresh()), {
+    autoSave.save(() => savePolicy({ taxSettings: { [key]: next } }, snapshot.policy.connectedAccountId).then(() => refresh()), {
       onError: () => setDraft((d) => ({ ...d, [key]: prev }))
     });
   };
@@ -141,7 +146,7 @@ export function TaxSettingsCard() {
       </div>
       <div className="mt-3 flex flex-col gap-2.5">
         {isIra ? (
-          <div className="rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+          <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-[length:var(--con-fs-sm)] font-semibold">Same-IRA wash sales</div>
@@ -178,7 +183,7 @@ export function TaxSettingsCard() {
           </div>
         ) : (
           <div
-            className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+            className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
             title="On: buying back a symbol you sold at a loss in the last 30 days is blocked, so the loss stays deductible."
           >
             <div>
@@ -201,7 +206,7 @@ export function TaxSettingsCard() {
           </div>
         )}
         <div
-          className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+          className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
           title="On: P&L on the Results screen is shown after subtracting estimated taxes at the rates above."
         >
           <div>

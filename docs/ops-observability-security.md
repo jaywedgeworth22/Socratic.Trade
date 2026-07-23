@@ -3,9 +3,11 @@
 This app now has opt-in scaffolding for the seven selected tools:
 
 - **Infisical**: use `npm run dev:secrets`, `npm run build:secrets`, or
-  `npm run start:secrets` to execute the app under `infisical run`. Configure
-  `INFISICAL_PROJECT_ID`, `INFISICAL_ENV`, `INFISICAL_PATH`, and a machine identity
-  token in the host environment. Do not commit `.env.local`.
+  `npm run start:secrets`. The runner normally exports secrets through a minimal CLI
+  environment and starts the app directly; `INFISICAL_WATCH=true` uses `infisical run
+  --watch` plus the final credential-masking wrapper. Configure `INFISICAL_PROJECT_ID`,
+  `INFISICAL_ENV`, `INFISICAL_PATH`, and a machine identity pair/token. Do not commit
+  `.env.local`.
 - **Gitleaks**: `npm run gitleaks` runs a local secret scan. The GitHub Actions
   Security workflow runs the pinned gitleaks action on the self-hosted runner
   and clears stale macOS installer temp files before invoking the action.
@@ -32,6 +34,12 @@ This app now has opt-in scaffolding for the seven selected tools:
   break trading. The monitor is auto-created via the upsert config on first check-in
   (interval 1 minute, 5-minute checkin margin). Inertness is asserted by
   `test/sentry-inert.test.ts`.
+- **Scheduler and strategy ownership leases**: scheduler single-leader coordination is ON by
+  default, including when `SCHEDULER_SINGLE_LEADER` is unset or empty; only an explicit
+  `false`/`off`/`0`/`no` disables it. Each strategy/approval invocation owns its account-scoped
+  lease with a unique token. A 60-second heartbeat renews the five-minute strategy lease; refused
+  or thrown renewals are caught and become sticky ownership loss, and the code synchronously
+  re-proves ownership before it writes a placing intent or calls the broker.
 - **Langfuse**: add `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. LLM calls are
   traced around Bull, Bear, Red Team, post-mortem, and strategy-tuning requests.
   The default `LANGFUSE_CAPTURE_IO=summary` captures model/schema/counts and

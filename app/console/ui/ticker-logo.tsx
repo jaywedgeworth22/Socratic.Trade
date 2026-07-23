@@ -48,8 +48,8 @@ const SIZE_CLASS: Record<TickerLogoSize, string> = {
 };
 
 const MONOGRAM_FONT_CLASS: Record<TickerLogoSize, string> = {
-  sm: "text-[9px]",
-  md: "text-[11px]",
+  sm: "text-[length:var(--con-fs-2xs)]",
+  md: "text-[length:var(--con-fs-xs)]",
   lg: "text-base"
 };
 

@@ -162,6 +162,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (name) token.name = name;
       if (image) token.picture = image;
       if (account?.provider) token.loginProvider = account.provider;
+      // Bind account recreation to an actual provider sign-in, not JWT rolling refresh. The
+      // middleware forwards this trusted claim so a pre-deletion cookie cannot clear a tombstone.
+      if (account?.provider) token.loginAt = Date.now();
       return token;
     },
     // Expose display identity on the `session` object returned by `auth()`.

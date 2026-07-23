@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { AUTHENTICATED_EMAIL_HEADER, resolveRequestUserFromEmail } from "../src/lib/request-user";
+import {
+  AUTHENTICATED_IDENTITY_SOURCE_HEADER,
+  AUTHENTICATED_IDENTITY_SOURCES
+} from "../src/lib/auth/strip-identity";
 import { rateLimit, RATE_LIMITS, resetRateLimiter } from "../src/lib/rate-limit";
 import { ADMIN_OPERATION_LIMITS, resetAdminOperationInFlight } from "../src/lib/admin-operation-guard";
 import { resetTuningSingleFlight } from "../src/lib/tuning-singleflight";
+import { encodeSessionToken } from "../src/lib/auth/session-token";
 
 const mocks = vi.hoisted(() => ({
   completeMcpOAuthCallback: vi.fn(),
@@ -23,7 +28,22 @@ vi.mock("@/lib/strategy-tuning", () => ({
 }));
 
 vi.mock("@/lib/db", () => ({
-  getPolicy: mocks.getPolicy
+  getPolicy: mocks.getPolicy,
+  // These rate-limit/single-flight tests never pass targetConnectedAccountId or hit GET/PATCH, so
+  // plain no-op stubs are enough — they exist only so the route's unconditional
+  // insertStrategyTuningReview call (and the optional-target ownership check) don't throw on an
+  // undefined mock export.
+  getActiveConnectedAccount: () => undefined,
+  getConnectedAccount: () => undefined,
+  getLatestOpenStrategyTuningReview: () => undefined,
+  insertStrategyTuningReview: () => "mock-review-id",
+  setStrategyTuningReviewStatus: () => true
+}));
+
+vi.mock("@/lib/user-write-fence", () => ({
+  // These route-limit tests bypass middleware and do not exercise account recreation. Preserve the
+  // already-resolved test identity without requiring a full SQLite account-generation fixture.
+  resolveAuthenticatedAccountGeneration: (userId: string) => userId
 }));
 
 vi.mock("@/lib/tuning-invariants", () => ({
@@ -43,6 +63,7 @@ import { POST as tuneStrategy } from "../app/api/strategy/tune/route";
 import { GET as dryRunTuning } from "../app/api/admin/tuning-dry-run/route";
 
 beforeEach(() => {
+  vi.unstubAllEnvs();
   resetRateLimiter();
   resetAdminOperationInFlight();
   resetTuningSingleFlight();
@@ -53,6 +74,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   resetRateLimiter();
   resetAdminOperationInFlight();
   resetTuningSingleFlight();
@@ -89,6 +111,54 @@ describe("public Robinhood OAuth callback rate limiting", () => {
       expect(response.status).toBe(429);
     }
     expect(mocks.completeMcpOAuthCallback).not.toHaveBeenCalled();
+  });
+
+  it("optionally binds the callback to a verified Auth.js session cookie", async () => {
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    const email = "oauth-owner@example.com";
+    vi.stubEnv("AUTH_SECRET", secret);
+    const sessionToken = await encodeSessionToken({
+      token: { email },
+      secret,
+      salt: "authjs.session-token",
+      maxAge: 60 * 60
+    });
+
+    const response = await robinhoodCallback(new NextRequest(
+      "https://socratictrade.com/api/auth/robinhood/callback?code=real-code&state=real-state",
+      {
+        headers: {
+          "cf-connecting-ip": "203.0.113.40",
+          cookie: `authjs.session-token=${sessionToken}`
+        }
+      }
+    ));
+
+    expect(response.status).toBe(307);
+    expect(mocks.completeMcpOAuthCallback).toHaveBeenCalledWith({
+      code: "real-code",
+      state: "real-state",
+      expectedUserId: resolveRequestUserFromEmail(email).userId
+    });
+  });
+
+  it("does not treat a client-supplied identity header as callback session binding", async () => {
+    const response = await robinhoodCallback(new NextRequest(
+      "https://socratictrade.com/api/auth/robinhood/callback?code=real-code&state=real-state",
+      {
+        headers: {
+          "cf-connecting-ip": "203.0.113.41",
+          [AUTHENTICATED_EMAIL_HEADER]: "attacker@example.com"
+        }
+      }
+    ));
+
+    expect(response.status).toBe(307);
+    expect(mocks.completeMcpOAuthCallback).toHaveBeenCalledWith({
+      code: "real-code",
+      state: "real-state",
+      expectedUserId: undefined
+    });
   });
 });
 
@@ -168,13 +238,17 @@ describe("paid strategy tuning rate limiting", () => {
 
   it("mutually excludes public tuning and the admin dry run for the same user", async () => {
     const email = "cross-route-tuning@example.com";
+    vi.stubEnv("ADMIN_USER_EMAILS", email);
     const publicRequest = () => new Request("https://socratictrade.com/api/strategy/tune", {
       method: "POST",
       headers: { [AUTHENTICATED_EMAIL_HEADER]: email, "content-type": "application/json" },
       body: "{}"
     });
     const adminRequest = () => new Request("https://socratictrade.com/api/admin/tuning-dry-run", {
-      headers: { [AUTHENTICATED_EMAIL_HEADER]: email }
+      headers: {
+        [AUTHENTICATED_EMAIL_HEADER]: email,
+        [AUTHENTICATED_IDENTITY_SOURCE_HEADER]: AUTHENTICATED_IDENTITY_SOURCES.authJsSession
+      }
     });
 
     let resolveDryRun!: (value: { wouldApply: boolean }) => void;

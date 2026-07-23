@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { OperationGuardRejectionSchema } from "@jaywedgeworth22/congress-trading-shared";
 import {
   ADMIN_OPERATION_LIMITS,
   adminOperationIdentity,
@@ -8,6 +12,7 @@ import {
 import { resetRateLimiter } from "../src/lib/rate-limit";
 import { resetTuningSingleFlight } from "../src/lib/tuning-singleflight";
 import { rateLimitedOperationResponse } from "../src/lib/operation-guard-response";
+import { OPERATION_LEASE_GROUPS, runWithOperationLease } from "../src/lib/operation-lease";
 
 function adminRequest(email: string, extraHeaders: Record<string, string> = {}): Request {
   return new Request("https://socratictrade.com/api/admin/test", {
@@ -25,6 +30,10 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve };
 }
+
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-admin-operation-guard-${randomUUID()}.db`)}`;
+});
 
 describe("admin operation guard", () => {
   beforeEach(() => {
@@ -49,6 +58,7 @@ describe("admin operation guard", () => {
       "reindex-10k",
       "reindex-8k",
       "robinhood-probe",
+      "sec-ingest-seed",
       "tuning-dry-run"
     ]);
     for (const config of Object.values(ADMIN_OPERATION_LIMITS)) {
@@ -92,7 +102,9 @@ describe("admin operation guard", () => {
     const blocked = await withAdminOperationGuard(request, operation, run);
     expect(blocked.status).toBe(429);
     expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
-    await expect(blocked.json()).resolves.toMatchObject({
+    const body = await blocked.json();
+    expect(() => OperationGuardRejectionSchema.parse(body)).not.toThrow();
+    expect(body).toMatchObject({
       ok: false,
       code: "rate_limited",
       operation,
@@ -130,7 +142,9 @@ describe("admin operation guard", () => {
     );
 
     expect(duplicate.status).toBe(409);
-    await expect(duplicate.json()).resolves.toMatchObject({
+    const duplicateBody = await duplicate.json();
+    expect(() => OperationGuardRejectionSchema.parse(duplicateBody)).not.toThrow();
+    expect(duplicateBody).toMatchObject({
       ok: false,
       code: "operation_in_flight",
       operation: "robinhood-probe",
@@ -156,7 +170,9 @@ describe("admin operation guard", () => {
     );
 
     expect(tenK.status).toBe(409);
-    await expect(tenK.json()).resolves.toMatchObject({
+    const tenKBody = await tenK.json();
+    expect(() => OperationGuardRejectionSchema.parse(tenKBody)).not.toThrow();
+    expect(tenKBody).toMatchObject({
       ok: false,
       code: "operation_in_flight",
       operation: "reindex-10k",
@@ -179,6 +195,24 @@ describe("admin operation guard", () => {
       "reindex-10k",
       async () => new Response("over-budget")
     )).status).toBe(429);
+  });
+
+  it("passes its opaque durable claim so the matching core boundary reuses the lease", async () => {
+    const response = await withAdminOperationGuard(
+      adminRequest("claim-reuse@example.com"),
+      "reindex-8k",
+      async (claim) => {
+        expect(claim).toBeDefined();
+        const nested = await runWithOperationLease(
+          { group: OPERATION_LEASE_GROUPS.RAG_REINDEX, operation: "nested-reindex", claim },
+          async () => new Response("nested")
+        );
+        expect(nested.acquired).toBe(true);
+        return nested.acquired ? nested.value : new Response("unexpected busy", { status: 500 });
+      }
+    );
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toBe("nested");
   });
 
   it("releases the single-flight entry after an operation throws", async () => {

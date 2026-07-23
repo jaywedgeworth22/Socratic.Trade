@@ -1,7 +1,10 @@
 // Edge auth gate (Phase-11 M6). Runs before every non-static request.
 //
 // Identity sources (first match wins):
-//   1. Cloudflare Access header (when CF_ACCESS_TRUST_EMAIL_HEADER=1).
+//   1. Cloudflare Access header (when CF_ACCESS_TRUST_EMAIL_HEADER=1) — the header is NEVER
+//      trusted on its own: CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD must also be configured, and the
+//      request's Cf-Access-Jwt-Assertion is verified against the team's JWKS (audience-checked)
+//      before the header email is trusted. See getCfEmail / verifyCfAccessAssertion below.
 //   2. Auth.js v5 session JWT cookie — verified with the same edge-safe HS256
 //      helper configured in src/lib/auth/auth.ts.
 //   3. Dev/local fallback to PRIMARY_USER_EMAIL — ONLY when auth is NOT configured.
@@ -22,14 +25,17 @@
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { createRemoteJWKSet } from "jose/jwks/remote";
+import { jwtVerify } from "jose/jwt/verify";
 import {
   AUTHENTICATED_IDENTITY_SOURCE_HEADER,
+  AUTHENTICATED_SESSION_ISSUED_AT_HEADER,
   AUTHENTICATED_IDENTITY_SOURCES,
   stripClientIdentityHeaders,
   type AuthenticatedIdentitySource
 } from "./src/lib/auth/strip-identity";
 import { checkSameOrigin } from "./src/lib/auth/csrf";
-import { getSessionEmail } from "./src/lib/auth/session-edge";
+import { getSessionIdentity } from "./src/lib/auth/session-edge";
 
 const PRIMARY_EMAIL = (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
 // The primary operator's aliases — additional addresses that map to the same primary account. Kept in sync
@@ -49,15 +55,24 @@ const PUBLIC_PREFIXES = [
   "/api/health",
   "/api/ops",
   "/api/webhooks",
+  "/api/framework",
   "/access-denied",
   "/login",
   "/logout",
+  // Crawler/metadata files: these MUST be anonymously reachable or robots
+  // rules never reach crawlers (a robots.txt that 307s to /login parses as
+  // "no rules"). Discovered live 2026-07-11: production redirected all three.
+  "/robots.txt",
+  "/sitemap.xml",
+  "/manifest.webmanifest",
   "/welcome",
   "/strategy",
+  "/framework",
   "/how-it-works",
   "/design/socratic-trade",
   "/privacy-policy",
-  "/terms-and-conditions"
+  "/terms-and-conditions",
+  "/api/mobile/auth/apple",
 ];
 const AUTHJS_PUBLIC_PATHS = new Set([
   "/api/auth/csrf",
@@ -144,11 +159,92 @@ function isAuthConfigured(): boolean {
   return Boolean(process.env.AUTH_SECRET) || isFlagOn(process.env.CF_ACCESS_TRUST_EMAIL_HEADER);
 }
 
-/** Extract the verified email from a Cloudflare Access request header, if present. */
-function getCfEmail(req: NextRequest): string | null {
+// --- Cloudflare Access JWT verification -----------------------------------------
+//
+// `cf-access-authenticated-user-email` is a PLAIN, spoofable HTTP header. It is only trustworthy
+// when Cloudflare Access itself terminates the connection and the origin is unreachable any other
+// way (e.g. a Tunnel with no public IP). This origin IS directly reachable, so the header alone is
+// NEVER trusted: CF_ACCESS_TRUST_EMAIL_HEADER additionally requires CF_ACCESS_TEAM_DOMAIN +
+// CF_ACCESS_AUD to be configured, and every request must carry a `Cf-Access-Jwt-Assertion` that
+// verifies against the team's JWKS (https://<team>.cloudflareaccess.com/cdn-cgi/access/certs) with
+// a matching audience. Any missing config or failed verification makes the header IGNORED — fail
+// closed, never a degraded/partial trust.
+
+/** Whether Cloudflare Access header trust is fully armed: the trust flag AND both pieces of config
+ *  needed to validate the accompanying JWT. The flag alone is intentionally not sufficient. */
+function isCfAccessConfigured(): boolean {
+  return Boolean(process.env.CF_ACCESS_TEAM_DOMAIN?.trim()) && Boolean(process.env.CF_ACCESS_AUD?.trim());
+}
+
+/** Normalize a team domain to the full JWKS host: a bare team name ("acme") becomes
+ *  "acme.cloudflareaccess.com"; anything that already looks like a domain is used as-is (covers
+ *  Cloudflare Access custom hostnames). */
+function normalizeCfTeamDomain(raw: string): string {
+  const trimmed = raw.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return trimmed.includes(".") ? trimmed : `${trimmed}.cloudflareaccess.com`;
+}
+
+// Cache the remote JWKS resolver at module scope (survives across requests within the same warm
+// edge isolate) so every request doesn't re-create a fresh jose JWKS fetcher; jose's own resolver
+// additionally caches the fetched key set internally.
+const cfAccessJwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+function getCfAccessJwks(teamDomain: string): ReturnType<typeof createRemoteJWKSet> {
+  let jwks = cfAccessJwksCache.get(teamDomain);
+  if (!jwks) {
+    jwks = createRemoteJWKSet(new URL(`https://${teamDomain}/cdn-cgi/access/certs`));
+    cfAccessJwksCache.set(teamDomain, jwks);
+  }
+  return jwks;
+}
+
+/** Verify a `Cf-Access-Jwt-Assertion` against the configured team's JWKS with an audience check.
+ *  Returns the verified email claim, or null on ANY failure (missing config, expired/invalid
+ *  signature, wrong issuer/audience, network error) — every failure path ignores the assertion
+ *  rather than trusting it. */
+async function verifyCfAccessAssertion(assertion: string): Promise<string | null> {
+  const teamDomainRaw = process.env.CF_ACCESS_TEAM_DOMAIN?.trim();
+  const aud = process.env.CF_ACCESS_AUD?.trim();
+  if (!teamDomainRaw || !aud) return null;
+  const teamDomain = normalizeCfTeamDomain(teamDomainRaw);
+  try {
+    const jwks = getCfAccessJwks(teamDomain);
+    const { payload } = await jwtVerify(assertion, jwks, {
+      issuer: `https://${teamDomain}`,
+      audience: aud
+    });
+    const email = payload.email;
+    return typeof email === "string" && email.includes("@") ? email.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Extract the verified email from a Cloudflare Access request, if present. Requires
+ *  CF_ACCESS_TRUST_EMAIL_HEADER on AND CF_ACCESS_TEAM_DOMAIN/CF_ACCESS_AUD configured AND a
+ *  Cf-Access-Jwt-Assertion that verifies against the team's JWKS with the configured audience —
+ *  the cf-access-authenticated-user-email header is NEVER trusted by itself. */
+async function getCfEmail(req: NextRequest): Promise<string | null> {
   if (!isFlagOn(process.env.CF_ACCESS_TRUST_EMAIL_HEADER)) return null;
-  const email = req.headers.get("cf-access-authenticated-user-email");
-  return email ? email.trim().toLowerCase() : null;
+  const headerEmail = req.headers.get("cf-access-authenticated-user-email");
+  if (!headerEmail) return null;
+  if (!isCfAccessConfigured()) {
+    // Flag on but not fully configured: fail closed by ignoring the header entirely, rather than
+    // falling back to a degraded/partial trust of an unverifiable claim.
+    console.error(
+      "CF_ACCESS_TRUST_EMAIL_HEADER is on but CF_ACCESS_TEAM_DOMAIN/CF_ACCESS_AUD are not both set " +
+        "— ignoring the cf-access-authenticated-user-email header (fail closed)."
+    );
+    return null;
+  }
+  const assertion = req.headers.get("cf-access-jwt-assertion");
+  if (!assertion) return null;
+  const verifiedEmail = await verifyCfAccessAssertion(assertion);
+  if (!verifiedEmail) return null;
+  // Defense in depth: the verified JWT's own email claim must match the header Access also set —
+  // the JWT is the source of truth, the header is corroboration, not an independent trust source.
+  if (verifiedEmail !== headerEmail.trim().toLowerCase()) return null;
+  return verifiedEmail;
 }
 
 function isEmailAllowed(email: string, fromCf: boolean): boolean {
@@ -163,6 +259,8 @@ function isEmailAllowed(email: string, fromCf: boolean): boolean {
 
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
+
+  const isMobileAuthExchangePath = pathname === "/api/mobile/auth/exchange";
 
   if (isPublicPath(pathname)) {
     // Public (no auth) — but still strip client-supplied identity headers so a forged
@@ -193,6 +291,14 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // The mobile exchange is intentionally unauthenticated, but it must still pass
+  // the CSRF gate above. Its one-time code and device verifier authorize the
+  // session handoff; the browser-origin check prevents login CSRF/session fixation.
+  if (isMobileAuthExchangePath) {
+    const headers = stripClientIdentityHeaders(new Headers(req.headers));
+    return withSecurityHeaders(NextResponse.next({ request: { headers } }));
+  }
+
   // --- Identity resolution ---
 
   // Track the identity source so isEmailAllowed can distinguish CF-provided identities
@@ -200,10 +306,11 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // identities (where empty ALLOWED_EMAILS means "only the primary user").
   let trustedEmail: string | null = null;
   let identitySource: AuthenticatedIdentitySource | null = null;
+  let sessionIssuedAt: number | null = null;
   let fromCf = false;
 
   // Source 1: Cloudflare Access header.
-  const cfEmail = getCfEmail(req);
+  const cfEmail = await getCfEmail(req);
   if (cfEmail) {
     trustedEmail = cfEmail;
     identitySource = AUTHENTICATED_IDENTITY_SOURCES.cloudflareAccess;
@@ -211,10 +318,26 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   }
 
   // Source 2: Auth.js v5 session JWT (verified with the shared edge-safe helper).
-  if (!trustedEmail && process.env.AUTH_SECRET) {
+  // Even when Cloudflare supplied the access identity, inspect a signed Auth.js session for the
+  // SAME email. Cloudflare application tokens can refresh without a fresh IdP login, so their
+  // `iat` is not account-recreation proof. A matching Auth.js `loginAt` is the provider-login
+  // timestamp; a missing/mismatched cookie leaves the request on the Cloudflare-only path and a
+  // deleted identity will fail closed in resolveRequestUser().
+  if (process.env.AUTH_SECRET) {
     const cookieHeader = req.headers.get("cookie");
-    trustedEmail = await getSessionEmail(cookieHeader, process.env.AUTH_SECRET);
-    if (trustedEmail) identitySource = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
+    const identity = await getSessionIdentity(cookieHeader, process.env.AUTH_SECRET);
+    if (!trustedEmail && identity?.email) {
+      trustedEmail = identity.email;
+      sessionIssuedAt = identity.loginAt ?? null;
+      identitySource = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
+    } else if (
+      trustedEmail &&
+      identity?.email === trustedEmail &&
+      identity.loginAt != null
+    ) {
+      sessionIssuedAt = identity.loginAt;
+      identitySource = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
+    }
   }
 
   // Source 3: Dev/local fallback — ONLY when auth is NOT configured.
@@ -234,6 +357,9 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
           : NextResponse.redirect(new URL("/access-denied", req.url))
       );
     }
+  } else if (pathname.startsWith("/api/admin/") && (req.headers.has("x-admin-token") || (req.headers.get("authorization") ?? "").trim().toLowerCase().startsWith("bearer "))) {
+    // Allow unauthenticated requests with an x-admin-token or bearer token to reach the admin route handlers.
+    // The middleware does NOT validate the token; the route handler's `requireAdmin()` or custom auth (like verifySecuritiesImportToken) will strictly validate it.
   } else {
     // No verified identity and auth is configured (or armed) → FAIL CLOSED.
     return withSecurityHeaders(
@@ -245,10 +371,13 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // Strip spoofable client-supplied identity hints, then forward the resolved identity + provenance.
   const headers = stripClientIdentityHeaders(new Headers(req.headers));
-  headers.set("x-authenticated-user-email", trustedEmail);
+  headers.set("x-authenticated-user-email", trustedEmail || "");
   // Preserve provenance separately from the email. Node handlers use this trusted middleware-set
   // marker to distinguish verified identities from the auth-unconfigured local fallback.
   if (identitySource) headers.set(AUTHENTICATED_IDENTITY_SOURCE_HEADER, identitySource);
+  if (sessionIssuedAt !== null) {
+    headers.set(AUTHENTICATED_SESSION_ISSUED_AT_HEADER, new Date(sessionIssuedAt).toISOString());
+  }
   return withSecurityHeaders(NextResponse.next({ request: { headers } }));
 }
 

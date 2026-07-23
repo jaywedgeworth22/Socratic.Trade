@@ -8,6 +8,7 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { bulkApproveProposals, LiveConfirmationRequiredError, rejectProposal, type ApproveResult } from "../lib/api";
 import { fmtMoney } from "../lib/format";
 import { fetchPendingLearnedContext } from "../lib/learned-context";
+import { isSuccessfulApprovalResult } from "../lib/thesis";
 import { ApprovalCard } from "../components/approval-card";
 import { AlertCenter } from "../components/alert-center";
 import { Card, Chip, Btn, Select, TextInput } from "../ui/primitives";
@@ -24,6 +25,7 @@ import {
   type ApprovalSort
 } from "./triage";
 import { useToast } from "../ui/toast";
+import { destinationLabel } from "../components/nav";
 
 const SIDE_OPTIONS: Array<{ value: ApprovalSideFilter; label: string }> = [
   { value: "all", label: "All ideas" },
@@ -171,8 +173,7 @@ export default function ApprovalsPage() {
   const resetSelection = () => setSelectedIds(new Set());
 
   const finishApproval = (result: ApproveResult) => {
-    if (result.status === "placed") return "placed";
-    if (result.status === "paper") return "placed";
+    if (isSuccessfulApprovalResult(result.status)) return "placed";
     if (result.status === "blocked") return "blocked";
     return "other";
   };
@@ -294,16 +295,28 @@ export default function ApprovalsPage() {
 
   if (!snapshot || !state) return null;
 
+  // Intentionally wider than CONSOLE_PAGE_WIDTH: this is a two-column layout (main
+  // approvals column + a 360px-fixed aside, xl:grid-cols-[minmax(0,1fr)_360px]),
+  // not a single reading column like the other console pages. Capping it to
+  // CONSOLE_PAGE_WIDTH's 1024px would starve the main column to satisfy the
+  // aside's fixed 360px. Same reasoning as the console home page and the
+  // decision-trace ready state — see ./lib/page-width.ts and
+  // docs/rollouts/2026-07-08-console-page-width-parity.md.
   return (
     <div className="mx-auto grid max-w-6xl gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <div className="flex min-w-0 flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-[length:var(--con-fs-lg)] font-bold">
-              Approvals{" "}
-              <span className="con-num text-[color:var(--con-accent)]">
-                ({filtered.length}/{pending.length})
-              </span>
+              {destinationLabel("/console/approvals")}
+              {pending.length > 0 && (
+                <>
+                  {" "}
+                  <span className="con-num text-[color:var(--con-accent)]">
+                    ({filtered.length}/{pending.length})
+                  </span>
+                </>
+              )}
             </h1>
             {learnedPendingCount > 0 && (
               <button
@@ -316,9 +329,13 @@ export default function ApprovalsPage() {
               </button>
             )}
           </div>
-          <Chip tone={state.tone === "pos" ? "pos" : state.tone === "neg" ? "neg" : "warn"}>{state.label}</Chip>
+          <Chip tone={state.tone === "pos" ? "pos" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "warn"}>{state.label}</Chip>
         </div>
 
+        {/* Triage apparatus (stat tiles, search, filters, bulk actions) only earns its
+            space when there's a queue to triage — an empty queue leads with the
+            empty-state card instead of four zero tiles and disabled controls. */}
+        {pending.length > 0 && (
         <Card
           title={
             <span className="flex items-center gap-1.5">
@@ -328,19 +345,19 @@ export default function ApprovalsPage() {
         >
           <div className="flex flex-col gap-3">
             <div className="grid gap-2 sm:grid-cols-4">
-              <div className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+              <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
                 <div className="con-card-title">Visible</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-lg)] font-semibold">{summary.count}</div>
               </div>
-              <div className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+              <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
                 <div className="con-card-title">Live</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-lg)] font-semibold">{summary.liveCount}</div>
               </div>
-              <div className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+              <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
                 <div className="con-card-title">Risk-reducing exits</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-lg)] font-semibold">{summary.exitCount}</div>
               </div>
-              <div className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+              <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
                 <div className="con-card-title">Estimated notional</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-lg)] font-semibold">{fmtMoney(summary.totalEstimatedNotional)}</div>
               </div>
@@ -430,12 +447,14 @@ export default function ApprovalsPage() {
             </div>
           </div>
         </Card>
+        )}
 
         {stopped && (
           <Card>
             <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-warn)]">
               <strong>The system is stopped.</strong> The server refuses approving or rejecting proposals while stopped —
-              start it (or switch to Close-only) from the run-state chip first. Run once can still create proposals.
+              start it (or switch to Close-only) from the Stopped button in the top bar first. Run once can still create
+              proposals.
             </p>
           </Card>
         )}
@@ -443,10 +462,21 @@ export default function ApprovalsPage() {
         {filtered.length === 0 ? (
           <Card>
             <div className="py-8 text-center">
-              <p className="font-semibold">No trade proposals match this triage view.</p>
-              <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                Adjust the filters above or wait for the next run to stage new ideas.
-              </p>
+              {pending.length === 0 ? (
+                <>
+                  <p className="font-semibold">Nothing waiting for your judgment.</p>
+                  <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                    When a run stages a trade that needs your approval, it shows up here.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-semibold">No trade proposals match this triage view.</p>
+                  <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                    Adjust the filters above or wait for the next run to stage new ideas.
+                  </p>
+                </>
+              )}
             </div>
           </Card>
         ) : (
@@ -554,7 +584,7 @@ function BulkLiveApproveSheet({
 
   return (
     <Sheet open={open} onClose={close} title="Approve live batch" tone="live">
-      <div className="mb-3 rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
+      <div className="mb-3 rounded-control border border-[color:var(--con-live-border)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
         <div className="font-bold">
           {live.length} live order{live.length === 1 ? "" : "s"} selected
         </div>
@@ -568,7 +598,7 @@ function BulkLiveApproveSheet({
         </p>
       </div>
 
-      <div className="mb-3 max-h-48 overflow-auto rounded-lg border border-[color:var(--con-line)]">
+      <div className="mb-3 max-h-48 overflow-auto rounded-control border border-[color:var(--con-line)]">
         {live.map((proposal) => (
           <div key={proposal.id} className="flex items-center justify-between gap-3 border-b border-[color:var(--con-line)] px-3 py-2 last:border-b-0">
             <div>

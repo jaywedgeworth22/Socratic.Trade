@@ -1,3 +1,10 @@
+import {
+  buildOperationInFlightRejection,
+  buildRateLimitedRejection,
+  getOperationGuardHttpStatus
+} from "@jaywedgeworth22/congress-trading-shared";
+import type { OperationLeaseBusy } from "./operation-lease";
+
 function jsonResponse(status: number, body: Record<string, unknown>, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify({ ok: false, ...body }), {
     status,
@@ -11,9 +18,10 @@ export function rateLimitedOperationResponse(
   error: string = `Rate limit exceeded for operation "${operation}". Please retry shortly.`
 ): Response {
   const retry = Number.isFinite(retryAfterSeconds) ? Math.max(1, Math.ceil(retryAfterSeconds)) : 1;
+  const rejection = buildRateLimitedRejection(operation, retry);
   return jsonResponse(
-    429,
-    { code: "rate_limited", operation, retryAfterSeconds: retry, error },
+    getOperationGuardHttpStatus(rejection),
+    { ...rejection, error },
     { "retry-after": String(retry) }
   );
 }
@@ -24,11 +32,20 @@ export function operationInFlightResponse(
   error: string = `Operation "${operation}" conflicts with "${activeOperation}", which is already running.`,
   extra: Record<string, unknown> = {}
 ): Response {
-  return jsonResponse(409, {
-    code: "operation_in_flight",
-    operation,
-    activeOperation,
+  const rejection = buildOperationInFlightRejection(operation, activeOperation);
+  return jsonResponse(getOperationGuardHttpStatus(rejection), {
+    ...rejection,
     error,
     ...extra
   });
+}
+
+/** Map a typed core-boundary busy result through the shared v1.5 rejection contract. */
+export function operationLeaseBusyResponse(operation: string, busy: OperationLeaseBusy): Response {
+  return operationInFlightResponse(
+    operation,
+    busy.activeOperation,
+    `Operation "${operation}" conflicts with "${busy.activeOperation}", which is already running.`,
+    { operationGroup: busy.group, retryAfterSeconds: busy.retryAfterSeconds }
+  );
 }

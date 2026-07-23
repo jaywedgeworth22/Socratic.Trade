@@ -2,6 +2,12 @@ import { rateLimit, type RateLimitOptions } from "./rate-limit";
 import { resolveRequestUserId } from "./request-user";
 import { withTuningSingleFlight } from "./tuning-singleflight";
 import { operationInFlightResponse, rateLimitedOperationResponse } from "./operation-guard-response";
+import {
+  OPERATION_LEASE_GROUPS,
+  runWithOperationLease,
+  type OperationLeaseClaim,
+  type OperationLeaseGroup
+} from "./operation-lease";
 
 type ConcurrencyScope = "admin" | "manual-admin";
 
@@ -31,10 +37,23 @@ export const ADMIN_OPERATION_LIMITS = {
   "congress-score-eval": { limit: 6, windowMs: 10 * 60_000, concurrencyGroup: "congress-score-eval", concurrencyScope: "admin" },
   "congress-share": { limit: 2, windowMs: 60 * 60_000, concurrencyGroup: "congress-share", concurrencyScope: "manual-admin" },
   "refresh-websource": { limit: 4, windowMs: 10 * 60_000, concurrencyGroup: "refresh-websource", concurrencyScope: "manual-admin" },
-  "robinhood-probe": { limit: 20, windowMs: 5 * 60_000, concurrencyGroup: "robinhood-probe", concurrencyScope: "admin" }
+  "robinhood-probe": { limit: 20, windowMs: 5 * 60_000, concurrencyGroup: "robinhood-probe", concurrencyScope: "admin" },
+  "sec-ingest-seed": { limit: 6, windowMs: 60 * 60_000, concurrencyGroup: "sec-ingest-seed", concurrencyScope: "manual-admin" }
 } as const satisfies Record<string, AdminOperationLimit>;
 
 export type AdminOperationName = keyof typeof ADMIN_OPERATION_LIMITS;
+
+export interface AdminOperationGuardOptions {
+  /** Required for refresh-websource because Congress and SEC 8-K own distinct durable datasets. */
+  durableGroup?: OperationLeaseGroup;
+}
+
+const FIXED_DURABLE_GROUPS: Partial<Record<AdminOperationName, OperationLeaseGroup>> = {
+  "reindex-8k": OPERATION_LEASE_GROUPS.RAG_REINDEX,
+  "reindex-10k": OPERATION_LEASE_GROUPS.RAG_REINDEX,
+  "congress-share": OPERATION_LEASE_GROUPS.CONGRESS_SHARE,
+  "sec-ingest-seed": OPERATION_LEASE_GROUPS.SEC_INGEST_SEED
+};
 
 type AdminOperationGuardHost = typeof globalThis & {
   __socraticAdminOperationsInFlight?: Map<string, { operation: AdminOperationName; token: symbol }>;
@@ -66,7 +85,8 @@ function concurrencyKey(identity: string, operation: AdminOperationName): string
 export async function withAdminOperationGuard(
   request: Request,
   operation: AdminOperationName,
-  run: () => Promise<Response>
+  run: (claim?: OperationLeaseClaim) => Promise<Response>,
+  options: AdminOperationGuardOptions = {}
 ): Promise<Response> {
   const identity = adminOperationIdentity(request);
   const config = ADMIN_OPERATION_LIMITS[operation];
@@ -83,6 +103,36 @@ export async function withAdminOperationGuard(
       }
       return run();
     });
+  }
+
+  const durableGroup = options.durableGroup ?? FIXED_DURABLE_GROUPS[operation];
+  if (durableGroup) {
+    const guarded = await runWithOperationLease(
+      { group: durableGroup, operation },
+      async (claim) => {
+        // The durable claim is the admission serialization point. Debit the per-admin budget only
+        // after it succeeds, then pass the opaque capability into the underlying core boundary so
+        // that boundary reuses (rather than conflicts with) the already-held lease.
+        const admission = rateLimit(`${identity}:admin:${operation}`, config);
+        if (!admission.allowed) {
+          return rateLimitedOperationResponse(
+            operation,
+            admission.retryAfterSeconds,
+            `Rate limit exceeded for admin operation "${operation}". Please retry shortly.`
+          );
+        }
+        return run(claim);
+      }
+    );
+    if (!guarded.acquired) {
+      return operationInFlightResponse(
+        operation,
+        guarded.busy.activeOperation,
+        `Admin operation "${operation}" conflicts with "${guarded.busy.activeOperation}", which is already running.`,
+        { operationGroup: guarded.busy.group, retryAfterSeconds: guarded.busy.retryAfterSeconds }
+      );
+    }
+    return guarded.value;
   }
 
   const flightKey = concurrencyKey(identity, operation);

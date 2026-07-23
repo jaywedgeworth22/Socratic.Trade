@@ -31,16 +31,35 @@ export async function POST(request: Request) {
 
   let symbols: string[] = [];
   let limit: number | undefined;
+  let clearCache = false;
   try {
-    const body = (await request.json()) as { symbols?: string[]; limit?: number };
-    if (Array.isArray(body?.symbols)) symbols = body.symbols.filter((s) => typeof s === "string" && s.length > 0);
+    const body = (await request.json()) as { symbols?: string[]; limit?: number; clearCache?: boolean; all?: boolean };
+    const isAll = body?.all === true || (Array.isArray(body?.symbols) && body.symbols.includes("*"));
+    if (isAll) {
+      const { getDb } = await import("@/lib/db");
+      const db = getDb();
+      const tickersSet = new Set<string>();
+      const filingsRows = db.prepare("SELECT DISTINCT ticker FROM sec_filings").all() as { ticker: string }[];
+      for (const r of filingsRows) if (r.ticker) tickersSet.add(r.ticker);
+      const hasIngested = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ingested_accessions'").get();
+      if (hasIngested) {
+        const legacyRows = db.prepare("SELECT DISTINCT ticker FROM ingested_accessions").all() as { ticker: string }[];
+        for (const r of legacyRows) if (r.ticker) tickersSet.add(r.ticker);
+      }
+      symbols = Array.from(tickersSet).map((s) => normalizeSymbol(s));
+    } else if (Array.isArray(body?.symbols)) {
+      symbols = [...new Set(body.symbols
+        .filter((s) => typeof s === "string" && s.length > 0)
+        .map((s) => normalizeSymbol(s)))];
+    }
     if (Number.isFinite(Number(body?.limit))) limit = Number(body.limit);
+    if (body?.clearCache === true) clearCache = true;
   } catch {
     // no body / not JSON → empty symbols (will return error)
   }
 
   if (symbols.length === 0) {
-    return NextResponse.json({ ok: false, error: "Provide { symbols: string[], limit?: number } in the request body." }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Provide { symbols: string[], limit?: number, clearCache?: boolean } or { all: true } in the request body." }, { status: 400 });
   }
 
   return withAdminOperationGuard(request, "reindex-10k", async () => {

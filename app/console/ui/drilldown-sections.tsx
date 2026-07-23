@@ -35,7 +35,7 @@ import {
 /** Bordered section block with an uppercase title (tooltip on the title). */
 function Section({ title, titleHint, children }: { title: string; titleHint: string; children: ReactNode }) {
   return (
-    <section className="rounded-lg border border-[color:var(--con-line)] p-3">
+    <section className="rounded-control border border-[color:var(--con-line)] p-3">
       <h3 className="con-card-title mb-2 cursor-default">
         <Tooltip content={titleHint}>{title}</Tooltip>
       </h3>
@@ -47,7 +47,7 @@ function Section({ title, titleHint, children }: { title: string; titleHint: str
 /** Collapsible section for the deep-dive tail of the drawer. */
 function Disclosure({ title, titleHint, children, defaultOpen }: { title: string; titleHint: string; children: ReactNode; defaultOpen?: boolean }) {
   return (
-    <details className="con-disclosure rounded-lg border border-[color:var(--con-line)] px-3" open={defaultOpen}>
+    <details className="con-disclosure rounded-control border border-[color:var(--con-line)] px-3" open={defaultOpen}>
       <summary><Tooltip content={titleHint}>{title}</Tooltip></summary>
       <div className="pb-3">{children}</div>
     </details>

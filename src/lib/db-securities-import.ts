@@ -54,6 +54,11 @@ function normTicker(raw: string): string {
   return (raw ?? "").trim().toUpperCase();
 }
 
+function normDisplayText(raw: string | null | undefined): string | null {
+  const value = (raw ?? "").trim();
+  return value ? value : null;
+}
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -93,7 +98,7 @@ export function upsertImportedRefs(refs: ImportedRefInput[], origin: string = DE
       if (!ticker) continue;
       stmt.run({
         ticker,
-        companyName: r.companyName ?? null,
+        companyName: normDisplayText(r.companyName),
         sector: r.sector ?? null,
         industry: r.industry ?? null,
         assetClass: r.assetClass ?? null,

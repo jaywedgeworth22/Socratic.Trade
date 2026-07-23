@@ -9,7 +9,7 @@ import {
   type ModelRoleStats
 } from "../src/lib/model-stats";
 
-function statFor(stats: ModelRoleStats[], model: string, role: "green" | "red"): ModelRoleStats {
+function statFor(stats: ModelRoleStats[], model: string, role: "green" | "red" | "strategist"): ModelRoleStats {
   const hit = stats.find((s) => s.model === model && s.role === role);
   expect(hit, `expected stats for ${role} ${model}`).toBeDefined();
   return hit!;
@@ -18,10 +18,11 @@ function statFor(stats: ModelRoleStats[], model: string, role: "green" | "red"):
 const NO_BENCH: BenchmarkRoleSummary[] = [];
 
 describe("role mapping", () => {
-  it("maps llm_usage contexts: strategy=green, strategy-bear/red-team=red, others ignored", () => {
+  it("maps llm_usage contexts: strategy=green, strategy-bear/red-team=red, strategy-tuning=strategist, others ignored", () => {
     expect(roleForUsageContext("strategy")).toBe("green");
     expect(roleForUsageContext("strategy-bear")).toBe("red");
     expect(roleForUsageContext("red-team")).toBe("red");
+    expect(roleForUsageContext("strategy-tuning")).toBe("strategist");
     expect(roleForUsageContext("chat")).toBeNull();
     expect(roleForUsageContext(null)).toBeNull();
   });
@@ -140,6 +141,71 @@ describe("aggregateModelStats — benchmark fallback", () => {
   });
 });
 
+describe("aggregateModelStats — strategist (AI review / strategy-tune) rollup", () => {
+  it("rolls 'strategy-tuning' usage rows up into a strategist row with cost/call, call count, and TOTAL cost", () => {
+    const stats = aggregateModelStats({
+      usageRows: [
+        { model: "gpt-5.4-mini", context: "strategy-tuning", calls: 3, costUsd: 0.09 },
+        { model: "gpt-5.4-mini", context: "strategy-tuning", calls: 2, costUsd: 0.06 },
+        // Green/red usage for the SAME model must never leak into its strategist row.
+        { model: "gpt-5.4-mini", context: "strategy", calls: 10, costUsd: 1 },
+        { model: "gpt-5.4-mini", context: "strategy-bear", calls: 10, costUsd: 1 }
+      ],
+      latencyEvents: [],
+      benchmarkSummaries: NO_BENCH,
+      closedLots: []
+    });
+
+    const strategist = statFor(stats, "gpt-5.4-mini", "strategist");
+    expect(strategist.liveCalls).toBe(5);
+    expect(strategist.avgCostUsd).toBeCloseTo(0.03, 6);
+    expect(strategist.totalCostUsd).toBeCloseTo(0.15, 6);
+    // No latency, benchmark, perf, or reviewerPerf concept for the strategist role.
+    expect(strategist.p50LatencyMs).toBeNull();
+    expect(strategist.latencySamples).toBe(0);
+    expect(strategist.benchmarkCostUsd).toBeNull();
+    expect(strategist.benchmarkColdP50Ms).toBeNull();
+    expect(strategist.closedTrades).toBe(0);
+    expect(strategist.perf).toBeNull();
+    expect(strategist.reviewerPerf).toBeNull();
+
+    // Green/red rows for the same model are unaffected by the strategist usage.
+    const green = statFor(stats, "gpt-5.4-mini", "green");
+    expect(green.liveCalls).toBe(10);
+    const red = statFor(stats, "gpt-5.4-mini", "red");
+    expect(red.liveCalls).toBe(10);
+  });
+
+  it("reports zero calls and null cost for a strategist row with no strategy-tuning usage", () => {
+    const stats = aggregateModelStats({
+      usageRows: [{ model: "xai/grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
+      latencyEvents: [],
+      benchmarkSummaries: NO_BENCH,
+      closedLots: []
+    });
+    const strategist = statFor(stats, "grok-4.3", "strategist");
+    expect(strategist.liveCalls).toBe(0);
+    expect(strategist.avgCostUsd).toBeNull();
+    expect(strategist.totalCostUsd).toBeNull();
+  });
+
+  it("never attributes green/red closed-lot or veto data to the strategist role", () => {
+    const stats = aggregateModelStats({
+      usageRows: [{ model: "claude-sonnet-5", context: "strategy-tuning", calls: 1, costUsd: 0.01 }],
+      latencyEvents: [],
+      benchmarkSummaries: NO_BENCH,
+      closedLots: [{ entryModel: "claude-sonnet-5", reviewedByModel: "claude-sonnet-5", pnl: 100, returnPct: 4 }],
+      reviewerPerfByModel: [
+        { model: "claude-sonnet-5", maturedVetoes: 42, vetoValueAddRate: 61.9, survivorRiskHitRate: 38.1, avgReturnPct: -1.87 }
+      ]
+    });
+    const strategist = statFor(stats, "claude-sonnet-5", "strategist");
+    expect(strategist.closedTrades).toBe(0);
+    expect(strategist.perf).toBeNull();
+    expect(strategist.reviewerPerf).toBeNull();
+  });
+});
+
 describe("aggregateModelStats — performance gating", () => {
   const lots = (model: string, wins: number, losses: number) => [
     ...Array.from({ length: wins }, () => ({ entryModel: model, pnl: 50, returnPct: 2 })),
@@ -164,7 +230,7 @@ describe("aggregateModelStats — performance gating", () => {
 
   it("reports zero closed trades + null perf for a model with no attributed lots", () => {
     const stats = aggregateModelStats({
-      usageRows: [{ model: "grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
+      usageRows: [{ model: "xai/grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
       latencyEvents: [],
       benchmarkSummaries: NO_BENCH,
       closedLots: []
@@ -268,7 +334,7 @@ describe("aggregateModelStats — reviewer veto value-add", () => {
 
   it("leaves reviewerPerf null on RED rows without matching veto data (and defaults to null with no input)", () => {
     const stats = aggregateModelStats({
-      usageRows: [{ model: "grok-4.3", context: "strategy", calls: 1, costUsd: 0.01 }],
+      usageRows: [{ model: "xai/grok-4.3", context: "strategy", calls: 1, costUsd: 0.01 }],
       latencyEvents: [],
       benchmarkSummaries: NO_BENCH,
       closedLots: [],

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { toBrokerSide, isShortIntent, isRejectedOrCanceledState, isLiveOrderState, liveExitOrderCoverage } from "../src/lib/broker-side";
+import { toBrokerSide, isShortIntent, isRejectedOrCanceledState, hasBrokerReportedFill, hasBrokerReportedPricedFill, isLiveOrderState, liveExitOrderCoverage } from "../src/lib/broker-side";
 import { ACTIVE_BROKER_ORDER_STATES } from "../src/lib/broker-held-orders";
 import { toMcpOrder } from "../src/lib/robinhood";
 import type { EquityOrder, EquityOrderInput, OrderSide } from "../src/lib/types";
@@ -63,6 +63,23 @@ describe("isRejectedOrCanceledState — broker-agnostic terminal-decline check",
     expect(isRejectedOrCanceledState("submitted")).toBe(false);
     expect(isRejectedOrCanceledState(undefined)).toBe(false);
     expect(isRejectedOrCanceledState(null)).toBe(false);
+  });
+});
+
+describe("hasBrokerReportedFill — terminal state execution truth", () => {
+  it("requires a finite positive broker-filled quantity", () => {
+    expect(hasBrokerReportedFill({ filledQuantity: 0.25 })).toBe(true);
+    expect(hasBrokerReportedFill({ filledQuantity: 0 })).toBe(false);
+    expect(hasBrokerReportedFill({ filledQuantity: Number.NaN })).toBe(false);
+    expect(hasBrokerReportedFill({})).toBe(false);
+  });
+
+  it("requires a finite positive realized price before execution is safe to book", () => {
+    expect(hasBrokerReportedPricedFill({ filledQuantity: 0.25, averagePrice: 100 })).toBe(true);
+    expect(hasBrokerReportedPricedFill({ filledQuantity: 0.25 })).toBe(false);
+    expect(hasBrokerReportedPricedFill({ filledQuantity: 0.25, averagePrice: 0 })).toBe(false);
+    expect(hasBrokerReportedPricedFill({ filledQuantity: 0.25, averagePrice: Number.NaN })).toBe(false);
+    expect(hasBrokerReportedPricedFill({ filledQuantity: 0, averagePrice: 100 })).toBe(false);
   });
 });
 
