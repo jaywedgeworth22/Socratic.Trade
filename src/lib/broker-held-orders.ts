@@ -4,7 +4,9 @@ import type { EquityOrder, EquityPosition, TradeProposal } from "./types";
 
 const EPSILON = 1e-6;
 
-const ACTIVE_BROKER_ORDER_STATES = new Set([
+// Exported so broker-side.test.ts can assert LIVE_ORDER_STATES (broker-side.ts) stays a superset —
+// an order this module counts as active/held must also count as live protection over there.
+export const ACTIVE_BROKER_ORDER_STATES = new Set([
   "accepted",
   "accepted_for_bidding",
   "confirmed",
@@ -12,6 +14,7 @@ const ACTIVE_BROKER_ORDER_STATES = new Set([
   "new",
   "open",
   "partially_filled",
+  "pending", // Tradier bare resting state
   "pending_cancel",
   "pending_new",
   "pending_replace",
@@ -33,6 +36,17 @@ export interface BrokerHeldExitAvailability {
 
 export function isActiveBrokerOrderState(state: string | undefined): boolean {
   return ACTIVE_BROKER_ORDER_STATES.has(String(state ?? "").trim().toLowerCase());
+}
+
+export const REJECTED_OR_CANCELED_STATES = new Set([
+  "canceled",
+  "cancelled",
+  "rejected",
+  "expired"
+]);
+
+export function isRejectedOrCanceledState(state: string | undefined): boolean {
+  return REJECTED_OR_CANCELED_STATES.has(String(state ?? "").trim().toLowerCase());
 }
 
 export function evaluateBrokerHeldExitAvailability(
@@ -85,7 +99,13 @@ export function brokerHeldExitBlockReason(availability: BrokerHeldExitAvailabili
   );
 }
 
-function requestedExitQuantity(proposal: TradeProposal): number | undefined {
+/** Exported so UI derivations (e.g. app/console/lib/derive.ts's approval-card P/L estimate)
+ *  can reuse the SAME shares-being-sold math as the broker-held-exit-availability check
+ *  above, instead of re-deriving it and risking drift. Structural param (only the sizing
+ *  fields) so narrow client-side proposal shapes (mobile snapshot) can call it too. */
+export function requestedExitQuantity(
+  proposal: Pick<TradeProposal, "quantity" | "dollarAmount" | "limitPrice" | "stopPrice" | "referencePrice">
+): number | undefined {
   if (proposal.quantity != null) return Math.abs(proposal.quantity);
   if (proposal.dollarAmount != null) {
     const price = proposal.limitPrice ?? proposal.stopPrice ?? proposal.referencePrice;

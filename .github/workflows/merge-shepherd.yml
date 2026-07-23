@@ -5,8 +5,11 @@ name: merge-shepherd
 # real PAT (`gh auth token`) so that `update-branch` re-triggers `verify` — the
 # default Actions GITHUB_TOKEN cannot re-trigger workflows on branches it pushes,
 # which would leave re-synced PRs without a fresh CI run. This dispatch path still
-# merges already-green armed PRs and publishes the digest; add a `SHEPHERD_TOKEN`
-# PAT secret (repo + workflow scope) to make its re-syncs re-trigger CI too.
+# merges already-green armed PRs and publishes the digest; without a `SHEPHERD_TOKEN`
+# PAT secret (repo + workflow scope), the script skips update-branch re-syncs and
+# reports them instead of attempting a re-sync that GITHUB_TOKEN couldn't re-trigger
+# CI for anyway. Add the secret to make re-syncs (and therefore CI re-triggers) work
+# from this dispatch path too.
 
 on:
   workflow_dispatch:
@@ -21,19 +24,22 @@ permissions:
   pull-requests: write
   actions: write
   issues: write
+  # Referencing `environment: merge-shepherd` below makes GitHub create/update a
+  # deployment record for each run; grant deployments:write explicitly since this
+  # workflow already narrows GITHUB_TOKEN to an explicit allow-list (unlisted
+  # scopes default to none).
+  deployments: write
 
 concurrency:
   group: merge-shepherd
   cancel-in-progress: false
 
 jobs:
-  shepherd:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run merge shepherd
-        env:
-          GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          SHEPHERD_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
-        run: bash scripts/merge-shepherd.sh
+  call-shepherd:
+    # Run the trusted default-branch implementation even when a maintainer dispatches
+    # this wrapper against another ref; the called workflow inherits write permissions
+    # and repository secrets.
+    uses: jaywedgeworth22/Socratic.Trade/.github/workflows/_merge-shepherd-impl.yml@main
+    with:
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit

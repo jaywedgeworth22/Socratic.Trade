@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({ retrieveContextDetailed: vi.fn() }));
 
 vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
-  return { ...actual, retrieveContextDetailed: mocks.retrieveContextDetailed };
+  return { ...actual, managedVectorLedgerAuthority: vi.fn(), retrieveContextDetailed: mocks.retrieveContextDetailed };
 });
 
 let orchestrator: typeof import("../src/lib/chat/orchestrator");

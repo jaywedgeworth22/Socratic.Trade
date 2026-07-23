@@ -15,8 +15,9 @@
  *  edit in a sibling field, and vice versa. */
 
 import { useCallback, useEffect, useState } from "react";
-import { sendTestNotification, ConsoleApiError } from "../lib/api";
+import { savePolicy, sendTestNotification, ConsoleApiError } from "../lib/api";
 import { useAutoSave } from "../lib/useAutoSave";
+import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { SaveStatus } from "../ui/save-status";
 import { Btn, Card, Field, TextInput, Toggle } from "../ui/primitives";
@@ -42,6 +43,50 @@ interface TestResult {
   ok: boolean;
   skipped?: string;
   error?: string;
+}
+
+/** The OLDER, separate webhook mechanism: policy.notificationSettings.webhookUrl
+ *  (written via savePolicy, distinct from the Webhook CHANNEL's own target field
+ *  above, which lives in NotifyPrefs and is written via saveDeliveryPrefs). This
+ *  one fires for every enabled event in Event notifications, unconditionally —
+ *  it does not depend on the Webhook channel toggle. Moved here from Event
+ *  notifications in the 2026-07-16 IA restructure (UI move only — same
+ *  savePolicy write path, same commit-on-blur / revert-on-error semantics) so
+ *  both webhook knobs sit together instead of splitting across two cards. */
+function WebhookUrlRow() {
+  const { snapshot, refresh } = useConsoleData();
+  const autoSave = useAutoSave();
+  const [localWebhook, setLocalWebhook] = useState<string | null>(null);
+  if (!snapshot) return null;
+
+  const current = snapshot.policy.notificationSettings;
+  const webhook = localWebhook ?? current.webhookUrl ?? "";
+
+  const commitWebhook = () => {
+    const next = webhook.trim();
+    if (next === (current.webhookUrl ?? "")) return; // unchanged → no write
+    const prev = webhook;
+    // Server validates (400 on a non-URL); revert the field on failure.
+    autoSave.save(() => savePolicy({ notificationSettings: { webhookUrl: next } }).then(() => refresh()), {
+      onError: () => setLocalWebhook(prev),
+      errorTitle: "Webhook not saved"
+    });
+  };
+
+  return (
+    <div className="mt-2 max-w-md">
+      <Field label="Webhook URL (optional)" hint="Rich embeds for chat webhooks; generic JSON otherwise." htmlFor="webhook">
+        <TextInput
+          id="webhook"
+          value={webhook}
+          placeholder="https://…"
+          title="Every enabled event in Event notifications above is also POSTed to this URL. Chat webhooks (Discord/Slack) get rich embeds; anything else gets plain JSON. Saves when you click away."
+          onChange={(e) => setLocalWebhook(e.target.value)}
+          onBlur={commitWebhook}
+        />
+      </Field>
+    </div>
+  );
 }
 
 export function DeliveryChannelsCard() {
@@ -166,7 +211,7 @@ export function DeliveryChannelsCard() {
       </p>
 
       {loadError && (
-        <p className="mb-3 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+        <p className="mb-3 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
           {loadError}{" "}
           <button type="button" className="font-semibold underline" onClick={() => void load()} title="Try loading the channels again.">
             Retry
@@ -186,7 +231,7 @@ export function DeliveryChannelsCard() {
             return (
               <div
                 key={ch.id}
-                className="rounded-lg border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
+                className="rounded-control border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
               >
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex flex-wrap items-center gap-2">
@@ -195,10 +240,14 @@ export function DeliveryChannelsCard() {
                     </span>
                     {ch.id === "push" && ch.available && (
                       <span
-                        className="rounded-full border border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[color:var(--con-pos)]"
-                        title="Push via ntfy needs no account or key and is free — the recommended first channel."
+                        className="rounded-full border border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)] px-2 py-0.5 text-[length:var(--con-fs-2xs)] font-bold uppercase tracking-wide text-[color:var(--con-pos)]"
+                        title={
+                          ch.provider === "pushover"
+                            ? "Phone push via Pushover — paste your Pushover user key as the target. Server needs PUSHOVER_APP_TOKEN + NOTIFY_PUSH_PROVIDER=pushover."
+                            : "Phone push via ntfy (free topic) or Pushover (server: NOTIFY_PUSH_PROVIDER=pushover + PUSHOVER_APP_TOKEN). Paste the topic or user key below."
+                        }
                       >
-                        recommended · free
+                        {ch.provider === "pushover" ? "pushover" : "recommended · free"}
                       </span>
                     )}
                     {!ch.available && (
@@ -231,6 +280,10 @@ export function DeliveryChannelsCard() {
                     </Field>
                   </div>
                 )}
+                {/* The older, always-on legacy webhook (see WebhookUrlRow above) sits under this
+                    channel's toggle regardless of whether the toggle is on — it's a separate
+                    field, not the channel's own target. */}
+                {ch.id === "webhook" && <WebhookUrlRow />}
               </div>
             );
           })}

@@ -1,6 +1,6 @@
 // db-notifications.ts — notification events + alert lifecycle (acknowledge, auto-ack, repeat-dedup)
 import crypto from "crypto";
-import { getDb } from "./db";
+import { audit, getDb } from "./db";
 import type {
   NotificationEvent,
   NotificationEventType,
@@ -49,30 +49,104 @@ function normalizeRunFailedSignature(title: string, payload: unknown): string {
 }
 
 /**
- * True for run_failed rows that are about a SPECIFIC order/proposal, or that explicitly demand a
- * human verify something with the broker — a later successful run does NOT resolve these, so they
- * must never be cleared by sweepAutoAcknowledgeNotifications' "latest run succeeded" heuristic.
- * Real emission sites enumerated (not guessed) from src/lib/strategy.ts:
- *   - :1990 / :3615 — title `${symbol} order placement uncertain — verify with broker`,
- *     payload { runId?, proposalId, refId, error } (no orderId — the broker may or may not have
- *     accepted the order; a human must check).
- *   - :2016 / :3629 — title `${symbol} order declined by broker (${state})`,
- *     payload { runId?, proposalId, refId, orderId, state }.
- *   - :2161 — the ONLY other run_failed emitter — title "Strategy run failed",
- *     payload { runId, summary }: a plain LLM/provider run-level failure with no order at stake.
- *     This one has none of the markers below and remains sweepable.
+ * True for run_failed rows whose underlying condition is NOT resolved by a later successful run —
+ * a genuinely-uncertain placement (broker unreachable, a human must verify) or a terminal broker
+ * decline. These must never be cleared by sweepAutoAcknowledgeNotifications' "latest run succeeded"
+ * heuristic. Marker-driven: new emitters carry a `payload.reconcile` discriminator; only "uncertain"
+ * and "declined" stay protected. A "not_placed" alert ("safe to retry") IS sweepable and self-clears
+ * once the account runs successfully; a confirmed "placed"/"recovered" fill notification is a
+ * `type: "fill"` row and never reaches here.
+ *
+ * The pre-marker blanket rule ("any run_failed carrying a proposalId/orderId is protected") was
+ * dropped: it would wrongly protect the new sweepable not_placed alert, which also carries
+ * proposalId/refId. Legacy rows persisted before the marker existed fall back to matching the
+ * enumerated titles/summaries.
+ *
+ * Real run_failed emission sites (enumerated, not guessed) in src/lib/strategy.ts:
+ *   - :2228 (autonomous) / :4057 (approval) — title `${symbol} order placement uncertain — verify
+ *     with broker`, payload { …, reconcile: "uncertain" }.
+ *   - :2254 (autonomous) / :4071 (approval) — title `${symbol} order declined by broker (${state})`,
+ *     payload { …, reconcile: "declined" }.
+ *   - :2399 — the ONLY order-agnostic run_failed emitter — title "Strategy run failed",
+ *     payload { runId, summary }: a plain LLM/provider run-level failure with no order at stake and
+ *     no reconcile marker, so it remains sweepable.
+ *   - reconcile-path emitters (order confirmed NOT placed) carry reconcile: "not_placed" and are
+ *     deliberately sweepable.
  */
 function isBrokerVerificationRunFailed(title: string, payload: unknown): boolean {
   const record = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
-  if (typeof record.proposalId === "string" && record.proposalId) return true;
-  if (typeof record.orderId === "string" && record.orderId) return true;
-  if (typeof record.brokerOrderId === "string" && record.brokerOrderId) return true;
+  const reconcile = typeof record.reconcile === "string" ? record.reconcile : undefined;
+  if (reconcile === "uncertain" || reconcile === "declined") return true;
+  if (reconcile === "not_placed" || reconcile === "placed" || reconcile === "recovered") return false;
+  // Legacy fallback: rows persisted before the reconcile marker existed carry only the title/summary.
   const text = `${title} ${typeof record.summary === "string" ? record.summary : ""}`.toLowerCase();
   return (
     text.includes("verify with broker") ||
     text.includes("placement uncertain") ||
     text.includes("declined by broker")
   );
+}
+
+/**
+ * How long a claimed-but-unresolved option-alert reservation stays authoritative before it is treated
+ * as ABANDONED and reclaimable. A live delivery (`sendNotification`) completes in well under a second;
+ * this window only ever reclaims a reservation whose owner crashed between claiming and recording a
+ * `status='sent'` event (or reaching the finally-release). Kept comfortably longer than any real
+ * delivery so an in-flight send is never stolen (Codex review, PR #1738).
+ */
+const OPTION_ALERT_RESERVATION_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Atomically claim the right to deliver a single option alert. Backed by a UNIQUE constraint on
+ * (user_id, connected_account_id, symbol, alert_type): the INSERT OR IGNORE either inserts the row
+ * (returns true — THIS caller owns delivery) or no-ops because a concurrent request already claimed
+ * it (returns false — skip). better-sqlite3 is synchronous, so the reclaim-insert-and-read-changes
+ * runs to completion within one event-loop tick, making the claim race-free against concurrent
+ * dashboard snapshot builds. Release the claim (`releaseOptionAlertReservation`) if the send does not
+ * actually deliver, so a disabled/failed alert stays deliverable on a later cycle.
+ *
+ * ABANDONED-reservation reclaim (Codex review, PR #1738): a process that dies AFTER the INSERT but
+ * BEFORE recording a `status='sent'` event (or the finally-release) would otherwise leave the row
+ * resting forever and permanently suppress this alert. The pre-insert DELETE reclaims any reservation
+ * older than the TTL. This can never double-send a genuinely-delivered alert: delivered alerts are
+ * deduped upstream by the permanent `status='sent'` check (the caller never even reaches this claim
+ * for one already sent), so a reclaim only ever frees an orphan that produced no delivery.
+ */
+export function reserveOptionAlert(
+  userId: string,
+  connectedAccountId: string,
+  symbol: string,
+  alertType: string
+): boolean {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - OPTION_ALERT_RESERVATION_TTL_MS).toISOString();
+  db.prepare(
+    `DELETE FROM option_alert_reservations
+     WHERE user_id = ? AND connected_account_id = ? AND symbol = ? AND alert_type = ? AND created_at < ?`
+  ).run(userId, connectedAccountId ?? "", symbol, alertType, cutoff);
+  const info = db
+    .prepare(
+      `INSERT OR IGNORE INTO option_alert_reservations (user_id, connected_account_id, symbol, alert_type, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(userId, connectedAccountId ?? "", symbol, alertType, new Date().toISOString());
+  return info.changes === 1;
+}
+
+/** Release a previously-claimed option-alert reservation so it can be delivered on a later cycle
+ *  (used when the send was skipped/failed rather than actually delivered). */
+export function releaseOptionAlertReservation(
+  userId: string,
+  connectedAccountId: string,
+  symbol: string,
+  alertType: string
+): void {
+  getDb()
+    .prepare(
+      `DELETE FROM option_alert_reservations
+       WHERE user_id = ? AND connected_account_id = ? AND symbol = ? AND alert_type = ?`
+    )
+    .run(userId, connectedAccountId ?? "", symbol, alertType);
 }
 
 function rowToEvent(row: RawNotificationEvent): NotificationEvent {
@@ -168,6 +242,70 @@ export function acknowledgeNotificationEvents(userId: string, ids: string[]): nu
     .prepare(`UPDATE notification_events SET acknowledged_at = ? WHERE user_id = ? AND acknowledged_at IS NULL AND id IN (${placeholders})`)
     .run(now, userId, ...ids);
   return result.changes;
+}
+
+/**
+ * Resolve (auto-acknowledge) the "verify with broker" alert(s) for a proposal/order whose true
+ * outcome has since been CONFIRMED (an order carrying our idempotency key was found at the broker, or
+ * a fill for the proposal reached "filled"). This is the counterpart to isBrokerVerificationRunFailed:
+ * the uncertain alert stays perpetual UNTIL a definite confirmation lands, at which point this clears
+ * exactly the matching row(s) — never a different proposal's alert, and never a `declined` alert
+ * (a declined order is a standing fact that must remain visible).
+ *
+ * Matching is by the exact globally-unique proposalId and/or refId UUID(s) in the row payload, so it
+ * is surgical (MP-5) and user-scoped (MP-7). A row is treated as an uncertain alert iff its
+ * payload carries `reconcile: "uncertain"`, or (legacy, pre-marker) its title reads "…placement
+ * uncertain — verify with broker". Returns the number of rows acknowledged.
+ */
+export function resolveBrokerVerificationNotifications(
+  userId: string,
+  opts: { proposalId?: string; refId?: string; resolution: "recovered" | "placed" | "not_placed" }
+): number {
+  if (!opts.proposalId && !opts.refId) return 0;
+  const db = getDb();
+  const clauses: string[] = [];
+  const params: unknown[] = [userId];
+  if (opts.proposalId) {
+    clauses.push("json_extract(payload, '$.proposalId') = ?");
+    params.push(opts.proposalId);
+  }
+  if (opts.refId) {
+    clauses.push("json_extract(payload, '$.refId') = ?");
+    params.push(opts.refId);
+  }
+  const rows = db
+    .prepare(
+      `SELECT id, title, payload FROM notification_events
+       WHERE user_id = ? AND type = 'run_failed' AND acknowledged_at IS NULL AND (${clauses.join(" OR ")})`
+    )
+    .all(...params) as Array<{ id: string; title: string; payload: string }>;
+  const now = new Date().toISOString();
+  let resolved = 0;
+  for (const row of rows) {
+    let payload: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(row.payload);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
+    } catch {
+      payload = {};
+    }
+    const reconcile = typeof payload.reconcile === "string" ? payload.reconcile : undefined;
+    // Only an UNCERTAIN alert is resolvable on confirmation. A `declined` alert is a standing fact
+    // (never auto-acked here); a `not_placed`/`placed`/plain-run-failed row is out of scope (those
+    // self-clear via the normal sweep). Legacy rows (no marker) fall back to the title text.
+    const isUncertain =
+      reconcile === "uncertain" ||
+      (reconcile === undefined && /verify with broker|placement uncertain/i.test(row.title));
+    if (!isUncertain) continue;
+    const info = db
+      .prepare("UPDATE notification_events SET acknowledged_at = ? WHERE id = ? AND user_id = ? AND acknowledged_at IS NULL")
+      .run(now, row.id, userId);
+    resolved += info.changes;
+  }
+  if (resolved > 0) {
+    audit("order_placement_uncertain_resolved", { proposalId: opts.proposalId, refId: opts.refId, resolution: opts.resolution, resolved }, userId);
+  }
+  return resolved;
 }
 
 /** The same "attention" criteria the Alert Center's default pill uses (kept in sync with

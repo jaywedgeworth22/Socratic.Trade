@@ -5,6 +5,7 @@
  *  "—" when nothing protects). Money in tabular numerals; missing = "—". */
 
 import type { DashboardSnapshot } from "../../dashboard-types";
+import type { OptionPosition } from "@/lib/types";
 import { deriveProtection } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { Card, Dash, Empty, SignedText } from "../ui/primitives";
@@ -45,15 +46,16 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
     const unrealizedPct =
       unrealized !== undefined && costBasis !== 0 ? (unrealized / Math.abs(costBasis)) * 100 : undefined;
     const weightPct = equity && equity !== 0 ? (p.marketValue / equity) * 100 : undefined;
-    const protection = deriveProtection(p, snapshot.orders ?? [], snapshot.policy);
+    const protection = deriveProtection(p, snapshot.orders ?? [], snapshot.policy, snapshot.stopPlanBySymbol?.[p.symbol]);
     const meta = snapshot.symbolMetaBySymbol?.[p.symbol];
     const exposure = exposureCue(weightPct, exposureCap);
     return { p, short, unrealized, unrealizedPct, weightPct, protection, meta, exposure };
   });
 
   return (
-    <Card title={`Positions (${positions.length})`} padded={false}>
-      {positions.length === 0 ? (
+    <>
+      <Card title={`Positions (${positions.length})`} padded={false}>
+        {positions.length === 0 ? (
         <Empty>No open positions in this account.</Empty>
       ) : (
         <>
@@ -200,5 +202,110 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
         </>
       )}
     </Card>
-  );
+    {snapshot.options && snapshot.options.length > 0 && (
+      <Card title="Unmanaged Options (no automated exit protection)" padded={false} className="mt-4">
+        <div className="hidden overflow-x-auto lg:block">
+          <table className="con-table">
+            <thead>
+              <tr>
+                <th title="OCC option symbol.">Symbol</th>
+                <th title="Underlying symbol.">Underlying</th>
+                <th title="Option type (Call/Put) and strike price.">Strike / Type</th>
+                <th title="Expiration date.">Expiration</th>
+                <th className="num" title="Number of contracts held; negative means short/written.">Qty</th>
+                <th className="num" title="Average price paid per contract (not multiplier-adjusted).">Avg cost</th>
+                <th className="num" title="Current market value of the option position (multiplier-adjusted).">Value</th>
+                <th className="num" title="Gain or loss if closed now.">Unrealized P&amp;L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snapshot.options.map((opt) => {
+                const qty = opt.quantity;
+                const costBasis = opt.averageCost * qty * 100;
+                const unrealized = opt.marketValue - costBasis;
+                const unrealizedPct = costBasis !== 0 ? (unrealized / Math.abs(costBasis)) * 100 : undefined;
+
+                return (
+                  <tr key={opt.symbol}>
+                    <td className="font-mono text-xs">{opt.symbol}</td>
+                    <td>
+                      <SymbolButton symbol={opt.underlyingSymbol} />
+                    </td>
+                    <td>
+                      <span className="font-semibold">${opt.strikePrice}</span>{" "}
+                      <span className={opt.optionType === "call" ? "text-indigo-400" : "text-pink-400"}>
+                        {opt.optionType.toUpperCase()}
+                      </span>
+                    </td>
+                    <td>{opt.expirationDate}</td>
+                    <td className="num con-num">{fmtQty(qty)}</td>
+                    <td className="num con-num">{fmtMoney(opt.averageCost)}</td>
+                    <td className="num con-num">{fmtMoney(opt.marketValue)}</td>
+                    <td className="num">
+                      <SignedText value={unrealized}>
+                        {`${unrealized > 0 ? "+" : ""}${fmtMoney(unrealized)}`}
+                        {unrealizedPct !== undefined ? ` (${fmtPct(unrealizedPct, 1, true)})` : ""}
+                      </SignedText>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex flex-col divide-y divide-[color:var(--con-line)] lg:hidden">
+          {snapshot.options.map((opt) => {
+            const qty = opt.quantity;
+            const short = qty < 0;
+            const costBasis = opt.averageCost * qty * 100;
+            const unrealized = opt.marketValue - costBasis;
+            const unrealizedPct = costBasis !== 0 ? (unrealized / Math.abs(costBasis)) * 100 : undefined;
+
+            return (
+              <div key={opt.symbol} className="flex flex-col gap-2 px-4 py-3 text-[length:var(--con-fs-sm)]">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-xs">{opt.symbol}</span>
+                      {short && <span className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">SHORT</span>}
+                    </div>
+                    <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] flex items-center gap-1">
+                      <span>Underlying:</span>
+                      <SymbolButton symbol={opt.underlyingSymbol} />
+                      <span>| Strike: ${opt.strikePrice} | {opt.optionType.toUpperCase()} | Exp: {opt.expirationDate}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="con-num grid grid-cols-2 gap-x-3 gap-y-1.5">
+                  <div>
+                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Qty (Contracts)</div>
+                    <div>{fmtQty(qty)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Value</div>
+                    <div>{fmtMoney(opt.marketValue)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Avg Cost</div>
+                    <div>{fmtMoney(opt.averageCost)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">P&amp;L</div>
+                    <div>
+                      <SignedText value={unrealized}>
+                        {`${unrealized > 0 ? "+" : ""}${fmtMoney(unrealized)}`}
+                        {unrealizedPct !== undefined ? ` (${fmtPct(unrealizedPct, 1, true)})` : ""}
+                      </SignedText>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    )}
+  </>
+);
 }

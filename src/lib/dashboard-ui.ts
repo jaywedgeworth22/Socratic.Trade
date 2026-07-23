@@ -29,7 +29,17 @@ const SOURCE_LABELS: Record<string, string> = {
   "sp500-universe": "S&P 500 Universe",
   "sp100-universe": "S&P 100 Universe",
   "nasdaq100-universe": "NASDAQ 100 Universe",
-  "nasdaq-composite-universe": "NASDAQ Composite Universe",
+  // The dynamic-universe source tags below are built in market.ts as `${universe}-universe`
+  // straight from the IndexUniverse config id — for the three camelCase compound ids
+  // (nasdaqComposite, nyseComposite, ftWilshire5000) that produces e.g. "nasdaqComposite-
+  // universe", which normalizeSourceKey only lowercases (never re-hyphenates) to
+  // "nasdaqcomposite-universe". A key with a hyphen between the words never matched, so these
+  // fell through to titleizeSource's raw-string fallback and rendered as "Nasdaqcomposite
+  // Universe" / "Nysecomposite Universe" / (unlabeled) "Ftwilshire5000 Universe". Keys here MUST
+  // match the id's own casing verbatim, not "properly" kebab-cased.
+  "nasdaqcomposite-universe": "NASDAQ Composite Universe",
+  "nysecomposite-universe": "NYSE Composite Universe",
+  "ftwilshire5000-universe": "FT Wilshire 5000 Universe",
   "alpaca-quotes": "Alpaca Quotes",
   "alpaca-snapshot": "Alpaca Snapshot",
   "alpaca-news": "Alpaca News",
@@ -201,9 +211,13 @@ export function receivedLabel(ts?: string): string {
 
 export function cellTitle(label: string, source?: string, asOf?: string): string {
   const parts = [label];
-  if (source) parts.push(`Source: ${friendlySource(source)}`);
-  const received = receivedLabel(asOf);
-  if (received) parts.push(received);
+  // Freshness rides provenance: no recorded source means no provider returned the
+  // field, so a "Received <time>" stamp would claim freshness for data we never got.
+  if (source) {
+    parts.push(`Source: ${friendlySource(source)}`);
+    const received = receivedLabel(asOf);
+    if (received) parts.push(received);
+  }
   return parts.join("\n");
 }
 
@@ -293,7 +307,9 @@ const FEED_STATUS_LABELS: Record<string, string> = {
   placed: "Placed",
   paper: "Paper trade",
   completed: "Completed",
+  skipped: "Skipped",
   placing_failed: "Placement failed",
+  not_placed: "Not placed - safe to retry",
   running: "Running"
 };
 
@@ -306,7 +322,7 @@ export function feedStatusLabel(raw?: string | null): string {
 
 // ── Notifications (decided vocabulary) ──────────────────────────────────────────────────────
 
-const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
+export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
   fill: "Order filled",
   block: "Trade blocked",
   run_failed: "Run failed",
@@ -319,9 +335,13 @@ const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
   budget_alert: "Budget alert",
   learning_review: "Learning review",
   deterministic_bear_veto: "Vetoed by Bear risk",
+  red_team_veto_override_requested: "Red Team override requested",
   red_team_veto_overridden: "Red Team veto overridden",
   prompt_injection_suspected: "Prompt injection suspected",
-  evidence_age_anomaly: "Evidence age anomaly"
+  evidence_age_anomaly: "Evidence age anomaly",
+  storage_warning: "Storage warning",
+  autonomy_halted_on_boot: "Autonomy halted on boot",
+  option_alert: "Option alert"
 };
 
 export function notificationTypeLabel(type?: string | null): string {
@@ -366,7 +386,8 @@ export function formatNotificationDisplay(
     // Red-Team-unavailable signal must survive into the feed — append the indicator instead of
     // discarding it with the generic overwrite.
     const adversaryUnavailable = payload.adversaryUnavailable === true;
-    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval${adversaryUnavailable ? " — Red Team Unavailable" : ""}`;
+    const humanReviewReasonTitle = stringValue(payload.humanReviewReasonTitle);
+    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval${humanReviewReasonTitle ? ` — ${humanReviewReasonTitle}` : adversaryUnavailable ? " — Red Team Unavailable" : ""}`;
   } else if (event.type === "kill_switch") {
     title = "Kill Switch Triggered";
   } else if (event.type === "run_failed") {
@@ -376,12 +397,16 @@ export function formatNotificationDisplay(
     title = `${actionLabel(side)} ${symbol ?? "Proposal"} ${expired ? "Expired" : "Withdrawn"}`;
   } else if (event.type === "deterministic_bear_veto") {
     title = `${actionLabel(side)} ${symbol ?? "Trade"} Vetoed by Bear Risk`;
+  } else if (event.type === "red_team_veto_override_requested") {
+    title = `Red Team Override Requested ${symbol ? `for ${symbol}` : ""}`;
   } else if (event.type === "red_team_veto_overridden") {
     title = `Red Team Veto Overridden ${symbol ? `for ${symbol}` : ""}`;
   } else if (event.type === "prompt_injection_suspected") {
     title = `Prompt Injection Suspected ${symbol ? `for ${symbol}` : ""}`;
   } else if (event.type === "evidence_age_anomaly") {
     title = `Evidence Age Anomaly ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "option_alert") {
+    title = event.title;
   }
 
   return {
@@ -394,8 +419,13 @@ export function formatNotificationDisplay(
 }
 
 function notificationDetail(event: NotificationEvent): string {
+  if (event.type === "option_alert") {
+    const payload = asRecord(event.payload);
+    return stringValue(payload.detail) || "Option alert";
+  }
   if (
     event.type === "deterministic_bear_veto" ||
+    event.type === "red_team_veto_override_requested" ||
     event.type === "red_team_veto_overridden" ||
     event.type === "prompt_injection_suspected" ||
     event.type === "evidence_age_anomaly"
@@ -411,21 +441,35 @@ function notificationDetail(event: NotificationEvent): string {
 
 function notificationReason(error?: string): string | undefined {
   if (!error) return undefined;
-  if (error === "Notifications Webhook Not Configured") return "Notifications Webhook Not Configured";
+  if (error === "Notifications Webhook Not Configured") return "No notification channels enabled.";
+  if (error === "not_configured") return "Notification channel is not configured by the operator.";
+  if (error === "no_target") return "Notification channel has no delivery target.";
   if (error === "Notification type is disabled.") return "Type Disabled";
   return error;
 }
 
 function actionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Sell" : side === "buy" ? "Buy" : "Trade";
+  if (side === "sell") return "Sell";
+  if (side === "buy") return "Buy";
+  if (side === "short") return "Short";
+  if (side === "cover") return "Cover";
+  return "Trade";
 }
 
 function executedActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Sold" : side === "buy" ? "Bought" : "Traded";
+  if (side === "sell") return "Sold";
+  if (side === "buy") return "Bought";
+  if (side === "short") return "Shorted";
+  if (side === "cover") return "Covered";
+  return "Traded";
 }
 
 function paperActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Paper Sell" : side === "buy" ? "Paper Buy" : "Paper Trade";
+  if (side === "sell") return "Paper Sell";
+  if (side === "buy") return "Paper Buy";
+  if (side === "short") return "Paper Short";
+  if (side === "cover") return "Paper Cover";
+  return "Paper Trade";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -448,5 +492,5 @@ function normalizeSymbol(symbol?: string): string | undefined {
 }
 
 function normalizeSide(side?: string): OrderSide | undefined {
-  return side === "buy" || side === "sell" ? side : undefined;
+  return side === "buy" || side === "sell" || side === "short" || side === "cover" ? side : undefined;
 }

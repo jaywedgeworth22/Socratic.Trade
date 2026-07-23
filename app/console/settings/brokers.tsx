@@ -15,12 +15,13 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Sheet } from "../ui/sheet";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
-import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle } from "lucide-react";
+import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle, Pencil, Check, X } from "lucide-react";
 import {
   connectAlpacaAccount,
-  connectTestAccount,
+  connectTradierAccount,
   disconnectAccount,
   fetchRobinhoodHealth,
+  renameAccount,
   syncRobinhoodAccount,
   ROBINHOOD_OAUTH_START_URL,
   type RobinhoodMcpHealth
@@ -34,8 +35,8 @@ function brokerName(broker: ConnectedAccount["broker"]): string {
       return "Alpaca MCP";
     case "robinhood":
       return "Robinhood";
-    case "test":
-      return "Test Account";
+    case "tradier":
+      return "Tradier";
     default:
       return broker;
   }
@@ -75,6 +76,10 @@ export function BrokerAccountsCard() {
   const [rhHealth, setRhHealth] = useState<RobinhoodMcpHealth | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<ConnectedAccount | null>(null);
   const [alpacaOpen, setAlpacaOpen] = useState(false);
+  const [tradierOpen, setTradierOpen] = useState(false);
+  // Inline rename of an account's cosmetic display name. `renaming` holds the id being edited
+  // and the working input value; the broker account number is never touched by this.
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
 
   // Best-effort Robinhood OAuth health — decides whether "Connect Robinhood"
   // starts OAuth or just re-syncs, and flags rows that need a reconnect.
@@ -123,7 +128,6 @@ export function BrokerAccountsCard() {
   const rhAuthed = Boolean(rhHealth?.configured && rhHealth?.authenticated && rhHealth?.ok);
   const rhNeedsReconnect = (account: ConnectedAccount) =>
     account.broker === "robinhood" && rhHealth !== null && !rhAuthed;
-  const hasTestAccount = accounts.some((account) => account.broker === "test");
   // Exactly one account carries isActive — hoist it as the "Currently Loaded"
   // account; everything else lists under "Other Accounts". Same isActive flag,
   // no server/query change.
@@ -154,18 +158,20 @@ export function BrokerAccountsCard() {
     }
   };
 
-  const connectTest = async () => {
-    setBusy("test");
+  const saveRename = async (account: ConnectedAccount) => {
+    const next = renaming?.value.trim() ?? "";
+    if (!next || next === account.label) {
+      setRenaming(null);
+      return;
+    }
+    setBusy(account.id);
     try {
-      const result = await connectTestAccount();
+      await renameAccount(account.id, next);
       await refresh();
-      toast.push(
-        "pos",
-        result.label ? `${result.label} added` : "Test Account added",
-        "Not loaded automatically. Load it to practice; it cannot reach real money."
-      );
+      setRenaming(null);
+      toast.push("pos", "Account renamed", `Now shown as "${next}".`);
     } catch (error) {
-      toast.push("neg", "Could not add test account", error instanceof ConsoleApiError ? error.message : String(error));
+      toast.push("neg", "Could not rename", error instanceof ConsoleApiError ? error.message : String(error));
     } finally {
       setBusy(null);
     }
@@ -181,13 +187,63 @@ export function BrokerAccountsCard() {
       <div
         key={account.id}
         tabIndex={0}
-        className="rounded-lg border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
+        className="rounded-control border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
-              {account.label || brokerName(account.broker)}
-            </span>
+            {renaming?.id === account.id ? (
+              <div className="flex min-w-0 items-center gap-1.5">
+                <TextInput
+                  autoFocus
+                  aria-label="Account name"
+                  value={renaming.value}
+                  maxLength={120}
+                  disabled={busy !== null}
+                  onChange={(e) => setRenaming({ id: account.id, value: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveRename(account);
+                    if (e.key === "Escape") setRenaming(null);
+                  }}
+                  className="h-7 w-44 max-w-full"
+                />
+                <button
+                  type="button"
+                  aria-label="Save name"
+                  disabled={busy !== null}
+                  onClick={() => void saveRename(account)}
+                  className="text-[color:var(--con-pos)] hover:opacity-80 disabled:opacity-50"
+                  title="Save the new name"
+                >
+                  <Check className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Cancel rename"
+                  disabled={busy !== null}
+                  onClick={() => setRenaming(null)}
+                  className="text-[color:var(--con-faint)] hover:opacity-80 disabled:opacity-50"
+                  title="Cancel"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
+                  {account.label || brokerName(account.broker)}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Rename account"
+                  disabled={busy !== null}
+                  onClick={() => setRenaming({ id: account.id, value: account.label || "" })}
+                  className="shrink-0 text-[color:var(--con-faint)] hover:text-[color:var(--con-fg)] disabled:opacity-50"
+                  title="Rename this account's display name. The broker account number is not affected."
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+              </>
+            )}
             <Chip tone={r.tone} title={r.clarification}>
               {r.word} · {r.phrase}
             </Chip>
@@ -219,14 +275,15 @@ export function BrokerAccountsCard() {
                 title="Load this account — the whole console rescopes to it."
                 onClick={async () => {
                   setBusy(account.id);
+                  let reloading = false;
                   try {
                     await activateAccount(account.id);
-                    await refresh();
-                    toast.push("info", "Account loaded", `Switched to ${account.label || brokerName(account.broker)}.`);
+                    reloading = true;
+                    window.location.reload();
                   } catch (error) {
                     toast.push("neg", "Could not load", error instanceof ConsoleApiError ? error.message : String(error));
                   } finally {
-                    setBusy(null);
+                    if (!reloading) setBusy(null);
                   }
                 }}
               >
@@ -257,56 +314,53 @@ export function BrokerAccountsCard() {
           {`${brokerName(account.broker)} · ${account.environment}`}
           {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
           {account.taxationType ? ` · ${TAXATION_WORD[account.taxationType] ?? account.taxationType}` : ""}
-          {account.broker === "test" && " — excluded from wash-sale accounting"}
         </p>
-        {account.broker !== "test" && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {caps ? (
-              <>
-                <Chip
-                  tone="info"
-                  title={`Stocks trading: ${caps.equityTrading ? "enabled" : "disabled"}`}
-                >
-                  <Briefcase className="inline size-3.5 mr-1.5" />
-                  stocks
-                </Chip>
-                <Chip
-                  tone="info"
-                  title={`Short selling: ${caps.shortSelling ? "enabled" : "disabled"}`}
-                >
-                  <ArrowDown className="inline size-3.5 mr-1.5" />
-                  shorting
-                </Chip>
-                {caps.optionsTrading && (
-                  <Chip
-                    tone="info"
-                    title={`Options trading at level ${caps.optionsLevel ?? "?"}`}
-                  >
-                    <Zap className="inline size-3.5 mr-1.5" />
-                    options L{caps.optionsLevel}
-                  </Chip>
-                )}
-                {caps.marginEnabled && (
-                  <Chip
-                    tone="info"
-                    title="Margin trading enabled"
-                  >
-                    <Scale className="inline size-3.5 mr-1.5" />
-                    margin
-                  </Chip>
-                )}
-              </>
-            ) : (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {caps ? (
+            <>
               <Chip
-                tone="warn"
-                title="Broker has not yet confirmed this account's trading capabilities. All capabilities read as off until confirmed."
+                tone="info"
+                title={`Stocks trading: ${caps.equityTrading ? "enabled" : "disabled"}`}
               >
-                <AlertTriangle className="inline size-3.5 mr-1.5" />
-                capabilities unconfirmed
+                <Briefcase className="inline size-3.5 mr-1.5" />
+                stocks
               </Chip>
-            )}
-          </div>
-        )}
+              <Chip
+                tone="info"
+                title={`Short selling: ${caps.shortSelling ? "enabled" : "disabled"}`}
+              >
+                <ArrowDown className="inline size-3.5 mr-1.5" />
+                shorting
+              </Chip>
+              {caps.optionsTrading && (
+                <Chip
+                  tone="info"
+                  title={`Options trading at level ${caps.optionsLevel ?? "?"}`}
+                >
+                  <Zap className="inline size-3.5 mr-1.5" />
+                  options L{caps.optionsLevel}
+                </Chip>
+              )}
+              {caps.marginEnabled && (
+                <Chip
+                  tone="info"
+                  title="Margin trading enabled"
+                >
+                  <Scale className="inline size-3.5 mr-1.5" />
+                  margin
+                </Chip>
+              )}
+            </>
+          ) : (
+            <Chip
+              tone="warn"
+              title="Broker has not yet confirmed this account's trading capabilities. All capabilities read as off until confirmed."
+            >
+              <AlertTriangle className="inline size-3.5 mr-1.5" />
+              capabilities unconfirmed
+            </Chip>
+          )}
+        </div>
       </div>
     );
   };
@@ -315,7 +369,10 @@ export function BrokerAccountsCard() {
     <Card
       title="Broker connections"
       action={
-        <div className="flex gap-2">
+        // flex-wrap + justify-end: three connect buttons don't fit beside the title on
+        // phone widths — wrapping keeps them on-canvas instead of forcing the whole
+        // page to scroll horizontally (390px viewport regression).
+        <div className="flex flex-wrap justify-end gap-2">
           <Btn
             size="sm"
             variant="outline"
@@ -341,15 +398,11 @@ export function BrokerAccountsCard() {
           <Btn
             size="sm"
             variant="outline"
-            disabled={busy !== null || hasTestAccount}
-            onClick={() => void connectTest()}
-            title={
-              hasTestAccount
-                ? "A Test Account already exists. It is only used if you load it."
-                : "Add a Test Account for practice trades. Not loaded automatically; cannot reach real money."
-            }
+            disabled={busy !== null}
+            onClick={() => setTradierOpen(true)}
+            title="Link a Tradier account with an access token. Choose Sandbox (paper) or Production (live)."
           >
-            {busy === "test" ? "Adding..." : hasTestAccount ? "Test Account Added" : "Add Test Account"}
+            Connect Tradier
           </Btn>
         </div>
       }
@@ -400,7 +453,7 @@ export function BrokerAccountsCard() {
           {BROKER_ROADMAP.map((broker) => (
             <div
               key={broker.name}
-              className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3"
+              className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3"
               title={broker.detail}
             >
               <div className="flex items-start justify-between gap-2">
@@ -439,7 +492,7 @@ export function BrokerAccountsCard() {
               stay exactly where they are; this app just stops seeing and managing them.
             </p>
             {realityForAccount(confirmRemove).tone === "live" && (
-              <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+              <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
                 This is a brokerage connection. After disconnecting, any app-managed stop rules for its
                 positions stop running — only broker-held orders keep protecting them.
               </p>
@@ -472,6 +525,15 @@ export function BrokerAccountsCard() {
         onClose={() => setAlpacaOpen(false)}
         onConnected={async () => {
           setAlpacaOpen(false);
+          await refresh();
+        }}
+      />
+
+      <TradierConnectSheet
+        open={tradierOpen}
+        onClose={() => setTradierOpen(false)}
+        onConnected={async () => {
+          setTradierOpen(false);
           await refresh();
         }}
       />
@@ -616,6 +678,158 @@ function AlpacaConnectSheet({
                 Connect <LiveTag />
               </>
             )}
+          </Btn>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+// ── Tradier connect (single access token) ────────────────────────────────────
+
+function TradierConnectSheet({
+  open,
+  onClose,
+  onConnected
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConnected: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [label, setLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [environment, setEnvironment] = useState<"paper" | "live">("paper");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [taxationType, setTaxationType] = useState<"" | TaxationType>("");
+  const [busy, setBusy] = useState(false);
+
+  const isLive = environment === "live";
+
+  const submit = async () => {
+    if (!apiKey.trim()) {
+      toast.push("warn", "Access token is required");
+      return;
+    }
+    setBusy(true);
+    try {
+      await connectTradierAccount({
+        label: label.trim() || undefined,
+        apiKey: apiKey.trim(),
+        environment,
+        accountNumber: accountNumber.trim() || undefined,
+        taxationType: taxationType || undefined
+      });
+      toast.push(
+        "pos",
+        "Tradier account connected",
+        isLive ? "Connected as a Tradier production (live) account." : "Connected as a Tradier sandbox (paper) account."
+      );
+      setLabel("");
+      setApiKey("");
+      setEnvironment("paper");
+      setAccountNumber("");
+      setTaxationType("");
+      await onConnected();
+    } catch (error) {
+      toast.push("neg", "Could not connect", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet open={open} onClose={onClose} title="Connect Tradier">
+      <div className="flex flex-col gap-3">
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Paste the access token from your Tradier dashboard. A sandbox token only authenticates
+          against Tradier&apos;s sandbox and a production token only against the live API, so you
+          choose the environment explicitly — currently reading as{" "}
+          <span className={isLive ? "font-bold text-[color:var(--con-accent)]" : "font-bold text-[color:var(--con-paper)]"}>
+            {isLive ? "Tradier Production (LIVE — Real Money)" : "Tradier Sandbox (Paper — NOT Real Money)"}
+          </span>
+          . The token is stored server-side and never shown again.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Label (optional)" hint="A name you'll recognize in the account switcher." htmlFor="trd-label">
+            <TextInput
+              id="trd-label"
+              value={label}
+              placeholder="Sandbox, Brokerage, etc"
+              onChange={(e) => setLabel(e.target.value)}
+              title="Display name for this connection inside the app."
+            />
+          </Field>
+          <Field label="Environment" hint="Sandbox = paper (no real money); Production = live." htmlFor="trd-env">
+            <Select
+              id="trd-env"
+              value={environment}
+              onChange={(e) => setEnvironment(e.target.value === "live" ? "live" : "paper")}
+              title="Which Tradier venue this token authenticates against."
+            >
+              <option value="paper">Sandbox (paper)</option>
+              <option value="live">Production (live)</option>
+            </Select>
+          </Field>
+          <Field label="Access token" hint="A single Bearer token — no secret." htmlFor="trd-key">
+            <TextInput
+              id="trd-key"
+              type="password"
+              value={apiKey}
+              autoComplete="off"
+              placeholder="Tradier access token"
+              onChange={(e) => setApiKey(e.target.value)}
+              title="The access token from Tradier. Sent once to the server, never echoed back."
+            />
+          </Field>
+          <Field label="Account number (optional)" hint="Leave blank to use the token's account." htmlFor="trd-acct">
+            <TextInput
+              id="trd-acct"
+              value={accountNumber}
+              placeholder="e.g. VA12345678"
+              onChange={(e) => setAccountNumber(e.target.value)}
+              title="Your Tradier account number. Optional — the profile is probed on first use."
+            />
+          </Field>
+          <Field
+            label="Tax treatment (optional)"
+            hint="IRAs zero the estimated tax rates and skip the per-account wash-sale guard."
+            htmlFor="trd-tax"
+          >
+            <Select
+              id="trd-tax"
+              value={taxationType}
+              onChange={(e) => setTaxationType(e.target.value as "" | TaxationType)}
+              title="How gains in this account are taxed — drives the tax estimates and wash-sale handling."
+            >
+              <option value="">not set</option>
+              <option value="taxable">taxable brokerage</option>
+              <option value="roth_ira">Roth IRA</option>
+              <option value="traditional_ira">traditional IRA</option>
+            </Select>
+          </Field>
+        </div>
+        {isLive && (
+          <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+            <LiveTag /> A production Tradier token trades <span className="font-semibold">real capital</span>. Orders can
+            reach real money only when policy, approval, and risk gates allow them.
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Btn variant="ghost" onClick={onClose} title="Close without connecting.">
+            Cancel
+          </Btn>
+          <Btn
+            variant="primary"
+            disabled={busy}
+            onClick={() => void submit()}
+            title="Validate and store this connection server-side."
+          >
+            {busy ? "Connecting…" : isLive ? (
+              <>
+                Connect <LiveTag />
+              </>
+            ) : "Connect Sandbox"}
           </Btn>
         </div>
       </div>
