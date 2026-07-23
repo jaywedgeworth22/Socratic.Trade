@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetDbForTesting } from "../src/lib/db";
+import { resetTriggersForTesting } from "../src/lib/triggers";
+
 const completedStrategyResult = () => ({
   runId: randomUUID(),
   status: "completed" as const,
@@ -20,6 +23,8 @@ vi.mock("../src/lib/market-hours", () => ({
 }));
 
 beforeAll(() => {
+  resetDbForTesting();
+  vi.resetModules();
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-trigger-durable-${randomUUID()}.db`)}`;
 });
 
@@ -41,6 +46,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetDbForTesting();
+  resetTriggersForTesting();
+  vi.resetModules();
+  vi.unstubAllEnvs();
   for (const key of ENV_KEYS) delete process.env[key];
 });
 

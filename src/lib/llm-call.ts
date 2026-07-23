@@ -12,7 +12,70 @@
 import { withLlmRequestBounds, type LlmTransport } from "./llm-request";
 import type { LlmEndpoint } from "./llm-provider";
 import type { LlmReasoningEffort } from "./types";
+import { getGitSha } from "./git-sha";
 import { jsonrepair } from "jsonrepair";
+import { openrouterRequestEnrichment } from "@jaywedgeworth22/congress-trading-shared";
+
+const CLASSIFIER_SOURCE_APP = "socratic-trade";
+
+/** Deploy environment tag for the OpenRouter `trace` object — same resolution as
+ *  `usage-monitor-push.ts`'s `usageMonitorEnv()`, duplicated here (not imported) to keep this
+ *  request-shaping module decoupled from the telemetry-push module. */
+function classifierEnvironment(): string {
+  return process.env.USAGE_MONITOR_ENV?.trim() || process.env.NODE_ENV || "development";
+}
+
+/** Deployed commit sha, when the runtime exposes one — `undefined` (never a new required env var)
+ *  otherwise, e.g. local dev. See `runtimeReleaseIdentity`'s env probe list. */
+function classifierGitSha(): string | undefined {
+  return getGitSha();
+}
+
+/** Call-site classifier tag threaded into an OpenRouter request's `user`/`session_id`/`trace`. */
+export interface LlmClassifierTag {
+  userId?: string;
+  /** Non-secret key fingerprint already computed by the caller (resolveLlmEndpoint's/
+   *  resolveLlmCredential's `keyRef`) — reused verbatim, never a new lookup. */
+  keyRef?: string;
+  /** Broad subsystem bucket, e.g. "strategy" | "rag" | "chat" | "memory". Defaults to "llm". */
+  service?: string;
+  /** Fine-grained call-site tag — reuse the exact string already passed to the neighbouring
+   *  `recordLlmUsage`'s `context` (e.g. "red-team", "post-mortem", "chat-salience"). */
+  feature?: string;
+}
+
+/**
+ * Merge OpenRouter classifier enrichment (`user`/`session_id` + flat `trace`) into a request body
+ * that is about to be sent to OpenRouter. No-op for every other provider — call only when
+ * `endpoint.provider === "openrouter"`.
+ *
+ * Never breaks the call: static-context validation errors (e.g. malformed input) and any other
+ * unexpected throw are caught and logged, degrading to the un-enriched `base` body rather than
+ * failing a paid LLM request over telemetry metadata.
+ */
+export function applyOpenRouterClassifierEnrichment(base: Record<string, unknown>, tag: LlmClassifierTag): void {
+  try {
+    const enrichment = openrouterRequestEnrichment({
+      sourceApp: CLASSIFIER_SOURCE_APP,
+      environment: classifierEnvironment(),
+      service: tag.service || "llm",
+      feature: tag.feature,
+      keyRef: tag.keyRef,
+      gitSha: classifierGitSha(),
+      // OpenRouter documents a 128-char cap on `user`; truncate rather than let the shared
+      // builder's max(128) validation throw and needlessly degrade to an un-enriched request.
+      user: tag.userId === undefined ? undefined : tag.userId.slice(0, 128),
+    });
+    if (enrichment.user !== undefined) base.user = enrichment.user;
+    if (enrichment.session_id !== undefined) base.session_id = enrichment.session_id;
+    base.trace = enrichment.trace;
+  } catch (err) {
+    console.warn(
+      "[llm-call] OpenRouter classifier enrichment failed; sending the request un-enriched:",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+}
 
 /** A JSON schema plus the name/description used to label it (OpenAI json_schema / Anthropic tool). */
 export interface LlmJsonSchema {
@@ -57,6 +120,17 @@ export interface LlmRequestSpec {
    * rather than a strict schema — this preserves that behavior while letting Claude enforce a tool.
    */
   openAiJsonObject?: boolean;
+  userId?: string;
+  /** Non-secret key fingerprint already resolved by the caller (e.g. `resolveLlmEndpoint`'s
+   *  `keyRef`) — threaded into the OpenRouter classifier `trace.keyRef`. */
+  keyRef?: string;
+  /** Call-site tag reused verbatim as the OpenRouter classifier `trace.feature` — pass the same
+   *  string already given to the neighbouring `recordLlmUsage`'s `context`. Falls back to a
+   *  regex-inferred tag when omitted, so untouched call sites still get a best-effort feature. */
+  feature?: string;
+  /** Broad subsystem bucket for the OpenRouter classifier `trace.service` (e.g. "strategy",
+   *  "rag", "chat", "memory"). Defaults to "llm". */
+  service?: string;
 }
 
 /** Auth + content headers for the endpoint's provider (Anthropic uses x-api-key, others Bearer). */
@@ -68,6 +142,14 @@ export function llmAuthHeaders(endpoint: Pick<LlmEndpoint, "provider" | "key">):
       "anthropic-version": "2023-06-01",
       // Honour cache_control blocks on the system prompt (prompt caching). (Chat A item 3.)
       "anthropic-beta": "prompt-caching-2024-07-31"
+    };
+  }
+  if (endpoint.provider === "openrouter") {
+    return {
+      "content-type": "application/json",
+      authorization: `Bearer ${endpoint.key ?? ""}`,
+      "HTTP-Referer": "https://socratictrade.com",
+      "X-Title": "Socratic.Trade"
     };
   }
   return {
@@ -82,12 +164,67 @@ export function buildLlmRequestBody(
   spec: LlmRequestSpec
 ): Record<string, unknown> {
   const { transport } = endpoint;
-  const { systemPrompt, userContent, schema, openAiJsonObject } = spec;
+  const { systemPrompt, userContent, schema, openAiJsonObject, userId, keyRef, service, feature } = spec;
   const bounds = {
     maxOutputTokens: spec.maxOutputTokens,
     model: spec.model,
     reasoningEffort: spec.reasoningEffort,
     temperature: spec.temperature
+  };
+
+  // Best-effort fallback for call sites that don't yet pass an explicit `feature` tag. Prefer the
+  // caller-supplied tag (the exact string already used for `recordLlmUsage`'s `context`) — this
+  // heuristic exists only so an un-migrated caller still gets a non-blank classifier feature.
+  const inferredFeature = () => {
+    const sys = (systemPrompt || "").toLowerCase();
+    const schemaName = schema?.name || "";
+    if (schemaName === "trade_proposals" || sys.includes("green team") || sys.includes("proposer")) {
+      return "green-team";
+    }
+    if (schemaName === "red_team_verdict" || sys.includes("red team") || sys.includes("reviewer") || sys.includes("adversary")) {
+      return "red-team";
+    }
+    if (schemaName === "tuned_parameters" || sys.includes("tuner") || sys.includes("tuning") || sys.includes("autotuning")) {
+      return "tuning";
+    }
+    if (sys.includes("salience") || sys.includes("memory") || sys.includes("importance")) {
+      return "memory-salience";
+    }
+    if (sys.includes("multi-query") || sys.includes("rag") || sys.includes("retrieval")) {
+      return "rag";
+    }
+    if (sys.includes("framework review") || sys.includes("framework_review")) {
+      return "framework-review";
+    }
+    if (sys.includes("post-mortem") || sys.includes("post_mortem")) {
+      return "post-mortem";
+    }
+    if (sys.includes("revalidation") || sys.includes("proposal-revalidation")) {
+      return "revalidation";
+    }
+    return "assistant-chat";
+  };
+
+  const injectCommonFields = (base: Record<string, unknown>) => {
+    if (endpoint.provider === "openrouter") {
+      // OpenRouter gets the shared classifier enrichment (user/session_id + flat trace) instead of
+      // the old bare `metadata` field — see applyOpenRouterClassifierEnrichment's doc comment for
+      // the fail-open contract (never breaks the call on an enrichment error).
+      applyOpenRouterClassifierEnrichment(base, {
+        userId,
+        keyRef,
+        service,
+        feature: feature || inferredFeature()
+      });
+      return;
+    }
+    if (userId) {
+      if (endpoint.provider === "openai" || endpoint.provider === "deepseek" || endpoint.provider === "gemini") {
+        base.user = userId;
+      } else if (endpoint.provider === "anthropic") {
+        base.metadata = { ...(base.metadata as Record<string, unknown> || {}), user_id: userId };
+      }
+    }
   };
 
   if (transport === "anthropic-messages") {
@@ -113,6 +250,7 @@ export function buildLlmRequestBody(
       ];
       base.tool_choice = { type: "tool", name: schema.name };
     }
+    injectCommonFields(base);
     return withLlmRequestBounds(base, transport, bounds);
   }
 
@@ -123,8 +261,9 @@ export function buildLlmRequestBody(
 
   if (transport === "chat-completions") {
     const base: Record<string, unknown> = { model: spec.model, messages };
-    const responseFormat = openAiChatResponseFormat(endpoint.provider, schema, openAiJsonObject);
+    const responseFormat = openAiChatResponseFormat(endpoint.provider, schema, openAiJsonObject, spec.model);
     if (responseFormat) base.response_format = responseFormat;
+    injectCommonFields(base);
     return withLlmRequestBounds(base, transport, bounds);
   }
 
@@ -132,6 +271,7 @@ export function buildLlmRequestBody(
   const base: Record<string, unknown> = { model: spec.model, input: messages };
   const textFormat = openAiResponsesTextFormat(schema, openAiJsonObject);
   if (textFormat) base.text = { format: textFormat };
+  injectCommonFields(base);
   return withLlmRequestBounds(base, transport, bounds);
 }
 
@@ -248,15 +388,15 @@ export function toGeminiJsonSchema(node: unknown): { schema: unknown; unsupporte
 function openAiChatResponseFormat(
   provider: LlmEndpoint["provider"],
   schema: LlmJsonSchema | undefined,
-  openAiJsonObject: boolean | undefined
+  openAiJsonObject: boolean | undefined,
+  model?: string
 ): Record<string, unknown> | undefined {
-  if (schema && !openAiJsonObject && provider === "gemini") {
+  const isGemini = provider === "gemini" || (model && /^google\//i.test(model));
+  const isDeepSeek = provider === "deepseek" || (model && /^deepseek\//i.test(model));
+
+  if (schema && !openAiJsonObject && isGemini) {
     const { schema: geminiSchema, unsupported } = toGeminiJsonSchema(schema.schema);
     if (unsupported) {
-      // Something in this schema (a type-union or anyOf with more than one non-null alternative) has
-      // no Gemini-dialect equivalent this transform can produce — fall back to a bare JSON object the
-      // same way the DeepSeek branch below does, rather than forwarding a schema Gemini will likely
-      // reject anyway. Logged so an unexpected new schema shape doesn't silently degrade output quality.
       console.warn(
         `[llm-call] Gemini schema "${schema.name}" has a construct toGeminiJsonSchema can't translate ` +
           "(type-union or anyOf with 2+ non-null branches) — falling back to json_object."
@@ -265,10 +405,9 @@ function openAiChatResponseFormat(
     }
     return { type: "json_schema", json_schema: { name: schema.name, strict: true, schema: geminiSchema } };
   }
-  if (schema && !openAiJsonObject && provider !== "deepseek") {
+  if (schema && !openAiJsonObject && !isDeepSeek) {
     return { type: "json_schema", json_schema: { name: schema.name, strict: true, schema: schema.schema } };
   }
-  // DeepSeek rejects strict json_schema; everything else here wants a bare JSON object.
   if (schema || openAiJsonObject) return { type: "json_object" };
   return undefined;
 }

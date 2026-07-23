@@ -385,13 +385,13 @@ describe("storeDocument: per-chunk char cap aligned with the token chunker (item
 
     expect(aaplRetrieved).toHaveLength(1);
     expect(aaplRetrieved[0]).toMatchObject({ id: aaplRecord.id, as_of: "2026-04-21T01:00:00.000Z" });
-    expect(aaplRetrieved[0]!.text).toContain("Document: AAPL earnings-transcript.");
+    expect(aaplRetrieved[0]!.text).toContain("Filing: AAPL Q1 earnings call");
     expect(aaplRetrieved[0]!.text).toContain(text);
     expect(aaplRetrieved[0]!.metadata).toMatchObject({ symbol: "AAPL", accession: "AAPL:2026:Q1" });
     expect(msftBeforePIT).toEqual([]);
     expect(msftRetrieved).toHaveLength(1);
     expect(msftRetrieved[0]).toMatchObject({ id: msftRecord.id, as_of: "2026-07-21T01:00:00.000Z" });
-    expect(msftRetrieved[0]!.text).toContain("Document: MSFT earnings-transcript.");
+    expect(msftRetrieved[0]!.text).toContain("Filing: MSFT Q2 earnings call");
     expect(msftRetrieved[0]!.text).toContain(text);
     expect(msftRetrieved[0]!.metadata).toMatchObject({ symbol: "MSFT", accession: "MSFT:2026:Q2" });
     quiet.mockRestore();

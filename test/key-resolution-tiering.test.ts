@@ -110,8 +110,8 @@ describe("LLM usage ledger", () => {
 
   it("records per-user usage and isolates operator-funded tenant spend", async () => {
     const { recordLlmUsage, getLlmUsageSummary } = await import("../src/lib/llm-usage");
-    recordLlmUsage({ userId: "local", provider: "openai", model: "gpt-4o-mini", context: "strategy", keySource: "user", promptTokens: 1000, completionTokens: 500 });
-    recordLlmUsage({ userId: "u_tenant", provider: "openai", model: "gpt-4o-mini", context: "chat", keySource: "operator", promptTokens: 2000, completionTokens: 1000 });
+    recordLlmUsage({ userId: "local", provider: "openai", model: "openai/gpt-4o-mini", context: "strategy", keySource: "user", promptTokens: 1000, completionTokens: 500 });
+    recordLlmUsage({ userId: "u_tenant", provider: "openai", model: "openai/gpt-4o-mini", context: "chat", keySource: "operator", promptTokens: 2000, completionTokens: 1000 });
 
     const all = getLlmUsageSummary();
     expect(all.length).toBe(2);
@@ -133,7 +133,7 @@ describe("LLM usage ledger", () => {
       choices: [{ message: { content: "ack" }, finish_reason: "stop" }],
       usage: { prompt_tokens: 120, completion_tokens: 30 }
     });
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport, { userId: "u_tenant", keySource: "operator", context: "chat" });
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport, { userId: "u_tenant", keySource: "operator", context: "chat" });
     await llm.run({ system: "s", message: "hi", tools: [], executeTool: async () => ({}), history: [] });
 
     const rows = getLlmUsageSummary();
@@ -155,9 +155,9 @@ describe("LLM usage ledger", () => {
     expect(own.keyRef).not.toContain("tenant-own-key"); // fingerprint, not the secret
 
     // Two calls on the operator key + one on the tenant's own key → grouped per key.
-    recordLlmUsage({ userId: "u_other", provider: "openai", model: "gpt-4o-mini", keySource: "operator", keyRef: op.keyRef, promptTokens: 100, completionTokens: 10 });
-    recordLlmUsage({ userId: "u_third", provider: "openai", model: "gpt-4o-mini", keySource: "operator", keyRef: op.keyRef, promptTokens: 100, completionTokens: 10 });
-    recordLlmUsage({ userId: "u_tenant", provider: "openai", model: "gpt-4o-mini", keySource: "user", keyRef: own.keyRef, promptTokens: 50, completionTokens: 5 });
+    recordLlmUsage({ userId: "u_other", provider: "openai", model: "openai/gpt-4o-mini", keySource: "operator", keyRef: op.keyRef, promptTokens: 100, completionTokens: 10 });
+    recordLlmUsage({ userId: "u_third", provider: "openai", model: "openai/gpt-4o-mini", keySource: "operator", keyRef: op.keyRef, promptTokens: 100, completionTokens: 10 });
+    recordLlmUsage({ userId: "u_tenant", provider: "openai", model: "openai/gpt-4o-mini", keySource: "user", keyRef: own.keyRef, promptTokens: 50, completionTokens: 5 });
 
     const byKey = getLlmUsageSummary();
     const opRows = byKey.filter((r) => r.keyRef === op.keyRef);
@@ -167,32 +167,35 @@ describe("LLM usage ledger", () => {
     expect(byKey.every((r) => r.keyRef !== null)).toBe(true);
   });
 
-  it("describeUsageKey resolves a human label (last-4 + name) from the live key store", async () => {
+  it("describeUsageKey resolves a human label + irreversible fingerprint from the live key store", async () => {
     vi.stubEnv("OPENAI_API_KEY", "env-operator-key-ABCD");
     const { upsertUserApiKey } = await import("../src/lib/db");
-    const { describeUsageKey, keyFingerprint } = await import("../src/lib/llm-usage");
+    const { describeUsageKey, displayKeyFingerprint, keyFingerprint } = await import("../src/lib/llm-usage");
 
     upsertUserApiKey("u_tenant", "openai", "tenant-own-key-WXYZ");
     upsertUserApiKey("local", "openai", "local-key-7788");
 
-    // A tenant's own key → labeled by user + last-4.
+    // A tenant's own key → labeled by user + an irreversible fingerprint (never a raw-key
+    // prefix/suffix — Connections promises a stored key is never displayed again).
     expect(describeUsageKey({ keyRef: keyFingerprint("tenant-own-key-WXYZ")!, userId: "u_tenant", provider: "openai" })).toEqual({
-      last4: "WXYZ",
-      masked: "tenant-o...WXYZ",
+      fingerprint: displayKeyFingerprint("tenant-own-key-WXYZ"),
       label: "u_tenant (openai)"
     });
     // The `local` primary user's own key is not an operator failover key.
     expect(describeUsageKey({ keyRef: keyFingerprint("local-key-7788")!, userId: "local", provider: "openai" })).toEqual({
-      last4: "7788",
-      masked: "local-ke...7788",
+      fingerprint: displayKeyFingerprint("local-key-7788"),
       label: "primary user (openai)"
     });
-    // A tenant served by server failover gets the env key's last-4.
+    // A tenant served by server failover gets the env key's fingerprint.
     expect(describeUsageKey({ keyRef: keyFingerprint("env-operator-key-ABCD")!, userId: "u_other", provider: "openai" })).toEqual({
-      last4: "ABCD",
-      masked: "env-oper...ABCD",
+      fingerprint: displayKeyFingerprint("env-operator-key-ABCD"),
       label: "server failover (openai)"
     });
+    // The fingerprint never contains any substring of the raw key (irreversible, safe to ship to the client).
+    const desc = describeUsageKey({ keyRef: keyFingerprint("tenant-own-key-WXYZ")!, userId: "u_tenant", provider: "openai" });
+    expect(desc?.fingerprint).not.toContain("tenant");
+    expect(desc?.fingerprint).not.toContain("WXYZ");
+    expect(desc?.fingerprint).toHaveLength(8);
     // A detached/unknown key (no longer in the store) → no label, fingerprint still in the ledger.
     expect(describeUsageKey({ keyRef: keyFingerprint("deleted-key")!, userId: "u_tenant", provider: "openai" })).toBeUndefined();
     expect(describeUsageKey({ keyRef: null, userId: "u_tenant", provider: "openai" })).toBeUndefined();

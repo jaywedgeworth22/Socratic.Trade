@@ -24,7 +24,8 @@ import { maybeAutoTuneWeights } from "./auto-tune-scheduler";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
-import type { TradingPolicy } from "./types";
+import { isLiveOrderState } from "./broker-side";
+import type { EquityOrder, TradingPolicy } from "./types";
 import { drainMaterialEventQueue, triggerEngineEnabled, triggerMode } from "./triggers";
 import {
   getTechnicalWatchlist,
@@ -75,6 +76,10 @@ export type ManagedVectorReconcileRun = {
   status: "success" | "busy" | "failed";
   result?: { skipped?: boolean };
 };
+
+export function drainingAccountLiveOrders(orders: readonly EquityOrder[]): EquityOrder[] {
+  return orders.filter((order) => isLiveOrderState(order.state));
+}
 
 const managedVectorReconcileGuardHost = globalThis as unknown as {
   __schedulerManagedVectorReconcileInFlight?: Promise<ManagedVectorReconcileRun | null>;
@@ -662,7 +667,7 @@ async function tick(): Promise<void> {
         if (account.isDraining) {
           if (brokerGateway && policy.accountNumber) {
             void brokerGateway.getEquityOrders(policy.accountNumber).then(async (orders) => {
-              const openOrders = orders.filter(o => o.state === "open" || o.state === "partially_filled");
+              const openOrders = drainingAccountLiveOrders(orders);
               for (const o of openOrders) {
                 await brokerGateway.cancelEquityOrder(policy.accountNumber!, o.id).catch((err: unknown) => {
                   console.error(`[scheduler] draining account cancel error for order ${o.id}:`, err);
@@ -698,11 +703,12 @@ async function tick(): Promise<void> {
         const protectiveState =
           policy.systemState === "active" ||
           policy.systemState === "close_only" ||
-          policy.systemState === "liquidating";
+          policy.systemState === "liquidating" ||
+          (policy.systemState === "halted" && policy.riskRules?.protectWhileHalted === true);
 
         // R2: synthetic trailing-stop monitor — runs every tick in states where risk-reducing exits
         // are allowed. `close_only` and `liquidating` must not disable the very protection that can
-        // reduce exposure after a breaker trips. `halted` remains the only no-order state.
+        // reduce exposure after a breaker trips. `halted` remains the only no-order state unless protectWhileHalted is active.
         if (protectiveState && !stopMonitorInFlight.has(key)) {
           stopMonitorInFlight.add(key);
           void runSyntheticStopMonitor(userId, policy, true)

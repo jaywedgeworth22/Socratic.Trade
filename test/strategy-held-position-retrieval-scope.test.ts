@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   retrieveContext: async () => [],
   retrieveContextDetailed: mocks.retrieveContextDetailed,
   defaultMinScore: () => 0.3,
@@ -138,11 +140,11 @@ describe("strategy.ts held-position retrieval scope", () => {
     const { clearMarketCache } = await import("../src/lib/market");
     clearMarketCache();
 
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
-        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -152,14 +154,14 @@ describe("strategy.ts held-position retrieval scope", () => {
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Held Retrieval Scope Test", isActive: true });
     setActiveConnectedAccount(accountId);
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: SCAN_SYMBOLS,
       strategyAuthority: "decide"
@@ -238,11 +240,11 @@ describe("strategy.ts held-position retrieval scope", () => {
     const { clearMarketCache } = await import("../src/lib/market");
     clearMarketCache();
 
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
-        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -274,14 +276,14 @@ describe("strategy.ts held-position retrieval scope", () => {
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Held Retrieval Scope Dedup Test", isActive: true });
     setActiveConnectedAccount(accountId);
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: SCAN_SYMBOLS,
       strategyAuthority: "decide"

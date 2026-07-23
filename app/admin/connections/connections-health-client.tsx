@@ -287,7 +287,7 @@ export function ConnectionsHealthClient() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">API connections</h1>
+          <h1 className="text-xl font-semibold">API Connections</h1>
           {data?.asOf && (
             <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Last updated {relTime(data.asOf)}</p>
           )}

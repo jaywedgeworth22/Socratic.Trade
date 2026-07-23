@@ -28,7 +28,23 @@ interface CapturedRequest {
   url: string;
   auth: string | null;
   rawBody: string;
-  body: { events: Array<Record<string, unknown>> };
+  body: {
+    schemaVersion: number;
+    producerId: string;
+    events: Array<Record<string, unknown>>;
+  };
+}
+
+function ack(received: number): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    schemaVersion: 2,
+    received,
+    persisted: received,
+    duplicates: 0,
+    pruned: 0,
+    rejected: 0,
+  }), { status: 202 });
 }
 
 function makeFetchStub(captured: CapturedRequest[]) {
@@ -41,7 +57,7 @@ function makeFetchStub(captured: CapturedRequest[]) {
       rawBody,
       body: JSON.parse(rawBody),
     });
-    return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+    return ack(JSON.parse(rawBody).events.length);
   }) as unknown as typeof fetch;
 }
 
@@ -91,7 +107,7 @@ describe("usage-monitor-push", () => {
     push.pushLlmUsage({
       sourceEventId: "llm-row-123",
       provider: "anthropic",
-      model: "claude-opus-4-8",
+      model: "anthropic/claude-opus-4-8",
       context: "strategy",
       userId: "local",
       keySource: "operator",
@@ -109,19 +125,23 @@ describe("usage-monitor-push", () => {
     const events = captured[0]!.body.events;
     expect(events).toHaveLength(1);
     const e = events[0]!;
-    expect(e.sourceApp).toBe("socratic-trade");
+    expect(captured[0]!.body.schemaVersion).toBe(2);
+    expect(captured[0]!.body.producerId).toBe("socratic-trade");
+    expect(e.sourceApp).toBeUndefined();
     expect(e.project).toBe("socratic-trade");
     expect(e.environment).toBe("test");
     expect(e.provider).toBe("anthropic");
+    expect(e.producerKeyRef).toBe("abcd");
+    expect(e.keyRef).toBeUndefined();
     expect(e.service).toBe("llm");
     expect(e.metricType).toBe("cost");
     expect(e.unit).toBe("token");
     expect(e.quantity).toBe(1000);
     expect(e.costUsd).toBe(0.03);
     expect(e.requests).toBe(1);
-    expect(e.idempotencyKey).toBe(expectedTelemetryKey("llm", "llm-row-123"));
+    expect(e.eventId).toBe(expectedTelemetryKey("llm", "llm-row-123"));
     expect(typeof e.occurredAt).toBe("string");
-    expect((e.metadata as Record<string, unknown>).model).toBe("claude-opus-4-8");
+    expect((e.metadata as Record<string, unknown>).model).toBe("anthropic/claude-opus-4-8");
   });
 
   it("pushes a RAG event and aggregates market-data call-volume in one flush", async () => {
@@ -140,14 +160,14 @@ describe("usage-monitor-push", () => {
     expect(rag).toBeDefined();
     expect(rag!.provider).toBe("voyage");
     expect(rag!.unit).toBe("token");
-    expect(rag!.idempotencyKey).toBe(expectedTelemetryKey("rag", "rag-row-123"));
+    expect(rag!.eventId).toBe(expectedTelemetryKey("rag", "rag-row-123"));
 
     const vol = events.find((e) => e.provider === "finnhub");
     expect(vol).toBeDefined();
     expect(vol!.metricType).toBe("usage");
     expect(vol!.unit).toBe("request");
     expect(vol!.requests).toBe(3);
-    expect(vol!.idempotencyKey).toMatch(
+    expect(vol!.eventId).toMatch(
       /^socratic-trade:provider-call-volume:/
     );
     expect((vol!.metadata as Record<string, unknown>).successes).toBe(2);
@@ -171,7 +191,7 @@ describe("usage-monitor-push", () => {
     // Two different credential lanes → two separate finnhub events, not one merged count.
     const finnhub = events.filter((e) => e.provider === "finnhub");
     expect(finnhub).toHaveLength(2);
-    const laneKeys = finnhub.map((event) => event.idempotencyKey);
+    const laneKeys = finnhub.map((event) => event.eventId);
     expect(laneKeys.every((key) => typeof key === "string")).toBe(true);
     expect(new Set(laneKeys).size).toBe(2);
     const userLane = finnhub.find((e) => (e.metadata as Record<string, unknown>).keySource === "user");
@@ -193,10 +213,10 @@ describe("usage-monitor-push", () => {
       });
       attempt += 1;
       if (attempt === 1) throw new Error("connection closed after request write");
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+      return ack(JSON.parse(rawBody).events.length);
     }) as unknown as typeof fetch);
     expect(() =>
-      recordLlmUsage({ provider: "openai", model: "gpt-4o-mini", context: "chat", userId: "local", keySource: "operator", promptTokens: 10, completionTokens: 5 })
+      recordLlmUsage({ provider: "openai", model: "openai/gpt-4o-mini", context: "chat", userId: "local", keySource: "operator", promptTokens: 10, completionTokens: 5 })
     ).not.toThrow();
     await expect(push.flushUsageMonitor()).resolves.toBeUndefined();
     expect(attempts).toHaveLength(1);
@@ -212,12 +232,36 @@ describe("usage-monitor-push", () => {
     expect(getLlmUsageSummary().length).toBeGreaterThan(0);
   });
 
+  it("retries the exact live batch when a valid v2 ACK under-reports acceptance", async () => {
+    const attempts: string[] = [];
+    push.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
+      const rawBody = String(init?.body ?? "{}");
+      attempts.push(rawBody);
+      const sent = (JSON.parse(rawBody) as { events: unknown[] }).events.length;
+      return attempts.length === 1 ? ack(sent - 1) : ack(sent);
+    }) as unknown as typeof fetch);
+    push.pushLlmUsage({
+      sourceEventId: "partial-live-ack",
+      provider: "openai",
+      userId: "local",
+      keySource: "operator",
+      totalTokens: 1,
+    });
+
+    await push.flushUsageMonitor();
+    expect(attempts).toHaveLength(1);
+    await push.flushUsageMonitor();
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toBe(attempts[0]);
+  });
+
   it("uses one durable LLM ledger identity and timestamp for persistence and delivery", async () => {
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured));
     recordLlmUsage({
       provider: "openai",
-      model: "gpt-4o-mini",
+      model: "openai/gpt-4o-mini",
       context: "telemetry-id-test",
       userId: "local",
       keySource: "operator",
@@ -232,7 +276,7 @@ describe("usage-monitor-push", () => {
       )
       .get("telemetry-id-test") as { id: string; created_at: string };
     const event = captured[0]!.body.events[0]!;
-    expect(event.idempotencyKey).toBe(expectedTelemetryKey("llm", row.id));
+    expect(event.eventId).toBe(expectedTelemetryKey("llm", row.id));
     expect(event.occurredAt).toBe(row.created_at);
   });
 
@@ -255,7 +299,7 @@ describe("usage-monitor-push", () => {
       )
       .get("telemetry-rag-user") as { id: string; created_at: string };
     const event = captured[0]!.body.events[0]!;
-    expect(event.idempotencyKey).toBe(expectedTelemetryKey("rag", row.id));
+    expect(event.eventId).toBe(expectedTelemetryKey("rag", row.id));
     expect(event.occurredAt).toBe(row.created_at);
   });
 
@@ -280,7 +324,7 @@ describe("usage-monitor-push", () => {
     const events = captured[0]!.body.events;
     expect(events).toHaveLength(2);
     expect(events[1]).toEqual(events[0]);
-    expect(events[0]!.idempotencyKey).toBe(
+    expect(events[0]!.eventId).toBe(
       expectedTelemetryKey("llm", entry.sourceEventId)
     );
     expect(events[0]!.occurredAt).toBe(entry.occurredAt);
@@ -303,7 +347,7 @@ describe("usage-monitor-push", () => {
     push.pushLlmUsage({ ...base, sourceEventId: "" });
     await push.flushUsageMonitor();
 
-    const keys = captured[0]!.body.events.map((event) => String(event.idempotencyKey));
+    const keys = captured[0]!.body.events.map((event) => String(event.eventId));
     expect(keys[0]).toBe(expectedTelemetryKey("llm", oversized));
     expect(keys.every((key) => key.length <= 200)).toBe(true);
     expect(keys.every((key) => /^socratic-trade:llm:[a-f0-9]{64}$/.test(key))).toBe(true);
@@ -343,7 +387,7 @@ describe("usage-monitor-push", () => {
 
     await reloaded.flushUsageMonitor();
     expect(captured).toHaveLength(1);
-    expect(captured[0]!.body.events[0]!.idempotencyKey).toBe(
+    expect(captured[0]!.body.events[0]!.eventId).toBe(
       expectedTelemetryKey("llm", "hmr-buffered-event")
     );
   });
@@ -358,8 +402,8 @@ describe("usage-monitor-push", () => {
     await push.flushUsageMonitor();
 
     expect(captured).toHaveLength(2);
-    const firstKey = captured[0]!.body.events[0]!.idempotencyKey;
-    const secondKey = captured[1]!.body.events[0]!.idempotencyKey;
+    const firstKey = captured[0]!.body.events[0]!.eventId;
+    const secondKey = captured[1]!.body.events[0]!.eventId;
     expect(firstKey).toMatch(/^socratic-trade:provider-call-volume:/);
     expect(secondKey).toMatch(/^socratic-trade:provider-call-volume:/);
     expect(secondKey).not.toBe(firstKey);

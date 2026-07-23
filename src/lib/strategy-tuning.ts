@@ -12,7 +12,7 @@ import {
   normalizeScoringWeights,
   setPolicy
 } from "./db";
-import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "./llm-usage";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
 import { policyUniverseSymbolCount } from "./index-universes";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, isModelRotationSentinel, resolveReviewerReasoningEffort } from "./llm-request";
@@ -916,7 +916,11 @@ async function requestLlmTuning(
       userContent,
       schema: { name: "strategy_tuning", schema, description: "Conservative, reviewable strategy-tuning suggestions." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning,
-      reasoningEffort: reasoningEffortOverride ?? policyForResolution.llmReasoningEffort
+      reasoningEffort: reasoningEffortOverride ?? policyForResolution.llmReasoningEffort,
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "strategy-tuning"
     }
   );
 
@@ -953,7 +957,7 @@ async function requestLlmTuning(
 
       const payload = await response.json();
       assertOwned?.();
-      recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, connectedAccountId: connectedAccountId ?? policy.connectedAccountId, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, connectedAccountId: connectedAccountId ?? policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(provider, payload), ...extractLlmUsage(payload) });
       const text = extractLlmText(payload);
       if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
       // §4.1 defense-in-depth: tolerate a fenced/prose-wrapped reply before parsing.

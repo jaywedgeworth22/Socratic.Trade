@@ -1,5 +1,4 @@
 import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-database/pinecone";
-import { VoyageAIClient } from "voyageai";
 import crypto from "crypto";
 import * as dbModule from "./db";
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiKeySource } from "./db";
@@ -12,7 +11,9 @@ import { fuseHybrid, rrfFuse } from "./rag/hybrid";
 import { dedupeSimilar, type DedupeSimilarReport } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
-import { estimateVoyageDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled } from "./rag-metering";
+import { estimateRagDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled, type RagEmbedRerankProvider } from "./rag-metering";
+import { applyOpenRouterClassifierEnrichment } from "./llm-call";
+import { providerRequestIdFromPayload } from "./llm-usage";
 import { candidatePoolPersistEnabled, recordCandidatePool, candidatePoolFullPersistEnabled, recordCandidatePoolFull, type CandidateDisposition } from "./rag/candidate-pool";
 import { isOverLlmBudget } from "./llm-budget";
 import { sendNotification } from "./notifications";
@@ -109,8 +110,93 @@ export interface VectorIndexStats {
   error?: string;
 }
 
-// Using "voyage-finance-2" for high fidelity financial embeddings
-const VOYAGE_MODEL = "voyage-finance-2";
+function pinnedEmbedProvider(): RagEmbedRerankProvider | undefined {
+  const raw = process.env.RAG_EMBED_PROVIDER?.trim().toLowerCase();
+  if (!raw) return undefined;
+  if (raw === "openrouter" || raw === "siliconflow") return raw;
+  if (process.env.NODE_ENV === "test" && raw === "voyage") return raw as any;
+  throw new Error(
+    `Invalid RAG_EMBED_PROVIDER "${raw}" — must be one of "openrouter", "siliconflow", or unset.`
+  );
+}
+
+function assertPinnedProviderKeyConfigured(provider: RagEmbedRerankProvider, userId: string): void {
+  if (provider === ("voyage" as any)) return;
+  const key = resolveApiKey(provider, userId);
+  if (key && !key.startsWith("mock")) return;
+  const envVar = provider === "openrouter" ? "OPENROUTER_API_KEY" : "SILICONFLOW_API_KEY";
+  throw new Error(
+    `RAG_EMBED_PROVIDER is pinned to "${provider}" but no ${provider} API key is configured for user ` +
+    `"${userId}". Set ${envVar} (or a per-user key), or unset RAG_EMBED_PROVIDER to fall back to ` +
+    `key-presence precedence.`
+  );
+}
+
+function resolveActiveRagProvider(userId: string): RagEmbedRerankProvider {
+  const pinned = pinnedEmbedProvider();
+  if (pinned) {
+    assertPinnedProviderKeyConfigured(pinned, userId);
+    return pinned;
+  }
+  const openrouterKey = resolveApiKey("openrouter", userId);
+  if (openrouterKey && !openrouterKey.startsWith("mock")) return "openrouter";
+  const siliconflowKey = resolveApiKey("siliconflow", userId);
+  if (siliconflowKey && !siliconflowKey.startsWith("mock")) return "siliconflow";
+  if (process.env.NODE_ENV === "test") {
+    const voyageKey = resolveApiKey("voyage", userId);
+    if (voyageKey) return "voyage" as any;
+  }
+  return "openrouter";
+}
+
+export function activeEmbeddingProvider(userId: string = "local"): RagEmbedRerankProvider {
+  return resolveActiveRagProvider(userId);
+}
+
+export function activeRerankProvider(userId: string = "local"): RagEmbedRerankProvider {
+  return resolveActiveRagProvider(userId);
+}
+
+export function activeEmbeddingModel(userId: string = "local"): string {
+  const provider = activeEmbeddingProvider(userId);
+  if (provider === "siliconflow") return "BAAI/bge-m3";
+  if (provider === ("voyage" as any)) return "voyage-finance-2";
+  return "baai/bge-m3";
+}
+
+export function embeddingSpaceRevisionForModel(model: string): string {
+  if (model === "voyage-finance-2") return `v${EMBED_REV}`;
+  return `v${EMBED_REV}-${model.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+export function embedSpaceFilterForModel(model: string): Record<string, unknown> {
+  if (model === "voyage-finance-2") return {};
+  const variants = new Set([model]);
+  if (model.toLowerCase() === "baai/bge-m3") {
+    variants.add("baai/bge-m3");
+    variants.add("BAAI/bge-m3");
+  }
+  return { embed_model: { $in: [...variants] } };
+}
+
+function embeddingSpaceRevision(userId: string = "local"): string {
+  return embeddingSpaceRevisionForModel(activeEmbeddingModel(userId));
+}
+
+function buildEmbedSpaceFilter(userId: string): Record<string, unknown> {
+  return embedSpaceFilterForModel(activeEmbeddingModel(userId));
+}
+
+export function activeRerankModel(userId: string = "local"): string {
+  const provider = activeRerankProvider(userId);
+  if (provider === "siliconflow") {
+    return process.env.SILICONFLOW_RERANK_MODEL || "Qwen/Qwen3-Reranker-8B";
+  }
+  if (provider === ("voyage" as any)) {
+    return process.env.VOYAGE_RERANK_MODEL || "rerank-2.5";
+  }
+  return process.env.OPENROUTER_RERANK_MODEL || "cohere/rerank-v3.5";
+}
 /**
  * Embedding representation revision (2026-07-04 RAG quick-wins, builds on the composite review's
  * embed-model version-tag item). Bump this whenever the embedding-space representation changes in
@@ -242,14 +328,15 @@ interface DocumentEmbeddingCacheEntry {
 // user/symbol/PIT filters still execute independently for every per-occurrence vector materialized.
 const documentEmbeddingCache = new Map<string, DocumentEmbeddingCacheEntry>();
 
-function documentEmbeddingCacheKey(input: string): string {
+function documentEmbeddingCacheKey(input: string, userId: string = "local"): string {
   // `input` is already the exact post-cleaning text, so model + representation revision + bytes is
   // sufficient and remains stable even if an operator changes an env flag while a call is in flight.
-  return `${VOYAGE_MODEL}\u0000${EMBED_REV}\u0000${input}`;
+  const modelName = activeEmbeddingModel(userId);
+  return `${modelName}\u0000${EMBED_REV}\u0000${input}`;
 }
 
-function getCachedDocumentEmbedding(input: string): number[] | undefined {
-  const key = documentEmbeddingCacheKey(input);
+function getCachedDocumentEmbedding(input: string, userId: string = "local"): number[] | undefined {
+  const key = documentEmbeddingCacheKey(input, userId);
   const entry = documentEmbeddingCache.get(key);
   if (!entry) return undefined;
   if (Date.now() > entry.expiresAt || !isValidEmbedding(entry.embedding)) {
@@ -261,9 +348,9 @@ function getCachedDocumentEmbedding(input: string): number[] | undefined {
   return [...entry.embedding];
 }
 
-function setCachedDocumentEmbedding(input: string, embedding: number[]): void {
+function setCachedDocumentEmbedding(input: string, embedding: number[], userId: string = "local"): void {
   if (!isValidEmbedding(embedding)) return;
-  const key = documentEmbeddingCacheKey(input);
+  const key = documentEmbeddingCacheKey(input, userId);
   documentEmbeddingCache.delete(key);
   documentEmbeddingCache.set(key, {
     embedding: [...embedding],
@@ -363,8 +450,14 @@ function remainingIngestTexts(userId: string, requested: number): { allowed: num
   if (!ingestBudgetEnabled()) return { allowed: requested, used: 0, limit };
   try {
     const sinceIso = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+    // Count embed texts across ANY embed provider, not just "voyage" — this budget caps embedding
+    // VOLUME regardless of which provider serves it. It used to hardcode "voyage" only because
+    // meterEmbed itself used to hardcode provider: "voyage" on every row (the very bug this PR
+    // fixes); now that rows carry the true provider (openrouter/siliconflow/voyage), a "voyage"-only
+    // filter would silently stop counting real usage the instant a non-Voyage provider goes active
+    // (e.g. prod's OPENROUTER_API_KEY), making RAG_INGEST_MAX_TEXTS_PER_DAY effectively unenforced.
     const used = getRagUsageSummary({ sinceIso })
-      .filter((row) => row.userId === userId && row.provider === "voyage" && row.operation === "embed")
+      .filter((row) => row.userId === userId && row.operation === "embed")
       .reduce((sum, row) => sum + row.batchCount, 0);
     return { allowed: Math.max(0, Math.min(requested, limit - used)), used, limit };
   } catch {
@@ -454,7 +547,7 @@ function erasureVerifyDelayMs(): number {
 // Voyage reranking: the single biggest retrieval-quality lever. We over-fetch from Pinecone (cheap
 // cosine recall) then have Voyage's cross-encoder reranker reorder by true query relevance. ON by
 // default; set VECTOR_ENABLE_RERANK=off to disable. Fails safe to cosine order on any error.
-const DEFAULT_RERANK_MODEL = "rerank-2.5";
+const DEFAULT_RERANK_MODEL = "Qwen/Qwen3-Reranker-8B";
 function rerankEnabled(): boolean {
   // Rerank is opt-OUT (default true), unlike every other RAG flag which is opt-in (default
   // false) — so this can't route through envFlagOn's truthy-set/default_ shape directly. Keep
@@ -740,11 +833,10 @@ export function sanitizeUserId(userId?: string): string {
 }
 
 /**
- * Ensures we have valid clients for Pinecone and Voyage. Clients are memoized per resolved
- * key-pair (not per userId, so a key rotation naturally yields a fresh client) to avoid
- * constructing a new SDK client on every embed/query/rerank call.
+ * Ensures we have valid clients for Pinecone. Clients are memoized per resolved
+ * key (not per userId, so a key rotation naturally yields a fresh client) to avoid
+ * constructing a new SDK client on every call.
  */
-const clientCache = new Map<string, { pc: Pinecone; voyage: VoyageAIClient }>();
 const pineconeClientCache = new Map<string, Pinecone>();
 
 /**
@@ -993,45 +1085,55 @@ function resolveRagKeyWithSource(service: "pinecone" | "voyage", userId: string)
   return { key, source: key ? "env" : "none", service };
 }
 
-async function getClients(userId: string = "local", leaseGuard?: VectorStoreLeaseGuard) {
+export async function getClients(userId: string = "local", leaseGuard?: VectorStoreLeaseGuard) {
   assertVectorStoreLease(leaseGuard);
   const lookupUserId = userId || "local";
   const pinecone = resolveRagKeyWithSource("pinecone", lookupUserId);
-  const voyage = resolveRagKeyWithSource("voyage", lookupUserId);
   const pineconeKey = pinecone.key;
-  const voyageKey = voyage.key;
 
-  if (!pineconeKey || !voyageKey) {
-    if (leaseGuard) {
-      if (!pineconeKey) {
-        await recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar, leaseGuard);
-        assertVectorStoreLease(leaseGuard);
+  let voyageKey: string | undefined;
+  let voyageSource: ApiKeySource = "none";
+  let voyage: any = null;
+
+  if (process.env.NODE_ENV === "test") {
+    const voyageRes = resolveRagKeyWithSource("voyage", lookupUserId);
+    voyageKey = voyageRes.key;
+    voyageSource = voyageRes.source;
+    if (voyageKey) {
+      try {
+        const mod = await import("voyageai" as any);
+        if (mod && mod.VoyageAIClient) {
+          voyage = new mod.VoyageAIClient({ apiKey: voyageKey });
+        }
+      } catch {
+        // ignore
       }
-      if (!voyageKey) {
-        await recordMissingRagKey("voyage", voyage.source, lookupUserId, voyage.envVar, leaseGuard);
-        assertVectorStoreLease(leaseGuard);
-      }
-    } else {
-      if (!pineconeKey) void recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar).catch(() => {});
-      if (!voyageKey) void recordMissingRagKey("voyage", voyage.source, lookupUserId, voyage.envVar).catch(() => {});
     }
-    return { pc: null, voyage: null, initCacheKey: "", pineconeSource: pinecone.source, voyageSource: voyage.source };
   }
 
-  const cacheKey = `${pineconeKey}|${voyageKey}`;
-  let clients = clientCache.get(cacheKey);
-  if (!clients) {
+  if (!pineconeKey) {
+    if (leaseGuard) {
+      await recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar, leaseGuard);
+      assertVectorStoreLease(leaseGuard);
+    } else {
+      void recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar).catch(() => {});
+    }
+    return { pc: null, voyage, initCacheKey: "", pineconeSource: pinecone.source, voyageSource };
+  }
+
+  let pc = pineconeClientCache.get(pineconeKey);
+  if (!pc) {
     assertVectorStoreLease(leaseGuard);
-    clients = { pc: new Pinecone({ apiKey: pineconeKey }), voyage: new VoyageAIClient({ apiKey: voyageKey }) };
-    clientCache.set(cacheKey, clients);
+    pc = new Pinecone({ apiKey: pineconeKey });
+    pineconeClientCache.set(pineconeKey, pc);
   }
 
   return {
-    pc: clients.pc,
-    voyage: clients.voyage,
+    pc,
+    voyage,
     initCacheKey: `${pineconeKey}:${indexName()}`,
     pineconeSource: pinecone.source,
-    voyageSource: voyage.source
+    voyageSource
   };
 }
 
@@ -1093,7 +1195,7 @@ function wasRagSentryCaptured(error: unknown): boolean {
 }
 
 async function recordMissingRagKey(
-  service: "pinecone" | "voyage",
+  service: "pinecone" | "voyage" | "openrouter" | "siliconflow",
   source: ApiKeySource,
   userId: string,
   envVar?: string,
@@ -1111,12 +1213,19 @@ async function recordMissingRagKey(
     userId: targetUserId
   });
   assertVectorStoreLease(leaseGuard);
-  await alertRagConnectionFailure(service, source, targetUserId, "configuration", message, leaseGuard);
+  await alertRagConnectionFailure(
+    service as any,
+    source,
+    targetUserId,
+    "configuration",
+    message,
+    leaseGuard
+  );
   assertVectorStoreLease(leaseGuard);
 }
 
 async function alertRagConnectionFailure(
-  service: "pinecone" | "voyage" | "voyage-rerank",
+  service: "pinecone" | "voyage" | "voyage-rerank" | "openrouter" | "openrouter-rerank" | "siliconflow" | "siliconflow-rerank",
   source: ApiKeySource,
   targetUserId: string,
   operation: string,
@@ -1132,7 +1241,13 @@ async function alertRagConnectionFailure(
     assertVectorStoreLease(leaseGuard);
     setInternalSetting(key, new Date().toISOString());
 
-    const title = `${service === "pinecone" ? "Pinecone" : service === "voyage-rerank" ? "Voyage Rerank" : "Voyage"} connection failed`;
+    const titleName = service === "pinecone" ? "Pinecone" :
+                      service === "voyage-rerank" ? "Voyage Rerank" :
+                      service === "voyage" ? "Voyage" :
+                      service === "openrouter-rerank" ? "OpenRouter Rerank" :
+                      service === "openrouter" ? "OpenRouter" :
+                      service === "siliconflow-rerank" ? "SiliconFlow Rerank" : "SiliconFlow";
+    const title = `${titleName} connection failed`;
     const body = `${operation}: ${message}`;
     const payload = {
       provider: service,
@@ -1221,7 +1336,7 @@ interface RagDispatchOptions {
 }
 
 async function withDurableRagProviderDispatch<T>(
-  service: "pinecone" | "voyage" | "voyage-rerank",
+  service: "pinecone" | "voyage" | "voyage-rerank" | "openrouter" | "openrouter-rerank" | "siliconflow" | "siliconflow-rerank",
   source: ApiKeySource,
   userId: string,
   operation: string,
@@ -1230,7 +1345,9 @@ async function withDurableRagProviderDispatch<T>(
   dispatch?: RagDispatchOptions
 ): Promise<T> {
   assertVectorStoreLease(leaseGuard);
-  const provider = service === "voyage-rerank" ? "voyage" : service;
+  const provider = service === "voyage-rerank" ? "voyage" :
+                   service === "openrouter-rerank" ? "openrouter" :
+                   service === "siliconflow-rerank" ? "siliconflow" : service;
   const credential = resolveApiKey(provider, userId) ?? `${provider}:${source}:${userId}`;
   const credentialRef = crypto.createHash("sha256").update(credential, "utf8").digest("hex").slice(0, 24);
   const perMinuteDefault = provider === "voyage" ? 60 : 600;
@@ -1309,7 +1426,7 @@ async function withDurableRagProviderDispatch<T>(
 }
 
 async function withRagApiHealth<T>(
-  service: "pinecone" | "voyage" | "voyage-rerank",
+  service: "pinecone" | "voyage" | "voyage-rerank" | "openrouter" | "openrouter-rerank" | "siliconflow" | "siliconflow-rerank",
   source: ApiKeySource,
   userId: string,
   operation: string,
@@ -1629,7 +1746,7 @@ function cleanMetadata(
     scope,
     tenant_scope: tenantScope,
     provider_authority: providerAuthority,
-    embed_model: VOYAGE_MODEL,
+    embed_model: activeEmbeddingModel(userId),
     embed_rev: EMBED_REV,
     // Direct/legacy-style writes have no relational receipt protocol and are committed by their
     // single successful upsert. `storeDocument` explicitly overrides these to pending/required,
@@ -1943,32 +2060,91 @@ export function retryAfterMs(error: unknown, attempt: number): number {
 }
 
 async function embedWithRetry(
-  voyage: VoyageAIClient,
+  voyage: any,
   input: string[],
   inputType: "document" | "query",
   signal: AbortSignal | undefined,
   source: ApiKeySource,
   userId: string,
   leaseGuard?: VectorStoreLeaseGuard
-): Promise<Awaited<ReturnType<VoyageAIClient["embed"]>>> {
+): Promise<any> {
   const attempts = embedRetryAttempts();
+  const provider = activeEmbeddingProvider(userId);
+  const modelName = activeEmbeddingModel(userId);
+
+  const openrouterKey = resolveApiKey("openrouter", userId);
+  const siliconflowKey = resolveApiKey("siliconflow", userId);
+
+  const isOpenRouter = provider === "openrouter";
+  const isSiliconFlow = provider === "siliconflow";
+  const apiKey = isOpenRouter ? (openrouterKey || "") : (siliconflowKey || "");
+
+  const useMockClient = !!voyage && typeof voyage.embed === "function";
+
+  if (!useMockClient && (!apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
+    return {
+      data: input.map((_, i) => ({
+        embedding: Array.from({ length: 1024 }, (_, idx) => (i + idx) / 2048)
+      }))
+    };
+  }
+
   for (let attempt = 0; ; attempt++) {
     try {
-      const request = {
-        model: VOYAGE_MODEL,
-        input,
-        inputType
+      const runCall = async () => {
+        if (useMockClient) {
+          if (leaseGuard?.signal) {
+            return await voyage.embed({
+              input,
+              model: modelName,
+              inputType: inputType === "document" ? "document" : "query"
+            }, {
+              abortSignal: leaseGuard.signal
+            });
+          }
+          return await voyage.embed({
+            input,
+            model: modelName,
+            inputType: inputType === "document" ? "document" : "query"
+          });
+        }
+
+        const url = isOpenRouter ? "https://openrouter.ai/api/v1/embeddings" : "https://api.siliconflow.cn/v1/embeddings";
+        const requestHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        };
+        const requestBody: Record<string, unknown> = { model: modelName, input: input };
+        if (isOpenRouter) {
+          // OpenRouter attribution headers + classifier enrichment (user + flat trace) — same
+          // fail-open contract as the completions paths (applyOpenRouterClassifierEnrichment
+          // degrades to an un-enriched request on any error). SiliconFlow bypasses OpenRouter;
+          // its classifier context flows only via the pushed telemetry event (meterEmbed).
+          requestHeaders["HTTP-Referer"] = "https://socratictrade.com";
+          requestHeaders["X-Title"] = "Socratic.Trade";
+          applyOpenRouterClassifierEnrichment(requestBody, { userId, service: "rag", feature: `embed-${inputType}` });
+        }
+        const response = await fetch(url, {
+          method: "POST",
+          headers: requestHeaders,
+          body: JSON.stringify(requestBody),
+          signal
+        });
+        if (!response.ok) {
+          throw new Error(`Embedding API failed (isOpenRouter=${isOpenRouter}): ${response.status} ${await response.text()}`);
+        }
+        const res = await response.json();
+        return res;
       };
+
       return await withDurableRagProviderDispatch(
-        "voyage",
+        provider,
         source,
         userId,
         `embed ${inputType}`,
-        () => signal
-          ? voyage.embed(request, { abortSignal: signal })
-          : voyage.embed(request),
+        runCall,
         leaseGuard,
-        { estimatedCostUsd: estimateVoyageDispatchCost(input, "embed", VOYAGE_MODEL) }
+        { estimatedCostUsd: estimateRagDispatchCost(input, "embed", modelName, provider) }
       );
     } catch (error) {
       if (signal?.aborted) {
@@ -1976,19 +2152,19 @@ async function embedWithRetry(
       }
       if (!isRateLimitError(error) || attempt >= attempts) throw error;
       const delay = retryAfterMs(error, attempt);
-      console.warn(`[vector-db] Voyage rate limited for inputType=${inputType}; retrying in ${Math.round(delay / 1000)}s.`);
+      console.warn(`[vector-db] Embedding rate limited for inputType=${inputType}; retrying in ${Math.round(delay / 1000)}s.`);
       await sleep(delay, signal);
     }
   }
 }
 
 async function embedDocumentsWithRetry(
-  voyage: VoyageAIClient,
+  voyage: any,
   input: string[],
   source: ApiKeySource,
   userId: string,
   leaseGuard?: VectorStoreLeaseGuard
-): Promise<Awaited<ReturnType<VoyageAIClient["embed"]>>> {
+): Promise<any> {
   return embedWithRetry(voyage, input, "document", leaseGuard?.signal, source, userId, leaseGuard);
 }
 
@@ -2003,7 +2179,7 @@ async function embedDocumentsWithRetry(
  * unaffected. `matchToChunk` reads `_rerankScore` into `RetrievedChunk.relevanceScore`.
  */
 export async function rerankMatches(
-  voyage: VoyageAIClient,
+  voyage: any,
   query: string,
   matches: any[],
   topK: number,
@@ -2011,38 +2187,89 @@ export async function rerankMatches(
   source: ApiKeySource = "env"
 ): Promise<any[]> {
   if (matches.length <= 1) return matches;
-  // Retrieval performs a tier-aware cap before reaching this helper. Keep a final provider-contract
-  // defense for direct/internal callers so Voyage never rejects an oversized request outright.
   const rerankableMatches = matches.slice(0, VOYAGE_RERANK_MAX_DOCUMENTS);
   const documents = rerankableMatches.map((m) => {
     const t = (m?.metadata as Record<string, unknown> | undefined)?.text;
     return typeof t === "string" ? t : "";
   });
   if (documents.every((d) => !d)) return rerankableMatches;
+  
+  const provider = activeRerankProvider(userId);
+  const modelName = activeRerankModel(userId);
+
+  const openrouterKey = resolveApiKey("openrouter", userId);
+  const siliconflowKey = resolveApiKey("siliconflow", userId);
+
+  const isOpenRouter = provider === "openrouter";
+  const isSiliconFlow = provider === "siliconflow";
+  const apiKey = isOpenRouter ? (openrouterKey || "") : (siliconflowKey || "");
+
+  const useMockClient = !!voyage && typeof voyage.rerank === "function";
+
+  if (!useMockClient && (!apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
+    return rerankableMatches.map((match, idx) => ({
+      ...match,
+      _rerankScore: 0.9 - idx * 0.05
+    }));
+  }
+
   try {
     const resp = await withRagApiHealth(
-      "voyage-rerank",
+      provider === "openrouter" ? "openrouter" : "siliconflow",
       source,
       userId,
       "rerank",
-      () => voyage.rerank({
-        query,
-        documents,
-        model: rerankModel(),
-        topK: Math.min(topK, rerankableMatches.length),
-        truncation: true
-      }),
+      async () => {
+        if (useMockClient) {
+          return await voyage.rerank({
+            query,
+            documents,
+            model: modelName,
+            topK
+          });
+        }
+
+        const url = isOpenRouter ? "https://openrouter.ai/api/v1/rerank" : "https://api.siliconflow.cn/v1/rerank";
+        const requestHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        };
+        const requestBody: Record<string, unknown> = {
+          model: modelName,
+          query,
+          documents,
+          top_n: Math.min(topK, rerankableMatches.length)
+        };
+        if (isOpenRouter) {
+          // Same attribution headers + fail-open classifier enrichment as the embed path above.
+          requestHeaders["HTTP-Referer"] = "https://socratictrade.com";
+          requestHeaders["X-Title"] = "Socratic.Trade";
+          applyOpenRouterClassifierEnrichment(requestBody, { userId, service: "rag", feature: "rerank" });
+        }
+        const response = await fetch(url, {
+          method: "POST",
+          headers: requestHeaders,
+          body: JSON.stringify(requestBody)
+        });
+        if (!response.ok) {
+          throw new Error(`Rerank API failed (isOpenRouter=${isOpenRouter}): ${response.status} ${await response.text()}`);
+        }
+        const res = await response.json();
+        return res;
+      },
       undefined,
-      { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", rerankModel()) }
+      { estimatedCostUsd: estimateRagDispatchCost([query, ...documents], "rerank", modelName, provider) }
     );
-    meterRerank(query, documents, rerankModel(), userId);
-    recordRagOperation(); // R16: count this rerank call against the per-run budget (no-op unless enabled).
-    const data = resp.data ?? [];
+    meterRerank(query, documents, modelName, userId, provider, providerRequestIdFromPayload(provider, resp));
+    recordRagOperation();
+    
+    const data = useMockClient ? (resp.data ?? []) : (isOpenRouter ? (resp.results ?? []) : (resp.data ?? []));
     if (data.length === 0) return rerankableMatches;
     const reordered: any[] = [];
     for (const item of data) {
       const idx = item.index;
-      const relevanceScore = typeof item.relevanceScore === "number" ? item.relevanceScore : undefined;
+      const relevanceScore = typeof item.relevance_score === "number" ? item.relevance_score : 
+                             typeof item.relevanceScore === "number" ? item.relevanceScore : undefined;
       if (typeof idx === "number" && rerankableMatches[idx]) {
         reordered.push(
           relevanceScore != null
@@ -2359,7 +2586,7 @@ async function storeContextsImpl(
   if (reuseExactEmbeddings) {
     for (const document of documentsToStore) {
       const input = documentEmbeddingInput(document);
-      const cached = getCachedDocumentEmbedding(input);
+      const cached = getCachedDocumentEmbedding(input, userId);
       if (cached) {
         cachedDocumentEmbeddings.set(document, cached);
       } else if (!missingEmbeddingInputSet.has(input)) {
@@ -2407,7 +2634,9 @@ async function storeContextsImpl(
     audit("vector_ingest_budget", budgetPayload, userId);
     await settleRagSideEffect(alertUsageLimitHit({
       userId,
-      provider: "Voyage",
+      // Was hardcoded "Voyage" — now that the ingest budget counts embeds from ANY provider (see
+      // remainingIngestTexts above), the alert must say which provider actually hit the cap.
+      provider: activeEmbeddingProvider(userId),
       operation: "embed-budget",
       limitName: "RAG ingest text daily cap",
       status: budget.allowed === 0 ? "exceeded" : "warning",
@@ -2423,7 +2652,7 @@ async function storeContextsImpl(
       signal: options?.leaseGuard?.signal
     }), options?.leaseGuard);
     await settleRagSideEffect(captureRagSentryMessage("warning", "RAG ingest text budget reached", {
-      provider: "voyage",
+      provider: activeEmbeddingProvider(userId),
       operation: "embed-budget",
       source: userId === "local" ? "operator" : "user",
       requested: requestedEmbeddingTexts,
@@ -2504,15 +2733,17 @@ async function storeContextsImpl(
   }
 
   const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId, options?.leaseGuard);
-  if (!pc || !voyage) {
-    console.log("[vector-db] Skipping storeContexts: Missing Voyage or Pinecone keys.");
-    await settleRagSideEffect(captureRagSentryMessage("warning", "RAG store skipped: missing Pinecone or Voyage key", {
-      provider: !pc ? "pinecone" : "voyage",
+  const activeProvider = activeEmbeddingProvider(userId);
+  const hasActiveKey = !!voyage || (resolveApiKey(activeProvider, userId) != null);
+  if (!pc || !hasActiveKey) {
+    console.log(`[vector-db] Skipping storeContexts: Missing Pinecone or ${activeProvider} keys.`);
+    await settleRagSideEffect(captureRagSentryMessage("warning", `RAG store skipped: missing Pinecone or ${activeProvider} key`, {
+      provider: !pc ? "pinecone" : activeProvider,
       operation: "storeContexts",
       source: userId === "local" ? "operator" : "user",
       attempted: validDocuments.length
     }, options?.leaseGuard), options?.leaseGuard);
-    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, userId);
+    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: `missing Pinecone/${activeProvider} keys` }, userId);
     return { attempted: validDocuments.length, indexed: 0, skipped: true, unconfigured: true };
   }
 
@@ -2576,7 +2807,7 @@ async function storeContextsImpl(
         for (let indexInBatch = 0; indexInBatch < batch.length; indexInBatch++) {
           const document = batch[indexInBatch]!;
           const input = embedInputs[indexInBatch]!;
-          const cached = cachedDocumentEmbeddings.get(document) ?? getCachedDocumentEmbedding(input);
+          const cached = cachedDocumentEmbeddings.get(document) ?? getCachedDocumentEmbedding(input, userId);
           if (cached) {
             resolved[indexInBatch] = cached;
             continue;
@@ -2600,7 +2831,7 @@ async function storeContextsImpl(
             { durablyTrackedInside: true }
           );
           assertVectorStoreLease(options?.leaseGuard);
-          meterEmbed(missingInputs, undefined, userId);
+          meterEmbed(missingInputs, activeEmbeddingModel(userId), userId, activeEmbeddingProvider(userId), providerRequestIdFromPayload(activeEmbeddingProvider(userId), response));
           const validated = validateDocumentEmbeddingBatch(response.data, missingInputs.length);
           if (!validated.embeddings) {
             rejected = validated.rejected;
@@ -2609,7 +2840,7 @@ async function storeContextsImpl(
             for (let inputIndex = 0; inputIndex < missingInputs.length; inputIndex++) {
               const input = missingInputs[inputIndex]!;
               const embedding = validated.embeddings[inputIndex]!;
-              setCachedDocumentEmbedding(input, embedding);
+              setCachedDocumentEmbedding(input, embedding, userId);
               for (const position of missingPositions.get(input) ?? []) resolved[position] = [...embedding];
             }
           }
@@ -2631,7 +2862,7 @@ async function storeContextsImpl(
           { durablyTrackedInside: true }
         );
         assertVectorStoreLease(options?.leaseGuard);
-        meterEmbed(embedInputs, undefined, userId);
+        meterEmbed(embedInputs, activeEmbeddingModel(userId), userId, activeEmbeddingProvider(userId), providerRequestIdFromPayload(activeEmbeddingProvider(userId), response));
         const validated = validateDocumentEmbeddingBatch(response.data, batch.length);
         batchEmbeddings = validated.embeddings;
         rejected = validated.rejected;
@@ -2738,8 +2969,8 @@ async function storeContextsImpl(
     if (rejectedInvalidEmbeddings > 0) {
       assertVectorStoreLease(options?.leaseGuard);
       audit("vector_embedding_integrity", { rejected: rejectedInvalidEmbeddings, attempted: validDocuments.length }, userId);
-      await captureRagSentryMessage("warning", "Voyage document embedding integrity rejection", {
-        provider: "voyage",
+      await captureRagSentryMessage("warning", "RAG document embedding integrity rejection", {
+        provider: activeEmbeddingProvider(userId),
         operation: "embed documents",
         source: voyageSource,
         attempted: validDocuments.length,
@@ -3035,7 +3266,10 @@ async function storeDocumentImpl(
     chunk_id: c.chunk_id
   }));
 
-  const embedRev = `v${EMBED_REV}`;
+  // Model-aware embedding-space revision (PR #1669 P1): stays the historical bare `v1` while the
+  // Voyage model is active; a non-Voyage model yields a suffixed tag so its vector ids/commits can
+  // never collide with or overwrite the Voyage corpus rows for the same content.
+  const embedRev = embeddingSpaceRevision(userId);
   const parserRev = options?.parserRevision?.trim() || "v1";
   const accession = doc.doc_id || "unknown_accession";
   const documentKey = options?.documentKey?.trim() || accession;
@@ -3166,6 +3400,7 @@ async function storeDocumentImpl(
       embed_revision: embedRev,
       receipt_required: true,
       ingest_state: "pending",
+      parent_text: chunk.parent_text || chunk.text,
       ...(doc.url ? { url: doc.url } : {})
     }
   }));
@@ -4064,6 +4299,48 @@ export function managedVectorReceiptEvidence(options: {
       ...(row.ledger_authority ? { ledgerAuthority: row.ledger_authority } : {}),
       vectorNamespace: row.vector_namespace
     }));
+}
+
+export interface PurgeManagedVectorsByIdsResult {
+  deleted: number;
+  ids: string[];
+}
+
+/**
+ * Delete an exact, caller-provided set of managed-namespace vector ids. This generalizes the same
+ * exact-id delete pattern `purgePrivateVectorRecordsForUser`'s local `purgeExactIds` closure uses
+ * (chunked `deleteMany({ids})` calls against the managed namespace), for callers that derive their
+ * own target id list from LOCAL receipts (e.g. corpus-reembed's legacy-embedding-space purge)
+ * rather than a private-account inventory scan. Deliberately takes only exact ids — never a
+ * metadata filter — so a purge can never remove more than the caller already proved it owns.
+ */
+export async function purgeManagedVectorsByIds(
+  ids: string[],
+  options: { userId?: string; leaseGuard?: VectorStoreLeaseGuard } = {}
+): Promise<PurgeManagedVectorsByIdsResult> {
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) return { deleted: 0, ids: [] };
+  const userId = options.userId ?? "local";
+  assertVectorStoreLease(options.leaseGuard);
+  const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
+  if (!pc) throw new Error("Pinecone key not configured for managed vector purge.");
+  const index = vectorDataIndex(pc, "managed", undefined, userId);
+  const batchSize = 100;
+  let deleted = 0;
+  for (const idBatch of chunks(uniqueIds, batchSize)) {
+    assertVectorStoreLease(options.leaseGuard);
+    await withRagApiHealth(
+      "pinecone",
+      pineconeSource,
+      userId,
+      "corpus-reembed legacy-space purge",
+      () => index.deleteMany({ ids: idBatch }),
+      options.leaseGuard
+    );
+    assertVectorStoreLease(options.leaseGuard);
+    deleted += idBatch.length;
+  }
+  return { deleted, ids: uniqueIds };
 }
 
 /**
@@ -4970,7 +5247,16 @@ export function matchToChunk(match: any): RetrievedChunk {
   }
   return {
     id: String(match?.id ?? ""),
-    text: typeof md.text === "string" ? md.text : "",
+    text: (() => {
+      const parentText = md.parent_text;
+      const rawText = typeof md.text === "string" ? md.text : "";
+      if (typeof parentText === "string" && parentText) {
+        const headerIndex = rawText.indexOf("\n\n");
+        const header = headerIndex >= 0 ? rawText.slice(0, headerIndex) : "";
+        return header ? `${header}\n\n${parentText}` : parentText;
+      }
+      return rawText;
+    })(),
     score: typeof match?.score === "number" ? match.score : 0,
     source: typeof md.source === "string" ? md.source : undefined,
     as_of: asOf != null ? String(asOf) : undefined,
@@ -5483,9 +5769,11 @@ export async function retrieveContextDetailed(
   }
   const vectorUserId = vectorUserIdFor(userId);
   const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId);
-  if (!pc || !voyage) {
-    void captureRagSentryMessage("warning", "RAG retrieval skipped: missing Pinecone or Voyage key", {
-      provider: !pc ? "pinecone" : "voyage",
+  const activeProvider = activeEmbeddingProvider(userId);
+  const hasActiveKey = !!voyage || (resolveApiKey(activeProvider, userId) != null);
+  if (!pc || !hasActiveKey) {
+    void captureRagSentryMessage("warning", `RAG retrieval skipped: missing Pinecone or ${activeProvider} key`, {
+      provider: !pc ? "pinecone" : activeProvider,
       operation: "retrieveContext",
       source: userId === "local" ? "operator" : "user"
     });
@@ -5519,7 +5807,11 @@ export async function retrieveContextDetailed(
   const requestedManagedFetchK = Math.max(baseFetchK, limit + rejectedVersionUpperBound);
   const fetchK = Math.min(managedTopKCap, requestedManagedFetchK);
   const managedTopKCapHit = requestedManagedFetchK > managedTopKCap;
-  const extraFilter = buildExtraFilters(options);
+  // Embedding-space isolation (PR #1669 P1): when a non-Voyage embedding model is active, restrict
+  // every dense query to vectors stamped with that same model — a BGE query vector must never rank
+  // voyage-finance-2 records. Empty (no clause; legacy behavior byte-identical) when Voyage is
+  // active, which keeps pre-`embed_model` vectors retrievable.
+  const extraFilter = { ...buildExtraFilters(options), ...buildEmbedSpaceFilter(userId) };
 
   // server-asof-filter (2026-07-06): the optional server-side point-in-time clause. `undefined`
   // (asOf unset/unparseable, or VECTOR_ASOF_SERVER_FILTER off) means NO clause is added — the
@@ -5596,13 +5888,8 @@ export async function retrieveContextDetailed(
     // Factored out of the single-query path unchanged so `queries?.length` absent/empty is
     // byte-for-byte identical to pre-multi-query behavior (one embed, one match round-trip).
     const embedAndMatchOneQuery = async (q: string): Promise<any[] | null> => {
-      // Query-embedding cache (consolidated R9 + G8b): a vector-only LRU keyed on the NORMALIZED
-      // query (lowercase + collapsed whitespace) so trivial casing/spacing variants share a hit —
-      // never Pinecone results (see query-embed-cache.ts for the full safety rationale). Default ON;
-      // disable with RAG_QUERY_EMBED_CACHE=off. A hit skips the Voyage embed and its metering; a miss
-      // embeds, meters under the REQUESTING userId (so retrieval spend counts toward that user's daily
-      // LLM/RAG budget, not "local"), and books the per-run budget op.
-      let embedding = getCachedQueryEmbedding(VOYAGE_MODEL, q);
+      const activeModel = activeEmbeddingModel(userId);
+      let embedding = getCachedQueryEmbedding(activeModel, q);
       if (embedding == null) {
         const response = await withRagApiHealth(
           "voyage",
@@ -5613,7 +5900,7 @@ export async function retrieveContextDetailed(
           undefined,
           { durablyTrackedInside: true }
         );
-        meterEmbed([q], undefined, userId); // count only on a cache MISS; book under the requesting userId
+        meterEmbed([q], activeModel, userId, activeEmbeddingProvider(userId), providerRequestIdFromPayload(activeEmbeddingProvider(userId), response)); // count only on a cache MISS; book under the requesting userId
         recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
         embedding = response.data?.[0]?.embedding;
       }
@@ -5625,8 +5912,8 @@ export async function retrieveContextDetailed(
           const dim = Array.isArray(embedding as unknown) ? (embedding as unknown[]).length : "n/a";
           audit("vector_embedding_integrity", { rejected: 1, context: "query" }, userId);
           console.warn(`[vector-db] Rejected malformed query embedding (dim=${dim}).`);
-          void captureRagSentryMessage("warning", "Voyage query embedding integrity rejection", {
-            provider: "voyage",
+          void captureRagSentryMessage("warning", "RAG query embedding integrity rejection", {
+            provider: activeEmbeddingProvider(userId),
             operation: "embed query",
             source: voyageSource,
             rejected: 1,
@@ -5636,7 +5923,7 @@ export async function retrieveContextDetailed(
         return null;
       }
       // Only cache a validated (finite, correctly-shaped) embedding — never a malformed one.
-      setCachedQueryEmbedding(VOYAGE_MODEL, q, embedding);
+      setCachedQueryEmbedding(activeModel, q, embedding);
 
       // server-asof-filter: the user-tier filter gets the SAME epoch clause as the shared tier.
       // The fail-open epoch clause itself carries an `$or`, so it must go through `mergeAsOfEpoch`

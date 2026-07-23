@@ -46,16 +46,69 @@ if (!process.env.ENCRYPTION_KEY && process.env.NODE_ENV !== "test" && !process.e
   }
 }
 
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
-  ? Buffer.from(process.env.ENCRYPTION_KEY, "hex")
-  : crypto.randomBytes(32); // Fallback to memory-only key if not set (keys will be lost on restart!)
+const IS_TEST_ENV = process.env.NODE_ENV === "test" || !!process.env.VITEST;
+
+/** A valid ENCRYPTION_KEY is a 64-char hex string (32 bytes) — anything else can't key AES-256-GCM. */
+export function isValidEncryptionKeyHex(value: string | undefined): value is string {
+  return !!value && /^[0-9a-f]{64}$/i.test(value.trim());
+}
+
+const RAW_ENCRYPTION_KEY = process.env.ENCRYPTION_KEY?.trim();
+const ENCRYPTION_KEY_CONFIGURED = isValidEncryptionKeyHex(RAW_ENCRYPTION_KEY);
+
+if (!IS_TEST_ENV && !ENCRYPTION_KEY_CONFIGURED) {
+  // Deterministic dev/local warning path. PRODUCTION instead REFUSES to boot for this same
+  // condition — see assertEncryptionKeyConfiguredInProduction below, called from
+  // instrumentation.ts before any request is served. A per-process random key here means every
+  // credential encrypted during this run becomes unreadable the moment the process restarts.
+  console.warn(
+    RAW_ENCRYPTION_KEY
+      ? "[db-api-keys] ENCRYPTION_KEY is set but is not a valid 64-char hex string (32 bytes) — " +
+        "falling back to a per-process random key for THIS RUN ONLY. Credentials encrypted now " +
+        "will be UNREADABLE after restart. Regenerate with: openssl rand -hex 32."
+      : "[db-api-keys] ENCRYPTION_KEY is not set — using a per-process random key for THIS RUN " +
+        "ONLY. Credentials encrypted now will be UNREADABLE after restart. Set ENCRYPTION_KEY " +
+        "(openssl rand -hex 32) for any environment where data must persist across restarts."
+  );
+}
+
+// Fallback to a memory-only key when unset/invalid (keys will be lost on restart!). Production
+// never reaches this silently — see assertEncryptionKeyConfiguredInProduction. (Calls
+// isValidEncryptionKeyHex directly, rather than reusing ENCRYPTION_KEY_CONFIGURED, so TS narrows
+// RAW_ENCRYPTION_KEY to `string` in the true branch.)
+const ENCRYPTION_KEY = isValidEncryptionKeyHex(RAW_ENCRYPTION_KEY) ? Buffer.from(RAW_ENCRYPTION_KEY, "hex") : crypto.randomBytes(32);
 const ALGORITHM = "aes-256-gcm";
 
 /**
- * AES-256-GCM encrypt a string to the compact `iv:authTag:ciphertext` (all hex) envelope. Uses the
- * process `ENCRYPTION_KEY` (or a memory-only key when unset). Exported so other at-rest secrets
- * (e.g. Robinhood OAuth tokens in mcp-oauth.ts) reuse the SAME field-level encryption + the
- * legacy-plaintext-tolerant `decryptValue` below, rather than duplicating the crypto.
+ * Refuse to boot in PRODUCTION when ENCRYPTION_KEY is missing or malformed. A real-money trading
+ * app must never silently mint a per-process ephemeral encryption key: stored broker
+ * credentials/OAuth tokens would become unreadable after every restart, and any legacy plaintext
+ * rows would have no path to ever get encrypted. Call from the Node-runtime boot hook
+ * (instrumentation.ts's `register()`), before any request is served or any credential is read.
+ * Intentionally independent of whether the DB already holds ciphertext — see the separate,
+ * broader-than-production `assertEncryptionKeyAvailable` in db.ts for that (dev+prod) check.
+ */
+export function assertEncryptionKeyConfiguredInProduction(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.NODE_ENV !== "production") return;
+  if (isValidEncryptionKeyHex(env.ENCRYPTION_KEY?.trim())) return;
+  throw new Error(
+    "ENCRYPTION_KEY is missing or invalid in production. Refusing to boot: a per-process " +
+    "ephemeral encryption key would make stored broker/API credentials unreadable after every " +
+    "restart. Set ENCRYPTION_KEY to a 64-char hex string (openssl rand -hex 32) before starting."
+  );
+}
+
+/** Prefix marking the current (v1) ciphertext envelope, so a future key-rotation/format change can
+ *  add v2 alongside it without breaking existing rows. Bump this (and add a v2 branch to
+ *  decryptValue) the next time the envelope format changes — never repurpose v1. */
+const CIPHERTEXT_VERSION_PREFIX = "v1:";
+
+/**
+ * AES-256-GCM encrypt a string to the versioned `v1:iv:authTag:ciphertext` (all hex after the
+ * prefix) envelope. Uses the process `ENCRYPTION_KEY` (or a memory-only key when unset/invalid).
+ * Exported so other at-rest secrets (e.g. Robinhood OAuth tokens in mcp-oauth.ts) reuse the SAME
+ * field-level encryption + the legacy-plaintext-tolerant `decryptValue` below, rather than
+ * duplicating the crypto.
  */
 export function encryptValue(text: string): string {
   const iv = crypto.randomBytes(12);
@@ -63,17 +116,25 @@ export function encryptValue(text: string): string {
   let encrypted = cipher.update(text, "utf8", "hex");
   encrypted += cipher.final("hex");
   const authTag = cipher.getAuthTag().toString("hex");
-  return `${iv.toString("hex")}:${authTag}:${encrypted}`;
+  return `${CIPHERTEXT_VERSION_PREFIX}${iv.toString("hex")}:${authTag}:${encrypted}`;
 }
 
 /**
- * Decrypt a value produced by `encryptValue`. Values that are NOT the 3-part `iv:tag:ct` envelope are
- * returned unchanged — the legacy-plaintext fallback that lets pre-encryption rows still load. Exported
- * for reuse by other at-rest secret stores (see encryptValue).
+ * Decrypt a value produced by `encryptValue`. Handles THREE shapes, oldest-compatible-first:
+ *   1. Current `v1:iv:tag:ct` envelope (the CIPHERTEXT_VERSION_PREFIX above).
+ *   2. The PRE-VERSIONING bare `iv:tag:ct` envelope (no prefix) — every row encrypted before this
+ *      change used this exact shape. MUST keep decrypting unchanged: same algorithm/key
+ *      derivation, same 3-part split, so the owner's existing prod ENCRYPTION_KEY keeps reading
+ *      every already-encrypted row with zero re-encryption required.
+ *   3. Anything else (no version prefix AND not a 3-part hex envelope) → legacy PLAINTEXT
+ *      fallback, returned unchanged (pre-encryption rows).
+ * Exported for reuse by other at-rest secret stores (see encryptValue).
  */
 export function decryptValue(encryptedText: string): string {
   try {
-    const parts = encryptedText.split(":");
+    const versioned = encryptedText.startsWith(CIPHERTEXT_VERSION_PREFIX);
+    const body = versioned ? encryptedText.slice(CIPHERTEXT_VERSION_PREFIX.length) : encryptedText;
+    const parts = body.split(":");
     if (parts.length !== 3) return encryptedText; // Legacy unencrypted fallback
     const iv = Buffer.from(parts[0], "hex");
     const authTag = Buffer.from(parts[1], "hex");
@@ -87,6 +148,90 @@ export function decryptValue(encryptedText: string): string {
     console.error("Failed to decrypt field:", e);
     return "";
   }
+}
+
+/**
+ * Strict (unlike decryptValue's lenient 3-part-split heuristic) detector for "is this value already
+ * one of our AES-GCM envelopes" — versioned or legacy-bare — used ONLY to decide whether the
+ * plaintext migration sweep below should re-encrypt a row. Validates each part's exact hex shape
+ * (12-byte iv, 16-byte authTag, hex ciphertext) rather than just counting colons, so a plaintext
+ * secret that happens to contain two colons is never mistaken for already-encrypted and left
+ * unmigrated.
+ */
+export function isEncryptedValue(value: string): boolean {
+  const body = value.startsWith(CIPHERTEXT_VERSION_PREFIX) ? value.slice(CIPHERTEXT_VERSION_PREFIX.length) : value;
+  const parts = body.split(":");
+  return (
+    parts.length === 3 &&
+    /^[0-9a-f]{24}$/i.test(parts[0]) &&
+    /^[0-9a-f]{32}$/i.test(parts[1]) &&
+    /^[0-9a-f]+$/i.test(parts[2])
+  );
+}
+
+export interface CredentialEncryptionMigrationResult {
+  apiKeysMigrated: number;
+  connectedAccountFieldsMigrated: number;
+}
+
+/**
+ * One-time, idempotent sweep that re-encrypts any legacy PLAINTEXT credential rows in place, now
+ * that a valid ENCRYPTION_KEY is available. Safe to call on every boot: already-encrypted rows
+ * (current `v1:` envelope OR the pre-versioning bare envelope) are left untouched via
+ * isEncryptedValue; only genuine plaintext rows (from before field-level encryption existed) are
+ * re-written. Every run that actually migrates something is audited. Covers the two tables this
+ * module owns (`user_api_keys`, `connected_accounts`); Robinhood OAuth token blobs in `settings`
+ * are re-encrypted by mcp-oauth.ts's own migration using the same encryptValue/decryptValue.
+ */
+export function migrateLegacyPlaintextCredentials(): CredentialEncryptionMigrationResult {
+  const db = getDb();
+  let apiKeysMigrated = 0;
+  let connectedAccountFieldsMigrated = 0;
+
+  const apiKeyRows = db.prepare("SELECT id, api_key FROM user_api_keys").all() as { id: string; api_key: string }[];
+  for (const row of apiKeyRows) {
+    if (!row.api_key || isEncryptedValue(row.api_key)) continue;
+    db.prepare("UPDATE user_api_keys SET api_key = ? WHERE id = ?").run(encryptValue(row.api_key), row.id);
+    apiKeysMigrated++;
+  }
+
+  const accountRows = db
+    .prepare("SELECT id, api_key, api_secret FROM connected_accounts")
+    .all() as { id: string; api_key: string | null; api_secret: string | null }[];
+  for (const row of accountRows) {
+    const sets: string[] = [];
+    const params: string[] = [];
+    if (row.api_key && !isEncryptedValue(row.api_key)) {
+      sets.push("api_key = ?");
+      params.push(encryptValue(row.api_key));
+      connectedAccountFieldsMigrated++;
+    }
+    if (row.api_secret && !isEncryptedValue(row.api_secret)) {
+      sets.push("api_secret = ?");
+      params.push(encryptValue(row.api_secret));
+      connectedAccountFieldsMigrated++;
+    }
+    if (sets.length > 0) {
+      params.push(row.id);
+      db.prepare(`UPDATE connected_accounts SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    }
+  }
+
+  if (apiKeysMigrated > 0 || connectedAccountFieldsMigrated > 0) {
+    audit("credential_encryption_migration", { apiKeysMigrated, connectedAccountFieldsMigrated });
+  }
+  return { apiKeysMigrated, connectedAccountFieldsMigrated };
+}
+
+/**
+ * Boot-time entry point for the sweep above: only runs when a REAL (non-ephemeral) ENCRYPTION_KEY
+ * is configured. Re-encrypting plaintext rows under a throwaway per-process key would make that
+ * data LESS recoverable, not more (the key vanishes on the next restart) — so this deliberately
+ * no-ops on the ephemeral fallback rather than migrating anything.
+ */
+export function migrateLegacyPlaintextCredentialsIfKeyConfigured(): CredentialEncryptionMigrationResult | null {
+  if (!ENCRYPTION_KEY_CONFIGURED) return null;
+  return migrateLegacyPlaintextCredentials();
 }
 
 // ── Multi-User API Key Storage ──────────────────────────────────────────────
@@ -124,6 +269,7 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   massive_secret_access_key: "MASSIVE_SECRET_ACCESS_KEY",
   pinecone: "PINECONE_API_KEY",
   voyage: "VOYAGE_API_KEY",
+  siliconflow: "SILICONFLOW_API_KEY",
   alpaca_paper_api_key: "ALPACA_PAPER_API_KEY",
   alpaca_paper_secret_key: "ALPACA_PAPER_SECRET_KEY",
   apify: "APIFY_API_TOKEN",
@@ -169,6 +315,7 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   massive_api_key: "massive",
   pinecone_api_key: "pinecone",
   voyage_api_key: "voyage",
+  siliconflow_api_key: "siliconflow",
   alpaca_paper_api_key: "alpaca_paper_api_key",
   alpaca_paper_secret_key: "alpaca_paper_secret_key",
   apify_api_token: "apify",
@@ -309,6 +456,7 @@ const API_KEY_TIER: Record<string, CredTier> = {
   apify: "shared-operator-infra", // ~$0.003/day congressional scraper; House coverage benefits all
   pinecone: "shared-operator-infra", // shared operator-ingested SEC corpus; isolation is the query namespace
   voyage: "shared-operator-infra", // embeds the shared corpus; same economic model as pinecone
+  siliconflow: "shared-operator-infra", // alternative embeds/reranker provider for the shared corpus
   sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
   tiingo: "shared-operator-infra",
   intrinio: "shared-operator-infra",
@@ -538,6 +686,30 @@ export function keyFingerprint(key: string | undefined): string | undefined {
   return crypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
 }
 
+/** Leading / trailing characters `maskApiKeyPreview` reveals, and the shortest key that earns a
+ *  preview. At 12 revealed characters a 13-char key hides only one — but no real provider key is
+ *  that short, and this threshold is the convention the admin usage ledger already ships
+ *  (`maskApiKey` in llm-usage.ts, which now delegates here). */
+const PREVIEW_HEAD = 8;
+const PREVIEW_TAIL = 4;
+const PREVIEW_MIN_LENGTH = PREVIEW_HEAD + PREVIEW_TAIL + 1;
+
+/**
+ * An IDENTIFYING, non-usable rendering of an API key: first 8 and last 4 characters with the middle
+ * elided (`sk-or-v1-...ab12`). Enough to answer "WHICH key is this?" when several exist for the same
+ * provider — the recurring cost of agents provisioning their own keys instead of using the one the
+ * owner set spend guardrails on — without ever showing a value anyone could authenticate with.
+ *
+ * Returns undefined for an absent/empty key and for one too short to elide (see PREVIEW_MIN_LENGTH),
+ * so callers must decide what to show instead rather than getting a near-complete secret by default.
+ * THE canonical mask: `llm-usage.ts`'s `maskApiKey` and the Connections preview both come through here.
+ */
+export function maskApiKeyPreview(key: string | undefined | null): string | undefined {
+  const trimmed = key?.trim();
+  if (!trimmed || trimmed.length < PREVIEW_MIN_LENGTH) return undefined;
+  return `${trimmed.slice(0, PREVIEW_HEAD)}...${trimmed.slice(-PREVIEW_TAIL)}`;
+}
+
 /**
  * Resolve an LLM provider key for a user. `source` distinguishes the user's own key from the
  * operator-funded failover, and `keyRef` is the non-secret fingerprint of the resolved key so the
@@ -549,13 +721,47 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
     if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
+
+    if (process.env.NODE_ENV === "test") {
+      if (canonical === "openrouter") {
+        const services: LlmProviderService[] = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek"];
+        for (const svc of services) {
+          const fallbackKey = getUserApiKey(userId, svc);
+          if (fallbackKey?.apiKey) {
+            return { key: fallbackKey.apiKey, source: "user", keyRef: keyFingerprint(fallbackKey.apiKey) };
+          }
+        }
+      } else {
+        const fallbackKey = getUserApiKey(userId, "openrouter");
+        if (fallbackKey?.apiKey) {
+          return { key: fallbackKey.apiKey, source: "user", keyRef: keyFingerprint(fallbackKey.apiKey) };
+        }
+      }
+    }
   }
   // Operator-funded failover for ANY user (flag-gated). `local`'s own env key is migrated into its
   // per-user store at boot, so `local` resolves "user" above; this serves users without their own
   // key. No `local` special case — when the failover is off, everyone (incl. `local`) needs a key.
   if (!llmOperatorFallbackEnabled()) return { source: "none" };
   const envVar = apiKeyEnvVarForService(canonical);
-  const envKey = envVar ? process.env[envVar] : undefined;
+  let envKey = envVar ? process.env[envVar] : undefined;
+
+  if (process.env.NODE_ENV === "test" && !envKey) {
+    if (canonical === "openrouter") {
+      const fallbacks = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+      for (const f of fallbacks) {
+        if (process.env[f]) {
+          envKey = process.env[f];
+          break;
+        }
+      }
+    } else {
+      if (process.env.OPENROUTER_API_KEY) {
+        envKey = process.env.OPENROUTER_API_KEY;
+      }
+    }
+  }
+
   return envKey ? { key: envKey, source: "operator", keyRef: keyFingerprint(envKey) } : { source: "none" };
 }
 
@@ -773,6 +979,29 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
   })();
 }
 
+/**
+ * Rename a connected account's user-facing display label. Deliberately narrow: it touches ONLY
+ * `label` — not the broker identifier (`account_number`), not credentials, and NOT `updated_at`
+ * (see the ordering note below), so a cosmetic rename can never re-run connect-time validation,
+ * disturb the broker-sourced account number that per-account trade history and
+ * `policy.accountNumber` key off of, or reorder credential resolution. User-scoped; returns false
+ * if no row matched (unknown id, or another user's row).
+ */
+export function renameConnectedAccount(id: string, label: string, userId: string = "local"): boolean {
+  const trimmed = label.trim();
+  if (!trimmed) throw new Error("Account name cannot be empty.");
+  if (trimmed.length > 120) throw new Error("Account name is too long (max 120 characters).");
+  // Update ONLY `label` — deliberately NOT `updated_at`. `getConnectedAccountByBroker` resolves
+  // which same-broker row backs shared data-source fetches (e.g. Tradier price history) with
+  // `ORDER BY is_active DESC, updated_at DESC`; bumping updated_at on a purely cosmetic rename
+  // would promote a renamed inactive row over the intended latest credential, silently swapping
+  // an old/sandbox token in for history fetches (Codex review, PR #1727).
+  const result = getDb()
+    .prepare("UPDATE connected_accounts SET label = ? WHERE id = ? AND user_id = ?")
+    .run(trimmed, id, userId);
+  return result.changes > 0;
+}
+
 export function setActiveConnectedAccount(id: string, userId: string = "local"): void {
   const db = getDb();
   db.transaction(() => {
@@ -809,7 +1038,8 @@ export function purgeConnectedAccount(id: string, userId: string = "local"): boo
       "counterfactual_learning_watermarks",
       "learning_mutations",
       "audit_events",
-      "notification_events"
+      "notification_events",
+      "option_alert_reservations"
     ]) {
       database.prepare(`DELETE FROM ${table} WHERE connected_account_id = ? AND user_id = ?`).run(id, userId);
     }
@@ -864,6 +1094,16 @@ export interface SyntheticTrailingStop {
   lastAttemptRefId?: string;
   createdAt: string;
   updatedAt: string;
+  suspectPrice?: number;
+  suspectCount?: number;
+  /**
+   * 'trailing' (default, incl. legacy rows predating this column): extreme_price ratchets with the
+   * high/low-water mark — unchanged behavior. 'fixed': a static-trigger row backing a "fixed"/"atr"
+   * stop plan between strategy runs (item 7) — the monitor re-pins extreme_price to entry_price
+   * every tick instead of persisting the ratchet, so evaluateStop yields a fixed distance from entry
+   * rather than a trail. See synthetic-stops.ts's registration/purge/fire-loop handling.
+   */
+  kind?: "trailing" | "fixed";
 }
 
 function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
@@ -883,7 +1123,10 @@ function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
     fireGeneration: r.fire_generation != null ? Number(r.fire_generation) : 0,
     lastAttemptRefId: r.last_attempt_ref_id != null ? String(r.last_attempt_ref_id) : undefined,
     createdAt: String(r.created_at),
-    updatedAt: String(r.updated_at)
+    updatedAt: String(r.updated_at),
+    suspectPrice: r.suspect_price != null ? Number(r.suspect_price) : undefined,
+    suspectCount: r.suspect_count != null ? Number(r.suspect_count) : 0,
+    kind: r.kind === "fixed" ? "fixed" : "trailing"
   };
 }
 
@@ -908,8 +1151,8 @@ export function upsertSyntheticStop(
       // routine upserts (auto-register, per-tick extreme/lastPrice persistence) must never reset the
       // exit-attempt ledger — generation moves only forward (advanceSyntheticStopGeneration) and the
       // possibly-live attempt id is recorded/cleared only by recordSyntheticStopAttempt / the advance.
-      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, fire_generation, last_attempt_ref_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, fire_generation, last_attempt_ref_id, created_at, updated_at, suspect_price, suspect_count, kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
         side = excluded.side,
         quantity = excluded.quantity,
@@ -923,13 +1166,16 @@ export function upsertSyntheticStop(
           ELSE excluded.status
         END,
         last_price = excluded.last_price,
-        updated_at = excluded.updated_at`
+        updated_at = excluded.updated_at,
+        suspect_price = excluded.suspect_price,
+        suspect_count = excluded.suspect_count,
+        kind = excluded.kind`
     )
     .run(
       stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.side, stop.quantity,
       stop.entryPrice, stop.extremePrice, stop.trailPercent ?? null, stop.trailAmount ?? null,
       stop.status, stop.lastPrice ?? null, stop.fireGeneration ?? 0, stop.lastAttemptRefId ?? null,
-      stop.createdAt ?? now, now
+      stop.createdAt ?? now, now, stop.suspectPrice ?? null, stop.suspectCount ?? 0, stop.kind ?? "trailing"
     );
 }
 
@@ -1060,14 +1306,17 @@ export function upsertBrokerProtectiveStop(
 }
 
 export function listBrokerProtectiveStops(accountNumber: string, userId: string = "local"): BrokerProtectiveStop[] {
-  // Include BOTH live-resting stops and stops mid-teardown ('pending_cancel'). Rows are hard-deleted
-  // on a successful cancel, so these are the only two statuses that ever persist — returning both is
-  // effectively "every active row". Filtering to status='resting' (the previous behavior) hid a
-  // pending_cancel row from the reconcile loop's retry pass, so a failed cancel could never be
-  // retried and the stop would orphan at the broker. Callers that must act on resting-only rows
-  // (e.g. mismatch replacement) still check `status === 'resting'` themselves.
+  // Include live-resting stops, stops mid-teardown ('pending_cancel'), and halted right-size retry
+  // markers ('pending_replace'). Rows are hard-deleted on a successful cancel, so these are the only
+  // statuses that ever persist — returning all is effectively "every active row". Filtering to
+  // status='resting' (the original behavior) hid a pending_cancel row from the reconcile loop's retry
+  // pass, so a failed cancel could never be retried and the stop would orphan at the broker; omitting
+  // 'pending_replace' likewise hid the halted right-size marker (Codex review, PR #1738), so section 1
+  // never re-queued the symbol and section 4 never re-placed — the position could stay unprotected
+  // until unhalted. Callers that must act on resting-only rows (e.g. mismatch replacement) still check
+  // `status === 'resting'` themselves.
   const rows = getDb()
-    .prepare("SELECT * FROM broker_protective_stops WHERE user_id = ? AND account_number = ? AND status IN ('resting', 'pending_cancel') ORDER BY created_at ASC")
+    .prepare("SELECT * FROM broker_protective_stops WHERE user_id = ? AND account_number = ? AND status IN ('resting', 'pending_cancel', 'pending_replace') ORDER BY created_at ASC")
     .all(userId, accountNumber) as Record<string, unknown>[];
   return rows.map(mapBrokerProtectiveStop);
 }
@@ -1761,4 +2010,65 @@ export function listOpenBracketOrders(accountNumber: string, symbol: string, use
     )
     .all(userId, accountNumber, symbol) as Array<{ id: string; account_number: string; symbol: string; order_id: string; created_at: string }>;
   return rows.map((r) => ({ id: r.id, accountNumber: r.account_number, symbol: r.symbol, orderId: r.order_id, createdAt: r.created_at }));
+}
+
+// ── Durable pre-network intent for broker protective-stop placement ───────────
+// (the broker_stop_placement_intents migration, src/lib/db.ts). One row per (user, account, symbol)
+// — see that migration's comment
+// for the crash/duplicate-placement rationale. Written BEFORE the broker call in
+// reconcileBrokerProtectiveStops, deleted on every definite outcome; a call that throws leaves the
+// row so the next tick can adopt the order it already placed instead of duplicating it.
+
+export interface BrokerStopPlacementIntent {
+  userId: string;
+  accountNumber: string;
+  symbol: string;
+  clientOrderId: string;
+  quantity: number;
+  stopPrice: number;
+  kind: "fixed" | "trailing";
+  trailPercent?: number;
+  createdAt: string;
+}
+
+export function upsertBrokerStopPlacementIntent(intent: Omit<BrokerStopPlacementIntent, "createdAt">): void {
+  getDb()
+    .prepare(
+      `INSERT INTO broker_stop_placement_intents
+         (user_id, account_number, symbol, client_order_id, quantity, stop_price, kind, trail_percent, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
+         client_order_id = excluded.client_order_id,
+         quantity = excluded.quantity,
+         stop_price = excluded.stop_price,
+         kind = excluded.kind,
+         trail_percent = excluded.trail_percent,
+         created_at = excluded.created_at`
+    )
+    .run(
+      intent.userId, intent.accountNumber, intent.symbol, intent.clientOrderId,
+      intent.quantity, intent.stopPrice, intent.kind, intent.trailPercent ?? null, new Date().toISOString()
+    );
+}
+
+export function getBrokerStopPlacementIntent(accountNumber: string, symbol: string, userId: string = "local"): BrokerStopPlacementIntent | undefined {
+  const row = getDb()
+    .prepare("SELECT * FROM broker_stop_placement_intents WHERE user_id = ? AND account_number = ? AND symbol = ?")
+    .get(userId, accountNumber, symbol) as Record<string, unknown> | undefined;
+  if (!row) return undefined;
+  return {
+    userId: String(row.user_id),
+    accountNumber: String(row.account_number),
+    symbol: String(row.symbol),
+    clientOrderId: String(row.client_order_id),
+    quantity: Number(row.quantity),
+    stopPrice: Number(row.stop_price),
+    kind: row.kind === "trailing" ? "trailing" : "fixed",
+    trailPercent: row.trail_percent == null ? undefined : Number(row.trail_percent),
+    createdAt: String(row.created_at)
+  };
+}
+
+export function deleteBrokerStopPlacementIntent(accountNumber: string, symbol: string, userId: string = "local"): void {
+  getDb().prepare("DELETE FROM broker_stop_placement_intents WHERE user_id = ? AND account_number = ? AND symbol = ?").run(userId, accountNumber, symbol);
 }

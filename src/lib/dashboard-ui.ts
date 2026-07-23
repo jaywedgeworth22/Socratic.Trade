@@ -29,7 +29,17 @@ const SOURCE_LABELS: Record<string, string> = {
   "sp500-universe": "S&P 500 Universe",
   "sp100-universe": "S&P 100 Universe",
   "nasdaq100-universe": "NASDAQ 100 Universe",
-  "nasdaq-composite-universe": "NASDAQ Composite Universe",
+  // The dynamic-universe source tags below are built in market.ts as `${universe}-universe`
+  // straight from the IndexUniverse config id — for the three camelCase compound ids
+  // (nasdaqComposite, nyseComposite, ftWilshire5000) that produces e.g. "nasdaqComposite-
+  // universe", which normalizeSourceKey only lowercases (never re-hyphenates) to
+  // "nasdaqcomposite-universe". A key with a hyphen between the words never matched, so these
+  // fell through to titleizeSource's raw-string fallback and rendered as "Nasdaqcomposite
+  // Universe" / "Nysecomposite Universe" / (unlabeled) "Ftwilshire5000 Universe". Keys here MUST
+  // match the id's own casing verbatim, not "properly" kebab-cased.
+  "nasdaqcomposite-universe": "NASDAQ Composite Universe",
+  "nysecomposite-universe": "NYSE Composite Universe",
+  "ftwilshire5000-universe": "FT Wilshire 5000 Universe",
   "alpaca-quotes": "Alpaca Quotes",
   "alpaca-snapshot": "Alpaca Snapshot",
   "alpaca-news": "Alpaca News",
@@ -297,6 +307,7 @@ const FEED_STATUS_LABELS: Record<string, string> = {
   placed: "Placed",
   paper: "Paper trade",
   completed: "Completed",
+  skipped: "Skipped",
   placing_failed: "Placement failed",
   not_placed: "Not placed - safe to retry",
   running: "Running"
@@ -329,7 +340,8 @@ export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, strin
   prompt_injection_suspected: "Prompt injection suspected",
   evidence_age_anomaly: "Evidence age anomaly",
   storage_warning: "Storage warning",
-  autonomy_halted_on_boot: "Autonomy halted on boot"
+  autonomy_halted_on_boot: "Autonomy halted on boot",
+  option_alert: "Option alert"
 };
 
 export function notificationTypeLabel(type?: string | null): string {
@@ -393,6 +405,8 @@ export function formatNotificationDisplay(
     title = `Prompt Injection Suspected ${symbol ? `for ${symbol}` : ""}`;
   } else if (event.type === "evidence_age_anomaly") {
     title = `Evidence Age Anomaly ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "option_alert") {
+    title = event.title;
   }
 
   return {
@@ -405,6 +419,10 @@ export function formatNotificationDisplay(
 }
 
 function notificationDetail(event: NotificationEvent): string {
+  if (event.type === "option_alert") {
+    const payload = asRecord(event.payload);
+    return stringValue(payload.detail) || "Option alert";
+  }
   if (
     event.type === "deterministic_bear_veto" ||
     event.type === "red_team_veto_override_requested" ||
@@ -431,15 +449,27 @@ function notificationReason(error?: string): string | undefined {
 }
 
 function actionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Sell" : side === "buy" ? "Buy" : "Trade";
+  if (side === "sell") return "Sell";
+  if (side === "buy") return "Buy";
+  if (side === "short") return "Short";
+  if (side === "cover") return "Cover";
+  return "Trade";
 }
 
 function executedActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Sold" : side === "buy" ? "Bought" : "Traded";
+  if (side === "sell") return "Sold";
+  if (side === "buy") return "Bought";
+  if (side === "short") return "Shorted";
+  if (side === "cover") return "Covered";
+  return "Traded";
 }
 
 function paperActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Paper Sell" : side === "buy" ? "Paper Buy" : "Paper Trade";
+  if (side === "sell") return "Paper Sell";
+  if (side === "buy") return "Paper Buy";
+  if (side === "short") return "Paper Short";
+  if (side === "cover") return "Paper Cover";
+  return "Paper Trade";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -462,5 +492,5 @@ function normalizeSymbol(symbol?: string): string | undefined {
 }
 
 function normalizeSide(side?: string): OrderSide | undefined {
-  return side === "buy" || side === "sell" ? side : undefined;
+  return side === "buy" || side === "sell" || side === "short" || side === "cover" ? side : undefined;
 }

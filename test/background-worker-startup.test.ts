@@ -10,6 +10,7 @@ function starterSpies(): BackgroundWorkerStarters {
     startScheduler: vi.fn(),
     startUsageMonitorReplay: vi.fn(),
     startStreams: vi.fn(),
+    startSecIngestWorker: vi.fn(),
   };
 }
 
@@ -67,12 +68,20 @@ describe("background worker startup", () => {
     expect(starters.startScheduler).not.toHaveBeenCalled();
     expect(starters.startUsageMonitorReplay).not.toHaveBeenCalled();
     expect(starters.startStreams).not.toHaveBeenCalled();
+    expect(starters.startSecIngestWorker).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("disabled (development"));
   });
 
   it("starts every worker family once after an explicit development opt-in", async () => {
     const starters = starterSpies();
     const log = vi.fn();
+    let replayBoundaryReady = false;
+    vi.mocked(starters.startUsageMonitorReplay).mockImplementation(() => {
+      replayBoundaryReady = true;
+    });
+    vi.mocked(starters.startScheduler).mockImplementation(() => {
+      expect(replayBoundaryReady).toBe(true);
+    });
 
     await expect(startServerBackgroundWorkers({
       env: { NODE_ENV: "development", DEV_BACKGROUND_WORKERS: "on" },
@@ -83,6 +92,9 @@ describe("background worker startup", () => {
     expect(starters.startScheduler).toHaveBeenCalledTimes(1);
     expect(starters.startUsageMonitorReplay).toHaveBeenCalledTimes(1);
     expect(starters.startStreams).toHaveBeenCalledTimes(1);
+    expect(starters.startSecIngestWorker).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(starters.startUsageMonitorReplay).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(starters.startScheduler).mock.invocationCallOrder[0]!);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("enabled (development"));
   });
 });

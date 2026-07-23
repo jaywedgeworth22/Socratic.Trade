@@ -89,8 +89,13 @@ export function getDb(): Database.Database {
   db.function("account_setting_matches_subject", { deterministic: true }, accountSettingMatchesSubject);
   db.pragma("journal_mode = WAL");
   // With WAL, a concurrent writer otherwise throws SQLITE_BUSY immediately; wait
-  // up to 5s for the lock instead. NORMAL durability is the WAL-recommended pairing.
-  db.pragma("busy_timeout = 5000");
+  // up to 60s for the lock instead. NORMAL durability is the WAL-recommended pairing.
+  // Raised from 30s (2026-07-18, PR #1728) after "database is locked" kept surfacing
+  // in prod under heavy concurrent write load (bulk RAG backfill/reindex + scheduler
+  // + burst ingest all writing the same file); WAL already lets readers proceed
+  // during a writer, so a longer wait here only affects genuinely-contended writers,
+  // not the common read path.
+  db.pragma("busy_timeout = 60000");
   db.pragma("synchronous = NORMAL");
   // Larger page cache + memory-mapped I/O: the dashboard replays fill/proposal history on every
   // request, so a ~20MB page cache (negative = KB) and 256MB mmap keep those hot reads off the
@@ -105,6 +110,15 @@ export function getDb(): Database.Database {
   installAccountWriteFenceTriggers(db);
   assertEncryptionKeyAvailable(db);
   return db;
+}
+
+export function resetDbForTesting(): void {
+  if (db) {
+    try {
+      db.close();
+    } catch {}
+    db = undefined;
+  }
 }
 
 // ── Versioned migrations ─────────────────────────────────────────────────────
@@ -1991,15 +2005,113 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {
+    version: 47,
+    name: "sec_facts_and_transactions",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_facts (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          concept TEXT NOT NULL,
+          value REAL NOT NULL,
+          unit TEXT,
+          period TEXT,
+          start_date TEXT,
+          end_date TEXT NOT NULL,
+          accepted_at TEXT NOT NULL,
+          segment TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_facts_cik_concept ON sec_facts(cik, concept);
+
+        CREATE TABLE IF NOT EXISTS sec_insider_transactions (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          insider_name TEXT NOT NULL,
+          relationship TEXT NOT NULL,
+          side TEXT NOT NULL,
+          shares REAL NOT NULL,
+          price REAL NOT NULL,
+          period_of_report TEXT NOT NULL,
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0,
+          transaction_code TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_insider_transactions_cik ON sec_insider_transactions(cik);
+      `);
+    }
+  },
+  {
+    version: 48,
+    name: "sec_eval_golden_set",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_eval_golden_set (
+          id TEXT PRIMARY KEY,
+          query TEXT NOT NULL,
+          expected_cik TEXT NOT NULL,
+          expected_accession TEXT NOT NULL,
+          expected_text_snippet TEXT NOT NULL,
+          category TEXT NOT NULL
+        );
+      `);
+    }
+  },
+  {
+    version: 49,
+    name: "document_chunks_fts",
+    up: (database) => {
+      database.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts USING fts5(
+          content_hash,
+          symbol,
+          source,
+          accession,
+          text
+        );
+      `);
+    }
+  },
+  {
+    version: 50,
+    name: "sec_insider_transactions_transaction_code",
+    up: (database) => {
+      // A legacy v47 database may have advanced past the migration without
+      // creating this table. Recover it before inspecting or altering columns.
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_insider_transactions (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          insider_name TEXT NOT NULL,
+          relationship TEXT NOT NULL,
+          side TEXT NOT NULL,
+          shares REAL NOT NULL,
+          price REAL NOT NULL,
+          period_of_report TEXT NOT NULL,
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0,
+          transaction_code TEXT NOT NULL DEFAULT ''
+        );
+      `);
+      // v47's CREATE TABLE now includes transaction_code for fresh databases; this backfills any
+      // database that ran the original v47 before the column existed (PR #1669 review: insider
+      // rows must preserve the SEC transaction code so P/S open-market trades are distinguishable
+      // from grants/exercises/gifts). Guarded because ADD COLUMN fails if the column exists.
+      const cols = database.prepare("PRAGMA table_info(sec_insider_transactions)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "transaction_code")) {
+        database.exec("ALTER TABLE sec_insider_transactions ADD COLUMN transaction_code TEXT NOT NULL DEFAULT ''");
+      }
+    }
+  },
+  {
     // EarningsCalls.dev fetch-once-forever transcript cache (CRUD in db-earningscalls.ts;
     // producer in earningscalls-transcripts.ts). GLOBAL market data — no user_id column,
     // deliberately exempt from DELETE_TABLES_BY_USER_ID (transcripts are public-company
     // material shared across users, like economic_events). `content` NULL = negative-cache
     // row: a budget-costing call found no transcript yet; re-fetch allowed only after the
     // negative TTL. A row with content is immutable — a cache hit NEVER re-fetches.
-    // NOTE (2026-07-16 merge): renumbered 46 -> 47 — main's #1667 position_stop_plan_open_brackets
-    // took v46 (already deployed) while this branch was in flight.
-    version: 47,
+    // NOTE (2026-07-17 merge): renumbered 50 -> 51 — branch's sec_insider_transactions_transaction_code took v50.
+    version: 51,
     name: "earningscalls_transcripts",
     up: (database) => {
       database.exec(`
@@ -2025,8 +2137,168 @@ const MIGRATIONS: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 52,
+    name: "sec_rag_tables_recovery",
+    up: (database) => {
+      database.exec(`
+        -- Backfill/recovery for databases which skipped version 47 due to migration collision
+        CREATE TABLE IF NOT EXISTS sec_facts (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          concept TEXT NOT NULL,
+          value REAL NOT NULL,
+          unit TEXT,
+          period TEXT,
+          start_date TEXT,
+          end_date TEXT NOT NULL,
+          accepted_at TEXT NOT NULL,
+          segment TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_facts_cik_concept ON sec_facts(cik, concept);
+
+        CREATE TABLE IF NOT EXISTS sec_insider_transactions (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          insider_name TEXT NOT NULL,
+          relationship TEXT NOT NULL,
+          side TEXT NOT NULL,
+          shares REAL NOT NULL,
+          price REAL NOT NULL,
+          period_of_report TEXT NOT NULL,
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0,
+          transaction_code TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_insider_transactions_cik ON sec_insider_transactions(cik);
+      `);
+    }
+  },
+  {
+    // Durable pre-network intent for broker protective-stop placement (CRUD in db-api-keys.ts,
+    // alongside broker_protective_stops). reconcileBrokerProtectiveStops previously called
+    // gateway.placeEquityOrder with no persisted state beforehand — if the broker accepted the order
+    // but the reply was lost (crash/timeout), a retry had no record a request was ever sent and could
+    // place a SECOND full-size stop. A row here is written BEFORE the network call, keyed by the
+    // stable client_order_id submitted, and deleted on every definite outcome (rejected/no-id/
+    // success); a call that THROWS deliberately leaves the row so the next tick can look its
+    // client_order_id up in the broker's own order list and adopt the order it already placed instead
+    // of duplicating it. One row per (user, account, symbol) — a fresh placement attempt replaces any
+    // stale row for that symbol.
+    // NOTE (numbering): resolved at the 2026-07-18 merge of origin/main — v52 (sec_rag_tables_recovery,
+    // PR #1735) is on main; this branch takes v53/v54 after it.
+    version: 53,
+    name: "broker_stop_placement_intents",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS broker_stop_placement_intents (
+          user_id TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          client_order_id TEXT NOT NULL,
+          quantity REAL NOT NULL,
+          stop_price REAL NOT NULL,
+          kind TEXT NOT NULL,
+          trail_percent REAL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, account_number, symbol)
+        );
+      `);
+    }
+  },
+  {
+    // A recovered/booked broker-held stop fill (bookBrokerHeldStopFill in broker-protective-stops.ts)
+    // never sets proposal_id, so migration 16's partial UNIQUE index on (proposal_id, broker_order_id)
+    // — which requires proposal_id NOT NULL — never covers it. Add a second partial UNIQUE index for
+    // exactly that recovery path: (user_id, account_number, broker_order_id) WHERE proposal_id IS
+    // NULL AND broker_order_id IS NOT NULL AND raw carries bookBrokerHeldStopFill's own
+    // `brokerHeldProtectiveStop: true` marker. insertFillEvent treats a violation the same way it
+    // already treats the proposal_id-scoped one: an idempotent no-op returning the already-booked
+    // fill. Existing duplicates (if any) are collapsed first, same approach as migration 16.
+    //
+    // Scoped to that ONE marker deliberately, not every proposal-less fill: order-replacement.ts's
+    // reconciliation intentionally books multiple proposal-less rows that can share the SAME
+    // broker_order_id across different (user, account) scopes and even, by its own test coverage
+    // ("does not let another tenant/account fill with the same broker order id suppress recovery"),
+    // within the same (user, account) for a DIFFERENT replacement — it keys its own idempotency off
+    // `raw.replacementRefId`, not the broker id, because broker order ids are not assumed globally
+    // unique there. A broad (user_id, account_number, broker_order_id) index across ALL proposal-less
+    // fills would silently collide with that design and drop a legitimate second fill.
+    version: 54,
+    name: "fill_events_no_proposal_broker_order_unique_index",
+    up: (database) => {
+      // Every real boot runs migrate()'s idempotent baseline (which creates fill_events,
+      // and a later baseline ALTER adds its user_id column) before applyVersionedMigrations
+      // ever runs, so fill_events always exists here in production/dev. The one exception is
+      // test/persistence-hardening.test.ts, which hand-rolls a minimal fixture schema and
+      // calls applyVersionedMigrations directly to exercise older migrations in isolation —
+      // it never creates fill_events because it doesn't exercise this migration's table. Skip
+      // rather than fabricate the table here: the baseline is the single source of truth for
+      // fill_events' real-world schema (including columns added by other migrations), and
+      // duplicating it here risks drifting from that truth.
+      const fillEventsExists = database
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'fill_events'`)
+        .get();
+      if (!fillEventsExists) return;
+      const dupGroups = database
+        .prepare(
+          `SELECT user_id, account_number, broker_order_id, COUNT(*) AS c, MIN(rowid) AS keep_rowid
+           FROM fill_events
+           WHERE proposal_id IS NULL AND broker_order_id IS NOT NULL
+             AND json_extract(raw, '$.brokerHeldProtectiveStop') = 1
+           GROUP BY user_id, account_number, broker_order_id
+           HAVING c > 1`
+        )
+        .all() as Array<{ user_id: string; account_number: string; broker_order_id: string; c: number; keep_rowid: number }>;
+      const deleteExtras = database.prepare(
+        `DELETE FROM fill_events
+         WHERE user_id = ? AND account_number = ? AND broker_order_id = ? AND proposal_id IS NULL
+           AND json_extract(raw, '$.brokerHeldProtectiveStop') = 1 AND rowid != ?`
+      );
+      for (const g of dupGroups) {
+        const info = deleteExtras.run(g.user_id, g.account_number, g.broker_order_id, g.keep_rowid);
+        console.warn(
+          `[db] migration 54: collapsed ${info.changes} duplicate broker-held-stop-recovery fill_events row(s) for (user_id=${g.user_id}, account_number=${g.account_number}, broker_order_id=${g.broker_order_id}) — kept rowid ${g.keep_rowid}.`
+        );
+      }
+      database.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_fill_events_no_proposal_broker_order
+         ON fill_events (user_id, account_number, broker_order_id)
+         WHERE proposal_id IS NULL AND broker_order_id IS NOT NULL
+           AND json_extract(raw, '$.brokerHeldProtectiveStop') = 1`
+      );
+    }
+  },
+  {
+    // Append-only archive for coach notes aged off the live `socratic_decisions.coach_notes`
+    // window (kept at COACH_NOTES_LIVE_CAP entries in db-socratic.ts). Before this migration, the
+    // 21st note appended to a decision silently deleted the 1st with zero trace. `note_seq` is a
+    // dense 0-based per-(user, decision) archive ordinal — an ordering/uniqueness device, not an
+    // all-time index (pre-port history is unrecoverable). See db-socratic.ts applyCoachNoteAppend.
+    // NOTE (numbering): renumbered from branch v53->v55 when merging origin/main (which claimed
+    // v53 broker_stop_placement_intents and v54 fill_events_no_proposal_broker_order_unique_index).
+    version: 55,
+    name: "socratic_coach_note_archive",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS socratic_coach_note_archive (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          decision_id TEXT NOT NULL,
+          connected_account_id TEXT,
+          note TEXT NOT NULL,
+          note_seq INTEGER NOT NULL,
+          archived_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_socratic_coach_note_archive_user_decision
+          ON socratic_coach_note_archive (user_id, decision_id, note_seq);
+      `);
+    }
   }
 ];
+
 
 /**
  * ONE-TIME migration (v7): PR #267 moved llmModel/redTeamLlmModel/llmReasoningEffort
@@ -2161,8 +2433,10 @@ export function hasEncryptedCredentials(database: Database.Database): boolean {
     .get() as { n: number };
   if (row.n > 0) return true;
   // Robinhood OAuth token blobs are JSON in settings; the JSON itself contains colons, so match the
-  // SECRET fields against the iv:tag:ct hex envelope rather than GLOB-ing the whole value.
-  const envelope = /^[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]+$/i;
+  // SECRET fields against the iv:tag:ct hex envelope rather than GLOB-ing the whole value. The
+  // optional "v1:" prefix covers the versioned envelope format (see db-api-keys.ts's
+  // CIPHERTEXT_VERSION_PREFIX) alongside the pre-versioning bare envelope still on disk.
+  const envelope = /^(?:v1:)?[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]+$/i;
   const oauthRows = database
     .prepare("SELECT value FROM settings WHERE key GLOB 'robinhood_mcp_oauth_token:*'")
     .all() as { value: string }[];
@@ -2370,6 +2644,22 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_fill_events_account ON fill_events (account_number, filled_at);
     CREATE INDEX IF NOT EXISTS idx_notification_events_created ON notification_events (created_at);
 
+    -- Atomic dedupe reservations for option alerts. Dashboard snapshots invoke the option-alert
+    -- check CONCURRENTLY, and each used to read the "already sent" set BEFORE any event row was
+    -- inserted, so two concurrent requests could both deliver the same (account, symbol, alertType)
+    -- alert. The UNIQUE constraint makes claiming the alert atomic: the first INSERT OR IGNORE wins
+    -- (changes=1 => this caller delivers); a concurrent one no-ops (changes=0 => skip). Rows are
+    -- released (deleted) when the send did NOT actually deliver, so a disabled/failed alert can
+    -- still be delivered on a later cycle (matches the historical status='sent'-only dedupe).
+    CREATE TABLE IF NOT EXISTS option_alert_reservations (
+      user_id TEXT NOT NULL,
+      connected_account_id TEXT NOT NULL DEFAULT '',
+      symbol TEXT NOT NULL,
+      alert_type TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, connected_account_id, symbol, alert_type)
+    );
+
     -- Multi-user API key storage (scaffolding for future multi-user support)
     CREATE TABLE IF NOT EXISTS user_api_keys (
       id TEXT PRIMARY KEY,
@@ -2420,6 +2710,8 @@ function migrate(database: Database.Database): void {
       last_price REAL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      suspect_price REAL,
+      suspect_count INTEGER NOT NULL DEFAULT 0,
       UNIQUE(user_id, account_number, symbol)
     );
     CREATE INDEX IF NOT EXISTS idx_synthetic_stops_account ON synthetic_trailing_stops (user_id, account_number);
@@ -3185,6 +3477,26 @@ function migrate(database: Database.Database): void {
   const connectedAccountDrainingColumns = database.prepare("PRAGMA table_info(connected_accounts)").all() as Array<{ name: string }>;
   if (!connectedAccountDrainingColumns.some((c) => c.name === "is_draining")) {
     database.exec("ALTER TABLE connected_accounts ADD COLUMN is_draining INTEGER DEFAULT 0");
+  }
+
+  // Exit-strategy Phase A: confirmation-based bad-tick acceptance (suspect_price, suspect_count)
+  const syntheticStopCols = database.prepare("PRAGMA table_info(synthetic_trailing_stops)").all() as Array<{ name: string }>;
+  if (!syntheticStopCols.some((c) => c.name === "suspect_price")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN suspect_price REAL");
+  }
+  if (!syntheticStopCols.some((c) => c.name === "suspect_count")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN suspect_count INTEGER NOT NULL DEFAULT 0");
+  }
+
+  // Fixed/ATR tick-cadence backstop (Codex review, item 7): fixed/atr stop plans previously had NO
+  // protection between strategy runs (excluded from this table entirely — see synthetic-stops.ts).
+  // `kind` discriminates a 'trailing' row (extreme ratchets with the high/low-water mark, unchanged
+  // behavior) from a 'fixed' row (a static trigger price — the monitor pins extreme_price back to
+  // entry_price every tick instead of persisting the ratchet, so the same evaluateStop/fire
+  // machinery yields a fixed distance instead of a trail). Defaults existing/legacy rows to
+  // 'trailing' (their only prior meaning) so this is purely additive.
+  if (!syntheticStopCols.some((c) => c.name === "kind")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN kind TEXT NOT NULL DEFAULT 'trailing'");
   }
 
   const now = new Date().toISOString();

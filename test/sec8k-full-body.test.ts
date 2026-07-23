@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../src/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/db")>();
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     ...actual,
     insertSecArtifact: mocks.insertSecArtifact,
     runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
@@ -35,7 +35,7 @@ vi.mock("../src/lib/db", async (importOriginal) => {
 
 vi.mock("../src/lib/db-vector-commits", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/db-vector-commits")>();
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     ...actual,
     runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
   };
@@ -50,6 +50,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
   return {
     ...actual,
+    managedVectorLedgerAuthority: vi.fn(),
     hasIngestTextBudget: mocks.hasIngestTextBudget,
     storeDocument: async (...args: Parameters<typeof actual.storeDocument>) => {
       const result = await mocks.storeDocument(...args);

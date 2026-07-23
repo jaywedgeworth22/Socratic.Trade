@@ -15,12 +15,13 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Sheet } from "../ui/sheet";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
-import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle } from "lucide-react";
+import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle, Pencil, Check, X } from "lucide-react";
 import {
   connectAlpacaAccount,
   connectTradierAccount,
   disconnectAccount,
   fetchRobinhoodHealth,
+  renameAccount,
   syncRobinhoodAccount,
   ROBINHOOD_OAUTH_START_URL,
   type RobinhoodMcpHealth
@@ -76,6 +77,9 @@ export function BrokerAccountsCard() {
   const [confirmRemove, setConfirmRemove] = useState<ConnectedAccount | null>(null);
   const [alpacaOpen, setAlpacaOpen] = useState(false);
   const [tradierOpen, setTradierOpen] = useState(false);
+  // Inline rename of an account's cosmetic display name. `renaming` holds the id being edited
+  // and the working input value; the broker account number is never touched by this.
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
 
   // Best-effort Robinhood OAuth health — decides whether "Connect Robinhood"
   // starts OAuth or just re-syncs, and flags rows that need a reconnect.
@@ -154,6 +158,25 @@ export function BrokerAccountsCard() {
     }
   };
 
+  const saveRename = async (account: ConnectedAccount) => {
+    const next = renaming?.value.trim() ?? "";
+    if (!next || next === account.label) {
+      setRenaming(null);
+      return;
+    }
+    setBusy(account.id);
+    try {
+      await renameAccount(account.id, next);
+      await refresh();
+      setRenaming(null);
+      toast.push("pos", "Account renamed", `Now shown as "${next}".`);
+    } catch (error) {
+      toast.push("neg", "Could not rename", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   // One row renderer, reused for the loaded account and each "Other" account so
   // the two sections stay identical in look and behavior.
   const renderAccountRow = (account: ConnectedAccount) => {
@@ -168,9 +191,59 @@ export function BrokerAccountsCard() {
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
-              {account.label || brokerName(account.broker)}
-            </span>
+            {renaming?.id === account.id ? (
+              <div className="flex min-w-0 items-center gap-1.5">
+                <TextInput
+                  autoFocus
+                  aria-label="Account name"
+                  value={renaming.value}
+                  maxLength={120}
+                  disabled={busy !== null}
+                  onChange={(e) => setRenaming({ id: account.id, value: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveRename(account);
+                    if (e.key === "Escape") setRenaming(null);
+                  }}
+                  className="h-7 w-44 max-w-full"
+                />
+                <button
+                  type="button"
+                  aria-label="Save name"
+                  disabled={busy !== null}
+                  onClick={() => void saveRename(account)}
+                  className="text-[color:var(--con-pos)] hover:opacity-80 disabled:opacity-50"
+                  title="Save the new name"
+                >
+                  <Check className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Cancel rename"
+                  disabled={busy !== null}
+                  onClick={() => setRenaming(null)}
+                  className="text-[color:var(--con-faint)] hover:opacity-80 disabled:opacity-50"
+                  title="Cancel"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
+                  {account.label || brokerName(account.broker)}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Rename account"
+                  disabled={busy !== null}
+                  onClick={() => setRenaming({ id: account.id, value: account.label || "" })}
+                  className="shrink-0 text-[color:var(--con-faint)] hover:text-[color:var(--con-fg)] disabled:opacity-50"
+                  title="Rename this account's display name. The broker account number is not affected."
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+              </>
+            )}
             <Chip tone={r.tone} title={r.clarification}>
               {r.word} · {r.phrase}
             </Chip>

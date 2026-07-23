@@ -16,12 +16,13 @@
 //   - Health is reported via `logApiHealth({ service: "usage-monitor" })` so the operator sees the
 //     connection status without the push ever affecting trading.
 //
-// CONTRACT: the event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
-// `UsageTelemetryEventSchema` and the monitor's server-side parser
+// CONTRACT: fresh outbound events use `@jaywedgeworth22/congress-trading-shared`'s strict
+// `UsageTelemetryV2EventSchema`; producer identity lives only on the v2 batch envelope.
 // (`API-usage-monitor/src/lib/usage-telemetry.ts`).
 // MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
+import { getGitSha } from "./git-sha";
 import {
   createUsageTelemetryClient,
   UsageTelemetryEventSchema,
@@ -37,7 +38,8 @@ export type UsageMetricType = UsageTelemetryMetricType;
 export type UsageUnit = UsageTelemetryUnit;
 export type UsageBillingMode = UsageTelemetryBillingMode;
 export type UsageConfidence = UsageTelemetryConfidence;
-export type UsageMonitorEvent = UsageTelemetryEvent;
+export type UsageMonitorEvent = UsageTelemetryV2Event;
+type UsageMonitorDraft = Omit<UsageMonitorEvent, "eventId"> & { eventId?: string };
 
 // ── Config (env-gated, server-only) ────────────────────────────────────────────
 
@@ -72,6 +74,41 @@ export function usageMonitorEnabled(): boolean {
 
 function usageMonitorEnv(): string {
   return trimmedEnv("USAGE_MONITOR_ENV") ?? trimmedEnv("NODE_ENV") ?? "development";
+}
+
+/** Deployed commit sha, when the runtime exposes one (see `runtimeReleaseIdentity`'s env probe
+ *  list) — reused as the classifier `gitSha`. `undefined` (never invents a new required env var)
+ *  when none of those vars are set, e.g. local dev. */
+function classifierGitSha(): string | undefined {
+  return getGitSha();
+}
+
+/**
+ * Classifier keys (sourceApp/environment/service/feature/keyRef/gitSha/user) as a flat string map,
+ * safe to merge into a pushed event's `metadata`. Never throws — an unexpected validation failure
+ * (e.g. a caller passing a blank required field) degrades to an empty object rather than dropping
+ * the whole telemetry event.
+ */
+function classifierTelemetryMetadata(ctx: {
+  service: string;
+  feature?: string;
+  keyRef?: string;
+  userId?: string;
+}): Record<string, string> {
+  try {
+    return telemetryEventClassifier({
+      sourceApp: SOURCE_APP,
+      environment: usageMonitorEnv(),
+      service: ctx.service,
+      feature: ctx.feature,
+      keyRef: ctx.keyRef,
+      gitSha: classifierGitSha(),
+      user: ctx.userId,
+    });
+  } catch (err) {
+    console.warn("[usage-monitor-push] classifier metadata build failed; pushing without it:", err instanceof Error ? err.message : String(err));
+    return {};
+  }
 }
 
 function flushDelayMs(): number {
@@ -225,7 +262,7 @@ interface CallVolumeEntry {
 }
 
 interface PendingUsageEvent {
-  event: UsageMonitorEvent;
+  event: UsageMonitorDraft;
   kind: string;
   sourceId: string;
   /** Wall-clock arrival time in this buffer; see isStaleBuffered(). */
@@ -351,18 +388,20 @@ export interface LlmUsageMonitorEntry {
   completionTokens?: number;
   totalTokens?: number;
   costUsd?: number;
+  /** OpenRouter's generation id for this call (see `providerRequestIdFromPayload` in llm-usage.ts).
+   *  Undefined for every non-OpenRouter provider. */
+  providerRequestId?: string;
 }
 
-function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorEvent {
+function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorDraft {
   const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
   return {
-    sourceApp: SOURCE_APP,
     environment: usageMonitorEnv(),
     provider: entry.provider,
     service: "llm",
     project: PROJECT,
     label: entry.context,
-    keyRef: entry.keyRef,
+    producerKeyRef: entry.keyRef,
     billingMode: "estimated",
     metricType: hasCost ? "cost" : "usage",
     quantity: entry.totalTokens,
@@ -371,6 +410,7 @@ function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorEvent {
     requests: 1,
     confidence: "estimated",
     occurredAt: entry.occurredAt ?? new Date().toISOString(),
+    providerRequestId: entry.providerRequestId,
     metadata: cleanMetadata({
       model: entry.model ?? null,
       context: entry.context ?? null,
@@ -378,6 +418,7 @@ function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorEvent {
       keySource: entry.keySource,
       promptTokens: entry.promptTokens ?? null,
       completionTokens: entry.completionTokens ?? null,
+      ...classifierTelemetryMetadata({ service: "llm", feature: entry.context, keyRef: entry.keyRef, userId: entry.userId }),
     }),
   };
 }
@@ -397,7 +438,7 @@ export async function createLlmUsageMonitorEvent(
 ): Promise<UsageMonitorEvent> {
   return {
     ...llmUsageEvent(entry),
-    idempotencyKey: await telemetryIdempotencyKey("llm", entry.sourceEventId),
+    eventId: await telemetryIdempotencyKey("llm", entry.sourceEventId),
   };
 }
 
@@ -418,9 +459,12 @@ export interface RagUsageMonitorEntry {
   tokensOut?: number;
   batchCount?: number;
   costUsd?: number;
+  /** OpenRouter's generation id for this call (embed/rerank via `baai/bge-m3`/`cohere/rerank-v3.5`).
+   *  Undefined for Voyage/SiliconFlow/Pinecone — see `providerRequestIdFromPayload` in llm-usage.ts. */
+  providerRequestId?: string;
 }
 
-function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorEvent {
+function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorDraft {
   const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
   const isPinecone = entry.provider === "pinecone";
   const quantity = isPinecone
@@ -430,13 +474,12 @@ function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorEvent {
   // Read/Write Units in tokensIn, with records kept separately in metadata.
   const unit: UsageUnit = isPinecone ? "credit" : "token";
   return {
-    sourceApp: SOURCE_APP,
     environment: usageMonitorEnv(),
     provider: entry.provider,
     service: "rag",
     project: PROJECT,
     label: entry.operation,
-    keyRef: undefined, // RAG keys are app-funded; no per-attached-key fingerprint today
+    producerKeyRef: undefined, // RAG keys are app-funded; no per-attached-key fingerprint today
     billingMode: "estimated",
     metricType: hasCost ? "cost" : "usage",
     quantity: quantity > 0 ? quantity : undefined,
@@ -445,12 +488,17 @@ function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorEvent {
     requests: 1,
     confidence: "estimated",
     occurredAt: entry.occurredAt ?? new Date().toISOString(),
+    providerRequestId: entry.providerRequestId,
     metadata: cleanMetadata({
       model: entry.model ?? null,
       operation: entry.operation,
       userId: entry.userId,
       batchCount: entry.batchCount ?? null,
       recordCount: isPinecone ? entry.tokensOut ?? null : null,
+      // Voyage/SiliconFlow bypass OpenRouter entirely (no request-side trace enrichment is
+      // possible), so this is the ONLY place their classifier context is ever recorded — sourced
+      // locally, never inferred from the provider response.
+      ...classifierTelemetryMetadata({ service: "rag", feature: entry.operation, userId: entry.userId }),
     }),
   };
 }
@@ -470,7 +518,7 @@ export async function createRagUsageMonitorEvent(
 ): Promise<UsageMonitorEvent> {
   return {
     ...ragUsageEvent(entry),
-    idempotencyKey: await telemetryIdempotencyKey("rag", entry.sourceEventId),
+    eventId: await telemetryIdempotencyKey("rag", entry.sourceEventId),
   };
 }
 
@@ -496,13 +544,12 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
   // The monitor's receiver sums cost by provider name only (it ignores `service`), so a non-zero
   // costUsd here would double-count spend the ledger lane already reported for the same call.
   return {
-    sourceApp: SOURCE_APP,
     environment: usageMonitorEnv(),
     provider: entry.provider,
     service: "provider-dispatch",
     project: PROJECT,
     label: entry.operation,
-    keyRef: entry.credentialRef,
+    producerKeyRef: entry.credentialRef,
     billingMode: "estimated",
     metricType: "usage",
     unit: "request",
@@ -515,7 +562,7 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
       outcome: entry.outcome,
       unknownOutcome: entry.outcome === "unknown",
     }),
-    idempotencyKey: await telemetryIdempotencyKey("provider-dispatch", entry.sourceEventId),
+    eventId: await telemetryIdempotencyKey("provider-dispatch", entry.sourceEventId),
   };
 }
 
@@ -546,12 +593,11 @@ export function pushBrokerBalance(entry: {
     // would poison the batch. Reject it here so the bad reading never enters the buffer.
     if (Number.isFinite(entry.cash)) {
       enqueuePending({
-        sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
         project: PROJECT,
-        keyRef: `${maskedAcc}:cash`,
+        producerKeyRef: `${maskedAcc}:cash`,
         billingMode: "actual",
         metricType: "balance",
         quantity: entry.cash,
@@ -567,12 +613,11 @@ export function pushBrokerBalance(entry: {
     }
     if (Number.isFinite(entry.buyingPower)) {
       enqueuePending({
-        sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
         project: PROJECT,
-        keyRef: `${maskedAcc}:buyingPower`,
+        producerKeyRef: `${maskedAcc}:buyingPower`,
         billingMode: "actual",
         metricType: "limit",
         quantity: entry.buyingPower,
@@ -588,12 +633,11 @@ export function pushBrokerBalance(entry: {
     }
     if (Number.isFinite(entry.equity)) {
       enqueuePending({
-        sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
         project: PROJECT,
-        keyRef: `${maskedAcc}:equity`,
+        producerKeyRef: `${maskedAcc}:equity`,
         billingMode: "actual",
         metricType: "balance",
         quantity: entry.equity,
@@ -670,7 +714,7 @@ export function recordProviderCall(
 // ── Queue / flush plumbing ─────────────────────────────────────────────────────
 
 function enqueuePending(
-  event: UsageMonitorEvent,
+  event: UsageMonitorDraft,
   kind: string,
   sourceId?: string
 ): void {
@@ -705,7 +749,6 @@ function drainCallVolume(now: string): PendingUsageEvent[] {
       sourceId: entry.windowId || randomDeliveryId(),
       receivedAt: Date.now(),
       event: {
-        sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: entry.service,
@@ -932,9 +975,7 @@ const REPLAY_SEND_TIMEOUT_MS = 30_000;
  * Applies an AbortSignal timeout so that a connection stall cannot permanently block the caller
  * (the replay worker's inFlight guard is never cleared if the POST promise never settles).
  */
-export async function sendUsageMonitorBatch(
-  events: UsageMonitorEvent[]
-): Promise<boolean> {
+async function sendReplayBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   if (events.length === 0) return true;
   if (!usageMonitorEnabled()) return false;
 
@@ -965,6 +1006,7 @@ export async function sendUsageMonitorBatch(
     const client = createUsageTelemetryClient({
       baseUrl,
       token,
+      producerId: SOURCE_APP,
       fetchImpl: (input, init) =>
         fetchImpl(input, { ...init, signal: controller.signal }),
     });
@@ -982,6 +1024,12 @@ export async function sendUsageMonitorBatch(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function sendUsageMonitorBatch(
+  events: UsageMonitorEvent[]
+): Promise<boolean> {
+  return sendReplayBatch(events);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

@@ -1,15 +1,27 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { audit } from "@/lib/db";
 import { applyCongressEvent, applyCongressEvents, type CongressEvent } from "@/lib/congress-trade-events";
-import { verifyCongressWebhookSignature } from "@/lib/congress-webhook-auth";
+import { verifyCongressWebhookSignature } from "@jaywedgeworth22/congress-trading-shared";
 import { logApiHealth } from "@/lib/db-health";
+import { CONGRESS_WEBHOOK_MAX_BYTES, PayloadTooLargeError, readBodyWithLimit } from "@/lib/bounded-body";
 
 export const dynamic = "force-dynamic";
 
 // Inbound receiver for congress.trade (App A) push events (see docs/push-to-app-b.md).
-// Auth: a shared secret (CONGRESS_WEBHOOK_SECRET) verified via HMAC SHA256 (X-Signature).
+// Auth: a shared secret (CONGRESS_WEBHOOK_SECRET) verified via HMAC SHA256 (X-Signature),
+// with the documented legacy Authorization: Bearer fallback retained for existing senders.
 // Rejects all writes when no secret is configured. Accepts a single event envelope or { events: [...] } for batches.
 // Always returns fast and never throws into the app; events are idempotent (deduped by id).
+function bearerSecretMatches(req: Request, expectedSecret: string): boolean {
+  const authHeader = req.headers.get("authorization")?.trim() ?? "";
+  if (!authHeader.toLowerCase().startsWith("bearer ")) return false;
+  const providedToken = authHeader.slice(7).trim();
+  const provided = Buffer.from(providedToken);
+  const expected = Buffer.from(expectedSecret);
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
+}
+
 export async function POST(req: Request) {
   const expectedSecret = (process.env.CONGRESS_WEBHOOK_SECRET ?? "").trim();
   if (!expectedSecret) {
@@ -22,22 +34,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const contentLengthStr = req.headers.get("content-length");
-  if (contentLengthStr) {
-    const contentLength = Number(contentLengthStr);
-    if (Number.isFinite(contentLength) && contentLength > 5 * 1024 * 1024) {
-      return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
-    }
-  }
-
+  // A declared content-length is a client CLAIM, not a guarantee (absent under chunked
+  // transfer, or simply wrong) — readBodyWithLimit fast-paths an honest oversized header but
+  // also aborts mid-stream the moment the ACTUAL byte count exceeds the cap, so a missing or
+  // understated header can't bypass the limit.
   let text: string;
   try {
-    text = await req.text();
-  } catch {
+    text = await readBodyWithLimit(req, CONGRESS_WEBHOOK_MAX_BYTES);
+  } catch (err) {
+    if (err instanceof PayloadTooLargeError) {
+      return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
+    }
     return NextResponse.json({ ok: false, error: "invalid body" }, { status: 400 });
   }
 
-  if (!verifyCongressWebhookSignature(req, text)) {
+  const signatureHeader = req.headers.get("x-signature") ?? "";
+  const isValid =
+    bearerSecretMatches(req, expectedSecret) ||
+    (hasSignature && await verifyCongressWebhookSignature(text, signatureHeader, expectedSecret));
+
+  if (!isValid) {
     audit("congress_webhook_rejected", { reason: "signature" });
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }

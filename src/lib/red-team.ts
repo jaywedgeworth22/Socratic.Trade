@@ -16,7 +16,7 @@
 
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
-import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
 import {
   interactiveStrategyReasoningEffort,
   LLM_OUTPUT_TOKEN_CAPS,
@@ -261,7 +261,11 @@ export async function debateProposal(
       reasoningEffort: interactiveStrategyReasoningEffort(model, resolveReviewerReasoningEffort(policy)),
       // Per-role sampling: non-zero adversary temperature so a re-run can surface a different
       // objection rather than always the identical (or absent) one. Ignored by reasoning models.
-      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
+      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature,
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "red-team"
     }
   );
 
@@ -289,7 +293,11 @@ export async function debateProposal(
           schema: { name: "red_team_verdict", schema: RED_TEAM_VERDICT_SCHEMA, description: "The Red Team's three-way verdict on the finalized trade." },
           maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.adversaryReview,
           reasoningEffort: interactiveStrategyReasoningEffort(ep.model, resolveReviewerReasoningEffort(policy)),
-          temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
+          temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature,
+          userId,
+          keyRef: ep.keyRef,
+          service: "strategy",
+          feature: "red-team"
         }
       )
     });
@@ -305,13 +313,14 @@ export async function debateProposal(
     connectedAccountId: policy.connectedAccountId
   });
 
-  let finalModel = model;
+  const { model: canonicalModel } = remapOpenRouterTelemetry(provider, model);
+  let finalModel = canonicalModel;
 
   try {
     const traced = await withLlmGeneration(
       {
         name: "trading.red-team.review",
-        model,
+        model: canonicalModel,
         userId,
         connectedAccountId: policy.connectedAccountId,
         input: summarizeOpenAiRequest(body),
@@ -337,7 +346,8 @@ export async function debateProposal(
           const attempt = plannedRedAttempts[i];
           const isLast = i === plannedRedAttempts.length - 1;
           const next = plannedRedAttempts[i + 1];
-          finalModel = attempt.model;
+          const { model: attemptCanonicalModel } = remapOpenRouterTelemetry(attempt.provider, attempt.model);
+          finalModel = attemptCanonicalModel;
 
           try {
             // Bounded same-model retry on transient failures (§4.3): 2 attempts total, fresh
@@ -396,6 +406,7 @@ export async function debateProposal(
               // Per-account usage attribution (PR #1030 coordination): the resolved run policy is
               // account-scoped, so the review's spend lands on the account it reviewed for.
               connectedAccountId: policy.connectedAccountId,
+              providerRequestId: providerRequestIdFromPayload(attempt.provider, payload),
               ...extractLlmUsage(payload)
             });
             const text = extractLlmText(payload);

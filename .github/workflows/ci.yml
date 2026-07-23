@@ -6,8 +6,11 @@
 # ONLY documentation-class paths (*.md anywhere, docs/**) the gate reports success immediately
 # without running the suite. Fail-closed in every ambiguous state.
 #
-# Hybrid resource-aware runner routing (2026-07-04, follow-up PR): the suite runs on the
-# self-hosted Mac runner ONLY when the Mac itself advertises spare capacity, hosted otherwise.
+# Hybrid resource-aware runner routing (2026-07-04, follow-up PR): the suite originally ran on the
+# self-hosted Mac runner ONLY when the Mac itself advertised spare capacity, hosted otherwise.
+# 2026-07-18: GitHub-hosted `ubuntu-latest` stopped assigning runners for this repo (jobs failed
+# before step 1 with runner_id=0/no log blob), while the Coolify Hetzner CI runner is online.
+# Required CI jobs therefore run on `[self-hosted, Linux, X64]`.
 # History matters here: verify was deliberately moved OFF the self-hosted runner on 2026-07-01
 # because it was the runner-queue bottleneck. The owner re-confirmed hybrid AFTER that tradeoff
 # was re-surfaced, with this resource-aware design:
@@ -54,18 +57,26 @@ on:
     # route to the Mac. schedule events always route hosted (see the route step below).
     - cron: "47 7 * * *"
 
-# Cancel a superseded run for the same branch/PR instead of letting it queue
-# behind newer pushes.
+# Keep the active verification alive when another commit reaches the same PR. GitHub
+# concurrency still retains only the newest pending run, so intermediate pushes collapse
+# without cancelling the expensive in-flight suite. This prevents high-churn branches from
+# repeatedly losing all progress before `verify` can turn green.
 concurrency:
+  # Keep one active run and one newest pending run per ref. Including a commit SHA here
+  # creates a distinct group for every push, so duplicate pending verifies accumulate
+  # indefinitely even though cancellation is disabled (2026-07-22 queue-drain fix).
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   classify:
     # Cheap gate-shape job: (1) is this diff documentation-only? (2) which runner should
     # execute the suite? Only `pull_request` gets the docs fast path; only fresh
     # self-advertised availability on a same-repo pull_request/push event routes self.
-    runs-on: ubuntu-latest
+    # Reject fork PRs at admission so fork-controlled repository content never reaches
+    # the persistent self-hosted workspace, including through actions/checkout.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
     outputs:
@@ -75,7 +86,11 @@ jobs:
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request'
         with:
-          fetch-depth: 0
+          # Classify only needs the two endpoint trees. Full-history fetches can
+          # monopolize the single self-hosted runner before this cheap gate runs.
+          fetch-depth: 1
+          fetch-tags: false
+          ref: ${{ github.sha }}
       - name: Determine whether the diff is documentation-only
         id: check
         shell: bash
@@ -95,8 +110,8 @@ jobs:
             exit 0
           fi
 
-          if ! git merge-base "$base" "$head" >/dev/null 2>&1; then
-            echo "No merge-base found between base and head — running full gate to be safe."
+          if ! git fetch --no-tags --depth=1 origin "$base" "$head"; then
+            echo "Could not fetch base/head endpoint commits — running full gate to be safe."
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -106,7 +121,7 @@ jobs:
           # so `git mv src/foo.ts docs/foo.md` would list just docs/foo.md and classify as
           # docs-only while code was removed. --no-renames splits every rename into
           # delete(old)+add(new) so BOTH paths get classified.
-          changed_files="$(git diff --name-only --no-renames "$base...$head" 2>/dev/null || true)"
+          changed_files="$(git diff --name-only --no-renames "$base" "$head" 2>/dev/null || true)"
           if [ -z "$changed_files" ]; then
             echo "Could not compute a changed-files list — running full gate to be safe."
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
@@ -169,7 +184,7 @@ jobs:
   verify-self:
     needs: classify
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && needs.classify.outputs.route == 'self' }}
-    runs-on: [self-hosted, trading-live]
+    runs-on: [self-hosted, socratic-ci]
     timeout-minutes: 30
     # Single-file lane: this is load-shedding on the production box, NOT the throughput
     # path (hosted is always available in parallel for other runs via the router).
@@ -251,15 +266,15 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-
             ${{ runner.os }}-nextjs-
       # Everything on the self path runs under `nice -n 19` so a live trading process always
-      # outbids CI for CPU on the production box. Install is tokenless `npm ci` (the shared
+      # outbids CI for CPU on the production box. Install is tokenless `npm install` (the shared
       # dependency resolves over public HTTPS now — no deploy key needed, matching deploy.yml).
       - name: Install dependencies (nice -19)
-        run: nice -n 19 npm ci
+        run: nice -n 19 npm install --no-audit --no-fund
       - run: nice -n 19 npm run lint
       - run: nice -n 19 npx tsc --noEmit
       # maxWorkers=2 (below the config default of 4) to further bound peak memory on the Mac.
@@ -270,18 +285,22 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
 
-  # Hosted lane: the deterministic Linux baseline. Runs when routed hosted, and ALSO as the
-  # exactly-one automatic re-run whenever the self lane did not succeed (failure, timeout,
-  # or unexpected skip) — Linux is the arbiter on disagreement.
+  # Coolify CI lane: the deterministic Linux baseline. This keeps the historic job id
+  # `verify-hosted` for branch-protection/status continuity, but it now runs on the online
+  # Coolify Hetzner runner because GitHub-hosted `ubuntu-latest` is not assigning jobs here.
   verify-hosted:
     needs: [classify, verify-self]
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && (needs.classify.outputs.route != 'self' || needs.verify-self.result != 'success') }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
       packages: read
+    env:
+      # The Coolify CI container is capped at 3 GiB; Node 24 otherwise defaults to a
+      # ~1 GiB heap and TypeScript aborts before reporting diagnostics.
+      NODE_OPTIONS: --max-old-space-size=2560
     steps:
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'
@@ -307,7 +326,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
       # Split restore/save (2026-07-04, cache-hygiene): PR/merge_group runs only restore;
       # a new entry is saved only on main pushes and the nightly schedule so cache storage
       # stays a single rolling lineage per OS instead of one throwaway entry per PR push.
@@ -317,15 +335,21 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-
             ${{ runner.os }}-nextjs-
+      # The long-lived Linux runner has twice lost its checkout between the
+      # initial checkout and npm install while another runner job was cleaning
+      # a stale workspace. Re-checkout at the package-operation boundary so a
+      # transient cleanup cannot turn into a false ENOENT failure.
+      - name: Refresh checkout before package operations
+        uses: actions/checkout@v4
       # verify-hosted only runs when docs-only is false (job-level `if` above), so per-step
-      # docs-only guards are unnecessary here. Tokenless `npm ci` — the shared dependency
+      # docs-only guards are unnecessary here. Tokenless `npm install` — the shared dependency
       # resolves over public HTTPS now (no deploy key), matching main's verify + deploy.yml.
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
@@ -339,7 +363,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
 
   # THE required check. Pure gate: interprets the lanes above and reports under the exact
   # context name the ruleset requires. Fail-closed in every ambiguous state; annotates which
@@ -350,7 +374,7 @@ jobs:
     # while classify/lane failures cannot silently skip a required check (skipped required
     # checks can fail open — Codex review, PR #370).
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
     steps:
@@ -368,7 +392,7 @@ jobs:
           note "### verify gate"
           note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a}, route: ${ROUTE:-n/a})"
           note "- verify-self (macOS, production Mac): ${SELF_RESULT}"
-          note "- verify-hosted (ubuntu-latest): ${HOSTED_RESULT}"
+          note "- verify-hosted (Coolify socratic-ci): ${HOSTED_RESULT}"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
             note "- RESULT: FAIL — classify did not succeed; the gate never fails open."
@@ -380,9 +404,9 @@ jobs:
           fi
           if [ "$HOSTED_RESULT" = "success" ]; then
             if [ "$SELF_RESULT" = "failure" ]; then
-              note "- RESULT: PASS — produced by hosted ubuntu-latest (ARBITER: self-hosted lane failed, hosted re-run passed; Linux result stands, likely a Mac-environment flake — check verify-self logs)."
+              note "- RESULT: PASS — produced by Coolify socratic-ci (ARBITER: alternate self-hosted lane failed, Linux lane passed)."
             else
-              note "- RESULT: PASS — produced by hosted ubuntu-latest."
+              note "- RESULT: PASS — produced by Coolify socratic-ci."
             fi
             exit 0
           fi

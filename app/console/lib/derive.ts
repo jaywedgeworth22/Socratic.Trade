@@ -17,6 +17,7 @@ import type {
   TradingPolicy
 } from "@/lib/types";
 import { resolveDailyOpeningCap, type DailyOpeningCapMode } from "@/lib/policy-caps";
+import { isRunAllowedNow, nextMarketOpenHint, previousTradingDayStart } from "@/lib/market-hours";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
 
@@ -28,7 +29,7 @@ export interface RealityInfo {
   /** The load-bearing word. */
   word: "NO ACCOUNT" | "PAPER" | "BROKERAGE";
   /** The load-bearing qualifier next to the word. */
-  phrase: "nothing connected yet" | "NOT real money" | "connected account";
+  phrase: "nothing connected yet" | "broker practice account" | "live orders";
   /** One-sentence honest clarification. */
   clarification: string;
   account?: ConnectedAccount;
@@ -45,16 +46,17 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
         mode,
         tone: "paper",
         word: "PAPER",
-        phrase: "NOT real money",
-        clarification: "Your broker's practice sandbox — real broker endpoints, zero real dollars."
+        phrase: "broker practice account",
+        clarification:
+          "Same broker-mediated trading path as live — practice dollars at the broker. Useful for reps and system training; live is the primary focus."
       };
     case "broker/live":
       return {
         mode,
         tone: "live",
         word: "BROKERAGE",
-        phrase: "connected account",
-        clarification: "Orders route through this connected broker account when approved or permitted by Autopilot."
+        phrase: "live orders",
+        clarification: "Orders route through this connected live broker account when approved or permitted by Autopilot."
       };
     default:
       return {
@@ -64,7 +66,7 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
         // Not "no account connected" — the banner renders "WORD · phrase", and
         // repeating the word's meaning made it a tautology.
         phrase: "nothing connected yet",
-        clarification: "Connect a broker account (paper or live) before the app can place orders."
+        clarification: "Connect a broker account before the app can place orders. Prefer live when ready; paper is for training reps."
       };
   }
 }
@@ -92,12 +94,45 @@ export interface StateInfo {
   /** One-line honest explanation. */
   detail: string;
   tone: "pos" | "warn" | "neg" | "muted";
+  /** Only meaningful when state === "active" — whether the market (per current session + the
+   *  account's extended-hours policy) is open right now. undefined for every other state (those
+   *  don't run on a market clock) AND for active policies whose `runDuringExtendedHours` wasn't
+   *  in the payload — without it the answer isn't knowable, so no paused/running split is made. A
+   *  configured-running account with the market closed is still `state: "active"` (nothing about
+   *  the underlying run-state changed) — only the label/detail/tone reflect the pause, so this is
+   *  purely a display fix, never a behavior change. */
+  marketOpen?: boolean;
 }
 
-export function deriveStateInfo(policy: Pick<TradingPolicy, "systemState" | "strategyAuthority">): StateInfo {
+/** `now` is injectable for tests; every real caller uses the default (current time). */
+export function deriveStateInfo(
+  policy: Pick<TradingPolicy, "systemState" | "strategyAuthority"> & { runDuringExtendedHours?: boolean },
+  now: Date = new Date()
+): StateInfo {
   const authority = policy.strategyAuthority === "decide" ? "Autopilot" : "Ask-first";
   switch (policy.systemState) {
-    case "active":
+    case "active": {
+      // undefined ≠ false: a payload that doesn't carry runDuringExtendedHours (older snapshot
+      // shapes, or a projection that forgot the field) cannot answer "is this account's market
+      // window open?" — an extended-hours account would be mislabeled "Paused · market closed"
+      // while genuinely running a pre/post session. In that case skip the split entirely and
+      // keep the plain "Running" claim. Only a real boolean opts into the market-aware display.
+      const marketOpen =
+        policy.runDuringExtendedHours === undefined ? undefined : isRunAllowedNow(policy.runDuringExtendedHours, now);
+      if (marketOpen === false) {
+        return {
+          state: "active",
+          label: "Paused · market closed",
+          detail:
+            `Scheduled runs pause while the market is closed and resume automatically once it reopens ` +
+            `(next open ${nextMarketOpenHint(now, policy.runDuringExtendedHours === true)}). ` +
+            (policy.strategyAuthority === "decide"
+              ? "Autonomous placement is paused too — nothing places itself outside market hours."
+              : "Every trade still waits for your approval once runs resume."),
+          tone: "muted",
+          marketOpen: false
+        };
+      }
       return {
         state: "active",
         label: `Running · ${authority}`,
@@ -105,8 +140,10 @@ export function deriveStateInfo(policy: Pick<TradingPolicy, "systemState" | "str
           policy.strategyAuthority === "decide"
             ? "The strategy runs on schedule and may place orders itself, inside your guardrails."
             : "The strategy runs on schedule. Every trade waits for your approval.",
-        tone: policy.strategyAuthority === "decide" ? "warn" : "pos"
+        tone: policy.strategyAuthority === "decide" ? "warn" : "pos",
+        ...(marketOpen === undefined ? {} : { marketOpen: true })
       };
+    }
     case "close_only":
       return {
         state: "close_only",
@@ -297,20 +334,25 @@ export interface DayPnl {
   pct: number;
   baselineAt: string;
   baselineEquity: number;
+  /** False when `baselineAt` is dated on (or after) the most recent prior trading session — the
+   *  normal case. True when the baseline predates that session, meaning one or more daily
+   *  snapshots are missing (the strategy didn't run/snapshot for a stretch) and this P&L is being
+   *  compared across a real gap (e.g. a July 7 baseline read on July 17), not just "yesterday". */
+  isStaleBaseline: boolean;
 }
 
 /** Change in equity vs the last persisted snapshot before today (local time)
  *  in the current mode's bucket. Null when there is no prior-day snapshot or
- *  no current equity — render "—", never invent. */
+ *  no current equity — render "—", never invent. `now` is injectable for tests. */
 export function deriveDayPnl(
   performance: PerformanceSummary | undefined,
   mode: ExecutionMode | undefined,
-  currentEquity: number | undefined
+  currentEquity: number | undefined,
+  now: Date = new Date()
 ): DayPnl | null {
   if (!performance || typeof currentEquity !== "number" || !Number.isFinite(currentEquity)) return null;
   const curve = mode === "broker/live" ? performance.liveEquityCurve : performance.paperEquityCurve;
   if (!curve || curve.length === 0) return null;
-  const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   let baseline: { timestamp: string; equity: number } | undefined;
   for (const point of curve) {
@@ -319,7 +361,17 @@ export function deriveDayPnl(
   }
   if (!baseline || !Number.isFinite(baseline.equity) || baseline.equity === 0) return null;
   const pnl = currentEquity - baseline.equity;
-  return { pnl, pct: (pnl / baseline.equity) * 100, baselineAt: baseline.timestamp, baselineEquity: baseline.equity };
+  const baselineDay = new Date(baseline.timestamp);
+  const baselineDayStart = new Date(baselineDay.getFullYear(), baselineDay.getMonth(), baselineDay.getDate()).getTime();
+  const priorSessionStart = previousTradingDayStart(now).getTime();
+  const isStaleBaseline = Number.isFinite(baselineDayStart) && baselineDayStart < priorSessionStart;
+  return {
+    pnl,
+    pct: (pnl / baseline.equity) * 100,
+    baselineAt: baseline.timestamp,
+    baselineEquity: baseline.equity,
+    isStaleBaseline
+  };
 }
 
 // ── Needs-attention inbox ────────────────────────────────────────────────────
@@ -374,8 +426,31 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
     items.push({
       id: "llm",
       tone: "warn",
-      title: "No LLM key configured",
-      detail: "Runs that generate proposals need one. Market data, positions, and guardrails still work without it."
+      title: "Setup: add an LLM key",
+      detail:
+        "Strategy runs need OpenRouter (or another configured LLM key) so Green/Red teams can propose and debate. Market data, positions, and guardrails still work without it.",
+      href: "/console/connections#api-keys"
+    });
+  }
+  // First-run / setup checklist (robust for many users; still useful as sole-operator checklist).
+  if (!activeConnectedAccount(snapshot) && snapshot.connectedAccounts.length === 0) {
+    items.push({
+      id: "setup-broker",
+      tone: "accent",
+      title: "Setup: connect a broker account",
+      detail:
+        "Connect Alpaca or Robinhood (live preferred when ready; paper is fine for training reps). The app cannot place orders without a connected account.",
+      href: "/console/connections"
+    });
+  }
+  const greenModel = snapshot.policy.llmModel?.trim();
+  if (!greenModel && snapshot.llmConfigured !== false) {
+    items.push({
+      id: "setup-models",
+      tone: "warn",
+      title: "Setup: choose Green team model",
+      detail: "Strategy → Models — pick the model that writes trade ideas. Red team is optional; blank means you are the sole adversary.",
+      href: "/console/strategy"
     });
   }
   if (snapshot.accountReadiness && !snapshot.accountReadiness.ok) {
@@ -383,7 +458,8 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       id: "readiness",
       tone: "warn",
       title: "Account not ready to run",
-      detail: snapshot.accountReadiness.detail
+      detail: snapshot.accountReadiness.detail,
+      href: "/console/connections"
     });
   }
   const failed = (snapshot.recentProposals ?? []).filter((p) => p.status === "placing_failed");

@@ -323,6 +323,82 @@ export async function recordClosedLotExperience(
   }
 }
 
+/**
+ * Backfill/re-embed support (corpus-reembed, 2026-07-18): reconstruct EVERY historical closed-lot
+ * experience document for one account, not just the ones matching a single just-closed fill.
+ * Mirrors `recordClosedLotExperience`'s per-lot construction (entry-fill/proposal resolution,
+ * factor breakdown, risk-exit classification) but additionally resolves the EXIT fill/proposal per
+ * lot — `recordClosedLotExperience` gets those directly from its caller's `closingFill`/
+ * `closingProposal` inputs, which don't exist for a full historical replay.
+ *
+ * Deliberately does NOT touch `recordClosedLotExperience` or `buildClosedLotExperienceDocument`:
+ * this is purely additive so the live write-hook (money-path-adjacent — feeds the Bull/Bear
+ * decision prompt) keeps its exact existing behavior. Read-only: never writes to the vector store
+ * itself. Callers decide how/where to embed the returned documents.
+ */
+export async function listClosedLotExperienceDocumentsForAccount(input: {
+  userId: string;
+  connectedAccountId?: string;
+  accountEnvironment: FillSource;
+  accountNumber: string;
+}): Promise<ContextDocument[]> {
+  const [{ listFillEvents }, { calculatePnl }] = await Promise.all([
+    import("./db"),
+    import("./performance")
+  ]);
+  const fills = listFillEvents(input.accountNumber, input.accountEnvironment, 5000, input.userId);
+  const { closedLots } = calculatePnl(fills);
+
+  return closedLots
+    .filter((lot): lot is typeof lot & { exitAt: string } => Boolean(lot.exitAt))
+    .map((lot) => {
+      const symbol = normalizeSymbol(lot.symbol ?? "");
+      const wantEntrySide = lot.side === "short" ? "short" : "buy";
+      const wantExitSide = lot.side === "short" ? "cover" : "sell";
+      const entryFill = fills.find(
+        (fill) =>
+          normalizeSymbol(fill.symbol) === symbol && fill.side === wantEntrySide && fill.filledAt === lot.entryAt
+      );
+      const exitFill = fills.find(
+        (fill) =>
+          normalizeSymbol(fill.symbol) === symbol && fill.side === wantExitSide && fill.filledAt === lot.exitAt
+      );
+      const entryProposal = proposalFromFillRaw(entryFill);
+      const exitProposal = proposalFromFillRaw(exitFill);
+      const riskExit = Boolean(
+        exitProposal?.tradeThesisTag && RISK_EXIT_THESIS_TAGS.has(exitProposal.tradeThesisTag)
+      );
+      return buildClosedLotExperienceDocument({
+        userId: input.userId,
+        connectedAccountId: input.connectedAccountId,
+        accountEnvironment: input.accountEnvironment,
+        accountNumber: input.accountNumber,
+        symbol,
+        side: lot.side ?? "long",
+        returnPct: lot.returnPct,
+        pnl: lot.pnl,
+        entryAt: lot.entryAt,
+        exitAt: lot.exitAt,
+        entryRunId: lot.entryRunId,
+        exitRunId: exitFill?.runId,
+        entryProposalId: entryFill?.proposalId,
+        exitProposalId: exitFill?.proposalId,
+        thesisTag: lot.thesisTag,
+        entryMarketRegime: lot.regime,
+        sector: lot.sector,
+        confidence: lot.confidence,
+        factorBreakdown: factorBreakdownFromFillRaw(entryFill),
+        entryBreadthPct: breadthFromFillRaw(entryFill),
+        entryRationale: entryProposal?.rationale,
+        exitThesisTag: exitProposal?.tradeThesisTag,
+        exitRationale: exitProposal?.rationale,
+        riskExit,
+        mae: lot.mae,
+        mfe: lot.mfe
+      });
+    });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Decision-time retrieval (read hook, called from the strategy run loop)
 // ─────────────────────────────────────────────────────────────────────────────
