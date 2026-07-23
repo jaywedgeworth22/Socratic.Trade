@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import { audit } from "@/lib/db";
+import { PayloadTooLargeError, readBodyWithLimit, TRADINGVIEW_WEBHOOK_MAX_BYTES } from "@/lib/bounded-body";
 import {
   recordTradingViewSignal,
   technicalEnabled,
   verifyWebhookSecret,
   type TradingViewWebhookPayload
 } from "@/lib/web-sources/technical";
+// Relative (not "@/lib/...") import: vitest's "@/" alias only resolves specifiers that route tests
+// mock; an unmocked "@/lib/*" import fails to load under vitest. A relative path resolves under both
+// vitest and the Next build. submitTriggerEvent must live outside this route module because a
+// Next.js route.ts may only export route handlers.
+import { submitTriggerEvent } from "../../../../src/lib/tradingview-trigger";
 
 export const dynamic = "force-dynamic";
 
@@ -42,12 +48,18 @@ export async function POST(req: Request) {
   }
 
   // Pine `alert()` sends the message as the raw request body; content-type is not
-  // guaranteed to be application/json, so read text and parse defensively.
+  // guaranteed to be application/json, so read text and parse defensively. This route had no
+  // byte cap at all (unlike the congress webhook, which at least checked a declared
+  // content-length); readBodyWithLimit enforces one independent of any header, streaming-abort
+  // style, since a single alert payload is always tiny.
   let payload: TradingViewWebhookPayload;
   try {
-    const text = await req.text();
+    const text = await readBodyWithLimit(req, TRADINGVIEW_WEBHOOK_MAX_BYTES);
     payload = JSON.parse(text) as TradingViewWebhookPayload;
-  } catch {
+  } catch (err) {
+    if (err instanceof PayloadTooLargeError) {
+      return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
+    }
     return NextResponse.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
   }
 
@@ -61,6 +73,19 @@ export async function POST(req: Request) {
     if (!result.ok) {
       return NextResponse.json({ ok: false, error: result.warning ?? "rejected" }, { status: 422 });
     }
+
+    // Submit a material event to the trigger engine so a fresh TV alert can kick off
+    // a strategy run — mirrors the sec8k.ts pattern (dynamic import to avoid circular
+    // deps; defensive catch so the signal cache write is never rolled back).
+    // No-op unless TRIGGER_ENGINE=on (the engine's own gate handles it).
+    if (!result.deduped && result.symbol) {
+      const symbol = result.symbol;
+      // sourceId is stable per unique signal instance: matches the dedupeKey written
+      // by recordTradingViewSignal (symbol|signals|asOf|direction).
+      const sourceId = `tradingview:${symbol}:${payload.signal ?? ""}:${payload.bar_time ?? ""}`;
+      void submitTriggerEvent(symbol, sourceId);
+    }
+
     return NextResponse.json({ ok: true, symbol: result.symbol, deduped: result.deduped ?? false });
   } catch (error) {
     audit("tradingview_webhook_error", { error: error instanceof Error ? error.message : "unknown" });
