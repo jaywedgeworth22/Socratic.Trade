@@ -140,6 +140,28 @@ describe("applyEnrichment", () => {
     expect(enriched.senateTrades).toBe(2); // not clobbered by undefined
     expect(enriched.peRatio).toBe(30);
   });
+
+  it("folds the new data-breadth fields (earnings, institution ownership, options IV) onto the quote", () => {
+    const extra: SymbolEnrichment = {
+      daysToEarnings: 8,
+      institutionOwnershipPct: 61.5,
+      nearTheMoneyIv: 34,
+      putCallRatio: 0.9,
+      sources: {
+        daysToEarnings: "yahoo-finance",
+        institutionOwnershipPct: "yahoo-finance",
+        nearTheMoneyIv: "robinhood-options",
+        putCallRatio: "robinhood-options"
+      }
+    };
+    const enriched = applyEnrichment(quote({ symbol: "NVDA" }), extra);
+    expect(enriched.daysToEarnings).toBe(8);
+    expect(enriched.institutionOwnershipPct).toBe(61.5);
+    expect(enriched.nearTheMoneyIv).toBe(34);
+    expect(enriched.putCallRatio).toBe(0.9);
+    expect(enriched.sources?.daysToEarnings).toBe("yahoo-finance");
+    expect(enriched.sources?.nearTheMoneyIv).toBe("robinhood-options");
+  });
 });
 
 describe("mergeQuoteData", () => {
@@ -184,6 +206,151 @@ describe("mergeQuoteData", () => {
     });
 
     expect(merged.source).toBe("nasdaq-delayed-screener+alpaca-quotes");
+  });
+
+  it("refreshes synthetic bid/ask provenance when a real broker spread is merged in", () => {
+    const synthetic = () =>
+      quote({
+        symbol: "AAPL",
+        bid: 99.9,
+        ask: 100.1,
+        sources: { price: "yahoo-finance", bid: "yahoo-finance-synthetic", ask: "yahoo-finance-synthetic" }
+      });
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [synthetic()],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: synthetic() },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 101, bid: 100.9, ask: 101.1, provider: "alpaca", asOf: "2026-06-19T14:00:00.000Z" }
+    });
+
+    // A real broker spread replaces the synthetic values AND their provenance — on both the ranked
+    // candidate and the quotesBySymbol entry the marketable-limit calc reads — so a real ask is no
+    // longer mistaken for synthetic and does not fall back to refPrice.
+    expect(merged.topCandidates[0]!.ask).toBe(101.1);
+    expect(merged.topCandidates[0]!.sources?.ask).toBe("alpaca");
+    expect(merged.topCandidates[0]!.sources?.bid).toBe("alpaca");
+    expect(merged.quotesBySymbol.AAPL!.sources?.ask).toBe("alpaca");
+    expect(merged.quotesBySymbol.AAPL!.sources?.bid).toBe("alpaca");
+  });
+
+  it("keeps synthetic provenance when a Test-mode synthetic Yahoo batch spread is merged", () => {
+    const withRealScreenerSource = () => quote({ symbol: "AAPL", sources: { price: "yahoo-finance" } });
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [withRealScreenerSource()],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: withRealScreenerSource() },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    // TestBrokerGateway returns a Yahoo BATCH quote whose bid/ask were synthesized from price.
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 100, bid: 99.9, ask: 100.1, provider: "yahoo-finance", syntheticSpread: true }
+    });
+
+    // The synthetic spread must NOT be relabeled as a real quoted spread — otherwise hasRealAsk /
+    // marketable-limit pricing would treat a price-derived ask as real in the default Test mode.
+    expect(merged.topCandidates[0]!.sources?.ask).toBe("yahoo-finance-synthetic");
+    expect(merged.topCandidates[0]!.sources?.bid).toBe("yahoo-finance-synthetic");
+    expect(merged.quotesBySymbol.AAPL!.sources?.ask).toBe("yahoo-finance-synthetic");
+    expect(merged.quotesBySymbol.AAPL!.sources?.bid).toBe("yahoo-finance-synthetic");
+  });
+
+  it("preserves the REAL side of a one-sided quote (real bid, synthetic ask)", () => {
+    const withRealScreenerSource = () => quote({ symbol: "AAPL", sources: { price: "yahoo-finance" } });
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [withRealScreenerSource()],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: withRealScreenerSource() },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    // Yahoo reported a real bid but no ask, so only the ask was derived from price.
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 100, bid: 99.9, ask: 100.1, provider: "yahoo-finance", syntheticAsk: true }
+    });
+
+    // The real bid keeps the actual provider; only the synthetic ask is tagged synthetic.
+    expect(merged.topCandidates[0]!.sources?.bid).toBe("yahoo-finance");
+    expect(merged.topCandidates[0]!.sources?.ask).toBe("yahoo-finance-synthetic");
+    expect(merged.quotesBySymbol.AAPL!.sources?.bid).toBe("yahoo-finance");
+    expect(merged.quotesBySymbol.AAPL!.sources?.ask).toBe("yahoo-finance-synthetic");
+  });
+
+  it("attributes a merged broker price to the broker provider (both tiers)", () => {
+    const screenerPriced = () => quote({ symbol: "AAPL", sources: { price: "yahoo-finance" } });
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [screenerPriced()],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: screenerPriced() },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    // A live broker quote replaces `price`; sources.price must follow the value to the broker so the
+    // drilldown/table price tooltip attributes the shown number correctly (it previously kept the
+    // stale screener source).
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 101, bid: 100.9, ask: 101.1, provider: "alpaca", asOf: "2026-06-19T14:00:00.000Z" }
+    });
+
+    expect(merged.topCandidates[0]!.price).toBe(101);
+    expect(merged.topCandidates[0]!.sources?.price).toBe("alpaca");
+    expect(merged.quotesBySymbol.AAPL!.sources?.price).toBe("alpaca");
+  });
+
+  it("attributes the real price provider even when the merged SPREAD is synthetic", () => {
+    const screenerPriced = () => quote({ symbol: "AAPL", sources: { price: "nasdaq-delayed-screener" } });
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [screenerPriced()],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: screenerPriced() },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    // Yahoo batch quote: a REAL last price with a price-DERIVED (synthetic) spread. The synthetic
+    // flags describe the derived bid/ask only — the price itself is real, so it takes the actual
+    // provider while bid/ask stay tagged synthetic.
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 100, bid: 99.9, ask: 100.1, provider: "yahoo-finance", syntheticSpread: true }
+    });
+
+    expect(merged.topCandidates[0]!.sources?.price).toBe("yahoo-finance");
+    expect(merged.topCandidates[0]!.sources?.bid).toBe("yahoo-finance-synthetic");
+    expect(merged.topCandidates[0]!.sources?.ask).toBe("yahoo-finance-synthetic");
+    expect(merged.quotesBySymbol.AAPL!.sources?.price).toBe("yahoo-finance");
   });
 });
 

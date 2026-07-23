@@ -592,16 +592,19 @@ describe("maxDrawdownOfCurve — P2-5", () => {
 });
 
 // ── P1-4a: HARD look-ahead invariant (CI-failing on leakage) ─────────────────────────────────────
+// 2026-01-05 is a Monday with no US market holiday before 2026-01-12, so 5 TRADING days lands on
+// Mon 2026-01-12 (Tue/Wed/Thu/Fri/Mon) — not the calendar-day "Sat 2026-01-10" this test asserted
+// before the trading-day-horizon fix (see docs/rollouts/2026-07-04-w1-learning-loops.md).
 describe("isPointInTimeForwardExit — P1-4a leakage certification", () => {
   it("a same-day exit is REJECTED as look-ahead", () => {
     expect(isPointInTimeForwardExit("2026-01-05", 5, "2026-01-05")).toBe(false);
   });
   it("an exit before the horizon target is REJECTED", () => {
-    // horizon 5 → target 2026-01-10; an exit at 2026-01-08 is too early.
+    // horizon 5 trading days → target 2026-01-12; an exit at 2026-01-08 is too early.
     expect(isPointInTimeForwardExit("2026-01-05", 5, "2026-01-08")).toBe(false);
   });
   it("an exit at/after the horizon target AND strictly after the snapshot is ACCEPTED", () => {
-    expect(isPointInTimeForwardExit("2026-01-05", 5, "2026-01-10")).toBe(true);
     expect(isPointInTimeForwardExit("2026-01-05", 5, "2026-01-12")).toBe(true);
+    expect(isPointInTimeForwardExit("2026-01-05", 5, "2026-01-13")).toBe(true);
   });
 });

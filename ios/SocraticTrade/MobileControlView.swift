@@ -1,0 +1,75 @@
+import SwiftUI
+
+struct MobileControlView: View {
+    @EnvironmentObject private var store: MobileStore
+    @State private var selectedTab: AppTab = .home
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                HomeView()
+            }
+            .tabItem { AppTab.home.label }
+            .tag(AppTab.home)
+
+            NavigationStack {
+                ProposalsView()
+            }
+            .tabItem { AppTab.proposals.label }
+            .tag(AppTab.proposals)
+            .badge(store.snapshot?.pendingProposals.count ?? 0)
+
+            NavigationStack {
+                MarketsView()
+            }
+            .tabItem { AppTab.markets.label }
+            .tag(AppTab.markets)
+
+            NavigationStack {
+                ActivityView()
+            }
+            .tabItem { AppTab.activity.label }
+            .tag(AppTab.activity)
+
+            NavigationStack {
+                CoachView()
+            }
+            .tabItem { AppTab.coach.label }
+            .tag(AppTab.coach)
+        }
+        .tint(AppPalette.accent)
+    }
+}
+
+private enum AppTab: String, CaseIterable, Identifiable {
+    case home
+    case proposals
+    case markets
+    case activity
+    case coach
+
+    var id: String { rawValue }
+
+    @ViewBuilder
+    var label: some View {
+        switch self {
+        case .home:
+            Label("Home", systemImage: "house.fill")
+        case .proposals:
+            Label("Proposals", systemImage: "checklist")
+        case .markets:
+            Label("Markets", systemImage: "chart.line.uptrend.xyaxis")
+        case .activity:
+            Label("Activity", systemImage: "clock.arrow.circlepath")
+        case .coach:
+            Label("Coach", systemImage: "bubble.left.and.text.bubble.right.fill")
+        }
+    }
+}
+
+#if DEBUG
+#Preview("Five-tab shell") {
+    MobileControlView()
+        .environmentObject(MobileStore.preview)
+}
+#endif

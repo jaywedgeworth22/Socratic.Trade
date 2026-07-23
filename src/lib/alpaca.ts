@@ -16,11 +16,12 @@ import type {
   BrokerGateway,
   EquityOrderInput
 } from "./types";
+import { OrderValidationError } from "./types";
 import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
-import { toBrokerSide } from "./broker-side";
-import { getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
+import { toBrokerSide, isRejectedOrCanceledState } from "./broker-side";
+import { audit, getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
 import { logApiHealth } from "./db-health";
-import { recordProviderCall } from "./usage-monitor-push";
+import { recordProviderCall, pushBrokerBalance } from "./usage-monitor-push";
 import { fetchDailyOHLC } from "./history";
 
 /**
@@ -116,7 +117,46 @@ export function estimateReviewNotional(
   };
 }
 
+export interface AlpacaTimeInForceResolution {
+  timeInForce: "day" | "gtc";
+  /** True only when the CALLER asked for "gtc" and this resolved to "day" because of it — the
+   *  honest signal for an audit receipt. A caller that already asked for "gfd" isn't "normalized". */
+  normalized: boolean;
+  reason?: "fractional_quantity" | "notional";
+}
+
+/**
+ * Alpaca requires time_in_force="day" for any order carrying a fractional share quantity or a
+ * notional (dollar) amount — fractional-share trading is day-only regardless of order type
+ * (docs.alpaca.markets); a "gtc" on either is a guaranteed 422. Bracket orders already require
+ * "day" for an unrelated reason (native OCO leg support). Resolves against the quantity/notional
+ * actually being submitted (the caller must resolve any bracket-floor qty first), never the raw
+ * proposal, so this can't drift from what really gets sent to the broker. Exported (and called from
+ * a single place per order path below) so REST, MCP, and the native-trailing path can't disagree.
+ */
+export function resolveAlpacaTimeInForce(input: {
+  requestedTimeInForce: TimeInForce;
+  isBracket: boolean;
+  quantity?: number;
+  notional?: number;
+}): AlpacaTimeInForceResolution {
+  const isFractionalQty = input.quantity != null && !Number.isInteger(input.quantity);
+  const isNotional = input.notional != null && input.notional > 0;
+  const requiresDay = input.isBracket || isFractionalQty || isNotional;
+  const timeInForce: "day" | "gtc" = requiresDay || input.requestedTimeInForce === "gfd" ? "day" : "gtc";
+  const normalized = input.requestedTimeInForce === "gtc" && (isFractionalQty || isNotional);
+  return {
+    timeInForce,
+    normalized,
+    reason: normalized ? (isFractionalQty ? "fractional_quantity" : "notional") : undefined
+  };
+}
+
 class AlpacaBrokerGateway implements BrokerGateway {
+  // getEquityOrders pages status:"all" (see below), so the returned list authoritatively includes
+  // recently-terminal orders (filled/canceled/rejected/expired). This lets reconcilePlacementError
+  // conclude not_placed from an absent order for Alpaca (safe: absence really means never placed).
+  readonly ordersListIncludesTerminal = true;
   private alpaca: Alpaca;
   private label: string;
   private isMcp: boolean;
@@ -152,12 +192,12 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
     if (accountKeys && !this.isMcp && !keyId) {
       throw new Error(
-        `Alpaca credentials are missing for ${this.label}. Open Settings -> Accounts and re-save the API key.`
+        `Alpaca credentials are missing for ${this.label}. Open Connections and re-save the API key.`
       );
     }
     if (accountKeys && this.isMcp && !this.mcpUrl && !keyId) {
       throw new Error(
-        `Alpaca MCP credentials are missing for ${this.label}. Open Settings -> Accounts and re-save the MCP endpoint or API key.`
+        `Alpaca MCP credentials are missing for ${this.label}. Open Connections and re-save the MCP endpoint or API key.`
       );
     }
 
@@ -307,12 +347,12 @@ class AlpacaBrokerGateway implements BrokerGateway {
       // account these keys belong to. Only flag a GENUINE cross-account mismatch (both numbers present
       // and actually different, ignoring case/whitespace) — a blank configured number or a mere
       // formatting difference must never block a run. The message is actionable so the operator can
-      // correct the stored number in Settings → Accounts.
+      // correct the stored number in Connections.
       const liveNum = String(account.account_number ?? "").trim();
       const wantNum = String(accountNumber ?? "").trim();
       if (wantNum && liveNum && liveNum.toLowerCase() !== wantNum.toLowerCase()) {
         throw new Error(
-          `Account Mismatch: the connected Alpaca credentials are for account ${liveNum}, but this profile is configured for ${wantNum}. Update the account number in Settings → Accounts.`
+          `Account Mismatch: the connected Alpaca credentials are for account ${liveNum}, but this profile is configured for ${wantNum}. Update the account number in Connections.`
         );
       }
       return {
@@ -324,8 +364,9 @@ class AlpacaBrokerGateway implements BrokerGateway {
         cash: number(account.cash)
       };
     }).then((res: any) => {
+      let result: Portfolio;
       if (res && res.account_number) {
-        return {
+        result = {
           accountNumber,
           totalMarketValue: number(res.portfolio_value),
           buyingPower: number(res.buying_power),
@@ -333,8 +374,20 @@ class AlpacaBrokerGateway implements BrokerGateway {
           optionMarketValue: 0,
           cash: number(res.cash)
         };
+      } else {
+        result = res;
       }
-      return res;
+      if (result && result.accountNumber) {
+        pushBrokerBalance({
+          provider: "alpaca",
+          userId: this.userId,
+          accountNumber: result.accountNumber,
+          cash: result.cash,
+          buyingPower: result.buyingPower,
+          equity: result.totalMarketValue
+        });
+      }
+      return result;
     });
   }
 
@@ -453,6 +506,46 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {
     const isBracket = !!(input.bracketTakeProfit || input.bracketStopLoss);
+    const isTrailing = input.trailPercent != null && input.trailPercent > 0;
+
+    // Native trailing stop: Alpaca's `trailing_stop` order type with `trail_percent` — the broker
+    // trails the high-water mark itself. Mutually exclusive with brackets (both would claim the
+    // same shares), quantity-based only, and Alpaca rejects limit/stop price params on it, so any
+    // caller-supplied stopPrice (a ratchet anchor meant for brokers without native trailing) is
+    // deliberately dropped.
+    if (isTrailing) {
+      if (isBracket) {
+        throw new OrderValidationError("Alpaca trailing stop cannot carry bracket legs — place one or the other.");
+      }
+      if (!input.quantity || !(input.quantity > 0)) {
+        throw new OrderValidationError("Alpaca trailing stop requires a positive share quantity (no notional trailing stops).");
+      }
+      const trailingTif = resolveAlpacaTimeInForce({ requestedTimeInForce: input.timeInForce, isBracket: false, quantity: input.quantity });
+      if (trailingTif.normalized) {
+        audit("alpaca_tif_normalized_to_day", { symbol: input.symbol, side: input.side, requestedTimeInForce: input.timeInForce, reason: trailingTif.reason, quantity: input.quantity }, this.userId);
+      }
+      try {
+        const raw = await this.trackHealth(() => this.alpaca.createOrder({
+          symbol: toAlpacaSymbol(input.symbol),
+          side: toBrokerSide(input.side),
+          type: "trailing_stop",
+          trail_percent: String(input.trailPercent),
+          qty: input.quantity,
+          time_in_force: trailingTif.timeInForce,
+          client_order_id: input.refId
+        }));
+        return {
+          orderId: raw.id,
+          refId: input.refId,
+          state: raw.status,
+          filledQuantity: optionalNumber(raw.filled_qty),
+          averagePrice: optionalNumber(raw.filled_avg_price),
+          raw
+        };
+      } catch (error: unknown) {
+        throw new Error(`Alpaca trailing stop order failed: ${formatAlpacaOrderError(error)}`);
+      }
+    }
 
     // Alpaca does not support notional (dollar) bracket orders — only qty-based.
     // If a bracketed dollar order reaches this gateway, it must carry a real entry
@@ -462,12 +555,39 @@ class AlpacaBrokerGateway implements BrokerGateway {
     if (isBracket && input.dollarAmount && !input.quantity) {
       const estPrice = input.limitPrice ?? input.referencePrice;
       if (estPrice == null || !(estPrice > 0)) {
-        throw new Error("Alpaca bracket dollar orders require a positive limitPrice or referencePrice.");
+        throw new OrderValidationError("Alpaca bracket dollar orders require a positive limitPrice or referencePrice.");
       }
       bracketQty = Math.floor(input.dollarAmount / estPrice);
       if (bracketQty < 1) {
-        throw new Error("Alpaca bracket dollar order is too small for a whole-share bracket at the reference price.");
+        throw new OrderValidationError("Alpaca bracket dollar order is too small for a whole-share bracket at the reference price.");
       }
+    }
+
+    // The ACTUAL quantity/notional this order will submit — resolved once (post bracket-floor
+    // resolution above) so the REST and MCP paths below, and the tif normalization right after,
+    // can't drift from each other or from what really gets sent.
+    const effectiveQty = bracketQty ?? (input.quantity || undefined);
+    const effectiveNotional = effectiveQty == null && input.dollarAmount && !isBracket ? input.dollarAmount : undefined;
+    // Bracket orders require time_in_force="day" (native OCO leg support); independently, Alpaca
+    // rejects "gtc" on any fractional-share-quantity or notional (dollar) order — fractional trading
+    // is day-only (docs.alpaca.markets). A caller-requested "gtc" (an LLM proposal, or any
+    // dollar-routed entry) that would otherwise 422 gets normalized instead of reaching the broker;
+    // the original intent is preserved via an audit receipt (Codex review, item 10).
+    const tif = resolveAlpacaTimeInForce({
+      requestedTimeInForce: input.timeInForce,
+      isBracket,
+      quantity: effectiveQty,
+      notional: effectiveNotional
+    });
+    if (tif.normalized) {
+      audit("alpaca_tif_normalized_to_day", {
+        symbol: input.symbol,
+        side: input.side,
+        requestedTimeInForce: input.timeInForce,
+        reason: tif.reason,
+        quantity: effectiveQty,
+        dollarAmount: effectiveNotional
+      }, this.userId);
     }
 
     const fallbackFn = async () => {
@@ -476,21 +596,24 @@ class AlpacaBrokerGateway implements BrokerGateway {
           symbol: toAlpacaSymbol(input.symbol),
           side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
           type: input.type,
-          // Bracket orders require time_in_force="day" — Alpaca rejects "gtc" entries with brackets.
-          time_in_force: isBracket ? "day" : (input.timeInForce === "gfd" ? "day" : "gtc"),
+          time_in_force: tif.timeInForce,
           client_order_id: input.refId
         };
 
-        if (bracketQty != null) {
-          orderOptions.qty = bracketQty;
-        } else if (input.quantity) {
-          orderOptions.qty = input.quantity;
-        } else if (input.dollarAmount && !isBracket) {
-          orderOptions.notional = input.dollarAmount;
+        if (effectiveQty != null) {
+          orderOptions.qty = effectiveQty;
+        } else if (effectiveNotional != null) {
+          orderOptions.notional = effectiveNotional;
         }
 
         if (input.limitPrice) orderOptions.limit_price = input.limitPrice;
-        if (input.stopPrice) orderOptions.stop_price = input.stopPrice;
+        // stop_price is only legal on stop-family order types — Alpaca rejects a limit order that
+        // carries one with HTTP 422 40010001 "limit orders require no stop price" (proposals may
+        // carry a protective stopPrice idea; that intent rides the bracket stop_loss /
+        // protective-stop systems, never this field).
+        if (input.stopPrice && (input.type === "stop_market" || input.type === "stop_limit")) {
+          orderOptions.stop_price = input.stopPrice;
+        }
         if (input.marketHours === "extended_hours") orderOptions.extended_hours = true;
 
         if (isBracket) {
@@ -534,17 +657,19 @@ class AlpacaBrokerGateway implements BrokerGateway {
       symbol: toAlpacaSymbol(input.symbol),
       side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
       type: input.type,
-      // Bracket orders require time_in_force="day" — Alpaca rejects "gtc" entries with brackets.
-      time_in_force: isBracket ? "day" : (input.timeInForce === "gfd" ? "day" : "gtc"),
+      time_in_force: tif.timeInForce,
       client_order_id: input.refId
     };
 
-    if (bracketQty != null) orderArgs.qty = String(bracketQty);
-    else if (input.quantity) orderArgs.qty = String(input.quantity);
-    else if (input.dollarAmount && !isBracket) orderArgs.notional = String(input.dollarAmount);
+    if (effectiveQty != null) orderArgs.qty = String(effectiveQty);
+    else if (effectiveNotional != null) orderArgs.notional = String(effectiveNotional);
 
     if (input.limitPrice) orderArgs.limit_price = String(input.limitPrice);
-    if (input.stopPrice) orderArgs.stop_price = String(input.stopPrice);
+    // Same constraint as the REST path: stop_price only on stop-family types (Alpaca 422s a
+    // limit order carrying one).
+    if (input.stopPrice && (input.type === "stop_market" || input.type === "stop_limit")) {
+      orderArgs.stop_price = String(input.stopPrice);
+    }
 
     if (isBracket) {
       orderArgs.order_class = "bracket";
@@ -584,6 +709,48 @@ class AlpacaBrokerGateway implements BrokerGateway {
       }
       return res;
     });
+  }
+
+  // Identifies and cancels a bracket's still-resting sibling legs given the ORIGINAL entry order's
+  // own ID. Alpaca's `GET /v2/orders/{id}?nested=true` returns the entry order with a `legs` array
+  // — each leg is ALSO independently listed in the plain (non-nested) order list with its own real
+  // order ID, and Alpaca cascades a cancel across the whole OCO group on its own once any one leg is
+  // cancelled/filled. This always goes through native REST (this.alpaca), never the MCP tool
+  // surface — this repo's alpaca-mcp integration has no documented equivalent for a nested-legs
+  // fetch, and `this.alpaca` is constructed with the same REST-capable keys regardless of isMcp
+  // whenever an underlying API key is configured (see the constructor) — so this degrades to a
+  // best-effort no-op only on an MCP-ONLY account with no REST-capable key at all.
+  async cancelBracketSiblingLegs(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }> {
+    let raw: any;
+    try {
+      raw = await this.trackHealth(() => this.alpaca.sendRequest(`/orders/${originalOrderId}`, { nested: true }, null, "GET"));
+    } catch (error) {
+      // A 404 means the entry order is genuinely gone (expired/purged) — nothing to tear down, safe
+      // to resolve as done. Any OTHER failure (network, rate-limit, 5xx) is transient and must
+      // propagate so reconcilePendingBracketTeardowns' bounded-retry sweep actually retries it,
+      // instead of the row being silently and permanently dropped on the first hiccup (adversarial
+      // review of PR #1661, 2026-07-16).
+      if ((error as { response?: { status?: number } })?.response?.status === 404) {
+        return { cancelledOrderIds: [] };
+      }
+      throw error;
+    }
+    const legs = Array.isArray(raw?.legs) ? raw.legs : [];
+    const cancelledOrderIds: string[] = [];
+    for (const leg of legs) {
+      const legId = leg?.id != null ? String(leg.id) : undefined;
+      if (!legId) continue;
+      const legState = String(leg?.status ?? "");
+      if (isRejectedOrCanceledState(legState) || legState.toLowerCase() === "filled") continue;
+      try {
+        await this.trackHealth(() => this.alpaca.cancelOrder(legId));
+        cancelledOrderIds.push(legId);
+      } catch {
+        // best-effort — a leg that filled/cancelled between the fetch above and this cancel is fine
+        // to skip; Alpaca's own OCO cascade may have already resolved it
+      }
+    }
+    return { cancelledOrderIds };
   }
 }
 
@@ -628,9 +795,13 @@ export function mapAlpacaOrder(o: Record<string, unknown>): EquityOrder {
     dollarAmount: optionalNumber(o.notional),
     filledQuantity: optionalNumber(o.filled_qty),
     averagePrice: optionalNumber(o.filled_avg_price),
+    limitPrice: optionalNumber(o.limit_price),
+    stopPrice: optionalNumber(o.stop_price),
+    timeInForce: o.time_in_force ? String(o.time_in_force) : undefined,
     createdAt: String(o.created_at),
     updatedAt: o.updated_at ? String(o.updated_at) : undefined,
     clientOrderId: o.client_order_id ? String(o.client_order_id) : undefined,
+    orderClass: o.order_class ? String(o.order_class) : undefined,
     placedAgent: "alpaca"
   };
 }

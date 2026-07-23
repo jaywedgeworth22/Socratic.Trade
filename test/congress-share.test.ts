@@ -4,15 +4,26 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OHLCBar } from "../src/lib/indicators";
 
-// Mock the history cascade so tests never hit the network. Keep toBusinessDay (and everything else)
-// real; only fetchDailyOHLC is replaced.
-vi.mock("../src/lib/history", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/lib/history")>();
-  return { ...actual, fetchDailyOHLC: vi.fn() };
+// Mock the history cascade without importOriginal(). history.ts imports the db barrel, whose
+// outcome-horizon re-export imports history.ts again; importing the original inside this factory can
+// therefore cache a second, real fetchDailyOHLC binding and leak network calls into this suite.
+vi.mock("../src/lib/history", () => {
+  const toBusinessDay = (time: number | string | undefined): string | undefined => {
+    if (typeof time === "number" && Number.isFinite(time)) {
+      const ms = time > 1e12 ? time : time * 1000;
+      return new Date(ms).toISOString().slice(0, 10);
+    }
+    if (typeof time === "string") {
+      if (/^\d{4}-\d{2}-\d{2}/.test(time)) return time.slice(0, 10);
+      const parsed = Date.parse(time);
+      if (Number.isFinite(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+    }
+    return undefined;
+  };
+  return { fetchDailyOHLC: vi.fn(), toBusinessDay };
 });
 
 import { fetchDailyOHLC } from "../src/lib/history";
-import { setInternalSetting } from "../src/lib/db";
 import {
   buildInsiderImport,
   buildShortVolumeImport,
@@ -34,6 +45,8 @@ import {
   shareWithCongressTrade,
   type CongressPrice
 } from "../src/lib/congress-share";
+import { setInternalSetting } from "../src/lib/db";
+import { flushDurableStateNow, resetDurableStateCacheForTests } from "../src/lib/durable-state";
 
 const recentDate = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
@@ -324,6 +337,24 @@ describe("shareScanRefs", () => {
     expect((await shareScanRefs(scan))?.ok).toBe(true); // retried, not throttled
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
+
+  it("the per-symbol send throttle survives a simulated process restart", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_ENABLED = "on";
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    expect((await shareScanRefs(scan))?.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    flushDurableStateNow(); // the throttle's debounced write lands in SQLite
+
+    // Simulate a restart: forget the in-memory durable-state cache (the SQLite rows are untouched).
+    resetDurableStateCacheForTests();
+
+    // A fresh process's next scan of the SAME candidates must still see the throttle, not re-POST.
+    expect(await shareScanRefs(scan)).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // unchanged
+  });
 });
 
 // ── Nightly batch + gating ─────────────────────────────────────────────────────────
@@ -388,6 +419,30 @@ describe("runCongressDailyShare", () => {
     const res = await runCongressDailyShare({ now });
     expect(res).toMatchObject({ ok: false, skipped: true, reason: "not-due" });
     expect(mockedFetchDailyOHLC).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates concurrent runs via a shared in-flight promise", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    const bars: OHLCBar[] = [
+      { time: "2026-06-15", close: 100 }
+    ];
+    mockedFetchDailyOHLC.mockResolvedValue(bars);
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => {
+      await new Promise(r => setTimeout(r, 50));
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const now = Date.UTC(2026, 5, 22, 13, 0, 0);
+    setInternalSetting("congress-share:lastDailyRunDate", "2026-06-20");
+
+    const [res1, res2] = await Promise.all([
+      runCongressDailyShare({ now, force: true, symbols: ["AAPL"] }),
+      runCongressDailyShare({ now, force: true, symbols: ["AAPL"] })
+    ]);
+
+    expect(res1).toBe(res2); // Should return the exact same promise/result reference
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // Should only execute one run (which POSTs SPX and prices payload separately)
   });
 });
 

@@ -1,6 +1,76 @@
 import { createHash, randomUUID } from "crypto";
 import { getDb } from "./db";
 
+// `stoppedWorking` is set for a few distinct reasons (see getServiceHealthSummaries). This one is the
+// "5 consecutive failures" condition — the only one strong enough to act on automatically (e.g. the
+// enrichment circuit breaker), as opposed to the softer "no success yet this hour" heuristics that a
+// single cold failure can trip. Exported so consumers key off the condition, not a brittle string.
+export const HEALTH_REASON_CONSECUTIVE_FAILURES = "Last 5 consecutive calls all failed";
+
+// RAG services (Pinecone, Voyage embed, Voyage rerank) already get their OWN explicit,
+// operation-scoped alert from vector-db.ts's withRagApiHealth -> alertRagConnectionFailure (richer
+// message: which operation failed, usage-limit escalation via alertUsageLimitHit, its own 1h
+// cooldown). Without this exclusion, logApiHealth's automatic alertConnectionFailure below ALSO
+// fires for the same failure (generic "<service> connection failed" text, its own separate 6h
+// cooldown clock) — two uncoordinated alerts, ~1s apart, for one underlying event (confirmed
+// 2026-07-07T14:01Z and 22:01Z in prod). Keep the richer vector-db.ts alert as the single source of
+// truth for these three lanes; every OTHER provider (finnhub, tiingo, twelvedata, etc.) has no
+// dedicated alerter, so it still needs this generic automatic path.
+const RAG_SERVICES_WITH_OWN_ALERTING = new Set(["pinecone", "openrouter", "openrouter-rerank", "siliconflow", "siliconflow-rerank"]);
+
+/**
+ * Per-credential-lane health for the API circuit breaker. A "lane" is (service, keySource) — the SAME
+ * granularity `getServiceHealthSummaries` and the whole health store already use — NOT per-user, so a
+ * globally-dead env key trips once (not per user) and a user's own bad key trips only that user's lane
+ * without stopping the shared env lane. `stoppedWorking` reuses the exact predicate below (kept in sync
+ * with getServiceHealthSummaries): the last 5 calls all failed, or active-this-hour with no recent
+ * success. Read-only; never throws (returns a not-stopped default on any DB error).
+ */
+export function getLaneHealth(
+  service: string,
+  keySource: string | null,
+  userId?: string | null
+): { stoppedWorking: boolean; reason: string | null; lastFailureTs: string | null } {
+  try {
+    const db = getDb();
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    // For a per-USER credential lane (keySource "user"), scope the failure streak to THIS user's own
+    // history — otherwise one tenant's 5 failures would trip a provider-degraded alert for every other
+    // user sharing the (service, "user") lane. Global/env/none lanes stay aggregate (no user predicate).
+    const scopeUser = keySource === "user" && userId != null;
+    const userClause = scopeUser ? " AND user_id IS ?" : "";
+    const withUser = (params: unknown[]): unknown[] => (scopeUser ? [...params, userId] : params);
+    const last5 = db
+      .prepare(`SELECT ok FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} ORDER BY ts DESC, rowid DESC LIMIT 5`)
+      .all(...withUser([service, keySource])) as Array<{ ok: number }>;
+    const lastSuccess = db
+      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ok = 1 ORDER BY ts DESC, rowid DESC LIMIT 1`)
+      .get(...withUser([service, keySource])) as { ts: string } | undefined;
+    const lastFailure = db
+      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ok = 0 ORDER BY ts DESC, rowid DESC LIMIT 1`)
+      .get(...withUser([service, keySource])) as { ts: string } | undefined;
+    const callsLastHour = (
+      db.prepare(`SELECT COUNT(*) as cnt FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ts >= ?`).get(...withUser([service, keySource]), hourAgo) as { cnt: number }
+    ).cnt;
+
+    let stoppedWorking = false;
+    let reason: string | null = null;
+    if (last5.length >= 5 && last5.every((r) => r.ok === 0)) {
+      stoppedWorking = true;
+      reason = HEALTH_REASON_CONSECUTIVE_FAILURES;
+    } else if (callsLastHour > 0 && !lastSuccess) {
+      stoppedWorking = true;
+      reason = "Active in past hour but no successful call ever";
+    } else if (callsLastHour > 0 && lastSuccess && lastSuccess.ts < hourAgo) {
+      stoppedWorking = true;
+      reason = "Active in past hour but no success in 60 min";
+    }
+    return { stoppedWorking, reason, lastFailureTs: lastFailure?.ts ?? null };
+  } catch {
+    return { stoppedWorking: false, reason: null, lastFailureTs: null };
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ServiceHealthSummary {
@@ -47,6 +117,13 @@ export function logApiHealth(opts: {
   errorText?: string;
   keySource?: string;
   userId?: string;
+  // Set ONLY by a caller that knows this failure is a daily-quota exhaustion which cannot
+  // recover before a known instant (e.g. Alpha Vantage's 25/day cap resets at midnight
+  // America/New_York) — an ISO timestamp of that reset. db-health never derives this itself
+  // (no string-matching error text here); it just threads whatever the call site passes
+  // through to alertConnectionFailure's cooldown. Omit for ordinary transient failures, which
+  // keep the generic fixed-duration cooldown.
+  quotaResetAt?: string;
 }): void {
   try {
     const db = getDb();
@@ -69,7 +146,7 @@ export function logApiHealth(opts: {
            AND id NOT IN (
              SELECT id FROM api_health_log
              WHERE service = ? AND key_source IS ?
-             ORDER BY ts DESC
+             ORDER BY ts DESC, rowid DESC
              LIMIT 500
            )`
       ).run(opts.service, keySource, opts.service, keySource);
@@ -93,6 +170,20 @@ export function logApiHealth(opts: {
         ).run(patternId, opts.service, fingerprint, opts.errorText, now, now, patternKeySource);
       }
     })();
+
+    if (!opts.ok && opts.errorText && !RAG_SERVICES_WITH_OWN_ALERTING.has(opts.service)) {
+      const keySource = opts.keySource ?? null;
+      // Scope the streak that gates the alert to this user's own history for user-key lanes, so
+      // tenant A's failures don't fire a provider-degraded alert to tenant B on the shared lane.
+      const lane = getLaneHealth(opts.service, keySource, opts.userId ?? null);
+      const isRateLimit = /429|rate limit/i.test(opts.errorText);
+      if (lane.stoppedWorking) {
+        void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, opts.errorText, {
+          skipSentry: isRateLimit,
+          cooldownUntil: opts.quotaResetAt
+        });
+      }
+    }
   } catch {
     // Health logging must never throw — swallow all errors
   }
@@ -138,7 +229,7 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         .prepare(
           `SELECT ts, latency_ms FROM api_health_log
            WHERE service = ? AND key_source IS ? AND ok = 1
-           ORDER BY ts DESC LIMIT 1`
+           ORDER BY ts DESC, rowid DESC LIMIT 1`
         )
         .get(service, ks) as { ts: string; latency_ms: number | null } | undefined;
 
@@ -146,7 +237,7 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         .prepare(
           `SELECT ts, error_text FROM api_health_log
            WHERE service = ? AND key_source IS ? AND ok = 0
-           ORDER BY ts DESC LIMIT 1`
+           ORDER BY ts DESC, rowid DESC LIMIT 1`
         )
         .get(service, ks) as { ts: string; error_text: string | null } | undefined;
 
@@ -173,7 +264,7 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         .prepare(
           `SELECT ok FROM api_health_log
            WHERE service = ? AND key_source IS ?
-           ORDER BY ts DESC LIMIT 5`
+           ORDER BY ts DESC, rowid DESC LIMIT 5`
         )
         .all(service, ks) as Array<{ ok: number }>;
 
@@ -182,7 +273,7 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
 
       if (last5.length >= 5 && last5.every((r) => r.ok === 0)) {
         stoppedWorking = true;
-        stoppedReason = "Last 5 consecutive calls all failed";
+        stoppedReason = HEALTH_REASON_CONSECUTIVE_FAILURES;
       } else if (callsLastHour > 0 && !lastSuccess) {
         stoppedWorking = true;
         stoppedReason = "Active in past hour but no successful call ever";
@@ -209,6 +300,11 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
   }
 }
 
+// NOTE: `rowid DESC` tiebreaker — `ts` is ms-resolution, so rows written in the same millisecond
+// otherwise return in arbitrary order and "the newest row" reads become nondeterministic (bit
+// test/data-providers.test.ts's newest-row assertion, 2026-07-10). It must be `rowid` (implicit
+// monotonic insertion order; `id TEXT PRIMARY KEY` does not alias it): `id` is a randomUUID, so
+// ordering by it is a per-run coin flip, not a tiebreak.
 export function getServiceHealthLog(
   service: string,
   limit = 100,
@@ -223,7 +319,7 @@ export function getServiceHealthLog(
           `SELECT id, service, ts, ok, latency_ms, error_text, key_source, user_id
            FROM api_health_log
            WHERE service = ? AND key_source IS ?
-           ORDER BY ts DESC
+           ORDER BY ts DESC, rowid DESC
            LIMIT ? OFFSET ?`
         )
         .all(service, keySource ?? null, limit, offset) as HealthLogRow[];
@@ -233,7 +329,7 @@ export function getServiceHealthLog(
         `SELECT id, service, ts, ok, latency_ms, error_text, key_source, user_id
          FROM api_health_log
          WHERE service = ?
-         ORDER BY ts DESC
+         ORDER BY ts DESC, rowid DESC
          LIMIT ? OFFSET ?`
       )
       .all(service, limit, offset) as HealthLogRow[];
@@ -292,5 +388,251 @@ export function getAllErrorPatterns(): Record<string, ErrorPatternRow[]> {
     return result;
   } catch {
     return {};
+  }
+}
+
+// ── Connection Health & Storage Alerts ────────────────────────────────────────
+
+const HEALTH_ALERT_COOLDOWN_PREFIX = "healthAlertSent";
+// Default cooldown for an ordinary transient failure. A caller that knows the failure is a
+// daily-quota exhaustion (persists until a known reset instant, not just "some hours") overrides
+// this per-call via alertConnectionFailure's `opts.cooldownUntil` — see its doc comment.
+const HEALTH_ALERT_COOLDOWN_MS = 6 * 60 * 60_000; // 6 hours
+
+const STORAGE_ALERT_COOLDOWN_PREFIX = "storageAlertSent";
+const STORAGE_ALERT_COOLDOWN_MS = 12 * 60 * 60_000; // 12 hours
+
+function operatorAlertEmail(): string | undefined {
+  return (
+    process.env.USAGE_LIMIT_ALERT_EMAIL?.trim() ||
+    process.env.ADMIN_ALERT_EMAIL?.trim() ||
+    process.env.PRIMARY_USER_EMAIL?.trim() ||
+    undefined
+  );
+}
+
+async function captureHealthSentryMessage(
+  level: "warning" | "error",
+  message: string,
+  context: Record<string, string | number | boolean | null | undefined>
+): Promise<void> {
+  if (!process.env.SENTRY_DSN) return;
+  try {
+    const mod = (await import("@sentry/nextjs")) as typeof import("@sentry/nextjs") & {
+      default?: typeof import("@sentry/nextjs");
+    };
+    const captureMessage = mod.captureMessage ?? mod.default?.captureMessage;
+    const withScope = mod.withScope ?? mod.default?.withScope;
+    if (typeof captureMessage !== "function" || typeof withScope !== "function") return;
+    withScope((scope) => {
+      scope.setLevel(level);
+      scope.setTag("component", "api-health");
+      if (context.service) scope.setTag("health.service", String(context.service));
+      if (context.keySource) scope.setTag("health.key_source", String(context.keySource));
+      scope.setContext("api-health", context);
+      captureMessage(message);
+    });
+  } catch {
+    // Observability must not affect trading control flow.
+  }
+}
+
+export async function alertConnectionFailure(
+  service: string,
+  keySource: string | null,
+  userId: string | null,
+  errorText: string,
+  // `cooldownUntil`: an ISO instant a caller passes when it KNOWS this failure won't clear
+  // before then (e.g. Alpha Vantage's daily-quota exhaustion, cooldownUntil = next
+  // America/New_York midnight reset) — the alert is suppressed until that instant instead of
+  // the generic HEALTH_ALERT_COOLDOWN_MS window. Falls back to the generic window when absent,
+  // unparsable, or already in the past, so a bad/stale value never shortens the cooldown to
+  // "always re-alert" or silences alerts forever.
+  opts?: { skipSentry?: boolean; cooldownUntil?: string }
+): Promise<void> {
+  try {
+    const targetUserId = userId || "local";
+    const actualKeySource = keySource || "none";
+    // Cool down GLOBAL lanes (env/none) by service+source only — NOT per-user. In a multi-user outage
+    // each tenant's failure hits the SAME global dependency, so a userId-scoped cooldown key would let
+    // every tenant mint its own cooldown row and re-alert the admin every 6h for the one shared outage.
+    // Only per-USER credential lanes ("user") key the cooldown by userId (each user's own key/alert).
+    const key =
+      actualKeySource === "user"
+        ? `${HEALTH_ALERT_COOLDOWN_PREFIX}:${service}:${actualKeySource}:${targetUserId}`
+        : `${HEALTH_ALERT_COOLDOWN_PREFIX}:${service}:${actualKeySource}`;
+
+    // Cooldown check. The stored setting value is the "suppressed until" instant (not "last sent
+    // at"): this lets a quota-exhaustion caller stretch the window arbitrarily far (to the
+    // provider's actual daily reset) while an ordinary transient failure keeps the fixed 6h
+    // window, using the exact same comparison. Audit + Sentry stay gated behind this SAME check
+    // as the notification (not split into an always-fires audit path) — the per-request
+    // api_health_log/error-pattern rows above already record every occurrence for forensics, so
+    // an audit row per occurrence here would just duplicate that without adding signal; only the
+    // repeat-alert noise is the target of this cooldown.
+    const { getInternalSetting, setInternalSetting, audit } = await import("./db");
+    const now = Date.now();
+    const last = getInternalSetting<string>(key);
+    if (last) {
+      const suppressedUntilMs = Date.parse(last);
+      if (Number.isFinite(suppressedUntilMs) && now < suppressedUntilMs) return;
+    }
+    const requestedCooldownMs = opts?.cooldownUntil ? Date.parse(opts.cooldownUntil) : NaN;
+    const cooldownUntilMs =
+      Number.isFinite(requestedCooldownMs) && requestedCooldownMs > now
+        ? requestedCooldownMs
+        : now + HEALTH_ALERT_COOLDOWN_MS;
+    setInternalSetting(key, new Date(cooldownUntilMs).toISOString());
+
+    const isGlobal = actualKeySource !== "user";
+    const title = `${service} connection failed`;
+    const body = `Connection to ${service} (${actualKeySource} lane) failed: ${errorText}`;
+
+    const payload = {
+      service,
+      keySource: actualKeySource,
+      userId: targetUserId,
+      errorText,
+      global: isGlobal
+    };
+
+    // Log audit event
+    audit("connection_health_alert", payload, targetUserId);
+
+    // Send Sentry event
+    if (!opts?.skipSentry) {
+      await captureHealthSentryMessage(isGlobal ? "error" : "warning", title, {
+        service,
+        keySource: actualKeySource,
+        userSpecific: !isGlobal,
+        reason: errorText
+      });
+    }
+
+    if (isGlobal) {
+      // Global failures: Route to admin email and health.
+      const { getNotifyPrefs } = await import("./db");
+      const prefs = getNotifyPrefs("local");
+      const { loadNotifyConfig, notify } = await import("./notify");
+
+      const fallbackEmail = operatorAlertEmail();
+      const config = loadNotifyConfig();
+
+      // The operator's own channels are delivered by sendNotification inside the enabled-event
+      // gate. The fallback email remains an EXTRA lazy lane when the operator has no usable email
+      // preference, so it cannot double-send or bypass that gate.
+      const additionalDelivery =
+        fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
+          ? () =>
+              notify(
+                "local",
+                { title, body, kind: "provider_degraded", data: payload },
+                {
+                  config,
+                  prefs: {
+                    ...prefs,
+                    channels: ["email" as any],
+                    email: fallbackEmail,
+                    updatedAt: prefs.updatedAt
+                  }
+                }
+              )
+          : undefined;
+
+      // Also send standard notification
+      const { sendNotification } = await import("./notifications");
+      const { getPolicy } = await import("./db");
+      const policy = getPolicy("local");
+      const forcedPolicy = {
+        ...policy,
+        notificationSettings: {
+          ...policy.notificationSettings,
+          enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "provider_degraded" as const])) as any
+        }
+      };
+      await sendNotification(
+        { type: "provider_degraded", title, payload },
+        { userId: "local", policy: forcedPolicy as any, directBody: body, notifyDeps: { config }, additionalDelivery }
+      ).catch(() => {});
+    } else {
+      // User-key failures: Route to user notifications only
+      const { sendNotification } = await import("./notifications");
+      const { getPolicy } = await import("./db");
+      const policy = getPolicy(targetUserId);
+      const forcedPolicy = {
+        ...policy,
+        notificationSettings: {
+          ...policy.notificationSettings,
+          enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "provider_degraded" as const])) as any
+        }
+      };
+      await sendNotification(
+        { type: "provider_degraded", title, payload },
+        { userId: targetUserId, policy: forcedPolicy as any, directBody: body }
+      ).catch(() => {});
+    }
+  } catch (err) {
+    // Health alerts must never throw
+    console.error("Health alert error:", err);
+  }
+}
+
+export async function alertStorageWarning(warningType: string, message: string): Promise<void> {
+  try {
+    const key = `${STORAGE_ALERT_COOLDOWN_PREFIX}:${warningType}`;
+    const { getInternalSetting, setInternalSetting, audit } = await import("./db");
+    const last = getInternalSetting<string>(key);
+    if (last && Date.now() - Date.parse(last) < STORAGE_ALERT_COOLDOWN_MS) return;
+    setInternalSetting(key, new Date().toISOString());
+
+    const title = `Storage Warning: ${warningType.replace(/_/g, " ")}`;
+    const body = message;
+    const payload = { warningType, message };
+
+    audit("storage_warning_alert", payload, "local");
+
+    // Route to admin email
+    const { getNotifyPrefs } = await import("./db");
+    const prefs = getNotifyPrefs("local");
+    const { loadNotifyConfig, notify } = await import("./notify");
+
+    const fallbackEmail = operatorAlertEmail();
+    const config = loadNotifyConfig();
+
+    const additionalDelivery =
+      fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
+        ? () =>
+            notify(
+              "local",
+              { title, body, kind: "storage_warning", data: payload },
+              {
+                config,
+                prefs: {
+                  ...prefs,
+                  channels: ["email" as any],
+                  email: fallbackEmail,
+                  updatedAt: prefs.updatedAt
+                }
+              }
+            )
+        : undefined;
+
+    // Also send standard notification
+    const { sendNotification } = await import("./notifications");
+    const { getPolicy } = await import("./db");
+    const policy = getPolicy("local");
+    const forcedPolicy = {
+      ...policy,
+      notificationSettings: {
+        ...policy.notificationSettings,
+        enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "storage_warning" as const])) as any
+      }
+    };
+    await sendNotification(
+      { type: "storage_warning", title, payload },
+      { userId: "local", policy: forcedPolicy as any, directBody: body, notifyDeps: { config }, additionalDelivery }
+    ).catch(() => {});
+  } catch {
+    // never throw on warnings
   }
 }

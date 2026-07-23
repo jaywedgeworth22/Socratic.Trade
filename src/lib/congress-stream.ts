@@ -20,6 +20,7 @@
 
 import { applyCongressEvent, type CongressEvent } from "./congress-trade-events";
 import { logApiHealth } from "./db-health";
+import { CongressTradeClient, SseParser, type SseMessage, type Subscription } from "@jaywedgeworth22/congress-trading-shared";
 
 const DEFAULT_PATH = "/api/stream";
 const MAX_BACKOFF_MS = 60_000;
@@ -122,44 +123,28 @@ export async function resolveSubscription(): Promise<Subscription | null> {
 }
 
 // ── Pure SSE frame parser (unit-tested; no network) ──────────────────────────
-export interface SseMessage {
-  event?: string;
-  id?: string;
-  data: string;
-}
+/** App A's non-data control frames — recognized so they never log as "dropped unparseable". */
+const CONTROL_EVENTS = new Set(["cursor", "ping", "reconnect", "error"]);
 
-/** Incremental text/event-stream parser. Feed decoded chunks; get back complete events. */
-export class SseParser {
-  private buf = "";
-  private cur: { event?: string; id?: string; data: string[] } = { data: [] };
-
-  push(chunk: string): SseMessage[] {
-    this.buf += chunk;
-    const out: SseMessage[] = [];
-    let nl: number;
-    while ((nl = this.buf.indexOf("\n")) >= 0) {
-      let line = this.buf.slice(0, nl);
-      this.buf = this.buf.slice(nl + 1);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      if (line === "") {
-        if (this.cur.data.length > 0 || this.cur.event !== undefined || this.cur.id !== undefined) {
-          out.push({ event: this.cur.event, id: this.cur.id, data: this.cur.data.join("\n") });
-        }
-        this.cur = { data: [] };
-        continue;
-      }
-      if (line.startsWith(":")) continue; // comment / heartbeat
-      const colon = line.indexOf(":");
-      const field = colon === -1 ? line : line.slice(0, colon);
-      let value = colon === -1 ? "" : line.slice(colon + 1);
-      if (value.startsWith(" ")) value = value.slice(1);
-      if (field === "data") this.cur.data.push(value);
-      else if (field === "event") this.cur.event = value;
-      else if (field === "id") this.cur.id = value;
-      // "retry" and unknown fields ignored
-    }
-    return out;
+/**
+ * Map one parsed SSE data payload into a canonical CongressEvent envelope.
+ *  - App A's `event: trade.new` carries the RAW Transaction as its data — wrap it explicitly as
+ *    { type:'congress.trade', id, data:{ transaction } } (applyCongressEvent reads data.transaction).
+ *  - Anything else is assumed to already be a CongressEvent envelope; fill type/id from the SSE frame
+ *    lines when absent (a webhook-style envelope delivered over SSE).
+ * Returns null when the payload isn't an object.
+ */
+export function toCongressEventEnvelope(parsed: unknown, msg: SseMessage): CongressEvent | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const obj = parsed as Record<string, unknown>;
+  if (msg.event === "trade.new") {
+    const txId = typeof obj.id === "string" ? obj.id : msg.id;
+    return { type: "congress.trade", id: txId, data: { transaction: obj } };
   }
+  const env = obj as unknown as CongressEvent;
+  if (!env.type && msg.event) env.type = msg.event;
+  if (!env.id && msg.id) env.id = msg.id;
+  return env;
 }
 
 /** App A's non-data control frames — recognized so they never log as "dropped unparseable". */
@@ -273,12 +258,35 @@ async function runLoop(): Promise<void> {
     try {
       await connectOnce();
     } catch (err) {
-      console.error("[congress-stream] connection error:", err instanceof Error ? err.message : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[congress-stream] connection error:", msg);
+      
+      // Do not pollute api_health_log or loop infinitely if we legitimately lack credentials
+      if (msg.includes("no subscription configured")) {
+        console.warn("[congress-stream] disabling stream until credentials are provided.");
+        state.closing = true;
+        break;
+      }
+
+      // Record ALL failures in api_health_log so the admin dashboard shows current state.
+      // logApiHealth already detects 429|rate limit in error text and suppresses Sentry
+      // alerts via skipSentry (see db-health.ts line 172-174), so rate-limit backpressure
+      // events are recorded without noise.
       logApiHealth({
         service: "congress.trade:sse",
         ok: false,
-        errorText: err instanceof Error ? err.message : String(err),
+        errorText: msg,
       });
+
+      // Back off on 429 explicitly, using the parsed Retry-After seconds if available
+      const retryMatch = msg.match(/HTTP 429 \(Retry-After: (\d+)\)/);
+      if (retryMatch) {
+        const sec = parseInt(retryMatch[1], 10);
+        state.backoffMs = Math.max(state.backoffMs, sec * 1000);
+      } else if (msg.includes("HTTP 429")) {
+        // Default to a 60s backoff if 429 but no Retry-After
+        state.backoffMs = Math.max(state.backoffMs, 60_000);
+      }
     }
     if (state.closing) break;
     await sleep(state.backoffMs);

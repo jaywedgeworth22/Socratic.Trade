@@ -25,14 +25,13 @@ beforeAll(() => {
 afterEach(() => {
   mockRunWalkForwardOOS.mockReset();
   mockRunWalkForwardOOS.mockResolvedValue(null);
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 function policyFor(account: string, tuning?: TradingPolicy["tuning"]): TradingPolicy {
   return {
     ...DEFAULT_POLICY,
     accountNumber: account,
-    paperMode: true,
     scoringWeights: { ...DEFAULT_POLICY.scoringWeights },
     tuning
   };

@@ -2,6 +2,94 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-07-13 evidence-contract and learning-boundary update
+
+The implemented decision path now treats evidence routing as a first-class contract:
+
+- a wider cheap preselection is enriched before the final candidate rank;
+- enriched fields carry availability, timestamp, provenance, disagreement, and provider-failure
+  receipts while preserving scalar consumers;
+- buy/short openings are deterministically limited to the exact final candidate set;
+- Green and Red receive one content-addressed evidence manifest and the complete same evidence
+  object, with a parity hash recorded in the run audit;
+- SEC/RAG, learned prose, reflections, and episodic memories share one run-wide context budget and
+  instruction-like external text is quarantined as data;
+- realized and skipped outcomes join to decision-time source ablations, producing explicitly
+  observational source-value telemetry; and
+- relational/vector account-derived learning is exact-account scoped. Broker-paper lessons transfer
+  only after independent live corroboration; the product Test Account is removed and purged.
+
+See `docs/reviews/2026-07-13-decision-evidence-architecture.md` for the source-by-source audit,
+invariants, and residual gaps.
+
+## 2026-07-13 sizing-arithmetic and outcome-semantics update
+
+- The app computes and persists finalized notional, decision-time NAV, order percentage of NAV,
+  daily cap mode/effective dollars, used budget, and remaining budget before Red Team review.
+- Migration v27 stores the exact Green rationale and sizing snapshot on the durable Socratic case;
+  refreshes and later coach/outcome/lesson writes preserve both receipts.
+- Red Team receives those deterministic values as authoritative arithmetic, so prose such as
+  "$4 is 0.04% of a $100 account" cannot be treated as a model-derived fact.
+- A Red approval means only that the adversarial thesis review approved the stated size; policy,
+  broker preflight, and placement remain separate deterministic outcomes in data and UI.
+- A Red rejection is called overridden only when the final policy decision records an applied
+  override; the earlier model request is not proof that hard gates allowed it.
+- Override-request audits likewise say `red_team_veto_override_requested`; the existing
+  `socratic_override_applied`/`socratic_override_refused` events remain final-outcome truth, while
+  historical `red_team_veto_overridden` rows remain readable for longitudinal metrics.
+- Alpaca sub-share dollar entries clear whole-share bracket fields when the app declares the native
+  bracket skipped, preventing the receipt/transport contradiction that previously blocked EXE.
+
+## 2026-07-14 final-size and lifecycle invariant update
+
+- A successful broker-minimum bump on a risk-adding opening refreshes the exact sizing receipt and
+  reruns Red once on Green-only prose plus structured evidence. Red's half-size result may apply one
+  down-only haircut; the broker reviews that haircut, and the strategy never bumps it back up.
+- Reject, unavailable, or broker-unplaceable half-size results hold the final broker-adjusted order
+  for one explicit owner decision. That second approval is stamped and audited as an override
+  without recursively rerunning Red. Risk-reducing exits remain exempt.
+- That owner decision is scoped to the broker estimate shown on the pending card. Downward drift
+  and upward quote noise no greater than the larger of 1%/$0.01 remain inside the approved risk
+  envelope; a larger upward requote persists the new amount and requires one fresh click.
+- Sell-to-fund planning cannot run ahead of that decision. Every otherwise autonomous opening is
+  correlation-gated, broker-reviewed, minimum-adjusted, exact-size Red-reviewed, and
+  policy/override-preflighted before its notional can request a funding sale. Correlation-dropped,
+  broker-unplaceable, human-held, and non-funding policy-blocked openings contribute zero demand;
+  the intended cumulative buying-power shortfall remains fundable. Placement consumes the cached
+  exact broker shape rather than rerunning a review that could create a post-sale hold.
+- Human-review reasons are independent. A later Red approval clears only the superseded Red hold,
+  never rationale-collapse or owner-preference holds.
+- Before any autonomous broker submission, the durable `trade_proposals` intent and initial
+  `socratic_decisions` case commit in one SQLite transaction. Subsequent placement, broker decline,
+  expiry, withdrawal, and recovery transitions update both ledgers transactionally.
+- Human approval uses the same invariant: the atomic `proposed -> placing` claim requires a
+  proposed Socratic case, creates a legacy fallback case inside that transaction when necessary,
+  and fails before the broker boundary when the receipt cannot be committed.
+- Uncertain submissions remain `placing` until reconciliation proves the result. Same-decision
+  vector-memory writes are serialized and re-read current SQLite state before embedding, preventing
+  a slow older lifecycle write from overwriting a newer terminal result.
+- A synchronous broker fill remains `filled` end to end while still consuming daily/hourly limits
+  and placement counts. Outcome coverage, run summaries, ops diagnostics, and the decision-memory
+  lifecycle include it rather than dropping the most useful realized cases.
+- A chat draft's synthetic run id is permanent idempotency, not merely pending-card dedupe. Retries
+  after approval or fill return the original proposal, and the final lookup plus insert share an
+  immediate SQLite transaction so concurrent requests cannot create a second approvable order.
+- Crash recovery uses `(proposalId, brokerOrderId)` to prevent duplicate fill rows, but still
+  reconciles the existing row forward. Broker-filled truth atomically advances a pending receipt,
+  proposal, and Socratic case before the uncertainty notification is resolved.
+- Terminal broker state is never interpreted without quantity: canceled/rejected/expired with a
+  positive broker-filled quantity is a final partial execution. Direct placement stores the fill
+  receipt before advancing proposal/case lifecycle in one transaction; persistence failure or a
+  nonterminal response lacking an order id stays `placing` under refId recovery.
+- A live `partially_filled` receipt is already accounting exposure and updates in place. Stale-limit
+  replacement receipts dedupe on user + account + replacement identity, not globally on a broker id.
+- Broker execution is not accounting truth until both cumulative quantity and a finite positive
+  realized price are known. Unpriced receipts persist zero price/notional plus the maximum
+  broker-reported quantity; later stale or terminal-zero snapshots cannot reduce that floor.
+- A replacement partial missing price or order id remains active under its durable replacement ref,
+  binds the eventual broker id onto the same receipt, and leaves recovery only after its known
+  execution is priced. The active replacement lock is scoped by user + account + original order.
+
 ## 1. Strategy Architecture: Evaluation Lenses
 
 To ensure balanced and resilient trade proposals, the LLM evaluates candidates
@@ -45,6 +133,83 @@ adversarial-debate lenses before making a decision.
 *Prevent confirmation bias and hallucination.*
 - **Mechanism:** Before a high-conviction trade is finalized, the proposal is routed to a separate "Red Team / Bear" prompt. This prompt is tasked *exclusively* with finding reasons the trade will fail (e.g., hidden technical resistance, negative sector news, overvaluation).
 - **Goal:** The main agent must successfully address or invalidate the Bear agent's concerns before the trade is approved, ensuring maximum robustness and quality.
+- **Implementation status (2026-07-01, Audit Chat A):** the inline Bear critique inside
+  `proposeTrades` now **fails CLOSED** — if it can't run (missing key, transport
+  error/timeout, unparseable response) the un-critiqued Bull proposals are routed to
+  human review in `decide` mode instead of auto-executing (never a silent carry-forward),
+  with a loud audit + `provider_degraded` notification. The Bull/Bear system prompts are
+  extracted to the versioned leaf module `src/lib/strategy-prompts.ts`
+  (`STRATEGY_PROMPT_VERSION` + `buildBullSystem`/`buildBearSystem`), stamped onto every
+  proposal via `trade_proposals.prompt_version`, and covered by a deterministic offline
+  eval (`npm run eval:strategy-offline`). The per-proposal `debateProposal` red-team now
+  requests strict `json_schema` on OpenAI-compatible providers, and the strategy/red-team
+  Anthropic calls use prompt caching. See
+  `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
+- **Single-adversary consolidation (IMPLEMENTED 2026-07-07):** `docs/single-adversary-consolidation.md`
+  landed, as amended by the owner's 2026-07-07 revision. The in-flow Bear LLM pass inside
+  `proposeTrades` is DELETED (the model-free `deterministicBearFilter` stays); the single hardened
+  **Red Team** (`debateProposal`) reviews the finalized (post-sizing) trade for EVERY risk-adding
+  opening (universal coverage, concurrent with a 3-wide pool), fact-checks the strategist's claims
+  against the same candidate evidence the Bull saw (R7 `adversaryContext`), returns a discrete
+  down-only `approve`/`approve-at-half`/`reject` verdict (unplaceable half → held for human, never
+  up-sized), fails **closed and visibly** when it can't run (persisted `decision.adversaryUnavailable`
+  + notification flag + amber approval-card badge), and NEVER reviews exits or net-risk-reducing
+  trades (§3.5, net-direction-aware). NO MODEL DEFAULTS anywhere: both `llmModel` and
+  `redTeamLlmModel` are mandatory explicit Settings picks (keyed providers only; same model allowed
+  with a non-blocking independence hint); the `RED_TEAM_LLM_PROVIDER`/`RED_TEAM_LLM_MODEL` env
+  override is deleted (db migration v15 seeds the first-class setting once from a live override).
+  Reliability: `extractJsonPayload` fence-tolerant parsing at every LLM parse site incl. the Bull,
+  strict shape validation (unknown verdict = fail closed), bounded same-model retry
+  (`fetchLlmWithRetry`, no hidden failover). Prompt version bumped to `agentic-strategy@2.0.0`.
+  See `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
+- **First-class verdict (2026-07-01):** the Red Team debate result is stored on the proposal as a
+  structured `redTeamVerdict?: { rejected; available; reason }` field (`TradeProposal` in
+  `src/lib/types.ts`), not just appended to the free-text rationale. It survives the JSON round-trip
+  into `trade_proposals` (folded into the existing payload column — no migration), so the dashboard
+  can render a dedicated "Bear Review" block instead of burying the critique in a truncated
+  rationale. The backward-compat rationale-append text is preserved.
+- **Bear-veto audit (2026-07-01):** a Bear *rejection* now writes an
+  `audit("proposal_rejected_by_red_team", { symbol, side, thesisTag, reason })` row before the
+  proposal is dropped — parity with the sibling `proposal_skipped_negative_ev` /
+  `proposal_skipped_correlation` audits — so a vetoed high-conviction trade is visible in the
+  Activity/Audit feed rather than only in the server console.
+- **Bear-veto counterfactuals + efficacy scorecard (2026-07-04):** the audit event above is now
+  additionally stamped with `runId` and `model`, and the Bear-reject branch calls
+  `recordRejectedProposalCounterfactual` for opening (buy/short) proposals — the same
+  counterfactual pipeline policy blocks and human rejections already feed — so a vetoed
+  high-conviction trade's post-veto return matures into missed-opportunity analytics. New
+  `getRedTeamEfficacy()` (`src/lib/performance.ts`) joins the audit events to matured
+  counterfactual rows (via `runId+symbol`) and reports rejection rate, veto value-add (the vetoed
+  trade lost money — the Bear helped), survivor-risk hit rate (the vetoed trade won — the Bear
+  missed it), and a per-model breakdown. Advisory/read-only; API/db-level only — no console/Results
+  UI wiring yet (see `docs/rollouts/2026-07-04-w1-learning-loops.md`).
+- **The Outcome Engine (2026-07-04, Wave 2):** loop step 5 is no longer a stub —
+  `src/lib/outcome-engine.ts` (`matureSocraticDecisionOutcomes`, fired on the counterfactual
+  cadence from `strategy.ts`) writes `SocraticDecisionCase.outcome`: placed decisions join their
+  `fill_events` entry and realized FIFO closed-lot P&L; blocked/rejected decisions (incl. Bear
+  vetoes) join their counterfactual `refPrice`. Outcomes are MULTI-HORIZON —
+  `outcomes[] {15m|1h|1d|1w, returnPct, spyExcessPct, priceBasis, resolution}` (pure math in
+  `src/lib/outcome-horizons.ts`, trading-day arithmetic) — on decision cases and on
+  skipped-counterfactual rows. 1d/1w come from daily closes via the cascade, SPY-relative;
+  15m/1h resolve only from an actually-sampled live quote, else land honestly as
+  `unresolvable(no_intraday_source)`. Kill-survivorship: a symbol whose series never resolves
+  within a bounded 10-trading-day recheck window terminates `unresolvable` (with reason) and
+  stays in every denominator — coverage disclosures ("N/M resolved (X%)") ride on job receipts,
+  `getRedTeamEfficacy`, the missed-opportunity summary, and `certifyForwardResolution`. On case
+  closure a budget-gated, batch-capped LLM post-mortem replaces the template `lessons[]` with
+  1-3 direction-tagged lessons (+`verdictOnBelief`/`whichDissentMattered`), re-indexes the case
+  vector, and routes each lesson through `ingestLearned` (origin `autonomous`); every skip is
+  receipted. See `docs/rollouts/2026-07-04-w2-outcome-engine.md`.
+- **Durable due-jobs substrate for 15m/1h sampling (2026-07-05):** the 15m/1h sample no longer
+  depends on a `runStrategyOnce` cadence run coincidentally landing inside the tolerance window. A
+  generic claimable job queue (`due_jobs` table, `src/lib/db-jobs.ts`, lease/reclaim so a crashed
+  claim is never stuck) is enqueued the moment a case's entry basis (fill or ref price) is known;
+  `outcome-engine.ts`'s `drainDueIntradaySampleJobs` worker (called from `scheduler.ts`'s `tick()`)
+  drains due jobs, samples a live quote, and writes through the exact same
+  `mergeHorizonRows`/write path the inline sampling uses — so whichever side resolves a horizon
+  first wins and the other is a documented no-op, never a duplicate row. The inline sampling path
+  described above is unchanged and still runs; this is additive redundancy, not a replacement. See
+  `docs/rollouts/2026-07-05-durable-due-jobs.md`.
 
 ---
 
@@ -202,9 +367,9 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   system-prompt prefix stable so provider prompt-caching can hit.
 - **Bounded LLM requests (2026-06-20)** — Bull, Bear, Red Team, strategy-tuning,
   and post-mortem calls now use shared OpenAI request bounds with deterministic
-  temperature and explicit output caps. Their prompts and payloads also use
-  `test/local`, `broker/paper`, and `broker/live` wording so broker-hosted paper
-  fills are not confused with local simulated fills.
+  temperature and explicit output caps. Their prompts and payloads use
+  `broker/paper` and `broker/live` wording so broker-hosted paper fills are
+  never confused with real-capital fills.
 - **LLM step timeout diagnostics (2026-06-30)** — strategy runs now audit
   `llm_step` start/failure rows and preserve failed Green Team context in the
   final `strategy_run` audit. Raw abort strings are translated into
@@ -227,6 +392,43 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   post-mortem so the proposal path stays network-free.
 - **Delta-only macro pruning** — `pruneMacro()` sends only changed (plus
   regime-critical) macro fields on repeat runs, listing the rest as unchanged.
+- **Risk-control wiring audit + money-path test (2026-07-01, audit work-split F/G):**
+  - **Drawdown kill-switch (G5)** — verified `runStrategyOnce` (`src/lib/strategy.ts:~253-262`)
+    flips an `active`, autonomous run to `close_only` via `setPolicy`, audits
+    `policy_violation_drawdown`, and sends a `kill_switch` notification when the account draws down
+    past `riskRules.maxDrawdownPct` / `maxDailyLossNotional` from the persisted equity high-water
+    mark (HWM + start-of-day equity live in the settings KV, so they survive a restart). Already
+    wired and durable; the missing piece was a *regression test* driving the full
+    breach→`close_only` flip through `runStrategyOnce`
+    (`test/strategy-moneypath-drawdown-flip.test.ts`). Default-safe: the block is gated on `active`
+    and no-ops when no limit is configured; no behavior change.
+  - **Correlation cluster gate (G6)** — verified `applyCorrelationClusterGate`
+    (`src/lib/strategy.ts:~1087`, invoked at `~509`) runs *before* execution, keyed on
+    `policy.maxAvgCorrelation` (default off). An over-correlated *opening* buy/short is dropped with
+    an `audit("proposal_skipped_correlation")` row while exits (sell/cover) always pass. Built +
+    wired + opt-in; covered by `test/correlation-cluster-gate.test.ts`.
+  - **Money-path e2e test (G7)** — `test/strategy-money-path-f-g.test.ts` drives `runStrategyOnce`
+    in broker/paper mode (simulated fills via the `TestBrokerGateway` test-infrastructure adapter,
+    never a real trade) with a stubbed LLM and asserts the full proposal→evaluate→execute path
+    books a paper fill and persists a proposal + `fill_event`.
+  - **Live-order pre-flight guard (G7)** — `src/lib/preflight-live-guard.ts` (`assertLivePreflight`)
+    is a default-SAFE assertion wired in just before a real (`broker/live`) order is placed
+    (`src/lib/strategy.ts`, before `gateway.placeEquityOrder`). `LivePreflightInput.mode` is one of
+    `"broker/paper" | "broker/live"`; the guard is a hard no-op whenever `mode !== "broker/live"`
+    (i.e. any broker/paper run — there is no separate local Test mode). On the real-capital path
+    it throws (blocking the order + auditing `order_blocked_live_preflight`) unless live trading
+    is explicitly enabled via the `ALLOW_LIVE_TRADING=true` env flag (or the caller passes
+    `allowLive: true`). It never places or enables a trade. Unit-tested in
+    `test/preflight-live-guard.test.ts`.
+- **Observability prompt-version + decision stamps (2026-07-01, G10):** every traced strategy
+  generation (bull `trading.strategy.bull`, bear `trading.strategy.bear`, red-team
+  `trading.red-team.debate`) now carries `metadata.promptVersion`, sourced from the single
+  `STRATEGY_PROMPT_VERSION` constant (`src/lib/strategy.ts`) so traces are filterable/comparable
+  across prompt revisions. The **Bear-veto** count is stamped into the bear generation's output
+  (`bearVeto` / `bearVetoCount`), and a **rationale diversity-collapse** emits a stamped
+  `recordDecisionObservation("trading.strategy.diversity-collapse")` span
+  (`src/lib/observability.ts`). All of it is a hard no-op when Langfuse is unconfigured
+  (`langfuseConfigured()` gates it). Covered by `test/redteam-observability-g10.test.ts`.
 - Still TODO from this section: OPRO-style prompt self-rewrite (intentionally
   kept advisory-only via Strategy Studio's human-approved tuning, not
   auto-applied).

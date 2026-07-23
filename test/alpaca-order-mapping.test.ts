@@ -57,6 +57,41 @@ describe("mapAlpacaOrder", () => {
     });
     expect(order.symbol).toBe("BRK-B");
   });
+
+  it("carries limit/stop price and time-in-force through to EquityOrder", () => {
+    const order = mapAlpacaOrder({
+      id: "o3",
+      symbol: "MSFT",
+      side: "buy",
+      type: "stop_limit",
+      status: "new",
+      qty: "5",
+      limit_price: "410.5",
+      stop_price: "405",
+      time_in_force: "gtc",
+      created_at: "2026-07-01T00:00:00Z"
+    });
+    expect(order.limitPrice).toBe(410.5);
+    expect(order.stopPrice).toBe(405);
+    expect(order.timeInForce).toBe("gtc");
+  });
+
+  it("leaves limit/stop/TIF undefined when Alpaca omits them (market order)", () => {
+    const order = mapAlpacaOrder({
+      id: "o4",
+      symbol: "AAPL",
+      side: "buy",
+      type: "market",
+      status: "filled",
+      qty: "1",
+      limit_price: null,
+      stop_price: null,
+      created_at: "2026-07-01T00:00:00Z"
+    });
+    expect(order.limitPrice).toBeUndefined();
+    expect(order.stopPrice).toBeUndefined();
+    expect(order.timeInForce).toBeUndefined();
+  });
 });
 
 describe("toAlpacaSymbol / fromAlpacaSymbol", () => {

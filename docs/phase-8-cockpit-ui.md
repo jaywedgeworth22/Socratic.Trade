@@ -40,6 +40,58 @@
 > Strategy LLM steps are shown with label/model/provider/status, and Settings uses
 > a clearer User/Account scope header, account picker, tab shell, and denser
 > notification/model controls.
+>
+> 2026-07-03: The Socratic Trade branch (`codex/socratic-trade-autonomy-mockup`)
+> supersedes the cockpit's homepage direction with an Autonomy Desk: live thesis,
+> capital posture, delegated action log, evidence contribution, dissent, outcome
+> learning, coaching, and framework-improvement proposals. This is now backed by
+> persisted Socratic decision cases, structured retrieval attribution, framework
+> proposal review actions, coach notes, and explicit autonomous override semantics
+> for owner preference gates. `/design/socratic-trade` is now a coded public product
+> overview rather than a static mockup. See `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
+>
+> 2026-07-04: `codex/console-ui-swimlane` extends the Autonomy Desk's inspection surfaces:
+> approval cards expose served-model/failover provenance, red-team triggers, sizing/R:R receipt
+> data, and linked citations; `/console/decisions/[id]` is the read-only trace inspector for
+> decision cases, coach notes, and linked framework proposals; mobile LIVE approval uses the same
+> phrase gate as desktop. See `docs/rollouts/2026-07-04-console-ui-swimlane.md`.
+>
+> 2026-07-04: `/console/scan` now matches the legacy dashboard's browser-local column controls
+> for the current console scan columns: visibility toggles, reorder arrows, Reset, and saved
+> visible-column state/order. See `docs/rollouts/2026-07-04-scan-column-customization.md`.
+>
+> 2026-07-13: Live Thesis no longer presents one concatenated Green/sizing/Red/outcome paragraph.
+> It renders visually distinct Green Team, deterministic sizing/risk, Red Team, and deterministic
+> outcome sections. Red verdicts say approved at full size / approved at half size / rejected /
+> unavailable rather than "survived"; blocked proposals display intent ("Buy") rather than the
+> false execution claim "Bought". Capital posture and approval cards resolve the selected daily
+> dollar-or-percent cap against current NAV. Migration v27 persists the exact Green rationale and
+> deterministic sizing receipt across refresh/lifecycle writes, and an objection is labeled
+> overridden only when the final policy decision records an applied override; a pending request is
+> explicitly labeled as requested rather than applied.
+> The Guardrails cap selector derives from the persisted account whenever no draft is active, so
+> discard/save/account changes cannot leave the Dollar/Percent control displaying stale local mode.
+>
+> 2026-07-14: approval cards and Live Thesis use the structured Green-only rationale rather than
+> relabeling appended Red or owner-hold prose as Green evidence. Proposal/case lifecycle status now
+> stays aligned through placement, broker rejection, expiry, withdrawal, and reconciliation. An
+> uncertain submission says “Placement pending confirmation” and never invites a retry; final-size
+> Red rejection/unavailability/half-size advice and any explicit owner override remain distinct.
+> Independent rationale-diversity or preference-override holds render in their own “Why your
+> approval is required” panel instead of being mislabeled as a Red Team outage. A synchronous
+> broker fill renders as a completed success in the single/bulk approval flow and Activity feed,
+> never as a failed approval or “awaiting next update.”
+> Chat retries return the original proposal's current lifecycle status, and stale-fill recovery
+> cannot show “Filled” while its accounting receipt remains pending; those ledgers advance together.
+> A broker cancellation after partial execution is shown as a completed partial execution—not a
+> total rejection—and current partial quantity enters exposure immediately.
+>
+> 2026-07-14: the decision trace treats the structured Red Team verdict card as the
+> canonical explanation. Exact generic dissent copies and known generated policy
+> wrappers around that same reason are hidden, while genuinely distinct policy
+> objections and override context remain visible. The canonical card owns the explicit
+> verdict status too, preserving “Approved at half size” and “Rejected by Red Team”
+> without restoring duplicate rationale rows.
 
 
 This phase restructures the dashboard from a long vertical page into a
@@ -49,8 +101,10 @@ screen.
 
 ## Layout Model
 
-- The desktop app shell uses `height: 100dvh` and three fixed rows: command bar,
-  main cockpit, and bottom drawer.
+- The desktop app shell uses `height: 100dvh` with a fixed command-bar row above
+  the main cockpit. (The original always-on bottom-drawer row was replaced by an
+  on-demand right slide-over for the feeds — see "User-Facing Tabs" — so the shell
+  is no longer a three-row grid.)
 - As of 2026-06-19, the fixed-height cockpit shell is desktop-only (`xl+`).
   Mobile/tablet use `min-height: 100dvh`, normal page scrolling, responsive shrinking command-bar buttons (grouped into selects/utility vs actions) that stack as exactly two right-aligned lines below the `md` (768px) breakpoint, and a compact portfolio summary above the workspace.
 - The main cockpit has three regions: left rail, center workspace, and right
@@ -62,9 +116,26 @@ screen.
 
 ## User-Facing Tabs
 
-- Center workspace tabs: `Decision`, `Market Scan`, `Performance`, `Strategy`.
-- Right inspector tabs: `Operate`, `Risk`, `Profile`.
-- Bottom drawer tabs: `Activity`, `Runs`, `Notifications`.
+> Updated 2026-07-01 to match code. The tab set grew past the original
+> 4-workspace / 3-feed split described in the 2026-06-16 redesign banner above;
+> the lists below are the source of truth (`app/dashboard-client.tsx`
+> `WorkspaceTab` type and `FeedTab` type).
+
+- **Center workspace tabs (7):** `Decision`, `Assistant`, `Market Scan`,
+  `Macro`, `Performance`, `Tax`, `Strategy` (`WorkspaceTab` union,
+  `app/dashboard-client.tsx`). As of 2026-07-01, only the five primary tabs
+  (`Decision`, `Assistant`, `Market Scan`, `Performance`, `Strategy`) render
+  inline; `Macro` and `Tax` are demoted behind a **"More" overflow menu** on the
+  tab row to keep the single-screen row scannable. Both overflow tabs stay
+  reachable in one extra click, remain deep-linkable, and persist via the same
+  `workspaceTab` state / `WORKSPACE_TAB_KEY` local-storage key as the primary
+  tabs. The overflow menu preserves `role="tab"`/`aria-selected` semantics (see
+  Accessibility below), and the "More" trigger shows the active overflow tab's
+  label so the user always sees where they are.
+- **Right inspector tabs:** `Operate`, `Risk`, `Profile`.
+- **Feed tabs (4):** `Activity`, `Runs`, `Notifications`, `Audit` (`FeedTab`
+  union, `app/dashboard-client.tsx`). These render in the feed slide-over rather
+  than an always-on bottom drawer.
 
 The `Decision` tab remains the default because the app's core value is showing
 what the agent recommends or decided, not hiding that output in logs.
