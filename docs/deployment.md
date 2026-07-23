@@ -1,59 +1,62 @@
 # Production Deployment
 
-Production is the self-hosted PM2 site at **trading.jays.services**, served by
-`next start` (PM2 app `trading`) from the `~/apps/trading-live` worktree on the
-owner's Apple Silicon Mac.
+Production is `socratictrade.com` on the Coolify app `socratic-trade-prod`
+(`m1os7ijf31bg3fanil152e4b`) on the Hetzner host. Coolify's GitHub App watches
+`main` and auto-deploys every push. A merged PR therefore enters the production
+deployment queue without an additional GitHub Actions or operator deploy step.
 
-## How it deploys (automated)
+Canonical implementation and rollback evidence:
 
-`.github/workflows/deploy.yml` deploys on **every push to `main`** (i.e. every
-merged PR) and via a manual **Actions → Deploy → Run workflow** button. The job
-runs on the self-hosted runner labeled `trading-live` and, in `~/apps/trading-live`:
+- `docs/rollouts/2026-07-10-auto-deploy-on.md`
+- `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`
+- `docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`
+- `AGENTS.md` -> **PRODUCTION IS ON COOLIFY**
 
-```
-git fetch https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git main
-git reset --hard FETCH_HEAD
-npm ci
-npm run build
-pm2 restart trading --update-env
-pm2 save
-```
+## Deployment flow
 
-- A `deploy-production` concurrency group prevents overlapping deploys.
-- Only **tracked** files are reset, so `.env.local`, `data/app.db`, and
-  `data/logos/` on the box are preserved.
-- Auth uses the job's `GITHUB_TOKEN` (the headless launchd runner has no git
-  creds); it resets to `FETCH_HEAD` rather than checking out `main` because
-  `trading-live` is a linked worktree that can't share the `main` checkout held
-  by the integration worktree. See
-  `docs/rollouts/2026-06-22-deploy-workflow-activated.md` for the why.
+1. A pull request passes the required `verify` check and merges to `main`.
+2. GitHub sends the push webhook to Coolify. The Cloudflare zone allows GitHub's
+   documented webhook source ranges.
+3. Coolify serializes the build (`concurrent_builds=1`), builds with Nixpacks,
+   and starts `scripts/coolify-prod-start.sh` with `DB_BOOTSTRAP=live`.
+4. The boot script injects Infisical secrets, restores the persistent SQLite DB
+   only when the marker-guarded bootstrap requires it, and runs Litestream
+   replication around the Next.js process.
 
-## Runner
+The retired `.github/workflows/deploy.yml` Mac/PM2 workflow was deleted on
+2026-07-11. Do not recreate or manually dispatch it: the old `trading-live`
+worktree and PM2 `trading` process are rollback infrastructure, and starting
+that scheduler while Coolify is live can place duplicate trades.
 
-A GitHub Actions self-hosted runner registered on the Mac:
-`~/actions-runner`, labels `self-hosted,trading-live`, installed as a LaunchAgent
-(`./svc.sh install && ./svc.sh start`, **no sudo** on macOS). Setup details and
-the SSH-from-hosted-runner alternative live in `ci-pending/README.md`.
+## Secrets and persistence
 
-Optional repo **Variables** `DEPLOY_DIR` / `PM2_APP` override the defaults
-(`$HOME/apps/trading-live`, `trading`).
+- Infisical is authoritative. `REQUIRE_SECRETS_MANAGER=1` makes production fail
+  closed unless startup runs through the Infisical injection path.
+- SQLite lives on the Coolify persistent volume at `/app/data`.
+- Litestream replicates from the production container to the R2 replica. The
+  version is pinned in `scripts/coolify-prod-start.sh`.
+- `ENCRYPTION_KEY` must remain stable or stored user/broker credentials become
+  undecryptable.
 
-## Manual deploy (fallback)
+See `docs/secrets.md` and `docs/litestream.md` for their focused runbooks.
 
-If the runner is down, deploy by hand on the box:
+## Verification
 
-```bash
-cd ~/apps/trading-live
-git fetch origin main && git reset --hard origin/main
-npm ci && npm run build
-pm2 restart trading && pm2 save
-```
+- Confirm the latest Coolify deployment is `finished` and its recorded commit
+  matches the intended `main` commit.
+- `curl -fsS https://socratictrade.com/api/health` must return `ok: true`, DB
+  `ok`, and a fresh scheduler tick.
+- Verify the running container is healthy and Litestream replication remains
+  continuous. A healthy edge response alone does not prove the intended commit
+  is serving.
 
-## Verifying a deploy
+## Rollback boundary
 
-- Actions → Deploy → latest run is green.
-- `curl -I https://trading.jays.services/` returns a response (a `302` to the
-  auth gate is expected for an unauthenticated request — it means the app is up).
-- Access requires the visitor's email to be on the allowlist
-  (`PRIMARY_USER_EMAIL` / `ADMIN_USER_EMAILS`, or the Cloudflare Access policy);
-  otherwise the app shows **Access denied** by design.
+The Mac/PM2 lane is rollback-only. Before starting it, an operator must first
+disable Coolify auto-deploy and stop the Coolify application/scheduler, then
+restore the saved rollback DNS target. Never run the Coolify and Mac schedulers
+at the same time. The exact saved DNS target and recovery boundary are recorded
+in `AGENTS.md` and the migration rollout notes above.
+
+Preview servers and preview hostnames are retired. Review branch work locally
+with `npm run dev` and use the required PR verification gate.

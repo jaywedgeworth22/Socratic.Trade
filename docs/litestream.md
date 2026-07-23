@@ -85,6 +85,53 @@ pm2 restart trading
 Point-in-time restore (0.5.x): add `-timestamp 2026-06-21T18:00:00Z` or
 `-txid <hex>` to the `litestream restore` call.
 
+## Restore verification status (G9a, 2026-07-01)
+
+**Restore has NOT yet been exercised.** Only the *replicate* (write) path has been
+verified live in production — see `docs/rollouts/2026-06-21-litestream-r2-live.md`
+("Verification" section: `litestream databases`/`litestream ltx` confirmed LTX files
+landing in R2, `pm2 show litestream` stable). That note's own follow-ups explicitly
+flagged the gap ("Consider a periodic restore drill") and it was never closed out —
+no rollout note or audit trail records `scripts/litestream-restore.sh` (or the
+underlying `litestream restore`) having actually been run and its output checked
+against `data/app.db`. Replication succeeding is NOT proof restore works: a wrong
+`-config` path, a stale/incompatible LTX generation, or a permissions gap on the R2
+read side would only surface at restore time.
+
+Until a drill is recorded, treat backups as **unverified** for disaster-recovery
+purposes — replicated bytes exist in R2, but the recovery procedure itself is
+untested end-to-end. This finding requires no infra change (the credentials and
+production host are out of reach for a non-production agent); it is an operator
+runbook step that must be performed once from `~/apps/trading-live`.
+
+### Runbook: perform and record a restore drill
+
+Run this periodically (recommend: quarterly, and after any Litestream/litestream.yml
+version bump) from a shell with the production `LITESTREAM_S3_*` creds available
+(via `.env.local` or `infisical run`, per `docs/deployment.md`):
+
+```bash
+# 1. Restore the latest replica to a scratch path (does NOT touch the live app.db).
+bash scripts/litestream-restore.sh /tmp/app.db.restored
+
+# 2. Sanity-check row counts against a table that changes frequently, and compare
+#    against the live DB's count (expect the restored count to be close, modulo
+#    whatever wrote since the last LTX sync).
+sqlite3 /tmp/app.db.restored 'SELECT count(*) FROM audit_events;'
+sqlite3 ~/apps/trading-live/data/app.db 'SELECT count(*) FROM audit_events;'
+
+# 3. Confirm the restored file is a valid, non-corrupt SQLite DB.
+sqlite3 /tmp/app.db.restored 'PRAGMA integrity_check;'   # expect: ok
+
+# 4. Clean up the scratch file (do NOT cp it over the live app.db as part of a drill).
+rm /tmp/app.db.restored
+```
+
+Record the outcome (date, LTX generation/txid if noted, row-count delta, integrity
+result) in a `docs/rollouts/YYYY-MM-DD-litestream-restore-drill.md` note so future
+agents/operators can see when restore was last actually proven to work, not just
+assumed from replication health.
+
 ## Local snapshot (optional)
 
 0.5.x cannot also mirror to a local file replica (single-replica limit). If you want a

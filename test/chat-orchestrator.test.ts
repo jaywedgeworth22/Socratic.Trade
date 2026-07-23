@@ -54,6 +54,44 @@ describe("chat orchestrator (MockLLM)", () => {
     expect(listTurns("o3").length).toBeGreaterThanOrEqual(2);
     expect(listMemories("o3").some((m) => m.subject === "no_options")).toBe(true);
   });
+
+  it("records the model on the assistant reply and turn (user turns carry none)", async () => {
+    const r = await orchestrate({ userId: "o_model", message: "AAPL price" });
+    expect(r.model).toBe("mock"); // MockLLM.modelName
+    const turns = listTurns("o_model");
+    const assistant = turns.filter((t) => t.role === "assistant").pop();
+    expect(assistant?.model).toBe("mock");
+    const user = turns.find((t) => t.role === "user");
+    expect(user?.model ?? null).toBeNull();
+  });
+
+  it("a retry with the same clientTurnId records the user turn exactly once but still answers", async () => {
+    const userId = "o_idem";
+    const first = await orchestrate({ userId, message: "AAPL price", clientTurnId: "ct-retry-1" });
+    const retry = await orchestrate({ userId, message: "AAPL price", clientTurnId: "ct-retry-1" });
+    expect(first.text.length).toBeGreaterThan(0);
+    expect(retry.text.length).toBeGreaterThan(0); // the retry's point is getting a reply
+    const userTurns = listTurns(userId).filter((t) => t.role === "user");
+    expect(userTurns.length).toBe(1);
+    expect(userTurns[0]!.clientTurnId).toBe("ct-retry-1");
+    // Both provider calls produced an assistant turn — only the user turn is deduped.
+    expect(listTurns(userId).filter((t) => t.role === "assistant").length).toBe(2);
+  });
+
+  it("two sends with distinct clientTurnIds record two user turns", async () => {
+    const userId = "o_idem2";
+    await orchestrate({ userId, message: "AAPL price", clientTurnId: "ct-a" });
+    await orchestrate({ userId, message: "AAPL price", clientTurnId: "ct-b" });
+    const userTurns = listTurns(userId).filter((t) => t.role === "user");
+    expect(userTurns.length).toBe(2);
+  });
+
+  it("sends without a clientTurnId are never deduped (legacy behavior preserved)", async () => {
+    const userId = "o_idem3";
+    await orchestrate({ userId, message: "AAPL price" });
+    await orchestrate({ userId, message: "AAPL price" });
+    expect(listTurns(userId).filter((t) => t.role === "user").length).toBe(2);
+  });
 });
 
 describe("chat orchestrator — NOW-tranche fixes (I1/I2/I3)", () => {
@@ -115,7 +153,9 @@ describe("chat read-only state tools (I6)", () => {
     listAlerts: () => [
       { id: "a1", userId: "s", symbol: "AAPL", op: "<", price: 180, note: "", status: "armed", createdAt: "2024-01-01", triggeredAt: null, triggeredPrice: null }
     ],
-    listOpenProposals: () => []
+    listOpenProposals: () => [],
+    getFundamentals: async (symbol) => ({ companyName: "Apple Inc.", peRatio: 30, analystRating: "Buy" }),
+    getMarketSignals: async () => ({ marketBreadthPct: 62.5, marketTopGainers: [{ sym: "AAPL", pct: 4.5 }] })
   };
   const orch = makeOrchestrator(stateDeps, new MockLLM());
 
@@ -134,5 +174,17 @@ describe("chat read-only state tools (I6)", () => {
   it("reads armed alerts", async () => {
     const r = await orch({ userId: "s3", message: "show me my alerts" });
     expect(r.text).toMatch(/AAPL/);
+  });
+
+  it("reads fundamentals for a ticker", async () => {
+    const r = await orch({ userId: "s4", message: "what is the PE ratio of AAPL?" });
+    expect(r.text).toMatch(/Apple Inc/);
+    expect(r.text).toMatch(/PE: 30/);
+  });
+
+  it("reads market signals", async () => {
+    const r = await orch({ userId: "s5", message: "what stocks did best today?" });
+    expect(r.text).toMatch(/Breadth: 62.5%/);
+    expect(r.text).toMatch(/AAPL \(\+4.5%\)/);
   });
 });

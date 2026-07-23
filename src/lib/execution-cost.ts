@@ -1,17 +1,18 @@
-// Deterministic transaction-cost model for SIMULATED (paper/Test) fills.
+// Deterministic transaction-cost model for PAPER (broker-paper) fills.
 //
 // The learning loop's win-rate / average-return / edge — which then drive deterministic position
-// sizing — are computed from closed lots. In Test/paper mode those lots are booked at the
-// frictionless mid quote, so the loop certifies a cost-free edge that may not survive a real fill
-// (half-spread + market impact), and sizes UP into exactly the thin, high-momentum names where
-// live cost is worst. This model debits an estimated cost on simulated fills so the scorecards are
-// net-of-cost.
+// sizing — are computed from closed lots. Paper fills recorded by this app (protective-stop exits,
+// market replacements) are booked at the raw quote with no broker reconciliation, so without an
+// adjustment the loop would certify a cost-free edge that may not survive a real fill (half-spread +
+// market impact), sizing UP into exactly the thin, high-momentum names where live cost is worst.
+// This model debits an estimated cost on those paper fills so the scorecards are net-of-cost.
 //
-// DEFAULT OFF: with no env configured, executionCostConfig().enabled is false and
-// recordFillFromProposal leaves the price unchanged — existing P&L/fixtures are untouched. Real
-// broker (live) fills already carry their realized price and are never adjusted (no double-count).
+// DEFAULT ON: with no env configured, executionCostConfig().enabled is true (1 bps base +
+// sqrt market-impact), so paper scorecards are net-of-cost by default. Opt out per box with
+// PAPER_EXECUTION_COST_MODEL=off (or 0/false/no). Real broker (live) fills already carry their
+// realized price and are never adjusted (no double-count) — only paper fills are affected.
 
-import type { OrderSide } from "./types";
+import type { FillSource, OrderSide } from "./types";
 
 export interface ExecutionCostInputs {
   /** (ask − bid)/mid × 1e4 — only when a real two-sided quote exists (else omitted, contributes 0). */
@@ -62,6 +63,40 @@ const DEFAULT_BASE_SLIPPAGE_BPS = 1;
  *
  * Real broker (live) fills are never adjusted — only paper/simulated fills are affected.
  */
+const DEFAULT_BASE_SLIPPAGE_BPS = 1;
+
+/**
+ * Read the cost-model config from env (DEFAULT ON for simulated fills).
+ *
+ * Enabled UNLESS `PAPER_EXECUTION_COST_MODEL` is explicitly set to a falsy value
+ * ("0", "false", "off", "no"). This means:
+ *   - No env → ON (default base of 1 bps + sqrt market-impact).
+ *   - PAPER_EXECUTION_COST_MODEL=off → disabled (opt-out for edge cases / frictionless tests).
+ *   - PAPER_EXECUTION_COST_BASE_BPS=8 → ON, overrides the default base.
+ *   - PAPER_EXECUTION_IMPACT_COEFF=20 → override impact coefficient.
+ *
+ * Real broker (live) fills are never adjusted — only paper/simulated fills are affected.
+ */
+/**
+ * B8 fix: apply the base execution cost to a PAPER EXIT fill priced at the raw quote.
+ *
+ * `recordFillFromProposal` already costs paper ENTRIES, but the two protective-exit writers
+ * (`synthetic-stops.ts`, `order-replacement.ts`) insert paper fills at the raw price with NO cost —
+ * so a paper lot exited via a synthetic stop pays no exit cost, overstating realized edge on the losing
+ * tail that feeds the tuner + sizer. This applies the EXIT side's adverse adjustment (base slippage only —
+ * no live scan quote is available at stop/replacement time, mirroring the entry path when spread/volume are
+ * absent). LIVE fills are returned UNCHANGED (they carry a real reconciled price; double-costing would be
+ * wrong), as are non-positive prices or a disabled model.
+ */
+export function applyPaperExitCost(price: number, side: OrderSide, source: FillSource | undefined): number {
+  if (source !== "paper") return price; // broker-paper fills only — live fills are reconciled, not adjusted
+  if (!(price > 0)) return price;
+  const cfg = executionCostConfig();
+  if (!cfg.enabled) return price;
+  const costBps = estimateExecutionCostBps({ orderNotional: 0, baseSlippageBps: cfg.baseSlippageBps, impactCoeff: cfg.impactCoeff });
+  return applyExecutionCost(price, side, costBps);
+}
+
 export function executionCostConfig(): { enabled: boolean; baseSlippageBps: number; impactCoeff: number } {
   const envFlag = String(process.env.PAPER_EXECUTION_COST_MODEL ?? "").trim().toLowerCase();
   // Explicit opt-out: treat "0", "false", "off", "no" as disabled.

@@ -1,14 +1,14 @@
-// Multi-user identity (Q3). The app derives a per-user id from a VERIFIED email — never from a
-// client-supplied hint. In production, `middleware.ts` verifies identity at the edge (Cloudflare Access
-// today; Auth.js/Google next) and forwards a trusted `x-authenticated-user-email` header that this module
-// maps to a stable userId. See docs/chat-multiuser-learning-design.md §2.
+// Multi-user identity (Q3). The app derives a per-user id from middleware-supplied email metadata —
+// never from a client-supplied hint. Middleware separately forwards identity-source provenance so
+// role-sensitive gates can distinguish verified upstream identities from the local fallback.
+// See docs/chat-multiuser-learning-design.md §2.
 //
 // NOTE: this module uses node `crypto` and must only be imported from the Node runtime (route handlers,
 // lib), NOT from edge middleware. `middleware.ts` keeps its own crypto-free allowlist check.
 
 import { createHash } from "crypto";
 
-/** Dev/test fallback identity, used only when NOT in production (middleware 401s unauth prod requests). */
+/** Back-compatible identity used when auth is unconfigured or an email input is invalid. */
 export const DEV_USER_ID = (process.env.DEV_USER_ID || "local").trim();
 
 /** Default primary email when PRIMARY_USER_EMAIL is unset. */
@@ -48,7 +48,7 @@ export function isPrimaryEmail(email: string): boolean {
 /**
  * Deterministic, stable app userId for a verified email. The primary user (and any of their configured
  * aliases) keep the legacy `"local"` id (no migration); everyone else gets an opaque `u_<hash>` id. Invalid
- * input falls back to the dev user (only reachable in non-production — see middleware).
+ * input falls back to the configured development user id.
  */
 export function userIdForEmail(email: string): string {
   const e = normalizeEmail(email);
@@ -58,15 +58,14 @@ export function userIdForEmail(email: string): string {
 }
 
 /**
- * Allowlist gate. The primary email and its aliases are always allowed. When `ALLOWED_EMAILS` is unset the
- * app defers to the upstream gateway (Cloudflare Access already enforces an email allowlist); set
- * `ALLOWED_EMAILS` for defense-in-depth or when no gateway is in front.
+ * Allowlist gate. The primary email and its aliases are always allowed. When `ALLOWED_EMAILS` is unset,
+ * non-primary users are denied; Auth.js authenticates identity, while this app still authorizes access.
  */
 export function isEmailAllowed(email: string): boolean {
   const e = normalizeEmail(email);
   if (!e || !e.includes("@")) return false;
   if (primaryEmails().has(e)) return true;
   const allowed = splitEmails(process.env.ALLOWED_EMAILS);
-  if (allowed.length === 0) return true;
+  if (allowed.length === 0) return false;
   return allowed.includes(e);
 }
