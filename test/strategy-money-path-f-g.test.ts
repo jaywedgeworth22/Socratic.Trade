@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 // End-to-end "money-path" + red-team wiring tests (audit work-split Chat F/G).
@@ -15,6 +16,8 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 //
 // The vector-db is mocked so the run needs no embeddings provider.
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -27,17 +30,55 @@ vi.mock("../src/lib/vector-db", () => ({
   storeContexts: async () => {}
 }));
 
+// Money-path assertions do not cover delivery; keep notification I/O out of this focused suite.
+vi.mock("../src/lib/notifications", () => ({
+  sendNotification: async () => ({ id: "test", status: "skipped" })
+}));
+
+const brokerBehavior = vi.hoisted(() => ({ terminalPartial: false, unpricedFill: false }));
+
+vi.mock("../src/lib/broker", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/broker")>();
+  return {
+    ...actual,
+    getBrokerGateway: (...args: Parameters<typeof actual.getBrokerGateway>) => {
+      const gateway = actual.getBrokerGateway(...args);
+      if (brokerBehavior.terminalPartial) {
+        gateway.placeEquityOrder = async (input) => ({
+          orderId: `terminal-partial-${randomUUID()}`,
+          refId: input.refId ?? randomUUID(),
+          state: "canceled",
+          filledQuantity: 0.4,
+          averagePrice: 200,
+          raw: { test: true }
+        });
+      } else if (brokerBehavior.unpricedFill) {
+        gateway.placeEquityOrder = async (input) => ({
+          orderId: `unpriced-fill-${randomUUID()}`,
+          refId: input.refId ?? randomUUID(),
+          state: "filled",
+          filledQuantity: 0.4,
+          raw: { test: true }
+        });
+      }
+      return gateway;
+    }
+  };
+});
+
 beforeEach(() => {
   // Reset the module cache so the DB singleton (a module-level `let db` in db.ts) re-opens against
   // this test's fresh temp file rather than reusing the previous test's connection/data.
   vi.resetModules();
+  brokerBehavior.terminalPartial = false;
+  brokerBehavior.unpricedFill = false;
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-money-path-${randomUUID()}.db`)}`;
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 /** A buy the Bull proposes — every risk-adding opening triggers the single Red Team review now. */
@@ -63,7 +104,7 @@ function makeFetchStub(opts: {
   const proposals = opts.bullProposals ?? [BULL_PROPOSAL];
   return async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       opts.onOpenAiBody?.(body);
       // The Red Team review (debateProposal) system prompt contains "Red Team Risk Agent";
@@ -76,7 +117,7 @@ function makeFetchStub(opts: {
         );
       }
       // The Bull returns the proposal set (there is no second in-flow Bear pass anymore).
-      return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals }) }), {
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals }) } }] }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -104,13 +145,13 @@ function makeFetchStub(opts: {
         { status: 200, headers: { "content-type": "application/json" } }
       );
     }
-    return new Response("not found", { status: 404 });
+    console.error("404 FOR URL:", href); return new Response("not found", { status: 404 });
   };
 }
 
 async function seedTestAccountAndPolicy() {
   const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -125,8 +166,8 @@ async function seedTestAccountAndPolicy() {
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    llmModel: "gpt-4.1-mini",
-    redTeamLlmModel: "gpt-4.1-mini",
+    llmModel: "openrouter/openai/gpt-4.1-mini",
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide"
@@ -135,7 +176,7 @@ async function seedTestAccountAndPolicy() {
 
 describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 + F1", () => {
   it("books a broker-paper fill and persists a proposal + fill_event with the redTeamVerdict field (survived)", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeFetchStub({ redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." } }));
 
     await seedTestAccountAndPolicy();
@@ -152,11 +193,11 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
     expect(aaplFill?.status).toBe("filled");
     expect(aaplFill?.source).toBe("paper");
 
-    // A proposal was persisted for AAPL, placed through the normal broker path.
+    // A proposal was persisted for AAPL and synchronously filled through the normal broker path.
     const proposals = listRecentProposals("TEST", 100, "local");
     const aaplProposal = proposals.find((p) => p.proposal.symbol === "AAPL");
     expect(aaplProposal).toBeDefined();
-    expect(aaplProposal?.status).toBe("placed");
+    expect(aaplProposal?.status).toBe("filled");
 
     // F1: the redTeamVerdict field round-trips through the persisted JSON payload (no migration),
     // including the served red-team model attribution (t3) and the universal-coverage trigger.
@@ -165,22 +206,60 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
       rejected: false,
       available: true,
       reason: "No fatal flaw found.",
-      model: "gpt-4.1-mini",
+      model: "openai/gpt-4.1-mini",
       trigger: "all_openings"
     });
-    // t3: the persisted proposal carries the FAILOVER-AWARE served Green model (here the primary),
-    // so approval-time attribution doesn't drift with later policy edits.
-    expect(aaplProposal?.proposal.proposedByModel).toBe("gpt-4.1-mini");
+    // t3: the persisted proposal carries the FAILOVER-AWARE policy model (here the primary),
+    // preserving its namespace so approval-time attribution can compare it to the saved policy.
+    expect(aaplProposal?.proposal.proposedByModel).toBe("openrouter/openai/gpt-4.1-mini");
     // Backward-compat rationale text is still appended.
-    expect(aaplProposal?.proposal.rationale).toContain("Red Team Review Survived");
+    expect(aaplProposal?.proposal.rationale).toContain("Red Team review — approved at full size");
     // The proposal's numeric conviction score survives end-to-end (no second schema pass anymore).
     expect(aaplProposal?.proposal.confidenceScore).toBe(90);
+  }, 30_000);
+
+  it("books a terminal partial execution as filled instead of treating the whole order as declined", async () => {
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
+    vi.stubEnv("PAPER_EXECUTION_COST_MODEL", "off");
+    brokerBehavior.terminalPartial = true;
+    vi.stubGlobal("fetch", makeFetchStub({ redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." } }));
+
+    await seedTestAccountAndPolicy();
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { getSocraticDecisionCase, listFillEvents, listRecentProposals } = await import("../src/lib/db");
+
+    const result = await runStrategyOnce();
+    expect(result.status).toBe("completed");
+    const fill = listFillEvents("TEST", undefined, 100, "local").find((row) => row.symbol === "AAPL");
+    expect(fill).toMatchObject({ status: "filled", quantity: 0.4, price: 200, notional: 80 });
+    const proposal = listRecentProposals("TEST", 100, "local").find((row) => row.proposal.symbol === "AAPL");
+    expect(proposal).toMatchObject({ status: "filled", estimatedNotional: 80 });
+    expect(getSocraticDecisionCase(proposal!.id, "local")).toMatchObject({ status: "filled", notional: 80 });
+  }, 30_000);
+
+  it("keeps an autonomous broker execution pending until a positive realized price is reported", async () => {
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
+    vi.stubEnv("PAPER_EXECUTION_COST_MODEL", "off");
+    brokerBehavior.unpricedFill = true;
+    vi.stubGlobal("fetch", makeFetchStub({ redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." } }));
+
+    await seedTestAccountAndPolicy();
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { getSocraticDecisionCase, listFillEvents, listRecentProposals } = await import("../src/lib/db");
+
+    const result = await runStrategyOnce();
+    expect(result.status).toBe("completed");
+    const fill = listFillEvents("TEST", undefined, 100, "local").find((row) => row.symbol === "AAPL");
+    expect(fill).toMatchObject({ status: "pending_reconciliation", quantity: 0.4, price: 0, notional: 0 });
+    const proposal = listRecentProposals("TEST", 100, "local").find((row) => row.proposal.symbol === "AAPL");
+    expect(proposal?.status).toBe("placed");
+    expect(getSocraticDecisionCase(proposal!.id, "local")?.status).toBe("placed");
   }, 30_000);
 });
 
 describe("strategy LLM budget ceiling — choke point AFTER risk breakers", () => {
-  it("skips LLM generation (no OpenAI call, no fill) but still COMPLETES when over the daily budget", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+  it("skips LLM generation (no OpenAI call, no fill) and marks the run skipped when over the daily budget", async () => {
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubEnv("TRIGGER_LLM_DAILY_TOKEN_BUDGET", "1000");
     let openAiCalled = false;
     vi.stubGlobal(
@@ -201,9 +280,9 @@ describe("strategy LLM budget ceiling — choke point AFTER risk breakers", () =
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const result = await runStrategyOnce();
 
-    // The run still COMPLETES — non-LLM safety maintenance (reconcile + drawdown breaker) ran; only
-    // the LLM proposal generation was skipped by the budget gate.
-    expect(result.status).toBe("completed");
+    // Wave A (PR #1847): pre-decision budget gate ends the run as "skipped" (not a green completed
+    // cycle). Non-LLM safety maintenance still ran before the gate; only LLM/scan generation stopped.
+    expect(result.status).toBe("skipped");
     expect(listAudit(500).filter((e) => e.kind === "strategy_run_suppressed_budget").length).toBeGreaterThanOrEqual(1);
     // The Bull/Bear model call never fired.
     expect(openAiCalled).toBe(false);
@@ -214,7 +293,7 @@ describe("strategy LLM budget ceiling — choke point AFTER risk breakers", () =
 
 describe("strategy Red Team rejection — F2 audit", () => {
   it("writes an audit('proposal_rejected_by_red_team') row and drops the proposal on a reviewer veto", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal(
       "fetch",
       makeFetchStub({ redTeamVerdict: { verdict: "reject", reason: "Overbought into earnings; asymmetric downside." } })
@@ -245,7 +324,7 @@ describe("strategy Red Team rejection — F2 audit", () => {
     // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
     // counterfactual return.
     expect(payload.runId).toBe(result.runId);
-    expect(payload.model).toBe("gpt-4.1-mini");
+    expect(payload.model).toBe("openai/gpt-4.1-mini");
 
     // A rejected proposal never reaches execution → no AAPL fill was booked.
     const fills = listFillEvents("TEST", undefined, 100, "local");

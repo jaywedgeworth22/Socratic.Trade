@@ -13,10 +13,16 @@
  *                            an explicit value — never a blank that secretly means Fable). */
 
 import { useState } from "react";
+import type { LlmReasoningEffort } from "@/lib/types";
+import { normalizeReasoningEffortForModel, reasoningCapabilityForModel } from "@/lib/llm-request";
+import { reasoningAdviceForModel, recommendedReasoningEffortForModel } from "@/lib/model-reasoning-recommendations";
 import { savePolicy, ConsoleApiError } from "../lib/api";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Card, Field, Select, Toggle } from "../ui/primitives";
+import { Card, Field, RawNumInput, Select, Toggle } from "../ui/primitives";
+
+const DEFAULT_MIN_NEW_LESSONS = 5;
+const DEFAULT_MAX_WAIT_DAYS = 7;
 
 const MODE_OPTIONS = [
   {
@@ -33,13 +39,14 @@ const MODE_OPTIONS = [
 
 // Model shortlist: this is a once-a-day audit of decisions that compound, so the curated
 // options are frontier-tier; the review model is its own user-level pick (unrelated to the
-// per-account team models on Framework → Models). No blank/"default" pseudo-option — the
+// per-account team models on Strategy → Models). No blank/"default" pseudo-option — the
 // field always holds a real, chosen model.
 const REVIEW_MODEL_OPTIONS = [
+  { value: "gpt-5.6-sol", label: "gpt-5.6-sol — recommended frontier audit · $$$" },
+  { value: "gpt-5.6-terra", label: "gpt-5.6-terra — balanced current-generation audit · $$$" },
+  { value: "gpt-5.6-luna", label: "gpt-5.6-luna — lower-cost current-generation audit · $$" },
   { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" },
   { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude reasoning · $$$" },
-  { value: "gpt-5.5", label: "gpt-5.5 — deepest OpenAI reasoning · $$$" },
-  { value: "gpt-5.4", label: "gpt-5.4 — stronger OpenAI analysis · $$$" },
   { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — deepest Gemini reasoning · $$$" }
 ];
 
@@ -47,6 +54,7 @@ export function LearningReviewCard() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState<{ learningReviewMinNewLessons?: number; learningReviewMaxWaitDays?: number }>({});
 
   const policy = snapshot?.policy;
   if (!snapshot || !policy) return null;
@@ -57,19 +65,44 @@ export function LearningReviewCard() {
   // Real default value (never blank-means-Fable).
   const model = policy.learningReviewModel?.trim() || "claude-fable-5";
   const customModel = model && !REVIEW_MODEL_OPTIONS.some((o) => o.value === model) ? model : null;
+  const reasoningCapability = reasoningCapabilityForModel(model);
+  const recommendedEffort = recommendedReasoningEffortForModel(model, "review");
+  const reasoningEffort = normalizeReasoningEffortForModel(
+    model,
+    policy.learningReviewReasoningEffort ?? recommendedEffort
+  );
+  const reasoningAdvice = reasoningAdviceForModel(model);
+  const minNewLessons = draft.learningReviewMinNewLessons ?? policy.learningReviewMinNewLessons ?? DEFAULT_MIN_NEW_LESSONS;
+  const maxWaitDays = draft.learningReviewMaxWaitDays ?? policy.learningReviewMaxWaitDays ?? DEFAULT_MAX_WAIT_DAYS;
 
-  const save = async (patch: Record<string, unknown>, saved: string) => {
-    if (busy) return;
+  /** Returns whether the save succeeded, so numeric-field callers can revert their optimistic draft. */
+  const save = async (patch: Record<string, unknown>, saved: string): Promise<boolean> => {
+    if (busy) return false;
     setBusy(true);
     try {
       await savePolicy(patch);
       await refresh();
       toast.push("pos", saved);
+      return true;
     } catch (error) {
       toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
+      return false;
     } finally {
       setBusy(false);
     }
+  };
+
+  // Numeric trigger knobs: local text while typing, commit on blur (mirrors Market-scan shape).
+  const commitNumber = (
+    key: "learningReviewMinNewLessons" | "learningReviewMaxWaitDays",
+    next: number,
+    saved: number,
+    label: string
+  ) => {
+    if (next === saved) return;
+    void save({ [key]: next }, label).then((ok) => {
+      if (!ok) setDraft((d) => ({ ...d, [key]: saved }));
+    });
   };
 
   return (
@@ -81,7 +114,7 @@ export function LearningReviewCard() {
       </p>
       <div className="flex flex-col gap-3">
         <div
-          className="con-row flex items-center justify-between gap-4 rounded-md px-1.5 py-1.5"
+          className="con-row flex items-center justify-between gap-4 rounded-control px-1.5 py-1.5"
           title="Run the review once per UTC day. Off = nothing runs and nothing is spent."
         >
           <div>
@@ -99,6 +132,56 @@ export function LearningReviewCard() {
             onChange={(next) => void save({ learningReviewEnabled: next }, next ? "Daily learning review on" : "Daily learning review off")}
           />
         </div>
+
+        {enabled && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Run after this many new lessons"
+              hint="Whichever fires first: this count, or the max wait below."
+              htmlFor="learning-review-min-new-lessons"
+            >
+              <RawNumInput
+                id="learning-review-min-new-lessons"
+                value={String(minNewLessons)}
+                emptyValue={DEFAULT_MIN_NEW_LESSONS}
+                disabled={busy}
+                title="Skips the daily call entirely until at least this many learned facts or pending items have appeared since the last successful review."
+                onValueChange={(parsed) => setDraft((d) => ({ ...d, learningReviewMinNewLessons: parsed }))}
+                onBlur={() =>
+                  commitNumber(
+                    "learningReviewMinNewLessons",
+                    minNewLessons,
+                    policy.learningReviewMinNewLessons ?? DEFAULT_MIN_NEW_LESSONS,
+                    "Threshold saved"
+                  )
+                }
+              />
+            </Field>
+            <Field
+              label="Or after this many days, whichever is first"
+              hint="A slow trickle of lessons still gets swept eventually."
+              htmlFor="learning-review-max-wait-days"
+            >
+              <RawNumInput
+                id="learning-review-max-wait-days"
+                value={String(maxWaitDays)}
+                emptyValue={DEFAULT_MAX_WAIT_DAYS}
+                disabled={busy}
+                title="Even below the threshold, the review still runs once the oldest un-reviewed lesson has waited this many days."
+                onValueChange={(parsed) => setDraft((d) => ({ ...d, learningReviewMaxWaitDays: parsed }))}
+                onBlur={() =>
+                  commitNumber(
+                    "learningReviewMaxWaitDays",
+                    maxWaitDays,
+                    policy.learningReviewMaxWaitDays ?? DEFAULT_MAX_WAIT_DAYS,
+                    "Max wait saved"
+                  )
+                }
+              />
+            </Field>
+          </div>
+        )}
+
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="When it disagrees with a lesson"
@@ -133,8 +216,17 @@ export function LearningReviewCard() {
               id="learning-review-model"
               value={model}
               disabled={busy}
-              title="The model that runs the daily learning review. Needs a resolvable key for its provider (Settings → API keys)."
-              onChange={(e) => void save({ learningReviewModel: e.target.value }, "Learning-review model saved")}
+              title="The model that runs the daily learning review. Needs a resolvable key for its provider (Connections → API keys)."
+              onChange={(e) => {
+                const nextModel = e.target.value;
+                void save(
+                  {
+                    learningReviewModel: nextModel,
+                    learningReviewReasoningEffort: recommendedReasoningEffortForModel(nextModel, "review")
+                  },
+                  "Learning-review model and recommended effort saved"
+                );
+              }}
             >
               {customModel && (
                 <option value={customModel} title="A model id outside the curated list, kept exactly as stored.">
@@ -149,6 +241,35 @@ export function LearningReviewCard() {
             </Select>
           </Field>
         </div>
+
+        {reasoningCapability && reasoningEffort && (
+          <Field label={reasoningCapability.settingLabel} htmlFor="learning-review-reasoning-effort">
+            <Select
+              id="learning-review-reasoning-effort"
+              value={reasoningEffort}
+              disabled={busy}
+              title={reasoningAdvice ?? reasoningCapability.description}
+              onChange={(e) =>
+                void save(
+                  { learningReviewReasoningEffort: e.target.value as LlmReasoningEffort },
+                  "Learning-review reasoning effort saved"
+                )
+              }
+            >
+              {reasoningCapability.options.map((option) => (
+                <option key={option.value} value={option.value} title={option.hint}>
+                  {option.label}{option.value === recommendedEffort ? " — recommended" : ""}
+                </option>
+              ))}
+            </Select>
+            <p className="mt-1 text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
+              {`Recommended for this review role: ${recommendedEffort}. ${reasoningCapability.description}`}
+            </p>
+            {reasoningAdvice && (
+              <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{reasoningAdvice}</p>
+            )}
+          </Field>
+        )}
       </div>
     </Card>
   );

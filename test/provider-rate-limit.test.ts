@@ -1,15 +1,27 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ProviderRateLimiter,
   RequestQuota,
+  admitProviderRequests,
   appendErrorCause,
   redactApiKeyParams,
   redactSecretValue,
+  refundProviderRequests,
+  resetProviderQuotaState,
   resolveProviderLimiterConfig,
   resolveProviderQuota,
   scrubProviderErrorText,
+  simulateProviderQuotaRestartForTests,
   type ProviderLimiterClock,
 } from "../src/lib/provider-rate-limit";
+import { flushDurableStateNow } from "../src/lib/durable-state";
+
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-provider-rate-limit-${randomUUID()}.db`)}`;
+});
 
 /** Drain every currently-queued microtask (including ones scheduled BY other microtasks
  *  along the way) before returning. A macrotask boundary (real setTimeout) always runs
@@ -448,6 +460,9 @@ const QUOTA_ENV_KEYS = [
   "PROVIDER_QUOTA_TIINGO_PER_HOUR",
   "PROVIDER_QUOTA_TESTPROV_PER_MIN",
   "PROVIDER_QUOTA_TESTPROV_PER_DAY",
+  "PROVIDER_QUOTA_FMP_PER_MIN",
+  "PROVIDER_QUOTA_FMP_PER_HOUR",
+  "PROVIDER_QUOTA_FMP_PER_DAY",
   "TWELVEDATA_CREDITS_PER_MIN",
 ];
 
@@ -468,6 +483,33 @@ describe("resolveProviderQuota", () => {
       { maxRequests: 50, windowMs: 3_600_000 },
       { maxRequests: 1000, windowMs: 86_400_000 },
     ]);
+  });
+
+  it("returns the built-in fmp window (290/min, no day cap by default)", () => {
+    expect(resolveProviderQuota("fmp")).toEqual([
+      { maxRequests: 290, windowMs: 60_000 },
+    ]);
+  });
+
+  it("lets PROVIDER_QUOTA_FMP_PER_MIN REPLACE the minute cap and =0 REMOVE it", () => {
+    process.env.PROVIDER_QUOTA_FMP_PER_MIN = "100";
+    expect(resolveProviderQuota("fmp")).toEqual([{ maxRequests: 100, windowMs: 60_000 }]);
+    process.env.PROVIDER_QUOTA_FMP_PER_MIN = "0";
+    // Removing the only window leaves an empty list → unlimited (undefined).
+    expect(resolveProviderQuota("fmp")).toBeUndefined();
+  });
+
+  it("lets PROVIDER_QUOTA_FMP_PER_DAY ADD a day window alongside the 290/min", () => {
+    process.env.PROVIDER_QUOTA_FMP_PER_DAY = "240";
+    expect(resolveProviderQuota("fmp")).toEqual([
+      { maxRequests: 290, windowMs: 60_000 },
+      { maxRequests: 240, windowMs: 86_400_000 },
+    ]);
+  });
+
+  it("PROVIDER_QUOTA_FMP_PER_DAY=0 is a no-op (no day window in the base)", () => {
+    process.env.PROVIDER_QUOTA_FMP_PER_DAY = "0";
+    expect(resolveProviderQuota("fmp")).toEqual([{ maxRequests: 290, windowMs: 60_000 }]);
   });
 
   it("is undefined for an unconfigured provider (unlimited)", () => {
@@ -542,6 +584,27 @@ describe("RequestQuota (sliding-window, fake clock)", () => {
     expect(quota.admit("twelvedata", "keyB", 8)).toBe(8); // keyB untouched by keyA's spend
   });
 
+  it("admits up to the fmp 290/min cap, reopens after 60s, and refund/per-cred lanes work", async () => {
+    const clock = new FakeClock();
+    const quota = new RequestQuota(clock);
+    expect(quota.admit("fmp", "credA", 300)).toBe(290); // 290/min ceiling
+    expect(quota.admit("fmp", "credA", 300)).toBe(0);   // minute spent
+    expect(quota.admit("fmp", "credB", 300)).toBe(290); // credB is an independent lane
+    quota.refund("fmp", "credA", 10);                   // hand back 10 (partial remainder / breaker skip)
+    expect(quota.admit("fmp", "credA", 300)).toBe(10);  // exactly the refunded 10
+    await clock.advance(60_000);
+    expect(quota.admit("fmp", "credA", 300)).toBe(290); // window reopened
+  });
+
+  it("enforces an opt-in PROVIDER_QUOTA_FMP_PER_DAY cap alongside the minute window", async () => {
+    process.env.PROVIDER_QUOTA_FMP_PER_DAY = "240"; // free-tier 250/day, 240 headroom
+    const clock = new FakeClock();
+    const quota = new RequestQuota(clock);
+    expect(quota.admit("fmp", "k", 1000)).toBe(240); // day cap (240) binds under the 290/min
+    await clock.advance(60_000);
+    expect(quota.admit("fmp", "k", 1000)).toBe(0);   // minute refreshed but the day budget is spent
+  });
+
   it("refills as older hits slide out of the window", async () => {
     const clock = new FakeClock();
     const quota = new RequestQuota(clock);
@@ -606,5 +669,49 @@ describe("RequestQuota (sliding-window, fake clock)", () => {
     quota.refund("twelvedata", "k", 0);
     quota.refund("twelvedata", "k", -3);
     expect(quota.admit("twelvedata", "k", 8)).toBe(0); // unchanged
+  });
+});
+
+describe("admitProviderRequests (the module singleton) — survives a simulated process restart", () => {
+  beforeEach(() => { process.env.PROVIDER_QUOTA_TESTQUOTA_PER_MIN = "8"; });
+  afterEach(() => {
+    delete process.env.PROVIDER_QUOTA_TESTQUOTA_PER_MIN;
+    resetProviderQuotaState("testquota");
+  });
+
+  it("a lane's spend from a PRIOR process is hydrated and enforced, not reset to a fresh budget", () => {
+    const credKey = `cred-${randomUUID()}`;
+    expect(admitProviderRequests("testquota", credKey, 8)).toBe(8); // spend the whole per-minute budget
+    expect(admitProviderRequests("testquota", credKey, 8)).toBe(0); // none left, pre-"restart"
+    flushDurableStateNow(); // debounced write lands in SQLite (what a graceful shutdown hook does)
+
+    // Simulate a restart: forget the in-memory RequestQuota state AND durable-state's hydration flag
+    // for this namespace, WITHOUT touching the persisted SQLite rows (a real restart doesn't touch
+    // disk) — this is exactly what protects against a redeploy re-granting an already-burned budget.
+    simulateProviderQuotaRestartForTests();
+
+    // A fresh process must still see the spend from before the "restart" — not a clean 8/8 budget.
+    expect(admitProviderRequests("testquota", credKey, 8)).toBe(0);
+  });
+
+  it("refundProviderRequests' effect also survives a restart (a partial-remainder/breaker-skip refund isn't lost)", () => {
+    const credKey = `cred-${randomUUID()}`;
+    expect(admitProviderRequests("testquota", credKey, 8)).toBe(8);
+    refundProviderRequests("testquota", credKey, 3); // e.g. a breaker skip handing 3 back
+    flushDurableStateNow();
+
+    simulateProviderQuotaRestartForTests();
+
+    // The refunded 3 must still be available post-"restart" — a lost refund would under-count the
+    // real remaining budget and needlessly defer symbols that should have been admitted.
+    expect(admitProviderRequests("testquota", credKey, 8)).toBe(3);
+  });
+
+  it("an unrelated credential's lane is unaffected by another lane's restart-survived spend", () => {
+    const credA = `cred-a-${randomUUID()}`;
+    const credB = `cred-b-${randomUUID()}`;
+    admitProviderRequests("testquota", credA, 8);
+    simulateProviderQuotaRestartForTests();
+    expect(admitProviderRequests("testquota", credB, 8)).toBe(8); // credB's own fresh budget, untouched
   });
 });

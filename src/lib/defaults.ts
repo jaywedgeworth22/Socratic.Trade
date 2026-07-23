@@ -68,7 +68,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // NO llmModel / redTeamLlmModel here (owner directive 2026-07-07: no model default for anything,
   // ever). A seeded default here would resurrect the exact silent-default the model layer removed —
   // every new policy would "choose" gpt-5.4-mini without the user ever picking it. Both team models
-  // are REQUIRED explicit picks in Framework → Models; unset fails closed with an actionable
+  // are REQUIRED explicit picks in Strategy → Models; unset fails closed with an actionable
   // message (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE / the Red reviewer's not_configured routing).
   // The PROPOSER's reasoning effort (per-team split 2026-07-10). NO redTeamReasoningEffort default
   // on purpose: absent means "inherit the proposer's" (resolveReviewerReasoningEffort) — seeding a
@@ -88,7 +88,9 @@ export const DEFAULT_POLICY: TradingPolicy = {
   learningReviewMaxWaitDays: 7,
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
-  maxDailyNotional: 500,
+  // Account-relative by default: four full-sized 5%-of-NAV openings can fit in one day. A user can
+  // switch this to a fixed dollar ceiling in Guardrails when that better matches the mandate.
+  maxDailyPctOfNav: 20,
   maxSymbolExposurePct: 25,
   maxGrossExposurePct: 80,  // keep ≥20% cash buffer by default; users can raise in policy settings
   maxNetExposurePct: 80,    // consistent with gross; net > gross is impossible for long-only anyway
@@ -100,6 +102,10 @@ export const DEFAULT_POLICY: TradingPolicy = {
   volPanicSkewThreshold: 160,
   brokerBracketsEnabled: true, // attach broker-held stop/take brackets on native-bracket brokers (Alpaca)
   robinhoodBrokerStops: false, // opt-in: true broker-held resting stop on live Robinhood (verify RH MCP stop semantics first)
+  // Broker-held trailing stops (inert until riskRules.trailingStopPct > 0): native Alpaca
+  // trailing_stop orders; on live Robinhood a tick-ratcheted stop-market, additionally gated on the
+  // robinhoodBrokerStops opt-in above. The synthetic monitor stays the always-on fallback.
+  brokerTrailingStops: true,
   // Per-symbol stop intelligence ON by default (owner decision 2026-07-07 — no more one-size-fits-all
   // stops). ATR stops scale the protective stop DISTANCE to each name's realized volatility
   // (atrStopMultiple × ATR as a % of entry); beta-scaling widens the stop for high-beta names and
@@ -125,7 +131,11 @@ export const DEFAULT_POLICY: TradingPolicy = {
   sectorCaps: {},
   riskRules: DEFAULT_RISK_RULES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
-  taxSettings: DEFAULT_TAX_SETTINGS
+  taxSettings: DEFAULT_TAX_SETTINGS,
+  fmpRealTimeDataEnabled: true,
+  fmpMacroDataEnabled: true,
+  fmpEventsDataEnabled: true,
+  fmpFundamentalsDataEnabled: true
   // No default broker: a fresh policy is broker-neutral. activeBroker is set when a real broker is
   // connected (see db-profiles.ts). With no connected account the app cannot place orders — there is
   // no local-sim fallback.

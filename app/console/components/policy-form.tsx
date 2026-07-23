@@ -7,7 +7,7 @@
  *  commit a change. The diff/classification logic lives in ../lib/policy-diff
  *  (pure, unit-tested); this file is the React skin over it. */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Lock, Unlock } from "lucide-react";
 import { DEFAULT_POLICY } from "@/lib/defaults";
 import type { TradingPolicy } from "@/lib/types";
@@ -183,8 +183,16 @@ export function PolicyDualModeRow({
   const pctTouched = pctDef.path in draft.values;
   const moneyValue = moneyTouched ? draft.values[moneyDef.path] : getAtPath(policy, moneyDef.path);
   const pctValue = pctTouched ? draft.values[pctDef.path] : getAtPath(policy, pctDef.path);
-  const [mode, setModeState] = useState<"money" | "pct">(() => (!isBlank(pctValue) ? "pct" : "money"));
+  const policyMode: "money" | "pct" = !isBlank(getAtPath(policy, pctDef.path)) ? "pct" : "money";
+  const [draftMode, setDraftMode] = useState<"money" | "pct">(policyMode);
   const [editText, setEditText] = useState<string | null>(null);
+  // Sync draft mode when the policy mode changes (e.g. account switch) so the first
+  // keystroke after the switch doesn't snap back to the stale previous account's mode.
+  useEffect(() => { setDraftMode(policyMode); }, [policyMode]);
+  // A mode choice is interaction state only while this field pair has an active draft. After
+  // discard/save or an account switch, derive from that account's persisted policy immediately;
+  // this avoids a stale selector without an effect-driven synchronization render.
+  const mode = moneyTouched || pctTouched ? draftMode : policyMode;
   const activeDef = mode === "money" ? moneyDef : pctDef;
   const activeValue = mode === "money" ? moneyValue : pctValue;
   const touched = moneyTouched || pctTouched;
@@ -192,7 +200,7 @@ export function PolicyDualModeRow({
   const unit = mode === "money" ? "$" : "%";
 
   const setMode = (next: "money" | "pct") => {
-    setModeState(next);
+    setDraftMode(next);
     setEditText(null);
     if (next === "money") {
       draft.set(pctDef.path, null);
@@ -309,7 +317,10 @@ export function PolicySaveBar({
   const commit = async () => {
     setBusy(true);
     try {
-      await savePolicy({ ...buildPatch(diff, policy), ...(extraPatch ?? {}) });
+      await savePolicy(
+        { ...buildPatch(diff, policy), ...(extraPatch ?? {}) },
+        policy.connectedAccountId
+      );
       await refresh();
       draft.clear();
       setReviewOpen(false);

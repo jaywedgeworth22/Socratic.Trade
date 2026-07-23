@@ -118,7 +118,7 @@ function WatchButton({
           : `Add ${symbol} to your watchlist — watching costs nothing and never trades.`
       }
       className={cx(
-        "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+        "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-control border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
         watched
           ? "border-[color:var(--con-accent-border)] bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]"
           : "border-[color:var(--con-line)] text-[color:var(--con-faint)] hover:border-[color:var(--con-line-strong)] hover:text-[color:var(--con-fg)]"
@@ -153,14 +153,14 @@ function ScanCard({
     (c): c is ScanColumn => Boolean(c)
   );
   return (
-    <div className="con-row flex flex-col gap-2 rounded-lg border border-[color:var(--con-line)] p-3">
+    <div className="con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3">
       <div className="flex items-center justify-between gap-2">
         {symbolColumn?.render(q)}
         <WatchButton symbol={q.symbol} watched={watched} pending={pending} onToggle={onToggleWatch} />
       </div>
       <div className="grid grid-cols-2 gap-1.5 text-[length:var(--con-fs-sm)]">
         {fields.map((c) => (
-          <div key={c.id} title={cellTitleWithReceived(c, q, received)} className="rounded-md bg-[color:var(--con-surface-2)] px-2 py-1">
+          <div key={c.id} title={cellTitleWithReceived(c, q, received)} className="rounded-control bg-[color:var(--con-surface-2)] px-2 py-1">
             <div className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">{c.label}</div>
             <div className={cx(c.num && "con-num")}>{c.render(q)}</div>
           </div>
@@ -310,7 +310,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
             <button
               type="button"
               onClick={() => setColumnsOpen((open) => !open)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-2.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)] transition-colors hover:text-[color:var(--con-fg)]">
+              className="inline-flex h-8 items-center gap-1.5 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-2.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)] transition-colors hover:text-[color:var(--con-fg)]">
               <Columns3 size={14} aria-hidden />
               Columns
             </button>
@@ -323,7 +323,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                 aria-label="Close column settings"
                 onClick={() => setColumnsOpen(false)}
               />
-              <div className="absolute right-0 z-20 mt-1 flex max-h-[60vh] w-72 flex-col overflow-hidden rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] shadow-[var(--shadow-lg)]">
+              <div className="absolute right-0 z-20 mt-1 flex max-h-[60vh] w-72 flex-col overflow-hidden rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] shadow-[var(--shadow-lg)]">
                 <div className="flex items-center justify-between gap-2 border-b border-[color:var(--con-line)] px-3 py-2">
                   <p className="text-[length:var(--con-fs-xs)] font-semibold uppercase tracking-[0.07em] text-[color:var(--con-faint)]">
                     Columns
@@ -344,7 +344,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                       <Tooltip key={column.id} content={column.headerTitle}>
                         <div
                           className={cx(
-                            "grid grid-cols-[1fr_auto] items-center gap-2 rounded-md px-2 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
+                            "grid grid-cols-[1fr_auto] items-center gap-2 rounded-control px-2 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
                             !isVisible && "opacity-70"
                           )}>
                           <label className={cx("flex min-w-0 items-center gap-2", column.id === SYMBOL_COLUMN_ID ? "opacity-70" : "cursor-pointer")}>
@@ -414,7 +414,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                         active ? "text-[color:var(--con-fg)]" : "hover:text-[color:var(--con-fg)]"
                       )}>
                       {c.label}
-                      <span aria-hidden className={cx("text-[9px]", !active && "opacity-0")}>
+                      <span aria-hidden className={cx("text-[length:var(--con-fs-2xs)]", !active && "opacity-0")}>
                         {active && activeSort.dir === "asc" ? "▲" : "▼"}
                       </span>
                     </button>

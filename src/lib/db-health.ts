@@ -16,7 +16,7 @@ export const HEALTH_REASON_CONSECUTIVE_FAILURES = "Last 5 consecutive calls all 
 // 2026-07-07T14:01Z and 22:01Z in prod). Keep the richer vector-db.ts alert as the single source of
 // truth for these three lanes; every OTHER provider (finnhub, tiingo, twelvedata, etc.) has no
 // dedicated alerter, so it still needs this generic automatic path.
-const RAG_SERVICES_WITH_OWN_ALERTING = new Set(["pinecone", "voyage", "voyage-rerank"]);
+const RAG_SERVICES_WITH_OWN_ALERTING = new Set(["pinecone", "openrouter", "openrouter-rerank", "siliconflow", "siliconflow-rerank"]);
 
 /**
  * Per-credential-lane health for the API circuit breaker. A "lane" is (service, keySource) — the SAME
@@ -117,6 +117,13 @@ export function logApiHealth(opts: {
   errorText?: string;
   keySource?: string;
   userId?: string;
+  // Set ONLY by a caller that knows this failure is a daily-quota exhaustion which cannot
+  // recover before a known instant (e.g. Alpha Vantage's 25/day cap resets at midnight
+  // America/New_York) — an ISO timestamp of that reset. db-health never derives this itself
+  // (no string-matching error text here); it just threads whatever the call site passes
+  // through to alertConnectionFailure's cooldown. Omit for ordinary transient failures, which
+  // keep the generic fixed-duration cooldown.
+  quotaResetAt?: string;
 }): void {
   try {
     const db = getDb();
@@ -169,8 +176,12 @@ export function logApiHealth(opts: {
       // Scope the streak that gates the alert to this user's own history for user-key lanes, so
       // tenant A's failures don't fire a provider-degraded alert to tenant B on the shared lane.
       const lane = getLaneHealth(opts.service, keySource, opts.userId ?? null);
+      const isRateLimit = /429|rate limit/i.test(opts.errorText);
       if (lane.stoppedWorking) {
-        void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, opts.errorText);
+        void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, opts.errorText, {
+          skipSentry: isRateLimit,
+          cooldownUntil: opts.quotaResetAt
+        });
       }
     }
   } catch {
@@ -383,6 +394,9 @@ export function getAllErrorPatterns(): Record<string, ErrorPatternRow[]> {
 // ── Connection Health & Storage Alerts ────────────────────────────────────────
 
 const HEALTH_ALERT_COOLDOWN_PREFIX = "healthAlertSent";
+// Default cooldown for an ordinary transient failure. A caller that knows the failure is a
+// daily-quota exhaustion (persists until a known reset instant, not just "some hours") overrides
+// this per-call via alertConnectionFailure's `opts.cooldownUntil` — see its doc comment.
 const HEALTH_ALERT_COOLDOWN_MS = 6 * 60 * 60_000; // 6 hours
 
 const STORAGE_ALERT_COOLDOWN_PREFIX = "storageAlertSent";
@@ -427,7 +441,14 @@ export async function alertConnectionFailure(
   service: string,
   keySource: string | null,
   userId: string | null,
-  errorText: string
+  errorText: string,
+  // `cooldownUntil`: an ISO instant a caller passes when it KNOWS this failure won't clear
+  // before then (e.g. Alpha Vantage's daily-quota exhaustion, cooldownUntil = next
+  // America/New_York midnight reset) — the alert is suppressed until that instant instead of
+  // the generic HEALTH_ALERT_COOLDOWN_MS window. Falls back to the generic window when absent,
+  // unparsable, or already in the past, so a bad/stale value never shortens the cooldown to
+  // "always re-alert" or silences alerts forever.
+  opts?: { skipSentry?: boolean; cooldownUntil?: string }
 ): Promise<void> {
   try {
     const targetUserId = userId || "local";
@@ -441,11 +462,27 @@ export async function alertConnectionFailure(
         ? `${HEALTH_ALERT_COOLDOWN_PREFIX}:${service}:${actualKeySource}:${targetUserId}`
         : `${HEALTH_ALERT_COOLDOWN_PREFIX}:${service}:${actualKeySource}`;
 
-    // Cooldown check
+    // Cooldown check. The stored setting value is the "suppressed until" instant (not "last sent
+    // at"): this lets a quota-exhaustion caller stretch the window arbitrarily far (to the
+    // provider's actual daily reset) while an ordinary transient failure keeps the fixed 6h
+    // window, using the exact same comparison. Audit + Sentry stay gated behind this SAME check
+    // as the notification (not split into an always-fires audit path) — the per-request
+    // api_health_log/error-pattern rows above already record every occurrence for forensics, so
+    // an audit row per occurrence here would just duplicate that without adding signal; only the
+    // repeat-alert noise is the target of this cooldown.
     const { getInternalSetting, setInternalSetting, audit } = await import("./db");
+    const now = Date.now();
     const last = getInternalSetting<string>(key);
-    if (last && Date.now() - Date.parse(last) < HEALTH_ALERT_COOLDOWN_MS) return;
-    setInternalSetting(key, new Date().toISOString());
+    if (last) {
+      const suppressedUntilMs = Date.parse(last);
+      if (Number.isFinite(suppressedUntilMs) && now < suppressedUntilMs) return;
+    }
+    const requestedCooldownMs = opts?.cooldownUntil ? Date.parse(opts.cooldownUntil) : NaN;
+    const cooldownUntilMs =
+      Number.isFinite(requestedCooldownMs) && requestedCooldownMs > now
+        ? requestedCooldownMs
+        : now + HEALTH_ALERT_COOLDOWN_MS;
+    setInternalSetting(key, new Date(cooldownUntilMs).toISOString());
 
     const isGlobal = actualKeySource !== "user";
     const title = `${service} connection failed`;
@@ -463,12 +500,14 @@ export async function alertConnectionFailure(
     audit("connection_health_alert", payload, targetUserId);
 
     // Send Sentry event
-    await captureHealthSentryMessage(isGlobal ? "error" : "warning", title, {
-      service,
-      keySource: actualKeySource,
-      userSpecific: !isGlobal,
-      reason: errorText
-    });
+    if (!opts?.skipSentry) {
+      await captureHealthSentryMessage(isGlobal ? "error" : "warning", title, {
+        service,
+        keySource: actualKeySource,
+        userSpecific: !isGlobal,
+        reason: errorText
+      });
+    }
 
     if (isGlobal) {
       // Global failures: Route to admin email and health.
@@ -479,23 +518,26 @@ export async function alertConnectionFailure(
       const fallbackEmail = operatorAlertEmail();
       const config = loadNotifyConfig();
 
-      // ALWAYS notify via the operator's own configured prefs (push/SMS/email/etc.) — the fallback
-      // email is an EXTRA channel, never the gate. Previously the whole notify() was skipped when no
-      // Resend fallback was configured, and sendNotification below treats provider_degraded as
-      // already-direct-sent, so an install relying on local direct channels got NO alert at all.
-      await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config }).catch(() => {});
-
-      // Additionally force the operator fallback email when it's configured AND the operator's own
-      // prefs don't already carry an email channel (so we don't double-send to the same address).
-      if (fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())) {
-        const forcedPrefs = {
-          ...prefs,
-          channels: ["email" as any],
-          email: fallbackEmail,
-          updatedAt: prefs.updatedAt
-        };
-        await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config, prefs: forcedPrefs }).catch(() => {});
-      }
+      // The operator's own channels are delivered by sendNotification inside the enabled-event
+      // gate. The fallback email remains an EXTRA lazy lane when the operator has no usable email
+      // preference, so it cannot double-send or bypass that gate.
+      const additionalDelivery =
+        fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
+          ? () =>
+              notify(
+                "local",
+                { title, body, kind: "provider_degraded", data: payload },
+                {
+                  config,
+                  prefs: {
+                    ...prefs,
+                    channels: ["email" as any],
+                    email: fallbackEmail,
+                    updatedAt: prefs.updatedAt
+                  }
+                }
+              )
+          : undefined;
 
       // Also send standard notification
       const { sendNotification } = await import("./notifications");
@@ -508,7 +550,10 @@ export async function alertConnectionFailure(
           enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "provider_degraded" as const])) as any
         }
       };
-      await sendNotification({ type: "provider_degraded", title, payload }, { userId: "local", policy: forcedPolicy as any }).catch(() => {});
+      await sendNotification(
+        { type: "provider_degraded", title, payload },
+        { userId: "local", policy: forcedPolicy as any, directBody: body, notifyDeps: { config }, additionalDelivery }
+      ).catch(() => {});
     } else {
       // User-key failures: Route to user notifications only
       const { sendNotification } = await import("./notifications");
@@ -521,13 +566,14 @@ export async function alertConnectionFailure(
           enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "provider_degraded" as const])) as any
         }
       };
-      await sendNotification({ type: "provider_degraded", title, payload }, { userId: targetUserId, policy: forcedPolicy as any }).catch(() => {});
-
-      const { notify } = await import("./notify");
-      await notify(targetUserId, { title, body, kind: "provider_degraded", data: payload }).catch(() => {});
+      await sendNotification(
+        { type: "provider_degraded", title, payload },
+        { userId: targetUserId, policy: forcedPolicy as any, directBody: body }
+      ).catch(() => {});
     }
-  } catch {
+  } catch (err) {
     // Health alerts must never throw
+    console.error("Health alert error:", err);
   }
 }
 
@@ -553,19 +599,23 @@ export async function alertStorageWarning(warningType: string, message: string):
     const fallbackEmail = operatorAlertEmail();
     const config = loadNotifyConfig();
 
-    if (fallbackEmail && config.email.resendKey && config.email.from) {
-      if (!prefs.channels.includes("email") || !prefs.email.trim()) {
-        const forcedPrefs = {
-          ...prefs,
-          channels: ["email" as any],
-          email: fallbackEmail,
-          updatedAt: prefs.updatedAt
-        };
-        await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config, prefs: forcedPrefs }).catch(() => {});
-      } else {
-        await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config }).catch(() => {});
-      }
-    }
+    const additionalDelivery =
+      fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
+        ? () =>
+            notify(
+              "local",
+              { title, body, kind: "storage_warning", data: payload },
+              {
+                config,
+                prefs: {
+                  ...prefs,
+                  channels: ["email" as any],
+                  email: fallbackEmail,
+                  updatedAt: prefs.updatedAt
+                }
+              }
+            )
+        : undefined;
 
     // Also send standard notification
     const { sendNotification } = await import("./notifications");
@@ -575,10 +625,13 @@ export async function alertStorageWarning(warningType: string, message: string):
       ...policy,
       notificationSettings: {
         ...policy.notificationSettings,
-        enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "provider_degraded" as const])) as any
+        enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "storage_warning" as const])) as any
       }
     };
-    await sendNotification({ type: "provider_degraded", title, payload }, { userId: "local", policy: forcedPolicy as any }).catch(() => {});
+    await sendNotification(
+      { type: "storage_warning", title, payload },
+      { userId: "local", policy: forcedPolicy as any, directBody: body, notifyDeps: { config }, additionalDelivery }
+    ).catch(() => {});
   } catch {
     // never throw on warnings
   }

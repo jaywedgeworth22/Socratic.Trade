@@ -1,20 +1,25 @@
 "use client";
 
 /** Settings — GLOBAL-ONLY since the 2026-07-10 IA restructure: everything here
- *  is either ALL YOUR ACCOUNTS (broker connections, API keys, event
- *  notifications, delivery channels, scan shape, learning review, typed
- *  confirmation, boot behavior — user-level, overlaid on every account),
- *  THIS BROWSER (appearance), OPERATOR (admin links), REFERENCE (glossary),
- *  or DANGER (deletion). Nothing account-scoped lives here anymore:
- *  per-account config (models, tax treatment, prompt, weights, guardrails)
- *  belongs to Framework (/console/strategy) and Mandates. Sub-sections live
- *  in sibling modules (brokers/api-keys/delivery/help) with their fetch
- *  helpers in ./lib. */
+ *  is either ALL YOUR ACCOUNTS (event notifications, delivery channels, scan
+ *  shape, learning review, typed confirmation, boot behavior — user-level,
+ *  overlaid on every account), THIS BROWSER (appearance), OPERATOR (admin
+ *  links), REFERENCE (glossary), or DANGER (deletion). Nothing account-scoped
+ *  lives here: per-account config (models, prompt, weights) belongs to
+ *  Strategy (/console/strategy) and Guardrails (/console/guardrails,
+ *  including tax treatment). The one-time-setup half of the old Settings page
+ *  — broker connections and API keys — split out to Connections
+ *  (/console/connections) in the 2026-07-16 IA restructure; a 3-line hash
+ *  safety net below redirects any old #brokers/#api-keys bookmark there.
+ *  Sub-sections live in sibling modules (delivery/danger/help/sharing/
+ *  learning-review) with their fetch helpers in ./lib. */
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Check, ExternalLink } from "lucide-react";
 import type { NotificationEventType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
+import { NOTIFICATION_EVENT_TYPE_LABELS } from "@/lib/dashboard-ui";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useAutoSave } from "../lib/useAutoSave";
@@ -22,17 +27,22 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { CONSOLE_FONT_OPTIONS, useConsoleFont } from "../lib/useConsoleFont";
 import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useToast } from "../ui/toast";
-import { Card, Chip, Field, RawNumInput, TextInput, Toggle } from "../ui/primitives";
+import { Card, Chip, Field, RawNumInput, Toggle } from "../ui/primitives";
 import { SaveStatus } from "../ui/save-status";
-import { ApiKeysCard } from "./api-keys";
-import { BrokerAccountsCard } from "./brokers";
 import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
 import { LearningReviewCard } from "./learning-review";
 import { DataSharingCard } from "./sharing";
 
-const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
+/** One-line meaning for every notification event, completing the sentence
+ *  "you get a notification whenever ...". VISIBLE LABELS come from the shared
+ *  NOTIFICATION_EVENT_TYPE_LABELS map in src/lib/dashboard-ui.ts, so this page
+ *  names events exactly the way the Alert Center and delivered notifications
+ *  do. Both maps are full Records (not Partial): adding a NotificationEventType
+ *  without copy is a compile error instead of a raw "run_failed" leaking into
+ *  production UI. */
+const EVENT_HINT: Record<NotificationEventType, string> = {
   fill: "an order filled",
   block: "the policy gate blocked an order",
   run_failed: "a strategy run failed",
@@ -43,23 +53,39 @@ const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
   limit_order_stale: "a limit order has been working too long",
   provider_degraded: "a data provider is failing",
   budget_alert: "a usage budget threshold was crossed",
-  learning_review: "the daily learning review posted its findings"
+  learning_review: "the daily learning review posted its findings",
+  deterministic_bear_veto: "the rule-based bear check vetoed a trade idea",
+  red_team_veto_override_requested: "an override of a Red Team veto was requested",
+  red_team_veto_overridden: "a human overrode a Red Team veto",
+  prompt_injection_suspected: "injection-like text was found in the evidence sent to the model",
+  evidence_age_anomaly: "a run leaned on evidence older than it should be",
+  storage_warning: "the server's database storage crossed a warning threshold",
+  autonomy_halted_on_boot: "a restart halted trading autonomy until you re-arm it",
+  option_alert: "an option contract changed status or expired"
 };
 
 export default function SettingsPage() {
   const { snapshot } = useConsoleData();
   const ready = snapshot !== null;
 
-  // Deep links (e.g. the Run-once blocked sheet routes to /console/settings#api-keys):
+  const router = useRouter();
+
+  // Deep links (e.g. #sharing, #learning-review, #confirmation, #admin, #danger):
   // the page renders only after the snapshot arrives, so the native anchor jump
-  // misses — scroll once the target section actually exists.
+  // misses — scroll once the target section actually exists. Safety net: #brokers
+  // and #api-keys moved to /console/connections in the 2026-07-16 IA restructure —
+  // an old bookmark or stale link redirects there instead of scrolling to nothing.
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
     const hash = window.location.hash.slice(1);
     if (!hash) return;
+    if (hash === "brokers" || hash === "api-keys") {
+      router.replace(`/console/connections#${hash}`);
+      return;
+    }
     const timer = setTimeout(() => document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
     return () => clearTimeout(timer);
-  }, [ready]);
+  }, [ready, router]);
 
   if (!snapshot) return null;
 
@@ -67,8 +93,9 @@ export default function SettingsPage() {
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-6`}>
       <h1 className="text-[length:var(--con-fs-lg)] font-bold">Settings</h1>
 
-      {/* Account-scoped config (models, tax treatment, prompt, weights) lives on
-          Framework (/console/strategy) and Mandates — Settings is global-only. */}
+      {/* Account-scoped config (models, prompt, weights) lives on Strategy
+          (/console/strategy); Guardrails (/console/guardrails) carries the caps,
+          protective stops, tax treatment, and rulebook — Settings is global-only. */}
 
       {/* ── ALL ACCOUNTS ── */}
       <section className="flex flex-col gap-4">
@@ -83,14 +110,6 @@ export default function SettingsPage() {
             applies everywhere, for you
           </span>
         </div>
-        {/* Anchor ids (#brokers/#api-keys) are deep-link targets used by the
-            Run-once blocked-reason sheet; scroll-mt clears the sticky chrome. */}
-        <div id="brokers" className="scroll-mt-28">
-          <BrokerAccountsCard />
-        </div>
-        <div id="api-keys" className="scroll-mt-28">
-          <ApiKeysCard />
-        </div>
         {/* notificationSettings is a USER-level policy field (USER_LEVEL_POLICY_FIELDS
             in db-profiles): one event list + webhook overlaid on every account —
             so the card lives under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
@@ -99,7 +118,6 @@ export default function SettingsPage() {
         <div id="sharing" className="scroll-mt-28">
           <DataSharingCard />
         </div>
-        <ScanShapeCard />
         {/* learningReviewEnabled/Mode/Model are USER-level policy fields
             (USER_LEVEL_POLICY_FIELDS in db-profiles): the review runs once per
             user per day over user-level learned context, so its config overlays
@@ -109,6 +127,8 @@ export default function SettingsPage() {
         <div id="learning-review" className="scroll-mt-28">
           <LearningReviewCard />
         </div>
+        <ScanShapeCard />
+        <FmpFeaturesCard />
         {/* requireTypedConfirmation is a USER-level policy field
             (USER_LEVEL_POLICY_FIELDS in db-profiles, promoted 2026-07-10): the
             phrase ceremony is an owner preference, not a per-account guardrail,
@@ -154,6 +174,9 @@ export default function SettingsPage() {
           <Chip tone="muted" title="Nothing here changes any setting — it's the app's vocabulary, searchable.">
             REFERENCE
           </Chip>
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            nothing here changes any setting — it&apos;s the app&apos;s vocabulary, searchable
+          </span>
         </div>
         <HelpGlossaryCard />
       </section>
@@ -164,6 +187,9 @@ export default function SettingsPage() {
           <Chip tone="neg" title="Irreversible actions live here, behind typed confirmations — nothing in this section happens by accident.">
             DANGER
           </Chip>
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            irreversible actions, behind typed confirmations
+          </span>
         </div>
         <AccountDeletionCard />
       </section>
@@ -244,7 +270,7 @@ function FontOptionGrid<F extends string>({
             aria-pressed={isSelected}
             title={option.description}
             onClick={() => onSelect(option.value)}
-            className={`min-h-[88px] rounded-lg border px-3 py-2 text-left transition-colors ${
+            className={`min-h-[88px] rounded-control border px-3 py-2 text-left transition-colors ${
               isSelected
                 ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)]"
                 : "border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] hover:border-[color:var(--con-accent-border)]"
@@ -287,24 +313,24 @@ function AppearanceCard() {
 // ── Operator/admin links (links only — the pages themselves live at /admin) ──
 
 const ADMIN_LINKS: Array<{ href: string; label: string; desc: string }> = [
-  { href: "/admin/connections", label: "API connections health", desc: "Live status of every upstream data/broker connection the server uses." },
-  { href: "/admin/llm-usage", label: "LLM usage & cost", desc: "Token and dollar spend per model and per day, across all users." },
-  { href: "/admin/rag-coverage", label: "RAG coverage", desc: "What the retrieval index covers and where it is thin." },
-  { href: "/admin/transcript", label: "Chat transcript", desc: "Raw assistant transcript view for debugging conversations." }
+  { href: "/admin/connections", label: "API Connections", desc: "Live status of every upstream data/broker connection the server uses." },
+  { href: "/admin/llm-usage", label: "LLM Usage & Cost", desc: "Token and dollar spend per model and per day, across all users." },
+  { href: "/admin/rag-coverage", label: "RAG Coverage", desc: "What the retrieval index covers and where it is thin." },
+  { href: "/admin/transcript", label: "Chat Transcript", desc: "Raw assistant transcript view for debugging conversations." }
 ];
 
 function AdminLinksCard() {
   return (
     <Card title="Admin pages">
       <p className="mb-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
-        Operator diagnostics from the legacy app — they open outside the console and keep their own styling.
+        Server-wide operator diagnostics — also reachable any time from the Admin link in the top bar.
       </p>
       <div className="flex flex-col gap-1">
         {ADMIN_LINKS.map((link) => (
           <a
             key={link.href}
             href={link.href}
-            className="con-row flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 text-[length:var(--con-fs-sm)]"
+            className="con-row flex items-center justify-between gap-3 rounded-control px-1.5 py-1.5 text-[length:var(--con-fs-sm)]"
             title={`${link.desc} Opens outside the console.`}
           >
             <span>
@@ -328,12 +354,10 @@ function EventNotificationsCard() {
   // change for instant feedback, reverted by useAutoSave's onError if the write
   // fails. refresh() keeps the shared snapshot current for the rest of the app.
   const [localEvents, setLocalEvents] = useState<NotificationEventType[] | null>(null);
-  const [localWebhook, setLocalWebhook] = useState<string | null>(null);
   if (!snapshot) return null;
 
   const current = snapshot.policy.notificationSettings;
   const events = localEvents ?? current.enabledEvents;
-  const webhook = localWebhook ?? current.webhookUrl ?? "";
 
   const toggleEvent = (type: NotificationEventType, on: boolean) => {
     const prev = events;
@@ -344,56 +368,38 @@ function EventNotificationsCard() {
     });
   };
 
-  const commitWebhook = () => {
-    const next = webhook.trim();
-    if (next === (current.webhookUrl ?? "")) return; // unchanged → no write
-    const prev = webhook;
-    // Server validates (400 on a non-URL); revert the field on failure.
-    autoSave.save(() => savePolicy({ notificationSettings: { webhookUrl: next } }).then(() => refresh()), {
-      onError: () => setLocalWebhook(prev),
-      errorTitle: "Webhook not saved"
-    });
-  };
-
   return (
     <Card title="Event notifications" action={<SaveStatus status={autoSave.status} />}>
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which events send notifications, and the webhook they go to. One list for your whole login — it applies across
-        every account, not just the one you&apos;re viewing. Delivery channels (push/email/SMS) are configured once per
-        user, below.
+        Which events send notifications. One list for your whole login — it applies across every account, not just the
+        one you&apos;re viewing. Where they go (webhook URL, push/email/SMS) is configured in Delivery channels, below.
       </p>
       <div className="grid gap-1.5 sm:grid-cols-2">
         {NOTIFICATION_EVENT_TYPES.map((type) => {
           const on = events.includes(type);
+          const hint = EVENT_HINT[type];
           return (
             <label
               key={type}
-              title={`When on, you get a notification whenever ${EVENT_HINT[type] ?? `a "${type}" event happens`}.`}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[length:var(--con-fs-sm)] transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
+              title={`${type} — when on, you get a notification whenever ${hint}. (${type} is the event's id in webhook payloads and the audit log.)`}
+              className="flex cursor-pointer items-start gap-2 rounded-control px-1.5 py-1 text-[length:var(--con-fs-sm)] transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
             >
+              {/* Native checkbox inside its <label>: the visible text IS the accessible
+                  name — no aria-label needed (unlike the Toggle primitive elsewhere). */}
               <input
                 type="checkbox"
+                className="mt-1"
                 checked={on}
                 disabled={autoSave.saving}
                 onChange={() => toggleEvent(type, on)}
               />
-              <span className="font-semibold">{type}</span>
-              <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{EVENT_HINT[type]}</span>
+              <span className="min-w-0">
+                <span className="font-semibold">{NOTIFICATION_EVENT_TYPE_LABELS[type]}</span>{" "}
+                <span className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{hint}</span>
+              </span>
             </label>
           );
         })}
-      </div>
-      <div className="mt-3 max-w-md">
-        <Field label="Webhook URL (optional)" hint="Rich embeds for chat webhooks; generic JSON otherwise." htmlFor="webhook">
-          <TextInput
-            id="webhook"
-            value={webhook}
-            placeholder="https://…"
-            title="Every enabled event is also POSTed to this URL. Chat webhooks (Discord/Slack) get rich embeds; anything else gets plain JSON. Saves when you click away."
-            onChange={(e) => setLocalWebhook(e.target.value)}
-            onBlur={commitWebhook}
-          />
-        </Field>
       </div>
     </Card>
   );
@@ -463,7 +469,7 @@ function BootBehaviorCard() {
   return (
     <Card title="After a restart">
       <div
-        className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+        className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
         title="Controls what happens to Running accounts when the server process restarts. Off keeps the safety net: a human must start trading again."
       >
         <div>
@@ -519,6 +525,77 @@ function YouCard() {
             via {user.loginProvider}
           </span>
         )}
+      </div>
+    </Card>
+  );
+}
+
+// ── All accounts: FMP Features ───────────────────────────────────────────────
+
+function FmpFeaturesCard() {
+  const { snapshot, refresh } = useConsoleData();
+  const autoSave = useAutoSave();
+  if (!snapshot) return null;
+
+  const policy = snapshot.policy;
+
+  return (
+    <Card title="Financial Modeling Prep (FMP) Features" action={<SaveStatus status={autoSave.status} />}>
+      <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        Toggle which FMP data modules are active. These settings are user-level and apply across all your accounts. Defaults to ON.
+      </p>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Real-Time & Index Data</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Real-time quotes, ETF holdings, sector weightings, and index market data.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpRealTimeDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpRealTimeDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Real-Time Data"
+          />
+        </div>
+        
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Macro & Commodities</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">BTC/ETH, VIX, Treasury Yields, GDP, CPI, Crude Oil, and Gold data.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpMacroDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpMacroDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Macro Data"
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Events & News</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Earnings calendars, economic calendars, and FMP market news.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpEventsDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpEventsDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Events Data"
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Deep Fundamentals</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Advanced Market Metrics (DCF, Piotroski, Altman Z-Scores) and Analyst Ratings.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpFundamentalsDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpFundamentalsDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Fundamentals Data"
+          />
+        </div>
       </div>
     </Card>
   );

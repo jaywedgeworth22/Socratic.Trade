@@ -4,7 +4,7 @@
 
    THEMING MODEL
    - Semantic tokens only (surface/fg/muted/line/accent/up-down/warn/reality).
-     Components never hardcode raw hex — they reference var(--con-*).
+     Components never hardcode raw hex — they reference the semantic console tokens.
    - Light is the base set; dark overrides it. Resolution order:
        1. explicit choice via [data-theme="light"|"dark"] on .console-root
           (persisted in localStorage under a console-scoped key), else
@@ -80,6 +80,10 @@
   --con-radius-sm: var(--radius-control);
 
   /* Type scale */
+  /* 2xs is the sanctioned MICRO tier: captions, timestamps, axis/sub-labels only —
+     never interactive text or anything the owner must read to act. Added 2026-07-16
+     to replace ad-hoc text-[9px]/text-[10px] arbitrary values. */
+  --con-fs-2xs: 10px;
   --con-fs-xs: 11px;
   --con-fs-sm: 12.5px;
   --con-fs-base: 13.5px;
@@ -234,7 +238,7 @@
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--con-faint);
+  color: var(--con-fg);
 }
 
 /* ── Autonomy desk home ── */
@@ -786,6 +790,22 @@
   color: var(--con-accent);
 }
 
+/* Bottom tab bar bottom-inset. In a normal browser tab, mobile Safari already
+ * holds a `position: fixed; bottom: 0` bar above its own address bar / toolbar,
+ * so adding `env(safe-area-inset-bottom)` here stacks a SECOND, redundant
+ * clearance — the empty band that showed under the tab labels, above Safari's
+ * address bar (nav background == page background, so it read as wasted page).
+ * Reserve the inset only in installed/standalone (or fullscreen) mode, where
+ * there's a physical home indicator and no browser chrome below the bar. */
+.con-tabbar {
+  padding-bottom: 0;
+}
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  .con-tabbar {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
 .con-tab-item {
   display: flex;
   flex-direction: column;
@@ -1041,17 +1061,18 @@
   user-select: none;
 }
 .con-disclosure > summary::-webkit-details-marker { display: none; }
-.con-disclosure > summary::before {
+.con-disclosure > summary::after {
   content: "";
   width: 6px;
   height: 6px;
+  margin-left: auto;
   border-right: 1.5px solid var(--con-faint);
   border-bottom: 1.5px solid var(--con-faint);
   transform: rotate(-45deg);
   transition: transform 140ms ease;
   flex: none;
 }
-.con-disclosure[open] > summary::before { transform: rotate(45deg); }
+.con-disclosure[open] > summary::after { transform: rotate(45deg); }
 
 .con-hr {
   border: none;

@@ -187,6 +187,7 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
   // Conflict counts keyed by normalized ticker (one conflict trade = one flagged disclosure).
   const conflictsByTicker = new Map<string, number>();
   for (const cf of conflicts) {
+    if (!cf.ticker) continue;
     const sym = normalizeSymbol(cf.ticker);
     if (sym) conflictsByTicker.set(sym, (conflictsByTicker.get(sym) ?? 0) + 1);
   }

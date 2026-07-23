@@ -29,6 +29,7 @@ const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
   "learningReviewEnabled",
   "learningReviewMode",
   "learningReviewModel",
+  "learningReviewReasoningEffort",
   "learningReviewMinNewLessons",
   "learningReviewMaxWaitDays",
   // Typed confirmation for high-impact live actions is an OWNER preference, not a
@@ -38,7 +39,11 @@ const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
   // per-account values — reads strip it from account rows, and with no user-level
   // value stored yet it falls back to the DEFAULT_POLICY value (true = required),
   // the safe direction. No legacy seed on purpose (sole-user, no compat tax).
-  "requireTypedConfirmation"
+  "requireTypedConfirmation",
+  "fmpRealTimeDataEnabled",
+  "fmpMacroDataEnabled",
+  "fmpEventsDataEnabled",
+  "fmpFundamentalsDataEnabled"
 ]);
 
 const LEGACY_STRATEGY_MODEL_FIELDS: Array<keyof TradingPolicy> = ["llmModel", "redTeamLlmModel", "llmReasoningEffort"];
@@ -48,6 +53,7 @@ const LEARNING_REVIEW_POLICY_FIELDS: Array<keyof TradingPolicy> = [
   "learningReviewEnabled",
   "learningReviewMode",
   "learningReviewModel",
+  "learningReviewReasoningEffort",
   "learningReviewMinNewLessons",
   "learningReviewMaxWaitDays"
 ];
@@ -254,10 +260,13 @@ export function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
         policy.notificationSettings?.enabledEvents ?? DEFAULT_POLICY.notificationSettings.enabledEvents
     }
   };
-  if ((merged.maxDailyNotional ?? 0) >= 500_000) {
-    merged.maxDailyNotional = DEFAULT_POLICY.maxDailyNotional;
-    if (merged.maxDailyOrders > DEFAULT_POLICY.maxDailyOrders) merged.maxDailyOrders = DEFAULT_POLICY.maxDailyOrders;
-  }
+  // DEFAULT_POLICY now uses account-relative daily sizing. Preserve an older account's explicit
+  // dollar mode instead of silently layering the new percent default on top; when both are truly
+  // present, percent wins consistently with normalizeExclusivePolicyCaps and the UI.
+  const explicitDailyPct = typeof policyWithoutLegacyFields.maxDailyPctOfNav === "number" && policyWithoutLegacyFields.maxDailyPctOfNav > 0;
+  const explicitDailyNotional = typeof policyWithoutLegacyFields.maxDailyNotional === "number" && policyWithoutLegacyFields.maxDailyNotional > 0;
+  if (explicitDailyPct) delete merged.maxDailyNotional;
+  else if (explicitDailyNotional) delete merged.maxDailyPctOfNav;
   if ((merged.maxOrderNotional ?? 0) > 100_000) merged.maxOrderNotional = 100_000;
   return merged;
 }
@@ -424,10 +433,10 @@ function migrateLegacyStrategyModelFieldsToAccounts(userId: string): void {
 }
 
 /** Write only the user-level fields of a policy to user_settings.policy. */
-function writeUserPolicyFields(userId: string, policy: TradingPolicy): void {
+function writeUserPolicyFields(userId: string, policy: TradingPolicy, emitAudit = true): void {
   migrateLegacyStrategyModelFieldsToAccounts(userId);
   const userFields = pickUserFields(policy);
-  setUserSetting(userId, "policy", userFields);
+  setUserSetting(userId, "policy", userFields, { auditPolicyChange: emitAudit });
 }
 
 /** The user-level base policy (active library profile, else legacy user_settings). */
@@ -562,19 +571,21 @@ export function setPolicy(policy: TradingPolicy, userId: string = "local", conne
 
   if (account) {
     // ── Tiered write: user fields → user_settings, account fields → account_strategy_state ──
-    writeUserPolicyFields(userId, merged);
+    writeUserPolicyFields(userId, merged, false);
     syncActiveProfile({ policy: pickAccountFields(merged) as TradingPolicy, scoringWeights: merged.scoringWeights }, userId);
     writeAccountStrategyState(userId, account.id, {
       policy: pickAccountFields(merged) as TradingPolicy,
       prompt: getStrategyPrompt(userId, account.id),
       scoringWeights: merged.scoringWeights
     });
+    audit("policy_change", { userId, key: "policy", value: merged }, userId, account.id);
   } else {
     // ── No connected account: store the full policy in user_settings (backward compat) ──
     // Users without a connected account (legacy single-user mode) keep the old behaviour:
     // the full policy is stored as a single blob under user_settings.policy.
-    setUserSetting(userId, "policy", merged);
+    setUserSetting(userId, "policy", merged, { auditPolicyChange: false });
     syncActiveProfile({ policy: merged, scoringWeights: merged.scoringWeights }, userId);
+    audit("policy_change", { userId, key: "policy", value: merged }, userId);
   }
 }
 
@@ -588,12 +599,15 @@ export function getStrategyPrompt(userId: string = "local", connectedAccountId?:
 }
 
 export function setStrategyPrompt(prompt: string, userId: string = "local", connectedAccountId?: string): void {
-  setUserSetting(userId, "strategyPrompt", prompt);
+  setUserSetting(userId, "strategyPrompt", prompt, { auditPolicyChange: false });
   syncActiveProfile({ prompt }, userId);
   const account = resolveAccount(userId, connectedAccountId);
   if (account) {
     const base = getPolicy(userId, account.id);
     writeAccountStrategyState(userId, account.id, { policy: base, prompt, scoringWeights: base.scoringWeights });
+    audit("policy_change", { userId, key: "strategyPrompt", value: prompt }, userId, account.id);
+  } else {
+    audit("policy_change", { userId, key: "strategyPrompt", value: prompt }, userId);
   }
 }
 
@@ -737,6 +751,160 @@ export function applyProfileToAccount(
     connectedAccountId
   );
   return { profileId, connectedAccountId };
+}
+
+/** Distinguishes the expected failure modes of {@link importAccountSettings} so the calling route
+ *  can map each to the correct HTTP status without fragile message-string matching. */
+export type ImportAccountSettingsErrorCode = "same_account" | "not_found" | "no_source_state";
+
+/** Thrown by {@link importAccountSettings} for every expected validation failure (never a generic
+ *  Error, so callers can `instanceof`-check instead of parsing messages). */
+export class ImportAccountSettingsError extends Error {
+  readonly code: ImportAccountSettingsErrorCode;
+  constructor(code: ImportAccountSettingsErrorCode, message: string) {
+    super(message);
+    this.name = "ImportAccountSettingsError";
+    this.code = code;
+  }
+}
+
+/** Account-identity TradingPolicy fields — always derived from the owning account's own row on
+ *  every `getPolicy` read (see the overlay at the end of `getPolicy` above), never copyable data.
+ *  Stripped from an imported policy so a stale source-account id can never sit in the target's
+ *  stored JSON, mirroring the client-writable-field strip in `PUT /api/policy`. */
+const ACCOUNT_IDENTITY_POLICY_FIELDS: Array<keyof TradingPolicy> = ["connectedAccountId", "accountNumber", "activeBroker"];
+
+function stripIdentityFields(policy: Partial<TradingPolicy>): Partial<TradingPolicy> {
+  const result: Partial<TradingPolicy> = { ...policy };
+  for (const key of ACCOUNT_IDENTITY_POLICY_FIELDS) {
+    delete result[key];
+  }
+  return result;
+}
+
+/**
+ * Write an imported account_strategy_state row with a DIRECT (non-preserving) overwrite of
+ * `derived_from_profile_id`. Unlike `writeAccountStrategyState` (whose ON CONFLICT clause COALESCEs
+ * a missing/null value into the row's existing lineage — the right call for incidental policy edits
+ * that shouldn't erase "which profile this account reflects"), an account-to-account import is a
+ * deliberate full-replace action: the target's lineage must end up matching the source's, including
+ * being cleared to NULL when the source itself has none. Leaving stale lineage behind would let the
+ * target silently keep claiming derivation from a profile its just-overwritten config no longer
+ * reflects.
+ */
+function writeImportedAccountStrategyState(
+  userId: string,
+  connectedAccountId: string,
+  args: { policy: TradingPolicy; prompt: string; scoringWeights: ScoringWeights; derivedFromProfileId: string | null }
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO account_strategy_state
+         (user_id, connected_account_id, policy, prompt, scoring_weights, system_state, derived_from_profile_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, connected_account_id) DO UPDATE SET
+         policy = excluded.policy, prompt = excluded.prompt, scoring_weights = excluded.scoring_weights,
+         system_state = excluded.system_state,
+         derived_from_profile_id = excluded.derived_from_profile_id,
+         updated_at = excluded.updated_at`
+    )
+    .run(
+      userId,
+      connectedAccountId,
+      JSON.stringify(args.policy),
+      args.prompt,
+      JSON.stringify(args.scoringWeights),
+      args.policy.systemState,
+      args.derivedFromProfileId,
+      new Date().toISOString()
+    );
+}
+
+/**
+ * Copy a CHOSEN connected account's own live strategy settings onto another CHOSEN connected
+ * account (any→any — e.g. paper→live, or the reverse). Unlike `applyProfileToAccount` (which copies
+ * a saved LIBRARY profile), this reads the SOURCE account's live `account_strategy_state` row and
+ * writes it onto the TARGET account's row. Same "copy, not link" semantics: this is a one-time
+ * snapshot — later edits to either account do not retro-mutate the other, and neither account's
+ * identity, active-account pointer, or broker credentials are touched.
+ *
+ * SAFETY:
+ *  - Both accounts must exist and belong to `userId` (write-time ownership re-validation, the PR #7
+ *    pattern — see `assertConnectedAccountOwnedByUser`): a stale/malicious id can never read or
+ *    target an account the session user does not own, and the failure looks identical whether the
+ *    id is missing entirely or owned by someone else.
+ *  - User-level fields (`USER_LEVEL_POLICY_FIELDS`) are stripped from the copied policy — those
+ *    already apply identically to both accounts via the `getPolicy` overlay, so copying them
+ *    account-to-account would duplicate user-scoped state into account-scoped storage.
+ *  - Identity fields (`ACCOUNT_IDENTITY_POLICY_FIELDS`) are stripped — `getPolicy` always overwrites
+ *    them from the target account's own row after read, but a stale source-account id must never sit
+ *    in the target's stored JSON in the meantime.
+ *  - The target's own `systemState` (active/halted/close_only/liquidating) is preserved — importing
+ *    settings is a config change, never an arm/disarm side effect, mirroring `applyProfileToAccount`.
+ *
+ * PROVENANCE DECISION: `derived_from_profile_id` is carried over from the SOURCE account's own value
+ * (including clearing it to NULL when the source has none), rather than preserved from whatever the
+ * target previously had. This extends `applyProfileToAccount`'s "record where this configuration
+ * originated" philosophy through one more hop of copying, and — because an import is a deliberate
+ * full-replace action, not an incidental edit — a target must not keep silently claiming lineage from
+ * a profile its just-overwritten config no longer reflects.
+ */
+export function importAccountSettings(
+  userId: string,
+  sourceConnectedAccountId: string,
+  targetConnectedAccountId: string
+): TradingPolicy {
+  if (sourceConnectedAccountId === targetConnectedAccountId) {
+    throw new ImportAccountSettingsError("same_account", "Source and target accounts must be different.");
+  }
+  // Write-time ownership re-validation (PR #7 pattern): missing vs. owned-by-someone-else look
+  // identical, so a probing request learns nothing about accounts it doesn't own.
+  if (!getConnectedAccount(sourceConnectedAccountId, userId)) {
+    throw new ImportAccountSettingsError("not_found", "Source connected account not found for this user.");
+  }
+  if (!getConnectedAccount(targetConnectedAccountId, userId)) {
+    throw new ImportAccountSettingsError("not_found", "Target connected account not found for this user.");
+  }
+
+  const sourceState = getAccountStrategyStateRow(userId, sourceConnectedAccountId);
+  if (!sourceState) {
+    throw new ImportAccountSettingsError("no_source_state", "Source connected account has no strategy settings to import yet.");
+  }
+
+  const sourcePolicyRaw = JSON.parse(sourceState.policy) as Partial<TradingPolicy>;
+  const sourceScoringWeights = normalizeScoringWeights(
+    (sourceState.scoring_weights ? JSON.parse(sourceState.scoring_weights) : sourcePolicyRaw.scoringWeights ?? {}) as Partial<ScoringWeights>
+  );
+  const derivedFromProfileId = sourceState.derived_from_profile_id ?? null;
+
+  // peekPolicy (not getPolicy): read-only, never seeds/writes — we are about to write the target's
+  // row ourselves right below, mirroring copyPolicyConfigToActiveAccount's same "about to overwrite
+  // it anyway" use of peekPolicy.
+  const targetSystemState = peekPolicy(userId, targetConnectedAccountId).systemState;
+
+  const cleaned = stripIdentityFields(stripUserFields(sourcePolicyRaw));
+  const policy = mergePolicy({
+    ...cleaned,
+    scoringWeights: sourceScoringWeights,
+    systemState: targetSystemState,
+    activeProfileId: derivedFromProfileId ?? undefined
+  });
+
+  writeImportedAccountStrategyState(userId, targetConnectedAccountId, {
+    policy,
+    prompt: sourceState.prompt ?? DEFAULT_STRATEGY_PROMPT,
+    scoringWeights: sourceScoringWeights,
+    derivedFromProfileId
+  });
+
+  audit(
+    "profile_change",
+    { action: "import_from_account", sourceConnectedAccountId, targetConnectedAccountId },
+    userId,
+    targetConnectedAccountId
+  );
+
+  return getPolicy(userId, targetConnectedAccountId);
 }
 
 /**

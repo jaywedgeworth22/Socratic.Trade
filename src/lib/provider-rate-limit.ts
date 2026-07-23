@@ -10,6 +10,8 @@
 // delay. This module gates the actual outbound dispatch, independent of caller batching,
 // so the cascade's chunking logic can stay untouched.
 
+import { createDurableMap, hasHydratedNamespace, resetDurableStateCacheForTests } from "./durable-state";
+
 export interface ProviderLimiterClock {
   now(): number;
   sleep(ms: number): Promise<void>;
@@ -48,7 +50,19 @@ const HARD_DEFAULTS: Record<string, { perMin?: number; minIntervalMs?: number; c
   // for any cross-path race; it deliberately does NOT use a 60s interval, which would re-introduce
   // the multi-minute scan stall the window-gate exists to avoid. The old 10s/120-symbol config
   // burst ~120 credits in one call and was 100% HTTP 429 in prod.
-  twelvedata: { minIntervalMs: 2_000, concurrency: 1 }
+  twelvedata: { minIntervalMs: 2_000, concurrency: 1 },
+  // RapidAPI "Basic" tier for both Mboum Finance and YH Finance 15 is documented as 1 req/sec —
+  // strictly serial with >1s spacing, same shape as the alpha-vantage entry above. The REAL
+  // throttle for these two is their tiny persisted daily budget (see rapidapi-quota.ts —
+  // Mboum ~16/day, YH Finance ~3/day); this pacer just keeps whatever few calls DO fire from
+  // bursting past the per-second gate within one scan.
+  "mboum-finance": { minIntervalMs: 1100, concurrency: 1 },
+  "yahoo-finance15": { minIntervalMs: 1100, concurrency: 1 },
+  // Alpha Vantage's RapidAPI-hosted plan is a separate subscription/quota shape from the native
+  // key pool above (500/day, 5/min — NOT the native 25/day) — see alpha-vantage-key-pool.ts's
+  // own doc comment for why native pacing stays keyed by provider name only; this is a distinct
+  // provider name so the two transports never share one pacer/quota by accident.
+  "alpha-vantage-rapidapi": { perMin: 5, concurrency: 1 }
 };
 
 function envKeyFor(provider: string): string {
@@ -234,7 +248,14 @@ const DAY = 86_400_000;
 // >1 request (tiingo up to 3) — callers pass the request count, not the symbol count.
 const RATE_QUOTAS: Record<string, RateWindow[]> = {
   twelvedata: [{ maxRequests: 8, windowMs: MINUTE }, { maxRequests: 800, windowMs: DAY }], // 1 credit/symbol
-  tiingo: [{ maxRequests: 50, windowMs: HOUR }, { maxRequests: 1000, windowMs: DAY }]      // up to 3 req/symbol
+  tiingo: [{ maxRequests: 50, windowMs: HOUR }, { maxRequests: 1000, windowMs: DAY }],     // up to 3 req/symbol
+  // FMP Starter plan = 300 requests/min account-wide; 290 leaves headroom so the fetchWithRetry
+  // 429 backoff isn't racing the reservation. Each miss symbol costs 2–5 requests (insider + senate
+  // always, plus ratios-ttm/grades-consensus/price-target-consensus when not skipped) — callers pass
+  // the request count via callsPerSymbol("fmp", …), not the symbol count. NO day window by default
+  // (no daily cap on Starter); PROVIDER_QUOTA_FMP_PER_DAY opts one in (e.g. 240 for the free 250/day
+  // tier) via the generic env path in resolveProviderQuota.
+  fmp: [{ maxRequests: 290, windowMs: MINUTE }]
 };
 
 /** Env-overridable effective windows for a provider. `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`
@@ -323,9 +344,61 @@ export class RequestQuota {
     if (!provider) { this.hits.clear(); return; }
     for (const k of [...this.hits.keys()]) if (k.startsWith(`${provider}|`)) this.hits.delete(k);
   }
+
+  /** Read-only snapshot of one lane's raw timestamp array, for persistence — treat as opaque, do
+   *  not mutate the returned array in place. undefined when the lane has no recorded hits. */
+  getLane(provider: string, credKey: string): number[] | undefined {
+    return this.hits.get(`${provider}|${credKey}`);
+  }
+
+  /** Seed a lane's raw timestamp array from persisted state (process-boot hydration). Bypasses
+   *  window pruning — the next admit()/refund() call prunes as usual. Ignores a malformed value
+   *  rather than throwing (a durable-state row surviving a schema change, corruption, etc.). */
+  restoreLane(combinedKey: string, timestamps: unknown): void {
+    if (Array.isArray(timestamps) && timestamps.every((t) => typeof t === "number")) {
+      this.hits.set(combinedKey, [...(timestamps as number[])].sort((a, b) => a - b));
+    }
+  }
 }
 
 const defaultQuota = new RequestQuota();
+
+// Durable backing for defaultQuota's hits (provider-rate-limit.ts's `hits` Map is otherwise pure
+// in-memory and forgets every past request the instant a process restarts). This matters because
+// the app now auto-deploys on every merge to main, replacing the running container mid-cycle — an
+// in-memory-only quota would let the app believe it has a full fresh twelvedata/tiingo budget again
+// after a redeploy even though the real account already burned most of an hour's/day's cap moments
+// before, risking real HTTP 429s or provider-side throttling. See durable-state.ts's file header
+// for the pacer-vs-quota-vs-ephemeral-cache reasoning this module's sibling primitives follow.
+const QUOTA_NAMESPACE = "provider-request-quota";
+// Lazily created on first actual use (NOT at module top level): createDurableMap() eagerly reaches
+// into durable-state.ts -> db-durable-state.ts -> db.ts's barrel, and this module is itself imported
+// from deep in that same barrel's dependency graph (data-providers.ts, etc.) — constructing it at
+// import time risked a circular-import TDZ crash ("Cannot access 'host' before initialization") if
+// this module's evaluation happened to be nested inside durable-state.ts's own still-in-progress
+// top-level evaluation. Deferring construction to the first real call sidesteps the whole class of
+// import-order hazards, since by then every module has finished loading.
+let quotaStoreInstance: ReturnType<typeof createDurableMap<number[]>> | undefined;
+function quotaStore(): ReturnType<typeof createDurableMap<number[]>> {
+  return quotaStoreInstance ?? (quotaStoreInstance = createDurableMap<number[]>(QUOTA_NAMESPACE));
+  // debounced: admit() is called at most once per enrich() batch per provider (not once per HTTP
+  // request), so this is not a hot path.
+}
+
+function ensureQuotaHydrated(): void {
+  // Gate on durable-state's OWN hydration tracking (not a second, parallel flag here) so a test's
+  // resetDurableStateCacheForTests(QUOTA_NAMESPACE) — or a real process forgetting everything on
+  // restart — is the single source of truth for "has this been loaded from SQLite yet".
+  if (hasHydratedNamespace(QUOTA_NAMESPACE)) return;
+  for (const [combinedKey, timestamps] of quotaStore().entries()) {
+    defaultQuota.restoreLane(combinedKey, timestamps);
+  }
+}
+
+function persistLane(provider: string, credKey: string): void {
+  const lane = defaultQuota.getLane(provider, credKey);
+  if (lane) quotaStore().set(`${provider}|${credKey}`, lane);
+}
 
 /** How many of `wanted` requests to `provider` on credential `credKey` fit the provider's rate
  *  budget right now (recording them). Unlimited providers return `wanted`. NOTE: unlike the pacer,
@@ -333,18 +406,40 @@ const defaultQuota = new RequestQuota();
  *  counter), so the speed escape hatch that switch exists for doesn't apply; disabling it would let a
  *  test/scan blow real free-tier caps. Full-chain tests use fresh per-test keys → isolated lanes. */
 export function admitProviderRequests(provider: string, credKey: string, wanted: number): number {
-  return defaultQuota.admit(provider, credKey, wanted);
+  ensureQuotaHydrated();
+  const allowed = defaultQuota.admit(provider, credKey, wanted);
+  if (allowed > 0) persistLane(provider, credKey);
+  return allowed;
 }
 
 /** Return up to `n` admitted-but-undispatched requests on (provider, credKey) to the budget —
  *  e.g. the partial remainder below one whole symbol, or calls a tripped circuit breaker skipped. */
 export function refundProviderRequests(provider: string, credKey: string, n: number): void {
+  ensureQuotaHydrated();
   defaultQuota.refund(provider, credKey, n);
+  persistLane(provider, credKey);
 }
 
-/** Test-only: clear the default quota's window state. */
+/** Test-only: clear the default quota's window state, in-memory AND persisted. */
 export function resetProviderQuotaState(provider?: string): void {
   defaultQuota.reset(provider);
+  if (!provider) {
+    quotaStore().clear();
+  } else {
+    for (const [combinedKey] of quotaStore().entries()) {
+      if (combinedKey.startsWith(`${provider}|`)) quotaStore().delete(combinedKey);
+    }
+  }
+}
+
+/** Test-only: simulate a process restart for the quota — forgets defaultQuota's in-memory hits AND
+ *  durable-state's hydration flag for this namespace, WITHOUT touching the persisted SQLite rows (a
+ *  real restart doesn't touch disk). Unlike resetProviderQuotaState (which deletes the persisted
+ *  rows too, for test isolation between scenarios), this proves the NEXT admitProviderRequests call
+ *  re-hydrates from whatever a "prior process" already wrote. */
+export function simulateProviderQuotaRestartForTests(): void {
+  defaultQuota.reset();
+  resetDurableStateCacheForTests(QUOTA_NAMESPACE);
 }
 
 // ── Secret scrubbing ──────────────────────────────────────────────────────────────

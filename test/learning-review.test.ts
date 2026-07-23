@@ -65,7 +65,11 @@ function seedLearnedRow(userId: string, overrides: Partial<LearnedContextRow> = 
     assertedAt: new Date(NOW - 2 * 86_400_000).toISOString(),
     supersededBy: null,
     expiresAt: null,
-    ...overrides
+    ...overrides,
+    connectedAccountId: overrides.connectedAccountId ?? null,
+    accountEnvironment: overrides.accountEnvironment ?? null,
+    learningScope: overrides.learningScope ?? "portfolio",
+    transferState: overrides.transferState ?? "not_applicable"
   };
   insertLearnedContext(row);
   return row;
@@ -87,7 +91,11 @@ function seedPendingRow(userId: string, overrides: Partial<LearnedContextPending
     createdAt: new Date(NOW - 86_400_000).toISOString(),
     status: "pending",
     resolvedAt: null,
-    ...overrides
+    ...overrides,
+    connectedAccountId: overrides.connectedAccountId ?? null,
+    accountEnvironment: overrides.accountEnvironment ?? null,
+    learningScope: overrides.learningScope ?? "portfolio",
+    transferState: overrides.transferState ?? "not_applicable"
   };
   insertPendingLearnedContext(row);
   return row;
@@ -254,32 +262,29 @@ describe("review trigger (learningReviewMinNewLessons / learningReviewMaxWaitDay
     expect(trigger.oldestUnreviewedAgeDays).toBeGreaterThanOrEqual(8);
   });
 
-  it("max-age fires for a LEARNED row older than the 7-day pack window (regression: the window cutoff hid it)", async () => {
+  it("max-age fires for a LEARNED row older than the 7-day pack window, and the row is ACTUALLY reviewed (deferred findings #2/#3: no more silent self-healing)", async () => {
     const userId = `lr-maxage-learned-${randomUUID().slice(0, 8)}`;
     enableReview(userId, "annotate");
     // A single LEARNED (not pending) lesson asserted 9 days ago — older than LEARNED_WINDOW_DAYS.
-    // The trigger used to filter learned rows to the last 7 days BEFORE the max-wait test, so this
-    // row dropped out of the un-reviewed count entirely: it stopped counting toward the threshold
-    // and "max-age" could never fire (zero-width window at the defaults maxWaitDays == 7).
+    // The trigger has always counted this without a window (8da047aa), so "max-age" fires.
     seedLearnedRow(userId, { assertedAt: new Date(NOW - 9 * 86_400_000).toISOString() });
     const trigger = evaluateLearningReviewTrigger(userId, NOW, getPolicy(userId));
     expect(trigger).toMatchObject({ shouldRun: true, newCount: 1, reason: "max-age" });
     expect(trigger.oldestUnreviewedAgeDays).toBeGreaterThanOrEqual(9);
 
-    // The row is outside the context-pack window, so the swept run terminally skips the day with
-    // "no-items" (accepted outcome) WITHOUT advancing lastReviewedAt — the row was never reviewed,
-    // so it keeps counting and re-triggers the next day rather than being silently marked reviewed.
-    const swept = await runDailyLearningReview(userId, { now: NOW, llm: async () => "should-not-be-called" });
-    expect(swept).toMatchObject({ skipped: true, reason: "no-items" });
-    const nextDay = NOW + 86_400_000;
-    expect(evaluateLearningReviewTrigger(userId, nextDay, getPolicy(userId)).reason).toBe("max-age");
-
-    // Self-healing: once a newer lesson arrives and a review SUCCEEDS, lastReviewedAt advances past
-    // the old row's assertedAt, so it stops counting/re-triggering.
-    seedLearnedRow(userId);
-    const run = await runDailyLearningReview(userId, { now: nextDay, llm: keepAllLlm() });
+    // Previously the row was outside the context-pack window and got silently skipped forever via
+    // a later unrelated review's "self-healing" marker advance (never actually reviewed) — that was
+    // deferred finding #2/#3's own failure mode wearing a different hat. Now buildLearningReviewContextPack
+    // treats an un-reviewed row as a candidate regardless of age, so this run actually reviews it.
+    const run = await runDailyLearningReview(userId, { now: NOW, llm: keepAllLlm() });
     expect(run.ok).toBe(true);
-    expect(evaluateLearningReviewTrigger(userId, nextDay + 3_600_000, getPolicy(userId)).reason).toBe("no-new-items");
+    expect(run.itemsReviewed).toBe(1);
+    const verdictAudits = listAuditByKind("learning_review_verdict", 10, userId);
+    expect(verdictAudits).toHaveLength(1);
+
+    // Genuinely reviewed now (not silently swept): the trigger goes quiet immediately, and stays
+    // quiet — there's no "unreviewed but never shown" row left hiding behind it.
+    expect(evaluateLearningReviewTrigger(userId, NOW + 3_600_000, getPolicy(userId)).reason).toBe("no-new-items");
   });
 
   it("falls back to the default thresholds when stored knob values are corrupt", () => {
@@ -390,10 +395,17 @@ describe("skip unchanged sets", () => {
     expect(calls).toBe(2);
 
     // Same set, different reviewer model: the newly chosen model must actually run.
-    setPolicy({ ...getPolicy(userId), learningReviewModel: "gpt-5.5" }, userId);
+    setPolicy({ ...getPolicy(userId), learningReviewModel: "openai/gpt-5.5" }, userId);
     const day3 = await runDailyLearningReview(userId, { now: NOW + 2 * 86_400_000, llm });
     expect(day3.reason).not.toBe("unchanged");
     expect(calls).toBe(3);
+
+    // Same model, different reasoning effort is also a materially different review config.
+    setPolicy({ ...getPolicy(userId), learningReviewReasoningEffort: "high" }, userId);
+    const day4 = await runDailyLearningReview(userId, { now: NOW + 3 * 86_400_000, llm });
+    expect(day4.reason).not.toBe("unchanged");
+    expect(day4.reasoningEffort).toBe("high");
+    expect(calls).toBe(4);
   });
 
   it("does not cache the fingerprint when some shown items received no verdict (partial coverage)", async () => {
@@ -507,7 +519,7 @@ describe("user-level scoping", () => {
     const userId = `lr-scope-${randomUUID().slice(0, 8)}`;
     // Set the review config while account A1 is the scope.
     setPolicy(
-      { ...getPolicy(userId, "A1"), learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" },
+      { ...getPolicy(userId, "A1"), learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "openai/gpt-5.5" },
       userId,
       "A1"
     );
@@ -515,7 +527,7 @@ describe("user-level scoping", () => {
     const underA2 = getPolicy(userId, "A2");
     expect(underA2.learningReviewEnabled).toBe(true);
     expect(underA2.learningReviewMode).toBe("annotate");
-    expect(underA2.learningReviewModel).toBe("gpt-5.5");
+    expect(underA2.learningReviewModel).toBe("openai/gpt-5.5");
   });
 });
 
@@ -533,7 +545,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     // (setPolicy syncs it via pickAccountFields + mergePolicy), so it is the hazardous base.
     createStrategyProfile({ name: "Base", active: true }, userId);
     seedAccount(userId, acct);
-    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewModel: "gpt-5.5" }, userId);
+    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewModel: "openai/gpt-5.5" }, userId);
     expect(getPolicy(userId).learningReviewEnabled).toBe(true);
 
     // Remove the only account: getPolicy(userId) falls back to the profile base — the user-level
@@ -541,7 +553,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     deleteConnectedAccount(acct, userId);
     const policy = getPolicy(userId);
     expect(policy.learningReviewEnabled).toBe(true);
-    expect(policy.learningReviewModel).toBe("gpt-5.5");
+    expect(policy.learningReviewModel).toBe("openai/gpt-5.5");
   });
 
   it("activating or editing a profile does not clobber the user-level review config", () => {
@@ -550,7 +562,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     seedAccount(userId, acct);
     createStrategyProfile({ name: "P1", active: true }, userId);
     const p2 = createStrategyProfile({ name: "P2", active: false }, userId);
-    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" }, userId);
+    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "openai/gpt-5.5" }, userId);
 
     // Activating another profile writes the full profile policy to user_settings.policy —
     // the stored user-level fields must be preserved through that write.
@@ -558,13 +570,13 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     const afterActivate = getPolicy(userId);
     expect(afterActivate.learningReviewEnabled).toBe(true);
     expect(afterActivate.learningReviewMode).toBe("annotate");
-    expect(afterActivate.learningReviewModel).toBe("gpt-5.5");
+    expect(afterActivate.learningReviewModel).toBe("openai/gpt-5.5");
 
     // Same for editing the ACTIVE profile.
     updateStrategyProfile(p2.id, { policy: { maxOrderNotional: 1234 } }, userId);
     const afterUpdate = getPolicy(userId);
     expect(afterUpdate.learningReviewEnabled).toBe(true);
-    expect(afterUpdate.learningReviewModel).toBe("gpt-5.5");
+    expect(afterUpdate.learningReviewModel).toBe("openai/gpt-5.5");
     expect(afterUpdate.maxOrderNotional).toBe(1234);
   });
 
@@ -574,7 +586,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     seedAccount(userId, acct);
     // Simulate a pre-#1278 deploy: the enabled review lives ONLY in the account row's policy
     // blob (the #1116 account-scoped layout); user_settings.policy never carried the keys.
-    const legacyPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" };
+    const legacyPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "openai/gpt-5.5" };
     getDb()
       .prepare(
         `INSERT INTO account_strategy_state
@@ -589,7 +601,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     const policy = getPolicy(userId);
     expect(policy.learningReviewEnabled).toBe(true);
     expect(policy.learningReviewMode).toBe("annotate");
-    expect(policy.learningReviewModel).toBe("gpt-5.5");
+    expect(policy.learningReviewModel).toBe("openai/gpt-5.5");
     // Idempotent: the seed persisted, later reads agree.
     expect(getPolicy(userId).learningReviewEnabled).toBe(true);
   });
@@ -599,7 +611,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     const acct = `acct-${randomUUID().slice(0, 8)}`;
     seedAccount(userId, acct);
     // Pre-cutover, the real ENABLED review lives account-scoped (#1116)…
-    const accountPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" };
+    const accountPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "openai/gpt-5.5" };
     getDb()
       .prepare(
         `INSERT INTO account_strategy_state
@@ -616,7 +628,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     const policy = getPolicy(userId);
     expect(policy.learningReviewEnabled).toBe(true);
     expect(policy.learningReviewMode).toBe("annotate");
-    expect(policy.learningReviewModel).toBe("gpt-5.5");
+    expect(policy.learningReviewModel).toBe("openai/gpt-5.5");
     // One-time + idempotent: later reads agree (the seed persisted onto the same blob).
     expect(getPolicy(userId).learningReviewEnabled).toBe(true);
   });
@@ -626,7 +638,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     const acct = `acct-${randomUUID().slice(0, 8)}`;
     seedAccount(userId, acct);
     // A stale account_strategy_state row still carries an ENABLED review…
-    const accountPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewModel: "gpt-5.5" };
+    const accountPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewModel: "openai/gpt-5.5" };
     getDb()
       .prepare(
         `INSERT INTO account_strategy_state
@@ -641,7 +653,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     setUserSetting(userId, "policy", {
       learningReviewEnabled: false,
       learningReviewMode: "decide",
-      learningReviewModel: "gpt-5.5",
+      learningReviewModel: "openai/gpt-5.5",
       notificationSettings: DEFAULT_POLICY.notificationSettings
     });
 
@@ -729,9 +741,19 @@ describe("decide mode", () => {
 
   it("never mutates rows the model was not shown (unknown ids are ignored)", async () => {
     const userId = `lr-unshown-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "annotate");
+    // Establish a non-zero lastReviewedAt marker via one fully-successful bootstrap review, so a
+    // row asserted BEFORE that marker is unambiguously "already reviewed" and excluded from the
+    // pack — independent of the un-reviewed-row window widening (deferred findings #2/#3), which
+    // only protects rows asserted AFTER the marker, not before it.
+    seedLearnedRow(userId, { assertedAt: new Date(NOW - 60 * 86_400_000).toISOString() });
+    const bootstrap = await runDailyLearningReview(userId, { now: NOW - 5 * 86_400_000, force: true, llm: keepAllLlm() });
+    expect(bootstrap.ok).toBe(true);
+
     const shown = seedLearnedRow(userId);
-    // A live row OUTSIDE the 7-day window — real, but not in the context pack.
-    const unshown = seedLearnedRow(userId, { assertedAt: new Date(NOW - 30 * 86_400_000).toISOString() });
+    // A live row asserted BEFORE the bootstrap marker (and outside the 7-day window) — real, but
+    // already-reviewed by definition, so it's not a pack candidate.
+    const unshown = seedLearnedRow(userId, { assertedAt: new Date(NOW - 10 * 86_400_000).toISOString() });
 
     const pack = await buildLearningReviewContextPack(userId, NOW);
     expect(pack.items.some((i) => i.id === shown.id)).toBe(true);
@@ -1063,4 +1085,77 @@ describe("backlog drain when reviewable items exceed MAX_REVIEW_ITEMS (deferred 
       expect(truncatedFlags.filter((t) => t === false)).toHaveLength(1);
     }
   );
+});
+
+// ── Two adjacent gaps found by adversarial re-review of the #1278 finding #2 fix (deferred finding
+// #2/#3 hardening): both reproduce the exact "shown to the LLM zero times, silently marked reviewed"
+// failure mode PR #1328 was written to eliminate, just reached via different mechanisms than a plain
+// MAX_REVIEW_ITEMS count overflow. Neither is covered by the existing drain suite above, which
+// deliberately uses strictly-distinct timestamps that stay inside the 7-day pack window.
+
+describe("tied-timestamp boundary (deferred finding #2/#3 hardening)", () => {
+  it("a tied-timestamp cluster larger than MAX_REVIEW_ITEMS widens the shown set instead of freezing the drain", async () => {
+    const MAX_REVIEW_ITEMS = 80;
+    const userId = `lr-tie-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "decide");
+    // 90 learned rows sharing the IDENTICAL assertedAt millisecond (e.g. a backfill/batch writer
+    // reusing one `now()`). A pure id-ascending tie-break at the MAX_REVIEW_ITEMS boundary would
+    // deterministically re-select the same 80 every run forever — this asserts the fix instead:
+    // the cut widens to consume the whole tied cluster, so it drains in a single run.
+    const tieTs = new Date(NOW - 86_400_000).toISOString();
+    const rows = Array.from({ length: MAX_REVIEW_ITEMS + 10 }, () => seedLearnedRow(userId, { assertedAt: tieTs }));
+
+    const pack = await buildLearningReviewContextPack(userId, NOW);
+    expect(pack.items).toHaveLength(rows.length);
+    expect(pack.truncated).toBe(false);
+    expect(pack.reviewedThroughMs).toBe(NOW);
+
+    const run = await runDailyLearningReview(userId, { now: NOW, llm: keepAllLlm() });
+    expect(run.ok).toBe(true);
+    expect(run.itemsReviewed).toBe(rows.length);
+    expect(evaluateLearningReviewTrigger(userId, NOW + 3_600_000, getPolicy(userId)).reason).toBe("no-new-items");
+  });
+});
+
+describe("multi-day drain vs. the 7-day pack window (deferred finding #2/#3 hardening)", () => {
+  it("a budget-deferred item does not silently age out of the window before its later sweep", async () => {
+    const MAX_REVIEW_ITEMS = 80;
+    const userId = `lr-drain-window-race-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "decide");
+    // 90 rows spanning NOW-6.99d (oldest) .. NOW-6.50d (newest), 8 minutes apart — all inside the
+    // 7-day window TODAY, but close enough to its trailing edge that the newest (deferred) ones
+    // would age OUT of tomorrow's window before a multi-day drain gets around to sweeping them.
+    const rows = Array.from({ length: MAX_REVIEW_ITEMS + 10 }, (_, i) =>
+      seedLearnedRow(userId, { assertedAt: new Date(NOW - (6.99 - i * (0.49 / (MAX_REVIEW_ITEMS + 9))) * 86_400_000).toISOString() })
+    );
+
+    // Day 0: truncated (90 > 80) — oldest 80 shown, newest 10 deferred.
+    const day0 = await runDailyLearningReview(userId, { now: NOW, llm: keepAllLlm() });
+    expect(day0.ok).toBe(true);
+    expect(day0.itemsReviewed).toBe(MAX_REVIEW_ITEMS);
+    const dueAfterDay0 = evaluateLearningReviewTrigger(userId, NOW, getPolicy(userId));
+    expect(dueAfterDay0).toMatchObject({ shouldRun: true, newCount: 10 });
+
+    // Day 1: one unrelated new lesson arrives. Without the window-widening fix, the 10 deferred
+    // rows (now ~7 days old relative to day 1) would silently exit `candidates` — never shown, yet
+    // this non-truncated run would still advance lastReviewedAt past them via reviewedThroughMs=now.
+    const day1Now = NOW + 86_400_000;
+    seedLearnedRow(userId, { assertedAt: new Date(day1Now).toISOString() });
+    const shownDay1 = new Set<string>();
+    const day1 = await runDailyLearningReview(userId, {
+      now: day1Now,
+      llm: async (spec: { userContent: string }) => {
+        const items = (JSON.parse(spec.userContent) as { reviewItems: Array<{ id: string; table: LearningReviewVerdict["table"] }> })
+          .reviewItems;
+        for (const it of items) shownDay1.add(it.id);
+        return verdictJson(items.map((it) => ({ id: it.id, table: it.table, verdict: "keep" as const, confidence: 90, reasoning: "sound" })));
+      }
+    });
+    expect(day1.ok).toBe(true);
+    // All 10 deferred rows PLUS the 1 new row were actually shown — none silently vanished.
+    expect(day1.itemsReviewed).toBe(11);
+    for (const r of rows.slice(MAX_REVIEW_ITEMS)) expect(shownDay1.has(r.id)).toBe(true);
+
+    expect(evaluateLearningReviewTrigger(userId, day1Now + 3_600_000, getPolicy(userId)).reason).toBe("no-new-items");
+  });
 });

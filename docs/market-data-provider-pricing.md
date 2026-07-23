@@ -28,7 +28,7 @@ in place when a fact changes.
 |---|---|---|---|---|
 | **Tiingo** | 50 req/hr, 1,000/day, 500 unique symbols/mo; **News API not included** (every news call 403s) | **Power $30/mo** | **$300/yr (2 months free)** — owner-verified 2026-07-10; the $499/yr on their site is the separate *commercial* license | 10,000 req/hr, 100,000 req/day, News API. **Fundamentals are NOT included** — separate contact-sales add-on on every tier |
 | **Massive** (ex-Polygon, rebranded 2025-10-30) | 5 calls/min, EOD only, 2 yr history | **Stocks Starter $29/mo** — **we already pay this** | $288/yr ($24/mo effective) | Unlimited API calls, 15-min delayed, 5 yr history, WS aggregates. Real-time + trades/quotes + financial ratios = Advanced $199/mo |
-| **FMP** | 250 calls/day, EOD | **Starter ~$22/mo billed annually** ($264/yr) — **our key behaves paid** | Annual-first pricing (monthly ≈ $29–34, not displayed) | 300 calls/min, real-time US quotes, **annual-only** fundamentals/ratios. Quarterly fundamentals need **Premium $59/mo-annual** ($708/yr), 750 calls/min |
+| **FMP** | 250 calls/day, EOD | **Starter $22/mo billed annually** ($264/yr) — **our active plan** | Premium $59/mo annual; Ultimate $149/mo annual | Starter: 300 calls/min, 20 GB/30d, real-time US quotes, annual-only fundamentals. Premium: quarterly/full fundamentals, 750/min, 50 GB. **Earnings-call transcripts require Ultimate** (3,000/min, 150 GB); display/redistribution also requires a separate agreement |
 | **Twelve Data** | 8 credits/min, 800/day | Grow $79/mo | $792/yr ($66/mo) | 377 credits/min, no daily cap. Credits = endpoint weight × symbols (fundamentals cost 100 credits/symbol — poor value for us). Real WebSocket starts at Pro $229/mo |
 | **Finnhub** | 60 calls/min (generous), US-only | **All-In-One $3,500/mo** — annual-only ($42,000/yr) | n/a | No affordable paid step exists. Stay free |
 | **Alpha Vantage** | Nominally 25 req/day — **but enforced PER IP**, so key rotation from one box is useless (proven in prod 2026-07-10: exactly 25 OKs, then all 6 pool keys instantly rejected) | $49.99/mo (75 req/min) | $499/yr ($41.58/mo, "2 months off") | Higher rate limits, no daily cap. Total overlap with FMP+Finnhub for us. Skip |
@@ -57,7 +57,12 @@ it is our own prod-observed fact).
 4. **FMP's displayed prices are annual-billed.** The "$22/mo" Starter is $264
    charged yearly; their monthly-billed price is hidden behind a toggle that may
    not render. Starter fundamentals are **annual statements only** — TTM/quarterly
-   depth needs Premium.
+   depth needs Premium. **A paid, below-quota Starter key is still not entitled to
+   transcript endpoints:** the owner's dashboard showed 0/300 calls/min, 3.01/20 GB,
+   and 0% over-limit while the stable transcript endpoints returned HTTP 402. FMP's
+   current matrix places Earnings Call Transcripts only on Ultimate ($149/mo billed
+   annually), and says display/redistribution requires a Data Display and Licensing
+   Agreement.
 5. **Massive ≠ quotes provider for us.** It's history + full-universe breadth +
    FINRA short interest. Real-time per-symbol quotes on Massive start at $199/mo —
    that job belongs to tiingo/brokers here.
@@ -72,23 +77,43 @@ it is our own prod-observed fact).
   Finnhub, Yahoo, Alpha Vantage (effectively dead — per-IP cap).
 - **Under consideration:** tiingo Power ($30/mo or $300/yr) — fixes the enrichment
   quote bottleneck + news; FMP Premium ($59/mo-annual) — only if quarterly-fresh
-  ratios prove necessary after tiingo relieves cascade pressure.
+  ratios prove necessary after tiingo relieves cascade pressure; FMP Ultimate
+  ($149/mo-annual) only if transcript value plus the required content license justify it.
 
 ## Where the dials live
 
 Every quota/pacing/tier flag is an env var in **Infisical prod** (seeded with
 code defaults 2026-07-10; boot-time injection ⇒ changes apply on the next deploy):
-`PROVIDER_QUOTA_{TIINGO,TWELVEDATA}_PER_{MIN,HOUR,DAY}`,
+`PROVIDER_QUOTA_{TIINGO,TWELVEDATA,FMP}_PER_{MIN,HOUR,DAY}`,
+`PROVIDER_DISPATCH_{VOYAGE,PINECONE}_PER_MIN`,
+`PROVIDER_DISPATCH_{VOYAGE,PINECONE}_MAX_COST_USD_PER_DAY`,
+`PROVIDER_QUOTA_AUTHORITY_ID`,
 `PROVIDER_RATE_LIMIT_{FINNHUB,ALPHA_VANTAGE,YAHOO_FINANCE,TWELVEDATA}_*`,
 `TIINGO_DROP_NEWS`, `FINNHUB_DROP_RECOMMENDATION`, `ALPACA_DATA_FEED`,
 `MASSIVE_{HISTORY,SHORT_INTEREST}_ENABLED`, `MASSIVE_REST_MAX_CALLS_PER_MINUTE`.
 Resolution logic: `src/lib/provider-rate-limit.ts`. Subscription→knob automation
-(API-Usage-Monitor as source of truth) is designed and reserved on the boards —
-paused pending owner unblock as of 2026-07-10.
+(API-Usage-Monitor as source of truth): the **Mac-side sync shipped 2026-07-10** —
+`scripts/sync-provider-knobs.sh` + `scripts/com.jay.provider-knob-sync.plist` GET the
+monitor's `/api/subscriptions`, map each plan's status to knobs (active→`knobEnv`,
+canceled/paused→`freeTierKnobEnv`, considering→skip), and write only the diffs into
+Infisical prod via the proven universal-auth CLI path (allow-listed keys only). It is
+**gated on the monitor's `/api/subscriptions` endpoint** (parallel PR) and dry-runs by
+default; the launchd job is not installed yet. See
+`docs/rollouts/2026-07-10-provider-knob-sync.md`.
+
+Socratic.Trade now also commits one durable provider-attempt reservation before each actual FMP,
+Voyage, or Pinecone boundary and replays deterministic outcomes (`succeeded`, `failed`, or crash-
+reconciled `unknown`) through API Usage Monitor. The FMP enrichment and transcript paths therefore
+share the same credential-wide quota inside this app. This does **not** yet prove cross-app quota
+authority: the same `PROVIDER_QUOTA_AUTHORITY_ID` in two separate SQLite databases still yields two
+independent ledgers. Transcript activation remains blocked until every app using the shared FMP
+credential reserves against one transactional authority.
 
 **Known gap, verified 2026-07-10:** `provider-rate-limit.ts`'s `HARD_DEFAULTS` map
 has entries for exactly four providers — `finnhub`, `alpha-vantage`,
-`yahoo-finance`, `twelvedata`. **marketstack, tradier, intrinio, fred,
+`yahoo-finance`, `twelvedata`. FMP is quota'd (not paced): it sits in
+`RATE_QUOTAS` at 290/min (see the FMP row below), not in `HARD_DEFAULTS`.
+**marketstack, tradier, intrinio, fred,
 fintechstudios, and logodev have NO hard-coded pacing/concurrency default.**
 Nothing throttles these six today besides the generic `fetchWithRetry` 429
 backoff. `resolveProviderLimiterConfig` still lets an operator set one ad hoc
@@ -104,7 +129,7 @@ something already handled.
 | You bought | Set in Infisical |
 |---|---|
 | tiingo Power | `PROVIDER_QUOTA_TIINGO_PER_HOUR=10000`, `PROVIDER_QUOTA_TIINGO_PER_DAY=100000`, `TIINGO_DROP_NEWS=false` |
-| FMP Premium | (no quota knob today — FMP is throttled by `FMP_MAX_SYMBOLS` scan-derived cap; revisit if 429s appear) |
+| FMP Starter / Premium | `PROVIDER_QUOTA_FMP_PER_MIN` (default **290**; FMP Starter = 300/min, 290 leaves headroom) — raise it on a higher plan, set `0` to remove the minute cap. `PROVIDER_QUOTA_FMP_PER_DAY` is UNSET (no daily cap) by default; set it (e.g. `240`) only on the free 250/day tier. `FMP_MAX_SYMBOLS` remains the separate symbols/scan throttle applied before the quota. |
 | Twelve Data Grow | `PROVIDER_QUOTA_TWELVEDATA_PER_MIN=377`, remove/raise `_PER_DAY` |
 | Massive → free downgrade (don't) | `MASSIVE_REST_MAX_CALLS_PER_MINUTE=5` |
 | Alpaca SIP feed | `ALPACA_DATA_FEED=sip` |
@@ -121,7 +146,7 @@ of raw HTML, not just AI-summarized) plus this repo's own source.
 | Provider | Role in this app | Free tier reality | Cheapest paid | Annual option | What paid unlocks (for us) |
 |---|---|---|---|---|---|
 | **Marketstack** (`MARKETSTACK_API_KEY`) | 3rd (last) keyed daily-OHLC history fallback, after Massive and Tradier — `src/lib/history.ts:22,64-65,98-99,232-237` | 100 req/mo, EOD only, 1yr history, HTTPS included (see trap #7 below) | **Basic $9.99/mo** | **$8.99/mo billed yearly** (~10% off) | 10,000 req/mo, IEX intraday data, 10yr history. Professional ($49.99/mo, $43.99/mo annual) adds sub-15-min real-time + commodities; Business ($149.99/mo, $127.99/mo annual) adds financial statements/ratios + 15yr+ history |
-| **Tradier** (`TRADIER_API_KEY`, `TRADIER_BASE_URL`) | 2nd keyed daily-OHLC history source — code comment at `history.ts:200` calls it "brokerage-grade, generous rate limits. Best primary source" | No separate market-data pricing exists — data access is bundled with ANY brokerage account signup, including the **$0/mo Lite** trading plan | n/a — nothing to buy for data alone | n/a | Real-time equities/options/indices/hourly-Greeks — but ONLY on a **production** token from a real (even $0/mo) brokerage account. A **sandbox** token gets 15-min-delayed equities/options, no indices, no Greeks at all |
+| **Tradier** (connected broker account, Settings -> Accounts — NOT a separate API key as of 2026-07-16) | 2nd keyed daily-OHLC history source — code comment at `history.ts` calls it "brokerage-grade, generous rate limits. Best primary source"; credential now resolved from the connected Tradier broker account via `resolveTradierHistoryCredential`/`getActiveConnectedAccountByBroker`, not a stored key | No separate market-data pricing exists — data access is bundled with ANY brokerage account signup, including the **$0/mo Lite** trading plan | n/a — nothing to buy for data alone | n/a | Real-time equities/options/indices/hourly-Greeks — but ONLY on a **production** token from a real (even $0/mo) brokerage account. A **sandbox** token gets 15-min-delayed equities/options, no indices, no Greeks at all |
 | **Intrinio** (`INTRINIO_API_KEY`) | Fundamentals/sector/industry enrichment — `src/lib/data-providers.ts:732,766,2917-3038`, `costTier: "paid"` | **14-day free trial only** — code comment at `data-providers.ts:2920` ("14-day trial covers prices/realtime, companies, and data_point endpoints"), then paid | **Individual $150/mo** (self-serve) | Startup tier is quarterly-phased, not annual: $333/mo → $666/mo → $999/mo over 12 months (self-serve) | EquitiesEdge/OptionsEdge real-time FMV pricing, US Fundamentals (15yr+ SEC-sourced statements, bundled at every tier, not an add-on), tick-level data. Individual has no redistribution/display rights — Startup adds those |
 | **Logo.dev** (`LOGO_DEV_TOKEN`, `LOGO_DEV_SECRET_KEY`) | Ticker/company logo images — `src/lib/ticker-logos.ts:37-70`, `app/api/logos/ticker/route.ts` | **500,000 req/mo free** (Community), commercial use requires a visible link-back; free-tier cap is a **hard stop** — requests fail once exceeded | **Startup $280/yr** (~$23.33/mo effective; no separate monthly price was found on the live page — may be a JS-toggle we didn't render) | Annual-only pricing as fetched | 1,000,000 req/mo, no attribution requirement. Pro ($1,260/yr) adds the Brand API + self-hosting/caching + priority support; unlike free, paid tiers are **soft-enforced** (service keeps running over cap; Logo.dev reaches out about upgrading rather than cutting access) |
 | **Fintech Studios / PowerIntell** (`FINTECH_STUDIOS_API_KEY`, alias `powerintell`) | Enrichment cascade provider — `src/lib/data-providers.ts:768,2810-2828`, `costTier: "paid"`, base `studio.fintechstudios.com/api/v1` | Free plan exists ($0/mo) on the marketing site | **Ambiguous — see trap #10 below.** Self-serve Pro tiers ($20/mo–$120/mo, 2.5K–15K credits, ~20% off annual) are published, but for the consumer **PowerIntell** app, not confirmed as the same product as the `studio.fintechstudios.com/api/v1` endpoint this app actually calls | Pro tier has an annual ~20% discount | Unclear for our integration — the endpoint we call looks institutional; Enterprise (the tier that would plausibly cover bulk API/data-feed access) is contact-sales-only, no published price |
@@ -152,8 +177,10 @@ also fails here, it's the host, not the tool).
    limits.** Sandbox = 15-min-delayed equities/options, **zero** index data,
    **zero** Greeks. Only a production token — which requires an actual
    brokerage account (even the $0/mo Lite plan qualifies) — gets real-time data.
-   If `TRADIER_API_KEY` in this app is ever a sandbox token, every
-   Tradier-sourced history bar in the cascade is 15-min-delayed, not live.
+   As of 2026-07-16 the credential comes from the connected Tradier BROKER
+   account's own `environment` (Settings -> Accounts), not a separate stored
+   key — if that connected account is `paper` (sandbox), every Tradier-sourced
+   history bar in the cascade is 15-min-delayed, not live.
 9. **Intrinio's gate is time-boxed, not tier-boxed.** The 14-day trial
    (`data-providers.ts:2920`) means a previously-working key can start failing
    with nothing about the key itself having changed. A sudden Intrinio cascade

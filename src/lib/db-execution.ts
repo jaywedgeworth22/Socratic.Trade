@@ -54,7 +54,7 @@ export function dailyExecutionStats(
   // (which have no limitPrice) count correctly against the daily cap.
   const rows = getDb()
     .prepare(
-      "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
+      "SELECT proposal, estimated_notional FROM trade_proposals WHERE datetime(coalesce(placed_at, created_at)) >= datetime(?) AND account_number = ? AND user_id = ? AND status IN ('placed', 'filled', 'paper', 'placing')"
     )
     .all(dayStart.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
@@ -88,7 +88,7 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
   const cutoff = new Date(now.getTime() - minutes * 60_000);
   const rows = getDb()
     .prepare(
-      "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
+      "SELECT proposal, estimated_notional FROM trade_proposals WHERE datetime(coalesce(placed_at, created_at)) >= datetime(?) AND account_number = ? AND user_id = ? AND status IN ('placed', 'filled', 'paper', 'placing')"
     )
     .all(cutoff.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
@@ -184,7 +184,7 @@ function strategyLockKey(userId: string, connectedAccountId?: string): string {
   return connectedAccountId ? `strategy_run_lock:${userId}:${connectedAccountId}` : `strategy_run_lock:${userId}`;
 }
 
-export function acquireStrategyLock(userId: string = "local", connectedAccountId?: string, staleMs = 5 * 60_000, now = new Date()): boolean {
+export function acquireStrategyLock(owner: string, userId: string = "local", connectedAccountId?: string, staleMs = 5 * 60_000, now = new Date()): boolean {
   const database = getDb();
   const key = strategyLockKey(userId, connectedAccountId);
   const acquire = database.transaction(() => {
@@ -194,15 +194,19 @@ export function acquireStrategyLock(userId: string = "local", connectedAccountId
 
     if (row) {
       try {
-        const { lockedAt } = JSON.parse(row.value) as { lockedAt: string };
-        const age = now.getTime() - new Date(lockedAt).getTime();
-        if (age < staleMs) return false; // lock is still live
+        const existing = JSON.parse(row.value) as { owner?: string, expiresAt?: string, lockedAt?: string };
+        const expiresAt = existing.expiresAt
+          ? new Date(existing.expiresAt).getTime()
+          : (existing.lockedAt ? new Date(existing.lockedAt).getTime() + staleMs : 0);
+        
+        const canWin = expiresAt <= now.getTime() || existing.owner === owner;
+        if (!canWin) return false;
       } catch {
         // malformed lock value — treat as absent and reclaim
       }
     }
 
-    const value = JSON.stringify({ lockedAt: now.toISOString() });
+    const value = JSON.stringify({ owner, acquiredAt: now.toISOString(), expiresAt: new Date(now.getTime() + staleMs).toISOString() });
     database
       .prepare(
         "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
@@ -214,24 +218,85 @@ export function acquireStrategyLock(userId: string = "local", connectedAccountId
   return acquire.immediate() as boolean;
 }
 
-export function releaseStrategyLock(userId: string = "local", connectedAccountId?: string): void {
-  if (connectedAccountId) {
-    getDb().prepare("DELETE FROM settings WHERE key = ?").run(strategyLockKey(userId, connectedAccountId));
-    return;
-  }
-  // No account given: release the user's base lock AND any per-account locks (teardown/back-compat).
-  getDb()
-    .prepare("DELETE FROM settings WHERE key = ? OR key LIKE ?")
-    .run(`strategy_run_lock:${userId}`, `strategy_run_lock:${userId}:%`);
+export function renewStrategyLock(owner: string, userId: string = "local", connectedAccountId?: string, staleMs = 5 * 60_000, now = new Date()): boolean {
+  const database = getDb();
+  const key = strategyLockKey(userId, connectedAccountId);
+  const renew = database.transaction(() => {
+    const row = database
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+
+    if (!row) return false;
+
+    try {
+      const existing = JSON.parse(row.value) as { owner?: string };
+      if (existing.owner !== owner) return false;
+    } catch {
+      return false; // malformed lock value, can't renew
+    }
+
+    const value = JSON.stringify({ owner, acquiredAt: now.toISOString(), expiresAt: new Date(now.getTime() + staleMs).toISOString() });
+    database
+      .prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = ?")
+      .run(value, now.toISOString(), key);
+    return true;
+  });
+
+  return renew.immediate() as boolean;
 }
 
-export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string): void {
-  getDb()
-    .prepare("INSERT INTO strategy_runs (id, user_id, connected_account_id, started_at, status) VALUES (?, ?, ?, ?, 'running')")
-    .run(id, userId, connectedAccountId ?? null, new Date().toISOString());
+export function releaseStrategyLock(owner: string, userId: string = "local", connectedAccountId?: string): void {
+  const database = getDb();
+  const key = strategyLockKey(userId, connectedAccountId);
+  
+  database.transaction(() => {
+    if (connectedAccountId) {
+      const row = database.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+      if (row) {
+        try {
+          const existing = JSON.parse(row.value) as { owner?: string };
+          if (existing.owner === owner) {
+            database.prepare("DELETE FROM settings WHERE key = ?").run(key);
+          }
+        } catch {
+          database.prepare("DELETE FROM settings WHERE key = ?").run(key);
+        }
+      }
+      return;
+    }
+
+    // No account given: release the user's base lock AND any per-account locks (teardown/back-compat).
+    const rows = database
+      .prepare("SELECT key, value FROM settings WHERE key = ? OR key LIKE ?")
+      .all(`strategy_run_lock:${userId}`, `strategy_run_lock:${userId}:%`) as Array<{ key: string, value: string }>;
+      
+    for (const r of rows) {
+      try {
+        const existing = JSON.parse(r.value) as { owner?: string };
+        if (existing.owner === owner) {
+          database.prepare("DELETE FROM settings WHERE key = ?").run(r.key);
+        }
+      } catch {
+        database.prepare("DELETE FROM settings WHERE key = ?").run(r.key);
+      }
+    }
+  }).immediate();
 }
 
-export function finishStrategyRun(id: string, status: "completed" | "failed", summary: string, userId: string = "local"): void {
+export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string, accountNumber?: string, policyRevision?: string): void {
+  getDb()
+    .prepare("INSERT INTO strategy_runs (id, user_id, connected_account_id, account_number, policy_revision, started_at, status) VALUES (?, ?, ?, ?, ?, ?, 'running')")
+    .run(id, userId, connectedAccountId ?? null, accountNumber ?? null, policyRevision ?? null, new Date().toISOString());
+}
+
+/** Terminal statuses for strategy_runs.
+ *  - completed: a decision cycle ran (LLM evaluated candidates, even if it proposed nothing)
+ *  - skipped: pre-decision gate (market closed, broker unhealthy, budget) — no LLM reasoning
+ *  - failed: hard error
+ * Skipped must NOT feed trading-liveness "healthy" or auto-tune. */
+export type StrategyRunFinishStatus = "completed" | "failed" | "skipped";
+
+export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, summary: string, userId: string = "local"): void {
   getDb()
     .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ? AND user_id = ?")
     .run(new Date().toISOString(), status, summary, id, userId);
@@ -341,7 +406,7 @@ export function listStrategyRuns(limit = 20, userId: string = "local", connected
         sr.status,
         sr.summary,
         sr.connected_account_id,
-        COUNT(CASE WHEN tp.status = 'placed'   THEN 1 END) AS placed_count,
+        COUNT(CASE WHEN tp.status IN ('placed', 'filled') THEN 1 END) AS placed_count,
         COUNT(CASE WHEN tp.status = 'paper'    THEN 1 END) AS paper_count,
         COUNT(CASE WHEN tp.status = 'blocked'  THEN 1 END) AS blocked_count,
         COUNT(CASE WHEN tp.status = 'proposed' THEN 1 END) AS proposed_count,
@@ -388,7 +453,7 @@ export function getStrategyRunById(id: string, userId: string = "local"): Strate
   const row = getDb()
     .prepare(
       `SELECT sr.id, sr.started_at, sr.finished_at, sr.status, sr.summary, sr.connected_account_id,
-              COUNT(CASE WHEN tp.status = 'placed'   THEN 1 END) AS placed_count,
+              COUNT(CASE WHEN tp.status IN ('placed', 'filled') THEN 1 END) AS placed_count,
               COUNT(CASE WHEN tp.status = 'paper'    THEN 1 END) AS paper_count,
               COUNT(CASE WHEN tp.status = 'blocked'  THEN 1 END) AS blocked_count,
               COUNT(CASE WHEN tp.status = 'proposed' THEN 1 END) AS proposed_count,

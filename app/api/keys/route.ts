@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiKeyEnvVarForService, listUserApiKeys, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
+import { apiKeyEnvVarForService, listUserApiKeys, LOCAL_USER, maskApiKeyPreview, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
+import { checkAdmin } from "@/lib/auth/admin";
 import { resolveRequestUserId } from "@/lib/request-user";
+import { queueStPrimaryBridgeWriterSync } from "@/lib/st-primary-bridge-writer";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +70,14 @@ const API_KEY_CATALOG = [
     docsUrl: "https://platform.deepseek.com/api_keys"
   },
   {
+    service: "openrouter",
+    label: "OpenRouter",
+    category: "LLM",
+    required: false,
+    unlocks: "Access to OpenRouter models including DeepSeek and Qwen for the Assistant and strategy.",
+    docsUrl: "https://openrouter.ai/keys"
+  },
+  {
     service: "finnhub",
     label: "Finnhub",
     category: "Market data",
@@ -100,14 +110,6 @@ const API_KEY_CATALOG = [
     docsUrl: "https://marketstack.com/signup/free"
   },
   {
-    service: "tradier",
-    label: "Tradier",
-    category: "Price history",
-    required: false,
-    unlocks: "Primary keyed daily OHLC source for charts and in-house technical signals.",
-    docsUrl: "https://developer.tradier.com/"
-  },
-  {
     service: "fred",
     label: "FRED",
     category: "Macro",
@@ -135,11 +137,28 @@ const API_KEY_CATALOG = [
 ] as const;
 
 const VALID_SERVICES: ReadonlySet<string> = new Set(API_KEY_CATALOG.map((item) => item.service));
+const ST_PRIMARY_BRIDGE_SERVICES: ReadonlySet<string> = new Set(["gemini", "deepseek"]);
+
+function queuePrimaryBridgeAfterTrackedMutation(userId: string, service: string): void {
+  if (userId === LOCAL_USER && ST_PRIMARY_BRIDGE_SERVICES.has(service)) {
+    queueStPrimaryBridgeWriterSync();
+  }
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const userId = resolveRequestUserId(request);
   const service = searchParams.get("service");
+
+  // A key's masked preview (first 8 + last 4, never a usable value) answers "WHICH key is serving
+  // me?" — the question the write-only key store otherwise makes unanswerable when several keys
+  // exist for one provider. Your OWN stored key is always previewable to you; the operator's env
+  // credential is previewable only to an operator/admin, so a tenant riding the shared key can see
+  // that one is serving them ("server key") without learning anything about the operator's secret.
+  // Token-based admin is excluded on purpose: this is an interactive, identity-bound disclosure.
+  const isOperator = checkAdmin(request, { allowToken: false }).ok;
+  const previewFor = (resolved: { key?: string; source: string }): string | undefined =>
+    resolved.source === "user" || isOperator ? maskApiKeyPreview(resolved.key) : undefined;
 
   // If a specific service is requested, resolve the key (user DB → env fallback)
   if (service) {
@@ -152,8 +171,10 @@ export async function GET(request: NextRequest) {
       service: canonical,
       configured: Boolean(resolved.key),
       source: resolved.source,
-      envVar: resolved.envVar
-      // NOTE: never return the actual key in a GET response for security
+      envVar: resolved.envVar,
+      preview: previewFor(resolved)
+      // NOTE: never return the actual key in a GET response for security — `preview` is the
+      // elided first-8/last-4 form only (see maskApiKeyPreview).
     });
   }
 
@@ -170,6 +191,7 @@ export async function GET(request: NextRequest) {
         envVar,
         configured: Boolean(resolved.key),
         source: resolved.source,
+        preview: previewFor(resolved),
         updatedAt: stored?.updatedAt,
         savedLabel: stored?.label
       };
@@ -192,6 +214,7 @@ export async function POST(request: NextRequest) {
     }
 
     const result = upsertUserApiKey(userId, canonical, apiKey.trim(), label);
+    queuePrimaryBridgeAfterTrackedMutation(userId, canonical);
     return NextResponse.json({
       success: true,
       key: {
@@ -222,5 +245,6 @@ export async function DELETE(request: NextRequest) {
   }
 
   const deleted = deleteUserApiKey(userId, canonical);
+  queuePrimaryBridgeAfterTrackedMutation(userId, canonical);
   return NextResponse.json({ success: true, deleted });
 }

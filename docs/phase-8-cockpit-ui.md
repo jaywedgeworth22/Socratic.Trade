@@ -59,6 +59,39 @@
 > 2026-07-04: `/console/scan` now matches the legacy dashboard's browser-local column controls
 > for the current console scan columns: visibility toggles, reorder arrows, Reset, and saved
 > visible-column state/order. See `docs/rollouts/2026-07-04-scan-column-customization.md`.
+>
+> 2026-07-13: Live Thesis no longer presents one concatenated Green/sizing/Red/outcome paragraph.
+> It renders visually distinct Green Team, deterministic sizing/risk, Red Team, and deterministic
+> outcome sections. Red verdicts say approved at full size / approved at half size / rejected /
+> unavailable rather than "survived"; blocked proposals display intent ("Buy") rather than the
+> false execution claim "Bought". Capital posture and approval cards resolve the selected daily
+> dollar-or-percent cap against current NAV. Migration v27 persists the exact Green rationale and
+> deterministic sizing receipt across refresh/lifecycle writes, and an objection is labeled
+> overridden only when the final policy decision records an applied override; a pending request is
+> explicitly labeled as requested rather than applied.
+> The Guardrails cap selector derives from the persisted account whenever no draft is active, so
+> discard/save/account changes cannot leave the Dollar/Percent control displaying stale local mode.
+>
+> 2026-07-14: approval cards and Live Thesis use the structured Green-only rationale rather than
+> relabeling appended Red or owner-hold prose as Green evidence. Proposal/case lifecycle status now
+> stays aligned through placement, broker rejection, expiry, withdrawal, and reconciliation. An
+> uncertain submission says “Placement pending confirmation” and never invites a retry; final-size
+> Red rejection/unavailability/half-size advice and any explicit owner override remain distinct.
+> Independent rationale-diversity or preference-override holds render in their own “Why your
+> approval is required” panel instead of being mislabeled as a Red Team outage. A synchronous
+> broker fill renders as a completed success in the single/bulk approval flow and Activity feed,
+> never as a failed approval or “awaiting next update.”
+> Chat retries return the original proposal's current lifecycle status, and stale-fill recovery
+> cannot show “Filled” while its accounting receipt remains pending; those ledgers advance together.
+> A broker cancellation after partial execution is shown as a completed partial execution—not a
+> total rejection—and current partial quantity enters exposure immediately.
+>
+> 2026-07-14: the decision trace treats the structured Red Team verdict card as the
+> canonical explanation. Exact generic dissent copies and known generated policy
+> wrappers around that same reason are hidden, while genuinely distinct policy
+> objections and override context remain visible. The canonical card owns the explicit
+> verdict status too, preserving “Approved at half size” and “Rejected by Red Team”
+> without restoring duplicate rationale rows.
 
 
 This phase restructures the dashboard from a long vertical page into a
