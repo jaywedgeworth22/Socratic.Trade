@@ -7,7 +7,7 @@ import {
   computeDiff,
   type FieldDef
 } from "../app/console/lib/policy-diff";
-import { ALL_DEFS, PANIC_BRAKE, STOPS_PLUMBING } from "../app/console/guardrails/field-defs";
+import { ALL_DEFS, PANIC_BRAKE, PROTECTIVE_STOPS } from "../app/console/guardrails/field-defs";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { TradingPolicy } from "../src/lib/types";
 
@@ -35,7 +35,7 @@ describe("console guardrails: protective-toggle loosening direction (Codex findi
   });
 
   it("declares DISABLING broker-held brackets as the loosening", () => {
-    const def = STOPS_PLUMBING.find((d) => d.path === "brokerBracketsEnabled")!;
+    const def = PROTECTIVE_STOPS.find((d) => d.path === "brokerBracketsEnabled")!;
     expect(def.looserWhen).toBe("off");
     expect(classify(def, true, false)).toBe("looser");
     expect(classify(def, false, true)).toBe("tighter");
@@ -146,6 +146,39 @@ describe("console guardrails: cleared-field honesty (Codex finding 9)", () => {
     // replaces universeFloor wholesale rather than deep-merging it.
     expect(patch.universeFloor.minMarketCapUsd).toBe(policy.universeFloor?.minMarketCapUsd);
     expect(patch.universeFloor.minDollarVolume).toBe(policy.universeFloor?.minDollarVolume);
+  });
+});
+
+describe("console guardrails: configurable daily cap mode", () => {
+  const money = defByPath("maxDailyNotional");
+  const percent = defByPath("maxDailyPctOfNav");
+
+  it("builds an exclusive percent-mode patch from the Guardrails draft", () => {
+    const fixedPolicy = { ...policy, maxDailyNotional: 1_000, maxDailyPctOfNav: undefined };
+    const diff = computeDiff(
+      fixedPolicy,
+      { maxDailyNotional: null, maxDailyPctOfNav: 20 },
+      [money, percent]
+    );
+
+    expect(buildPatch(diff, fixedPolicy)).toMatchObject({
+      maxDailyNotional: null,
+      maxDailyPctOfNav: 20
+    });
+  });
+
+  it("builds an exclusive fixed-dollar patch when switched back", () => {
+    const percentPolicy = { ...policy, maxDailyNotional: undefined, maxDailyPctOfNav: 20 };
+    const diff = computeDiff(
+      percentPolicy,
+      { maxDailyNotional: 250, maxDailyPctOfNav: null },
+      [money, percent]
+    );
+
+    expect(buildPatch(diff, percentPolicy)).toMatchObject({
+      maxDailyNotional: 250,
+      maxDailyPctOfNav: null
+    });
   });
 });
 

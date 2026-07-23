@@ -6,6 +6,7 @@
 import { randomUUID } from "crypto";
 import { clearChatTurns, insertChatTurn, listChatTurns, trimChatTurns } from "./db";
 import type { ChatTurn, ChatTurnRole } from "./types";
+import { captureUserWriteEpoch, runWithUserWriteEpoch, type UserWriteEpoch } from "./user-write-fence";
 
 export const MAX_TURNS = 100;
 
@@ -37,7 +38,8 @@ export function sanitizeTranscriptText(text: string): { text: string; redacted: 
 
 export function appendTurn(
   userId: string,
-  input: { role: ChatTurnRole; text: string; citations?: string[]; intent?: string | null; model?: string | null; clientTurnId?: string | null }
+  input: { role: ChatTurnRole; text: string; citations?: string[]; intent?: string | null; model?: string | null; clientTurnId?: string | null },
+  writeEpoch?: UserWriteEpoch
 ): ChatTurn {
   if (input.role !== "user" && input.role !== "assistant") throw new Error("role must be 'user' or 'assistant'");
   const sanitized = sanitizeTranscriptText(input.text);
@@ -53,9 +55,12 @@ export function appendTurn(
     clientTurnId: input.clientTurnId ?? null,
     createdAt: new Date().toISOString()
   };
-  insertChatTurn(turn);
-  trimChatTurns(userId, MAX_TURNS);
-  return turn;
+  const epoch = writeEpoch ?? captureUserWriteEpoch(userId);
+  return runWithUserWriteEpoch(userId, epoch, () => {
+    insertChatTurn(turn);
+    trimChatTurns(userId, MAX_TURNS);
+    return turn;
+  });
 }
 
 export function listTurns(userId: string, limit: number = MAX_TURNS): ChatTurn[] {
@@ -64,5 +69,6 @@ export function listTurns(userId: string, limit: number = MAX_TURNS): ChatTurn[]
 }
 
 export function clearTurns(userId: string): number {
-  return clearChatTurns(userId);
+  const epoch = captureUserWriteEpoch(userId);
+  return runWithUserWriteEpoch(userId, epoch, () => clearChatTurns(userId));
 }

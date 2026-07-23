@@ -12,7 +12,8 @@ import type {
   ReviewedOrder,
   TimeInForce,
   BrokerGateway,
-  EquityOrderInput
+  EquityOrderInput,
+  OptionPosition
 } from "./types";
 import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
@@ -179,6 +180,11 @@ export function portfolioFromRobinhoodRaw(accountNumber: string, raw: Record<str
 }
 
 class HttpMcpRobinhoodGateway implements BrokerGateway {
+  // ordersListIncludesTerminal is DELIBERATELY left unset (⇒ conservative/false): Robinhood's
+  // get_equity_orders terminal-inclusion window can't be verified without a live token, so
+  // reconcilePlacementError must NOT conclude not_placed from an absent order here (a placed order
+  // that already filled and aged out of a live-only list would be wrongly dropped, then duplicated
+  // next run). Absent-from-list ⇒ uncertain (protected). Flip to `true` only once verified live.
   private readonly userId: string;
 
   constructor(userId: string) {
@@ -304,9 +310,37 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
     return positions;
   }
 
+  async getOptionPositions(accountNumber: string): Promise<OptionPosition[]> {
+    const raw = await this.callTool("get_option_positions", { account_number: accountNumber }) as Record<string, unknown>;
+    const rows = Array.isArray(raw?.positions) ? raw.positions : Array.isArray(raw?.results) ? raw.results : Array.isArray(raw) ? raw : [];
+    
+    return rows.map((item: any) => {
+      const underlying = String(item.chain_symbol ?? item.symbol ?? "");
+      const expDate = String(item.expiration_date ?? item.expiry_date ?? "");
+      const type = String(item.option_type ?? item.type ?? "call").toLowerCase() === "put" ? "put" as const : "call" as const;
+      const strike = number(item.strike_price ?? item.strike ?? 0);
+      const qty = number(item.quantity ?? 0);
+      const avgPrice = number(item.average_price ?? item.average_buy_price ?? item.averageCost ?? 0);
+      
+      const symbol = buildOccSymbol(underlying, expDate, type, strike);
+      const marketValue = number(item.market_value ?? item.marketValue ?? (qty * avgPrice * 100));
+
+      return {
+        symbol,
+        underlyingSymbol: normalizeSymbol(underlying),
+        expirationDate: expDate,
+        optionType: type,
+        strikePrice: strike,
+        quantity: qty,
+        averageCost: avgPrice,
+        marketValue: marketValue
+      } satisfies OptionPosition;
+    }).filter((p) => p.underlyingSymbol && p.expirationDate && p.quantity !== 0);
+  }
+
   async getEquityOrders(accountNumber: string): Promise<EquityOrder[]> {
-    const raw = await this.callTool("get_equity_orders", { account_number: accountNumber }) as Record<string, unknown>;
-    const orders = Array.isArray(raw?.orders) ? raw.orders : Array.isArray(raw?.results) ? raw.results : Array.isArray(raw) ? raw : [];
+    const raw = await this.callTool("get_equity_orders", { account_number: accountNumber });
+    const orders = extractRobinhoodOrderCollection(raw);
     return orders.map((item: Record<string, unknown>) => ({
       id: String(item.id ?? item.order_id),
       symbol: normalizeSymbol(String(item.symbol)),
@@ -545,7 +579,7 @@ export async function callRobinhoodMcpTool(userId: string, name: string, args: R
 export async function callRobinhoodMcpMethod(userId: string, method: string, params: Record<string, unknown>): Promise<unknown> {
   const token = await getMcpAccessToken(userId);
   if (!token) {
-    throw new Error("Robinhood not connected — reconnect your account in Settings → Connections");
+    throw new Error("Robinhood not connected — reconnect your account in Connections");
   }
   const response = await fetch(getRobinhoodMcpUrl(), {
     method: "POST",
@@ -568,7 +602,7 @@ export async function callRobinhoodMcpMethod(userId: string, method: string, par
 
   if (response.status === 401) {
     clearMcpOAuthTokens(userId);
-    throw new Error("Robinhood session expired — reconnect your account in Settings → Connections");
+    throw new Error("Robinhood session expired — reconnect your account in Connections");
   }
 
   const body = await response.text();
@@ -626,6 +660,21 @@ function parseSseMcpResponse(body: string): { result?: unknown; error?: unknown 
 
 function unpackMcpToolResult(raw: unknown): unknown {
   const rawObj = raw as Record<string, unknown> | undefined;
+  // A tools/call result can report a TOOL-LEVEL failure via `isError: true` on an otherwise-2xx
+  // JSON-RPC success (distinct from a JSON-RPC-level `error`, which callRobinhoodMcpMethod already
+  // throws on). Surface it as a THROW so a broker-side failure (rate limit, auth lapse, upstream
+  // 5xx surfaced by the MCP proxy) can never be silently unwrapped into an error-shaped payload
+  // that a reader (e.g. getEquityOrders) then coalesces to an empty list. Booking a placement
+  // reconcile off a masked error is the phantom-fill / dropped-order money-path hazard this guards.
+  if (rawObj?.isError === true) {
+    const contentText = Array.isArray(rawObj.content)
+      ? (rawObj.content as Array<{ text?: unknown }>)
+          .map((c) => (typeof c?.text === "string" ? c.text : ""))
+          .filter(Boolean)
+          .join("; ")
+      : undefined;
+    throw new Error(`Robinhood MCP tool reported an error${contentText ? `: ${contentText}` : ""}`);
+  }
   const result = rawObj?.structuredContent ?? (rawObj?.content as Array<{ text?: unknown }>)?.[0]?.text ?? raw;
   let parsed: unknown = result;
   if (typeof result === "string") {
@@ -641,6 +690,36 @@ function unpackMcpToolResult(raw: unknown): unknown {
     return (parsed as { data: unknown }).data;
   }
   return parsed;
+}
+
+/**
+ * Pull the order array out of Robinhood's get_equity_orders response, distinguishing an
+ * AUTHORITATIVE empty list (a real "no orders" account state) from a malformed / error-shaped
+ * response. A shape that carries no recognizable orders/results collection must THROW — never
+ * coalesce to `[]` — because a placement reconcile (reconcilePlacementError / flagStalePlacingIntents)
+ * reads `[]` as "the broker has no such order" and would mark a genuinely-placed order not_placed,
+ * drop its durable 'placing' intent, and let the next run DUPLICATE the position. After this guard,
+ * a returned `[]` means Robinhood authoritatively returned an empty order list. Tool-level broker
+ * errors already throw earlier in unpackMcpToolResult (isError), so a well-formed collection here is
+ * a genuine success payload.
+ */
+function extractRobinhoodOrderCollection(raw: unknown): Record<string, unknown>[] {
+  if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.orders)) return obj.orders as Record<string, unknown>[];
+    if (Array.isArray(obj.results)) return obj.results as Record<string, unknown>[];
+  }
+  const preview = (() => {
+    try {
+      return JSON.stringify(raw)?.slice(0, 200) ?? String(raw);
+    } catch {
+      return String(raw);
+    }
+  })();
+  throw new Error(
+    `Robinhood get_equity_orders returned an unrecognized shape (no orders/results array) — treating as an error, not an empty account: ${preview}`
+  );
 }
 
 function mcpErrorMessage(payload: { error?: unknown }): string | undefined {
@@ -681,6 +760,10 @@ const MOCK_PRICES: Record<string, number> = {
 };
 
 class TestBrokerGateway implements BrokerGateway {
+  // The local deterministic sim has full knowledge of its own order history (nothing ages out), so
+  // its order list is authoritative for terminal orders. (Moot in practice — TestBroker fills
+  // synchronously and never throws on placement — but correct, and keeps sim reconciles precise.)
+  readonly ordersListIncludesTerminal = true;
   private readonly userId: string;
 
   constructor(userId: string = "local") {
@@ -864,6 +947,15 @@ export function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
   if (isShortIntent(input.side)) {
     throw new Error(
       `Robinhood does not support short selling (side="${input.side}"). Short/cover orders must not reach the broker.`
+    );
+  }
+  // The Robinhood MCP exposes no verified native trailing-stop parameter. A trailPercent order must
+  // never silently degrade into a plain stop here — the protective-stop reconciler emulates trailing
+  // on Robinhood itself (a stop_market it ratchets upward each tick) and deliberately omits this
+  // field. If Robinhood's MCP adds a trailing peg, translate it here instead of throwing.
+  if (input.trailPercent != null && input.trailPercent > 0) {
+    throw new Error(
+      "Robinhood MCP does not support native trailing stops. Place a stop_market and ratchet it (see broker-protective-stops.ts)."
     );
   }
   // FRACTIONAL / NOTIONAL ENTRIES ARE MARKET-ONLY ON ROBINHOOD. A fractional order -- a dollar_amount
@@ -1165,3 +1257,16 @@ function optionalString(value: unknown): string | undefined {
 }
 
 export { fetchYahooFinanceQuote } from "./yahoo-finance";
+
+export function buildOccSymbol(underlying: string, expirationDate: string, type: "call" | "put", strike: number): string {
+  const parts = expirationDate.split("-");
+  if (parts.length !== 3) {
+    return underlying.toUpperCase() + expirationDate;
+  }
+  const yy = parts[0].slice(2, 4);
+  const mm = parts[1].padStart(2, "0");
+  const dd = parts[2].padStart(2, "0");
+  const cp = type === "put" ? "P" : "C";
+  const strikeDigits = Math.round(strike * 1000).toString().padStart(8, "0");
+  return `${underlying.toUpperCase()}${yy}${mm}${dd}${cp}${strikeDigits}`;
+}

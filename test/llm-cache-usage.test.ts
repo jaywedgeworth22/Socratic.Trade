@@ -76,9 +76,9 @@ describe("estimateLlmCostUsd — cache-aware pricing", () => {
   it("prices cache reads at 0.1x input instead of full rate (gpt-5.5)", () => {
     // 6000 prompt (5000 cached) + 1500 out on gpt-5.5 ($5/$30):
     // uncached: 6000*5/1M = $0.03 ... full-price version:
-    const fullPrice = estimateLlmCostUsd("gpt-5.5", 6000, 1500);
+    const fullPrice = estimateLlmCostUsd("openai/gpt-5.5", 6000, 1500);
     // cache-aware: (1000*5 + 5000*0.5)*1e-6 + 1500*30*1e-6
-    const cached = estimateLlmCostUsd("gpt-5.5", 6000, 1500, 5000);
+    const cached = estimateLlmCostUsd("openai/gpt-5.5", 6000, 1500, 5000);
     expect(fullPrice).toBeCloseTo((6000 * 5 + 1500 * 30) / 1_000_000, 10);
     expect(cached).toBeCloseTo((1000 * 5 + 5000 * 0.5 + 1500 * 30) / 1_000_000, 10);
     expect(cached!).toBeLessThan(fullPrice!);
@@ -86,19 +86,31 @@ describe("estimateLlmCostUsd — cache-aware pricing", () => {
 
   it("prices Anthropic cache creation at 1.25x input", () => {
     // opus-4-8 ($5/$25): 6000 prompt = 800 full + 4000 read(0.1x) + 1200 creation(1.25x)
-    const cost = estimateLlmCostUsd("claude-opus-4-8", 6000, 400, 4000, 1200);
+    const cost = estimateLlmCostUsd("anthropic/claude-opus-4-8", 6000, 400, 4000, 1200);
     const expected = ((800 + 4000 * 0.1 + 1200 * 1.25) * 5 + 400 * 25) / 1_000_000;
     expect(cost).toBeCloseTo(expected, 10);
   });
 
   it("clamps malformed usage (cached > prompt) — never a negative cost", () => {
-    const cost = estimateLlmCostUsd("gpt-5.5", 1000, 0, 999999);
+    const cost = estimateLlmCostUsd("openai/gpt-5.5", 1000, 0, 999999);
     // all 1000 treated as cached at 0.1x
     expect(cost).toBeCloseTo((1000 * 0.5) / 1_000_000, 10);
     expect(cost!).toBeGreaterThan(0);
   });
 
   it("back-compat: two-arg call unchanged", () => {
-    expect(estimateLlmCostUsd("gpt-5.5", 1000, 100)).toBeCloseTo((1000 * 5 + 100 * 30) / 1_000_000, 10);
+    expect(estimateLlmCostUsd("openai/gpt-5.5", 1000, 100)).toBeCloseTo((1000 * 5 + 100 * 30) / 1_000_000, 10);
+  });
+
+  it("openrouter/vendor/model 3-part form prices identically to bare model name", () => {
+    // Before the fix, priceForModel stripped only ONE slash:
+    //   "openrouter/openai/gpt-5.5" → "openai/gpt-5.5" (no price-table hit → fallback rate).
+    // After the fix it strips "openrouter/" first, then "openai/" → "gpt-5.5" (correct rate).
+    const bare = estimateLlmCostUsd("gpt-5.5", 1000, 100);
+    const twopart = estimateLlmCostUsd("openai/gpt-5.5", 1000, 100);
+    const threepart = estimateLlmCostUsd("openrouter/openai/gpt-5.5", 1000, 100);
+    expect(bare).toBeCloseTo((1000 * 5 + 100 * 30) / 1_000_000, 10);
+    expect(twopart).toBe(bare);
+    expect(threepart).toBe(bare);
   });
 });

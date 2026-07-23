@@ -1,21 +1,26 @@
 "use client";
 
-/** Model stats drawer — the info affordance next to the Proposer/Reviewer model
- *  pickers (settings/models + strategy page). One small button per select opens
- *  a sheet listing every catalog model with cost per call and latency (live
- *  figures when this user has enough real traffic, otherwise the 2026-07-08
- *  benchmark, always labeled which is which) plus a performance column whose
- *  meaning is role-specific. Neither performance measure is shown unlabeled
- *  below its sample-size thresholds.
- *  - Proposer (Green): realized performance = closed trades whose ENTRY this
+/** Model stats drawer — the info affordance next to the Proposer/Reviewer/Strategist model
+ *  pickers on the Strategy page and the AI review picker. One small button per
+ *  select opens a sheet listing every catalog model with cost per call and latency (live
+ *  figures when this user has enough real traffic, otherwise the standardized
+ *  offline benchmark — the 2026-07-08 full sweep, topped up 2026-07-10 for
+ *  Mistral once its capability-map bug was fixed — always labeled which is
+ *  which) plus a performance column whose meaning is role-specific. Neither
+ *  performance measure is shown unlabeled below its sample-size thresholds.
+ *  - Green Team (proposer): realized performance = closed trades whose ENTRY this
  *    model proposed. Hidden below 20 closed trades ("needs >= 20 closed trades
  *    (n=X)"); 20-49 shows numbers WITH a small-sample caveat; 50+ plain.
- *  - Reviewer (Red): veto value-add = the counterfactual "had-it-run" outcome
+ *  - Red Team (reviewer): veto value-add = the counterfactual "had-it-run" outcome
  *    of the risk-adding proposals this model vetoed (share whose forward return
  *    was a loss — a good veto avoids a loser — plus the average counterfactual
  *    return, where NEGATIVE = value added). Fed by getRedTeamEfficacy(userId)
  *    .byModel; gated on 20/50 MATURED vetoes with the same helpers as the
- *    Results page 'Red Team veto efficacy' scorecard. Same measure, per model. */
+ *    Results page 'Red Team veto efficacy' scorecard. Same measure, per model.
+ *  - Strategist (AI review / strategy-tune): no benchmark, no perf/efficacy join —
+ *    just live cost/call, run count, and TOTAL cost per model over the window (the
+ *    owner's explicit ask: historical spend on running AI review, per model). The
+ *    table swaps Latency + performance for Runs + Total cost for this role. */
 
 import { useCallback, useState } from "react";
 import { BarChart2 } from "lucide-react";
@@ -33,7 +38,7 @@ import {
 import { Chip, Dash, IconButton, TONE_VAR } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 
-type PickerRole = "proposer" | "red-team";
+type PickerRole = "proposer" | "red-team" | "strategist";
 
 interface ModelPerf {
   closedTrades: number;
@@ -54,9 +59,12 @@ interface ReviewerPerf {
 
 interface ModelRoleStats {
   model: string;
-  role: "green" | "red";
+  role: "green" | "red" | "strategist";
   liveCalls: number;
   avgCostUsd: number | null;
+  /** Live TOTAL cost (USD) over the window; null when liveCalls === 0. Strategist-section only —
+   *  the owner's explicit ask for historical spend on running AI review, per model. */
+  totalCostUsd: number | null;
   p50LatencyMs: number | null;
   latencySamples: number;
   benchmarkCostUsd: number | null;
@@ -106,11 +114,24 @@ function CostCell({ s }: { s: ModelRoleStats | undefined }) {
     return (
       <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
         <span className="con-num">{fmtCost(s.benchmarkCostUsd)}</span>
-        <Chip title="Estimated cost per call from the 2026-07-08 standardized benchmark run — not your live traffic.">benchmark</Chip>
+        <Chip title="Estimated cost per call from a standardized offline benchmark run — not your live traffic.">benchmark</Chip>
       </span>
     );
   }
   return <Dash />;
+}
+
+/** Strategist-only: call count over the window (Runs column). */
+function RunsCell({ s }: { s: ModelRoleStats | undefined }) {
+  if (!s || s.liveCalls === 0) return <Dash />;
+  return <span className="con-num whitespace-nowrap">{s.liveCalls}</span>;
+}
+
+/** Strategist-only: TOTAL cost over the window — the owner's explicit ask for historical spend
+ *  on running AI review, per model (distinct from the per-call CostCell above). */
+function TotalCostCell({ s }: { s: ModelRoleStats | undefined }) {
+  if (!s || s.totalCostUsd === null) return <Dash />;
+  return <span className="con-num whitespace-nowrap">{fmtCost(s.totalCostUsd)}</span>;
 }
 
 function LatencyCell({ s }: { s: ModelRoleStats | undefined }) {
@@ -128,7 +149,7 @@ function LatencyCell({ s }: { s: ModelRoleStats | undefined }) {
     return (
       <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
         <span className="con-num">{fmtLatency(s.benchmarkColdP50Ms)}</span>
-        <Chip title="Cold-start p50 from the 2026-07-08 standardized benchmark run — not your live traffic.">benchmark</Chip>
+        <Chip title="Cold-start p50 from a standardized offline benchmark run — not your live traffic.">benchmark</Chip>
       </span>
     );
   }
@@ -167,7 +188,7 @@ function ReviewerPerfCell({ s }: { s: ModelRoleStats | undefined }) {
   );
 }
 
-function PerfCell({ s, role }: { s: ModelRoleStats | undefined; role: PickerRole }) {
+function PerfCell({ s, role }: { s: ModelRoleStats | undefined; role: Exclude<PickerRole, "strategist"> }) {
   if (role === "red-team") return <ReviewerPerfCell s={s} />;
   const n = s?.closedTrades ?? 0;
   if (!s || n < PERF_MIN_TRADES || !s.perf) {
@@ -195,7 +216,9 @@ function PerfCell({ s, role }: { s: ModelRoleStats | undefined; role: PickerRole
 }
 
 /** Small stats button + drawer for ONE picker. `role` picks which side of the
- *  per-(model, role) stats to show: proposer = green, red-team = red. */
+ *  per-(model, role) stats to show: proposer = green, red-team = red, strategist = strategist
+ *  (the AI review / strategy-tune seat — no benchmark, no perf/efficacy join, just live cost/call,
+ *  run count, and total cost over the window). */
 export function ModelStatsButton({ role }: { role: PickerRole }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<ModelStatsResponse | null>(null);
@@ -216,24 +239,43 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
       .finally(() => setLoading(false));
   }, [data, loading]);
 
-  const statsRole = role === "proposer" ? "green" : "red";
+  const statsRole = role === "proposer" ? "green" : role === "red-team" ? "red" : "strategist";
   const byModel = new Map((data?.stats ?? []).filter((s) => s.role === statsRole).map((s) => [s.model, s]));
-  const roleLabel = role === "proposer" ? "Proposer (Green Team)" : "Reviewer (Red Team)";
+  // Naming follows the owner-directed convention from PR #1466 (Green Team / Red Team).
+  const roleLabel = role === "proposer" ? "Green Team (proposer)" : role === "red-team" ? "Red Team (reviewer)" : "Strategist (AI review)";
+  const isStrategist = role === "strategist";
 
   return (
     <>
-      <IconButton label={`Model stats — cost, latency and realized performance for every ${roleLabel} option.`} onClick={openDrawer}>
+      <IconButton
+        label={
+          isStrategist
+            ? `Model stats — cost per call and total spend for every ${roleLabel} option.`
+            : `Model stats — cost, latency and realized performance for every ${roleLabel} option.`
+        }
+        onClick={openDrawer}
+      >
         <BarChart2 size={15} />
       </IconButton>
       <Sheet open={open} onClose={() => setOpen(false)} title={`Model stats — ${roleLabel}`} wide>
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Cost and latency per call for every model in this picker. Figures marked <strong>live</strong> come from your own
-          recent calls in this role{data ? ` (last ${data.sinceDays} days)` : ""}; models without enough live traffic fall
-          back to the standardized <strong>benchmark</strong> run{data ? ` of ${new Date(data.benchmark.runAt).toLocaleDateString()}` : ""}.
+          {isStrategist ? (
+            <>
+              Cost per call, run count, and total spend for every model in this picker, from your own recent AI review
+              runs{data ? ` (last ${data.sinceDays} days)` : ""}. There is no offline benchmark for AI review — a model with
+              no runs in the window shows no data.
+            </>
+          ) : (
+            <>
+              Cost and latency per call for every model in this picker. Figures marked <strong>live</strong> come from your own
+              recent calls in this role{data ? ` (last ${data.sinceDays} days)` : ""}; models without enough live traffic fall
+              back to a standardized offline <strong>benchmark</strong> run{data ? ` (most recently updated ${new Date(data.benchmark.runAt).toLocaleDateString()})` : ""}.
+            </>
+          )}
         </p>
         {loading && <p className="py-4 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading model stats…</p>}
         {error && !loading && (
-          <p className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+          <p className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
             {error}
           </p>
         )}
@@ -242,10 +284,20 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
             <table className="con-table w-full">
               <thead>
                 <tr>
+                  <th className="text-left">Provider</th>
                   <th className="text-left">Model</th>
                   <th className="text-left">Cost / call</th>
-                  <th className="text-left">Latency (p50)</th>
-                  <th className="text-left">{role === "proposer" ? "Realized performance" : "Veto value-add"}</th>
+                  {isStrategist ? (
+                    <>
+                      <th className="text-left">Runs</th>
+                      <th className="text-left">Total cost{data ? ` (${data.sinceDays}d)` : ""}</th>
+                    </>
+                  ) : (
+                    <>
+                      <th className="text-left">Latency (p50)</th>
+                      <th className="text-left">{role === "proposer" ? "Realized performance" : "Veto value-add"}</th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -258,7 +310,13 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
         )}
         {data && !loading && (
           <p className="mt-3 text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
-            {role === "proposer" ? (
+            {isStrategist ? (
+              <>
+                Total cost = the sum of every AI review call&apos;s actual cost over the window shown above, per model; Runs =
+                the number of AI review calls this model made in that window. Figures are live-only — there is no offline
+                benchmark for AI review.
+              </>
+            ) : role === "proposer" ? (
               <>
                 Realized performance = closed trades whose ENTRY this model proposed (win rate and average return per closed
                 lot, all your accounts). Hidden until 20 closed trades exist; shown with a small-sample caveat until 50.
@@ -292,25 +350,43 @@ function ProviderRows({
 }) {
   return (
     <>
-      <tr>
-        <td colSpan={4} className="pt-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)]">
-          {label}
-        </td>
-      </tr>
-      {models.map((model) => {
+      {models.map((model, idx) => {
         const s = byModel.get(model);
         return (
-          <tr key={model}>
+          <tr key={model} className={idx === 0 ? "border-t border-[color:var(--con-border)]" : ""}>
+            {idx === 0 && (
+              <td
+                rowSpan={models.length}
+                className="align-middle pr-4 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)]"
+              >
+                <div className="max-sm:[writing-mode:vertical-rl] max-sm:rotate-180 sm:whitespace-nowrap flex items-center justify-center min-h-[4rem] sm:min-h-0 sm:block sm:h-auto">
+                  {label}
+                </div>
+              </td>
+            )}
             <td className="whitespace-nowrap font-medium">{model}</td>
             <td>
               <CostCell s={s} />
             </td>
-            <td>
-              <LatencyCell s={s} />
-            </td>
-            <td>
-              <PerfCell s={s} role={role} />
-            </td>
+            {role === "strategist" ? (
+              <>
+                <td>
+                  <RunsCell s={s} />
+                </td>
+                <td>
+                  <TotalCostCell s={s} />
+                </td>
+              </>
+            ) : (
+              <>
+                <td>
+                  <LatencyCell s={s} />
+                </td>
+                <td>
+                  <PerfCell s={s} role={role} />
+                </td>
+              </>
+            )}
           </tr>
         );
       })}

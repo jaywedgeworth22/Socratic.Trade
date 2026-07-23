@@ -8,6 +8,7 @@
 
 import type { ReactNode } from "react";
 import { signIn } from "../../src/lib/auth/auth";
+import { HeaderLogo } from "../console/ui/header-logo";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Sign in" };
@@ -20,12 +21,9 @@ const anyProviderConfigured = googleConfigured || githubConfigured || appleConfi
 export default function LoginPage() {
   return (
     <main className="grid min-h-screen place-items-center bg-bg px-6 text-center">
-      <div className="max-w-md space-y-6">
-        <div className="space-y-2">
-          <h1 className="text-xl font-semibold text-fg">Sign in to the dashboard</h1>
-          <p className="text-sm text-muted">
-            Authentication is required to access this app.
-          </p>
+      <div className="w-full max-w-md space-y-6">
+        <div className="flex justify-center mb-8 px-4 overflow-hidden">
+          <HeaderLogo height={20} />
         </div>
 
         {anyProviderConfigured ? (
@@ -101,10 +99,6 @@ export default function LoginPage() {
             </p>
           </div>
         )}
-
-        <p className="text-xs text-muted">
-          Access is restricted. Contact the owner if you need an account.
-        </p>
       </div>
     </main>
   );

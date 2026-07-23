@@ -39,12 +39,13 @@ Before every commit/push to the GitHub repo, you MUST update the following:
    Completed (merged to `main`) → Deployed to production** as its state changes, and add new
    efforts as they are conceived. This is the owner's at-a-glance board; treat it as append-mostly
    and never delete another agent's row — correct it in place and note the correction. "Completed"
-   means merged to `main` (which auto-deploys NOWHERE — auto-deploy is OFF and previews are retired);
-   "Deployed to production" is a separate **ANNOUNCE-THEN-DEPLOY** release (owner ruling 2026-07-09):
-   one deployer posts a #agent-sync claim (app + exact commit + contents + "deploying in N min unless
-   objection"), honors a ~10-min objection window, avoids market hours unless it's a fix, then triggers
-   the Coolify deploy and owns health-verify + boards — canonical protocol detail in
-   `/Users/jay/apps/AGENT-SYNC.md`. Do not mark it deployed unless that release actually happened.
+   means merged to `main`. **As of 2026-07-10, merging to `main` AUTO-DEPLOYS to production**
+   (owner-directed): Coolify auto-deploys `socratic-trade-prod` on every push to `main`, so
+   "Completed (merged)" and "Deployed to production" now collapse — there is no separate manual deploy
+   step. The old **ANNOUNCE-THEN-DEPLOY** protocol is **RETIRED**: do NOT post deploy claims or manually
+   trigger Coolify deploys. Mechanism, verification, and rollback:
+   `docs/rollouts/2026-07-10-auto-deploy-on.md`; canonical protocol detail in
+   `/Users/jay/apps/AGENT-SYNC.md`.
 3. **`docs/rollouts/YYYY-MM-DD-short-slug.md`** — create or update a chronological rollout note detailing what was done, decisions made, what's next, exact touched files, and verification commands run. Do NOT use a single `HANDOFF.md` file, use the rollouts directory.
 4. **`PLAN.md`** — reflect any scope, timeline, or approach changes.
 5. **Phase docs (`docs/*.md`)** — update the relevant phase doc to match actual implementation state.
@@ -118,10 +119,11 @@ PM2 `next dev` servers (ports 4001/4100-4104 — stopped and deleted from pm2), 
 preview app (`socratic-trade-preview` — deleted). **Do not start, recreate, or route to
 any of these.** Coolify's PR-preview feature was considered and deliberately NOT enabled
 (it auto-builds every PR; build bursts OOM-wedged and disk-filled the 4 GB box on
-2026-07-07/08) — revisit only on owner instruction. For that future option the plumbing
-is pre-armed (owner-directed 2026-07-08): a `*.jays.services` wildcard A record points at
-the box, preview hostnames must be ONE level (`pr{{pr_id}}.jays.services` — two-level
-names fail CF Universal SSL), the Preview URL Template is a UI-only Coolify field, and
+2026-07-07/08) — revisit only on owner instruction. For that future option, notes that
+still apply: preview hostnames must be ONE level (`pr{{pr_id}}.jays.services` — two-level
+names fail CF Universal SSL; the `*.jays.services` wildcard A record was deleted by the
+owner 2026-07-09, so per-preview records would need re-creating), the Preview URL Template
+is a UI-only Coolify field, and
 `socratic-trade-prod` carries a preview-scoped `DB_BOOTSTRAP=fresh` so a PR preview can
 never restore the production DB and trade. To check
 your work: `npm run dev` locally in your own worktree + the verify CI gate.
@@ -131,11 +133,17 @@ dead after the preview retirement; the pre-push hook they used to install is now
 by `scripts/land.sh`). The "Preview freshness policy" section below is historical.
 
 Hosting is now Coolify on the Hetzner box (`135.181.192.190`, 8 GB `ubuntu-8gb-hel1-2`,
-dashboard `https://jays.services` — direct DNS, no Mac dependency; migrated 2026-07-09
-from the 4 GB `91.98.44.8` box, which is kept stopped as rollback until the owner deletes
-it — see `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`). The box hosts
+dashboard + API `https://host.jays.services` — direct DNS, no Mac dependency; migrated
+2026-07-09 from the 4 GB `91.98.44.8` box, which the owner DELETED 2026-07-10 — that IP
+is gone; DB rollback path is the litestream R2 replica — see
+`docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`).
+**The dashboard moved off the apex the same evening (owner-directed): `jays.services`
+(apex) now CNAMEs to the Mac Cloudflare tunnel and does NOT reach Coolify — any tool or
+script calling `https://jays.services/api/v1/...` must use
+`https://host.jays.services/api/v1/...` instead.** The box hosts
 `socratic-trade-prod` (= `socratictrade.com`, see the production stanza below) plus the
 `github-runner` service (two GitHub Actions deploy runners).
+**MAC RUNNER RETIRED & DELETED (OWNER DIRECTIVE, 2026-07-21):** The Mac host self-hosted runner `trading-live-mac` is permanently stopped, uninstalled, and deleted from GitHub settings. **DO NOT EVER START, RE-REGISTER, OR REFERENCE `trading-live-mac` OR `trading-live` RUNNER LABELS AGAIN.** All CI/CD jobs must target `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`.
 **Build caveats:** the box's `concurrent_builds` is
 pinned to **1** (two parallel `next build`s OOM-wedged the old 4 GB box on 2026-07-07,
 console reboot required; unproven on the 8 GB box — loosen only deliberately), and Docker
@@ -145,14 +153,20 @@ rollout note).
 
 **PRODUCTION IS ON COOLIFY (cut over 2026-07-07, owner-directed, MONET; verified).**
 `socratictrade.com` = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`,
-branch `main`, nixpacks, auto-deploy OFF). **A production release follows ANNOUNCE-THEN-DEPLOY
-(owner ruling 2026-07-09):** one deployer posts a #agent-sync claim (app + exact commit + contents +
-"deploying in N min unless objection"), honors a ~10-min objection window, avoids market hours unless
-it's a fix, then triggers a Coolify deploy of `socratic-trade-prod` and owns health-verify + board
-updates. `~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
+branch `main`, nixpacks). **AUTO-DEPLOY IS ON (owner-directed 2026-07-10): every push to `main`
+auto-deploys `socratic-trade-prod`** via Coolify's GitHub-App webhook — `is_auto_deploy_enabled=true`
+plus GitHub's webhook IP ranges whitelisted on the `jays.services` Cloudflare zone (they were 403'd by
+the zone's IP-allowlist, which is why webhooks never fired before; bot protection stays on for all
+other traffic). Merge == live; the **ANNOUNCE-THEN-DEPLOY protocol is RETIRED** — do NOT post deploy
+claims or manually trigger deploys. Rollback to manual: set `is_auto_deploy_enabled=false` on the app.
+Details/verification: `docs/rollouts/2026-07-10-auto-deploy-on.md`.
+`~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
 protocol detail lives in `/Users/jay/apps/AGENT-SYNC.md`. Boot path:
 `scripts/coolify-prod-start.sh` under `DB_BOOTSTRAP=live` — Infisical secrets via pinned
-in-container CLI, one-time litestream 0.5.14 restore from the R2 replica
+in-container CLI, one-time restore via the pinned litestream (version pinned in
+`scripts/coolify-prod-start.sh`; 0.5.14 was rolled back to 0.5.12 on 2026-07-10 after its
+socket churn exhausted kernel tcp_mem and wedged all deploys — see
+`docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`) from the R2 replica
 (marker-guarded), then `litestream replicate -exec` (backup continuity lives in the
 container now; the Mac `litestream` pm2 app is stopped). SQLite lives on the persistent
 volume at `/app/data`. Rollback: restore the `socratictrade.com` CNAME to the tunnel
@@ -282,6 +296,23 @@ silent no-op without it — safe in any repo). Optional env: `SLACK_AGENT_NAME` 
 canonical tags: `Socratic.Trade`, `Congress.Trade`, `API-Usage-Monitor`,
 `Congress-Trading-Shared`), `SLACK_CHANNEL_ID` (per-repo channel override). Setup and FAQ:
 `docs/slack-coordination.md`.
+
+## Delegation & model economics (fleet rule — binding for every agent)
+
+- **Teams of sub-agents are the DEFAULT for substantial work.** Decompose non-trivial tasks
+  into parallel lanes, builder+verifier pairs, review/judge panels, and landing operators
+  wherever your platform supports them. Never serialize big work out of habit; never spawn
+  agents for trivial one-step tasks. Sub-teams follow the same coordination rules as
+  top-level agents (board reservations + #agent-sync claims).
+- **Right-size the model for EVERY task, including each sub-agent you spawn:** use the
+  lowest-cost model that completes that task very effectively. Small tier = mechanical
+  edits/mirrors/greps; mid tier = the default for well-specified implementation with tests
+  and for landing operators; frontier tier ONLY for ambiguous design, money-path-subtle
+  changes, and critical adversarial verification. Escalate a tier when a cheaper model's
+  output fails verification — not preemptively.
+- **Same bar at every tier:** full gates, receipts, and board discipline apply no matter
+  which model did the work.
+- Canonical reference: `/Users/jay/apps/AGENT-SYNC.md` — "Delegation & model economics".
 
 ## Cross-file consistency traps (cheap to check, expensive to miss)
 
@@ -446,6 +477,33 @@ paternalism that keeps creeping back in from every agent (Claude, Codex, others)
 - Don't run destructive git operations (`reset --hard`, force-push, branch
  deletion) without explicit user confirmation in the current conversation,
  even if a previous session was authorized to push.
+
+- **NEVER create a new provider API key. No agent, on any platform, ever.**
+ (Owner ruling, 2026-07-20 — binding for Claude, Codex, Antigravity/Gemini,
+ Cursor, Monet, cloud sessions, and any sub-agent they spawn.) The owner
+ maintains exactly ONE intended key per provider per app, with spend caps and
+ rate guardrails deliberately configured on that key. Agents provisioning their
+ own keys — for Socratic.Trade and Congress.Trade both — silently routed
+ production spend around those guardrails and made "which key is even in use?"
+ unanswerable. That is the failure this rule exists to prevent.
+  - Do not create, mint, rotate, or regenerate a key in ANY provider console or
+    API (OpenRouter, OpenAI, Anthropic, Pinecone, Voyage, FMP, …), and do not
+    swap in a key from another app, another workspace, or your own MCP
+    provisioning.
+  - If a key is missing, wrong, exhausted, or rejected: STOP and tell the owner
+    what you observed and which key you believe is in play (identify it by its
+    masked first-8/last-4 preview — see below — never by pasting a value). The
+    owner supplies keys via the `chmod 600` handoff in `/Users/jay/.secrets/`.
+    Waiting is always cheaper than a second key.
+  - To see WHICH key is serving without ever revealing one: the Connections page
+    (`/console/connections#api-keys`) shows the masked preview of the key that
+    actually resolves for you, and `/admin/llm-usage` breaks spend down per
+    distinct key fingerprint (`keyRef`) and per user.
+  - Trap that makes this worse: `migrateLocalEnvCredentials`
+    (`src/lib/db-api-keys.ts`) seeds the primary user's key store from env ONCE,
+    and `resolveLlmCredential` reads the DB row BEFORE env — so a key stored in
+    the DB permanently shadows `OPENROUTER_API_KEY`. Rotating the Infisical
+    secret alone changes nothing until that row is replaced via Connections.
 
 ## Cursor Cloud specific instructions
 

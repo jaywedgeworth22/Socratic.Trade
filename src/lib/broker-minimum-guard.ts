@@ -65,8 +65,11 @@ const FULL_POSITION_QTY_EPSILON = 1e-6;
 function isFullPositionExit(order: { quantity?: number; side?: OrderSide; positionQuantity?: number }): boolean {
   if (order.side !== "sell" && order.side !== "cover") return false;
   if (order.quantity == null || order.positionQuantity == null) return false;
-  if (!(order.positionQuantity > 0)) return false;
-  return Math.abs(order.quantity - order.positionQuantity) <= FULL_POSITION_QTY_EPSILON;
+  // Short positions are stored with NEGATIVE quantities — a full COVER must qualify for the
+  // exemption exactly like a full sell, so compare magnitudes.
+  const held = Math.abs(order.positionQuantity);
+  if (!(held > 0)) return false;
+  return Math.abs(order.quantity - held) <= FULL_POSITION_QTY_EPSILON;
 }
 
 /**
@@ -264,13 +267,13 @@ const SUB_MINIMUM_ALERT_COOLDOWN_PREFIX = "subMinimumOrderAlertSent";
 const SUB_MINIMUM_ALERT_COOLDOWN_MS = 24 * 60 * 60_000; // 24 hours
 
 /**
- * Cooldown-gated: returns true (and marks the cooldown) at most once per (accountNumber, symbol)
+ * Cooldown-gated: returns true (and marks the cooldown) at most once per (user, accountNumber, symbol)
  * per `SUB_MINIMUM_ALERT_COOLDOWN_MS` window — mirrors the HEALTH_ALERT_COOLDOWN /
  * STORAGE_ALERT_COOLDOWN pattern in db-health.ts. Callers must still skip placing the order
  * regardless of this return value; it only gates whether an outward alert/notification fires this run.
  */
-export function shouldAlertBrokerMinimumOrderBlock(accountNumber: string, symbol: string): boolean {
-  const key = `${SUB_MINIMUM_ALERT_COOLDOWN_PREFIX}:${accountNumber}:${symbol}`;
+export function shouldAlertBrokerMinimumOrderBlock(userId: string, accountNumber: string, symbol: string): boolean {
+  const key = `${SUB_MINIMUM_ALERT_COOLDOWN_PREFIX}:${userId}:${accountNumber}:${symbol}`;
   const last = getInternalSetting<string>(key);
   if (last && Date.now() - Date.parse(last) < SUB_MINIMUM_ALERT_COOLDOWN_MS) return false;
   setInternalSetting(key, new Date().toISOString());

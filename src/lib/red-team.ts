@@ -16,16 +16,20 @@
 
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
-import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
 import {
   interactiveStrategyReasoningEffort,
   LLM_OUTPUT_TOKEN_CAPS,
   LLM_REQUEST_DEFAULTS,
-  fetchLlmWithRetry
+  fetchLlmWithRetry,
+  resolveReviewerReasoningEffort,
+  isRetryableLlmStatus,
+  isRetryableLlmError
 } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
+import { planLlmProviderAttempts, recordLlmProviderFailure } from "./llm-provider-cooldown";
 import { withLlmGeneration } from "./observability";
 import { buildRedTeamReviewSystem } from "./strategy-prompts";
 import { STRATEGY_PROMPT_VERSION } from "./strategy-prompt-version";
@@ -93,6 +97,19 @@ export interface RedTeamFinalizedSizing {
   estimatedNotional?: number;
   /** Whether the finalized order is dollar-routed or quantity-routed (marketable-limit). */
   sizeBasis: "notional" | "quantity";
+  /** Account NAV used by deterministic sizing. */
+  portfolioValue?: number;
+  /** App-computed order size as a percentage of NAV; models must not redo this arithmetic. */
+  estimatedPctOfNav?: number;
+  /** Canonical daily opening ceiling after resolving the user's dollar/percent mode. */
+  dailyOpeningCap?: {
+    mode: "pct_nav" | "dollar";
+    configuredValue: number;
+    effectiveNotional: number;
+    pctOfNav?: number;
+  };
+  dailyNotionalUsed?: number;
+  remainingDailyNotional?: number;
 }
 
 /** True when `error` looks like an AbortSignal.timeout()-triggered abort (vs some other thrown
@@ -182,13 +199,13 @@ export async function debateProposal(
   // NO MODEL DEFAULTS: an unchosen Red model resolves to "" — fail closed, never guess a model.
   if (!model) {
     return unavailable(
-      "Red Team reviewer model is not chosen — select it under Settings → LLM models.",
+      "Red Team reviewer model is not chosen — select it under Strategy → Models.",
       "not_configured"
     );
   }
   if (!llmKey) {
     return unavailable(
-      `No API key resolves for the Red Team reviewer's provider (${provider}) — add one under Settings → API keys.`,
+      `No API key resolves for the Red Team reviewer's provider (${provider}) — add one under Connections → API keys.`,
       "not_configured",
       model
     );
@@ -217,6 +234,7 @@ export async function debateProposal(
       holdingHorizon: policy.holdingHorizon,
       maxOrderNotional: policy.maxOrderNotional,
       maxDailyNotional: policy.maxDailyNotional,
+      maxDailyPctOfNav: policy.maxDailyPctOfNav,
       scoringWeights: policy.scoringWeights
     },
     ...(review?.context ?? {}),
@@ -234,20 +252,75 @@ export async function debateProposal(
       // Anthropic — all decided inside buildLlmRequestBody from provider/transport.
       schema: { name: "red_team_verdict", schema: RED_TEAM_VERDICT_SCHEMA, description: "The Red Team's three-way verdict on the finalized trade." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.adversaryReview,
-      // Same interactive-reasoning clamp as the Green proposal step, so a stored gpt-5.5/high
-      // config can't send high reasoning on the review call and hit the run-lock timeout.
-      reasoningEffort: interactiveStrategyReasoningEffort(model, policy.llmReasoningEffort),
+      // The reviewer's OWN per-team effort (redTeamReasoningEffort, falling back to the
+      // proposer's legacy llmReasoningEffort until explicitly set — resolveReviewerReasoningEffort
+      // owns that fallback). Same interactive-reasoning clamp as the Green proposal step, so a
+      // stored gpt-5.5/high config can't send high reasoning on the review call and hit the
+      // run-lock timeout. Under rotation the run-scoped policy already carries the rotated
+      // model's recommended effort (src/lib/model-rotation.ts).
+      reasoningEffort: interactiveStrategyReasoningEffort(model, resolveReviewerReasoningEffort(policy)),
       // Per-role sampling: non-zero adversary temperature so a re-run can surface a different
       // objection rather than always the identical (or absent) one. Ignored by reasoning models.
-      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
+      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature,
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "red-team"
     }
   );
+
+  const redAttempts = [
+    { url, provider, model, transport, key: llmKey, keySource, keyRef, body }
+  ];
+  const fallbackModelList = Array.isArray(policy.redTeamFallbackModels) ? policy.redTeamFallbackModels : [];
+  for (const fallbackModel of fallbackModelList.filter((m): m is string => typeof m === "string").map((m) => m.trim()).filter(Boolean)) {
+    const ep = resolveLlmEndpoint({ ...policy, redTeamLlmModel: fallbackModel }, userId, "https://api.openai.com/v1/chat/completions", "red");
+    if (!ep.key) continue; // No credential for this provider's model — skip it rather than fail.
+    redAttempts.push({
+      url: ep.url,
+      provider: ep.provider,
+      model: ep.model,
+      transport: ep.transport,
+      key: ep.key,
+      keySource: ep.keySource,
+      keyRef: ep.keyRef,
+      body: buildLlmRequestBody(
+        { provider: ep.provider, transport: ep.transport },
+        {
+          model: ep.model,
+          systemPrompt,
+          userContent,
+          schema: { name: "red_team_verdict", schema: RED_TEAM_VERDICT_SCHEMA, description: "The Red Team's three-way verdict on the finalized trade." },
+          maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.adversaryReview,
+          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, resolveReviewerReasoningEffort(policy)),
+          temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature,
+          userId,
+          keyRef: ep.keyRef,
+          service: "strategy",
+          feature: "red-team"
+        }
+      )
+    });
+  }
+
+  // Cross-run cooldown planning (handoff 6b.4): rate/quota-cooled lanes are skipped (audited);
+  // when EVERY lane is cooling the full chain still runs, least-recently-failed first — so the
+  // fail-closed / unavailable outcomes below are decided by exactly the same code as before, the
+  // cooldown only avoids pointless retries. Kill switch: LLM_PROVIDER_COOLDOWN_DISABLED=1.
+  const plannedRedAttempts = planLlmProviderAttempts(redAttempts, {
+    step: "red",
+    userId,
+    connectedAccountId: policy.connectedAccountId
+  });
+
+  const { model: canonicalModel } = remapOpenRouterTelemetry(provider, model);
+  let finalModel = canonicalModel;
 
   try {
     const traced = await withLlmGeneration(
       {
         name: "trading.red-team.review",
-        model,
+        model: canonicalModel,
         userId,
         connectedAccountId: policy.connectedAccountId,
         input: summarizeOpenAiRequest(body),
@@ -268,107 +341,175 @@ export async function debateProposal(
         })
       },
       async (): Promise<{ text: string | undefined; debate: RedTeamDebateResult }> => {
-        // Bounded same-model retry on transient failures (§4.3): 2 attempts total, fresh
-        // per-attempt timeout signal so a hung provider can't wedge the per-user run lock.
-        const response = await fetchLlmWithRetry(
-          url,
-          {
-            method: "POST",
-            headers: llmAuthHeaders({ provider, key: llmKey }),
-            body: JSON.stringify(body)
-          },
-          {
-            attempts: 2,
-            baseDelayMs: 500,
-            timeoutMs: RED_TEAM_TIMEOUT_MS,
-            onRetry: (info) =>
-              console.warn(
-                `[RedTeam] transient failure (attempt ${info.attempt}${info.status ? `, HTTP ${info.status}` : ""}); retrying ${proposal.symbol} ${proposal.side} review once.`
-              )
+        let lastError: unknown;
+        for (let i = 0; i < plannedRedAttempts.length; i++) {
+          const attempt = plannedRedAttempts[i];
+          const isLast = i === plannedRedAttempts.length - 1;
+          const next = plannedRedAttempts[i + 1];
+          const { model: attemptCanonicalModel } = remapOpenRouterTelemetry(attempt.provider, attempt.model);
+          finalModel = attemptCanonicalModel;
+
+          try {
+            // Bounded same-model retry on transient failures (§4.3): 2 attempts total, fresh
+            // per-attempt timeout signal so a hung provider can't wedge the per-user run lock.
+            const response = await fetchLlmWithRetry(
+              attempt.url,
+              {
+                method: "POST",
+                headers: llmAuthHeaders({ provider: attempt.provider, key: attempt.key }),
+                body: JSON.stringify(attempt.body)
+              },
+              {
+                attempts: 2,
+                baseDelayMs: 500,
+                timeoutMs: RED_TEAM_TIMEOUT_MS,
+                onRetry: (info) =>
+                  console.warn(
+                    `[RedTeam] transient failure (attempt ${info.attempt}${info.status ? `, HTTP ${info.status}` : ""}); retrying ${proposal.symbol} ${proposal.side} review once.`
+                  )
+              }
+            );
+
+            if (!response.ok) {
+              // Raw body captured BEFORE humanizing: cooldown classification must see the raw
+              // provider error (the humanized string says "billing" for every 429).
+              const rawDetail = await response.text().catch(() => "");
+              recordLlmProviderFailure({
+                provider: attempt.provider,
+                keySource: attempt.keySource,
+                status: response.status,
+                detail: rawDetail,
+                model: attempt.model,
+                step: "red",
+                userId,
+                connectedAccountId: policy.connectedAccountId
+              });
+              const why = humanizeLlmError(rawDetail, { provider: attempt.provider, status: response.status });
+              if (!isLast && isRetryableLlmStatus(response.status)) {
+                lastError = new Error(why);
+                console.warn(`[RedTeam] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
+                continue;
+              }
+              console.warn("Red Team LLM call failed:", why);
+              const failureKind: RedTeamDebateResult["failureKind"] = response.status === 429 ? "rate_limited" : "provider_error";
+              return { text: undefined, debate: unavailable(`Red Team review unavailable — ${why}`, failureKind, attempt.model) };
+            }
+
+            const payload = await response.json();
+            recordLlmUsage({
+              userId,
+              provider: attempt.provider,
+              model: attempt.model,
+              context: "red-team",
+              keySource: attempt.keySource,
+              keyRef: attempt.keyRef,
+              // Per-account usage attribution (PR #1030 coordination): the resolved run policy is
+              // account-scoped, so the review's spend lands on the account it reviewed for.
+              connectedAccountId: policy.connectedAccountId,
+              providerRequestId: providerRequestIdFromPayload(attempt.provider, payload),
+              ...extractLlmUsage(payload)
+            });
+            const text = extractLlmText(payload);
+            finalModel = attempt.model;
+
+            if (!text) {
+              return {
+                text: undefined,
+                debate: unavailable("Red Team review returned no response.", "malformed_response", attempt.model)
+              };
+            }
+
+            // AMBIGUITY GUARD (Codex, PR #1696): a malformed reply carrying MORE THAN ONE verdict
+            // block (e.g. `{"verdict":"approve",...} {"verdict":"reject",...}`, or a multi-element
+            // array of conflicting verdicts) must never resolve to whichever block happens to be
+            // extracted first. Counted on the RAW text — first-balanced-block extraction below
+            // would hide the trailing block. A prose false positive (the model echoing the
+            // `"verdict":` key while also emitting real JSON) fails CLOSED to unavailable, which
+            // is the acceptable direction for this gate.
+            // JSON permits \uXXXX escapes inside property names (`{"\u0076erdict":...}` parses
+            // with key "verdict"), so decode them before counting or a second, escaped verdict
+            // block slips past a literal-key regex (Codex P1, round 3). Malformed escape tails
+            // are left as-is — they cannot form a parseable key anyway on this strict gate.
+            const escapeNormalizedText = text.replace(/\\u([0-9a-fA-F]{4})/g, (_whole, hex: string) =>
+              String.fromCharCode(Number.parseInt(hex, 16))
+            );
+            // Quotes OPTIONAL (same class as the Bull guard, Codex round 10): an unquoted JSON5
+            // `{verdict: 'reject'}` trailing block would otherwise evade the count while the
+            // first double-quoted approval parses cleanly.
+            const verdictKeyOccurrences = (escapeNormalizedText.match(/(?<![\w"'])["']?verdict["']?\s*:/g) ?? []).length;
+            if (verdictKeyOccurrences > 1) {
+              console.warn(`Red Team response contained ${verdictKeyOccurrences} verdict blocks; treating the review as ambiguous/unavailable.`);
+              return {
+                text,
+                debate: unavailable(
+                  "Red Team returned multiple conflicting verdict blocks (ambiguous response); treating the review as unavailable.",
+                  "malformed_response",
+                  attempt.model
+                )
+              };
+            }
+
+            // Fence/prose-tolerant parse (§4.1 / R9 — the gemini-3.5-flash root cause) + strict shape
+            // validation (§4.4): anything that isn't exactly one of the three verdicts fails CLOSED.
+            // DELIBERATELY parsed WITHOUT jsonrepair (extractJsonPayload's repair stays off): repair
+            // would turn a TRUNCATED reply like `{"verdict":"approve"` into a well-formed approval,
+            // converting this fail-closed gate into fail-open on a risk-adding opening (Codex P1,
+            // PR #1696). A response that doesn't parse as-is is UNAVAILABLE, exactly as before.
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(extractJsonPayload(text));
+            } catch {
+              const looksLikeRefusal = /^(i can'?t|i cannot|i'?m not able|i am not able|as an ai)/i.test(text.trim());
+              return {
+                text,
+                debate: unavailable(
+                  looksLikeRefusal
+                    ? "Red Team model refused to answer (safety-filter style response); treating the review as unavailable."
+                    : "Red Team returned an unparseable response (not valid JSON); treating the review as unavailable.",
+                  "malformed_response",
+                  attempt.model
+                )
+              };
+            }
+            // Bare-array unwrap (#1091): DeepSeek v4 Flash and other small/fast json_object-mode
+            // providers sometimes wrap a correct verdict object in an array (e.g.
+            // [{verdict:"reject",reason:"…"}]). Extract the first element instead of failing the
+            // whole review as malformed — the shape validation below still gates the payload.
+            if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object" && parsed[0] !== null) {
+              parsed = parsed[0];
+            }
+            const verdict = validateRedTeamVerdictShape(parsed);
+            if (!verdict) {
+              console.warn(`Red Team returned a malformed verdict; first 200 chars: ${text.slice(0, 200)}`);
+              return {
+                text,
+                debate: unavailable(
+                  "Red Team returned a malformed verdict (missing/unknown 'verdict'); treating the review as unavailable.",
+                  "malformed_response",
+                  attempt.model
+                )
+              };
+            }
+            return {
+              text,
+              debate: {
+                verdict: verdict.verdict,
+                rejected: verdict.verdict === "reject",
+                available: true,
+                reason: verdict.reason,
+                model: attempt.model
+              }
+            };
+          } catch (err) {
+            if (!isLast && isRetryableLlmError(err)) {
+              lastError = err;
+              console.warn(`[RedTeam] ${attempt.model}/${attempt.provider} errored (${(err as { message?: string })?.message ?? String(err)}); failing over to ${next.model}/${next.provider}.`);
+              continue;
+            }
+            throw err;
           }
-        );
-
-        if (!response.ok) {
-          const why = humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status });
-          console.warn("Red Team LLM call failed:", why);
-          const failureKind: RedTeamDebateResult["failureKind"] = response.status === 429 ? "rate_limited" : "provider_error";
-          return { text: undefined, debate: unavailable(`Red Team review unavailable — ${why}`, failureKind, model) };
         }
-
-        const payload = await response.json();
-        recordLlmUsage({
-          userId,
-          provider,
-          model,
-          context: "red-team",
-          keySource,
-          keyRef,
-          // Per-account usage attribution (PR #1030 coordination): the resolved run policy is
-          // account-scoped, so the review's spend lands on the account it reviewed for.
-          connectedAccountId: policy.connectedAccountId,
-          ...extractLlmUsage(payload)
-        });
-        const text = extractLlmText(payload);
-
-        if (!text) {
-          return {
-            text: undefined,
-            debate: unavailable("Red Team review returned no response.", "malformed_response", model)
-          };
-        }
-
-        // Fence/prose-tolerant parse (§4.1 / R9 — the gemini-3.5-flash root cause) + strict shape
-        // validation (§4.4): anything that isn't exactly one of the three verdicts fails CLOSED.
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(extractJsonPayload(text));
-        } catch (parseError) {
-          // §4.6: log a raw-text prefix so a safety-filter refusal ("I can't…") is distinguishable
-          // from malformed JSON in the operator log.
-          console.warn(
-            `Red Team response was not valid JSON (${parseError instanceof Error ? parseError.message : String(parseError)}); first 200 chars: ${text.slice(0, 200)}`
-          );
-          const looksLikeRefusal = /^(i can'?t|i cannot|i'?m not able|i am not able|as an ai)/i.test(text.trim());
-          return {
-            text,
-            debate: unavailable(
-              looksLikeRefusal
-                ? "Red Team model refused to answer (safety-filter style response); treating the review as unavailable."
-                : "Red Team returned an unparseable response (not valid JSON); treating the review as unavailable.",
-              "malformed_response",
-              model
-            )
-          };
-        }
-        // Bare-array unwrap (#1091): DeepSeek v4 Flash and other small/fast json_object-mode
-        // providers sometimes wrap a correct verdict object in an array (e.g.
-        // [{verdict:"reject",reason:"…"}]). Extract the first element instead of failing the
-        // whole review as malformed — the shape validation below still gates the payload.
-        if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object" && parsed[0] !== null) {
-          parsed = parsed[0];
-        }
-        const verdict = validateRedTeamVerdictShape(parsed);
-        if (!verdict) {
-          console.warn(`Red Team returned a malformed verdict; first 200 chars: ${text.slice(0, 200)}`);
-          return {
-            text,
-            debate: unavailable(
-              "Red Team returned a malformed verdict (missing/unknown 'verdict'); treating the review as unavailable.",
-              "malformed_response",
-              model
-            )
-          };
-        }
-        return {
-          text,
-          debate: {
-            verdict: verdict.verdict,
-            rejected: verdict.verdict === "reject",
-            available: true,
-            reason: verdict.reason,
-            model
-          }
-        };
+        throw lastError;
       }
     );
     return traced.debate;
@@ -377,7 +518,7 @@ export async function debateProposal(
     return unavailable(
       "Red Team review errored out.",
       isAbortTimeoutError(error) ? "timeout" : "provider_error",
-      model
+      finalModel
     );
   }
 }

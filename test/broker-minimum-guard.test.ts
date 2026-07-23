@@ -353,22 +353,24 @@ describe("resolveBrokerMinimum", () => {
 });
 
 describe("shouldAlertBrokerMinimumOrderBlock cooldown", () => {
-  it("alerts once per (accountNumber, symbol) and suppresses a second call within the cooldown window", async () => {
+  it("alerts once per (user, accountNumber, symbol) and suppresses a second call within the cooldown window", async () => {
     const { shouldAlertBrokerMinimumOrderBlock } = await import("../src/lib/broker-minimum-guard");
 
-    expect(shouldAlertBrokerMinimumOrderBlock("RH-ACCOUNT", "AAPL")).toBe(true);
+    expect(shouldAlertBrokerMinimumOrderBlock("cooldown-user-1", "RH-ACCOUNT", "AAPL")).toBe(true);
     // Second call for the SAME account+symbol, same "run" — must emit nothing (cooldown active).
-    expect(shouldAlertBrokerMinimumOrderBlock("RH-ACCOUNT", "AAPL")).toBe(false);
-    expect(shouldAlertBrokerMinimumOrderBlock("RH-ACCOUNT", "AAPL")).toBe(false);
+    expect(shouldAlertBrokerMinimumOrderBlock("cooldown-user-1", "RH-ACCOUNT", "AAPL")).toBe(false);
+    expect(shouldAlertBrokerMinimumOrderBlock("cooldown-user-1", "RH-ACCOUNT", "AAPL")).toBe(false);
   });
 
-  it("cooldown is scoped per (accountNumber, symbol), not global", async () => {
+  it("cooldown is scoped per (user, accountNumber, symbol), not global", async () => {
     const { shouldAlertBrokerMinimumOrderBlock } = await import("../src/lib/broker-minimum-guard");
 
-    expect(shouldAlertBrokerMinimumOrderBlock("RH-ACCOUNT", "AAPL")).toBe(true);
+    expect(shouldAlertBrokerMinimumOrderBlock("cooldown-user-2", "RH-ACCOUNT", "AAPL")).toBe(true);
     // Different symbol, same account — independent cooldown.
-    expect(shouldAlertBrokerMinimumOrderBlock("RH-ACCOUNT", "MSFT")).toBe(true);
+    expect(shouldAlertBrokerMinimumOrderBlock("cooldown-user-2", "RH-ACCOUNT", "MSFT")).toBe(true);
     // Different account, same symbol — independent cooldown.
-    expect(shouldAlertBrokerMinimumOrderBlock("OTHER-ACCOUNT", "AAPL")).toBe(true);
+    expect(shouldAlertBrokerMinimumOrderBlock("cooldown-user-2", "OTHER-ACCOUNT", "AAPL")).toBe(true);
+    // Same broker account and symbol, different owner — independent cooldown and deletion scope.
+    expect(shouldAlertBrokerMinimumOrderBlock("cooldown-user-3", "RH-ACCOUNT", "AAPL")).toBe(true);
   });
 });
