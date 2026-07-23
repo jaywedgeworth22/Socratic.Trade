@@ -185,7 +185,7 @@ export function resolveLlmEndpoint(
       } else if (/^deepseek/i.test(model)) {
         model = `deepseek/${model}`;
       } else if (/^llama/i.test(model)) {
-        model = `meta-llama/${model}`;
+        model = "meta-llama/llama-3.3-70b-instruct";
       } else if (/^(gpt|o1|o3)/i.test(model)) {
         model = `openai/${model}`;
       }

@@ -66,7 +66,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     provider: "xai",
     label: "xAI",
     options: [
-      { value: "grok-build-latest", label: "grok-build-latest - coding specialist", tier: "$" },
+      { value: "grok-build-0.1", label: "grok-build-0.1 - coding specialist", tier: "$" },
       { value: "grok-latest", label: "grok-latest - default Grok analysis", tier: "$$" }
     ]
   },
@@ -74,7 +74,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     provider: "gemini",
     label: "Google",
     options: [
-      { value: "gemini-flash-lite-latest", label: "gemini-flash-lite-latest - low-cost Gemini", tier: "$" },
+      { value: "gemini-3.5-flash-lite", label: "gemini-3.5-flash-lite - low-cost Gemini", tier: "$" },
       { value: "gemini-flash-latest", label: "gemini-flash-latest - stable flagship Flash", tier: "$$", recommendedGreen: true },
       { value: "gemini-pro-latest", label: "gemini-pro-latest - deepest Gemini reasoning", tier: "$$$", recommendedRed: true }
     ]
@@ -83,8 +83,8 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     provider: "mistral",
     label: "Mistral",
     options: [
-      { value: "mistral-small-latest", label: "mistral-small-latest - low-cost Mistral Small", tier: "$" },
-      { value: "mistral-medium-latest", label: "mistral-medium-latest - frontier Mistral Medium", tier: "$$" }
+      { value: "mistral-small-2603", label: "mistral-small-2603 - low-cost Mistral Small", tier: "$" },
+      { value: "mistral-medium-3.5", label: "mistral-medium-3.5 - frontier Mistral Medium", tier: "$$" }
     ]
   },
   {
@@ -100,7 +100,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     provider: "meta",
     label: "Meta",
     options: [
-      { value: "llama-70b-latest", label: "llama-70b-latest - flagship open-weights analysis", tier: "$$" }
+      { value: "llama-3.3-70b-instruct", label: "llama-3.3-70b-instruct - flagship open-weights analysis", tier: "$$" }
     ]
   }
 ];
