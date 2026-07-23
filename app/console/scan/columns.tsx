@@ -9,7 +9,7 @@
  *  `eps`), "—" = the data simply wasn't available. */
 
 import type { ReactNode } from "react";
-import type { MarketQuote } from "@/lib/types";
+import type { MarketQuote, EnrichmentSources } from "@/lib/types";
 import { friendlySource, ratingTitle, receivedLabel, sentimentTitle } from "@/lib/dashboard-ui";
 import { fmtMoney, fmtPct } from "../lib/format";
 import { Chip, Dash, SignedText } from "../ui/primitives";
@@ -19,12 +19,21 @@ const compactNum = new Intl.NumberFormat("en-US", { notation: "compact", maximum
 
 /** "Label\nSource: <provider>\nReceived <time>" — provenance strictly from the
  *  field's own recorded source; with no source the line is simply omitted. */
-export function fieldTitle(label: string, source?: string, asOf?: string): string {
+export function fieldTitle(label: string, source?: string, asOf?: string, isStale?: boolean): string {
   const parts = [label];
   if (source) parts.push(`Source: ${friendlySource(source)}`);
   const received = receivedLabel(asOf);
-  if (received) parts.push(received);
+  if (received) {
+    parts.push(isStale ? `(Stale: ${received.replace('Received ', '')})` : received);
+  }
   return parts.join("\n");
+}
+
+export function isStaleField(q: MarketQuote, fieldKey?: keyof EnrichmentSources): boolean {
+  const specificTime = fieldKey && q.fieldObservations?.[fieldKey]?.fetchedAt;
+  const time = specificTime || q.asOf;
+  if (!time) return false;
+  return Date.now() - new Date(time).getTime() > 24 * 60 * 60 * 1000;
 }
 
 /** Price provenance is two-stage server-side: enrichment can refine the
@@ -174,18 +183,21 @@ export const SCAN_COLUMNS: ScanColumn[] = [
       "Price-to-earnings ratio = price ÷ trailing 12-month earnings per share; lower is cheaper relative to earnings. \"n/a\" = negative or zero earnings (no meaningful ratio); \"—\" = the data wasn't available.",
     num: true,
     sortValue: (q) => (typeof q.peRatio === "number" && q.peRatio > 0 ? q.peRatio : undefined),
-    render: (q) =>
-      typeof q.peRatio === "number" && q.peRatio > 0 ? (
-        q.peRatio.toFixed(1)
+    render: (q) => {
+      const isStale = isStaleField(q, "peRatio");
+      return typeof q.peRatio === "number" && q.peRatio > 0 ? (
+        <span className={isStale ? "italic opacity-70" : ""}>{q.peRatio.toFixed(1)}</span>
       ) : typeof q.eps === "number" && q.eps <= 0 ? (
         <span className="text-[color:var(--con-faint)]">n/a</span>
       ) : (
         <Dash />
-      ),
+      );
+    },
     cellTitle: (q) => {
-      if (typeof q.peRatio === "number" && q.peRatio > 0) return fieldTitle("P/E ratio", q.sources?.peRatio, q.asOf);
+      const isStale = isStaleField(q, "peRatio");
+      if (typeof q.peRatio === "number" && q.peRatio > 0) return fieldTitle("P/E ratio", q.sources?.peRatio, q.fieldObservations?.peRatio?.fetchedAt || q.asOf, isStale);
       if (typeof q.eps === "number" && q.eps <= 0) {
-        return fieldTitle("n/a — trailing earnings are negative or zero, so there is no meaningful P/E ratio.", q.sources?.eps, q.asOf);
+        return fieldTitle("n/a — trailing earnings are negative or zero, so there is no meaningful P/E ratio.", q.sources?.eps, q.fieldObservations?.eps?.fetchedAt || q.asOf, isStale);
       }
       return "P/E wasn't available from any provider for this symbol.";
     }
@@ -196,13 +208,17 @@ export const SCAN_COLUMNS: ScanColumn[] = [
     headerTitle: "Earnings-per-share growth, year over year. Positive = earnings expanding.",
     num: true,
     sortValue: (q) => q.epsGrowth,
-    render: (q) =>
-      typeof q.epsGrowth === "number" ? (
-        <SignedText value={q.epsGrowth}>{fmtPct(q.epsGrowth * 100, 0, true)}</SignedText>
+    render: (q) => {
+      const isStale = isStaleField(q, "epsGrowth");
+      return typeof q.epsGrowth === "number" ? (
+        <span className={isStale ? "italic opacity-70" : ""}>
+          <SignedText value={q.epsGrowth}>{fmtPct(q.epsGrowth * 100, 0, true)}</SignedText>
+        </span>
       ) : (
         <Dash />
-      ),
-    cellTitle: (q) => fieldTitle("EPS growth (year over year)", q.sources?.epsGrowth, q.asOf)
+      );
+    },
+    cellTitle: (q) => fieldTitle("EPS growth (year over year)", q.sources?.epsGrowth, q.fieldObservations?.epsGrowth?.fetchedAt || q.asOf, isStaleField(q, "epsGrowth"))
   },
   {
     id: "dividendYield",
@@ -210,8 +226,15 @@ export const SCAN_COLUMNS: ScanColumn[] = [
     headerTitle: "Annual dividend yield = trailing dividends per share ÷ price.",
     num: true,
     sortValue: (q) => q.dividendYield,
-    render: (q) => (typeof q.dividendYield === "number" ? fmtPct(q.dividendYield, 2) : <Dash />),
-    cellTitle: (q) => fieldTitle("Dividend yield", q.sources?.dividendYield, q.asOf)
+    render: (q) => {
+      const isStale = isStaleField(q, "dividendYield");
+      return typeof q.dividendYield === "number" ? (
+        <span className={isStale ? "italic opacity-70" : ""}>{fmtPct(q.dividendYield, 2)}</span>
+      ) : (
+        <Dash />
+      );
+    },
+    cellTitle: (q) => fieldTitle("Dividend yield", q.sources?.dividendYield, q.fieldObservations?.dividendYield?.fetchedAt || q.asOf, isStaleField(q, "dividendYield"))
   },
   {
     id: "sentiment",
