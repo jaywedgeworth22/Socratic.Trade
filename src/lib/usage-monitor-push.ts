@@ -1,9 +1,10 @@
 // Outbound usage telemetry → API Usage Monitor (usage.jays.services) — server-only.
 //
-// Wires App B's local usage ledgers (recordLlmUsage / recordRagUsage) and its market-data /
-// broker call paths to the monitor's ingest endpoint (`POST /api/ingest/usage`), so the monitor
-// can see providers it structurally cannot poll (Anthropic, Voyage, Robinhood) plus real
-// call-volume for the shared-quota market-data providers.
+// Wires App B's local usage ledgers (recordLlmUsage / recordRagUsage) and its paid market-data
+// call paths to the monitor's ingest endpoint (`POST /api/ingest/usage`), so the monitor can see
+// providers it structurally cannot poll (Anthropic, Voyage) plus real call-volume for shared-quota
+// market-data providers. Broker families (Alpaca/Tradier/Robinhood) are deliberately suppressed —
+// see `usage-monitor-provider-policy.ts`.
 //
 // DESIGN / SAFETY:
 //   - Default OFF: no-op unless BOTH `USAGE_MONITOR_BASE_URL` and `USAGE_INGEST_TOKEN` are set.
@@ -23,6 +24,7 @@
 
 import { logApiHealth } from "./db-health";
 import { getGitSha } from "./git-sha";
+import { suppressUsageMonitorProvider } from "./usage-monitor-provider-policy";
 import {
   createUsageTelemetryClient,
   telemetryEventClassifier,
@@ -235,8 +237,7 @@ function isStaleBuffered(receivedAt: number, ttlMs: number, now: number): boolea
  * Bound the in-memory failure buffer so a multi-day receiver outage can't grow ST's own memory
  * without limit. This is safe to trim aggressively: llm/rag/provider-dispatch events dropped here
  * are still recoverable — the durable DB-backed ledgers replay them independently via
- * usage-monitor-replay.ts. Only ephemeral broker-balance snapshots have no such backstop, and losing
- * a stale one is harmless (the next portfolio fetch pushes a fresh reading).
+ * usage-monitor-replay.ts. Call-volume aggregates are best-effort only (rebuilt on the next window).
  */
 function trimBufferedEvents(now: number): void {
   const ttlMs = queueTtlMs();
@@ -571,7 +572,10 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
   requests?: number;
   estimatedCostUsd?: number;
   actualCostUsd?: number;
-}): Promise<UsageMonitorEvent> {
+}): Promise<UsageMonitorEvent | null> {
+  // Retired broker families are never admitted to the monitor (live or replay). Callers treat
+  // null as "skip this row" while still advancing durable watermarks past it.
+  if (suppressUsageMonitorProvider(entry.provider)) return null;
   // INVARIANT: the ledger lanes (pushLlmUsage/pushRagUsage, service "llm"/"rag") are the single
   // external cost authority for every provider they cover — dispatch (service "provider-dispatch")
   // is a quota/request-volume signal only, for every provider, always. entry.estimatedCostUsd /
@@ -603,103 +607,13 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
   };
 }
 
-function maskAccountNumber(acc: string): string {
-  const clean = acc.trim();
-  if (clean.length <= 4) return clean;
-  return `...${clean.slice(-4)}`;
-}
+// ── Aggregate: market-data call-volume ─────────────────────────────────────────
 
 /**
- * Record broker account balances and limits.
- */
-export function pushBrokerBalance(entry: {
-  provider: string;
-  userId: string;
-  accountNumber: string;
-  cash?: number;
-  buyingPower?: number;
-  equity?: number;
-}): void {
-  if (!usageMonitorEnabled()) return;
-  try {
-    const occurredAt = new Date().toISOString();
-    const snapshotId = randomDeliveryId();
-    const maskedAcc = maskAccountNumber(entry.accountNumber);
-    // Number.isFinite (not typeof === "number") at admission: NaN and Infinity are both typeof
-    // "number" but the shared v2 event schema rejects them (.finite()), so a NaN balance
-    // would poison the batch. Reject it here so the bad reading never enters the buffer.
-    if (Number.isFinite(entry.cash)) {
-      enqueuePending({
-        environment: usageMonitorEnv(),
-        provider: entry.provider,
-        service: "broker",
-        project: PROJECT,
-        producerKeyRef: `${maskedAcc}:cash`,
-        billingMode: "actual",
-        metricType: "balance",
-        quantity: entry.cash,
-        unit: "usd",
-        confidence: "actual",
-        occurredAt,
-        metadata: cleanMetadata({
-          userId: entry.userId,
-          accountNumber: maskedAcc,
-          metric: "cash"
-        }),
-      }, "broker-balance", `${snapshotId}:cash`);
-    }
-    if (Number.isFinite(entry.buyingPower)) {
-      enqueuePending({
-        environment: usageMonitorEnv(),
-        provider: entry.provider,
-        service: "broker",
-        project: PROJECT,
-        producerKeyRef: `${maskedAcc}:buyingPower`,
-        billingMode: "actual",
-        metricType: "limit",
-        quantity: entry.buyingPower,
-        unit: "usd",
-        confidence: "actual",
-        occurredAt,
-        metadata: cleanMetadata({
-          userId: entry.userId,
-          accountNumber: maskedAcc,
-          metric: "buyingPower"
-        }),
-      }, "broker-balance", `${snapshotId}:buying-power`);
-    }
-    if (Number.isFinite(entry.equity)) {
-      enqueuePending({
-        environment: usageMonitorEnv(),
-        provider: entry.provider,
-        service: "broker",
-        project: PROJECT,
-        producerKeyRef: `${maskedAcc}:equity`,
-        billingMode: "actual",
-        metricType: "balance",
-        quantity: entry.equity,
-        unit: "usd",
-        confidence: "actual",
-        occurredAt,
-        metadata: cleanMetadata({
-          userId: entry.userId,
-          accountNumber: maskedAcc,
-          metric: "equity"
-        }),
-      }, "broker-balance", `${snapshotId}:equity`);
-    }
-  } catch {
-    /* telemetry must never break the caller */
-  }
-}
-
-// ── Aggregate: market-data / broker call-volume ────────────────────────────────
-
-/**
- * Count one external market-data or broker API call. Called from the central `fetchWithRetry`
- * wrapper (`data-providers.ts`) and the broker choke points (`alpaca.ts`, `robinhood.ts`). This is
- * on a hot path, so it only mutates an in-memory per-provider counter — the counts are flushed as a
- * single aggregated `requests`-count event per provider per window (never one POST per call).
+ * Count one external market-data API call. Called from the central `fetchWithRetry` wrapper
+ * (`data-providers.ts`). This is on a hot path, so it only mutates an in-memory per-provider
+ * counter — the counts are flushed as a single aggregated `requests`-count event per provider per
+ * window (never one POST per call). Retired broker families are suppressed at admission.
  */
 export function recordProviderCall(
   provider: string,
@@ -708,6 +622,9 @@ export function recordProviderCall(
   if (!usageMonitorEnabled()) return;
   // Never re-count the telemetry channel's own health calls (would loop).
   if (provider === HEALTH_SERVICE) return;
+  // Retired broker families (Alpaca/Tradier/Robinhood and their subproviders) stay in trading/health
+  // but never enter the Usage Monitor feed.
+  if (suppressUsageMonitorProvider(provider)) return;
   try {
     // Key by credential lane too, so a user's own market-data key isn't conflated with shared/
     // operator quota in the monitor.
@@ -780,6 +697,8 @@ function drainCallVolume(now: string): PendingUsageEvent[] {
   const events: PendingUsageEvent[] = [];
   for (const entry of state.callVolume.values()) {
     if (entry.requests <= 0) continue;
+    // Defense in depth: never flush a retired family even if a stale HMR map entry slipped in.
+    if (suppressUsageMonitorProvider(entry.provider)) continue;
     events.push({
       kind: "provider-call-volume",
       // HMR can preserve a pre-upgrade global map entry without windowId.

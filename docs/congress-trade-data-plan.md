@@ -71,7 +71,7 @@ App A needs prices back to *old* trade dates, but the nightly push caps each sym
 2. **App A price refresh → lean on App B's push.** App A can cut FMP `eodHistory` calls (its biggest
    budget line) to gap-fills only, since App B feeds prices nightly + on backfill.
 3. **App A enrichment → lean on App B refs/fundamentals + SEC.** Fewer App A FMP/Massive/Finnhub/
-   Intrinio/TwelveData enrichment calls.
+   TwelveData enrichment calls.
 
 ## 6. No-paid-access / low-cap future (the floor)
 | Datum | Free floor when paid lapses |
