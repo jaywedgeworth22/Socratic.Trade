@@ -666,14 +666,14 @@ export function resolveAlpacaStreamAccount(
 // with per-user usage tracking (see llm-usage.ts): every call records who spent and on whose key.
 export type LlmKeySource = "user" | "operator" | "none";
 
-/** Whether the operator's env LLM key may serve non-`local` tenants as a failover (default on). */
+/** Whether the operator's env LLM key may serve non-`local` tenants as a failover (disabled — user keys required). */
 export function llmOperatorFallbackEnabled(): boolean {
   const envVal = process.env.LLM_OPERATOR_FALLBACK;
   if (envVal !== undefined) {
     const v = envVal.trim().toLowerCase();
     return v === "1" || v === "true" || v === "yes" || v === "on";
   }
-  return process.env.NODE_ENV === "test";
+  return false;
 }
 
 /**
