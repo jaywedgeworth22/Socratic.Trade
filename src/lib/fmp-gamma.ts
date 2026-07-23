@@ -1,4 +1,4 @@
-import { politeFetchText } from "./web-sources/http";
+import { requestFmp } from "./fmp-common";
 
 export interface CongressTrade {
   disclosureYear?: number;
@@ -57,75 +57,56 @@ export interface FmpMarketNews {
   url: string;
 }
 
-const BASE_URL = "https://financialmodelingprep.com/api";
-
-function getApiKey(): string {
-  const key = process.env.FMP_API_KEY;
-  if (!key) {
-    throw new Error("FMP_API_KEY is not set in the environment.");
-  }
-  return key;
-}
-
-async function fetchFmpJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    const text = await res.text();
-    console.error(`FMP Error fetching ${url}: ${res.status} - ${text}`);
-    throw new Error(`FMP API Error: ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
-
 export async function getHouseDisclosures(symbol?: string, page = 0): Promise<CongressTrade[]> {
-  const apiKey = getApiKey();
-  let url = `${BASE_URL}/v4/house-disclosure?apikey=${apiKey}&page=${page}`;
+  const endpoint = symbol ? "/house-trades" : "/house-latest";
+  const params: Record<string, string | number> = { page };
   if (symbol) {
-    url += `&symbol=${symbol}`;
+    params.symbol = symbol;
   }
-  return fetchFmpJson<CongressTrade[]>(url);
+  const data = await requestFmp<CongressTrade[]>(endpoint, params);
+  return data || [];
 }
 
 export async function getSenateDisclosures(symbol?: string, page = 0): Promise<CongressTrade[]> {
-  const apiKey = getApiKey();
-  let url = `${BASE_URL}/v4/senate-trading?apikey=${apiKey}&page=${page}`;
+  const endpoint = symbol ? "/senate-trades" : "/senate-latest";
+  const params: Record<string, string | number> = { page };
   if (symbol) {
-    url += `&symbol=${symbol}`;
+    params.symbol = symbol;
   }
-  return fetchFmpJson<CongressTrade[]>(url);
+  const data = await requestFmp<CongressTrade[]>(endpoint, params);
+  return data || [];
 }
 
 export async function getEarningsCalendar(from?: string, to?: string): Promise<EarningCalendar[]> {
-  const apiKey = getApiKey();
-  let url = `${BASE_URL}/v3/earning_calendar?apikey=${apiKey}`;
-  if (from && to) {
-    url += `&from=${from}&to=${to}`;
-  }
-  return fetchFmpJson<EarningCalendar[]>(url);
+  const params: Record<string, string> = {};
+  if (from) params.from = from;
+  if (to) params.to = to;
+  const data = await requestFmp<EarningCalendar[]>("/earnings-calendar", params);
+  return data || [];
 }
 
 export async function getEconomicCalendar(from?: string, to?: string): Promise<EconomicCalendar[]> {
-  const apiKey = getApiKey();
-  let url = `${BASE_URL}/v3/economic_calendar?apikey=${apiKey}`;
-  if (from && to) {
-    url += `&from=${from}&to=${to}`;
-  }
-  return fetchFmpJson<EconomicCalendar[]>(url);
+  const params: Record<string, string> = {};
+  if (from) params.from = from;
+  if (to) params.to = to;
+  const data = await requestFmp<EconomicCalendar[]>("/economic-calendar", params);
+  return data || [];
 }
 
 export async function getEarningsCallTranscript(symbol: string, year?: number, quarter?: number): Promise<EarningCallTranscript[]> {
-  const apiKey = getApiKey();
-  let url = `${BASE_URL}/v3/earning_call_transcript/${symbol}?apikey=${apiKey}`;
-  if (year !== undefined) url += `&year=${year}`;
-  if (quarter !== undefined) url += `&quarter=${quarter}`;
-  return fetchFmpJson<EarningCallTranscript[]>(url);
+  const params: Record<string, string | number> = { symbol };
+  if (year !== undefined) params.year = year;
+  if (quarter !== undefined) params.quarter = quarter;
+  const data = await requestFmp<EarningCallTranscript[]>("/earning-call-transcript", params);
+  return data || [];
 }
 
 export async function getMarketNews(tickers?: string, limit = 50, page = 0): Promise<FmpMarketNews[]> {
-  const apiKey = getApiKey();
-  let url = `${BASE_URL}/v3/stock_news?apikey=${apiKey}&limit=${limit}&page=${page}`;
+  const endpoint = tickers ? "/news/stock" : "/news/stock-latest";
+  const params: Record<string, string | number> = { limit, page };
   if (tickers) {
-    url += `&tickers=${tickers}`;
+    params.symbols = tickers;
   }
-  return fetchFmpJson<FmpMarketNews[]>(url);
+  const data = await requestFmp<FmpMarketNews[]>(endpoint, params);
+  return data || [];
 }

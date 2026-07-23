@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+// Admin portal shell — same design system as the console (con-* tokens via
+// console.css + .console-root scope), same nav idiom (DesktopRail geometry),
+// but a distinct operator frame: no trading chrome, no snapshot fetch, and an
+// always-visible console return link and profile control in the top bar.
+
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -11,169 +16,250 @@ import {
   Server,
   FileText,
   ArrowLeft,
-  Clock,
-  ShieldCheck,
+  Monitor,
+  Moon,
+  Sun,
+  UserRound,
   Menu,
   X
 } from "lucide-react";
-import { cn } from "../ui/cn";
-import { Button } from "../ui/primitives";
+import "../console/console.css";
+import { useConsoleTheme, type ConsoleTheme } from "../console/lib/useConsoleTheme";
+import { useConsoleFont } from "../console/lib/useConsoleFont";
+import { useConsoleTextBoxFont } from "../console/lib/useConsoleTextBoxFont";
+import { HeaderLogo } from "../console/ui/header-logo";
 
 interface NavItem {
   href: string;
   label: string;
-  icon: React.ComponentType<any>;
+  desc: string;
+  icon: React.ComponentType<{ size?: number | string; className?: string }>;
   exact?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/admin", label: "Dashboard", icon: LayoutDashboard, exact: true },
-  { href: "/admin/connections", label: "API Connections", icon: Activity },
-  { href: "/admin/llm-usage", label: "LLM Spend & Costs", icon: Brain },
-  { href: "/admin/rag-coverage", label: "RAG Coverage", icon: Database },
-  { href: "/admin/server", label: "Server & Infra", icon: Server },
-  { href: "/admin/transcript", label: "Chat Transcripts", icon: FileText }
+  {
+    href: "/admin",
+    label: "Overview",
+    desc: "Server-wide status: connections, spend, corpus, host, and transcripts at a glance.",
+    icon: LayoutDashboard,
+    exact: true
+  },
+  {
+    href: "/admin/connections",
+    label: "API Connections",
+    desc: "Per-provider call health: last success/failure, call volume, and error patterns.",
+    icon: Activity
+  },
+  {
+    href: "/admin/llm-usage",
+    label: "LLM Usage & Cost",
+    desc: "Per-key, per-model, per-context LLM spend across all accounts.",
+    icon: Brain
+  },
+  {
+    href: "/admin/rag-coverage",
+    label: "RAG Coverage",
+    desc: "Vector index contents per ticker: chunk counts, freshness, and coverage gaps.",
+    icon: Database
+  },
+  {
+    href: "/admin/server",
+    label: "Server Stats",
+    desc: "Host node metrics and Coolify application resource statuses.",
+    icon: Server
+  },
+  {
+    href: "/admin/transcript",
+    label: "Chat Transcript",
+    desc: "Every chat turn, with the model that produced each assistant reply.",
+    icon: FileText
+  }
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [timeStr, setTimeStr] = useState("");
-
-  useEffect(() => {
-    const update = () => {
-      setTimeStr(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
-    };
-    update();
-    const id = setInterval(update, 1000);
-    return () => clearInterval(id);
-  }, []);
+  const { theme, dataTheme, set: setTheme } = useConsoleTheme();
+  const { dataConsoleFont } = useConsoleFont();
+  const { dataTextBoxFont } = useConsoleTextBoxFont();
 
   const isActive = (item: NavItem) => {
     if (item.exact) return pathname === item.href;
     return pathname.startsWith(item.href) && pathname !== "/admin";
   };
+  const activeItem = NAV_ITEMS.find(isActive);
+
+  const navLinks = (onNavigate?: () => void) =>
+    NAV_ITEMS.map((item) => {
+      const Icon = item.icon;
+      const active = isActive(item);
+      return (
+        <Link
+          key={item.href}
+          href={item.href}
+          className="con-nav-item"
+          data-active={active}
+          aria-current={active ? "page" : undefined}
+          title={item.desc}
+          onClick={onNavigate}
+        >
+          <Icon size={16} />
+          <span>{item.label}</span>
+        </Link>
+      );
+    });
 
   return (
-    <div className="flex min-h-screen bg-base text-fg font-sans antialiased">
-      {/* ── Desktop Sidebar ─────────────────────────────────────────────────── */}
-      <aside className="hidden md:flex w-64 flex-col border-r border-line/40 bg-surface/40 backdrop-blur-md shrink-0">
-        <div className="flex h-14 items-center justify-between border-b border-line/30 px-6">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-accent" />
-            <span className="font-bold text-sm tracking-wider uppercase text-fg">Socratic Admin</span>
-          </div>
-        </div>
-
-        <nav className="flex-1 space-y-1.5 px-4 py-6">
-          {NAV_ITEMS.map((item) => {
-            const ActiveIcon = item.icon;
-            const active = isActive(item);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-xl transition-all duration-150 border-l-2",
-                  active
-                    ? "bg-accent/8 border-accent text-accent"
-                    : "border-transparent text-muted hover:text-fg hover:bg-surface-2/50"
-                )}
-              >
-                <ActiveIcon className={cn("h-4 w-4 shrink-0", active ? "text-accent" : "text-muted")} />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="p-4 border-t border-line/20 flex flex-col gap-2">
-          <Link href="/console" className="w-full">
-            <Button variant="ghost" size="sm" className="w-full justify-start text-xs text-muted hover:text-fg border border-line/40 rounded-xl">
-              <ArrowLeft className="h-3 w-3 mr-1" />
-              Autonomy Desk
-            </Button>
+    <div
+      className="console-root flex min-h-dvh flex-col"
+      data-theme={dataTheme}
+      data-console-font={dataConsoleFont}
+      data-textbox-font={dataTextBoxFont}
+      suppressHydrationWarning /* same SSR-vs-localStorage pattern as the console shell */
+    >
+      {/* ── Top bar: the normal console geometry, with admin-only actions ── */}
+      <header className="sticky top-0 z-40 border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]">
+        <div className="relative mx-auto flex h-12 w-full max-w-[1400px] items-center gap-2 px-4">
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+            className="-ml-2 flex h-11 w-11 items-center justify-center rounded-[var(--con-radius-sm)] text-[color:var(--con-muted)] transition-colors hover:text-[color:var(--con-fg)] lg:hidden"
+            aria-label="Toggle admin navigation"
+            aria-expanded={mobileMenuOpen}
+          >
+            {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
+          <Link href="/console" className="flex shrink-0 items-center gap-2" title="Back to the trading console">
+            <span className="hidden sm:block">
+              <HeaderLogo height={18} />
+            </span>
+            <span className="con-card-title hidden sm:inline">Socratic Trade</span>
+            <ArrowLeft size={14} className="text-[color:var(--con-muted)]" />
           </Link>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="con-card-title">Admin</span>
+            <span className="hidden truncate text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] sm:block">
+              {activeItem?.label ?? "Overview"}
+            </span>
+          </div>
+          <div className="flex-1" />
+          <AdminProfileMenu theme={theme} setTheme={setTheme} />
         </div>
-      </aside>
+      </header>
 
-      {/* ── Main Content Shell ─────────────────────────────────────────────── */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        {/* Sticky Topbar */}
-        <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-line/30 bg-surface/30 backdrop-blur-md px-6">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-1 text-muted hover:text-fg transition-colors"
-              aria-label="Toggle menu"
-            >
-              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-            </button>
-            <h2 className="text-sm font-semibold text-fg md:block hidden">
-              {NAV_ITEMS.find(isActive)?.label ?? "Operator Hub"}
-            </h2>
+      {/* ── Mobile navigation drawer (top bar stays visible above it) ────── */}
+      {mobileMenuOpen && (
+        <div
+          className="con-scrim lg:hidden"
+          style={{ top: 48, zIndex: 30 }}
+          onClick={() => setMobileMenuOpen(false)}
+        >
+          <div
+            className="absolute inset-y-0 left-0 flex w-64 flex-col gap-1 border-r border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="con-card-title px-3 pb-1">Admin</div>
+            {navLinks(() => setMobileMenuOpen(false))}
           </div>
+        </div>
+      )}
 
-          <div className="flex items-center gap-4 text-xs text-muted">
-            <div className="flex items-center gap-1.5 bg-surface-2/60 border border-line/30 rounded-full px-2.5 py-1 font-mono font-medium">
-              <Clock className="h-3.5 w-3.5 text-accent animate-pulse" />
-              <span>{timeStr || "--:--:--"}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-pos opacity-70" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-pos" />
-              </span>
-              <span className="font-semibold text-fg">LIVE</span>
-            </div>
-          </div>
-        </header>
+      {/* ── Rail + content ───────────────────────────────────────────────── */}
+      <div className="mx-auto flex w-full max-w-[1400px] flex-1">
+        <aside
+          className="hidden w-52 shrink-0 flex-col gap-1 border-r border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-4 shadow-sm lg:flex mr-4"
+          aria-label="Admin navigation"
+        >
+          <div className="con-card-title px-3 pb-1">Admin</div>
+          {navLinks()}
+        </aside>
+        <main className="min-w-0 flex-1 px-4 pt-4 pb-8 lg:px-6">{children}</main>
+      </div>
+    </div>
+  );
+}
 
-        {/* Mobile Navigation Drawer */}
-        {mobileMenuOpen && (
-          <div className="md:hidden fixed inset-0 z-30 bg-base/80 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}>
-            <div
-              className="absolute top-14 left-0 bottom-0 w-64 border-r border-line bg-surface/90 flex flex-col p-4 space-y-1.5"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {NAV_ITEMS.map((item) => {
-                const ActiveIcon = item.icon;
-                const active = isActive(item);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setMobileMenuOpen(false)}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-xl border-l-2",
-                      active
-                        ? "bg-accent/8 border-accent text-accent"
-                        : "border-transparent text-muted hover:text-fg"
-                    )}
-                  >
-                    <ActiveIcon className={cn("h-4 w-4 shrink-0", active ? "text-accent" : "text-muted")} />
-                    <span>{item.label}</span>
-                  </Link>
-                );
-              })}
+function AdminProfileMenu({ theme, setTheme }: { theme: ConsoleTheme; setTheme: (theme: ConsoleTheme) => void }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
-              <div className="mt-auto border-t border-line/20 pt-4 flex flex-col gap-2">
-                <Link href="/console" onClick={() => setMobileMenuOpen(false)} className="w-full">
-                  <Button variant="ghost" size="sm" className="w-full justify-start text-xs border border-line/40 rounded-xl">
-                    <ArrowLeft className="h-3 w-3 mr-1" />
-                    Autonomy Desk
-                  </Button>
+  const close = () => {
+    setOpen(false);
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => (open ? close() : setOpen(true))}
+        title="Open profile and account settings"
+        aria-label="Profile and account settings"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] sm:h-8 sm:w-8"
+      >
+        <UserRound size={15} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={close} aria-hidden />
+          <div className="con-menu-drop absolute right-0 top-[calc(100%+2px)] z-50 w-[min(92vw,340px)] rounded-card border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-4 shadow-xl">
+            <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
+              <div>
+                <div className="font-semibold">Profile</div>
+                <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                  Console preferences and account settings
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-control border border-[color:var(--con-line)] px-3 py-2">
+                <span className="text-[color:var(--con-muted)]">Theme</span>
+                <div className="flex items-center gap-1 rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-bg)] p-0.5">
+                  {(["light", "dark", "system"] as const).map((option) => {
+                    const active = theme === option;
+                    const Icon = option === "dark" ? Moon : option === "light" ? Sun : Monitor;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setTheme(option)}
+                        aria-label={`Set theme to ${option}`}
+                        className={`flex items-center gap-1.5 rounded-control border px-2.5 py-1 text-[length:var(--con-fs-xs)] transition-colors ${
+                          active
+                            ? "border-[color:var(--con-line)] bg-[color:var(--con-surface)] font-medium text-[color:var(--con-fg)] shadow-sm"
+                            : "border-transparent text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)]"
+                        }`}
+                      >
+                        <Icon size={13} />
+                        {option[0].toUpperCase() + option.slice(1)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Link href="/console/settings" className="con-btn con-btn-outline" onClick={close}>
+                  Profile & Settings
                 </Link>
+                <a href="/logout" className="con-btn con-btn-outline" onClick={close}>
+                  Sign Out
+                </a>
               </div>
             </div>
           </div>
-        )}
-
-        {/* Main Content Area */}
-        <main className="flex-1 p-6 md:p-8 max-w-5xl w-full mx-auto">
-          {children}
-        </main>
-      </div>
+        </>
+      )}
     </div>
   );
 }

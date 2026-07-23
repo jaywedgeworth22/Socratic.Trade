@@ -175,7 +175,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
 
   if (phase === "discarded") {
     return (
-      <div className="mt-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+      <div className="mt-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
         Draft discarded. Nothing was created.
       </div>
     );
@@ -198,7 +198,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
   const stagedLive = stagedScope?.tone === "live";
 
   return (
-    <div className="mt-2 rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3">
+    <div className="mt-2 rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Tooltip className="con-mono text-[length:var(--con-fs-sm)] font-semibold" content="The order the assistant drafted. It is only a draft until you stage and then approve it.">
           {sideUp} {draft.qty} <SymbolButton symbol={draft.symbol} showLogo={false} className="font-mono text-inherit" /> · {draft.order_type}
@@ -245,7 +245,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
           }
         >
           <div
-            className="rounded-md px-2.5 py-1.5 text-[length:var(--con-fs-xs)]"
+            className="rounded-control px-2.5 py-1.5 text-[length:var(--con-fs-xs)]"
             style={{
               background: blocked ? "var(--con-neg-soft)" : "var(--con-pos-soft)",
               color: blocked ? "var(--con-neg)" : "var(--con-pos)"
@@ -275,7 +275,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
       )}
       {phase !== "checking" && previewError && (
         <Tooltip
-          className="mt-2 rounded-md bg-[color:var(--con-warn-soft)] px-2.5 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
+          className="mt-2 rounded-control bg-[color:var(--con-warn-soft)] px-2.5 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
           content="Only the preview failed. Staging still runs the real policy check on the server."
         >
           <AlertTriangle size={13} className="mr-1.5 inline-block align-[-2px]" />

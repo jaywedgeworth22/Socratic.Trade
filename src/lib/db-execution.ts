@@ -54,7 +54,7 @@ export function dailyExecutionStats(
   // (which have no limitPrice) count correctly against the daily cap.
   const rows = getDb()
     .prepare(
-      "SELECT proposal, estimated_notional FROM trade_proposals WHERE coalesce(placed_at, created_at) >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper', 'placing')"
+      "SELECT proposal, estimated_notional FROM trade_proposals WHERE datetime(coalesce(placed_at, created_at)) >= datetime(?) AND account_number = ? AND user_id = ? AND status IN ('placed', 'filled', 'paper', 'placing')"
     )
     .all(dayStart.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
@@ -88,7 +88,7 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
   const cutoff = new Date(now.getTime() - minutes * 60_000);
   const rows = getDb()
     .prepare(
-      "SELECT proposal, estimated_notional FROM trade_proposals WHERE coalesce(placed_at, created_at) >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper', 'placing')"
+      "SELECT proposal, estimated_notional FROM trade_proposals WHERE datetime(coalesce(placed_at, created_at)) >= datetime(?) AND account_number = ? AND user_id = ? AND status IN ('placed', 'filled', 'paper', 'placing')"
     )
     .all(cutoff.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
@@ -283,13 +283,20 @@ export function releaseStrategyLock(owner: string, userId: string = "local", con
   }).immediate();
 }
 
-export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string): void {
+export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string, accountNumber?: string, policyRevision?: string): void {
   getDb()
-    .prepare("INSERT INTO strategy_runs (id, user_id, connected_account_id, started_at, status) VALUES (?, ?, ?, ?, 'running')")
-    .run(id, userId, connectedAccountId ?? null, new Date().toISOString());
+    .prepare("INSERT INTO strategy_runs (id, user_id, connected_account_id, account_number, policy_revision, started_at, status) VALUES (?, ?, ?, ?, ?, ?, 'running')")
+    .run(id, userId, connectedAccountId ?? null, accountNumber ?? null, policyRevision ?? null, new Date().toISOString());
 }
 
-export function finishStrategyRun(id: string, status: "completed" | "failed", summary: string, userId: string = "local"): void {
+/** Terminal statuses for strategy_runs.
+ *  - completed: a decision cycle ran (LLM evaluated candidates, even if it proposed nothing)
+ *  - skipped: pre-decision gate (market closed, broker unhealthy, budget) — no LLM reasoning
+ *  - failed: hard error
+ * Skipped must NOT feed trading-liveness "healthy" or auto-tune. */
+export type StrategyRunFinishStatus = "completed" | "failed" | "skipped";
+
+export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, summary: string, userId: string = "local"): void {
   getDb()
     .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ? AND user_id = ?")
     .run(new Date().toISOString(), status, summary, id, userId);
@@ -399,7 +406,7 @@ export function listStrategyRuns(limit = 20, userId: string = "local", connected
         sr.status,
         sr.summary,
         sr.connected_account_id,
-        COUNT(CASE WHEN tp.status = 'placed'   THEN 1 END) AS placed_count,
+        COUNT(CASE WHEN tp.status IN ('placed', 'filled') THEN 1 END) AS placed_count,
         COUNT(CASE WHEN tp.status = 'paper'    THEN 1 END) AS paper_count,
         COUNT(CASE WHEN tp.status = 'blocked'  THEN 1 END) AS blocked_count,
         COUNT(CASE WHEN tp.status = 'proposed' THEN 1 END) AS proposed_count,
@@ -446,7 +453,7 @@ export function getStrategyRunById(id: string, userId: string = "local"): Strate
   const row = getDb()
     .prepare(
       `SELECT sr.id, sr.started_at, sr.finished_at, sr.status, sr.summary, sr.connected_account_id,
-              COUNT(CASE WHEN tp.status = 'placed'   THEN 1 END) AS placed_count,
+              COUNT(CASE WHEN tp.status IN ('placed', 'filled') THEN 1 END) AS placed_count,
               COUNT(CASE WHEN tp.status = 'paper'    THEN 1 END) AS paper_count,
               COUNT(CASE WHEN tp.status = 'blocked'  THEN 1 END) AS blocked_count,
               COUNT(CASE WHEN tp.status = 'proposed' THEN 1 END) AS proposed_count,

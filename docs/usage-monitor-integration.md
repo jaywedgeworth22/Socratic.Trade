@@ -52,6 +52,9 @@ alpaca.trackHealth / robinhood   ─┘   call-volume aggregate; debounced batch
                                         ▼
                               API Usage Monitor → ExternalUsageEvent
 
+llm_usage / rag_usage ──► usage-monitor-replay.ts (startup + 60s bounded replay;
+                          ordered durable settings watermarks) ──► same ingest endpoint
+
 runStrategyOnce entry ──► usage-budget.ts ──GET /api/budget-status──► monitor
    (Phase 1) over-budget → notify(budget_alert)
    (Phase 1.5, always on) → audit(usage_budget_status) + Bull prompt advisory line
@@ -65,7 +68,32 @@ runStrategyOnce entry ──► usage-budget.ts ──GET /api/budget-status─�
   tokens>`, `costUsd` (from `estimateLlmCostUsd`), `metricType:"cost"|"usage"`,
   `metadata:{model,context,userId,keySource,prompt/completion tokens}`.
 - **RAG** (`recordRagUsage`): `provider` (voyage/pinecone), `service:"rag"`,
-  `label:<operation>`, `unit:"token"`, `costUsd` (from `estimateRagCost`).
+  `label:<operation>`, `unit:"token"`, `costUsd` (from `estimateRagCost`). This is the
+  **single cost authority** for Voyage/Pinecone spend.
+- **Provider dispatch** (`withDurableRagProviderDispatch` in `vector-db.ts`, `requestFmp` in
+  `fmp-common.ts`): `service:"provider-dispatch"`, `label:<operation>`, `unit:"request"`. This
+  lane is **quota/reservation-only externally** — the event actually pushed to the monitor
+  (`createProviderDispatchUsageMonitorEvent` in `usage-monitor-push.ts`) always carries
+  `metricType:"usage"` with no `costUsd`, for every provider, unconditionally — it exists purely to
+  report request volume against the durable per-credential rate window, never a dollar figure.
+  Cost for these providers is owned exclusively by their dedicated ledger lane (the RAG bullet
+  above for Voyage; FMP has none, it's poll-primary).
+  This is deliberately two-layered: Voyage embed/rerank call sites in `vector-db.ts` pass a real
+  `estimateVoyageDispatchCost(...)` estimate into the *local* reservation
+  (`reserveProviderDispatch`, `provider_dispatch_attempts.estimated_cost_usd`), because that number
+  still drives the LOCAL per-credential daily cost-cap fuse (`PROVIDER_DISPATCH_VOYAGE_*_MAX_COST_USD_PER_DAY`,
+  default $25/day) — zeroing it there would silently disable that fuse. `createProviderDispatchUsageMonitorEvent`
+  is the single choke point for every provider-dispatch event sent to the monitor (both the
+  immediate push on startup and the crash-durable replay/reconciliation pass run through it), and
+  it discards `estimatedCostUsd`/`actualCostUsd` before building the outbound event — so the same
+  real local estimate never reaches the wire. FMP's local estimate is already 0 (poll-primary, no
+  local fuse needed), so it was and remains unaffected by this zeroing.
+  A 2026-07-15 version of this fix briefly zeroed the Voyage dispatch calls' *local* estimate
+  instead of the push boundary, which fixed the double-count but silently disabled the local Voyage
+  cost-cap fuse — corrected the same day: the local estimate is real again, and the push-boundary
+  zero in `usage-monitor-push.ts` is what actually prevents the receiver (which aggregates
+  `ExternalUsageEvent.costUsd` by provider name, ignoring `service`) from double-counting the same
+  spend the RAG ledger lane already reported.
 - **Call-volume** (market-data + broker): aggregated per provider per flush window as
   a single `metricType:"usage"`, `unit:"request"`, `requests:<count>` event —
   never one POST per call. Brokers are tagged `provider:"alpaca"|"robinhood"`,
@@ -83,9 +111,24 @@ and prevents distinct lanes in one flush from colliding just because they share
 `provider`, `metricType`, and `occurredAt`. The shared five-field fallback remains
 unchanged for other producers.
 
-The event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
-`UsageTelemetryEventSchema` and the monitor's server parser
-(`src/lib/usage-telemetry.ts`).
+Discrete LLM/RAG delivery is also crash-durable. `usage-monitor-replay.ts` reads the persisted
+ledgers in `(created_at,id)` order, reconstructs the exact event key/timestamp, and advances a
+per-ledger watermark in the existing internal `settings` table only after the batch is acknowledged.
+Every pass inclusively re-sends the last acknowledged row once; receiver idempotency makes that
+overlap safe if the app dies between remote acknowledgement and its local watermark write. The
+watermark update is monotonic inside `BEGIN IMMEDIATE`, so an overlapping deploy cannot regress it.
+The worker runs immediately at Node startup and every minute, bounded to ten 100-event pages per
+ledger per pass. It needs no schema migration or additional env variable.
+
+Every newly emitted event carries top-level `project:"socratic-trade"`. The raw `provider`
+value remains unchanged at the producer; canonical provider/project resolution belongs to the
+monitor receiver.
+
+The producer exact-pins immutable shared release `v2.0.0` and sends only the strict v2 envelope:
+`schemaVersion:2`, batch-level `producerId:"socratic-trade"`, and event-level `eventId` plus
+`producerKeyRef`. Deprecated v1 `sourceApp`, `idempotencyKey`, and `keyRef` fields never appear on
+the wire. An in-memory one-time normalizer preserves buffered pre-v2 events across hot reloads; the
+durable LLM/RAG/provider ledgers reconstruct fresh strict-v2 events from their source rows.
 
 ### Push-primary providers (item 3)
 
@@ -159,13 +202,11 @@ cost even if App B also pushes some events for them. Budget alerts reuse
 ## Shared client and idempotency contract
 
 `src/lib/usage-monitor-push.ts` uses `createUsageTelemetryClient` from
-`@jaywedgeworth22/congress-trading-shared`. The monitor persists explicit keys and
-deduplicates identical retries. Its deterministic five-field fallback is retained
-for producers that omit a key, but lane/detail fields are deliberately outside
-that compatibility basis. This producer therefore supplies explicit source IDs
-where it has stronger event identity instead of changing the shared algorithm.
-Source IDs are hashed before transmission, which keeps keys below the ingest
-length cap even if an upstream identifier is unexpectedly large.
+`@jaywedgeworth22/congress-trading-shared`. Every strict-v2 event has an explicit `eventId`;
+the receiver deduplicates on `(producerId,eventId)` and rejects conflicting replays. This producer
+derives IDs from durable source rows or one allocated aggregate-window ID, then hashes them before
+transmission so identity remains stable and below the ingest length cap. Provider credential
+identity is transmitted separately as `producerKeyRef` and never participates in replay identity.
 
 ## Operator setup notes
 
@@ -193,5 +234,6 @@ length cap even if an upstream identifier is unexpectedly large.
 ## Verification
 
 - **App B:** `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build`.
-  New tests: `test/usage-monitor-push.test.ts`, `test/usage-budget.test.ts`.
+  New tests: `test/usage-monitor-push.test.ts`, `test/usage-monitor-replay.test.ts`,
+  `test/usage-budget.test.ts`.
 - **Monitor:** `npm run lint` (`tsc --noEmit`), `npm run build`.

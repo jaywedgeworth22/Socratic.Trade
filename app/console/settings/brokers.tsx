@@ -15,14 +15,13 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Sheet } from "../ui/sheet";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
-import { ListSection, ListRow, LabeledContent } from "../../ui/ios-components";
-import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle } from "lucide-react";
+import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle, Pencil, Check, X } from "lucide-react";
 import {
   connectAlpacaAccount,
   connectTradierAccount,
-  connectTestAccount,
   disconnectAccount,
   fetchRobinhoodHealth,
+  renameAccount,
   syncRobinhoodAccount,
   ROBINHOOD_OAUTH_START_URL,
   type RobinhoodMcpHealth
@@ -36,8 +35,6 @@ function brokerName(broker: ConnectedAccount["broker"]): string {
       return "Alpaca MCP";
     case "robinhood":
       return "Robinhood";
-    case "test":
-      return "Test Account";
     case "tradier":
       return "Tradier";
     default:
@@ -80,6 +77,9 @@ export function BrokerAccountsCard() {
   const [confirmRemove, setConfirmRemove] = useState<ConnectedAccount | null>(null);
   const [alpacaOpen, setAlpacaOpen] = useState(false);
   const [tradierOpen, setTradierOpen] = useState(false);
+  // Inline rename of an account's cosmetic display name. `renaming` holds the id being edited
+  // and the working input value; the broker account number is never touched by this.
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
 
   // Best-effort Robinhood OAuth health — decides whether "Connect Robinhood"
   // starts OAuth or just re-syncs, and flags rows that need a reconnect.
@@ -128,7 +128,6 @@ export function BrokerAccountsCard() {
   const rhAuthed = Boolean(rhHealth?.configured && rhHealth?.authenticated && rhHealth?.ok);
   const rhNeedsReconnect = (account: ConnectedAccount) =>
     account.broker === "robinhood" && rhHealth !== null && !rhAuthed;
-  const hasTestAccount = accounts.some((account) => account.broker === "test");
   // Exactly one account carries isActive — hoist it as the "Currently Loaded"
   // account; everything else lists under "Other Accounts". Same isActive flag,
   // no server/query change.
@@ -159,18 +158,20 @@ export function BrokerAccountsCard() {
     }
   };
 
-  const connectTest = async () => {
-    setBusy("test");
+  const saveRename = async (account: ConnectedAccount) => {
+    const next = renaming?.value.trim() ?? "";
+    if (!next || next === account.label) {
+      setRenaming(null);
+      return;
+    }
+    setBusy(account.id);
     try {
-      const result = await connectTestAccount();
+      await renameAccount(account.id, next);
       await refresh();
-      toast.push(
-        "pos",
-        result.label ? `${result.label} added` : "Test Account added",
-        "Not loaded automatically. Load it to practice; it cannot reach real money."
-      );
+      setRenaming(null);
+      toast.push("pos", "Account renamed", `Now shown as "${next}".`);
     } catch (error) {
-      toast.push("neg", "Could not add test account", error instanceof ConsoleApiError ? error.message : String(error));
+      toast.push("neg", "Could not rename", error instanceof ConsoleApiError ? error.message : String(error));
     } finally {
       setBusy(null);
     }
@@ -183,13 +184,66 @@ export function BrokerAccountsCard() {
     const caps = account.capabilities;
     const needsReconnect = rhNeedsReconnect(account);
     return (
-      <ListRow key={account.id}>
-        <div className="flex flex-col w-full">
-          <div className="flex flex-wrap items-center justify-between gap-2 w-full py-1">
-            <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
-              {account.label || brokerName(account.broker)}
-            </span>
+      <div
+        key={account.id}
+        tabIndex={0}
+        className="rounded-control border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            {renaming?.id === account.id ? (
+              <div className="flex min-w-0 items-center gap-1.5">
+                <TextInput
+                  autoFocus
+                  aria-label="Account name"
+                  value={renaming.value}
+                  maxLength={120}
+                  disabled={busy !== null}
+                  onChange={(e) => setRenaming({ id: account.id, value: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveRename(account);
+                    if (e.key === "Escape") setRenaming(null);
+                  }}
+                  className="h-7 w-44 max-w-full"
+                />
+                <button
+                  type="button"
+                  aria-label="Save name"
+                  disabled={busy !== null}
+                  onClick={() => void saveRename(account)}
+                  className="text-[color:var(--con-pos)] hover:opacity-80 disabled:opacity-50"
+                  title="Save the new name"
+                >
+                  <Check className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Cancel rename"
+                  disabled={busy !== null}
+                  onClick={() => setRenaming(null)}
+                  className="text-[color:var(--con-faint)] hover:opacity-80 disabled:opacity-50"
+                  title="Cancel"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
+                  {account.label || brokerName(account.broker)}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Rename account"
+                  disabled={busy !== null}
+                  onClick={() => setRenaming({ id: account.id, value: account.label || "" })}
+                  className="shrink-0 text-[color:var(--con-faint)] hover:text-[color:var(--con-fg)] disabled:opacity-50"
+                  title="Rename this account's display name. The broker account number is not affected."
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+              </>
+            )}
             <Chip tone={r.tone} title={r.clarification}>
               {r.word} · {r.phrase}
             </Chip>
@@ -260,66 +314,65 @@ export function BrokerAccountsCard() {
           {`${brokerName(account.broker)} · ${account.environment}`}
           {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
           {account.taxationType ? ` · ${TAXATION_WORD[account.taxationType] ?? account.taxationType}` : ""}
-          {account.broker === "test" && " — excluded from wash-sale accounting"}
         </p>
-        {account.broker !== "test" && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {caps ? (
-              <>
-                <Chip
-                  tone="info"
-                  title={`Stocks trading: ${caps.equityTrading ? "enabled" : "disabled"}`}
-                >
-                  <Briefcase className="inline size-3.5 mr-1.5" />
-                  stocks
-                </Chip>
-                <Chip
-                  tone="info"
-                  title={`Short selling: ${caps.shortSelling ? "enabled" : "disabled"}`}
-                >
-                  <ArrowDown className="inline size-3.5 mr-1.5" />
-                  shorting
-                </Chip>
-                {caps.optionsTrading && (
-                  <Chip
-                    tone="info"
-                    title={`Options trading at level ${caps.optionsLevel ?? "?"}`}
-                  >
-                    <Zap className="inline size-3.5 mr-1.5" />
-                    options L{caps.optionsLevel}
-                  </Chip>
-                )}
-                {caps.marginEnabled && (
-                  <Chip
-                    tone="info"
-                    title="Margin trading enabled"
-                  >
-                    <Scale className="inline size-3.5 mr-1.5" />
-                    margin
-                  </Chip>
-                )}
-              </>
-            ) : (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {caps ? (
+            <>
               <Chip
-                tone="warn"
-                title="Broker has not yet confirmed this account's trading capabilities. All capabilities read as off until confirmed."
+                tone="info"
+                title={`Stocks trading: ${caps.equityTrading ? "enabled" : "disabled"}`}
               >
-                <AlertTriangle className="inline size-3.5 mr-1.5" />
-                capabilities unconfirmed
+                <Briefcase className="inline size-3.5 mr-1.5" />
+                stocks
               </Chip>
-            )}
-          </div>
-        )}
+              <Chip
+                tone="info"
+                title={`Short selling: ${caps.shortSelling ? "enabled" : "disabled"}`}
+              >
+                <ArrowDown className="inline size-3.5 mr-1.5" />
+                shorting
+              </Chip>
+              {caps.optionsTrading && (
+                <Chip
+                  tone="info"
+                  title={`Options trading at level ${caps.optionsLevel ?? "?"}`}
+                >
+                  <Zap className="inline size-3.5 mr-1.5" />
+                  options L{caps.optionsLevel}
+                </Chip>
+              )}
+              {caps.marginEnabled && (
+                <Chip
+                  tone="info"
+                  title="Margin trading enabled"
+                >
+                  <Scale className="inline size-3.5 mr-1.5" />
+                  margin
+                </Chip>
+              )}
+            </>
+          ) : (
+            <Chip
+              tone="warn"
+              title="Broker has not yet confirmed this account's trading capabilities. All capabilities read as off until confirmed."
+            >
+              <AlertTriangle className="inline size-3.5 mr-1.5" />
+              capabilities unconfirmed
+            </Chip>
+          )}
         </div>
-      </ListRow>
+      </div>
     );
   };
 
   return (
-    <ListSection
+    <Card
       title="Broker connections"
       action={
-        <div className="flex flex-wrap items-center justify-end gap-2 max-w-full">
+        // flex-wrap + justify-end: three connect buttons don't fit beside the title on
+        // phone widths — wrapping keeps them on-canvas instead of forcing the whole
+        // page to scroll horizontally (390px viewport regression).
+        <div className="flex flex-wrap justify-end gap-2">
           <Btn
             size="sm"
             variant="outline"
@@ -351,19 +404,6 @@ export function BrokerAccountsCard() {
           >
             Connect Tradier
           </Btn>
-          <Btn
-            size="sm"
-            variant="outline"
-            disabled={busy !== null || hasTestAccount}
-            onClick={() => void connectTest()}
-            title={
-              hasTestAccount
-                ? "A Test Account already exists. It is only used if you load it."
-                : "Add a Test Account for practice trades. Not loaded automatically; cannot reach real money."
-            }
-          >
-            {busy === "test" ? "Adding..." : hasTestAccount ? "Test Account Added" : "Add Test Account"}
-          </Btn>
         </div>
       }
     >
@@ -373,41 +413,31 @@ export function BrokerAccountsCard() {
       </p>
 
       {accounts.length === 0 ? (
-        <ListRow>
-          <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] py-2">
-            No brokerage connected yet. Use the buttons above when you want broker-backed execution — Robinhood connects
-            through the broker&apos;s own sign-in, Alpaca through an API key pair.
-          </p>
-        </ListRow>
+        <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+          No brokerage connected yet. Use the buttons above when you want broker-backed execution — Robinhood connects
+          through the broker&apos;s own sign-in, Alpaca through an API key pair.
+        </p>
       ) : (
         <div className="flex flex-col gap-4">
           <section>
             <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Currently Loaded Account</h3>
-            <div className="rounded-xl overflow-hidden shadow-sm">
-              {loaded ? (
-                renderAccountRow(loaded)
-              ) : (
-                <ListRow>
-                  <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] py-2">
-                    No account loaded — select one below.
-                  </p>
-                </ListRow>
-              )}
-            </div>
+            {loaded ? (
+              renderAccountRow(loaded)
+            ) : (
+              <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                No account loaded — select one below.
+              </p>
+            )}
           </section>
           <section>
             <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Other Accounts</h3>
-            <div className="rounded-xl overflow-hidden shadow-sm">
-              {others.length > 0 ? (
-                others.map(renderAccountRow)
-              ) : (
-                <ListRow>
-                  <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] py-2">
-                    No other accounts. Use the buttons above to connect one.
-                  </p>
-                </ListRow>
-              )}
-            </div>
+            {others.length > 0 ? (
+              <div className="flex flex-col gap-2">{others.map(renderAccountRow)}</div>
+            ) : (
+              <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                No other accounts. Use the buttons above to connect one.
+              </p>
+            )}
           </section>
         </div>
       )}
@@ -419,28 +449,30 @@ export function BrokerAccountsCard() {
             not wired yet
           </Chip>
         </div>
-        <div className="rounded-xl overflow-hidden shadow-sm">
+        <div className="grid gap-2 lg:grid-cols-3">
           {BROKER_ROADMAP.map((broker) => (
-            <ListRow key={broker.name}>
-              <div className="w-full" title={broker.detail}>
-                <div className="flex items-start justify-between gap-2">
-                  <span className="font-semibold">{broker.name}</span>
-                  <Chip tone="warn">{broker.status}</Chip>
-                </div>
-                <p className="mt-1 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
-                  {broker.detail}
-                </p>
-                <Btn
-                  size="sm"
-                  variant="ghost"
-                  disabled
-                  className="mt-2"
-                  title={`Connect ${broker.name} is disabled because no ${broker.name} broker gateway exists in this app yet.`}
-                >
-                  Connect unavailable
-                </Btn>
+            <div
+              key={broker.name}
+              className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3"
+              title={broker.detail}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-semibold">{broker.name}</span>
+                <Chip tone="warn">{broker.status}</Chip>
               </div>
-            </ListRow>
+              <p className="mt-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+                {broker.detail}
+              </p>
+              <Btn
+                size="sm"
+                variant="ghost"
+                disabled
+                className="mt-2"
+                title={`Connect ${broker.name} is disabled because no ${broker.name} broker gateway exists in this app yet.`}
+              >
+                Connect unavailable
+              </Btn>
+            </div>
           ))}
         </div>
       </div>
@@ -460,7 +492,7 @@ export function BrokerAccountsCard() {
               stay exactly where they are; this app just stops seeing and managing them.
             </p>
             {realityForAccount(confirmRemove).tone === "live" && (
-              <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+              <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
                 This is a brokerage connection. After disconnecting, any app-managed stop rules for its
                 positions stop running — only broker-held orders keep protecting them.
               </p>
@@ -505,7 +537,7 @@ export function BrokerAccountsCard() {
           await refresh();
         }}
       />
-    </ListSection>
+    </Card>
   );
 }
 
@@ -778,7 +810,7 @@ function TradierConnectSheet({
           </Field>
         </div>
         {isLive && (
-          <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+          <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
             <LiveTag /> A production Tradier token trades <span className="font-semibold">real capital</span>. Orders can
             reach real money only when policy, approval, and risk gates allow them.
           </p>

@@ -4,15 +4,26 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OHLCBar } from "../src/lib/indicators";
 
-// Mock the history cascade so tests never hit the network. Keep toBusinessDay (and everything else)
-// real; only fetchDailyOHLC is replaced.
-vi.mock("../src/lib/history", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/lib/history")>();
-  return { ...actual, fetchDailyOHLC: vi.fn() };
+// Mock the history cascade without importOriginal(). history.ts imports the db barrel, whose
+// outcome-horizon re-export imports history.ts again; importing the original inside this factory can
+// therefore cache a second, real fetchDailyOHLC binding and leak network calls into this suite.
+vi.mock("../src/lib/history", () => {
+  const toBusinessDay = (time: number | string | undefined): string | undefined => {
+    if (typeof time === "number" && Number.isFinite(time)) {
+      const ms = time > 1e12 ? time : time * 1000;
+      return new Date(ms).toISOString().slice(0, 10);
+    }
+    if (typeof time === "string") {
+      if (/^\d{4}-\d{2}-\d{2}/.test(time)) return time.slice(0, 10);
+      const parsed = Date.parse(time);
+      if (Number.isFinite(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+    }
+    return undefined;
+  };
+  return { fetchDailyOHLC: vi.fn(), toBusinessDay };
 });
 
 import { fetchDailyOHLC } from "../src/lib/history";
-import { setInternalSetting } from "../src/lib/db";
 import {
   buildInsiderImport,
   buildShortVolumeImport,
@@ -33,6 +44,8 @@ import {
   shareWithCongressTrade,
   type CongressPrice
 } from "../src/lib/congress-share";
+import { setInternalSetting } from "../src/lib/db";
+import { flushDurableStateNow, resetDurableStateCacheForTests } from "../src/lib/durable-state";
 
 const recentDate = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
@@ -305,6 +318,24 @@ describe("shareScanRefs", () => {
     expect((await shareScanRefs(scan))?.ok).toBe(false);
     expect((await shareScanRefs(scan))?.ok).toBe(true); // retried, not throttled
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("the per-symbol send throttle survives a simulated process restart", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_ENABLED = "on";
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    expect((await shareScanRefs(scan))?.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    flushDurableStateNow(); // the throttle's debounced write lands in SQLite
+
+    // Simulate a restart: forget the in-memory durable-state cache (the SQLite rows are untouched).
+    resetDurableStateCacheForTests();
+
+    // A fresh process's next scan of the SAME candidates must still see the throttle, not re-POST.
+    expect(await shareScanRefs(scan)).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // unchanged
   });
 });
 

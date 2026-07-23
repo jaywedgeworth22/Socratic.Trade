@@ -20,6 +20,7 @@ import { getUserWashSaleLockProvenance, type WashSaleLockMap } from "./tax";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
 import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./market-regime";
+import { effectiveDailyOpeningNotionalCap } from "./policy-caps";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -339,13 +340,17 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   // (Codex review, PR #1371). Permissive default — brackets should be encouraged when stop rules (or
   // an explicit per-position plan) are active.
   if (proposal.bracketTakeProfit != null || proposal.bracketStopLoss != null) {
+    const applicableStopLossPct =
+      proposal.side === "short" ? context.policy.riskRules?.shortStopLossPct : context.policy.riskRules?.stopLossPct;
     const bracketPermitted =
       context.policy.permittedOrderTypes.includes("bracket" as any) ||
-      (context.policy.riskRules?.stopLossPct != null && context.policy.riskRules.stopLossPct > 0) ||
+      (applicableStopLossPct != null && applicableStopLossPct > 0) ||
       proposal.stopPlan?.style === "fixed" ||
       proposal.stopPlan?.style === "atr";
     if (!bracketPermitted) {
-      reasons.push('Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct risk rule.');
+      reasons.push(
+        'Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct / shortStopLossPct risk rule.'
+      );
     }
   }
   if (proposal.side !== "sell" && proposal.side !== "cover" && !context.policy.permitExtendedHours && proposal.marketHours !== "regular_hours") {
@@ -437,17 +442,25 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
         : `the connected account does not support short selling`;
       reasons.push(`Order side "${proposal.side}" rejected: ${why}.`);
     } else {
-      // An explicit per-position "fixed"/"atr"/"trailing" plan satisfies the mandatory-stop
-      // requirement the same way it satisfies the bracket-permission gate above — it guarantees this
-      // short a real stop (via STOP_PLAN_FALLBACK_STOP_PCT or the trailing lane) even on an account
-      // with no account-wide shortStopLossPct configured (Codex review, PR #1371). A "none" plan does
-      // NOT satisfy this gate — that's a deliberate, separate safety invariant for shorts specifically
-      // (unbounded loss direction), not the general "risk-increasing choices aren't gated" rule this
-      // repo applies to per-position stop plans elsewhere; see the PR comment for the open question.
-      const hasExplicitDistancePlan =
-        proposal.stopPlan?.style === "fixed" || proposal.stopPlan?.style === "atr" || proposal.stopPlan?.style === "trailing";
-      if ((!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) && !hasExplicitDistancePlan) {
-        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct, or an explicit fixed/atr/trailing stopPlan).`);
+      // An explicit per-position stopPlan satisfies the mandatory-stop requirement the same way it
+      // satisfies the bracket-permission gate above: "fixed"/"atr"/"trailing" guarantee this short a
+      // real stop (via STOP_PLAN_FALLBACK_STOP_PCT or the trailing lane) even on an account with no
+      // account-wide shortStopLossPct configured (Codex review, PR #1371). An explicit "none" ALSO
+      // satisfies this gate (owner decision, 2026-07-15 — "if the LLM decides it does not want a stop
+      // plan, that is okay"): the mandatory-stop-loss requirement exists to prevent an accidental,
+      // un-stopped short, not to override a deliberate, rationale-backed owner/LLM choice to carry
+      // one without a stop — same "real trading, owner's risk" precedent as `stopPlan: "none"` never
+      // being hard-blocked elsewhere in this file. An explicit "default" does NOT satisfy this gate —
+      // it defers to the account's own precedence, which in this branch has no shortStopLossPct
+      // configured, so it guarantees nothing; only fixed/atr/trailing/none are genuine, deliberate
+      // choices with a known outcome.
+      const hasExplicitStopPlan =
+        proposal.stopPlan?.style === "fixed" ||
+        proposal.stopPlan?.style === "atr" ||
+        proposal.stopPlan?.style === "trailing" ||
+        proposal.stopPlan?.style === "none";
+      if ((!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) && !hasExplicitStopPlan) {
+        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct, or an explicit stopPlan).`);
       }
       if (context.policy.maxShortOrderNotional && estimatedNotional > context.policy.maxShortOrderNotional) {
         reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the max short order limit of $${context.policy.maxShortOrderNotional}`);
@@ -519,9 +532,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       }
     }
   }
-  const effectiveMaxDailyNotional = Math.min(
-    context.policy.maxDailyNotional ?? Infinity,
-    context.policy.maxDailyPctOfNav ? (context.policy.maxDailyPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
+  const effectiveMaxDailyNotional = effectiveDailyOpeningNotionalCap(
+    context.policy,
+    context.portfolio.totalMarketValue
   );
   // Daily/hourly notional + daily order-count failures are TIME-CONTEXT gates: the budget they
   // guard replenishes on its own (midnight / rolling hour), so they are escalatable — a pending
@@ -978,10 +991,28 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
   const beta = context.marketScan?.quotesBySymbol[normalizeSymbol(proposal.symbol)]?.beta;
   const betaStops = context.policy.betaScaledStops === true;
 
+  // Mark for add-to-loser: prefer live scan quote, then proposal limit/stop, then avgCost.
+  // Market/dollar openings often have no limit/stop — using only those made drawdown always 0
+  // so the rule never fired on the common path (expert review 2026-07-20).
+  const markForAddToLoser = (sym: string, proposal: TradeProposal, avgCost: number): number => {
+    const q = context.marketScan?.quotesBySymbol[normalizeSymbol(sym)];
+    const fromScan =
+      (typeof q?.price === "number" && q.price > 0 ? q.price : undefined) ??
+      (typeof q?.bid === "number" && typeof q?.ask === "number" && q.bid > 0 && q.ask > 0
+        ? (q.bid + q.ask) / 2
+        : undefined);
+    if (fromScan && fromScan > 0) return fromScan;
+    if (typeof position.marketValue === "number" && Math.abs(position.quantity) > 0) {
+      const fromMv = Math.abs(position.marketValue / position.quantity);
+      if (fromMv > 0) return fromMv;
+    }
+    return proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+  };
+
   if (proposal.side === "buy") {
     if (position.quantity > 0) {
       const avgCost = position.averageCost;
-      const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+      const currentPrice = markForAddToLoser(proposal.symbol, proposal, avgCost);
       const drawdownPct = ((avgCost - currentPrice) / avgCost) * 100;
       const returnPct = ((currentPrice - avgCost) / avgCost) * 100;
 
@@ -1008,12 +1039,13 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
   } else if (proposal.side === "short") {
     if (position.quantity < 0) {
       const avgCost = position.averageCost;
-      const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+      const currentPrice = markForAddToLoser(proposal.symbol, proposal, avgCost);
       const drawdownPct = ((currentPrice - avgCost) / avgCost) * 100; // Inverse math for short: price up means loss
 
       const effShortStopPct = betaScaledStopPct(context.policy.riskRules?.shortStopLossPct ?? 0, beta, betaStops);
       if (effShortStopPct > 0 && drawdownPct > effShortStopPct) {
-        return `Cannot average up on short: Position is down ${drawdownPct.toFixed(2)}%, exceeding short stop-loss limit of ${context.policy.riskRules.shortStopLossPct}%.`;
+        const limitLabel = effShortStopPct;
+        return `Cannot average up on short: Position is down ${drawdownPct.toFixed(2)}%, exceeding short stop-loss limit of ${limitLabel}%.`;
       }
     }
   }

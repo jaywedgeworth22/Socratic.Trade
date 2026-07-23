@@ -6,6 +6,7 @@
 // identity can't be handed a forged one.
 
 export const AUTHENTICATED_IDENTITY_SOURCE_HEADER = "x-authenticated-identity-source";
+export const AUTHENTICATED_SESSION_ISSUED_AT_HEADER = "x-authenticated-session-issued-at";
 
 export const AUTHENTICATED_IDENTITY_SOURCES = {
   cloudflareAccess: "cloudflare-access",
@@ -28,6 +29,7 @@ export function isVerifiedIdentitySource(source: string | null): boolean {
 export const CLIENT_IDENTITY_HEADERS = [
   "x-authenticated-user-email",
   AUTHENTICATED_IDENTITY_SOURCE_HEADER,
+  AUTHENTICATED_SESSION_ISSUED_AT_HEADER,
   "x-user-id"
 ] as const;
 

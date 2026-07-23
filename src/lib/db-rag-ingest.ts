@@ -785,16 +785,23 @@ export function advanceSecIngestTask(input: {
   const advance = database.transaction(() => {
     const identity = database
       .prepare(
-        `SELECT parser_revision, chunker_revision, embed_model, embed_revision
+        `SELECT parser_revision, chunker_revision, embed_model, embed_revision,
+                raw_sha256, normalized_sha256
          FROM sec_ingest_tasks WHERE id = ?`
       )
-      .get(input.taskId) as Pick<RawTaskRow, "parser_revision" | "chunker_revision" | "embed_model" | "embed_revision"> | undefined;
+      .get(input.taskId) as Pick<
+        RawTaskRow,
+        "parser_revision" | "chunker_revision" | "embed_model" | "embed_revision" |
+        "raw_sha256" | "normalized_sha256"
+      > | undefined;
     if (!identity) return false;
     const identityMatches =
       (input.parserRevision === undefined || input.parserRevision === identity.parser_revision) &&
       (input.chunkerRevision === undefined || input.chunkerRevision === identity.chunker_revision) &&
       (input.embedModel === undefined || input.embedModel === identity.embed_model) &&
-      (input.embedRevision === undefined || input.embedRevision === identity.embed_revision);
+      (input.embedRevision === undefined || input.embedRevision === identity.embed_revision) &&
+      (rawSha256 === undefined || identity.raw_sha256 === null || rawSha256 === identity.raw_sha256) &&
+      (normalizedSha256 === undefined || identity.normalized_sha256 === null || normalizedSha256 === identity.normalized_sha256);
     if (!identityMatches) return false;
     const info = database
       .prepare(
@@ -948,8 +955,8 @@ export function failSecIngestTask(input: {
       .run(
         status,
         nextRetryAt ?? null,
-        input.errorType,
-        input.error,
+        errorType,
+        error,
         errorJson,
         nowIso,
         input.taskId,
@@ -966,8 +973,8 @@ export function failSecIngestTask(input: {
       .run(
         status,
         nowIso,
-        input.errorType,
-        input.error,
+        errorType,
+        error,
         input.receipt === undefined ? null : stableSecIngestJson(input.receipt),
         input.taskId,
         input.leaseToken,

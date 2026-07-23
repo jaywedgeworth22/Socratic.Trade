@@ -236,6 +236,27 @@ describe("SEC/RAG durable ingest worker state", () => {
     expect(outcomes.map((row) => row.outcome)).toEqual(["lease_expired", "advanced"]);
   });
 
+  it("falls back to a finite default for malformed claim and heartbeat lease durations", async () => {
+    const { claimSecIngestTasks, enqueueSecIngestTask, getSecIngestTask, heartbeatSecIngestTask } = await import("../src/lib/db");
+    const job = await createJob(`lease-config-${randomUUID()}`);
+    const task = enqueueSecIngestTask({ jobId: job.id, accession: "lease-config-accession" }).task;
+    const start = new Date("2026-07-13T12:30:00.000Z");
+    const [claim] = claimSecIngestTasks(job.id, {
+      owner: "worker",
+      leaseMs: Number.NaN,
+      now: start
+    });
+    expect(claim.leaseExpiresAt).toBe("2026-07-13T12:35:00.000Z");
+    expect(heartbeatSecIngestTask({
+      taskId: task.id,
+      owner: "worker",
+      leaseToken: claim.leaseToken!,
+      leaseMs: Number.POSITIVE_INFINITY,
+      now: new Date("2026-07-13T12:31:00.000Z")
+    })).toBe(true);
+    expect(getSecIngestTask(task.id)?.leaseExpiresAt).toBe("2026-07-13T12:36:00.000Z");
+  });
+
   it("permits only direct checkpoint transitions and accounts a successful stage exactly once", async () => {
     const { advanceSecIngestTask, claimSecIngestTasks, enqueueSecIngestTask, getSecIngestTask } = await import("../src/lib/db");
     const job = await createJob(`transition-${randomUUID()}`);
@@ -339,6 +360,56 @@ describe("SEC/RAG durable ingest worker state", () => {
     expect(advanceSecIngestTask({ ...base, rawSha256: "a".repeat(64) })).toBe(true);
   });
 
+  it("preserves the first accepted raw and normalized artifact checksums across later checkpoints", async () => {
+    const { advanceSecIngestTask, claimSecIngestTasks, enqueueSecIngestTask, getSecIngestTask } = await import("../src/lib/db");
+    const job = await createJob(`hash-identity-${randomUUID()}`);
+    const task = enqueueSecIngestTask({ jobId: job.id, accession: "hash-identity-accession" }).task;
+    const start = new Date("2026-07-13T13:40:00.000Z");
+    const [fetchClaim] = claimSecIngestTasks(job.id, { owner: "worker", now: start });
+    expect(advanceSecIngestTask({
+      taskId: task.id,
+      owner: "worker",
+      leaseToken: fetchClaim.leaseToken!,
+      expectedCheckpoint: "discovered",
+      nextCheckpoint: "fetched",
+      rawSha256: "a".repeat(64),
+      now: start
+    })).toBe(true);
+
+    const [validateClaim] = claimSecIngestTasks(job.id, { owner: "worker", now: new Date(start.getTime() + 1_000) });
+    const validateBase = {
+      taskId: task.id,
+      owner: "worker",
+      leaseToken: validateClaim.leaseToken!,
+      expectedCheckpoint: "fetched" as const,
+      nextCheckpoint: "validated" as const,
+      now: new Date(start.getTime() + 1_000)
+    };
+    expect(advanceSecIngestTask({ ...validateBase, rawSha256: "b".repeat(64) })).toBe(false);
+    expect(advanceSecIngestTask({
+      ...validateBase,
+      rawSha256: "a".repeat(64),
+      normalizedSha256: "c".repeat(64)
+    })).toBe(true);
+
+    const [parseClaim] = claimSecIngestTasks(job.id, { owner: "worker", now: new Date(start.getTime() + 2_000) });
+    const parseBase = {
+      taskId: task.id,
+      owner: "worker",
+      leaseToken: parseClaim.leaseToken!,
+      expectedCheckpoint: "validated" as const,
+      nextCheckpoint: "parsed" as const,
+      now: new Date(start.getTime() + 2_000)
+    };
+    expect(advanceSecIngestTask({ ...parseBase, normalizedSha256: "d".repeat(64) })).toBe(false);
+    expect(advanceSecIngestTask({ ...parseBase, normalizedSha256: "c".repeat(64) })).toBe(true);
+    expect(getSecIngestTask(task.id)).toMatchObject({
+      rawSha256: "a".repeat(64),
+      normalizedSha256: "c".repeat(64),
+      checkpoint: "parsed"
+    });
+  });
+
   it("schedules bounded retry backoff, then dead-letters when the stage budget is exhausted", async () => {
     const { claimSecIngestTasks, enqueueSecIngestTask, failSecIngestTask, getDb, getSecIngestTask } = await import("../src/lib/db");
     const job = await createJob(`retry-${randomUUID()}`);
@@ -390,6 +461,36 @@ describe("SEC/RAG durable ingest worker state", () => {
       .prepare("SELECT outcome FROM sec_ingest_task_attempts WHERE task_id = ? ORDER BY attempt_no")
       .all(task.id) as Array<{ outcome: string }>;
     expect(outcomes.map((row) => row.outcome)).toEqual(["retry_wait", "dead_letter"]);
+  });
+
+  it("rejects blank failure reasons and persists trimmed auditable errors", async () => {
+    const { claimSecIngestTasks, enqueueSecIngestTask, failSecIngestTask, getDb, getSecIngestTask } = await import("../src/lib/db");
+    const job = await createJob(`failure-reason-${randomUUID()}`);
+    const task = enqueueSecIngestTask({ jobId: job.id, accession: "failure-reason-accession" }).task;
+    const now = new Date("2026-07-13T14:30:00.000Z");
+    const [claim] = claimSecIngestTasks(job.id, { owner: "worker", now });
+    const base = {
+      taskId: task.id,
+      owner: "worker",
+      leaseToken: claim.leaseToken!,
+      retryable: false,
+      now
+    };
+    expect(() => failSecIngestTask({ ...base, errorType: " ", error: "missing type" })).toThrow("errorType");
+    expect(() => failSecIngestTask({ ...base, errorType: "provider_error", error: "\t" })).toThrow("error");
+    expect(getSecIngestTask(task.id)?.status).toBe("leased");
+    expect(failSecIngestTask({
+      ...base,
+      errorType: " provider_error ",
+      error: " upstream rejected artifact "
+    })).toMatchObject({ applied: true, status: "dead_letter" });
+    expect(getSecIngestTask(task.id)).toMatchObject({
+      lastErrorType: "provider_error",
+      lastError: "upstream rejected artifact"
+    });
+    expect(getDb().prepare(
+      "SELECT error_type, error FROM sec_ingest_task_attempts WHERE task_id = ?"
+    ).get(task.id)).toEqual({ error_type: "provider_error", error: "upstream rejected artifact" });
   });
 
   it("sanitizes non-finite and extreme retry settings into a finite date-safe delay", async () => {

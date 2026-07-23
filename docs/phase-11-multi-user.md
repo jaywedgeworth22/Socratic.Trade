@@ -1,5 +1,11 @@
 # Phase 11 - Multi-user & API-key management (plan)
 
+## CI pin-check reliability (2026-07-22)
+
+The shared-package pin workflow runs on every pull request so the status cannot disappear for
+unrelated code changes. It installs the pinned Node 24 toolchain before the comparison script,
+which uses Node for GitHub API JSON parsing.
+
 Goal: let multiple users use the app — logging in at the same or different times —
 each getting analysis and trade proposals tailored to **their own preferences and
 their own API keys**. With no connected broker account the app cannot place any
@@ -120,8 +126,13 @@ per-user via `upsertUserApiKey` under the default user.
 
 Current implementation: Settings -> Connections lists OpenAI, Anthropic,
 xAI/Grok, Google Gemini, Mistral, DeepSeek, Finnhub, FMP, Alpha Vantage,
-Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set / Using
+Marketstack, FRED, SEC EDGAR User-Agent, and Massive with Set / Using
 env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
+**Tradier was removed from this generic key catalog on 2026-07-16** — it is
+sourced from the connected Tradier BROKER account (Settings -> Accounts)
+instead, per owner direction that a broker-connection-only source shouldn't
+also appear as a separate, duplicate "API key" (see
+`docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`).
 Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
 secret values. Strategy lets the selected account strategy choose a Green
 Team model for proposal generation and an optional separate Red Team model for
@@ -303,13 +314,25 @@ proposal is `placing`, or any broker-routed fill is still
 `pending_reconciliation`. The app does not auto-cancel broker orders or close
 broker positions during account deletion.
 
+Deletion permanently fences the prior opaque user generation. A later account is created only from a
+verified provider session issued after the deletion cutoff. Auth.js forwards its signed `loginAt`.
+Cloudflare Access application-token `iat` is deliberately not accepted as fresh-login proof because an
+application token may refresh without a new IdP sign-in; a Cloudflare-fronted request must also carry a
+matching signed Auth.js session with a post-cutoff `loginAt`. Missing or pre-cutoff claims fail closed
+instead of reopening the deleted generation.
+
 Deletion removes the user's private app rows from user API keys, connected
 accounts, strategy profiles/runs/settings, proposals, snapshots, fills,
 synthetic stops, notifications, watchlists, alerts, chat, user memory,
 learned-context pending rows, learned-context rows where they are either owner
 or contributor, LLM usage, market-data demands, and normal audit events. It also
+removes exact FMP-derived provenance rows and private-vector provider-work receipts after provider-first
+private-vector erasure succeeds. Those tables are part of the versioned schema so the account-deletion
+coverage test and database write-fence triggers cannot miss them. It also
 clears per-user Robinhood MCP OAuth tokens and pending OAuth states while
-preserving the global MCP client registration. The only retained deletion record
+preserving the global MCP client registration. One canonical ownership matcher also fences and erases
+user-owned internal settings, including provider/risk/learning state, model rotation, usage/health alerts,
+and broker-minimum alert cooldowns. The only retained deletion record
 is `account_deletion_audit`, which stores a non-reversible subject hash, schema
 version, timestamps, and row counts; it does not store raw email, raw userId,
 symbols, broker account numbers, chat text, proposal JSON, or credentials.

@@ -846,3 +846,256 @@ describe("Tradier adapter — tenant isolation", () => {
     expect(() => getTradierGateway("u_other")).toThrow(/No Tradier account connected/);
   });
 });
+
+describe("Tradier adapter — native OTOCO/OTO bracket order placement", () => {
+  it("places an OTOCO (class=otoco) with indexed legs when both take-profit and stop-loss are set", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 900, status: "ok" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const res = await getTradierGateway("local").placeEquityOrder({
+      accountNumber: ACCT, symbol: "AAPL", side: "buy", type: "limit", quantity: 10, limitPrice: 190,
+      timeInForce: "gfd", marketHours: "regular_hours", bracketTakeProfit: 210, bracketStopLoss: 175,
+      refId: "otoco-ref-1"
+    });
+    expect(res).toMatchObject({ orderId: "900", state: "pending", refId: "otoco-ref-1" });
+    const post = records.find((r) => r.method === "POST")!;
+    const form = new URLSearchParams(post.body ?? "");
+    expect(form.get("class")).toBe("otoco");
+    expect(form.get("symbol[0]")).toBe("AAPL");
+    expect(form.get("side[0]")).toBe("buy");
+    expect(form.get("quantity[0]")).toBe("10");
+    expect(form.get("type[0]")).toBe("limit");
+    expect(form.get("price[0]")).toBe("190");
+    expect(form.get("symbol[1]")).toBe("AAPL");
+    expect(form.get("side[1]")).toBe("sell"); // exit leg for a long entry
+    expect(form.get("type[1]")).toBe("limit");
+    expect(form.get("price[1]")).toBe("210");
+    expect(form.get("symbol[2]")).toBe("AAPL");
+    expect(form.get("side[2]")).toBe("sell");
+    expect(form.get("type[2]")).toBe("stop");
+    expect(form.get("stop[2]")).toBe("175");
+  });
+
+  it("places an OTO (class=oto, single exit leg) when only a stop-loss is set", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 901, status: "ok" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").placeEquityOrder({
+      accountNumber: ACCT, symbol: "TSLA", side: "buy", type: "stop_market", quantity: 5, stopPrice: 300,
+      timeInForce: "gfd", marketHours: "regular_hours", bracketStopLoss: 250,
+      refId: "oto-ref-1"
+    });
+    const post = records.find((r) => r.method === "POST")!;
+    const form = new URLSearchParams(post.body ?? "");
+    expect(form.get("class")).toBe("oto");
+    expect(form.get("type[0]")).toBe("stop"); // stop_market -> "stop" on the wire
+    expect(form.get("stop[0]")).toBe("300");
+    expect(form.get("symbol[1]")).toBe("TSLA");
+    expect(form.get("side[1]")).toBe("sell");
+    expect(form.get("type[1]")).toBe("stop");
+    expect(form.get("stop[1]")).toBe("250");
+    expect(form.get("symbol[2]")).toBeNull(); // no second exit leg
+  });
+
+  it("uses a stop_limit exit leg when bracketStopLimit is provided", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 902, status: "ok" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").placeEquityOrder({
+      accountNumber: ACCT, symbol: "NVDA", side: "buy", type: "limit", quantity: 3, limitPrice: 500,
+      timeInForce: "gfd", marketHours: "regular_hours", bracketTakeProfit: 560, bracketStopLoss: 470, bracketStopLimit: 465,
+      refId: "otoco-ref-stoplimit"
+    });
+    const post = records.find((r) => r.method === "POST")!;
+    const form = new URLSearchParams(post.body ?? "");
+    expect(form.get("type[2]")).toBe("stop_limit");
+    expect(form.get("stop[2]")).toBe("470");
+    expect(form.get("price[2]")).toBe("465");
+  });
+
+  it("uses exit side buy_to_cover for a short entry's bracket legs", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 903, status: "ok" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").placeEquityOrder({
+      accountNumber: ACCT, symbol: "MSFT", side: "short", type: "limit", quantity: 4, limitPrice: 400,
+      timeInForce: "gfd", marketHours: "regular_hours", bracketTakeProfit: 370, bracketStopLoss: 420,
+      refId: "otoco-short-ref"
+    });
+    const post = records.find((r) => r.method === "POST")!;
+    const form = new URLSearchParams(post.body ?? "");
+    expect(form.get("side[0]")).toBe("sell_short");
+    expect(form.get("side[1]")).toBe("buy_to_cover");
+    expect(form.get("side[2]")).toBe("buy_to_cover");
+  });
+
+  it("falls back to a PLAIN single-leg order (no bracket) for a market-type entry — OTOCO leg[0] has no market type", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 904, status: "ok" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").placeEquityOrder({
+      accountNumber: ACCT, symbol: "AMZN", side: "buy", type: "market", quantity: 2,
+      timeInForce: "gfd", marketHours: "regular_hours", bracketTakeProfit: 230, bracketStopLoss: 185,
+      refId: "market-bracket-fallback"
+    });
+    const post = records.find((r) => r.method === "POST")!;
+    const form = new URLSearchParams(post.body ?? "");
+    expect(form.get("class")).toBe("equity"); // plain order, bracket silently not attached
+    expect(form.get("symbol[0]")).toBeNull();
+  });
+
+  it("places a plain equity order (no class param at all beyond 'equity') when no bracket fields are set", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 905, status: "ok" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").placeEquityOrder({
+      accountNumber: ACCT, symbol: "SPY", side: "buy", type: "market", quantity: 1,
+      timeInForce: "gfd", marketHours: "regular_hours", refId: "no-bracket-ref"
+    });
+    const post = records.find((r) => r.method === "POST")!;
+    const form = new URLSearchParams(post.body ?? "");
+    expect(form.get("class")).toBe("equity");
+  });
+});
+
+describe("Tradier adapter — cancelBracketSiblingLegs (bracket sibling-leg teardown)", () => {
+  it("cancels only the still-open legs of an OTOCO container, skipping a filled/canceled one", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      {
+        match: (u, m) => m === "GET" && u.includes("/orders/900"),
+        body: { order: { id: 900, class: "otoco", symbol: "AAPL", status: "open", leg: [
+          { id: 901, class: "equity", status: "open" },
+          { id: 902, class: "equity", status: "filled" }
+        ] } }
+      },
+      { match: (u, m) => m === "DELETE" && u.includes("/orders/901"), body: { order: { id: 901, status: "ok" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "900");
+    expect(result.cancelledOrderIds).toEqual(["901"]);
+    expect(records.some((r) => r.method === "DELETE" && r.url.includes("/orders/901"))).toBe(true);
+    expect(records.some((r) => r.method === "DELETE" && r.url.includes("/orders/902"))).toBe(false);
+  });
+
+  it("returns no cancellations for a plain (non-container) order", async () => {
+    await seedTradier();
+    installFetchMock([
+      { match: (u, m) => m === "GET" && u.includes("/orders/800"), body: { order: { id: 800, class: "equity", symbol: "AAPL", status: "filled" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "800");
+    expect(result.cancelledOrderIds).toEqual([]);
+  });
+
+  it("never cancels the entry order itself when no bracket was ever attached, even if it's still OPEN (not just filled)", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      // A market-type entry (Tradier can't carry a bracket leg[0] of type market) falls through to a
+      // plain single-leg order in placeEquityOrder, but openingOrderId is still recorded on the plan
+      // (see performance.ts) — this order is class "equity" and still resting (partial fill), which
+      // must NOT be treated as a cancellable "sibling" of itself (adversarial review of PR #1661).
+      { match: (u, m) => m === "GET" && u.includes("/orders/801"), body: { order: { id: 801, class: "equity", symbol: "AAPL", status: "open" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "801");
+    expect(result.cancelledOrderIds).toEqual([]);
+    expect(records.some((r) => r.method === "DELETE")).toBe(false);
+  });
+
+  it("resolves as done (empty result) when the order is gone via a genuine HTTP 404", async () => {
+    await seedTradier();
+    installFetchMock([
+      { match: (u, m) => m === "GET" && u.includes("/orders/never-existed"), body: { errors: { error: "no such order" } }, status: 404 }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "never-existed");
+    expect(result.cancelledOrderIds).toEqual([]);
+  });
+
+  it("resolves as done (empty result) when Tradier's own 200-with-errors-envelope reports the order not found", async () => {
+    await seedTradier();
+    installFetchMock([
+      { match: (u, m) => m === "GET" && u.includes("/orders/gone"), body: { errors: { error: "not found" } }, status: 200 }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "gone");
+    expect(result.cancelledOrderIds).toEqual([]);
+  });
+
+  it("propagates a NON-not-found lookup failure so the caller's bounded-retry sweep actually retries it", async () => {
+    await seedTradier();
+    installFetchMock([
+      { match: (u, m) => m === "GET" && u.includes("/orders/901-transient"), body: { errors: { error: "internal server error" } }, status: 503 }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await expect(getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "901-transient")).rejects.toThrow();
+  });
+});
+
+describe("Tradier adapter — option positions", () => {
+  it("fetches and maps option positions, parses OCC symbols, and prices them via getEquityQuotes", async () => {
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/positions`),
+        body: {
+          positions: {
+            position: [
+              {
+                symbol: "DELL  260717C00150000",
+                quantity: 2,
+                cost_basis: 500.0,
+                date_acquired: "2026-07-01T00:00:00Z"
+              },
+              {
+                symbol: "AAPL",
+                quantity: 10,
+                cost_basis: 1500.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        match: (u, m) => m === "GET" && u.includes("/markets/quotes") && u.includes("DELL260717C00150000"),
+        body: {
+          quotes: {
+            quote: {
+              symbol: "DELL260717C00150000",
+              last: 3.5,
+              volume: 100
+            }
+          }
+        }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const gateway = getTradierGateway("local");
+    const result = await gateway.getOptionPositions!(ACCT);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      symbol: "DELL260717C00150000",
+      underlyingSymbol: "DELL",
+      expirationDate: "2026-07-17",
+      optionType: "call",
+      strikePrice: 150.0,
+      quantity: 2,
+      averageCost: 2.5,
+      marketValue: 700.0
+    });
+  });
+});
+

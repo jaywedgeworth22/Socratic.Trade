@@ -20,6 +20,7 @@ import {
   ListChecks,
   MessageSquare,
   Pin,
+  Plug,
   Radar,
   ReceiptText,
   Settings as SettingsIcon,
@@ -88,12 +89,20 @@ export const DESTINATIONS: Destination[] = [
   { href: "/console/macro", label: "Regime", icon: Globe, desc: "Macro and market-regime board: rates, credit, volatility, breadth." },
   { href: "/console/orders", label: "Orders", icon: ListChecks, desc: "Order history and open orders at the broker." },
   { href: "/console/assistant", label: "Coach", icon: MessageSquare, desc: "Coach Socratic Trade about its reasoning, accounts, and market focus." },
-  { href: "/console/strategy", label: "Framework", icon: Brain, desc: "The agent framework: prompts, models, doctrine, and run cadence." },
-  { href: "/console/guardrails", label: "Mandates", icon: Shield, desc: "Delegated authority and hard constraints that bind every trade." },
+  { href: "/console/strategy", label: "Strategy", icon: Brain, desc: "The agent's brain: instructions, models, scoring weights, presets." },
+  { href: "/console/guardrails", label: "Guardrails", icon: Shield, desc: "Autonomy, spending caps, protective stops, schedule, and the trading rulebook." },
+  { href: "/console/connections", label: "Connections", icon: Plug, desc: "Broker accounts and provider API keys." },
   { href: "/console/results", label: "Outcomes", icon: BarChart3, desc: "Realized performance, equity curve, thesis scorecards, and learning evidence." },
   { href: "/console/usage", label: "Usage", icon: ReceiptText, desc: "Your LLM usage and estimated model cost by key, model, and workflow." },
-  { href: "/console/settings", label: "Settings", icon: SettingsIcon, desc: "Accounts, notifications, API keys, and console preferences." }
+  { href: "/console/settings", label: "Settings", icon: SettingsIcon, desc: "Notifications, sharing, confirmations, and console preferences." }
 ];
+
+/** Canonical destination name for page titles. Every page h1 renders through this
+ *  (h1 === rail label, the 2026-07-16 naming canon) so nav and titles can't drift
+ *  apart again — 9 of 13 surfaces had diverged (click "Outcomes", land on "Results"). */
+export function destinationLabel(href: string): string {
+  return DESTINATIONS.find((d) => d.href === href)?.label ?? href;
+}
 
 function isActive(pathname: string, href: string): boolean {
   return href === "/console" ? pathname === "/console" : pathname.startsWith(href);
@@ -110,7 +119,7 @@ const GROUPED_DESTINATION_HREFS: { label: string; hrefs: string[] }[] = [
   { label: "Core", hrefs: ["/console", "/console/approvals", "/console/activity"] },
   { label: "Monitor", hrefs: ["/console/scan", "/console/watchlist", "/console/macro", "/console/orders"] },
   { label: "Review", hrefs: ["/console/assistant", "/console/results", "/console/usage"] },
-  { label: "Configure", hrefs: ["/console/strategy", "/console/guardrails", "/console/settings"] }
+  { label: "Configure", hrefs: ["/console/strategy", "/console/guardrails", "/console/connections", "/console/settings"] }
 ];
 
 export function groupedDestinations(destinations: Destination[]): { label: string; items: Destination[] }[] {
@@ -299,7 +308,7 @@ function TabsSheet({
         <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5 relative">
           <div className="absolute top-2 left-1/2 -translate-x-1/2 w-9 h-1.5 rounded-full bg-[color:var(--con-line-strong)] opacity-60"></div>
           <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold mt-2">
-            Tabs
+            More
           </h2>
           <button
             type="button"
@@ -412,8 +421,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
     <>
       <nav
         ref={navRef}
-        className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]/85 backdrop-blur-xl supports-[backdrop-filter]:bg-[color:var(--con-surface)]/70 lg:hidden"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        className="con-tabbar fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]/85 backdrop-blur-xl supports-[backdrop-filter]:bg-[color:var(--con-surface)]/70 lg:hidden"
         aria-label="Console navigation"
       >
         <div className="flex">
@@ -454,7 +462,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
             type="button"
             className="con-tab-item"
             data-active={tabsButtonActive || tabsOpen}
-            title={tabsOpen ? "Close tabs menu" : "Choose which screens show up here, or jump to any screen"}
+            title={tabsOpen ? "Close more menu" : "Choose which screens show up here, or jump to any screen"}
             style={tabsButtonActive || tabsOpen ? { fontWeight: 800 } : undefined}
             onClick={() => setTabsOpen(!tabsOpen)}
           >
@@ -464,7 +472,10 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
             >
               <LayoutGrid size={19} />
             </span>
-            Tabs
+            {/* Was "Tabs" — unclear for the standard mobile overflow-menu pattern this
+                is (the grid of every destination, with pin/unpin to customize the bar
+                above). "More" is the conventional label for this affordance. */}
+            More
           </button>
         </div>
       </nav>

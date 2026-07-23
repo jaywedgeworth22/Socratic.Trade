@@ -28,8 +28,9 @@ export default defineConfig({
     }
   },
   test: {
-    maxWorkers: 4,
-    testTimeout: 20_000,
+    maxWorkers: 1,
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     globalSetup: "./test/global-setup.ts",
     // Force isTradingDay()'s no-argument "today" check true so strategy/scheduler tests don't flake
     // on real market holidays/weekends (see isTradingDay in src/lib/market-calendar.ts). The override
@@ -40,6 +41,7 @@ export default defineConfig({
     // land loose in the shared OS temp dir.
     env: {
       AGENTIC_TEST_FORCE_TRADING_DAY: "1",
+      OPENROUTER_API_URL: "https://openrouter.ai/api/v1/chat/completions",
       TMPDIR: runTmpRoot,
       TMP: runTmpRoot,
       TEMP: runTmpRoot

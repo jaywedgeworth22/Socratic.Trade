@@ -9,6 +9,8 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { ShieldCheck } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleFont } from "../lib/useConsoleFont";
@@ -269,18 +271,42 @@ function ChromeBar({
           The desktop spacer is hidden below sm so the scope absorbs the room. */}
       {/* relative: the UserMenu dropdown anchors to this row (right edge of the
           bar), not to its small button — anchoring to the 44px button pushed the
-          panel off the left edge of phone viewports. */}
-      <div className="relative mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
+          panel off the left edge of phone viewports. gap-1.5/px-3 on phones (vs
+          gap-2/px-4 from sm up) claws back a few px so the account scope's mobile
+          min-width (chrome.tsx ScopeSelector) has room without overflowing. */}
+      <div className="relative mx-auto flex max-w-[1400px] items-center gap-1.5 px-3 py-2 sm:gap-2 sm:px-4">
         <BrandReveal />
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
         <div className="hidden flex-1 sm:block" />
+        {/* Operator-only: small top-of-site entry to the admin portal (owner-directed —
+            it must not be buried in Settings). Desktop chrome only; phones reach the
+            same link from the profile menu (UserMenu), where there's room. */}
+        {snapshot.currentUser?.isAdmin && (
+          <Link
+            href="/admin"
+            className="hidden items-center gap-1.5 rounded-control border border-[color:var(--con-line-strong)] px-2.5 text-[length:var(--con-fs-xs)] font-medium text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] md:flex sm:h-8"
+            title="Admin portal — operator diagnostics: connections, LLM spend, RAG coverage, server. Visible because this login has admin rights."
+          >
+            <ShieldCheck size={14} />
+            Admin
+          </Link>
+        )}
         <div className="hidden md:block">
           <CommandPaletteTrigger />
         </div>
         <UserMenu snapshot={snapshot} theme={theme} setTheme={setTheme} />
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />
+        </div>
+        {/* Phones get an icon-only Run once: the home hero's call-to-action was
+            unreachable on mobile without scrolling to the very bottom. Icon-only
+            keeps the owner-tuned phone-bar priorities (scope gets the slack,
+            nothing squeezes STOP). size="sm" trims its footprint to help the
+            scope selector's mobile min-width fit; the outline styling (chrome.tsx)
+            keeps it from reading as a second "Start" sitting right next to it. */}
+        <div className="sm:hidden">
+          <RunOnceButton snapshot={snapshot} size="sm" iconOnly />
         </div>
         <RunStateButton snapshot={snapshot} />
       </div>

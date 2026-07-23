@@ -132,7 +132,8 @@ export function stopFlowModel(policy: TradingPolicy): StopFlowLane[] {
             : "") +
           (policy.shortSellingEnabled === true
             ? " Broker-held trailing is LONG positions only — a short position's trail is always the app monitor, even on Alpaca (broker-held short trails are a planned follow-up, not yet built)."
-            : "")
+            : "") +
+          " Note: Broker-held stops execute during Regular Trading Hours (RTH) only — overnight and pre-market price gaps will only fill at the next regular-hours open."
       },
       {
         key: "app",
@@ -144,7 +145,10 @@ export function stopFlowModel(policy: TradingPolicy): StopFlowLane[] {
         value: trailingOn ? "trail: every tick · stops: each strategy run" : "stops: each strategy run",
         active: true,
         detail:
-          "The always-on, quantity-aware fallback. Fixed/ATR/beta breaches exit through the deterministic risk check at the start of each strategy run; the trailing monitor evaluates every scheduler tick (~1 min) when a trailing % is set — covering fractional shares, brokers without a needed order type, and anything a broker-held order doesn't. Pauses while the account is Stopped; broker-held orders keep resting."
+          "The always-on, quantity-aware fallback. Fixed/ATR/beta breaches exit through the deterministic risk check at the start of each strategy run; the trailing monitor evaluates every scheduler tick (~1 min) when a trailing % is set — covering fractional shares, brokers without a needed order type, and anything a broker-held order doesn't. Pauses while the account is Stopped; broker-held orders keep resting." +
+          (policy.strategyAuthority === "propose"
+            ? " [Blind Spot] Under 'propose' authority, the app produces approval cards on stop breach instead of executing exits automatically — if the owner is offline, positions can drift past stops without exits executing."
+            : "")
       }
     ],
     note: "A position's shares can only back ONE resting sell at the broker — the app monitor layers the remaining rules on top."
@@ -194,7 +198,7 @@ function NodeBox({ node }: { node: StopFlowNode }) {
   return (
     <div
       title={node.detail}
-      className={`min-w-[7.5rem] rounded-md border px-2.5 py-1.5 ${
+      className={`min-w-[7.5rem] rounded-control border px-2.5 py-1.5 ${
         node.active
           ? "border-[color:var(--con-pos-border)] bg-[color:var(--con-surface-2)]"
           : "border-[color:var(--con-line)] opacity-55"
@@ -211,7 +215,7 @@ function NodeBox({ node }: { node: StopFlowNode }) {
 function Arrow({ caption }: { caption?: string }) {
   return (
     <div className="flex flex-col items-center px-1 text-[color:var(--con-faint)]">
-      {caption ? <span className="text-[10px] leading-tight whitespace-nowrap">{caption}</span> : null}
+      {caption ? <span className="text-[length:var(--con-fs-2xs)] leading-tight whitespace-nowrap">{caption}</span> : null}
       <span aria-hidden className="text-[length:var(--con-fs-sm)] leading-none">⟶</span>
     </div>
   );
@@ -221,7 +225,7 @@ function Arrow({ caption }: { caption?: string }) {
 export function StopFlowDiagram({ policy }: { policy: TradingPolicy }) {
   const lanes = stopFlowModel(policy);
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-1)] p-3">
+    <div className="flex flex-col gap-3 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-1)] p-3">
       {lanes.map((lane) => (
         <div key={lane.key}>
           <div className="mb-1.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)]">{lane.label}</div>

@@ -108,19 +108,19 @@ export function connectTradierAccount(body: TradierConnectBody): Promise<{ ok: b
   });
 }
 
-/** POST /api/connected-accounts {broker:"test"} — creates the explicit local
- *  mock paper account. The server keeps it inactive until the user switches to it. */
-export function connectTestAccount(): Promise<{ ok: boolean; accountNumber?: string; label?: string }> {
-  return request<{ ok: boolean; accountNumber?: string; label?: string }>("/api/connected-accounts", {
-    method: "POST",
-    body: JSON.stringify({ broker: "test" })
-  });
-}
-
 /** DELETE /api/connected-accounts/[id] — removes the connection (and its
  *  stored credentials) from this app. Nothing at the broker is touched. */
 export function disconnectAccount(id: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/connected-accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** PATCH /api/connected-accounts/[id] {label} — rename an account's cosmetic display
+ *  name only. The broker-sourced account number and credentials are untouched. */
+export function renameAccount(id: string, label: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/connected-accounts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ label })
+  });
 }
 
 // ── API keys ─────────────────────────────────────────────────────────────────
@@ -138,6 +138,10 @@ export interface ApiKeyEntry {
   configured: boolean;
   /** "user" = your stored key, "env" = the server operator's env var, "none". */
   source: "user" | "env" | "none";
+  /** Elided first-8/last-4 form of the key that ACTUALLY resolves ("sk-or-v1-...ab12") — never a
+   *  usable value. Absent for a server key when you are not the operator, and for keys too short
+   *  to elide safely. */
+  preview?: string;
   /** Set only when YOU have a stored key. */
   updatedAt?: string;
   savedLabel?: string;
