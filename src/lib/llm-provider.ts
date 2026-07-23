@@ -96,7 +96,7 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
 
     case "gemini":
       if (/flash.*lite/i.test(lower)) return "gemini-2.0-flash-lite";
-      if (/pro/i.test(lower)) return "gemini-1.5-pro";
+      if (/pro/i.test(lower)) return "gemini-2.5-pro";
       return "gemini-2.0-flash";
 
     case "deepseek":
