@@ -22,7 +22,7 @@ describe("resolveLlmEndpoint", () => {
     const { getDb } = await import("../src/lib/db");
     getDb();
     const dbApiKeys = await import("../src/lib/db-api-keys");
-    setApiKey = dbApiKeys.setApiKey;
+    setApiKey = dbApiKeys.upsertUserApiKey;
     const mod = await import("../src/lib/llm-provider");
     resolveLlmEndpoint = mod.resolveLlmEndpoint;
   });
