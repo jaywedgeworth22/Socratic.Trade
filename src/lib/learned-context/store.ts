@@ -29,13 +29,17 @@ import {
 import { emitDashboardEvent } from "../events";
 import { getLearnedContextSharing } from "../db-settings";
 import type {
+  LearnedContextAccountEnvironment,
   LearnedContextCandidate,
+  LearnedContextLearningScope,
   LearnedContextOrigin,
   LearnedContextPendingRow,
-  LearnedContextRow
+  LearnedContextRow,
+  LearnedContextTransferState
 } from "../types";
 import { hasPii } from "./classify";
 import { classifyWithSemanticGate, type SemanticGateOptions } from "./semantic-gate";
+import { captureUserWriteEpoch, runWithUserWriteEpoch, type UserWriteEpoch } from "../user-write-fence";
 
 export interface IngestLearnedResult {
   written: LearnedContextRow | null;
@@ -46,6 +50,17 @@ export interface IngestLearnedResult {
   /** Convenience id of the queued pending row (mirrors `pending?.id`). */
   pendingId: string | null;
   tier: LearnedContextRow["riskTier"];
+}
+
+export interface IngestLearnedOptions extends SemanticGateOptions {
+  /** Exact broker account that produced the evidence. Account-derived writes are always private. */
+  connectedAccountId?: string;
+  accountEnvironment?: LearnedContextAccountEnvironment;
+  /** Internal override used by the transfer validator when it emits corroborated research. */
+  learningScope?: Exclude<LearnedContextLearningScope, "legacy">;
+  transferState?: LearnedContextTransferState;
+  /** Captured before any async classifier/provider work; stale operations cannot write after deletion. */
+  writeEpoch?: UserWriteEpoch;
 }
 
 /**
@@ -68,18 +83,45 @@ export async function ingestLearned(
   userId: string,
   candidate: LearnedContextCandidate,
   origin: LearnedContextOrigin,
-  opts: SemanticGateOptions = {}
+  opts: IngestLearnedOptions = {}
 ): Promise<IngestLearnedResult> {
+  const writeEpoch = opts.writeEpoch ?? captureUserWriteEpoch(userId);
   // PII gate first — an SSN/card number is never written regardless of tier.
   if (hasPii(candidate.value)) {
-    audit("learned_context.drop", { userId, origin, reason: "pii", subject: candidate.subject }, userId);
-    return { written: null, dropped: "pii", pending: null, pendingId: null, tier: "fact" };
+    return runWithUserWriteEpoch(userId, writeEpoch, () => {
+      audit("learned_context.drop", { userId, origin, reason: "pii", subject: candidate.subject }, userId);
+      return { written: null, dropped: "pii", pending: null, pendingId: null, tier: "fact" };
+    });
   }
 
   // Thread userId so the gate's LLM call uses this user's key + failover and is usage-attributed.
-  const tier = await classifyWithSemanticGate(candidate, { ...opts, userId });
+  const {
+    connectedAccountId,
+    accountEnvironment,
+    learningScope: requestedLearningScope,
+    transferState: requestedTransferState,
+    writeEpoch: _ignoredWriteEpoch,
+    ...semanticGateOptions
+  } = opts;
+  void _ignoredWriteEpoch;
+  const learningScope: Exclude<LearnedContextLearningScope, "legacy"> =
+    requestedLearningScope ?? (connectedAccountId ? "account" : "portfolio");
+  if (learningScope === "account" && !connectedAccountId) {
+    throw new Error("Account-scoped learned context requires connectedAccountId");
+  }
+  if (learningScope !== "account" && connectedAccountId) {
+    throw new Error(`${learningScope}-scoped learned context cannot carry connectedAccountId`);
+  }
+  const transferState: LearnedContextTransferState = requestedTransferState ??
+    (learningScope === "account" && accountEnvironment === "paper" ? "candidate" : "not_applicable");
+  if (learningScope === "research" && transferState !== "validated" && transferState !== "rejected") {
+    throw new Error("Research learned context must have an explicit validated or rejected transfer state");
+  }
 
-  if (tier !== "fact") {
+  const tier = await classifyWithSemanticGate(candidate, { ...semanticGateOptions, userId });
+
+  return runWithUserWriteEpoch(userId, writeEpoch, () => {
+    if (tier !== "fact") {
     // CHAT origin is HARD-CAPPED at 'fact' — a chat message can NEVER produce a pending risk item.
     // Preserve the audit-drop seam exactly for chat.
     if (origin === "chat") {
@@ -104,6 +146,10 @@ export async function ingestLearned(
       source: candidate.source ?? "inferred",
       origin,
       riskTier: tier,
+      connectedAccountId: connectedAccountId ?? null,
+      accountEnvironment: accountEnvironment ?? null,
+      learningScope,
+      transferState,
       classifierReason: `classified '${tier}' (fail-closed); queued for human confirmation`,
       createdAt: new Date().toISOString(),
       status: "pending",
@@ -119,14 +165,21 @@ export async function ingestLearned(
     // instead of waiting for the next poll cycle.
     emitDashboardEvent({ type: "pending-learned-change", userId, at: new Date().toISOString(), detail: { pendingId: pending.id } });
     return { written: null, dropped: null, pending, pendingId: pending.id, tier };
-  }
+    }
 
   const symbol = candidate.symbol ? candidate.symbol.toUpperCase() : null;
   const nowIso = new Date().toISOString();
 
   // Reconcile-on-write: if a live fact for this (kind, subject, symbol) exists with a different
   // value, supersede it; if identical, no-op (don't accumulate duplicates).
-  const existing = findLiveLearnedContextBySubject(userId, candidate.kind, candidate.subject, symbol);
+  const existing = findLiveLearnedContextBySubject(
+    userId,
+    candidate.kind,
+    candidate.subject,
+    symbol,
+    connectedAccountId ?? null,
+    learningScope
+  );
   if (existing && existing.value === candidate.value) {
     return { written: existing, dropped: null, pending: null, pendingId: null, tier };
   }
@@ -136,7 +189,9 @@ export async function ingestLearned(
   // SAFETY: only fact-tier rows ever reach this code path — risk/strategy-directive rows are
   // routed to the pending queue above and NEVER land here.
   const { contributeShared } = getLearnedContextSharing(userId);
-  const scope = contributeShared ? "shared" : "private";
+  const scope = learningScope === "account" || learningScope === "research"
+    ? "private"
+    : contributeShared ? "shared" : "private";
 
   const row: LearnedContextRow = {
     id: randomUUID(),
@@ -151,6 +206,10 @@ export async function ingestLearned(
     riskTier: "fact",
     confidence: candidate.confidence ?? 0.5,
     contributorUserId: userId,
+    connectedAccountId: connectedAccountId ?? null,
+    accountEnvironment: accountEnvironment ?? null,
+    learningScope,
+    transferState,
     assertedAt: nowIso,
     supersededBy: null,
     expiresAt: null
@@ -159,10 +218,21 @@ export async function ingestLearned(
   if (existing) supersedeLearnedContext(existing.id, row.id);
   audit(
     "learned_context.write",
-    { userId, origin, kind: row.kind, subject: row.subject, symbol: row.symbol, op: existing ? "supersede" : "append" },
+    {
+      userId,
+      origin,
+      kind: row.kind,
+      subject: row.subject,
+      symbol: row.symbol,
+      connectedAccountId: row.connectedAccountId,
+      learningScope: row.learningScope,
+      transferState: row.transferState,
+      op: existing ? "supersede" : "append"
+    },
     userId
   );
-  return { written: row, dropped: null, pending: null, pendingId: null, tier };
+    return { written: row, dropped: null, pending: null, pendingId: null, tier };
+  });
 }
 
 /**
@@ -182,7 +252,7 @@ export function retrieveLearnedContext(
   userId: string,
   symbols: string[],
   _regime?: string,
-  options: { includeShared?: boolean; limit?: number; perContributorCap?: number } = {}
+  options: { includeShared?: boolean; limit?: number; perContributorCap?: number; connectedAccountId?: string } = {}
 ): string[] {
   return retrieveLearnedContextDetailed(userId, symbols, _regime, options).lines;
 }
@@ -202,7 +272,7 @@ export function retrieveLearnedContextDetailed(
   userId: string,
   symbols: string[],
   _regime?: string,
-  options: { includeShared?: boolean; limit?: number; perContributorCap?: number } = {}
+  options: { includeShared?: boolean; limit?: number; perContributorCap?: number; connectedAccountId?: string } = {}
 ): RetrievedLearnedContext {
   const limit = options.limit ?? 12;
   const perContributorCap = options.perContributorCap ?? 6;
@@ -211,7 +281,7 @@ export function retrieveLearnedContextDetailed(
   const includeShared = options.includeShared !== undefined
     ? options.includeShared
     : getLearnedContextSharing(userId).includeShared;
-  const rows = listLearnedContextForDecision(userId, symbols, includeShared);
+  const rows = listLearnedContextForDecision(userId, symbols, includeShared, options.connectedAccountId);
 
   // Per-contributor cap so one prolific source can't crowd out the rest (matters once shared rows
   // are enabled; harmless for the private-only slice).
@@ -246,6 +316,9 @@ function formatLearnedContextLine(row: LearnedContextRow): string {
   if (typeof row.confidence === "number" && Number.isFinite(row.confidence)) {
     prov.push(`conf=${Number(row.confidence.toFixed(2))}`);
   }
+  prov.push(`scope=${row.learningScope}`);
+  if (row.accountEnvironment) prov.push(`environment=${row.accountEnvironment}`);
+  if (row.transferState !== "not_applicable") prov.push(`transfer=${row.transferState}`);
   return `- ${sym}${row.subject}: ${row.value}${prov.length > 0 ? ` [${prov.join(" ")}]` : ""}`;
 }
 
@@ -291,15 +364,21 @@ export function mergeStrategyDirectiveBlock(currentPrompt: string, id: string, v
  * The caller is responsible for the status transition + 'learned_context.approve' audit so ownership
  * is enforced once at the route layer.
  */
-export function applyApprovedPending(pending: LearnedContextPendingRow): void {
+export function applyApprovedPending(pending: LearnedContextPendingRow, assertedAt: string = new Date().toISOString()): void {
   if (pending.riskTier === "strategy-directive") {
     const current = getStrategyPrompt(pending.userId);
-    const merged = mergeStrategyDirectiveBlock(current, pending.id, pending.value, new Date().toISOString());
+    const merged = mergeStrategyDirectiveBlock(current, pending.id, pending.value, assertedAt);
     setStrategyPrompt(merged, pending.userId);
     return;
   }
 
   // tier 'risk' → advisory promote. Lives in the learned_context store as soft DATA only.
+  // assertedAt is caller-controllable: the daily learning review passes its run-start timestamp
+  // (the same value it persists as lastReviewedAt) so a row it JUST approved is stamped at ==
+  // lastReviewedAt and excluded by evaluateLearningReviewTrigger's strict `> lastReviewedAt` — it
+  // is not miscounted as a brand-new lesson the next day and does not re-trigger a review of
+  // content it just reviewed. The human approve route omits the arg and gets the real approval
+  // time (a human-approved lesson has NOT been through the review board, so it SHOULD trigger one).
   const row: LearnedContextRow = {
     id: randomUUID(),
     userId: pending.userId,
@@ -313,7 +392,11 @@ export function applyApprovedPending(pending: LearnedContextPendingRow): void {
     riskTier: "risk",
     confidence: 0.5,
     contributorUserId: pending.userId,
-    assertedAt: new Date().toISOString(),
+    connectedAccountId: pending.connectedAccountId,
+    accountEnvironment: pending.accountEnvironment,
+    learningScope: pending.learningScope,
+    transferState: pending.transferState,
+    assertedAt,
     supersededBy: null,
     expiresAt: null
   };

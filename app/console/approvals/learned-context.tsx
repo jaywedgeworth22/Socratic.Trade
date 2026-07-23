@@ -15,7 +15,8 @@
  *  every card, non-blocking error notices, light/dark via --con-* tokens. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { Brain, ChevronDown, ChevronRight, RefreshCw, Settings } from "lucide-react";
 import {
   approvePendingLearnedContext,
   deleteLearnedContextItem,
@@ -34,11 +35,63 @@ import { SymbolButton } from "../ui/symbol-drilldown";
 
 const POLL_MS = 60_000;
 
+/** Small header link from each Learning Review block to the Learning Review model-selection card
+ *  in Settings (its #learning-review anchor, ALL YOUR ACCOUNTS section). */
+function LearningReviewModelSettingsLink() {
+  return (
+    <Tooltip content="Configure the daily Learning Review — the model that audits these learned items — in Settings.">
+      <Link
+        href="/console/settings#learning-review"
+        className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] transition-colors hover:text-[color:var(--con-fg)]"
+      >
+        <Settings size={12} aria-hidden /> Model settings
+      </Link>
+    </Tooltip>
+  );
+}
+
 const ORIGIN_LABEL: Record<PendingLearnedItem["origin"], string> = {
   autonomous: "autonomous run",
   ingest: "document ingestion",
   chat: "chat" // defensive: chat-origin risk items are hard-capped server-side and never queued
 };
+
+function sourceLabel(value?: string): string {
+  if (!value) return "-";
+  const map: Record<string, string> = {
+    "market_scan": "Market scan",
+    "candidate": "Candidate",
+    "rag": "Retrieved evidence",
+    "red_team": "Red team",
+    "policy": "Policy gate",
+    "outcome": "Outcome",
+    "learning": "Learning",
+    "coaching": "Coaching",
+    "framework": "Framework",
+    "override": "Owner override",
+    "safety": "Safety",
+    "owner-chat": "Owner chat",
+    "experience-memory": "Experience memory",
+    "document-ingest": "Document ingest",
+    "autonomous-run": "Autonomous run"
+  };
+  return map[value] ?? value.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function kindLabel(value?: string): string {
+  if (!value) return "-";
+  const map: Record<string, string> = {
+    "pattern": "Pattern",
+    "decision": "Decision",
+    "fact": "Fact"
+  };
+  return map[value] ?? value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function capitalizeFirstLetter(text: string): string {
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 function tierMeta(tier: PendingLearnedItem["riskTier"]): { label: string; tone: "warn" | "accent"; explain: string } {
   return tier === "risk"
@@ -68,22 +121,40 @@ function Provenance({ item }: { item: PendingLearnedItem }) {
       </Tooltip>
       <Tooltip content="What the producer cited as the basis for this item.">
         <span>
-          Source <span className="text-[color:var(--con-muted)]">{item.source}</span>
+          Source <span className="text-[color:var(--con-muted)]">{sourceLabel(item.source)}</span>
         </span>
       </Tooltip>
       <Tooltip content="The type of learned item: a pattern, a decision, or a fact.">
         <span>
-          Kind <span className="text-[color:var(--con-muted)]">{item.kind}</span>
+          Kind <span className="text-[color:var(--con-muted)]">{kindLabel(item.kind)}</span>
         </span>
       </Tooltip>
       {item.classifierReason && (
         <Tooltip
           content="Why the fail-closed classifier routed this to your confirmation queue instead of storing it automatically.">
-          <span>Why it queued <span className="text-[color:var(--con-muted)]">{item.classifierReason}</span>
+          <span>Queued because <span className="text-[color:var(--con-muted)]">{capitalizeFirstLetter(item.classifierReason.trim())}</span>
           </span>
         </Tooltip>
       )}
     </div>
+  );
+}
+
+// ── Learning Review "left for you" note (defer verdict) ─────────────────────
+
+/** Shown only when the daily Learning Review LLM reviewed this item and could not confidently
+ *  decide it — it left the item pending and explained why. Distinct from Provenance's
+ *  classifierReason: that's why INGEST queued it here; this is why the REVIEWER, having looked,
+ *  still left it for a human. */
+function ReviewerNote({ item }: { item: PendingLearnedItem }) {
+  if (!item.reviewNote) return null;
+  return (
+    <Tooltip content="The daily Learning Review model looked at this item and could not confidently decide, so it left the item here for you and explained why.">
+      <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
+        Left for you because{" "}
+        <span className="text-[color:var(--con-muted)]">{item.reviewNote}</span>
+      </p>
+    </Tooltip>
   );
 }
 
@@ -101,7 +172,7 @@ function ApprovalEffect({ item, withPreview }: { item: PendingLearnedItem; withP
         {withPreview && (
           <pre
             title="The exact block approval appends to your strategy prompt. The date is stamped at approval time."
-            className="con-mono overflow-x-auto whitespace-pre-wrap break-words rounded-[var(--con-radius-sm)] border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[11px] leading-relaxed text-[color:var(--con-muted)]"
+            className="con-mono overflow-x-auto whitespace-pre-wrap break-words rounded-[var(--con-radius-sm)] border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]"
           >
             {directiveBlockPreview(item)}
           </pre>
@@ -167,6 +238,7 @@ function LearnedItemCard({
         </Tooltip>
         <ApprovalEffect item={item} withPreview={false} />
         <Provenance item={item} />
+        <ReviewerNote item={item} />
       </div>
       <footer className="flex items-center gap-2 border-t border-[color:var(--con-line)] px-4 py-3">
         <Btn
@@ -314,16 +386,19 @@ export function LearnedContextInbox() {
             )}
           </h2>
         </Tooltip>
-        <Tooltip
-          content="Re-check the server for pending learned context now (it also refreshes automatically).">
-          <button
-            type="button"
-            className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] transition-colors hover:text-[color:var(--con-fg)]"
-            onClick={() => void load()}
-            aria-label="Refresh learned-context queue">
-            <RefreshCw size={12} aria-hidden /> Refresh
-          </button>
-        </Tooltip>
+        <div className="flex items-center gap-3">
+          <LearningReviewModelSettingsLink />
+          <Tooltip
+            content="Re-check the server for pending learned context now (it also refreshes automatically).">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] transition-colors hover:text-[color:var(--con-fg)]"
+              onClick={() => void load()}
+              aria-label="Refresh learned-context queue">
+              <RefreshCw size={12} aria-hidden /> Refresh
+            </button>
+          </Tooltip>
+        </div>
       </div>
       {error && (
         <Card>
@@ -485,12 +560,12 @@ function LearnedFactCard({
           </Tooltip>
           <Tooltip content="What the producer cited as the basis for this row.">
             <span>
-              Source <span className="text-[color:var(--con-muted)]">{item.source}</span>
+              Source <span className="text-[color:var(--con-muted)]">{sourceLabel(item.source)}</span>
             </span>
           </Tooltip>
           <Tooltip content="The type of learned row: a pattern, a decision, or a fact.">
             <span>
-              Kind <span className="text-[color:var(--con-muted)]">{item.kind}</span>
+              Kind <span className="text-[color:var(--con-muted)]">{kindLabel(item.kind)}</span>
             </span>
           </Tooltip>
         </div>
@@ -601,7 +676,8 @@ export function LearnedFactsArchive() {
       </Tooltip>
       {open && (
         <>
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-end gap-3">
+            <LearningReviewModelSettingsLink />
             <Tooltip
               content="Re-check the server for recorded learned context now (it also refreshes automatically while open).">
               <button

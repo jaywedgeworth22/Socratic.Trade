@@ -242,7 +242,7 @@ function dissentForDecision(proposal: TradeProposal, decision: PolicyDecision, o
     // Distinguish "Bear rejected AND blocked" from "Bear rejected but OVERRIDDEN & executed": an
     // overridden veto is advisory (a logged rationale let the opening proceed), so it reads as a
     // warning, not a hard negative, and the title says so.
-    const overridden = proposal.redTeamVerdict.overridden === true;
+    const overridden = overrideResolution?.applied === true;
     rows.push({
       kind: "red_team",
       title: proposal.redTeamVerdict.rejected
@@ -325,6 +325,8 @@ export function buildSocraticDecisionCase(input: {
     authority: input.authority,
     thesis: input.proposal.tradeThesisTag,
     rationale: input.proposal.rationale,
+    ...(input.proposal.greenTeamRationale ? { greenTeamRationale: input.proposal.greenTeamRationale } : {}),
+    ...(input.proposal.sizingSnapshot ? { sizingSnapshot: input.proposal.sizingSnapshot } : {}),
     action: formatAction(input.proposal, notional),
     thesisTag: input.proposal.tradeThesisTag,
     regime: input.proposal.entryMarketRegime,
@@ -364,7 +366,7 @@ export function buildSocraticDecisionCase(input: {
     dissent: dissentForDecision(input.proposal, input.decision, input.overrideResolution),
     ...(override ? { autonomyOverride: override } : {}),
     lessons: [
-      input.status === "placed" ? "Track realized outcome against the stated thesis and invalidation note." : "",
+      input.status === "placed" || input.status === "filled" ? "Track realized outcome against the stated thesis and invalidation note." : "",
       input.status === "blocked" && input.proposal.autonomyOverride?.requested ? "Override request did not clear the hard/preference split; review classifier or mandate." : "",
       input.overrideResolution?.applied ? "Owner preference gate was explicitly overridden; measure whether the autonomy judgment improved returns." : ""
     ].filter(Boolean),
@@ -407,10 +409,16 @@ export function frameworkProposalFromDecision(decision: SocraticDecisionCase): O
 }
 
 export function socraticStatusFromProposalStatus(status: string): SocraticDecisionStatus {
-  if (status === "placed") return "placed";
+  if (status === "placed" || status === "paper") return "placed";
+  if (status === "filled") return "filled";
   if (status === "proposed") return "proposed";
+  if (status === "placing") return "placing";
   if (status === "blocked") return "blocked";
-  if (status === "rejected" || status === "rejected_by_broker") return "rejected";
-  if (status === "error" || status === "placing_failed") return "error";
+  if (status === "rejected" || status === "rejected_by_red_team") return "rejected";
+  if (status === "rejected_by_broker") return "rejected_by_broker";
+  if (status === "not_placed" || status === "placing_failed") return "not_placed";
+  if (status === "expired") return "expired";
+  if (status === "withdrawn") return "withdrawn";
+  if (status === "error" || status === "failed") return "error";
   return "planned";
 }

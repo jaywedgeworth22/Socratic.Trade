@@ -8,7 +8,7 @@
  *  light and dark themes. Static frame for prefers-reduced-motion. */
 
 import { useEffect, useRef } from "react";
-import { sampleWordmark, buildTickerUnits, drawTicker, type Wordmark, type TickerUnit } from "./candle-ticker";
+import { sampleWordmark, buildTickerUnits, drawTicker, WORDMARK_AR, type Wordmark, type TickerUnit } from "./candle-ticker";
 
 let CACHED: { wm: Wordmark; units: TickerUnit[] } | null = null;
 function model() {
@@ -52,10 +52,17 @@ export function HeaderLogo({ height = 18 }: { height?: number }) {
       data-brand-logo
       role="img"
       aria-label="Socratic Trade"
-      // initial size estimate using the measured "SOCRATIC TRADE" aspect ratio
-      // (≈13.8) so the bar reserves the right space before the effect sets the
-      // exact width from wm.ar; keeps the reserved box within a couple px.
-      style={{ display: "block", height: `${height}px`, width: `${Math.round(height * 13.8)}px` }}
+      // Initial width uses the shared WORDMARK_AR — the SAME value the effect's
+      // wm.ar yields — so the reserved box already equals the final size and the
+      // canvas never resizes on mount (a stale ~13.8 guess popped it ~5% narrower,
+      // which the landing intro measured and followed: the reported size jump).
+      style={{
+        display: "block",
+        height: `${height}px`,
+        width: `${Math.round(height * WORDMARK_AR)}px`,
+        maxWidth: "100%",
+        objectFit: "contain",
+      }}
     />
   );
 }

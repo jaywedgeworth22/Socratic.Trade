@@ -2,6 +2,94 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-07-13 evidence-contract and learning-boundary update
+
+The implemented decision path now treats evidence routing as a first-class contract:
+
+- a wider cheap preselection is enriched before the final candidate rank;
+- enriched fields carry availability, timestamp, provenance, disagreement, and provider-failure
+  receipts while preserving scalar consumers;
+- buy/short openings are deterministically limited to the exact final candidate set;
+- Green and Red receive one content-addressed evidence manifest and the complete same evidence
+  object, with a parity hash recorded in the run audit;
+- SEC/RAG, learned prose, reflections, and episodic memories share one run-wide context budget and
+  instruction-like external text is quarantined as data;
+- realized and skipped outcomes join to decision-time source ablations, producing explicitly
+  observational source-value telemetry; and
+- relational/vector account-derived learning is exact-account scoped. Broker-paper lessons transfer
+  only after independent live corroboration; the product Test Account is removed and purged.
+
+See `docs/reviews/2026-07-13-decision-evidence-architecture.md` for the source-by-source audit,
+invariants, and residual gaps.
+
+## 2026-07-13 sizing-arithmetic and outcome-semantics update
+
+- The app computes and persists finalized notional, decision-time NAV, order percentage of NAV,
+  daily cap mode/effective dollars, used budget, and remaining budget before Red Team review.
+- Migration v27 stores the exact Green rationale and sizing snapshot on the durable Socratic case;
+  refreshes and later coach/outcome/lesson writes preserve both receipts.
+- Red Team receives those deterministic values as authoritative arithmetic, so prose such as
+  "$4 is 0.04% of a $100 account" cannot be treated as a model-derived fact.
+- A Red approval means only that the adversarial thesis review approved the stated size; policy,
+  broker preflight, and placement remain separate deterministic outcomes in data and UI.
+- A Red rejection is called overridden only when the final policy decision records an applied
+  override; the earlier model request is not proof that hard gates allowed it.
+- Override-request audits likewise say `red_team_veto_override_requested`; the existing
+  `socratic_override_applied`/`socratic_override_refused` events remain final-outcome truth, while
+  historical `red_team_veto_overridden` rows remain readable for longitudinal metrics.
+- Alpaca sub-share dollar entries clear whole-share bracket fields when the app declares the native
+  bracket skipped, preventing the receipt/transport contradiction that previously blocked EXE.
+
+## 2026-07-14 final-size and lifecycle invariant update
+
+- A successful broker-minimum bump on a risk-adding opening refreshes the exact sizing receipt and
+  reruns Red once on Green-only prose plus structured evidence. Red's half-size result may apply one
+  down-only haircut; the broker reviews that haircut, and the strategy never bumps it back up.
+- Reject, unavailable, or broker-unplaceable half-size results hold the final broker-adjusted order
+  for one explicit owner decision. That second approval is stamped and audited as an override
+  without recursively rerunning Red. Risk-reducing exits remain exempt.
+- That owner decision is scoped to the broker estimate shown on the pending card. Downward drift
+  and upward quote noise no greater than the larger of 1%/$0.01 remain inside the approved risk
+  envelope; a larger upward requote persists the new amount and requires one fresh click.
+- Sell-to-fund planning cannot run ahead of that decision. Every otherwise autonomous opening is
+  correlation-gated, broker-reviewed, minimum-adjusted, exact-size Red-reviewed, and
+  policy/override-preflighted before its notional can request a funding sale. Correlation-dropped,
+  broker-unplaceable, human-held, and non-funding policy-blocked openings contribute zero demand;
+  the intended cumulative buying-power shortfall remains fundable. Placement consumes the cached
+  exact broker shape rather than rerunning a review that could create a post-sale hold.
+- Human-review reasons are independent. A later Red approval clears only the superseded Red hold,
+  never rationale-collapse or owner-preference holds.
+- Before any autonomous broker submission, the durable `trade_proposals` intent and initial
+  `socratic_decisions` case commit in one SQLite transaction. Subsequent placement, broker decline,
+  expiry, withdrawal, and recovery transitions update both ledgers transactionally.
+- Human approval uses the same invariant: the atomic `proposed -> placing` claim requires a
+  proposed Socratic case, creates a legacy fallback case inside that transaction when necessary,
+  and fails before the broker boundary when the receipt cannot be committed.
+- Uncertain submissions remain `placing` until reconciliation proves the result. Same-decision
+  vector-memory writes are serialized and re-read current SQLite state before embedding, preventing
+  a slow older lifecycle write from overwriting a newer terminal result.
+- A synchronous broker fill remains `filled` end to end while still consuming daily/hourly limits
+  and placement counts. Outcome coverage, run summaries, ops diagnostics, and the decision-memory
+  lifecycle include it rather than dropping the most useful realized cases.
+- A chat draft's synthetic run id is permanent idempotency, not merely pending-card dedupe. Retries
+  after approval or fill return the original proposal, and the final lookup plus insert share an
+  immediate SQLite transaction so concurrent requests cannot create a second approvable order.
+- Crash recovery uses `(proposalId, brokerOrderId)` to prevent duplicate fill rows, but still
+  reconciles the existing row forward. Broker-filled truth atomically advances a pending receipt,
+  proposal, and Socratic case before the uncertainty notification is resolved.
+- Terminal broker state is never interpreted without quantity: canceled/rejected/expired with a
+  positive broker-filled quantity is a final partial execution. Direct placement stores the fill
+  receipt before advancing proposal/case lifecycle in one transaction; persistence failure or a
+  nonterminal response lacking an order id stays `placing` under refId recovery.
+- A live `partially_filled` receipt is already accounting exposure and updates in place. Stale-limit
+  replacement receipts dedupe on user + account + replacement identity, not globally on a broker id.
+- Broker execution is not accounting truth until both cumulative quantity and a finite positive
+  realized price are known. Unpriced receipts persist zero price/notional plus the maximum
+  broker-reported quantity; later stale or terminal-zero snapshots cannot reduce that floor.
+- A replacement partial missing price or order id remains active under its durable replacement ref,
+  binds the eventual broker id onto the same receipt, and leaves recovery only after its known
+  execution is priced. The active replacement lock is scoped by user + account + original order.
+
 ## 1. Strategy Architecture: Evaluation Lenses
 
 To ensure balanced and resilient trade proposals, the LLM evaluates candidates
@@ -57,12 +145,23 @@ adversarial-debate lenses before making a decision.
   requests strict `json_schema` on OpenAI-compatible providers, and the strategy/red-team
   Anthropic calls use prompt caching. See
   `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
-- **Proposed redesign (design-only, 2026-07-01):** `docs/single-adversary-consolidation.md`
-  proposes collapsing today's *two* adversarial passes (the in-flow Bear inside `proposeTrades`
-  and the standalone `debateProposal`, which run the same model twice) into a single hardened
-  **Red Team** that reviews the finalized (post-sizing) trade, fails **closed and visibly** when
-  it can't run, never blocks a risk-reducing exit, and is provably independent of the proposer.
-  Not yet implemented; decisions resolved in that spec's §9, review refinements in §12.
+- **Single-adversary consolidation (IMPLEMENTED 2026-07-07):** `docs/single-adversary-consolidation.md`
+  landed, as amended by the owner's 2026-07-07 revision. The in-flow Bear LLM pass inside
+  `proposeTrades` is DELETED (the model-free `deterministicBearFilter` stays); the single hardened
+  **Red Team** (`debateProposal`) reviews the finalized (post-sizing) trade for EVERY risk-adding
+  opening (universal coverage, concurrent with a 3-wide pool), fact-checks the strategist's claims
+  against the same candidate evidence the Bull saw (R7 `adversaryContext`), returns a discrete
+  down-only `approve`/`approve-at-half`/`reject` verdict (unplaceable half → held for human, never
+  up-sized), fails **closed and visibly** when it can't run (persisted `decision.adversaryUnavailable`
+  + notification flag + amber approval-card badge), and NEVER reviews exits or net-risk-reducing
+  trades (§3.5, net-direction-aware). NO MODEL DEFAULTS anywhere: both `llmModel` and
+  `redTeamLlmModel` are mandatory explicit Settings picks (keyed providers only; same model allowed
+  with a non-blocking independence hint); the `RED_TEAM_LLM_PROVIDER`/`RED_TEAM_LLM_MODEL` env
+  override is deleted (db migration v15 seeds the first-class setting once from a live override).
+  Reliability: `extractJsonPayload` fence-tolerant parsing at every LLM parse site incl. the Bull,
+  strict shape validation (unknown verdict = fail closed), bounded same-model retry
+  (`fetchLlmWithRetry`, no hidden failover). Prompt version bumped to `agentic-strategy@2.0.0`.
+  See `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
 - **First-class verdict (2026-07-01):** the Red Team debate result is stored on the proposal as a
   structured `redTeamVerdict?: { rejected; available; reason }` field (`TradeProposal` in
   `src/lib/types.ts`), not just appended to the free-text rationale. It survives the JSON round-trip

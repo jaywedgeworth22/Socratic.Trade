@@ -27,6 +27,7 @@
 import { logApiHealth } from "./db-health";
 import { sendNotification } from "./notifications";
 import { audit } from "./db";
+import { createDurableMap } from "./durable-state";
 import type { TradingPolicy } from "./types";
 import { resolveOpenAiModel } from "./llm-request";
 import { usageMonitorBaseUrl, usageMonitorToken, usageMonitorEnabled } from "./usage-monitor-push";
@@ -103,9 +104,21 @@ function alertCooldownMs(): number {
 
 interface BudgetCacheHost {
   __usageBudgetCache?: { status: BudgetStatus; fetchedAt: number };
-  __usageBudgetAlertSentAt?: Map<string, number>;
 }
 const cacheHost = globalThis as unknown as BudgetCacheHost;
+
+// Durable (survives a process restart): every OTHER alert-cooldown in this codebase (db-health.ts,
+// usage-limit-alerts.ts, broker-minimum-guard.ts, vector-db.ts) is backed by getInternalSetting/
+// setInternalSetting (durable); this one alone used a bare in-memory Map — an inconsistency, not a
+// deliberate choice. Without persistence, a redeploy resets the cooldown clock and a user/provider
+// already alerted minutes earlier gets re-alerted immediately after — the exact duplicate-alert spam
+// this cooldown exists to prevent.
+// Lazily created (not at module top level) — see provider-rate-limit.ts's quotaStore() for why
+// eagerly calling createDurableMap() at import time risks a circular-import TDZ crash.
+let alertSentAtInstance: ReturnType<typeof createDurableMap<number>> | undefined;
+function alertSentAt(): ReturnType<typeof createDurableMap<number>> {
+  return alertSentAtInstance ?? (alertSentAtInstance = createDurableMap<number>("usage-budget-alert-cooldown"));
+}
 
 function isBudgetLevel(v: unknown): v is BudgetLevel {
   return v === "ok" || v === "warning" || v === "exceeded" || v === "unconfigured";
@@ -204,12 +217,11 @@ export async function getBudgetStatusCached(opts: { force?: boolean; fetchImpl?:
 // ── Phase 1: alerts ──────────────────────────────────────────────────────────────
 
 function shouldAlert(userId: string, provider: string, level: BudgetLevel): boolean {
-  const map = cacheHost.__usageBudgetAlertSentAt ?? (cacheHost.__usageBudgetAlertSentAt = new Map());
   const key = `${userId}|${provider}|${level}`;
   const now = Date.now();
-  const last = map.get(key);
+  const last = alertSentAt().get(key);
   if (last !== undefined && now - last < alertCooldownMs()) return false;
-  map.set(key, now);
+  alertSentAt().set(key, now);
   return true;
 }
 
@@ -267,6 +279,7 @@ function providerForModel(model: string | null | undefined): string {
   if (/^grok/.test(m)) return "xai";
   if (/^gemini/.test(m)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
+  if (/^openrouter\//.test(m)) return "openrouter";
   if (/^deepseek/.test(m)) return "deepseek";
   return "openai";
 }
@@ -274,6 +287,10 @@ function providerForModel(model: string | null | undefined): string {
 // Cost-ordered downgrade within a provider family (keys/values exist in MODEL_PRICE_PER_M).
 const CHEAPER_MODEL: Record<string, string> = {
   // OpenAI
+  "gpt-5.6": "gpt-5.6-terra",
+  "gpt-5.6-sol": "gpt-5.6-terra",
+  "gpt-5.6-terra": "gpt-5.6-luna",
+  "gpt-5.6-luna": "gpt-5.4-mini",
   "gpt-5.5": "gpt-5.4-mini",
   "gpt-5.4": "gpt-5.4-mini",
   "gpt-5.4-mini": "gpt-5.4-nano",
@@ -306,18 +323,26 @@ const CHEAPER_MODEL: Record<string, string> = {
 /** A cheaper model in the same family, or undefined if none is known. */
 export function cheaperModel(model: string | null | undefined): string | undefined {
   if (!model) return undefined;
-  const key = model.toLowerCase();
-  if (CHEAPER_MODEL[key]) return CHEAPER_MODEL[key];
-  // Prefix fallback for DATED/versioned suffixes only (e.g. "claude-opus-4-8-20251101" → the
-  // "claude-opus-4-8" tier). Requires the remainder to be a "-<digit>..." date/version — never a
-  // variant suffix like "-mini"/"-nano" (those must be exact keys, else they'd wrongly map to their
-  // own base tier's downgrade, i.e. to themselves).
-  const prefix = Object.keys(CHEAPER_MODEL).find((k) => {
-    if (!key.startsWith(k)) return false;
-    const rest = key.slice(k.length);
-    return rest === "" || /^-\d/.test(rest);
-  });
-  return prefix ? CHEAPER_MODEL[prefix] : undefined;
+  const parts = model.toLowerCase().split("/");
+  const prefix = parts.length > 1 ? parts.slice(0, -1).join("/") + "/" : "";
+  const key = parts[parts.length - 1];
+
+  let cheaper: string | undefined;
+  if (CHEAPER_MODEL[key]) {
+    cheaper = CHEAPER_MODEL[key];
+  } else {
+    // Prefix fallback for DATED/versioned suffixes only (e.g. "claude-opus-4-8-20251101" → the
+    // "claude-opus-4-8" tier). Requires the remainder to be a "-<digit>..." date/version — never a
+    // variant suffix like "-mini"/"-nano" (those must be exact keys, else they'd wrongly map to their
+    // own base tier's downgrade, i.e. to themselves).
+    const matchedKey = Object.keys(CHEAPER_MODEL).find((k) => {
+      if (!key.startsWith(k)) return false;
+      const rest = key.slice(k.length);
+      return rest === "" || /^-\d/.test(rest);
+    });
+    if (matchedKey) cheaper = CHEAPER_MODEL[matchedKey];
+  }
+  return cheaper ? prefix + cheaper : undefined;
 }
 
 export interface BudgetRunDecision {
@@ -369,16 +394,36 @@ function computeBudgetDecision(
   policy: { llmModel?: string | null; redTeamLlmModel?: string | null },
   status: BudgetStatus
 ): BudgetRunDecision {
-  // Resolve the models that will ACTUALLY serve this run, matching resolveLlmEndpoint: the green
-  // model falls back to OPENAI_MODEL/the default when policy.llmModel is unset, and the red model
-  // falls back to the green model. Enforcing on the raw (possibly undefined) policy fields would
-  // silently no-op the common default-model case.
+  // Resolve the models that will ACTUALLY serve this run, matching resolveLlmEndpoint. NO MODEL
+  // DEFAULTS (owner directive 2026-07-07): both resolve to the user's explicit choices, or "" when
+  // unchosen — Red NEVER falls back to Green. A run with an unchosen model fails closed before any
+  // spend, so there is nothing here to budget: bail out with NO_DECISION on a blank Green, and treat
+  // a blank Red as "no red call will run" (no downgrade to compute for it).
   const greenModel = resolveOpenAiModel(policy);
-  const redModel = (policy.redTeamLlmModel && policy.redTeamLlmModel.trim()) || greenModel;
+  if (!greenModel) return NO_DECISION;
+  const redModel = policy.redTeamLlmModel?.trim() || "";
 
+  // Universal OpenRouter (#1703): strategy LLM spend is booked as provider "openrouter", while
+  // model ids remain family-native (gpt-*, claude-*, …). Prefer openrouter status when present;
+  // fall back to model-family name for older multi-provider monitor shapes. Summary.overBudget is
+  // only a fallback when NEITHER openrouter NOR the model family appear in the provider list —
+  // never treat alpaca/etc. exceeded as an LLM skip.
   const statusByProvider = new Map(status.providers.map((p) => [p.name.toLowerCase(), p.status]));
-  const primaryProvider = providerForModel(greenModel);
-  const primaryStatus = statusByProvider.get(primaryProvider) ?? "ok";
+  const familyProvider = providerForModel(greenModel);
+  let primaryProvider = familyProvider;
+  let primaryStatus = statusByProvider.get(familyProvider) ?? "ok";
+  if (statusByProvider.has("openrouter")) {
+    primaryProvider = "openrouter";
+    primaryStatus = statusByProvider.get("openrouter") ?? "ok";
+  } else if (!statusByProvider.has(familyProvider)) {
+    if (status.summary.overBudget) {
+      primaryProvider = "openrouter";
+      primaryStatus = "exceeded";
+    } else if (status.summary.warning) {
+      primaryProvider = "openrouter";
+      primaryStatus = "warning";
+    }
+  }
 
   if (primaryStatus !== "exceeded" && primaryStatus !== "warning") return NO_DECISION;
 
@@ -396,7 +441,7 @@ function computeBudgetDecision(
     };
   }
 
-  const cheaperRed = cheaperModel(redModel);
+  const cheaperRed = redModel ? cheaperModel(redModel) : undefined;
   const redChanged = !!cheaperRed && cheaperRed !== redModel;
   if (greenChanged || redChanged) {
     return {

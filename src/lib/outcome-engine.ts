@@ -28,6 +28,7 @@ import {
   enqueueDueJob,
   failDueJob,
   getDueJobStats,
+  getConnectedAccount,
   getPolicy,
   getSkippedCounterfactualByRunSymbol,
   getSkippedCounterfactualByRunSymbolHorizon,
@@ -50,7 +51,7 @@ import { buildLlmRequestBody, extractLlmText, llmAuthHeaders } from "./llm-call"
 import { humanizeLlmError } from "./llm-errors";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
-import { extractLlmUsage, recordLlmUsage } from "./llm-usage";
+import { extractLlmUsage, providerRequestIdFromPayload, recordLlmUsage } from "./llm-usage";
 import { addTradingDays } from "./market-calendar";
 import { normalizeSymbol } from "./money";
 import { withLlmGeneration } from "./observability";
@@ -275,7 +276,7 @@ async function measureCase(
   let realizedLot: ClosedLot | undefined;
   let note: string | undefined;
 
-  if (decisionCase.status === "placed") {
+  if (decisionCase.status === "placed" || decisionCase.status === "filled") {
     const fills = listFillEventsByProposalId(decisionCase.proposalId ?? decisionCase.id, ctx.userId).filter(
       (fill) => normalizeSymbol(fill.symbol) === symbol
     );
@@ -397,7 +398,7 @@ async function measureCase(
 
   const allHorizonsTerminal = outcomes.length === 4;
   const okRows = outcomes.filter((row) => row.resolution === "ok");
-  if (decisionCase.status !== "placed" && allHorizonsTerminal) {
+  if (decisionCase.status !== "placed" && decisionCase.status !== "filled" && allHorizonsTerminal) {
     const headline = pickHeadlineRow(okRows);
     if (headline && typeof headline.returnPct === "number") {
       return {
@@ -764,8 +765,22 @@ async function generatePostMortemLessons(
     decisionCase.connectedAccountId
   );
 
-  // Route each lesson through the shared learned-context ingestion (origin 'autonomous'): the
-  // fail-closed classifier decides fact-vs-risk tier; risk-tier lessons land in the approval inbox.
+  // Route each lesson through the account-scoped learned-context boundary. A historical case without
+  // an attributable connected account may retain its embedded case/lesson, but it cannot enter a
+  // decision prompt as portfolio-wide context because its paper/live provenance is unknowable.
+  const lessonAccount = decisionCase.connectedAccountId
+    ? getConnectedAccount(decisionCase.connectedAccountId, userId)
+    : undefined;
+  if (!lessonAccount) {
+    audit(
+      "learned_context.account_provenance_missing",
+      { userId, decisionId: decisionCase.id, connectedAccountId: decisionCase.connectedAccountId ?? null },
+      userId,
+      decisionCase.connectedAccountId
+    );
+    return { written: true };
+  }
+
   for (const { lesson, direction } of parsed.lessons) {
     try {
       await ingestLearned(
@@ -778,7 +793,8 @@ async function generatePostMortemLessons(
           source: "inferred",
           confidence: 0.55
         },
-        "autonomous"
+        "autonomous",
+        { connectedAccountId: lessonAccount.id, accountEnvironment: lessonAccount.environment }
       );
     } catch (err) {
       console.warn("[outcome-engine] ingestLearned for lesson failed:", err instanceof Error ? err.message : String(err));
@@ -797,14 +813,18 @@ async function generatePostMortemLessons(
  * single well-defined "this run's downgrade" to hand it. It always re-reads the owner's persisted
  * (undowngraded) policy — same behavior as before the usage-budget downgrade existed.
  */
-async function callLessonLlm(userId: string, userContent: string): Promise<string | undefined> {
+export async function callLessonLlm(userId: string, userContent: string): Promise<string | undefined> {
   const policy = getPolicy(userId);
   const { url, key, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(
     policy,
     userId,
     "https://api.openai.com/v1/chat/completions"
   );
-  if (!key) return undefined;
+  // No-defaults / rotation-sentinel safety net: resolveLlmEndpoint maps an unconfigured OR "__rotate__"
+  // model to "" outside a strategy run (rotation is resolved only inside runStrategyOnce), so a blank
+  // model with a present key must be treated as unconfigured — skip cleanly rather than POST model:""
+  // (which 400s on every post-mortem lesson call). Same contract as strategy-tuning's local-rules gate.
+  if (!key || !model) return undefined;
 
   const body = buildLlmRequestBody(
     { provider, transport },
@@ -813,7 +833,11 @@ async function callLessonLlm(userId: string, userContent: string): Promise<strin
       systemPrompt: LESSON_SYSTEM_PROMPT,
       userContent,
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection,
-      reasoningEffort: policy.llmReasoningEffort
+      reasoningEffort: policy.llmReasoningEffort,
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "outcome-postmortem"
     }
   );
 
@@ -841,7 +865,7 @@ async function callLessonLlm(userId: string, userContent: string): Promise<strin
         return { text: undefined };
       }
       const payload = await response.json();
-      recordLlmUsage({ userId, provider, model, context: "outcome-postmortem", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId, provider, model, context: "outcome-postmortem", keySource, keyRef, connectedAccountId: policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(provider, payload), ...extractLlmUsage(payload) });
       const text = extractLlmText(payload);
       return { text: typeof text === "string" ? text : undefined };
     }
