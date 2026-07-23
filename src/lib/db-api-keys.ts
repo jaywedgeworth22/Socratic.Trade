@@ -722,22 +722,6 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
     const userKey = getUserApiKey(userId, canonical);
     if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
 
-    if (process.env.NODE_ENV === "test") {
-      if (canonical === "openrouter") {
-        const services: LlmProviderService[] = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "meta"];
-        for (const svc of services) {
-          const fallbackKey = getUserApiKey(userId, svc);
-          if (fallbackKey?.apiKey) {
-            return { key: fallbackKey.apiKey, source: "user", keyRef: keyFingerprint(fallbackKey.apiKey) };
-          }
-        }
-      } else {
-        const fallbackKey = getUserApiKey(userId, "openrouter");
-        if (fallbackKey?.apiKey) {
-          return { key: fallbackKey.apiKey, source: "user", keyRef: keyFingerprint(fallbackKey.apiKey) };
-        }
-      }
-    }
   }
   // Operator-funded failover for ANY user (flag-gated). `local`'s own env key is migrated into its
   // per-user store at boot, so `local` resolves "user" above; this serves users without their own

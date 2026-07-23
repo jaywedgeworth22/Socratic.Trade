@@ -63,11 +63,11 @@ describe("aggregateModelStats — live usage rollup", () => {
       closedLots: []
     });
 
-    const green = statFor(stats, "gpt-5.4-mini", "green");
+    const green = statFor(stats, "gpt-mini-latest", "green");
     expect(green.liveCalls).toBe(10);
     expect(green.avgCostUsd).toBeCloseTo(0.02, 6);
 
-    const red = statFor(stats, "gpt-5.4-mini", "red");
+    const red = statFor(stats, "gpt-mini-latest", "red");
     expect(red.liveCalls).toBe(4);
     expect(red.avgCostUsd).toBeCloseTo(0.01, 6);
   });
@@ -91,11 +91,11 @@ describe("aggregateModelStats — live usage rollup", () => {
       closedLots: []
     });
 
-    const green = statFor(stats, "claude-sonnet-5", "green");
+    const green = statFor(stats, "claude-sonnet-latest", "green");
     expect(green.latencySamples).toBe(3);
     expect(green.p50LatencyMs).toBe(8000);
 
-    const red = statFor(stats, "claude-sonnet-5", "red");
+    const red = statFor(stats, "claude-sonnet-latest", "red");
     expect(red.latencySamples).toBe(1);
     expect(red.p50LatencyMs).toBe(5000);
   });
@@ -113,14 +113,14 @@ describe("aggregateModelStats — benchmark fallback", () => {
       closedLots: []
     });
 
-    const green = statFor(stats, "gemini-3.5-flash", "green");
+    const green = statFor(stats, "gemini-flash-latest", "green");
     expect(green.liveCalls).toBe(0);
     expect(green.avgCostUsd).toBeNull();
     expect(green.p50LatencyMs).toBeNull();
     expect(green.benchmarkCostUsd).toBeCloseTo(0.0159, 6);
     expect(green.benchmarkColdP50Ms).toBe(27395);
 
-    const red = statFor(stats, "gemini-3.5-flash", "red");
+    const red = statFor(stats, "gemini-flash-latest", "red");
     expect(red.benchmarkCostUsd).toBeCloseTo(0.0045, 6);
     expect(red.benchmarkColdP50Ms).toBe(10260);
   });
@@ -156,7 +156,7 @@ describe("aggregateModelStats — strategist (AI review / strategy-tune) rollup"
       closedLots: []
     });
 
-    const strategist = statFor(stats, "gpt-5.4-mini", "strategist");
+    const strategist = statFor(stats, "gpt-mini-latest", "strategist");
     expect(strategist.liveCalls).toBe(5);
     expect(strategist.avgCostUsd).toBeCloseTo(0.03, 6);
     expect(strategist.totalCostUsd).toBeCloseTo(0.15, 6);
@@ -170,9 +170,9 @@ describe("aggregateModelStats — strategist (AI review / strategy-tune) rollup"
     expect(strategist.reviewerPerf).toBeNull();
 
     // Green/red rows for the same model are unaffected by the strategist usage.
-    const green = statFor(stats, "gpt-5.4-mini", "green");
+    const green = statFor(stats, "gpt-mini-latest", "green");
     expect(green.liveCalls).toBe(10);
-    const red = statFor(stats, "gpt-5.4-mini", "red");
+    const red = statFor(stats, "gpt-mini-latest", "red");
     expect(red.liveCalls).toBe(10);
   });
 
@@ -183,7 +183,7 @@ describe("aggregateModelStats — strategist (AI review / strategy-tune) rollup"
       benchmarkSummaries: NO_BENCH,
       closedLots: []
     });
-    const strategist = statFor(stats, "grok-4.3", "strategist");
+    const strategist = statFor(stats, "grok-latest", "strategist");
     expect(strategist.liveCalls).toBe(0);
     expect(strategist.avgCostUsd).toBeNull();
     expect(strategist.totalCostUsd).toBeNull();
