@@ -6,11 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 process.env.DATABASE_URL = `file:${join(tmpdir(), `socratic-vector-retrieval-${randomUUID()}.db`)}`;
 
 const {
+  activeEmbeddingProvider,
+  activeRerankModel,
+  activeRerankProvider,
   buildExtraFilters,
   defaultMinScore,
   filterMatchesForTranscriptRights,
   isWithinAsOf,
   matchToChunk,
+  rankPool,
   rerankMatches
 } = await import("../src/lib/vector-db");
 
@@ -187,6 +191,42 @@ describe("rerankMatches", () => {
     const voyage = fakeVoyage(() => ({ data: [{ index: 1 }, { index: 0 }] }));
     const out = await rerankMatches(voyage, "q", matches, 2);
     expect(matchToChunk(out[0]).relevanceScore).toBeUndefined();
+  });
+});
+
+describe("independent rerank routing", () => {
+  it("lets an explicit rerank provider differ from the embedding provider", async () => {
+    const previousEmbed = process.env.RAG_EMBED_PROVIDER;
+    const previousRerank = process.env.RAG_RERANK_PROVIDER;
+    const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
+    const previousSiliconFlowKey = process.env.SILICONFLOW_API_KEY;
+    process.env.RAG_EMBED_PROVIDER = "siliconflow";
+    process.env.RAG_RERANK_PROVIDER = "openrouter";
+    process.env.SILICONFLOW_API_KEY = "sf-key";
+    process.env.OPENROUTER_API_KEY = "or-key";
+    try {
+      expect(activeEmbeddingProvider()).toBe("siliconflow");
+      expect(activeRerankProvider()).toBe("openrouter");
+      expect(activeRerankModel()).toBe("cohere/rerank-v3.5");
+    } finally {
+      if (previousEmbed === undefined) delete process.env.RAG_EMBED_PROVIDER; else process.env.RAG_EMBED_PROVIDER = previousEmbed;
+      if (previousRerank === undefined) delete process.env.RAG_RERANK_PROVIDER; else process.env.RAG_RERANK_PROVIDER = previousRerank;
+      if (previousOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
+      if (previousSiliconFlowKey === undefined) delete process.env.SILICONFLOW_API_KEY; else process.env.SILICONFLOW_API_KEY = previousSiliconFlowKey;
+    }
+  });
+});
+
+describe("corpus-wide lexical candidate floors", () => {
+  it("does not apply a dense cosine floor to an independently recalled lexical candidate", async () => {
+    const lexicalOnly = {
+      id: "lexical-only",
+      score: 0,
+      metadata: { text: "exact accession evidence", retrieval_sources: ["lexical"] }
+    };
+    const dense = { id: "dense", score: 0.8, metadata: { text: "semantic evidence" } };
+    const ordered = await rankPool([dense, lexicalOnly], "accession", 2, { minScore: 0.5 });
+    expect(ordered.map((match) => match.id)).toEqual(["dense", "lexical-only"]);
   });
 });
 

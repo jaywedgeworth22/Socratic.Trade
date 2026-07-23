@@ -132,18 +132,19 @@
   --con-body-font: var(--con-font-mono);
 }
 
-/* ── DARK (explicit choice) — keep IDENTICAL to the media-query block below ── */
+/* ── DARK (explicit choice) — keep IDENTICAL to the media-query block below ──
+   Near-black neutral charcoal (no teal/navy cast). Surfaces step up in grey only. */
 .console-root[data-theme="dark"] {
-  --con-bg: #0b1114;
-  --con-surface: #11191d;
-  --con-surface-2: #162127;
-  --con-surface-3: #1c2b31;
-  --con-line: rgba(148, 163, 184, 0.13);
-  --con-line-strong: rgba(148, 163, 184, 0.26);
+  --con-bg: #0a0a0a;
+  --con-surface: #141414;
+  --con-surface-2: #1a1a1a;
+  --con-surface-3: #242424;
+  --con-line: rgba(255, 255, 255, 0.09);
+  --con-line-strong: rgba(255, 255, 255, 0.16);
 
-  --con-fg: #e8edf4;
-  --con-muted: #a5b2c4;
-  --con-faint: #8492a6;
+  --con-fg: #f0f0f0;
+  --con-muted: #a8a8a8;
+  --con-faint: #8a8a8a;
 
   --con-accent: var(--brand-accent-dark);
   --con-accent-contrast: #071316;
@@ -160,9 +161,9 @@
   --con-paper: #98a3ff;
   --con-live: #ff5d5d;
 
-  --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
-  --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.75);
-  --con-scrim: rgba(4, 6, 10, 0.66);
+  --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
+  --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.8);
+  --con-scrim: rgba(0, 0, 0, 0.72);
 
   color-scheme: dark;
 }
@@ -171,16 +172,16 @@
       the block above ── */
 @media (prefers-color-scheme: dark) {
   .console-root:not([data-theme="light"]) {
-    --con-bg: #0b1114;
-    --con-surface: #11191d;
-    --con-surface-2: #162127;
-    --con-surface-3: #1c2b31;
-    --con-line: rgba(148, 163, 184, 0.13);
-    --con-line-strong: rgba(148, 163, 184, 0.26);
+    --con-bg: #0a0a0a;
+    --con-surface: #141414;
+    --con-surface-2: #1a1a1a;
+    --con-surface-3: #242424;
+    --con-line: rgba(255, 255, 255, 0.09);
+    --con-line-strong: rgba(255, 255, 255, 0.16);
 
-    --con-fg: #e8edf4;
-    --con-muted: #a5b2c4;
-    --con-faint: #8492a6;
+    --con-fg: #f0f0f0;
+    --con-muted: #a8a8a8;
+    --con-faint: #8a8a8a;
 
     --con-accent: var(--brand-accent-dark);
     --con-accent-contrast: #071316;
@@ -197,9 +198,9 @@
     --con-paper: #98a3ff;
     --con-live: #ff5d5d;
 
-    --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
-    --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.75);
-    --con-scrim: rgba(4, 6, 10, 0.66);
+    --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
+    --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.8);
+    --con-scrim: rgba(0, 0, 0, 0.72);
 
     color-scheme: dark;
   }
@@ -242,47 +243,16 @@
 }
 
 /* ── Autonomy desk home ── */
-.con-thesis-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
-  gap: 16px;
-  align-items: stretch;
+.con-strategy-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
   border: 1px solid var(--con-line);
-  /* Flat surface + accent left-rule, not a gradient wash (2026-07-08 UI-audit,
-     Package G item 4) — the gradient read as decoration without meaning. */
   border-left: 3px solid var(--con-accent);
   border-radius: var(--con-radius);
   background: var(--con-surface);
-  box-shadow: var(--con-shadow);
-  padding: 18px;
-}
-.con-thesis-hero h1 {
-  margin-top: 8px;
-  max-width: 760px;
-  font-size: var(--con-fs-xxl);
-  line-height: 1.12;
-  font-weight: 750;
-  color: var(--con-fg);
-}
-.con-thesis-hero p {
-  margin-top: 10px;
-  max-width: 820px;
-  color: var(--con-muted);
-  font-size: var(--con-fs-md);
-  line-height: 1.55;
-}
-.con-autonomy-card {
-  min-width: 0;
-  border: 1px solid var(--con-accent-border);
-  border-radius: var(--con-radius-sm);
-  background: color-mix(in oklab, var(--con-accent) 8%, var(--con-surface));
-  padding: 14px;
-}
-.con-autonomy-card p {
-  margin-top: 4px;
-  color: var(--con-muted);
-  font-size: var(--con-fs-sm);
-  line-height: 1.45;
+  padding: 10px 14px;
 }
 .con-decision-list {
   display: flex;
@@ -368,20 +338,14 @@
 }
 
 @media (max-width: 900px) {
-  .con-thesis-hero {
-    grid-template-columns: 1fr;
+  .con-strategy-bar {
+    /* Allow wrapping to stack naturally on narrow screens */
   }
 }
 
 @media (max-width: 640px) {
-  .con-thesis-hero {
-    padding: 14px;
-  }
-  .con-thesis-hero h1 {
-    font-size: var(--con-fs-xl);
-  }
-  .con-thesis-hero p {
-    font-size: var(--con-fs-base);
+  .con-strategy-bar {
+    padding: 8px 10px;
   }
   .con-decision-row {
     grid-template-columns: 1fr;

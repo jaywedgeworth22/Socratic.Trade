@@ -694,29 +694,73 @@ describe("usage-monitor-push", () => {
     });
   });
 
-  describe("poison-event isolation (local validation error is NOT a receiver outage)", () => {
-    it("rejects NaN/Infinity broker balances at admission so they never enter the buffer", () => {
-      push.pushBrokerBalance({
-        provider: "alpaca",
-        userId: "local",
-        accountNumber: "1234567890",
-        cash: Number.NaN,
-        buyingPower: Number.POSITIVE_INFINITY,
-        equity: Number.NEGATIVE_INFINITY,
-      });
-      expect(push.__usageMonitorDebugState().queueDepth).toBe(0);
+  describe("retired provider-family admission", () => {
+    it("suppresses Alpaca/Tradier/Robinhood call-volume while keeping paid FMP control traffic", async () => {
+      const captured: CapturedRequest[] = [];
+      push.__setUsageMonitorFetch(makeFetchStub(captured));
 
-      // A finite reading in the same shape is still admitted; only the non-finite fields are dropped.
-      push.pushBrokerBalance({
-        provider: "alpaca",
-        userId: "local",
-        accountNumber: "1234567890",
-        cash: Number.NaN,
-        equity: 1000,
+      push.recordProviderCall("alpaca", { ok: true });
+      push.recordProviderCall("alpaca-news", { ok: true });
+      push.recordProviderCall("tradier", { ok: true });
+      push.recordProviderCall("robinhood", { ok: false });
+      push.recordProviderCall("fmp", { ok: true, keySource: "operator" });
+      push.recordProviderCall("fmp", { ok: true, keySource: "operator" });
+
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(0);
+      await push.flushUsageMonitor();
+
+      expect(captured).toHaveLength(1);
+      expect(captured[0]!.body.schemaVersion).toBe(2);
+      expect(captured[0]!.body.producerId).toBe("socratic-trade");
+      const providers = captured[0]!.body.events.map((event) => event.provider);
+      expect(providers).toEqual(["fmp"]);
+      expect(captured[0]!.body.events[0]).toMatchObject({
+        provider: "fmp",
+        metricType: "usage",
+        unit: "request",
+        requests: 2,
       });
-      expect(push.__usageMonitorDebugState().queueDepth).toBe(1);
     });
 
+    it("createProviderDispatchUsageMonitorEvent returns null for retired families and a strict-v2 event for paid controls", async () => {
+      const suppressed = await push.createProviderDispatchUsageMonitorEvent({
+        sourceEventId: "dispatch-alpaca-1",
+        occurredAt: "2026-07-22T00:00:00.000Z",
+        provider: "alpaca",
+        operation: "get-portfolio",
+        credentialRef: "alpaca-key",
+        userId: "local",
+        outcome: "succeeded",
+      });
+      expect(suppressed).toBeNull();
+
+      const paid = await push.createProviderDispatchUsageMonitorEvent({
+        sourceEventId: "dispatch-fmp-1",
+        occurredAt: "2026-07-22T00:00:00.000Z",
+        provider: "fmp",
+        operation: "income-statement",
+        credentialRef: "fmp-key",
+        userId: "local",
+        outcome: "succeeded",
+        requests: 1,
+        estimatedCostUsd: 0.12,
+        actualCostUsd: 0.09,
+      });
+      expect(paid).not.toBeNull();
+      expect(paid).toMatchObject({
+        provider: "fmp",
+        service: "provider-dispatch",
+        metricType: "usage",
+        unit: "request",
+        requests: 1,
+        eventId: expectedTelemetryKey("provider-dispatch", "dispatch-fmp-1"),
+      });
+      // Dispatch is quota-only on the wire — local cost fields must never reach the monitor.
+      expect(paid).not.toHaveProperty("costUsd");
+    });
+  });
+
+  describe("poison-event isolation (local validation error is NOT a receiver outage)", () => {
     it("discards a schema-invalid event at flush WITHOUT tripping the breaker; valid events still send", async () => {
       const captured: CapturedRequest[] = [];
       push.__setUsageMonitorFetch(makeFetchStub(captured));

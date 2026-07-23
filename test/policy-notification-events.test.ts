@@ -35,6 +35,106 @@ describe("policy notification event settings", () => {
     expect(getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings.enabledEvents).toEqual(["fill", "provider_degraded", "limit_order_stale"]);
   });
 
+  // ITEM 11 (SSRF hardening): policy.notificationSettings.webhookUrl legitimately points
+  // anywhere public (the owner's own receiver), so the save-time guard resolves DNS and rejects
+  // a target that lands in a private/loopback/link-local/metadata range — see
+  // src/lib/egress-guard.ts. A literal IP host needs no DNS mock (net.isIP short-circuits it).
+  it("rejects a webhookUrl that resolves to a private/internal address (400, nothing persisted)", async () => {
+    const { PUT } = await import("../app/api/policy/route");
+    const { getPolicy } = await import("../src/lib/db");
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+
+    const response = await PUT(
+      new Request("http://localhost/api/policy", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          notificationSettings: {
+            ...getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings,
+            webhookUrl: "http://169.254.169.254/latest/meta-data"
+          }
+        })
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings.webhookUrl).toBe("");
+  });
+
+  it("rejects a webhookUrl targeting localhost", async () => {
+    const { PUT } = await import("../app/api/policy/route");
+    const { getPolicy } = await import("../src/lib/db");
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+
+    const response = await PUT(
+      new Request("http://localhost/api/policy", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          notificationSettings: {
+            ...getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings,
+            webhookUrl: "http://localhost:4000/hook"
+          }
+        })
+      })
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it("accepts a webhookUrl that resolves to a public address", async () => {
+    const { PUT } = await import("../app/api/policy/route");
+    const { getPolicy } = await import("../src/lib/db");
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+
+    const response = await PUT(
+      new Request("http://localhost/api/policy", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          notificationSettings: {
+            ...getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings,
+            // A literal public IP host — deterministic in tests, no DNS involved.
+            webhookUrl: "https://8.8.8.8/hook"
+          }
+        })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings.webhookUrl).toBe("https://8.8.8.8/hook");
+  });
+
+  it("does not re-check an unchanged, already-saved webhookUrl on an unrelated save (no re-validate-every-save regression)", async () => {
+    const { PUT } = await import("../app/api/policy/route");
+    const { getPolicy } = await import("../src/lib/db");
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+
+    // Seed a previously-saved webhookUrl directly (bypassing this route's own guard) so it's
+    // already stored as "valid" — mirroring a value that was fine when saved but would now be
+    // rejected (DNS blip, or a since-tightened rule). An unrelated save (toggling enabledEvents)
+    // must not be blocked by re-validating a field this request never touched.
+    const { setPolicy } = await import("../src/lib/db");
+    const seeded = { ...getPolicy(DEFAULT_REQUEST_USER_ID), notificationSettings: { ...getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings, webhookUrl: "http://127.0.0.1/already-bad" } };
+    setPolicy(seeded, DEFAULT_REQUEST_USER_ID);
+
+    const response = await PUT(
+      new Request("http://localhost/api/policy", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          notificationSettings: {
+            ...getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings,
+            enabledEvents: ["fill"]
+          }
+        })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings.webhookUrl).toBe("http://127.0.0.1/already-bad");
+  });
+
   it("rejects gpt-5.5 high reasoning for interactive strategy runs", async () => {
     const { PUT } = await import("../app/api/policy/route");
     // Keyed-provider backstop (owner directive 2026-07-07): a chosen model's provider must have a

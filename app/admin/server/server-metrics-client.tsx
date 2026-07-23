@@ -405,7 +405,7 @@ export function ServerMetricsClient() {
                   <span className="text-[color:var(--con-muted)]">CPU Utilization</span>
                   <span className="con-num">{currentCpu === undefined ? "Unavailable" : `${currentCpu}%`}</span>
                 </div>
-                <Meter value={currentCpu ?? 0} max={100} />
+                {currentCpu !== undefined ? <Meter value={currentCpu} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
               </div>
 
               {/* Memory Bar */}
@@ -414,7 +414,7 @@ export function ServerMetricsClient() {
                   <span className="text-[color:var(--con-muted)]">RAM Utilization</span>
                   <span className="con-num">{memPct === undefined ? "Unavailable" : `${memPct}%`}</span>
                 </div>
-                <Meter value={memPct ?? 0} max={100} />
+                {memPct !== undefined ? <Meter value={memPct} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
               </div>
             </div>
 
@@ -443,6 +443,7 @@ export function ServerMetricsClient() {
             title={
               <span className="flex items-center gap-1.5">
                 <Cpu className="h-4 w-4" /> CPU History (Last 1 Hour)
+                {metrics && metrics.cpu && metrics.cpu.length > 0 && <span className="ml-2 font-normal text-[color:var(--con-faint)]">Max: 100%</span>}
               </span>
             }
           >
@@ -578,11 +579,12 @@ function SparklineChart({ points, yMax, stroke, fill }: { points: MetricPoint[];
       <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="var(--con-line)" strokeWidth={0.5} strokeDasharray="3" />
       <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} stroke="var(--con-line)" strokeWidth={0.5} strokeDasharray="3" />
       <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="var(--con-line)" strokeWidth={0.5} />
-
       {/* Area */}
       <path d={areaD} fill="url(#chartGrad)" />
       {/* Line */}
       <path d={pathD} fill="none" stroke={stroke} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      {/* Max reference line */}
+      <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke={stroke} strokeWidth={1} strokeDasharray="4" opacity={0.3} />
     </svg>
   );
 }
@@ -646,6 +648,8 @@ function DualLineChart({
           <path d={pathA} fill="none" stroke="var(--con-pos)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
           {/* Line B */}
           <path d={pathB} fill="none" stroke="var(--con-accent)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+          {/* Max reference line */}
+          <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="var(--con-muted)" strokeWidth={1} strokeDasharray="4" opacity={0.3} />
         </svg>
       </div>
     </div>

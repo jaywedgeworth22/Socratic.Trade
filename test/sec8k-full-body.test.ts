@@ -117,6 +117,33 @@ describe("ingestEightKBody (full-body ingest path when the flag is on)", () => {
     expect(hasIngestedAccession(EVENT.accession, "8-K-body")).toBe(true);
   });
 
+  it("mirrors committed 8-K body chunks into document_chunks_fts (source=sec-8k)", async () => {
+    const event: EightKEvent = { ...EVENT, accession: `0000320193-26-fts-${randomUUID().slice(0, 8)}` };
+    const { getDb } = await import("../src/lib/db");
+    const result = await ingestEightKBody(event);
+    expect(result.completed).toBe(true);
+    expect(result.skipped).toBe(false);
+
+    const rows = getDb()
+      .prepare(
+        `SELECT content_hash, symbol, source, accession FROM document_chunks_fts
+         WHERE source = ? AND accession = ? AND symbol = ?`
+      )
+      .all("sec-8k", event.accession, event.symbol) as Array<{
+      content_hash: string;
+      symbol: string;
+      source: string;
+      accession: string;
+    }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.source).toBe("sec-8k");
+      expect(row.accession).toBe(event.accession);
+      expect(row.symbol).toBe("AAPL");
+      expect(row.content_hash.length).toBeGreaterThan(0);
+    }
+  });
+
   it("skips a filing whose accession was already ingested (de-dup gate)", async () => {
     await ingestEightKBody(EVENT);
     mocks.storeDocument.mockClear();
