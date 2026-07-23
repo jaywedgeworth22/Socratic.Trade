@@ -4059,3 +4059,4 @@ brackets; effort S/M/L.
 | 2026-07-20 | Document Summarizer & Abstracts DB Migration | Completed | Added migration 55 for document_abstracts, db-document-abstracts CRUD, document-summarizer engine, and vitest unit tests | AG |
 
 | 2026-07-21 | GROK + CODEX | In Progress | ST multi-day PR stuck: preserve active verify runs; remove absent trading-live targets; keep observer reporting on socratic-deploy; stop smoke-on-PR; remove synthetic enrichment fallback; make bracket permission side-specific; stabilize focused tests | monet/ci-runner-and-queue-fixes |
+| 2026-07-22 | ANTIGRAVITY | Completed | Fix Admin panel UI bugs (Go Back button, Server Metrics 0% fallbacks, RAG table DB noise filtering, API Connection mapping) | fix/admin-ui-polish |

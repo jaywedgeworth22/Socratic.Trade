@@ -1,9 +1,11 @@
 @import "tailwindcss";
 
-/* Keep Tailwind's class-candidate scanner OUT of docs/: rollout notes quote utility
-   literals (e.g. arbitrary-value shadow classes), and Tailwind v4 treating those
-   markdown snippets as candidates makes Turbopack `next dev` 500 on every route. */
+/* Keep Tailwind's class-candidate scanner OUT of docs/ and .worktrees/:
+   rollout notes quote utility literals (e.g. arbitrary-value shadow classes with
+   literal `*`), and Tailwind v4 treating those markdown snippets as candidates
+   generates invalid CSS (e.g. `var(--shadow*)`) that breaks the build. */
 @source not "../docs";
+@source not "../.worktrees";
 
 /* Class-based dark mode: utilities prefixed `dark:` apply under a `.dark` ancestor. */
 @custom-variant dark (&:where(.dark, .dark *));

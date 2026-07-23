@@ -130,14 +130,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           >
             {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
-          <Link href="/console" className="flex shrink-0 items-center gap-2" title="Back to the trading console">
+          <Link href="/console" className="flex shrink-0 items-center gap-1.5 text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)] transition-colors" title="Back to the trading console">
+            <ArrowLeft size={14} />
+            <span className="text-[length:var(--con-fs-sm)] font-medium">Go Back</span>
+          </Link>
+          <div className="flex min-w-0 items-center gap-2">
             <span className="hidden sm:block">
               <HeaderLogo height={18} />
             </span>
             <span className="con-card-title hidden sm:inline">Socratic Trade</span>
-            <ArrowLeft size={14} className="text-[color:var(--con-muted)]" />
-          </Link>
-          <div className="flex min-w-0 items-center gap-2">
+            <span className="con-card-title px-1 text-[color:var(--con-line-strong)]">/</span>
             <span className="con-card-title">Admin</span>
             <span className="hidden truncate text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] sm:block">
               {activeItem?.label ?? "Overview"}
