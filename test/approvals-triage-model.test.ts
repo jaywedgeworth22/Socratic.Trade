@@ -136,8 +136,8 @@ describe("approvals triage helpers", () => {
       expect(normalizeModelId("openrouter/openai/gpt-4o")).toBe("gpt-4o");
       expect(normalizeModelId("openai/gpt-4o")).toBe("gpt-4o");
       expect(normalizeModelId("gpt-4o")).toBe("gpt-4o");
-      expect(normalizeModelId("openrouter/anthropic/claude-3-5-sonnet")).toBe("claude-3-5-sonnet");
-      expect(normalizeModelId("anthropic/claude-3-5-sonnet")).toBe("claude-3-5-sonnet");
+      expect(normalizeModelId("openrouter/~anthropic/claude-sonnet-latest")).toBe("claude-sonnet-latest");
+      expect(normalizeModelId("~anthropic/claude-sonnet-latest")).toBe("claude-sonnet-latest");
     });
   });
 });
