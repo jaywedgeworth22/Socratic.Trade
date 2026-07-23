@@ -30,6 +30,8 @@ describe("detectLlmTruncation (Chat A item 5)", () => {
 });
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -65,15 +67,15 @@ function nasdaqRow(): Response {
 
 describe("Bull truncation is not a silent no-op (Chat A item 5)", () => {
   it("records a strategy_bull_truncated audit + step reason when the Bull response hits the cap", async () => {
-    // vi.stubEnv so afterEach(vi.unstubAllEnvs) restores these — a leaked OPENAI_API_URL would break
+    // vi.stubEnv so afterEach(vi.unstubAllEnvs) restores these — a leaked OPENROUTER_API_URL would break
     // other files' Bull-body assertions when vitest shares a process across test files.
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     // chat-completions transport so the mock can return a finish_reason=length truncation signal.
-    vi.stubEnv("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions");
+    vi.stubEnv("OPENROUTER_API_URL", "https://openrouter.ai/v1/chat/completions");
     let openAiCalls = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         openAiCalls += 1;
         if (openAiCalls === 1) {
           // Truncated Bull: finish_reason "length" with cut-off, unparseable JSON content.
@@ -93,14 +95,14 @@ describe("Bull truncation is not a silent no-op (Chat A item 5)", () => {
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, listAudit } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Truncation Test", isActive: true });
     setActiveConnectedAccount(accountId);
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide"

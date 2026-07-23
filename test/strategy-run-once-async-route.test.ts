@@ -29,7 +29,7 @@ import { runStrategyOnce } from "@/lib/strategy";
 import { getPolicy, setPolicy } from "@/lib/db";
 import { DEV_USER_ID } from "@/lib/auth/identity";
 
-const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+const LLM_ENV = ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-run-once-async-${randomUUID()}.db`)}`;
@@ -47,7 +47,7 @@ afterEach(() => {
 // must have a real Green model persisted, otherwise the second gate 412s first.
 function stubLlmKeyAvailable(): void {
   vi.stubEnv("LLM_OPERATOR_FALLBACK", "on");
-  vi.stubEnv("OPENAI_API_KEY", "test-operator-key");
+  vi.stubEnv("OPENROUTER_API_KEY", "test-operator-key");
   setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "gpt-5.4-mini" }, DEV_USER_ID);
 }
 
@@ -128,8 +128,64 @@ describe("POST /api/strategy/run — async run-once", () => {
 
   it("keeps the 412 LLM-gate pre-check synchronous and never launches the run executor", async () => {
     stubNoLlmKey();
+    setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "gpt-5.4-mini" }, DEV_USER_ID);
     const res = await callRoute();
     expect(res.status).toBe(412);
     expect(runStrategyOnce).not.toHaveBeenCalled();
+  });
+
+  it("still 412s an explicitly BLANK Green model with the model-choice message (key present)", async () => {
+    stubLlmKeyAvailable();
+    setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "" }, DEV_USER_ID);
+    const res = await callRoute();
+    expect(res.status).toBe(412);
+    const body = (await res.json()) as { summary: string };
+    const { LLM_MODEL_REQUIRED_STRATEGY_MESSAGE } = await import("../src/lib/llm-required");
+    expect(body.summary).toBe(LLM_MODEL_REQUIRED_STRATEGY_MESSAGE);
+    expect(runStrategyOnce).not.toHaveBeenCalled();
+  });
+
+  // Rotation precheck (owner-reported): the persisted "__rotate__" sentinel deliberately resolves
+  // as UNSET in resolveOpenAiModel (llm-request.ts safety net), so the old model gate 412'd every
+  // manual Run-once under rotation even though runStrategyOnce resolves the sentinel to a concrete
+  // model at the top of the run (scheduled runs worked). The route now gates a rotating Green on
+  // the credential-filtered rotation pool instead.
+  it("lets a rotating Green through when the eligible rotation pool is non-empty (no 412)", async () => {
+    stubLlmKeyAvailable(); // operator OpenAI key → gpt-* models are pool-eligible
+    setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "__rotate__" }, DEV_USER_ID);
+    vi.mocked(runStrategyOnce).mockResolvedValue({
+      runId: "run-rotate",
+      status: "completed",
+      summary: "ok",
+      proposals: []
+    } as never);
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    expect(runStrategyOnce).toHaveBeenCalledTimes(1);
+  });
+
+  it("412s a rotating Green with the actionable ROTATION message when NO credential resolves (empty pool)", async () => {
+    stubNoLlmKey();
+    setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "__rotate__" }, DEV_USER_ID);
+    const res = await callRoute();
+    expect(res.status).toBe(412);
+    const body = (await res.json()) as { summary: string };
+    const { LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE } = await import("../src/lib/llm-required");
+    expect(body.summary).toBe(LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE);
+    expect(runStrategyOnce).not.toHaveBeenCalled();
+  });
+
+  it("does NOT gate on a rotating RED seat (blank/rotating red routes per-opening to human, not a 412)", async () => {
+    stubLlmKeyAvailable(); // Green = concrete gpt-5.4-mini via stub
+    setPolicy({ ...getPolicy(DEV_USER_ID), redTeamLlmModel: "__rotate__" }, DEV_USER_ID);
+    vi.mocked(runStrategyOnce).mockResolvedValue({
+      runId: "run-red-rotate",
+      status: "completed",
+      summary: "ok",
+      proposals: []
+    } as never);
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    expect(runStrategyOnce).toHaveBeenCalledTimes(1);
   });
 });

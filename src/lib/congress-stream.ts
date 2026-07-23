@@ -180,7 +180,29 @@ export async function connectOnce(): Promise<void> {
     if (state.subscription) state.subscription = undefined;
     throw new Error(`SSE connect rejected: HTTP ${res.status} (subscription invalid?)`);
   }
-  if (!res.ok || !res.body) throw new Error(`SSE connect failed: HTTP ${res.status}`);
+  if (!res.ok || !res.body) {
+    let retryMsg = "";
+    if (res.status === 429) {
+      const retryAfter = res.headers.get("retry-after");
+      if (retryAfter) {
+        // RFC 7231 §7.1.3: Retry-After can be delta-seconds or HTTP-date
+        const parsed = parseInt(retryAfter, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          retryMsg = ` (Retry-After: ${parsed})`;
+        } else {
+          // Try HTTP-date format, e.g. "Wed, 21 Oct 2015 07:28:00 GMT"
+          const httpDate = Date.parse(retryAfter);
+          if (!isNaN(httpDate)) {
+            const seconds = Math.ceil((httpDate - Date.now()) / 1000);
+            if (seconds > 0) {
+              retryMsg = ` (Retry-After: ${seconds})`;
+            }
+          }
+        }
+      }
+    }
+    throw new Error(`SSE connect failed: HTTP ${res.status}${retryMsg}`);
+  }
   state.backoffMs = INITIAL_BACKOFF_MS; // healthy connection → reset backoff
   // Connection-health signal for the admin Connections page (App B's side of the App A → App B
   // real-time link). Re-fires on each (re)connect within App A's ~25min stream lifetime.
@@ -224,11 +246,25 @@ async function runLoop(): Promise<void> {
         break;
       }
 
+      // Record ALL failures in api_health_log so the admin dashboard shows current state.
+      // logApiHealth already detects 429|rate limit in error text and suppresses Sentry
+      // alerts via skipSentry (see db-health.ts line 172-174), so rate-limit backpressure
+      // events are recorded without noise.
       logApiHealth({
         service: "congress.trade:sse",
         ok: false,
         errorText: msg,
       });
+
+      // Back off on 429 explicitly, using the parsed Retry-After seconds if available
+      const retryMatch = msg.match(/HTTP 429 \(Retry-After: (\d+)\)/);
+      if (retryMatch) {
+        const sec = parseInt(retryMatch[1], 10);
+        state.backoffMs = Math.max(state.backoffMs, sec * 1000);
+      } else if (msg.includes("HTTP 429")) {
+        // Default to a 60s backoff if 429 but no Retry-After
+        state.backoffMs = Math.max(state.backoffMs, 60_000);
+      }
     }
     if (state.closing) break;
     await sleep(state.backoffMs);

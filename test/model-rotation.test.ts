@@ -4,23 +4,29 @@
  * so comparative live history accrues across models (proposals stamp `proposedByModel`).
  *
  * Covers: pure round-robin pointer logic (wrap advances the red pointer one extra step so
- * green/red combinations vary), the curated-pool exclusions, the credential-missing skip
- * (rotation never picks a model whose provider key doesn't resolve), pointer persistence via
- * internal settings + pick auditing, the resolveOpenAiModel safety net, and that the sentinel
- * passes /api/policy validation.
+ * green/red combinations vary; the same-model skip keeps the two seats on DIFFERENT models within
+ * a run), the curated-pool exclusions, the credential-missing skip (rotation never picks a model
+ * whose provider key doesn't resolve), pointer persistence via internal settings + pick auditing,
+ * the resolveOpenAiModel safety net, and that the sentinel passes /api/policy validation.
  */
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { resetDbForTesting } from "../src/lib/db";
 
 beforeAll(() => {
+  resetDbForTesting();
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-model-rotation-${randomUUID()}.db`)}`;
 });
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  resetDbForTesting();
+  vi.resetModules();
+  vi.unstubAllEnvs();
+});
 
-const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 
 function noEnvKeys() {
   vi.stubEnv("LLM_OPERATOR_FALLBACK", "off");
@@ -44,29 +50,58 @@ describe("advanceRotationPointers (pure round-robin)", () => {
 
   it("advances the red pointer ONE EXTRA step when the green pointer wraps (combinations shift phase)", async () => {
     const { advanceRotationPointers } = await import("../src/lib/model-rotation");
-    // Green consuming the LAST slot of the cycle = wrap.
-    const wrapped = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 2, redCounter: 2 });
+    // Green consuming the LAST slot of the cycle = wrap. Red on a DIFFERENT slot (no same-model
+    // skip in play) isolates the wrap-extra behavior.
+    const wrapped = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 2, redCounter: 0 });
     expect(wrapped.green).toMatchObject({ model: "m2", wrapped: true, nextPointer: 3 });
-    expect(wrapped.red!.nextPointer).toBe(wrapped.red!.pointer + 2); // extra step
+    expect(wrapped.red).toMatchObject({ model: "m0", pointer: 0, nextPointer: 2 }); // extra step
     // Mid-cycle: no extra step.
-    const mid = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 0 });
+    const mid = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 1 });
     expect(mid.green!.wrapped).toBe(false);
-    expect(mid.red!.nextPointer).toBe(mid.red!.pointer + 1);
+    expect(mid.red).toMatchObject({ model: "m1", pointer: 1, nextPointer: 2 });
   });
 
-  it("phase-shifts the green/red pairing across full cycles instead of locking it", async () => {
+  it("skips red one slot when both seats rotate onto the SAME model (both counters at 0 → adjacent picks)", async () => {
+    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
+    // Both counters start at 0 on a fresh account: without the skip, green AND red served m0 —
+    // the same model debating itself — every run of the entire first cycle.
+    const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 0 });
+    expect(out.green).toMatchObject({ model: "m0", pointer: 0, nextPointer: 1 });
+    // Red consumed the NEXT slot; its counter continues past the consumed slot.
+    expect(out.red).toMatchObject({ model: "m1", pointer: 1, nextPointer: 2 });
+  });
+
+  it("stacks the same-model skip with the green-wrap extra advance (skip wraps to slot 0, wrap adds +1)", async () => {
+    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
+    // Green consumes the last slot (m2, wraps); red's slot 2 would ALSO be m2 → skip wraps red to
+    // slot 0 (m0), and the green-wrap extra advance still applies on top: nextPointer = 0 + 1 + 1.
+    const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 2, redCounter: 2 });
+    expect(out.green).toMatchObject({ model: "m2", wrapped: true, nextPointer: 3 });
+    expect(out.red).toMatchObject({ model: "m0", pointer: 0, nextPointer: 2, wrapped: false });
+  });
+
+  it("cannot skip on a single-model pool (degenerate case: both seats serve the only model)", async () => {
+    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
+    const out = advanceRotationPointers({ pool: ["only"], rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 0 });
+    expect(out.green!.model).toBe("only");
+    expect(out.red!.model).toBe("only");
+  });
+
+  it("phase-shifts the green/red pairing across full cycles and NEVER pairs a model with itself", async () => {
     const { advanceRotationPointers } = await import("../src/lib/model-rotation");
     const pairs = new Set<string>();
     let green = 0;
     let red = 0;
     for (let i = 0; i < pool.length * pool.length; i++) {
       const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: green, redCounter: red });
+      expect(out.red!.model).not.toBe(out.green!.model); // same-model skip: never the same model in one run
       pairs.add(`${out.green!.model}+${out.red!.model}`);
       green = out.green!.nextPointer;
       red = out.red!.nextPointer;
     }
-    // Fixed phase would yield exactly |pool| distinct pairs; the wrap-advance must beat that.
-    expect(pairs.size).toBe(pool.length * pool.length);
+    // Fixed phase would yield exactly |pool| distinct pairs; the wrap-advance must reach every
+    // DISTINCT-model ordered pair — |pool| * (|pool| - 1), since same-model pairs are skipped.
+    expect(pairs.size).toBe(pool.length * (pool.length - 1));
   });
 
   it("red-only rotation advances by exactly one per run (no green wrap possible)", async () => {
@@ -85,16 +120,21 @@ describe("advanceRotationPointers (pure round-robin)", () => {
 });
 
 describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
-  it("excludes the broken/unsuitable models and nothing else from the curated catalog", async () => {
+  it("excludes only the unsuitable models and nothing else from the curated catalog", async () => {
     const { MODEL_ROTATION_POOL } = await import("../src/lib/model-rotation");
     const { CURATED_LLM_MODEL_IDS } = await import("../app/ui/llm-model-catalog");
-    const excluded = ["mistral-small-2603", "mistral-medium-3-5", "grok-build-0.1"];
+    // mistral-small-2603 / mistral-medium-3-5 were re-added 2026-07-10 (owner directive, after
+    // the keyed re-benchmark proved both complete real calls) — only grok-build-0.1 (coding
+    // specialist, soft-timeouts as a Green strategist) stays excluded.
+    const excluded = ["grok-build-0.1"];
     for (const model of excluded) expect(MODEL_ROTATION_POOL).not.toContain(model);
     // Keep-in-sync check: the pool is exactly the curated catalog minus the exclusions.
     expect(new Set(MODEL_ROTATION_POOL)).toEqual(new Set(CURATED_LLM_MODEL_IDS.filter((id) => !excluded.includes(id))));
     expect(MODEL_ROTATION_POOL).toContain("gpt-5.4-mini");
     expect(MODEL_ROTATION_POOL).toContain("claude-fable-5");
     expect(MODEL_ROTATION_POOL).toContain("grok-4.3");
+    expect(MODEL_ROTATION_POOL).toContain("mistral-small-2603");
+    expect(MODEL_ROTATION_POOL).toContain("mistral-medium-3-5");
   });
 });
 
@@ -108,10 +148,18 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     upsertUserApiKey(userId, "anthropic", "sk-test-anthropic", "test");
     const { pool, skipped } = eligibleRotationPool(userId);
     expect(pool.length).toBeGreaterThan(0);
-    for (const model of pool) expect(model).toMatch(/^(gpt-|claude-)/);
-    for (const model of skipped) expect(model).not.toMatch(/^(gpt-|claude-)/);
+    
+    // GPT and Claude models should be kept (in pool) since openai/anthropic keys are active
+    expect(pool).toContain("gpt-5.4-mini");
+    expect(pool).toContain("claude-opus-4-8");
+    expect(pool).toContain("openrouter/openai/gpt-4o");
+    expect(pool).toContain("openrouter/~anthropic/claude-sonnet-latest");
+    
+    // Gemini and DeepSeek models should be skipped since gemini/deepseek keys are missing
     expect(skipped).toContain("gemini-3.5-flash");
     expect(skipped).toContain("deepseek-v4-pro");
+    expect(skipped).toContain("openrouter/google/gemini-2.5-pro");
+    expect(skipped).toContain("openrouter/deepseek/deepseek-r1");
   });
 });
 
@@ -150,6 +198,10 @@ describe("resolveModelRotationForRun", () => {
       expect(out.llmModel).toBeTruthy();
       expect(out.llmModel).not.toBe(LLM_MODEL_ROTATION_SENTINEL);
       expect(out.redTeamLlmModel).toBeUndefined(); // red seat not rotating
+      expect(out.redTeamReasoningEffort).toBeUndefined(); // ...so its effort is untouched too
+      // Per-team reasoning (2026-07-10): a rotating seat auto-sets the served model's curated
+      // recommended effort on the run-scoped override.
+      expect(out.llmReasoningEffort).toBeTruthy();
       served.push(out.llmModel!);
       out.commit(); // commit-late: the pointer only advances once the run serves the LLM
     }
@@ -172,15 +224,29 @@ describe("resolveModelRotationForRun", () => {
     });
     expect(out.llmModel).toMatch(/^gpt-/);
     expect(out.redTeamLlmModel).toMatch(/^gpt-/);
+    // Same-model skip end-to-end: both pointers start at 0, but the run never serves the same
+    // model to both seats (red consumes the adjacent slot).
+    expect(out.redTeamLlmModel).not.toBe(out.llmModel);
+    // Per-team reasoning (2026-07-10): each rotated seat carries ITS served model's curated
+    // recommended effort (unknown -> medium) on the run-scoped override.
+    const { recommendedReasoningEffortForModel } = await import("../src/lib/model-reasoning-recommendations");
+    expect(out.llmReasoningEffort).toBe(recommendedReasoningEffortForModel(out.llmModel));
+    expect(out.redTeamReasoningEffort).toBe(recommendedReasoningEffortForModel(out.redTeamLlmModel, "red"));
     out.commit(); // pick audits + pointer advance are only written on commit (Finding 3: commit-late)
     const audits = getDb()
       .prepare("SELECT payload FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
       .all(userId) as Array<{ payload: string }>;
-    const parsed = audits.map((row) => JSON.parse(row.payload) as { runId: string; seat: string; model: string; pointer: number });
+    const parsed = audits.map(
+      (row) => JSON.parse(row.payload) as { runId: string; seat: string; model: string; pointer: number; reasoningEffort?: string }
+    );
     expect(parsed.filter((p) => p.runId === runId).map((p) => p.seat).sort()).toEqual(["green", "red"]);
     for (const pick of parsed) {
       expect(typeof pick.pointer).toBe("number");
       expect(pick.model).not.toBe(LLM_MODEL_ROTATION_SENTINEL);
+      // The served effort is part of the pick's audit trail.
+      expect(pick.reasoningEffort).toBe(
+        recommendedReasoningEffortForModel(pick.model, pick.seat === "red" ? "red" : "green")
+      );
     }
     // A different account starts at its own pointer (slot 0), independent of acct-A's advance.
     const other = resolveModelRotationForRun({
@@ -257,13 +323,54 @@ describe("resolveModelRotationForRun", () => {
   });
 });
 
+describe("recommendedReasoningEffortForModel (curated rotation efforts)", () => {
+  it("uses role-aware GPT-5.6 efforts while preserving provider-safe defaults", async () => {
+    const { recommendedReasoningEffortForModel, reasoningAdviceForModel } = await import("../src/lib/model-reasoning-recommendations");
+    expect(recommendedReasoningEffortForModel("deepseek-v4-flash")).toBe("none");
+    expect(recommendedReasoningEffortForModel("deepseek-v4-pro")).toBe("none");
+    expect(recommendedReasoningEffortForModel("openai/gpt-5.5")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-luna", "chat")).toBe("low");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-luna", "green")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-terra", "green")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-terra", "red")).toBe("high");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-sol", "review")).toBe("high");
+    expect(recommendedReasoningEffortForModel("gpt-5.4-mini", "chat")).toBe("low");
+    expect(recommendedReasoningEffortForModel("gpt-5.4-mini", "red")).toBe("high");
+    expect(recommendedReasoningEffortForModel("claude-fable-5")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("some-custom-model")).toBe("medium");
+    expect(recommendedReasoningEffortForModel(undefined)).toBe("medium");
+    // gpt-5.5's advice carries the interactive-high rule the UI surfaces BEFORE save.
+    expect(reasoningAdviceForModel("openai/gpt-5.5")).toMatch(/disabled for interactive/i);
+    expect(reasoningAdviceForModel("gpt-5.4")).toMatch(/Terra.*preferable curated successor/i);
+    expect(reasoningAdviceForModel("gpt-5.6-terra")).toMatch(/Green Team.*Coach/i);
+    // mistral-medium-3-5's advice carries the 2026-07-10 benchmark tradeoff: None is fast/cheap
+    // but proposes nothing, High actually proposes but is far slower/costlier.
+    expect(reasoningAdviceForModel("mistral-medium-3-5")).toMatch(/EMPTY proposal list/);
+    expect(reasoningAdviceForModel("mistral-medium-3-5")).toMatch(/\$0\.07/);
+  });
+
+  it("every rotation-pool model's recommended effort survives the interactive clamp unchanged", async () => {
+    // Rotation must never auto-set an effort the interactive strategy path would then silently
+    // rewrite (e.g. recommending high for gpt-5.5, or medium for a DeepSeek that treats it as off).
+    const { MODEL_ROTATION_POOL } = await import("../src/lib/model-rotation");
+    const { recommendedReasoningEffortForModel } = await import("../src/lib/model-reasoning-recommendations");
+    const { interactiveStrategyReasoningEffort, reasoningCapabilityForModel } = await import("../src/lib/llm-request");
+    for (const model of MODEL_ROTATION_POOL) {
+      const recommended = recommendedReasoningEffortForModel(model);
+      const served = interactiveStrategyReasoningEffort(model, recommended);
+      if (reasoningCapabilityForModel(model)) expect(served, model).toBe(recommended);
+      else expect(served, model).toBeUndefined();
+    }
+  });
+});
+
 describe("sentinel handling at the edges", () => {
   it("resolveOpenAiModel treats the sentinel as unset (safety net for non-run consumers)", async () => {
     vi.stubEnv("OPENAI_MODEL", "");
     const { resolveOpenAiModel, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/llm-request");
     // No-defaults: the sentinel (like any unset model) resolves to "" — fail closed, never a default.
     expect(resolveOpenAiModel({ llmModel: LLM_MODEL_ROTATION_SENTINEL })).toBe("");
-    expect(resolveOpenAiModel({ llmModel: "gpt-5.5" })).toBe("gpt-5.5");
+    expect(resolveOpenAiModel({ llmModel: "openai/gpt-5.5" })).toBe("openai/gpt-5.5");
   });
 
   it("PUT /api/policy accepts and persists the sentinel for both seats", async () => {

@@ -1,5 +1,11 @@
 # Scope: Full-filing RAG ingestion (Q2) — 10-K/10-Q body fetch → storeDocument → ingested_accessions de-dup → scope:shared
 
+> **2026-07-12 scope correction:** this file preserves the original recent-10-K/10-Q implementation design.
+> It is not sufficient for a 1,000-issuer historical backfill: the scheduler path, regex parser, recent-only
+> discovery, coarse accession ledger, and global content-hash dedup all require replacement or hardening first.
+> The current architecture and rollout plan is
+> [`docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md`](../reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md).
+
 _Scoped 2026-06-21 (multi-agent design pass). Effort: **m** · Autonomy: **autonomous-after-decisions**_
 
 ## Current state

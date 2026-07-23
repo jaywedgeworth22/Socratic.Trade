@@ -3,7 +3,7 @@
 import { audit } from "./db";
 import { getDrizzle } from "./db/client";
 import { settings, userSettings, marketDataDemands } from "./db/schema";
-import { eq, like, and, lte, gt } from "drizzle-orm";
+import { eq, and, lte, gt } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
 // ── Global settings (legacy/internal) ─────────────────────────────────────────
@@ -55,14 +55,6 @@ export function deleteInternalSetting(key: string): void {
   getDrizzle().delete(settings).where(eq(settings.key, key)).run();
 }
 
-/** Find the first settings row whose key matches a LIKE pattern.  Used for
- *  state-recovery during OAuth callbacks where userId is not yet in scope. */
-export function findInternalSettingByKeyLike<T>(pattern: string): { key: string; value: T } | undefined {
-  const row = getDrizzle().select().from(settings).where(like(settings.key, pattern)).limit(1).get();
-  if (!row) return undefined;
-  return { key: row.key, value: JSON.parse(row.value) as T };
-}
-
 // ── Per-user settings ──────────────────────────────────────────────────────────
 
 export function getUserSetting<T>(userId: string, key: string, fallback: T): T {
@@ -71,7 +63,7 @@ export function getUserSetting<T>(userId: string, key: string, fallback: T): T {
   try { return JSON.parse(row.value) as T; } catch { return row.value as unknown as T; }
 }
 
-export function setUserSetting(userId: string, key: string, value: unknown): void {
+export function setUserSetting(userId: string, key: string, value: unknown, options?: { auditPolicyChange?: boolean }): void {
   const id = `${userId}_${key}`;
   const updated_at = new Date().toISOString();
   const stringValue = JSON.stringify(value);
@@ -85,7 +77,14 @@ export function setUserSetting(userId: string, key: string, value: unknown): voi
     target: [userSettings.user_id, userSettings.key],
     set: { value: stringValue, updated_at }
   }).run();
-  audit("policy_change", { userId, key, value }, userId);
+  // auditPolicyChange=false is for machine-generated state (e.g. the hourly reflection_summary
+  // write) that would otherwise flood the activity feed with "policy_change" cards the user
+  // never made. User-driven settings writes must keep the default (audited).
+  if (options?.auditPolicyChange !== false) audit("policy_change", { userId, key, value }, userId);
+}
+
+export function deleteUserSetting(userId: string, key: string): void {
+  getDrizzle().delete(userSettings).where(and(eq(userSettings.user_id, userId), eq(userSettings.key, key))).run();
 }
 
 // ── Shared market-data pool consent ───────────────────────────────────────────

@@ -20,6 +20,7 @@ import {
   ListChecks,
   MessageSquare,
   Pin,
+  Plug,
   Radar,
   ReceiptText,
   Settings as SettingsIcon,
@@ -88,12 +89,20 @@ export const DESTINATIONS: Destination[] = [
   { href: "/console/macro", label: "Regime", icon: Globe, desc: "Macro and market-regime board: rates, credit, volatility, breadth." },
   { href: "/console/orders", label: "Orders", icon: ListChecks, desc: "Order history and open orders at the broker." },
   { href: "/console/assistant", label: "Coach", icon: MessageSquare, desc: "Coach Socratic Trade about its reasoning, accounts, and market focus." },
-  { href: "/console/strategy", label: "Framework", icon: Brain, desc: "The agent framework: prompts, models, doctrine, and run cadence." },
-  { href: "/console/guardrails", label: "Mandates", icon: Shield, desc: "Delegated authority and hard constraints that bind every trade." },
+  { href: "/console/strategy", label: "Strategy", icon: Brain, desc: "The agent's brain: instructions, models, scoring weights, presets." },
+  { href: "/console/guardrails", label: "Guardrails", icon: Shield, desc: "Autonomy, spending caps, protective stops, schedule, and the trading rulebook." },
+  { href: "/console/connections", label: "Connections", icon: Plug, desc: "Broker accounts and provider API keys." },
   { href: "/console/results", label: "Outcomes", icon: BarChart3, desc: "Realized performance, equity curve, thesis scorecards, and learning evidence." },
   { href: "/console/usage", label: "Usage", icon: ReceiptText, desc: "Your LLM usage and estimated model cost by key, model, and workflow." },
-  { href: "/console/settings", label: "Settings", icon: SettingsIcon, desc: "Accounts, notifications, API keys, and console preferences." }
+  { href: "/console/settings", label: "Settings", icon: SettingsIcon, desc: "Notifications, sharing, confirmations, and console preferences." }
 ];
+
+/** Canonical destination name for page titles. Every page h1 renders through this
+ *  (h1 === rail label, the 2026-07-16 naming canon) so nav and titles can't drift
+ *  apart again — 9 of 13 surfaces had diverged (click "Outcomes", land on "Results"). */
+export function destinationLabel(href: string): string {
+  return DESTINATIONS.find((d) => d.href === href)?.label ?? href;
+}
 
 function isActive(pathname: string, href: string): boolean {
   return href === "/console" ? pathname === "/console" : pathname.startsWith(href);
@@ -110,7 +119,7 @@ const GROUPED_DESTINATION_HREFS: { label: string; hrefs: string[] }[] = [
   { label: "Core", hrefs: ["/console", "/console/approvals", "/console/activity"] },
   { label: "Monitor", hrefs: ["/console/scan", "/console/watchlist", "/console/macro", "/console/orders"] },
   { label: "Review", hrefs: ["/console/assistant", "/console/results", "/console/usage"] },
-  { label: "Configure", hrefs: ["/console/strategy", "/console/guardrails", "/console/settings"] }
+  { label: "Configure", hrefs: ["/console/strategy", "/console/guardrails", "/console/connections", "/console/settings"] }
 ];
 
 export function groupedDestinations(destinations: Destination[]): { label: string; items: Destination[] }[] {
@@ -133,7 +142,7 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
   const learnedCount = useLearnedPendingCount();
   const decisionCount = pendingCount + learnedCount;
   return (
-    <nav className="hidden w-52 shrink-0 flex-col gap-1 px-3 py-4 lg:flex" aria-label="Console navigation">
+    <nav className="hidden w-52 shrink-0 flex-col gap-1 px-3 py-4 lg:flex border-r border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] shadow-sm mr-4" aria-label="Console navigation">
       {groupedDestinations(DESTINATIONS).map((group, i) => (
         <div key={group.label} className={cx("flex flex-col gap-1", i > 0 && "mt-4")}>
           <div className="con-card-title px-3 pb-1">{group.label}</div>
@@ -148,7 +157,7 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
                 data-active={active}
                 aria-current={active ? "page" : undefined}
                 title={d.desc}
-                onClick={(e) => guardNav(e)}
+                onClick={(e) => guardNav(e, d.href)}
               >
                 <Icon size={16} />
                 <span className="flex-1">{d.label}</span>
@@ -178,7 +187,7 @@ const FOCUSABLE_SELECTOR =
  * the sheet off the very top of the viewport (status bar / notch). A floor
  * is used until the first measurement lands (effectively instant — the bar
  * is always mounted before a user can tap "Tabs" to open this). */
-const TABS_SHEET_GAP = 8;
+const TABS_SHEET_GAP = 0;
 const TABS_SHEET_TOP_GAP = 16;
 const TABS_SHEET_BAR_FLOOR = 56;
 
@@ -208,7 +217,7 @@ function TabsSheet({
   open: boolean;
   onClose: () => void;
   pathname: string;
-  guardNav: (event?: { preventDefault: () => void }) => boolean;
+  guardNav: (event: { preventDefault: () => void } | undefined, href: string) => boolean;
   tabs: MobileTabsState;
   decisionCount: number;
   pendingCount: number;
@@ -288,7 +297,7 @@ function TabsSheet({
         aria-labelledby={headingId}
         tabIndex={-1}
         className={cx(
-          "fixed inset-x-0 z-[101] flex flex-col overflow-hidden rounded-[var(--con-radius)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] shadow-[var(--con-shadow-lg)] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none motion-reduce:duration-0 lg:hidden",
+          "fixed inset-x-0 z-[101] flex flex-col overflow-hidden rounded-t-[24px] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] shadow-[var(--con-shadow-lg)] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none motion-reduce:duration-0 lg:hidden",
           entered ? "translate-y-0 opacity-100" : "translate-y-full opacity-0"
         )}
         style={{
@@ -296,9 +305,10 @@ function TabsSheet({
           maxHeight: `calc(100dvh - ${barOffset + TABS_SHEET_GAP + TABS_SHEET_TOP_GAP}px)`
         }}
       >
-        <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5">
-          <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold">
-            Tabs
+        <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5 relative">
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 w-9 h-1.5 rounded-full bg-[color:var(--con-line-strong)] opacity-60"></div>
+          <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold mt-2">
+            More
           </h2>
           <button
             type="button"
@@ -337,7 +347,7 @@ function TabsSheet({
                         aria-current={active ? "page" : undefined}
                         title={d.desc}
                         onClick={(e) => {
-                          if (guardNav(e)) onClose();
+                          if (guardNav(e, d.href)) onClose();
                         }}
                       >
                         <Icon size={16} />
@@ -411,8 +421,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
     <>
       <nav
         ref={navRef}
-        className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] lg:hidden"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        className="con-tabbar fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]/85 backdrop-blur-xl supports-[backdrop-filter]:bg-[color:var(--con-surface)]/70 lg:hidden"
         aria-label="Console navigation"
       >
         <div className="flex">
@@ -428,7 +437,11 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
                 aria-current={active ? "page" : undefined}
                 title={d.desc}
                 style={active ? { fontWeight: 800 } : undefined}
-                onClick={(e) => guardNav(e)}
+                onClick={(e) => {
+                  if (guardNav(e, d.href)) {
+                    setTabsOpen(false);
+                  }
+                }}
               >
                 <span
                   className="relative flex h-7 w-10 items-center justify-center rounded-full transition-colors"
@@ -448,18 +461,21 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
           <button
             type="button"
             className="con-tab-item"
-            data-active={tabsButtonActive}
-            title="Choose which screens show up here, or jump to any screen"
-            style={tabsButtonActive ? { fontWeight: 800 } : undefined}
-            onClick={() => setTabsOpen(true)}
+            data-active={tabsButtonActive || tabsOpen}
+            title={tabsOpen ? "Close more menu" : "Choose which screens show up here, or jump to any screen"}
+            style={tabsButtonActive || tabsOpen ? { fontWeight: 800 } : undefined}
+            onClick={() => setTabsOpen(!tabsOpen)}
           >
             <span
               className="relative flex h-7 w-10 items-center justify-center rounded-full transition-colors"
-              style={tabsButtonActive ? { background: "var(--con-accent-soft)" } : undefined}
+              style={tabsButtonActive || tabsOpen ? { background: "var(--con-accent-soft)" } : undefined}
             >
               <LayoutGrid size={19} />
             </span>
-            Tabs
+            {/* Was "Tabs" — unclear for the standard mobile overflow-menu pattern this
+                is (the grid of every destination, with pin/unpin to customize the bar
+                above). "More" is the conventional label for this affordance. */}
+            More
           </button>
         </div>
       </nav>
