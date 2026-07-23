@@ -10,11 +10,16 @@ configuration/documentation, while retaining historical rollout evidence.
 
 - Alpaca, including its `alpaca-news` and `alpaca-snapshot` subproviders, Tradier, and Robinhood
   remain available for trading, account reads, and API-health reporting.
-- Their call-volume and broker-balance events are no longer forwarded to Usage Monitor.
+- Their call-volume events are no longer forwarded to Usage Monitor.
+- `pushBrokerBalance` is removed entirely (call sites were already unhooked; the export is gone).
 - A central provider-family policy prevents retired broker names and subproviders from being
-  admitted if a future call site accidentally tries to record them.
-- Paid providers remain eligible for Usage Monitor forwarding; the regression suite uses FMP as
-  the control.
+  admitted on the live path (`recordProviderCall`) and the durable provider-dispatch path
+  (`createProviderDispatchUsageMonitorEvent` returns null; replay drops nulls and still advances
+  watermarks).
+- Paid providers remain eligible for Usage Monitor forwarding; the integrated regression uses FMP
+  as the paid control alongside suppressed Alpaca/Tradier/Robinhood.
+- Strict-v2 identities, complete/partial ACK semantics, replay watermarks, and cutover behavior
+  from #1889 are preserved.
 - The unused Intrinio provider, API-key resolution, environment example, and current planning
   references are removed. Historical rollouts, reviews, and handoffs are deliberately unchanged.
 
@@ -27,9 +32,10 @@ configuration/documentation, while retaining historical rollout evidence.
 - `src/lib/data-providers.ts`
 - `src/lib/db-api-keys.ts`
 - `src/lib/usage-monitor-provider-policy.ts`
-- `src/lib/usage-monitor-push.ts` (after PR #1889 lands)
+- `src/lib/usage-monitor-push.ts`
+- `src/lib/usage-monitor-replay.ts`
 - `test/usage-monitor-provider-policy.test.ts`
-- `test/usage-monitor-push.test.ts` (after PR #1889 lands)
+- `test/usage-monitor-push.test.ts`
 - Current provider/broker/Usage Monitor docs
 - `STATUS.md`, `PLAN.md`, and `docs/EFFORT-LOG.md`
 
@@ -37,12 +43,12 @@ configuration/documentation, while retaining historical rollout evidence.
 
 - Node 24 focused gate before strict-v2 integration: 5 files / 209 tests passed.
 - TypeScript `--noEmit` and `git diff --check` passed before strict-v2 integration.
-- The final gate will run after adopting the exact merge of PR #1889 so its event schema,
-  partial-ACK handling, replay admission, and cutover behavior are verified together.
+- Post-#1889 integration on exact `origin/main` (`bd7068b6`): focused usage-monitor suites
+  4 files / 61 tests passed (`provider-policy`, `push`, `replay`, `vector-db-voyage-dispatch-cost`);
+  `tsc --noEmit` and `git diff --check` green. Full `npm test` + `npm run build` run before PR.
 
 ## Dependency and release state
 
-PR #1889 owns the direct strict-v2 Usage Monitor transport and its tests. This branch does not
-modify those files until #1889 merges. It will then integrate the retired-provider boundary on
-current `main`, run the authoritative Node 24 gate, and open a ready review PR. Merge and deployment
-remain owner-controlled.
+PR #1889 merged as `bd7068b6341380b49ec13165f5f4e0b8b15a07ee` and is live on Coolify at that exact
+SHA with `usage-monitor` healthy. This branch integrates the retired-provider boundary on that
+strict-v2 transport.
