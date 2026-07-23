@@ -1,5 +1,14 @@
 # Active Implementation Plan
 
+> **2026-07-22 — Approval Busy/red-team/UptimeRobot repair (CODEX, branch
+> `codex/trade-approval-redteam-uptime-20260722`).** Keep the per-account strategy lock as the
+> correctness fence, but retry its side-effect-free Busy response in the approval client so a user
+> does not have to race a long LLM run. Use OpenRouter's account-filtered model list before choosing
+> rotation slots; explicit unavailable model selections remain fail-closed and require owner choice.
+> Keep the external monitor on public `/api/health`; do not expose authenticated `/api/ready` just for
+> monitoring. Verify the dedicated branch with the ordered lint/tsc/test/build gate, then land via
+> `scripts/land.sh` if the owner wants deployment.
+
 > **2026-07-22 — Usage telemetry v2 + shared-package pin-check combined landing (PR #1889).** The
 > reviewed #1890 workflow correction is subsumed into #1889 to avoid two serialized full CI cycles.
 > Keep auto-merge off until the combined final head passes hosted `gitleaks`, `check-pin`, required

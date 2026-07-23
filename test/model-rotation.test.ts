@@ -146,7 +146,7 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     const { eligibleRotationPool } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test-openai", "test");
     upsertUserApiKey(userId, "anthropic", "sk-test-anthropic", "test");
-    const { pool, skipped } = eligibleRotationPool(userId);
+    const { pool, skipped } = await eligibleRotationPool(userId);
     expect(pool.length).toBeGreaterThan(0);
     
     // GPT and Claude models should be kept (in pool) since openai/anthropic keys are active
@@ -167,7 +167,7 @@ describe("resolveModelRotationForRun", () => {
   it("returns no override (only a no-op commit) when neither seat holds the sentinel", async () => {
     noEnvKeys();
     const { resolveModelRotationForRun } = await import("../src/lib/model-rotation");
-    const { commit, ...override } = resolveModelRotationForRun({
+    const { commit, ...override } = await resolveModelRotationForRun({
       userId: `rot-none-${randomUUID()}`,
       accountId: "acct-1",
       runId: randomUUID(),
@@ -186,10 +186,10 @@ describe("resolveModelRotationForRun", () => {
     const { resolveModelRotationForRun, eligibleRotationPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test", "test");
     upsertUserApiKey(userId, "anthropic", "sk-test", "test");
-    const { pool } = eligibleRotationPool(userId);
+    const { pool } = await eligibleRotationPool(userId);
     const served: string[] = [];
     for (let i = 0; i < pool.length; i++) {
-      const out = resolveModelRotationForRun({
+      const out = await resolveModelRotationForRun({
         userId,
         accountId,
         runId: randomUUID(),
@@ -216,7 +216,7 @@ describe("resolveModelRotationForRun", () => {
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test", "test");
     const runId = randomUUID();
-    const out = resolveModelRotationForRun({
+    const out = await resolveModelRotationForRun({
       userId,
       accountId: "acct-A",
       runId,
@@ -249,7 +249,7 @@ describe("resolveModelRotationForRun", () => {
       );
     }
     // A different account starts at its own pointer (slot 0), independent of acct-A's advance.
-    const other = resolveModelRotationForRun({
+    const other = await resolveModelRotationForRun({
       userId,
       accountId: "acct-B",
       runId: randomUUID(),
@@ -261,7 +261,7 @@ describe("resolveModelRotationForRun", () => {
   it("fails the rotating seats closed (empty override models, not the sentinel) when no credential resolves at all", async () => {
     noEnvKeys();
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    const { commit, ...override } = resolveModelRotationForRun({
+    const { commit, ...override } = await resolveModelRotationForRun({
       userId: `rot-nokeys-${randomUUID()}`,
       accountId: "acct-1",
       runId: randomUUID(),
@@ -286,7 +286,7 @@ describe("resolveModelRotationForRun", () => {
       (getDb()
         .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
         .get(userId) as { n: number }).n;
-    const out = resolveModelRotationForRun({
+    const out = await resolveModelRotationForRun({
       userId,
       accountId,
       runId: randomUUID(),
@@ -311,14 +311,14 @@ describe("resolveModelRotationForRun", () => {
     upsertUserApiKey(userId, "openai", "sk-test", "test");
     const pointerKey = `model_rotation:${userId}:${accountId}:green`;
     // Run 1 resolves a pick but ABORTS before commit (e.g. account unavailable / over budget) — never commits.
-    const first = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    const first = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
     // Run 2 resolves next: because run 1 never committed, the pointer is still at slot 0, so it serves the SAME model.
-    const second = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    const second = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
     expect(second.llmModel).toBe(first.llmModel);
     expect(getInternalSetting<number>(pointerKey)).toBeUndefined(); // no slot consumed by the aborted runs
     // Run 2 now actually serves the LLM and commits → the pointer finally advances, so run 3 gets a different model.
     second.commit();
-    const third = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    const third = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
     expect(third.llmModel).not.toBe(first.llmModel);
   });
 });

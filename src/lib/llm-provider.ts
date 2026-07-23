@@ -43,6 +43,30 @@ export function modelCredentialService(model: string | undefined): LlmModelFamil
   return process.env.NODE_ENV === "test" ? llmModelFamily(model) : "openrouter";
 }
 
+/**
+ * Normalize a catalog or persisted model name to the OpenRouter wire ID. Keep this beside
+ * resolveLlmEndpoint so availability probes and actual calls cannot disagree about a model's ID.
+ */
+export function normalizeOpenRouterModelId(rawModel: string | undefined): string {
+  let model = (rawModel ?? "").trim();
+  if (!model.includes("/")) {
+    if (/^claude/i.test(model)) {
+      model = `anthropic/${model}`;
+    } else if (/^grok/i.test(model)) {
+      model = `x-ai/${model}`;
+    } else if (/^gemini/i.test(model)) {
+      model = `google/${model}`;
+    } else if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
+      model = `mistralai/${model}`;
+    } else if (/^deepseek/i.test(model)) {
+      model = `deepseek/${model}`;
+    } else if (/^(gpt|o1|o3)/i.test(model)) {
+      model = `openai/${model}`;
+    }
+  }
+  return model.replace(/^openrouter\//i, "").replace(/^xai\//i, "x-ai/");
+}
+
 // Cross-family Red Team DEFAULT removed 2026-07-07 (owner directive: no model is a default for
 // anything, ever). The Red Team model is the user's explicit `redTeamLlmModel` or nothing;
 // resolveRoleModel returns "" when unset and the caller fails closed. Independence (a different
@@ -80,36 +104,7 @@ export function resolveLlmEndpoint(
   role: LlmTeamRole = "green"
 ): LlmEndpoint {
   const rawModel = resolveRoleModel(policy, role);
-  let model = rawModel;
-
-  // Prefix raw model names with the appropriate OpenRouter provider ID if they don't already have one.
-  if (!model.includes("/")) {
-    if (/^claude/i.test(model)) {
-      model = `anthropic/${model}`;
-    } else if (/^grok/i.test(model)) {
-      // OpenRouter's Grok namespace is `x-ai/`, not `xai/` — the latter is an invalid model id
-      // OpenRouter rejects (Codex finding on PR #1703).
-      model = `x-ai/${model}`;
-    } else if (/^gemini/i.test(model)) {
-      model = `google/${model}`;
-    } else if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
-      model = `mistralai/${model}`;
-    } else if (/^deepseek/i.test(model)) {
-      model = `deepseek/${model}`;
-    } else if (/^(gpt|o1|o3)/i.test(model)) {
-      model = `openai/${model}`;
-    }
-  }
-
-  // Strip a legacy openrouter/ prefix that may have been saved in older policy selections
-  // (e.g. "openrouter/google/gemini-2.5-flash" → "google/gemini-2.5-flash").
-  model = model.replace(/^openrouter\//i, "");
-
-  // Normalize the legacy `xai/` Grok slug to OpenRouter's `x-ai/` even when the id was ALREADY
-  // namespaced (e.g. a saved `xai/grok-4.3` policy value, or a test fixture). The bare-`grok`
-  // mapping above only fires for un-namespaced ids, so an already-`xai/`-qualified id would
-  // otherwise reach OpenRouter unchanged and hit an invalid-model failure (Codex finding, PR #1703).
-  model = model.replace(/^xai\//i, "x-ai/");
+  const model = normalizeOpenRouterModelId(rawModel);
 
   const url = process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
   const cred = resolveLlmCredential(modelCredentialService(rawModel), userId);
