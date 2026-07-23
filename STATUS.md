@@ -1,6 +1,11 @@
 ## 2026-07-20 — RAG & Database Ingestion Strategy & Document Summarizer Engine (ANTIGRAVITY, branch `agent/antigravity`)
 
 Designed and implemented Layer 3 (Derived Abstracts & Summaries) of the RAG data expansion architecture. Added database migration 55 (`document_abstracts`), created `src/lib/db-document-abstracts.ts` for CRUD operations, implemented `src/lib/rag/document-summarizer.ts` for generating cited abstracts linking back to Layer 1 raw `source_chunk_ids` and embedding them into the vector store, and added full unit test coverage in `test/document-summarizer.test.ts`.
+## 2026-07-22 — Dark mode near-black retint (GROK)
+
+Public + console dark backgrounds retinted from blue/slate/navy to neutral
+near-black `#0a0a0a` for logo contrast on `/login` and cleaner cockpit surfaces.
+Dark mesh orb opacity cut sharply. Docs: `docs/rollouts/2026-07-22-dark-mode-near-black.md`.
 ## 2026-07-22 — Congress market-data alias split via shared package (CURSOR)
 
 Salvaged #1906 kernel only: `canonicalMarketDataSymbol` drops acquisition tickers for market-data
@@ -19,6 +24,15 @@ from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
 # Current Status
 
+## 2026-07-22 — Admin UI Polish (ANTIGRAVITY, branch `fix/admin-ui-polish`)
+
+Fixed Admin panel UI bugs:
+1. Replaced the misformatted `Socratic Trade <` header navigation toggle with a standard `< Go Back` button for clarity.
+2. The Server Metrics dashboard correctly falls back to a gray inactive line and displays 'Unavailable' when Hetzner usage values (`currentCpu`, `memPct`) are undefined, preventing misleading 0% indicators. Added a 'Max: 100%' heading and 100% Y-axis dashed line to the Sparkline/DualLine charts to provide scale.
+3. Addressed RAG DB Coverage table noise: internal vector DB chunk IDs (e.g. `...#c001`) were improperly stored as 'sources'. Added `WHERE source NOT LIKE '%#c%'` in `db-learning.ts` to filter them out.
+4. Cleaned up API Connections mapping in `route.ts`: aliased legacy `earningscall` rows into the `earningscalls-dev-rapidapi` environment block and formatted `congress.trade` as 'Congress.Trade (Public API)'. Profile photo extraction for the Admin Header was investigated but deemed too resource-heavy since the Admin layout intentionally excludes the `ConsoleDataProvider` that wraps the trading shell.
+
+All 420 files / 4,901 tests and the Next.js build verified green. Rollout: `docs/rollouts/2026-07-22-admin-ui-polish.md`.
 ## 2026-07-22 — UI Redesign: Proposal Slide-out Drawer and Inline Approval (ANTIGRAVITY)
 
 Implemented a slide-out drawer for strategy proposals containing the full `ThesisNarrative` and relevant `Evidence`. Replaced the "Market Thesis" hero with a streamlined feed of these clickable `ProposalRow`s and moved historical actions to the bottom of the page. Added inline "Approve Proposal" buttons in the drawer to allow direct approval of pending trades from the dashboard. Rollout note: `docs/rollouts/2026-07-22-proposal-row-drawer.md`. Next: land.sh, PR, await user review.
@@ -135,6 +149,16 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 ## 2026-07-21 — Mass PR CI Runner Synchronization (Antigravity)
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
+
+## 2026-07-22 — Admin UI Polish (ANTIGRAVITY, branch `fix/admin-ui-polish`)
+
+Fixed Admin panel UI bugs:
+1. Replaced the misformatted `Socratic Trade <` header navigation toggle with a standard `< Go Back` button for clarity.
+2. The Server Metrics dashboard correctly falls back to a gray inactive line and displays 'Unavailable' when Hetzner usage values (`currentCpu`, `memPct`) are undefined, preventing misleading 0% indicators. Added a 'Max: 100%' heading and 100% Y-axis dashed line to the Sparkline/DualLine charts to provide scale.
+3. Addressed RAG DB Coverage table noise: internal vector DB chunk IDs (e.g. `...#c001`) were improperly stored as 'sources'. Added `WHERE source NOT LIKE '%#c%'` in `db-learning.ts` to filter them out.
+4. Cleaned up API Connections mapping in `route.ts`: aliased legacy `earningscall` rows into the `earningscalls-dev-rapidapi` environment block and formatted `congress.trade` as 'Congress.Trade (Public API)'. Profile photo extraction for the Admin Header was investigated but deemed too resource-heavy since the Admin layout intentionally excludes the `ConsoleDataProvider` that wraps the trading shell.
+
+All 420 files / 4,901 tests and the Next.js build verified green. Rollout: `docs/rollouts/2026-07-22-admin-ui-polish.md`.
 
 ## 2026-07-20 — Chat Draft Policy Wash Sale Test Fix (Antigravity/AG, branch `antigravity/fix-chat-draft-policy-washsale`)
 
@@ -2885,6 +2909,16 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - `src/lib/rag/document-summarizer.ts` implemented for generating cited abstracts and embedding them into Pinecone/Voyage under `doc_type: "document-summary"` or `"earnings-summary"`.
 - `test/document-summarizer.test.ts` passes 2/2 tests cleanly.
 - `npx tsc --noEmit` verified with 0 errors.
+
+## 2026-07-22 — Admin UI Polish (ANTIGRAVITY, branch `fix/admin-ui-polish`)
+
+Fixed Admin panel UI bugs:
+1. Replaced the misformatted `Socratic Trade <` header navigation toggle with a standard `< Go Back` button for clarity.
+2. The Server Metrics dashboard correctly falls back to a gray inactive line and displays 'Unavailable' when Hetzner usage values (`currentCpu`, `memPct`) are undefined, preventing misleading 0% indicators. Added a 'Max: 100%' heading and 100% Y-axis dashed line to the Sparkline/DualLine charts to provide scale.
+3. Addressed RAG DB Coverage table noise: internal vector DB chunk IDs (e.g. `...#c001`) were improperly stored as 'sources'. Added `WHERE source NOT LIKE '%#c%'` in `db-learning.ts` to filter them out.
+4. Cleaned up API Connections mapping in `route.ts`: aliased legacy `earningscall` rows into the `earningscalls-dev-rapidapi` environment block and formatted `congress.trade` as 'Congress.Trade (Public API)'. Profile photo extraction for the Admin Header was investigated but deemed too resource-heavy since the Admin layout intentionally excludes the `ConsoleDataProvider` that wraps the trading shell.
+
+All 420 files / 4,901 tests and the Next.js build verified green. Rollout: `docs/rollouts/2026-07-22-admin-ui-polish.md`.
 
 ## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
 
