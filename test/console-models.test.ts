@@ -8,7 +8,7 @@ import { isOpenRouterRouted, modelDisplayName, providerForModel } from "../app/c
 // as OpenAI and every routed id showed its raw vendor-qualified string instead of a display name.
 describe("providerForModel — OpenRouter vendor-routing prefixes", () => {
   it("brands bare (pre-routing) ids correctly, unaffected by the fix", () => {
-    expect(providerForModel("claude-sonnet-5")).toBe("anthropic");
+    expect(providerForModel("claude-sonnet-latest")).toBe("anthropic");
     expect(providerForModel("grok-4.3")).toBe("xai");
     expect(providerForModel("gemini-3.5-flash")).toBe("gemini");
     expect(providerForModel("mistral-medium-3-5")).toBe("mistral");
@@ -17,7 +17,7 @@ describe("providerForModel — OpenRouter vendor-routing prefixes", () => {
   });
 
   it("brands OpenRouter-routed ids by their real vendor, not OpenAI", () => {
-    expect(providerForModel("anthropic/claude-sonnet-5")).toBe("anthropic");
+    expect(providerForModel("anthropic/claude-sonnet-latest")).toBe("anthropic");
     // The regression this fix targets: x-ai/ and google/ prefixes don't start with "grok"/"gemini",
     // so they used to fall through to the "openai" default.
     expect(providerForModel("x-ai/grok-4.3")).toBe("xai");
@@ -40,17 +40,17 @@ describe("providerForModel — OpenRouter vendor-routing prefixes", () => {
 
 describe("modelDisplayName — strips the OpenRouter routing prefix before the curated lookup", () => {
   it("resolves a curated model routed through OpenRouter to its curated display name, not the raw id", () => {
-    expect(modelDisplayName("x-ai/grok-4.3")).toBe("Grok 4.3");
-    expect(modelDisplayName("google/gemini-3.5-flash")).toBe("Gemini 3.5 Flash");
-    expect(modelDisplayName("anthropic/claude-sonnet-4-6")).toBe("Claude Sonnet 4.6");
+    expect(modelDisplayName("x-ai/grok-4.3")).toBe("Grok Latest");
+    expect(modelDisplayName("google/gemini-3.5-flash")).toBe("Gemini Flash Latest");
+    expect(modelDisplayName("anthropic/claude-sonnet-4-6")).toBe("Claude Sonnet Latest");
   });
 
   it("falls back to the bare id (prefix stripped) for a routed but uncatalogued model", () => {
-    expect(modelDisplayName("anthropic/claude-3.5-sonnet")).toBe("claude-3.5-sonnet");
+    expect(modelDisplayName("openrouter/mistralai/mistral-tiny")).toBe("mistral-tiny");
   });
 
   it("is unaffected for bare ids (pre-routing / direct calls)", () => {
-    expect(modelDisplayName("grok-4.3")).toBe("Grok 4.3");
+    expect(modelDisplayName("grok-4.3")).toBe("Grok Latest");
     expect(modelDisplayName("")).toBe("");
     expect(modelDisplayName(null)).toBe("");
   });
