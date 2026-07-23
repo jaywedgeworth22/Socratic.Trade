@@ -113,7 +113,7 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
       console.warn("[congress-events] event validation failed, using raw event");
     }
     const id = typeof raw.id === "string" ? raw.id : undefined;
-    if (id && isDuplicate(id)) {
+    if (id && !markSeen(id)) {
       return { ok: true, type, applied: 0, duplicate: true };
     }
     const data = asRecord(raw.data);
@@ -143,7 +143,6 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
         candidates.push(bareTx);
       }
       const trades = candidates.map(coerceCongressTrade).filter((t): t is CongressTrade => t !== null);
-      if (id) commitSeen(id);
       if (trades.length === 0) return { ok: true, type, applied: 0, reason: "no-trades" };
       const { added } = upsertCongressTrades(trades);
       return { ok: true, type, applied: added };
@@ -187,7 +186,10 @@ export function applyCongressEvents(events: unknown): ApplyResult[] {
 }
 
 function isCongressEventType(value: string): boolean {
-  // Canonical types come from the shared package; `trade.new` is App A's legacy
-  // alias and is remapped to `congress.trade` by applyCongressEvent.
-  return (CONGRESS_EVENT_TYPES as readonly string[]).includes(value) || value === "trade.new";
+  return value === "congress.trade" ||
+    value === "trade.new" ||
+    value === "insider.update" ||
+    value === "ref.upsert" ||
+    value === "price.eod" ||
+    value === "spx.eod";
 }
