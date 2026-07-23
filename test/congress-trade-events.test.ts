@@ -254,6 +254,23 @@ describe("webhook endpoint (POST)", () => {
     expect(resOversized.status).toBe(413);
   });
 
+  // ITEM 13 (bounded body): the pre-fix code trusted the declared content-length ALONE — a
+  // missing/understated header (chunked transfer, or a lying client) sailed straight through to
+  // an unbounded req.text() read. readBodyWithLimit aborts mid-stream on the ACTUAL byte count
+  // regardless of any header, so this must still 413 even with no content-length header at all.
+  it("rejects an actually-oversized body via the streaming cap even with NO content-length header", async () => {
+    process.env.CONGRESS_WEBHOOK_SECRET = "s3cr3t";
+    const bigBody = JSON.stringify({ padding: "a".repeat(6 * 1024 * 1024) });
+    const req = new Request("https://b.example/api/webhooks/congress", {
+      method: "POST",
+      headers: { "x-signature": sign("s3cr3t", bigBody) },
+      body: bigBody
+    });
+    expect(req.headers.get("content-length")).toBeNull(); // proves this exercises the stream path, not the header fast-path
+    const res = await postCongressWebhook(req);
+    expect(res.status).toBe(413);
+  });
+
   it("accepts shared-package HMAC signatures with supported prefix forms", async () => {
     process.env.CONGRESS_WEBHOOK_SECRET = "s3cr3t";
     // An authenticated but invalid event returns 400; an auth failure returns 401. Using an
