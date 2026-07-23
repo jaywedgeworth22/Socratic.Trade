@@ -23,10 +23,35 @@ export function isShortIntent(side: OrderSide): boolean {
 // This is the single broker-agnostic check for "the broker declined/terminated this order without
 // a fill" — used both immediately after placement (so a synchronous broker rejection isn't
 // mislabeled "placed") and by the later reconciliation sweep (so both spellings/brokers match).
-const TERMINAL_DECLINE_STATES = new Set(["rejected", "canceled", "cancelled", "failed", "expired"]);
+const TERMINAL_DECLINE_STATES = new Set([
+  "rejected", "canceled", "cancelled", "failed", "expired",
+  // Tradier-flavored terminal-decline (beyond the shared 7 words above).
+  "error"
+]);
 
 export function isRejectedOrCanceledState(state: string | undefined | null): boolean {
   return TERMINAL_DECLINE_STATES.has(String(state ?? "").trim().toLowerCase());
+}
+
+/** Broker terminal state does not prove zero execution: a cancel/reject/expire can arrive after a
+ * partial fill. Every placement/reconciliation path must inspect the broker-reported quantity
+ * before classifying the order as wholly declined. */
+export function hasBrokerReportedFill(order: { filledQuantity?: number | null }): boolean {
+  return typeof order.filledQuantity === "number" && Number.isFinite(order.filledQuantity) && order.filledQuantity > 0;
+}
+
+/** A broker-reported execution is safe to book only when both cumulative quantity and the
+ * broker's realized average price are present. Proposal/reference prices are useful estimates,
+ * but substituting them here would permanently turn an unresolved broker receipt into invented
+ * realized P&L. */
+export function hasBrokerReportedPricedFill(order: {
+  filledQuantity?: number | null;
+  averagePrice?: number | null;
+}): boolean {
+  return hasBrokerReportedFill(order)
+    && typeof order.averagePrice === "number"
+    && Number.isFinite(order.averagePrice)
+    && order.averagePrice > 0;
 }
 
 // The complementary broker-agnostic check: "this order is still RESTING/LIVE at the broker"
@@ -44,6 +69,10 @@ const LIVE_ORDER_STATES = new Set([
   "new", "accepted", "pending_new", "accepted_for_bidding", "held", "calculated", "partially_filled", "open",
   // Robinhood-flavored resting states (get_equity_orders reports a working stop as one of these).
   "queued", "confirmed", "unconfirmed",
+  // Tradier-flavored resting state. "pending" is a bare Tradier working state (open/partially_filled
+  // are already covered above); it is also added to broker-held-orders.ts ACTIVE_BROKER_ORDER_STATES,
+  // so it must be here too to keep the superset invariant guarded by broker-side.test.ts.
+  "pending",
   // Non-terminal in-transition states. "pending_cancel"/"pending_replace" are deliberate: an order
   // whose cancel/replace is merely REQUESTED can still fill, so it must keep counting as live
   // protection/coverage until the broker confirms it dead — treating it as gone is what lets a
@@ -78,7 +107,7 @@ export function isLiveExitOrder(order: EquityOrder, positionSide: "long" | "shor
 // not a standalone order" (Alpaca `order_class`). Case-insensitive match against EquityOrder.orderClass.
 const BRACKET_ORDER_CLASSES = new Set(["bracket", "oco", "oto"]);
 
-function isBracketOrderClass(orderClass: string | undefined): boolean {
+export function isBracketOrderClass(orderClass: string | undefined): boolean {
   return typeof orderClass === "string" && BRACKET_ORDER_CLASSES.has(orderClass.trim().toLowerCase());
 }
 

@@ -61,4 +61,49 @@ describe("stopFlowModel — the guardrails stop diagram tells the truth about th
     const longOnly = policy({ activeBroker: "alpaca", riskRules: trail, shortSellingEnabled: false });
     expect(node(longOnly, "enforcement", "broker").detail).not.toMatch(/long positions only/i);
   });
+
+  describe("per-position override lane — always available, independent of account config", () => {
+    it("all four per-position styles are present and active regardless of account-wide stop/trailing config", () => {
+      // Universal availability: even an account with NO stop-loss and NO trailing % configured at
+      // all must still show every style as genuinely selectable (backed by STOP_PLAN_FALLBACK_STOP_PCT).
+      const bare = policy({ riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 0, trailingStopPct: 0 } });
+      const laneNodes = lane(bare, "perPosition").nodes;
+      expect(laneNodes.map((n) => n.key)).toEqual(["plan-fixed", "plan-atr", "plan-trailing", "plan-none"]);
+      expect(laneNodes.every((n) => n.active)).toBe(true);
+    });
+
+    it("the fixed/trailing detail text names the account's own %, or the 8% fallback when unconfigured", () => {
+      const configured = policy({ riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 12, trailingStopPct: 6 } });
+      expect(node(configured, "perPosition", "plan-fixed").detail).toMatch(/12%/);
+      expect(node(configured, "perPosition", "plan-trailing").detail).toMatch(/6%/);
+      const bare = policy({ riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 0, trailingStopPct: 0 } });
+      expect(node(bare, "perPosition", "plan-fixed").detail).toMatch(/8% fallback/);
+      expect(node(bare, "perPosition", "plan-trailing").detail).toMatch(/8% fallback/);
+    });
+
+    it("'none' is never silent — its detail requires a rationale and says where it's surfaced", () => {
+      const p = policy();
+      expect(node(p, "perPosition", "plan-none").detail).toMatch(/rationale/i);
+      expect(node(p, "perPosition", "plan-none").detail).toMatch(/never hard-blocked/i);
+    });
+
+    it("the lane note explains the absent/default case and when a plan is set", () => {
+      const p = policy();
+      expect(lane(p, "perPosition").note).toMatch(/account's own precedence/i);
+      expect(lane(p, "perPosition").note).toMatch(/opening buy\/short/i);
+    });
+
+    it("contains the RTH-only broker stop warning in the broker-held detail string", () => {
+      const p = policy();
+      expect(node(p, "enforcement", "broker").detail).toMatch(/Regular Trading Hours/);
+    });
+
+    it("displays the propose-authority blind spot warning on the app-managed node only under propose mode", () => {
+      const proposeMode = policy({ strategyAuthority: "propose" });
+      expect(node(proposeMode, "enforcement", "app").detail).toMatch(/blind spot/i);
+
+      const decideMode = policy({ strategyAuthority: "decide" });
+      expect(node(decideMode, "enforcement", "app").detail).not.toMatch(/blind spot/i);
+    });
+  });
 });

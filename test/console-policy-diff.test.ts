@@ -149,6 +149,39 @@ describe("console guardrails: cleared-field honesty (Codex finding 9)", () => {
   });
 });
 
+describe("console guardrails: configurable daily cap mode", () => {
+  const money = defByPath("maxDailyNotional");
+  const percent = defByPath("maxDailyPctOfNav");
+
+  it("builds an exclusive percent-mode patch from the Guardrails draft", () => {
+    const fixedPolicy = { ...policy, maxDailyNotional: 1_000, maxDailyPctOfNav: undefined };
+    const diff = computeDiff(
+      fixedPolicy,
+      { maxDailyNotional: null, maxDailyPctOfNav: 20 },
+      [money, percent]
+    );
+
+    expect(buildPatch(diff, fixedPolicy)).toMatchObject({
+      maxDailyNotional: null,
+      maxDailyPctOfNav: 20
+    });
+  });
+
+  it("builds an exclusive fixed-dollar patch when switched back", () => {
+    const percentPolicy = { ...policy, maxDailyNotional: undefined, maxDailyPctOfNav: 20 };
+    const diff = computeDiff(
+      percentPolicy,
+      { maxDailyNotional: 250, maxDailyPctOfNav: null },
+      [money, percent]
+    );
+
+    expect(buildPatch(diff, percentPolicy)).toMatchObject({
+      maxDailyNotional: 250,
+      maxDailyPctOfNav: null
+    });
+  });
+});
+
 describe("console guardrails: washSaleHandling select classification", () => {
   const def = defByPath("taxSettings.washSaleHandling");
 

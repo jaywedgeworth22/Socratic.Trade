@@ -36,7 +36,7 @@ export function NeedsAttention({ snapshot }: { snapshot: DashboardSnapshot }) {
           {items.map((item) => {
             const body = (
               <div
-                className="flex items-start gap-2.5 rounded-lg border p-3 transition-colors"
+                className="flex items-start gap-2.5 rounded-control border p-3 transition-colors"
                 style={{ borderColor: TONE_STYLE[item.tone].border }}
               >
                 <ItemIcon tone={item.tone} />

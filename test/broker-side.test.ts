@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { toBrokerSide, isShortIntent, isRejectedOrCanceledState, isLiveOrderState, liveExitOrderCoverage } from "../src/lib/broker-side";
+import { toBrokerSide, isShortIntent, isRejectedOrCanceledState, hasBrokerReportedFill, hasBrokerReportedPricedFill, isLiveOrderState, liveExitOrderCoverage } from "../src/lib/broker-side";
 import { ACTIVE_BROKER_ORDER_STATES } from "../src/lib/broker-held-orders";
 import { toMcpOrder } from "../src/lib/robinhood";
 import type { EquityOrder, EquityOrderInput, OrderSide } from "../src/lib/types";
@@ -51,6 +51,10 @@ describe("isRejectedOrCanceledState — broker-agnostic terminal-decline check",
     expect(isRejectedOrCanceledState("Cancelled")).toBe(true);
   });
 
+  it("recognizes the Tradier-flavored terminal-decline state 'error'", () => {
+    expect(isRejectedOrCanceledState("error")).toBe(true);
+  });
+
   it("does not flag accepted/filled/unknown states", () => {
     expect(isRejectedOrCanceledState("filled")).toBe(false);
     expect(isRejectedOrCanceledState("partially_filled")).toBe(false);
@@ -62,6 +66,23 @@ describe("isRejectedOrCanceledState — broker-agnostic terminal-decline check",
   });
 });
 
+describe("hasBrokerReportedFill — terminal state execution truth", () => {
+  it("requires a finite positive broker-filled quantity", () => {
+    expect(hasBrokerReportedFill({ filledQuantity: 0.25 })).toBe(true);
+    expect(hasBrokerReportedFill({ filledQuantity: 0 })).toBe(false);
+    expect(hasBrokerReportedFill({ filledQuantity: Number.NaN })).toBe(false);
+    expect(hasBrokerReportedFill({})).toBe(false);
+  });
+
+  it("requires a finite positive realized price before execution is safe to book", () => {
+    expect(hasBrokerReportedPricedFill({ filledQuantity: 0.25, averagePrice: 100 })).toBe(true);
+    expect(hasBrokerReportedPricedFill({ filledQuantity: 0.25 })).toBe(false);
+    expect(hasBrokerReportedPricedFill({ filledQuantity: 0.25, averagePrice: 0 })).toBe(false);
+    expect(hasBrokerReportedPricedFill({ filledQuantity: 0.25, averagePrice: Number.NaN })).toBe(false);
+    expect(hasBrokerReportedPricedFill({ filledQuantity: 0, averagePrice: 100 })).toBe(false);
+  });
+});
+
 describe("isLiveOrderState — broker-agnostic resting/live check", () => {
   it("recognizes Alpaca-flavored resting/working states", () => {
     expect(isLiveOrderState("new")).toBe(true);
@@ -70,6 +91,12 @@ describe("isLiveOrderState — broker-agnostic resting/live check", () => {
     expect(isLiveOrderState("held")).toBe(true);
     expect(isLiveOrderState("partially_filled")).toBe(true);
     expect(isLiveOrderState("open")).toBe(true);
+  });
+
+  it("recognizes the Tradier-flavored resting state 'pending' (open/partially_filled already covered)", () => {
+    expect(isLiveOrderState("pending")).toBe(true);
+    expect(isLiveOrderState("open")).toBe(true);
+    expect(isLiveOrderState("partially_filled")).toBe(true);
   });
 
   it("recognizes Robinhood resting states (queued/confirmed/unconfirmed) — the double-exit fix", () => {

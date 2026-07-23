@@ -48,12 +48,16 @@ interface DirtyGuardValue {
    *  its own navigation); `proceed` runs only if the user chooses Discard. When clean, runs
    *  `proceed` immediately and returns true. */
   guardNavigation: (proceed: () => void) => boolean;
+  /** Suppress exactly the next beforeunload prompt. Used only after a server-side scope mutation
+   *  has succeeded and the page must reload so stale scope UI cannot remain interactive. */
+  allowNextUnload: () => void;
 }
 
 const DirtyGuardContext = createContext<DirtyGuardValue | null>(null);
 
 export function DirtyGuardProvider({ children }: { children: ReactNode }) {
   const registry = useRef(new Map<string, Registration>());
+  const allowNextUnloadRef = useRef(false);
   // Only set when a dirty navigation is intercepted — toggling it is the one thing here that
   // re-renders (rare, user-initiated), so typing in a guarded draft never re-renders the shell.
   const [prompt, setPrompt] = useState<null | { proceed: () => void; hasReview: boolean }>(null);
@@ -76,12 +80,24 @@ export function DirtyGuardProvider({ children }: { children: ReactNode }) {
         for (const r of registry.current.values()) if (r.dirty && r.onReview) hasReview = true;
         setPrompt({ proceed, hasReview });
         return false;
+      },
+      allowNextUnload: () => {
+        allowNextUnloadRef.current = true;
+        // Reload normally dispatches beforeunload immediately. Bound the bypass anyway so a blocked
+        // or mocked reload cannot silently suppress an unrelated later close/navigation.
+        window.setTimeout(() => {
+          allowNextUnloadRef.current = false;
+        }, 1_000);
       }
     };
   }, []);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (allowNextUnloadRef.current) {
+        allowNextUnloadRef.current = false;
+        return;
+      }
       if (!value.isDirty()) return;
       // Browsers show their own generic wording; preventDefault + returnValue is the cross-browser
       // contract for "ask before leaving". (A full-page unload can't offer the in-app 3 options.)
@@ -162,4 +178,29 @@ export function useNavDirtyGuard(): (event: { preventDefault: () => void } | und
     },
     [ctx, router]
   );
+}
+
+/** Guard a non-navigation action that also changes the meaning of every account-scoped editor —
+ *  chiefly the global account selector. The caller supplies the action and it runs immediately
+ *  when clean, or only after the user explicitly chooses Discard in the shared prompt. */
+export function useDirtyActionGuard(): (proceed: () => void) => boolean {
+  const ctx = useContext(DirtyGuardContext);
+  return useCallback(
+    (proceed) => {
+      if (!ctx) {
+        proceed();
+        return true;
+      }
+      return ctx.guardNavigation(proceed);
+    },
+    [ctx]
+  );
+}
+
+/** Return a one-shot escape hatch for a mandatory reload after a mutation already changed the
+ * server-side scope. Calling it before the mutation would be unsafe; callers arm it only after the
+ * mutation succeeds and immediately before `window.location.reload()`. */
+export function useNextUnloadBypass(): () => void {
+  const ctx = useContext(DirtyGuardContext);
+  return useCallback(() => ctx?.allowNextUnload(), [ctx]);
 }

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Card, Chip, Dot } from "../../ui/primitives";
+import { Btn, Card, Chip, Dot, Meter, Toggle } from "../../console/ui/primitives";
 import { Server, Cpu, Database, Activity, RefreshCw, Layers, ArrowDown, ArrowUp, Globe, Shield } from "lucide-react";
+import { asRecord, normalizeCoolifyResources, readText } from "@/lib/server-metrics-shapes";
 
 interface MetricPoint {
   timestamp: number;
@@ -10,30 +11,29 @@ interface MetricPoint {
 }
 
 interface HostInfo {
-  name: string;
-  status: string;
-  os: string;
-  cpus: number;
-  memoryTotalBytes: number;
-  memoryFreeBytes: number;
-  uptimeSeconds: number;
-  loadAvg?: number[];
-  serverType?: string;
-  location?: string;
-  ip?: string;
-}
-
-interface ResourceItem {
-  uuid: string;
-  name: string;
-  type: string;
-  status: string;
+  // JSON is an untrusted runtime boundary. Keep every display field unknown so
+  // a future provider regression renders a diagnostic rather than crashing.
+  name?: unknown;
+  status?: unknown;
+  os?: unknown;
+  cpus?: unknown;
+  memoryTotalBytes?: unknown;
+  memoryFreeBytes?: unknown;
+  uptimeSeconds?: unknown;
+  loadAvg?: unknown;
+  serverType?: unknown;
+  location?: unknown;
+  ip?: unknown;
 }
 
 interface ServerMetricsData {
   isProd: boolean;
+  usesLocalHost?: boolean;
+  degraded?: boolean;
+  stale?: boolean;
+  cacheAgeSeconds?: number;
   hostInfo: HostInfo;
-  resources: ResourceItem[];
+  resources: unknown;
   metrics: {
     cpu: MetricPoint[];
     diskRead: MetricPoint[];
@@ -43,6 +43,63 @@ interface ServerMetricsData {
   };
   asOf: string;
   error?: string;
+  warnings?: unknown;
+}
+
+function parseMetricPoints(value: unknown): MetricPoint[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const points: MetricPoint[] = [];
+  for (const item of value) {
+    const point = asRecord(item);
+    if (
+      typeof point?.timestamp !== "number"
+      || !Number.isFinite(point.timestamp)
+      || typeof point.value !== "number"
+      || !Number.isFinite(point.value)
+    ) return undefined;
+    points.push({ timestamp: point.timestamp, value: point.value });
+  }
+  return points;
+}
+
+export function parseServerMetricsEnvelope(value: unknown): ServerMetricsData | undefined {
+  const envelope = asRecord(value);
+  const hostInfo = asRecord(envelope?.hostInfo);
+  const rawMetrics = asRecord(envelope?.metrics);
+  if (
+    typeof envelope?.isProd !== "boolean"
+    || !hostInfo
+    || !Array.isArray(envelope.resources)
+    || !rawMetrics
+    || typeof envelope.asOf !== "string"
+    || !Number.isFinite(Date.parse(envelope.asOf))
+  ) return undefined;
+  const cpu = parseMetricPoints(rawMetrics.cpu);
+  const diskRead = parseMetricPoints(rawMetrics.diskRead);
+  const diskWrite = parseMetricPoints(rawMetrics.diskWrite);
+  const networkRx = parseMetricPoints(rawMetrics.networkRx);
+  const networkTx = parseMetricPoints(rawMetrics.networkTx);
+  if (!cpu || !diskRead || !diskWrite || !networkRx || !networkTx) return undefined;
+  return {
+    isProd: envelope.isProd,
+    usesLocalHost: envelope.usesLocalHost === true,
+    degraded: envelope.degraded === true,
+    stale: envelope.stale === true,
+    cacheAgeSeconds: readNonNegativeNumber(envelope.cacheAgeSeconds),
+    hostInfo,
+    resources: envelope.resources,
+    metrics: { cpu, diskRead, diskWrite, networkRx, networkTx },
+    asOf: envelope.asOf,
+    error: readText(envelope.error),
+    warnings: envelope.warnings,
+  };
+}
+
+export function markServerMetricsSnapshotStale(
+  previous: ServerMetricsData | null,
+  error: string,
+): ServerMetricsData | null {
+  return previous ? { ...previous, degraded: true, stale: true, error } : null;
 }
 
 // Helper formats
@@ -70,25 +127,56 @@ function formatUptime(seconds: number) {
   return `${h}h ${m}m`;
 }
 
+export function displayProviderText(value: unknown, fallback: string, label: string): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (value === undefined || value === null || value === "") return fallback;
+  return `Invalid ${label}`;
+}
+
+function readNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
 export function ServerMetricsClient() {
   const [data, setData] = useState<ServerMetricsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [autoPoll, setAutoPoll] = useState(true);
+  const [requestError, setRequestError] = useState<string | null>(null);
 
-  const fetchMetrics = useCallback(async (isSilent = false) => {
-    if (!isSilent) setRefreshing(true);
+  const fetchMetrics = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/server-metrics");
+      const json: unknown = await res.json().catch(() => undefined);
+      const envelope = parseServerMetricsEnvelope(json);
       if (res.ok) {
-        const json = await res.json();
-        setData(json);
+        if (envelope) {
+          setData(envelope);
+          setRequestError(null);
+        } else {
+          const error = "The server metrics endpoint returned malformed data.";
+          setData((previous) => markServerMetricsSnapshotStale(previous, error));
+          setRequestError(error);
+        }
       } else {
-        const json = await res.json().catch(() => ({}));
-        setData((prev) => prev ? { ...prev, error: json.error || "Failed to load metrics" } : null);
+        const error = readText(asRecord(json)?.error) || "Failed to load metrics";
+        // Preserve verified partial data if a proxy or unexpected route error
+        // changes the status code; reject unrelated/malformed error JSON.
+        if (envelope) {
+          setData({ ...envelope, error });
+          setRequestError(null);
+        } else {
+          setData((previous) => markServerMetricsSnapshotStale(previous, error));
+          setRequestError(error);
+        }
       }
     } catch (err) {
       console.error(err);
+      const error = "Unable to reach the server metrics endpoint.";
+      setData((previous) => markServerMetricsSnapshotStale(previous, error));
+      setRequestError(error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -96,13 +184,16 @@ export function ServerMetricsClient() {
   }, []);
 
   useEffect(() => {
-    fetchMetrics();
+    const timer = window.setTimeout(() => {
+      void fetchMetrics();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [fetchMetrics]);
 
   useEffect(() => {
     if (!autoPoll) return;
     const timer = setInterval(() => {
-      fetchMetrics(true);
+      void fetchMetrics();
     }, 30000);
     return () => clearInterval(timer);
   }, [autoPoll, fetchMetrics]);
@@ -110,29 +201,54 @@ export function ServerMetricsClient() {
   if (loading) {
     return (
       <div className="flex h-[50vh] flex-col items-center justify-center gap-3">
-        <RefreshCw className="h-8 w-8 animate-spin text-accent" />
-        <span className="text-sm text-muted">Polling infrastructure health...</span>
+        <RefreshCw className="h-8 w-8 animate-spin text-[color:var(--con-accent)]" />
+        <span className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">Polling infrastructure health...</span>
       </div>
     );
   }
 
   const host = data?.hostInfo;
-  const resources = data?.resources || [];
+  const normalizedResources = normalizeCoolifyResources(data?.resources ?? []);
+  const resources = normalizedResources.resources;
   const metrics = data?.metrics;
-
-  const usedMem = host ? host.memoryTotalBytes - host.memoryFreeBytes : 0;
-  const memPct = host ? Math.round((usedMem / host.memoryTotalBytes) * 100) : 0;
+  const providerWarnings = Array.isArray(data?.warnings)
+    ? data.warnings.filter((warning): warning is string => typeof warning === "string" && Boolean(warning.trim()))
+    : data?.warnings == null
+      ? []
+      : ["The server metrics warnings payload was malformed."];
+  const warnings = [...providerWarnings, ...normalizedResources.warnings];
+  const usesLocalHost = data?.usesLocalHost === true;
+  const hostName = displayProviderText(host?.name, usesLocalHost ? "localhost" : "Unavailable", "host name");
+  const hostOs = displayProviderText(host?.os, "Unavailable", "operating system");
+  const hostIp = displayProviderText(host?.ip, usesLocalHost ? "127.0.0.1" : "Unavailable", "server IP");
+  const hostLocation = displayProviderText(host?.location, usesLocalHost ? "local" : "Unavailable", "server location");
+  const serverType = displayProviderText(host?.serverType, usesLocalHost ? "local runtime" : "Unavailable", "server type");
+  const cpuCores = typeof host?.cpus === "number" && Number.isFinite(host.cpus) && host.cpus > 0
+    ? `${host.cpus} Cores`
+    : "Unavailable";
+  const memoryTotalBytes = readNonNegativeNumber(host?.memoryTotalBytes);
+  const memoryFreeBytes = readNonNegativeNumber(host?.memoryFreeBytes);
+  const memPct = memoryTotalBytes && memoryFreeBytes !== undefined
+    ? Math.max(0, Math.min(100, Math.round(((memoryTotalBytes - memoryFreeBytes) / memoryTotalBytes) * 100)))
+    : undefined;
+  const uptimeSeconds = readNonNegativeNumber(host?.uptimeSeconds);
+  const loadAverage = Array.isArray(host?.loadAvg)
+    ? readNonNegativeNumber(host.loadAvg[0])
+    : undefined;
+  const asOf = data?.asOf ? new Date(data.asOf) : undefined;
+  const hasValidAsOf = asOf && Number.isFinite(asOf.getTime());
+  const formattedAsOf = hasValidAsOf ? asOf.toLocaleString() : "Unavailable";
 
   // CPU average of last 3 points
   const latestCpuValues = metrics?.cpu?.slice(-3).map(p => p.value) || [];
-  const currentCpu = latestCpuValues.length > 0 
-    ? Math.round(latestCpuValues.reduce((a, b) => a + b, 0) / latestCpuValues.length) 
-    : 0;
+  const currentCpu = latestCpuValues.length > 0
+    ? Math.round(latestCpuValues.reduce((a, b) => a + b, 0) / latestCpuValues.length)
+    : undefined;
 
   // Disk/Network average speed of last 3 points
   const getLatestAvg = (points?: MetricPoint[]) => {
     const vals = points?.slice(-3).map(p => p.value) || [];
-    return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+    return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : undefined;
   };
 
   const currentDiskRead = getLatestAvg(metrics?.diskRead);
@@ -141,100 +257,130 @@ export function ServerMetricsClient() {
   const currentNetTx = getLatestAvg(metrics?.networkTx);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
+    <div className="space-y-6">
       {/* Header Info */}
-      <header className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-fg">Server & infrastructure</h1>
-            {data?.isProd ? (
-              <Chip tone="accent">PRODUCTION</Chip>
+            <h1 className="text-2xl font-bold">Server Stats</h1>
+            {usesLocalHost ? (
+              <Chip tone="warn">LOCAL HOST</Chip>
             ) : (
-              <Chip tone="warn">DEVELOPMENT MOCK</Chip>
+              <Chip tone={data?.degraded ? "warn" : "accent"}>
+                {data?.isProd
+                  ? data.degraded ? "PRODUCTION - DEGRADED" : "PRODUCTION"
+                  : data?.degraded ? "REMOTE - DEGRADED" : "REMOTE"}
+              </Chip>
             )}
+            {data?.stale && <Chip tone="warn">STALE SNAPSHOT</Chip>}
           </div>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             Host node metrics and Coolify application resource statuses.
+          </p>
+          <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+            As of {formattedAsOf}
+            {typeof data?.cacheAgeSeconds === "number" && data.cacheAgeSeconds > 0
+              ? ` (${Math.floor(data.cacheAgeSeconds)}s old)`
+              : ""}
           </p>
         </div>
         <div className="flex items-center gap-3 self-start max-sm:w-full">
-          <label className="flex items-center gap-2 text-xs text-muted max-sm:mr-auto">
-            <input 
-              type="checkbox" 
-              checked={autoPoll} 
-              onChange={(e) => setAutoPoll(e.target.checked)}
-              className="rounded border-line bg-surface text-accent focus:ring-accent"
-            />
+          <div className="flex items-center gap-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)] max-sm:mr-auto">
+            <Toggle checked={autoPoll} onChange={setAutoPoll} label="Auto-refresh every 30 seconds" />
             Auto-refresh (30s)
-          </label>
-          <button
-            type="button"
-            onClick={() => fetchMetrics()}
+          </div>
+          <Btn
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setRefreshing(true);
+              void fetchMetrics();
+            }}
             disabled={refreshing}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-line bg-surface px-4 text-xs font-semibold text-fg transition-colors hover:bg-surface-2 disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
             Refresh
-          </button>
+          </Btn>
         </div>
       </header>
 
-      {data?.error && (
-        <div className="mb-6 rounded-xl border border-neg/20 bg-neg/5 p-4 text-sm text-neg">
-          <span className="font-semibold">Error retrieving full metrics:</span> {data.error}. Reverting to local metrics fallback.
+      {(requestError || data?.error) && (
+        <div className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-4 text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]">
+          <span className="font-semibold">Error retrieving full metrics:</span> {requestError || data?.error}
+          {data ? " Available verified data is shown." : ""}
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-4 text-[length:var(--con-fs-sm)] text-[color:var(--con-warn)]" role="status">
+          <span className="font-semibold">Provider metadata warning:</span> {warnings.join(" ")}
         </div>
       )}
 
       {/* Host Details Grid */}
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="p-4 flex items-center gap-3">
-          <div className="rounded-lg bg-accent/8 p-2 text-accent">
-            <Server size={20} />
-          </div>
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">Host Server</div>
-            <div className="font-bold text-fg">{host?.name || "localhost"}</div>
-            <div className="text-xs text-muted flex items-center gap-1.5 mt-0.5">
-              <Globe size={11} /> {host?.ip || "127.0.0.1"} • {host?.location || "local"}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <div className="flex items-center gap-3">
+            <div className="rounded-[var(--con-radius-sm)] bg-[color:var(--con-accent-soft)] p-2 text-[color:var(--con-accent)]">
+              <Server size={20} />
+            </div>
+            <div>
+              <div className="con-card-title">Host Server</div>
+              <div className="font-bold">{hostName}</div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                <Globe size={11} /> {hostIp} • {hostLocation}
+              </div>
             </div>
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3">
-          <div className="rounded-lg bg-pos/8 p-2 text-pos">
-            <Cpu size={20} />
-          </div>
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">CPU Cores</div>
-            <div className="font-bold text-fg">{host?.cpus || 2} Cores</div>
-            <div className="text-xs text-muted mt-0.5">
-              {host?.serverType || "vps"} • Load: {host?.loadAvg ? host.loadAvg[0].toFixed(2) : "n/a"}
+        <Card>
+          <div className="flex items-center gap-3">
+            <div className="rounded-[var(--con-radius-sm)] bg-[color:var(--con-pos-soft)] p-2 text-[color:var(--con-pos)]">
+              <Cpu size={20} />
+            </div>
+            <div>
+              <div className="con-card-title">CPU Cores</div>
+              <div className="font-bold">{cpuCores}</div>
+              <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                {serverType} • Load: {loadAverage === undefined ? "n/a" : loadAverage.toFixed(2)}
+              </div>
             </div>
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3">
-          <div className="rounded-lg bg-info/8 p-2 text-info">
-            <Database size={20} />
-          </div>
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">System Memory</div>
-            <div className="font-bold text-fg">{formatBytes(host?.memoryTotalBytes || 0)}</div>
-            <div className="text-xs text-muted mt-0.5">
-              {memPct}% used • {formatBytes(host ? host.memoryFreeBytes : 0)} free
+        <Card>
+          <div className="flex items-center gap-3">
+            <div className="rounded-[var(--con-radius-sm)] bg-[color:var(--con-info-soft)] p-2 text-[color:var(--con-info)]">
+              <Database size={20} />
+            </div>
+            <div>
+              <div className="con-card-title">System Memory</div>
+              <div className="font-bold">
+                {memoryTotalBytes === undefined ? "Unavailable" : formatBytes(memoryTotalBytes)}
+              </div>
+              <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                {memPct === undefined || memoryFreeBytes === undefined
+                  ? "Utilization unavailable"
+                  : `${memPct}% used - ${formatBytes(memoryFreeBytes)} free`}
+              </div>
             </div>
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3">
-          <div className="rounded-lg bg-warn/8 p-2 text-warn">
-            <Activity size={20} />
-          </div>
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">Host Uptime</div>
-            <div className="font-bold text-fg">{formatUptime(host?.uptimeSeconds || 0)}</div>
-            <div className="text-xs text-muted mt-0.5 truncate max-w-[180px]">
-              {host?.os || "Ubuntu"}
+        <Card>
+          <div className="flex items-center gap-3">
+            <div className="rounded-[var(--con-radius-sm)] bg-[color:var(--con-warn-soft)] p-2 text-[color:var(--con-warn)]">
+              <Activity size={20} />
+            </div>
+            <div>
+              <div className="con-card-title">Host Uptime</div>
+              <div className="font-bold">
+                {uptimeSeconds === undefined ? "Unavailable" : formatUptime(uptimeSeconds)}
+              </div>
+              <div className="mt-0.5 max-w-[180px] truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                {hostOs}
+              </div>
             </div>
           </div>
         </Card>
@@ -243,92 +389,91 @@ export function ServerMetricsClient() {
       {/* Main Content Layout */}
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left 2 Columns: Live Utilization and Charts */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="space-y-6 lg:col-span-2">
           {/* Real-time Rings / Progress */}
-          <Card className="p-5">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted mb-4 flex items-center gap-1.5">
-              <Activity className="h-4 w-4" /> Live Resource Load
-            </h2>
+          <Card
+            title={
+              <span className="flex items-center gap-1.5">
+                <Activity className="h-4 w-4" /> Live Resource Load
+              </span>
+            }
+          >
             <div className="grid gap-6 sm:grid-cols-2">
               {/* CPU Bar */}
               <div>
-                <div className="flex justify-between text-xs font-semibold mb-1">
-                  <span className="text-muted">CPU Utilization</span>
-                  <span className="text-fg">{currentCpu}%</span>
+                <div className="mb-1 flex justify-between text-[length:var(--con-fs-xs)] font-semibold">
+                  <span className="text-[color:var(--con-muted)]">CPU Utilization</span>
+                  <span className="con-num">{currentCpu === undefined ? "Unavailable" : `${currentCpu}%`}</span>
                 </div>
-                <div className="h-2 w-full rounded-full bg-surface-3 overflow-hidden">
-                  <div 
-                    className="h-full bg-accent transition-all duration-500" 
-                    style={{ width: `${currentCpu}%` }}
-                  />
-                </div>
+                <Meter value={currentCpu ?? 0} max={100} />
               </div>
 
               {/* Memory Bar */}
               <div>
-                <div className="flex justify-between text-xs font-semibold mb-1">
-                  <span className="text-muted">RAM Utilization</span>
-                  <span className="text-fg">{memPct}%</span>
+                <div className="mb-1 flex justify-between text-[length:var(--con-fs-xs)] font-semibold">
+                  <span className="text-[color:var(--con-muted)]">RAM Utilization</span>
+                  <span className="con-num">{memPct === undefined ? "Unavailable" : `${memPct}%`}</span>
                 </div>
-                <div className="h-2 w-full rounded-full bg-surface-3 overflow-hidden">
-                  <div 
-                    className="h-full bg-info transition-all duration-500" 
-                    style={{ width: `${memPct}%` }}
-                  />
-                </div>
+                <Meter value={memPct ?? 0} max={100} />
               </div>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-4 border-t border-line pt-4 text-xs text-muted">
+            <div className="mt-5 grid grid-cols-2 gap-4 border-t border-[color:var(--con-line)] pt-4 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
               <div>
-                <div className="flex items-center gap-1"><ArrowDown size={12} className="text-pos" /> Disk Read</div>
-                <div className="font-semibold text-fg mt-0.5">{formatBandwidth(currentDiskRead)}</div>
+                <div className="flex items-center gap-1"><ArrowDown size={12} className="text-[color:var(--con-pos)]" /> Disk Read</div>
+                <div className="con-num mt-0.5 font-semibold text-[color:var(--con-fg)]">{currentDiskRead === undefined ? "Unavailable" : formatBandwidth(currentDiskRead)}</div>
               </div>
               <div>
-                <div className="flex items-center gap-1"><ArrowUp size={12} className="text-accent" /> Disk Write</div>
-                <div className="font-semibold text-fg mt-0.5">{formatBandwidth(currentDiskWrite)}</div>
+                <div className="flex items-center gap-1"><ArrowUp size={12} className="text-[color:var(--con-accent)]" /> Disk Write</div>
+                <div className="con-num mt-0.5 font-semibold text-[color:var(--con-fg)]">{currentDiskWrite === undefined ? "Unavailable" : formatBandwidth(currentDiskWrite)}</div>
               </div>
               <div>
-                <div className="flex items-center gap-1"><ArrowDown size={12} className="text-pos" /> Network In (Rx)</div>
-                <div className="font-semibold text-fg mt-0.5">{formatBandwidth(currentNetRx)}</div>
+                <div className="flex items-center gap-1"><ArrowDown size={12} className="text-[color:var(--con-pos)]" /> Network In (Rx)</div>
+                <div className="con-num mt-0.5 font-semibold text-[color:var(--con-fg)]">{currentNetRx === undefined ? "Unavailable" : formatBandwidth(currentNetRx)}</div>
               </div>
               <div>
-                <div className="flex items-center gap-1"><ArrowUp size={12} className="text-accent" /> Network Out (Tx)</div>
-                <div className="font-semibold text-fg mt-0.5">{formatBandwidth(currentNetTx)}</div>
+                <div className="flex items-center gap-1"><ArrowUp size={12} className="text-[color:var(--con-accent)]" /> Network Out (Tx)</div>
+                <div className="con-num mt-0.5 font-semibold text-[color:var(--con-fg)]">{currentNetTx === undefined ? "Unavailable" : formatBandwidth(currentNetTx)}</div>
               </div>
             </div>
           </Card>
 
           {/* CPU Chart */}
-          <Card className="p-5">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted mb-4 flex items-center gap-1.5">
-              <Cpu className="h-4 w-4" /> CPU History (Last 1 Hour)
-            </h2>
+          <Card
+            title={
+              <span className="flex items-center gap-1.5">
+                <Cpu className="h-4 w-4" /> CPU History (Last 1 Hour)
+              </span>
+            }
+          >
             <div className="h-44 w-full">
               {metrics && metrics.cpu && metrics.cpu.length > 0 ? (
-                <SparklineChart points={metrics.cpu} yMax={100} stroke="var(--accent)" fill="var(--accent)" />
+                <SparklineChart points={metrics.cpu} yMax={100} stroke="var(--con-accent)" fill="var(--con-accent)" />
               ) : (
-                <div className="flex h-full items-center justify-center text-xs text-faint">No historical data available</div>
+                <div className="flex h-full items-center justify-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">No historical data available</div>
               )}
             </div>
           </Card>
 
           {/* Network Chart */}
-          <Card className="p-5">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted mb-4 flex items-center gap-1.5">
-              <Globe className="h-4 w-4" /> Network Bandwidth
-            </h2>
+          <Card
+            title={
+              <span className="flex items-center gap-1.5">
+                <Globe className="h-4 w-4" /> Network Bandwidth
+              </span>
+            }
+          >
             <div className="h-44 w-full">
               {metrics && metrics.networkRx && metrics.networkRx.length > 0 ? (
-                <DualLineChart 
-                  seriesA={metrics.networkRx} 
+                <DualLineChart
+                  seriesA={metrics.networkRx}
                   seriesB={metrics.networkTx}
                   labelA="Rx (Inbound)"
                   labelB="Tx (Outbound)"
                   formatValue={formatBandwidth}
                 />
               ) : (
-                <div className="flex h-full items-center justify-center text-xs text-faint">No historical data available</div>
+                <div className="flex h-full items-center justify-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">No historical data available</div>
               )}
             </div>
           </Card>
@@ -336,31 +481,34 @@ export function ServerMetricsClient() {
 
         {/* Right 1 Column: Coolify Application Container Health */}
         <div className="space-y-6">
-          <Card className="p-5">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted mb-4 flex items-center gap-1.5">
-              <Layers className="h-4 w-4" /> Coolify Services
-            </h2>
+          <Card
+            title={
+              <span className="flex items-center gap-1.5">
+                <Layers className="h-4 w-4" /> Coolify Services
+              </span>
+            }
+          >
             {resources.length === 0 ? (
-              <div className="py-6 text-center text-xs text-faint">No containers registered or active</div>
+              <div className="py-6 text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">No containers registered or active</div>
             ) : (
               <div className="space-y-3">
                 {resources.map((item) => {
                   const isHealthy = item.status.includes("healthy") || item.status === "running";
                   const isDegraded = item.status.includes("unhealthy") || item.status.includes("degraded");
                   const tone = isHealthy ? "pos" : isDegraded ? "neg" : "warn";
-                  
+
                   return (
-                    <div 
-                      key={item.uuid} 
-                      className="flex items-center justify-between border-b border-line pb-3 last:border-0 last:pb-0"
+                    <div
+                      key={item.uuid}
+                      className="flex items-center justify-between border-b border-[color:var(--con-line)] pb-3 last:border-0 last:pb-0"
                     >
                       <div className="min-w-0">
-                        <div className="font-semibold text-sm text-fg truncate">{item.name}</div>
-                        <div className="text-xs text-muted capitalize">{item.type}</div>
+                        <div className="truncate text-[length:var(--con-fs-sm)] font-semibold">{item.name}</div>
+                        <div className="text-[length:var(--con-fs-xs)] capitalize text-[color:var(--con-muted)]">{item.type}</div>
                       </div>
                       <div className="flex items-center gap-2">
                         <Dot tone={tone} pulse={!isHealthy} />
-                        <span className="text-xs font-medium uppercase text-fg">{item.status.split(":")[0]}</span>
+                        <span className="text-[length:var(--con-fs-xs)] font-medium uppercase">{item.status.split(":")[0]}</span>
                       </div>
                     </div>
                   );
@@ -369,16 +517,19 @@ export function ServerMetricsClient() {
             )}
           </Card>
 
-          <Card className="p-5">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted mb-3 flex items-center gap-1.5">
-              <Shield className="h-4 w-4" /> Security & Access
-            </h2>
-            <div className="space-y-3 text-xs text-muted">
+          <Card
+            title={
+              <span className="flex items-center gap-1.5">
+                <Shield className="h-4 w-4" /> Security & Access
+              </span>
+            }
+          >
+            <div className="space-y-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
               <p>
                 All endpoint communication between the dashboard, Hetzner API, and Coolify host is encrypted via SSL/TLS.
               </p>
-              <div className="rounded-lg bg-surface-2 p-3 text-faint">
-                <span className="font-bold text-muted block mb-1">Server Ingress rules:</span>
+              <div className="con-tile text-[color:var(--con-faint)]">
+                <span className="mb-1 block font-bold text-[color:var(--con-muted)]">Server Ingress rules:</span>
                 • Port 80/443 (HTTP/S proxy via Traefik)<br />
                 • Port 22 (SSH root access restricted)<br />
                 • In-container litestream PITR backup replication to Cloudflare R2 Cloud Storage.
@@ -424,10 +575,10 @@ function SparklineChart({ points, yMax, stroke, fill }: { points: MetricPoint[];
         </linearGradient>
       </defs>
       {/* Grid lines */}
-      <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="var(--line)" strokeWidth={0.5} strokeDasharray="3" />
-      <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} stroke="var(--line)" strokeWidth={0.5} strokeDasharray="3" />
-      <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="var(--line)" strokeWidth={0.5} />
-      
+      <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="var(--con-line)" strokeWidth={0.5} strokeDasharray="3" />
+      <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} stroke="var(--con-line)" strokeWidth={0.5} strokeDasharray="3" />
+      <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="var(--con-line)" strokeWidth={0.5} />
+
       {/* Area */}
       <path d={areaD} fill="url(#chartGrad)" />
       {/* Line */}
@@ -437,16 +588,16 @@ function SparklineChart({ points, yMax, stroke, fill }: { points: MetricPoint[];
 }
 
 // ── SVG Dual Line Chart ────────────────────────────────────────────────────────
-function DualLineChart({ 
-  seriesA, 
-  seriesB, 
-  labelA, 
+function DualLineChart({
+  seriesA,
+  seriesB,
+  labelA,
   labelB,
   formatValue
-}: { 
-  seriesA: MetricPoint[]; 
-  seriesB: MetricPoint[]; 
-  labelA: string; 
+}: {
+  seriesA: MetricPoint[];
+  seriesB: MetricPoint[];
+  labelA: string;
   labelB: string;
   formatValue: (v: number) => string;
 }) {
@@ -476,25 +627,25 @@ function DualLineChart({
 
   return (
     <div className="h-full flex flex-col justify-between">
-      <div className="flex items-center gap-4 text-[10px] text-muted self-end">
+      <div className="flex items-center gap-4 self-end text-[10px] text-[color:var(--con-muted)]">
         <span className="flex items-center gap-1">
-          <span className="inline-block h-1.5 w-4 bg-pos rounded" /> {labelA} (Max: {formatValue(Math.max(...valsA))})
+          <span className="inline-block h-1.5 w-4 rounded bg-[color:var(--con-pos)]" /> {labelA} (Max: {formatValue(Math.max(...valsA))})
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-1.5 w-4 bg-accent rounded" /> {labelB} (Max: {formatValue(Math.max(...valsB))})
+          <span className="inline-block h-1.5 w-4 rounded bg-[color:var(--con-accent)]" /> {labelB} (Max: {formatValue(Math.max(...valsB))})
         </span>
       </div>
       <div className="flex-1 h-36 mt-2">
         <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
           {/* Grid lines */}
-          <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="var(--line)" strokeWidth={0.5} strokeDasharray="3" />
-          <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} stroke="var(--line)" strokeWidth={0.5} strokeDasharray="3" />
-          <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="var(--line)" strokeWidth={0.5} />
-          
+          <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="var(--con-line)" strokeWidth={0.5} strokeDasharray="3" />
+          <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} stroke="var(--con-line)" strokeWidth={0.5} strokeDasharray="3" />
+          <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="var(--con-line)" strokeWidth={0.5} />
+
           {/* Line A */}
-          <path d={pathA} fill="none" stroke="var(--pos)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+          <path d={pathA} fill="none" stroke="var(--con-pos)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
           {/* Line B */}
-          <path d={pathB} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+          <path d={pathB} fill="none" stroke="var(--con-accent)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </div>
     </div>

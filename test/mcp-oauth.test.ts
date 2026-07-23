@@ -3,6 +3,35 @@ import { join } from "path";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+async function prepareDeletion(userId: string, generation = randomUUID()): Promise<string> {
+  const [{ getDb }, { markUserDeletionPrepared }] = await Promise.all([
+    import("../src/lib/db"),
+    import("../src/lib/user-write-fence")
+  ]);
+  const database = getDb();
+  const now = new Date().toISOString();
+  database.transaction(() => markUserDeletionPrepared(database, userId, generation, now)).immediate();
+  return generation;
+}
+
+async function completeDeletion(userId: string, generation: string): Promise<void> {
+  const [{ getDb }, { markUserDeletionCompleted }] = await Promise.all([
+    import("../src/lib/db"),
+    import("../src/lib/user-write-fence")
+  ]);
+  const database = getDb();
+  const now = new Date().toISOString();
+  database.transaction(() => markUserDeletionCompleted(database, userId, generation, now)).immediate();
+}
+
 beforeEach(() => {
   vi.resetModules();
   vi.unstubAllEnvs();
@@ -27,6 +56,37 @@ describe("mcp oauth", () => {
     expect(authorizationUrl.searchParams.get("code_challenge")).toBeTruthy();
     expect(authorizationUrl.searchParams.get("resource")).toBe("https://mcp.example.test/trading");
     expect(authorizationUrl.searchParams.get("state")).toBeTruthy();
+  });
+
+  it("does not persist OAuth state when account deletion starts during async client registration", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_REGISTRATION_URL", "https://auth.example.test/register");
+    const registrationStarted = deferred<void>();
+    const registrationResponse = deferred<Response>();
+    vi.stubGlobal("fetch", async () => {
+      registrationStarted.resolve();
+      return registrationResponse.promise;
+    });
+    const [{ buildMcpAuthorizationUrl }, { getDb }] = await Promise.all([
+      import("../src/lib/mcp-oauth"),
+      import("../src/lib/db")
+    ]);
+
+    const pending = buildMcpAuthorizationUrl("user-a");
+    const rejected = expect(pending).rejects.toThrow(/write epoch changed|operation claim was lost/i);
+    await registrationStarted.promise;
+    await prepareDeletion("user-a");
+    registrationResponse.resolve(new Response(JSON.stringify({ client_id: "client-after-delete" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }));
+
+    await rejected;
+    const stateRows = getDb().prepare(
+      "SELECT COUNT(*) AS count FROM settings WHERE substr(key, 1, ?) = ?"
+    ).get("robinhood_mcp_oauth_state:".length, "robinhood_mcp_oauth_state:") as { count: number };
+    expect(stateRows.count).toBe(0);
   });
 
   it("discovers OAuth endpoints from the documented Robinhood MCP link before manual endpoint env", async () => {
@@ -119,12 +179,39 @@ describe("mcp oauth", () => {
     expect(resolveMcpOAuthRedirectUri(request)).toBe("https://broker.example.test/api/auth/robinhood/callback");
   });
 
-  it("derives a public https callback from x-forwarded-host when the app sees localhost internally", async () => {
+  it("keeps the local callback in development instead of trusting x-forwarded-host", async () => {
     vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "http://localhost:4000/api/auth/robinhood/callback");
     const { resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
 
     const request = new Request("http://localhost:4000/api/auth/robinhood/start", {
       headers: { "x-forwarded-host": "socratictrade.com" }
+    });
+
+    expect(resolveMcpOAuthRedirectUri(request)).toBe("http://localhost:4000/api/auth/robinhood/callback");
+  });
+
+  it("does not let an untrusted forwarded host choose the OAuth callback origin", async () => {
+    const { resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
+    const request = new Request("http://localhost:4000/api/auth/robinhood/start", {
+      headers: {
+        host: "localhost:4000",
+        "x-forwarded-host": "attacker.example",
+        "x-forwarded-proto": "https"
+      }
+    });
+
+    expect(resolveMcpOAuthRedirectUri(request)).toBe("http://localhost:4000/api/auth/robinhood/callback");
+  });
+
+  it("uses the canonical production fallback when forwarded host is untrusted", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const { resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
+    const request = new Request("http://localhost:4000/api/auth/robinhood/start", {
+      headers: {
+        host: "localhost:4000",
+        "x-forwarded-host": "attacker.example",
+        "x-forwarded-proto": "https"
+      }
     });
 
     expect(resolveMcpOAuthRedirectUri(request)).toBe("https://socratictrade.com/api/auth/robinhood/callback");
@@ -240,6 +327,56 @@ describe("mcp oauth", () => {
     expect(await getMcpAccessToken("user-a")).toBe("broker-token");
   });
 
+  it("cannot recreate OAuth tokens when deletion is prepared during callback exchange", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    const tokenExchangeStarted = deferred<void>();
+    const tokenResponse = deferred<Response>();
+    const { buildMcpAuthorizationUrl, completeMcpOAuthCallback, getStoredMcpOAuthTokens } = await import(
+      "../src/lib/mcp-oauth"
+    );
+    const state = new URL(await buildMcpAuthorizationUrl("user-a")).searchParams.get("state")!;
+    vi.stubGlobal("fetch", async () => {
+      tokenExchangeStarted.resolve();
+      return tokenResponse.promise;
+    });
+
+    const pending = completeMcpOAuthCallback({ code: "oauth-code", state, expectedUserId: "user-a" });
+    const rejected = expect(pending).rejects.toThrow(/write epoch changed|operation claim was lost/i);
+    await tokenExchangeStarted.promise;
+    const generation = await prepareDeletion("user-a");
+    tokenResponse.resolve(new Response(JSON.stringify({ access_token: "post-delete-token", token_type: "Bearer" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }));
+
+    await rejected;
+    expect(getStoredMcpOAuthTokens("user-a")).toBeUndefined();
+    await completeDeletion("user-a", generation);
+    expect(getStoredMcpOAuthTokens("user-a")).toBeUndefined();
+  });
+
+  it("consumes callback state before exchange so a failed exchange cannot be replayed", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    let exchanges = 0;
+    vi.stubGlobal("fetch", async () => {
+      exchanges += 1;
+      return new Response("unavailable", { status: 503 });
+    });
+    const { buildMcpAuthorizationUrl, completeMcpOAuthCallback, findMcpOAuthStateByRandom } = await import(
+      "../src/lib/mcp-oauth"
+    );
+    const state = new URL(await buildMcpAuthorizationUrl("user-a")).searchParams.get("state")!;
+
+    await expect(completeMcpOAuthCallback({ code: "oauth-code", state })).rejects.toThrow("HTTP 503");
+    expect(findMcpOAuthStateByRandom(state)).toBeUndefined();
+    await expect(completeMcpOAuthCallback({ code: "oauth-code", state })).rejects.toThrow("not found or already used");
+    expect(exchanges).toBe(1);
+  });
+
   it("sends the MCP resource indicator when refreshing OAuth tokens", async () => {
     vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
@@ -265,6 +402,41 @@ describe("mcp oauth", () => {
     expect(await getMcpAccessToken("user-a")).toBe("fresh-token");
     expect(tokenRequest?.get("grant_type")).toBe("refresh_token");
     expect(tokenRequest?.get("resource")).toBe("https://agent.robinhood.com/mcp/trading");
+  });
+
+  it("cannot write a refreshed token when deletion is prepared during the exchange", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    const tokenExchangeStarted = deferred<void>();
+    const tokenResponse = deferred<Response>();
+    vi.stubGlobal("fetch", async () => {
+      tokenExchangeStarted.resolve();
+      return tokenResponse.promise;
+    });
+    const { getMcpAccessToken, getStoredMcpOAuthTokens, setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", {
+      accessToken: "old-token",
+      refreshToken: "refresh-token",
+      tokenType: "Bearer",
+      expiresAt: new Date(Date.now() - 60_000).toISOString()
+    });
+
+    const pending = getMcpAccessToken("user-a");
+    const rejected = expect(pending).rejects.toThrow(/write epoch changed|operation claim was lost/i);
+    await tokenExchangeStarted.promise;
+    const generation = await prepareDeletion("user-a");
+    tokenResponse.resolve(new Response(JSON.stringify({ access_token: "post-delete-refresh", token_type: "Bearer" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }));
+
+    await rejected;
+    expect(getStoredMcpOAuthTokens("user-a")?.accessToken).toBe("old-token");
+    const { clearMcpOAuthForUser } = await import("../src/lib/mcp-oauth");
+    clearMcpOAuthForUser("user-a");
+    await completeDeletion("user-a", generation);
+    expect(getStoredMcpOAuthTokens("user-a")).toBeUndefined();
   });
 
   it("coalesces concurrent refreshes for the same user into a single token exchange (dashboard parallelization race)", async () => {
@@ -325,6 +497,50 @@ describe("mcp oauth", () => {
     expect(found!.key).toMatch(/^robinhood_mcp_oauth_state:user-a:/);
   });
 
+  it("treats base64url underscore as data, never as a SQL wildcard", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    const { buildMcpAuthorizationUrl, findMcpOAuthStateByRandom } = await import("../src/lib/mcp-oauth");
+
+    const urlStr = await buildMcpAuthorizationUrl("user-a");
+    const state = new URL(urlStr).searchParams.get("state")!;
+    const replacementIndex = [...state.slice(0, -1)].findIndex((character) => character !== "_");
+    expect(replacementIndex).toBeGreaterThanOrEqual(0);
+    const wildcardLookalike = `${state.slice(0, replacementIndex)}_${state.slice(replacementIndex + 1)}`;
+
+    expect(wildcardLookalike).not.toBe(state);
+    expect(findMcpOAuthStateByRandom(wildcardLookalike)).toBeUndefined();
+    expect(findMcpOAuthStateByRandom(`%${state.slice(1)}`)).toBeUndefined();
+    expect(findMcpOAuthStateByRandom(state)?.value.userId).toBe("user-a");
+  });
+
+  it("atomically consumes state so concurrent callbacks exchange only one code", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    let exchanges = 0;
+    vi.stubGlobal("fetch", async () => {
+      exchanges += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response(JSON.stringify({ access_token: "once", token_type: "Bearer" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const { buildMcpAuthorizationUrl, completeMcpOAuthCallback, getStoredMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    const state = new URL(await buildMcpAuthorizationUrl("user-a")).searchParams.get("state")!;
+
+    const results = await Promise.allSettled([
+      completeMcpOAuthCallback({ code: "code-a", state }),
+      completeMcpOAuthCallback({ code: "code-b", state })
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(exchanges).toBe(1);
+    expect(getStoredMcpOAuthTokens("user-a")?.accessToken).toBe("once");
+  });
+
   it("isolates tokens per user — user-b cannot read user-a token", async () => {
     vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
@@ -353,6 +569,19 @@ describe("mcp oauth", () => {
     expect(await getMcpAccessToken("local")).toBe("operator-token");
     // A tenant never resolves the operator's token.
     expect(await getMcpAccessToken("user-b")).toBeUndefined();
+  });
+
+  it("never re-seeds the legacy env token after deletion is prepared or completed", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTH_TOKEN", "operator-token");
+    const { getMcpAccessToken, migrateLocalRobinhoodToken } = await import("../src/lib/mcp-oauth");
+    const generation = await prepareDeletion("local");
+
+    expect(migrateLocalRobinhoodToken()).toBe(false);
+    expect(await getMcpAccessToken("local")).toBeUndefined();
+
+    await completeDeletion("local", generation);
+    expect(migrateLocalRobinhoodToken()).toBe(false);
+    expect(await getMcpAccessToken("local")).toBeUndefined();
   });
 
   it("clears only the calling user token on disconnect", async () => {
