@@ -95,7 +95,7 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
       return "grok-4.5";
 
     case "gemini":
-      if (/flash.*lite/i.test(lower)) return "gemini-3.5-flash-lite";
+      if (/flash.*lite/i.test(lower)) return "gemini-flash-lite-latest";
       if (/pro/i.test(lower)) return "gemini-3.1-pro";
       return "gemini-3.6-flash";
 
@@ -160,7 +160,7 @@ export function resolveLlmEndpoint(
         model = `x-ai/${model}`;
       } else if (/^gemini-flash-latest$/i.test(model)) {
         model = "~google/gemini-flash-latest";
-      } else if (/^gemini-flash-lite-latest$/i.test(model)) {
+      } else if (/^gemini-flash-lite-latest$/i.test(model) || /^gemini-3.5-flash-lite$/i.test(model)) {
         model = "google/gemini-3.5-flash-lite";
       } else if (/^gemini-pro-latest$/i.test(model)) {
         model = "~google/gemini-pro-latest";
