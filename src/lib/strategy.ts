@@ -88,7 +88,7 @@ import type { ThesisStat, ThesisRegimeStat, SkippedCandidateReturn } from "./per
 import { buildSpyReturnToNowMap } from "./backtest";
 import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
-import { effectiveDailyOpeningNotionalCap, resolveDailyOpeningCap } from "./policy-caps";
+import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap, resolveDailyOpeningCap } from "./policy-caps";
 import { assessProtectiveExitRepriceDrift, extendedHoursExitBufferBps, marketableLimitExitPrice, repriceStoredProtectiveExit } from "./protective-exit-routing";
 import type { ProtectiveExitQuote } from "./protective-exit-routing";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
@@ -3732,14 +3732,11 @@ export function openingRiskCapacity(
 }
 
 export function openingPolicyNotionalCap(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio): number {
-  return Math.min(
-    policy.maxOrderNotional ?? Infinity,
-    proposal.side === "short" && policy.maxShortOrderNotional != null && policy.maxShortOrderNotional > 0
-      ? policy.maxShortOrderNotional
-      : Infinity,
-    policy.maxOrderPctOfNav != null && policy.maxOrderPctOfNav > 0 && portfolio.totalMarketValue > 0
-      ? (policy.maxOrderPctOfNav / 100) * portfolio.totalMarketValue
-      : Infinity
+  return effectiveOpeningOrderNotionalCap(
+    policy,
+    portfolio.totalMarketValue,
+    portfolio.buyingPower,
+    proposal.side === "short" ? "short" : "buy"
   );
 }
 
@@ -4205,11 +4202,11 @@ async function proposeTrades(input: {
     note: "All proposals must strictly be selected from `marketScan.topCandidates`. Do not propose symbols outside this list. You may SELL/TRIM any current position."
   };
 
-  const effectiveMaxOrderNotional = Math.min(
-    input.policy.maxOrderNotional ?? Infinity,
-    input.policy.maxOrderPctOfNav && input.portfolio.totalMarketValue > 0
-      ? (input.policy.maxOrderPctOfNav / 100) * input.portfolio.totalMarketValue
-      : Infinity
+  const effectiveMaxOrderNotional = effectiveOpeningOrderNotionalCap(
+    input.policy,
+    input.portfolio.totalMarketValue,
+    input.portfolio.buyingPower,
+    "buy"
   );
   const preferredMaxOrderNotional = applyOpeningOrderHeadroom(effectiveMaxOrderNotional);
   const promptContainmentReceipts: Array<{ field: string; result: PromptContainmentResult }> = [];

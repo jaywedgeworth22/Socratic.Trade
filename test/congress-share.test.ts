@@ -27,6 +27,7 @@ import { fetchDailyOHLC } from "../src/lib/history";
 import {
   buildInsiderImport,
   buildShortVolumeImport,
+  canonicalMarketDataSymbol,
   canonicalOutboundSymbol,
   chunkPrices,
   dropInvalidShareRows,
@@ -87,6 +88,39 @@ describe("canonicalOutboundSymbol + alias-resolved outbound tickers", () => {
     expect(marketQuoteToRef({ symbol: "FB" } as unknown as RefArg)?.ticker).toBe("META");
     expect(marketQuoteToFundamentals({ symbol: "FB", peRatio: 20 } as unknown as FundArg, recentDate(0))?.ticker).toBe("META");
     expect(marketQuoteToAnalyst({ symbol: "FB", analystRating: "Buy" } as unknown as AnalystArg, recentDate(0))?.ticker).toBe("META");
+  });
+});
+
+describe("canonicalMarketDataSymbol (shared rename-vs-acquisition)", () => {
+  it("folds continuous renames via shared resolveContinuousTicker", () => {
+    expect(canonicalMarketDataSymbol("fb")).toBe("META");
+    expect(canonicalMarketDataSymbol("SQ")).toBe("XYZ");
+    expect(canonicalMarketDataSymbol("AAPL")).toBe("AAPL");
+    expect(canonicalMarketDataSymbol("BRK-B")).toBe("BRK-B");
+  });
+
+  it("drops acquisition sources (never relabel ATVI/TWX/RHT onto acquirer)", () => {
+    expect(canonicalMarketDataSymbol("ATVI")).toBeNull();
+    expect(canonicalMarketDataSymbol("TWX")).toBeNull();
+    expect(canonicalMarketDataSymbol("RHT")).toBeNull();
+    expect(canonicalMarketDataSymbol("BRCM")).toBeNull();
+  });
+
+  it("keeps identity refs folding acquisitions while market-data mappers drop them", () => {
+    type RefArg = Parameters<typeof marketQuoteToRef>[0];
+    type FundArg = Parameters<typeof marketQuoteToFundamentals>[0];
+    // Company identity still points at the acquirer (canonicalOutboundSymbol).
+    expect(canonicalOutboundSymbol("ATVI")).toBe("MSFT");
+    expect(marketQuoteToRef({ symbol: "ATVI", companyName: "Activision" } as unknown as RefArg)?.ticker).toBe("MSFT");
+    // Market-data rows must not pollute MSFT's series with ATVI numbers.
+    expect(
+      marketQuoteToFundamentals({ symbol: "ATVI", peRatio: 12, eps: 1 } as unknown as FundArg, "2026-07-01")
+    ).toBeNull();
+    expect(
+      ohlcBarsToPriceEntry("ATVI", [
+        { time: "2026-07-01", open: 1, high: 1, low: 1, close: 90, volume: 1 }
+      ])
+    ).toBeNull();
   });
 });
 
@@ -232,6 +266,15 @@ describe("shareWithCongressTrade", () => {
     vi.stubGlobal("fetch", fetchSpy);
     const res = await shareWithCongressTrade({});
     expect(res).toMatchObject({ ok: false, skipped: true, reason: "empty" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails (not skip) when every row is schema-dropped — do not advance daily marker", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await shareWithCongressTrade({ refs: [{ ticker: "" }] });
+    expect(res).toMatchObject({ ok: false, skipped: false, reason: "all-rows-dropped" });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
