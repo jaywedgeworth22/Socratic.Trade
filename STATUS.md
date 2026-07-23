@@ -63,6 +63,21 @@ then integrate it alongside dense recall in a separately reviewed retrieval PR. 
 ## 2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, `codex/rag-shadow-benchmarks-20260722`)
 
 Added a default-off, read-only capability/context probe. The local Turso/libSQL probe reports installed-client and vector-SQL capability without a network/database write; this checkout has no direct `@libsql/client` dependency, so a real remote Turso benchmark is intentionally not attempted. The Pinecone path requires an explicit live flag, a named pre-existing Assistant, an API key, externally supplied frozen cases, a 100-query cap, and a 30-second aborting timeout. It calls only Assistant context retrieval and emits redacted latency/citation/usage/error receipts—never prompts, snippets, file names, answers, keys, or provider errors. It does not claim relevance/provider-selection evidence without a same-corpus golden citation mapping. No provider, corpus, index, file, broker, or production mutation was made. Rollout: `docs/rollouts/2026-07-22-rag-shadow-benchmarks.md`.
+## 2026-07-21 — Fleet multi-app watchdog + disk follow-ups (GROK4, ops on Hetzner)
+
+**Watchdog does NOT run on the Mac** — it runs on the Hetzner Coolify host and is **enabled on server boot**.
+
+| Item | Status |
+|------|--------|
+| Usage-Monitor litestream retention 7d | PR #714 **merged**; `retention: 168h` on main |
+| Multi-app fleet watchdog | **live**: `fleet-watchdog.service` active+enabled; watches socratic (remediate), congress+usage (alert only); **no host reboot** by default |
+| Old socratic-watchdog | remains parked `…DISABLED-20260721` |
+| Runner disk policy | all 7 runners `EPHEMERAL=true`, `restart: always`; daily `hetzner-disk-guard` prune |
+| Site | health 200 / sha `0eafc7d16c1c…`; disk ~38% used |
+
+Rollout: `docs/rollouts/2026-07-21-fleet-watchdog-disk-followups.md`.
+
+## 2026-07-20 — GROK4 multi-wave Wave A (+C partial) on `grok/multi-wave-a-onward`
 ## 2026-07-22 — Usage telemetry v2 producer adoption (CODEX, `codex/usage-telemetry-v2-20260721`)
 
 Socratic now exact-pins shared `v2.0.0` over HTTPS and emits only strict v2 usage telemetry:
