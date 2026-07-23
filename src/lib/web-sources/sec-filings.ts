@@ -550,12 +550,15 @@ export async function ingestFiling(
       // Mirror the committed chunks into the local FTS table so hybrid/lexical retrieval covers the
       // PRODUCTION filing-body path. Must run inside the transaction so FTS failures rollback
       // and allow the filing ingestion to be retried on subsequent ticks.
+      // Use the same managed document key storeDocument writes on chunk_occurrences.accession
+      // (doc_id). Bare SEC accessions in FTS cannot join to composite occurrence keys.
+      const managedAccession = document.doc_id;
       for (const chunk of chunkDocument(document, {})) {
         insertDocumentChunkFts(
           chunk.content_hash,
           chunk.ticker[0] ?? ticker,
           "sec-edgar",
-          filingRef.accession,
+          managedAccession,
           chunk.text
         );
       }
