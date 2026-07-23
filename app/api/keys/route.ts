@@ -1,32 +1,81 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiKeyEnvVarForService, listUserApiKeys, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
+import { apiKeyEnvVarForService, listUserApiKeys, LOCAL_USER, maskApiKeyPreview, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
+import { checkAdmin } from "@/lib/auth/admin";
 import { resolveRequestUserId } from "@/lib/request-user";
+import { queueStPrimaryBridgeWriterSync } from "@/lib/st-primary-bridge-writer";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Multi-user API Key Management
  *
- * Scaffolding for per-user API key storage. Currently uses a simple
- * request user hint (x-user-id header, userId query/body, then local fallback).
- * This is not authentication; production identity should be gated separately.
+ * Per-user API key storage. Identity comes from middleware's verified
+ * `x-authenticated-user-email` header; request body/query user hints are ignored.
  *
  * Supported services are defined in API_KEY_CATALOG below.
  *
- * GET  /api/keys?userId=<id>              → list all keys for user
- * GET  /api/keys?userId=<id>&service=<s>  → resolve key (user → env fallback)
- * POST /api/keys  { userId?, service, apiKey, label? }  → upsert key
- * DELETE /api/keys?userId=<id>&service=<s>  → delete key
+ * GET  /api/keys             → list all keys for the current user
+ * GET  /api/keys?service=<s> → resolve key (user → env fallback)
+ * POST /api/keys  { service, apiKey, label? }  → upsert key
+ * DELETE /api/keys?service=<s>  → delete key
  */
 
 const API_KEY_CATALOG = [
   {
     service: "openai",
     label: "OpenAI",
-    category: "Required",
-    required: true,
-    unlocks: "LLM trade proposals, strategy reviews, red-team debate, and post-mortems.",
+    category: "LLM",
+    required: false,
+    unlocks: "OpenAI models for trade proposals, strategy reviews, red-team debate, and post-mortems.",
     docsUrl: "https://platform.openai.com/api-keys"
+  },
+  {
+    service: "anthropic",
+    label: "Anthropic (Claude)",
+    category: "LLM",
+    required: false,
+    unlocks: "Claude models for the Assistant chat and for the Green/Red Team (trade proposals, strategy review, red-team debate). Select a claude-* model in Strategy or the Assistant to use.",
+    docsUrl: "https://console.anthropic.com/settings/keys"
+  },
+  {
+    service: "xai",
+    label: "xAI (Grok)",
+    category: "LLM",
+    required: false,
+    unlocks: "Grok models for trade proposals, strategy analysis, and the Assistant. Select a grok-* model to use.",
+    docsUrl: "https://console.x.ai/"
+  },
+  {
+    service: "gemini",
+    label: "Google (Gemini)",
+    category: "LLM",
+    required: false,
+    unlocks: "Gemini models for the Assistant and strategy review. Select a gemini-* model in the Assistant or Strategy screen to use.",
+    docsUrl: "https://aistudio.google.com/app/apikey"
+  },
+  {
+    service: "mistral",
+    label: "Mistral AI",
+    category: "LLM",
+    required: false,
+    unlocks: "Mistral models for the Assistant and strategy review. Select a mistral-* model in the Assistant or Strategy screen to use.",
+    docsUrl: "https://console.mistral.ai/api-keys/"
+  },
+  {
+    service: "deepseek",
+    label: "DeepSeek",
+    category: "LLM",
+    required: false,
+    unlocks: "DeepSeek V4 models (deepseek-v4-flash / deepseek-v4-pro) for the Assistant and strategy. Note: requests are processed on DeepSeek's servers (China).",
+    docsUrl: "https://platform.deepseek.com/api_keys"
+  },
+  {
+    service: "openrouter",
+    label: "OpenRouter",
+    category: "LLM",
+    required: false,
+    unlocks: "Access to OpenRouter models including DeepSeek and Qwen for the Assistant and strategy.",
+    docsUrl: "https://openrouter.ai/keys"
   },
   {
     service: "finnhub",
@@ -61,14 +110,6 @@ const API_KEY_CATALOG = [
     docsUrl: "https://marketstack.com/signup/free"
   },
   {
-    service: "tradier",
-    label: "Tradier",
-    category: "Price history",
-    required: false,
-    unlocks: "Primary keyed daily OHLC source for charts and in-house technical signals.",
-    docsUrl: "https://developer.tradier.com/"
-  },
-  {
     service: "fred",
     label: "FRED",
     category: "Macro",
@@ -81,6 +122,7 @@ const API_KEY_CATALOG = [
     label: "SEC EDGAR User-Agent",
     category: "Scrapers",
     required: false,
+    credentialName: "contact",
     unlocks: "Polite SEC Form 4 and 8-K requests with your descriptive contact string.",
     docsUrl: "https://www.sec.gov/os/accessing-edgar-data"
   },
@@ -95,11 +137,28 @@ const API_KEY_CATALOG = [
 ] as const;
 
 const VALID_SERVICES: ReadonlySet<string> = new Set(API_KEY_CATALOG.map((item) => item.service));
+const ST_PRIMARY_BRIDGE_SERVICES: ReadonlySet<string> = new Set(["gemini", "deepseek"]);
+
+function queuePrimaryBridgeAfterTrackedMutation(userId: string, service: string): void {
+  if (userId === LOCAL_USER && ST_PRIMARY_BRIDGE_SERVICES.has(service)) {
+    queueStPrimaryBridgeWriterSync();
+  }
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const userId = resolveRequestUserId(request);
   const service = searchParams.get("service");
+
+  // A key's masked preview (first 8 + last 4, never a usable value) answers "WHICH key is serving
+  // me?" — the question the write-only key store otherwise makes unanswerable when several keys
+  // exist for one provider. Your OWN stored key is always previewable to you; the operator's env
+  // credential is previewable only to an operator/admin, so a tenant riding the shared key can see
+  // that one is serving them ("server key") without learning anything about the operator's secret.
+  // Token-based admin is excluded on purpose: this is an interactive, identity-bound disclosure.
+  const isOperator = checkAdmin(request, { allowToken: false }).ok;
+  const previewFor = (resolved: { key?: string; source: string }): string | undefined =>
+    resolved.source === "user" || isOperator ? maskApiKeyPreview(resolved.key) : undefined;
 
   // If a specific service is requested, resolve the key (user DB → env fallback)
   if (service) {
@@ -112,8 +171,10 @@ export async function GET(request: NextRequest) {
       service: canonical,
       configured: Boolean(resolved.key),
       source: resolved.source,
-      envVar: resolved.envVar
-      // NOTE: never return the actual key in a GET response for security
+      envVar: resolved.envVar,
+      preview: previewFor(resolved)
+      // NOTE: never return the actual key in a GET response for security — `preview` is the
+      // elided first-8/last-4 form only (see maskApiKeyPreview).
     });
   }
 
@@ -130,6 +191,7 @@ export async function GET(request: NextRequest) {
         envVar,
         configured: Boolean(resolved.key),
         source: resolved.source,
+        preview: previewFor(resolved),
         updatedAt: stored?.updatedAt,
         savedLabel: stored?.label
       };
@@ -152,6 +214,7 @@ export async function POST(request: NextRequest) {
     }
 
     const result = upsertUserApiKey(userId, canonical, apiKey.trim(), label);
+    queuePrimaryBridgeAfterTrackedMutation(userId, canonical);
     return NextResponse.json({
       success: true,
       key: {
@@ -182,5 +245,6 @@ export async function DELETE(request: NextRequest) {
   }
 
   const deleted = deleteUserApiKey(userId, canonical);
+  queuePrimaryBridgeAfterTrackedMutation(userId, canonical);
   return NextResponse.json({ success: true, deleted });
 }

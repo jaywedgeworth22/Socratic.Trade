@@ -93,7 +93,7 @@ describe("Alpaca MCP gateway adapter", () => {
     expect(calls[0].body.params.name).toBe("get_account_info");
   });
 
-  it("routes getEquityPositions() to get_positions tool", async () => {
+  it("routes getEquityPositions() to get_positions tool and preserves fractional quantity fields", async () => {
     vi.stubGlobal("fetch", async () => {
       return new Response(
         JSON.stringify({
@@ -103,7 +103,10 @@ describe("Alpaca MCP gateway adapter", () => {
             content: [
               {
                 type: "text",
-                text: JSON.stringify([{ symbol: "MSFT", qty: 20, avg_entry_price: 300, market_value: 6000 }])
+                text: JSON.stringify([
+                  { symbol: "MSFT", qty: 20, avg_entry_price: 300, market_value: 6000 },
+                  { symbol: "AAPL", quantity: "0.5", average_entry_price: "200", marketValue: "100" }
+                ])
               }
             ]
           }
@@ -117,7 +120,8 @@ describe("Alpaca MCP gateway adapter", () => {
     const positions = await gateway.getEquityPositions("MCP_ACC_1");
 
     expect(positions).toEqual([
-      { symbol: "MSFT", quantity: 20, averageCost: 300, marketValue: 6000, sector: undefined, industry: undefined }
+      { symbol: "MSFT", quantity: 20, averageCost: 300, marketValue: 6000, sector: undefined, industry: undefined },
+      { symbol: "AAPL", quantity: 0.5, averageCost: 200, marketValue: 100, sector: undefined, industry: undefined }
     ]);
   });
 
@@ -159,6 +163,40 @@ describe("Alpaca MCP gateway adapter", () => {
     expect(order.state).toBe("accepted");
     expect(calls[0].params.name).toBe("place_market_order");
     expect(calls[0].params.arguments.qty).toBe("5");
+  });
+
+  it("logs alpaca-broker health on a successful REST SDK call", async () => {
+    // No MCP path: fetch 500 forces the REST SDK fallback, where the raw getAccount() call runs.
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 500 }));
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const { getDb } = await import("../src/lib/db");
+    await getAlpacaGateway("local").getAccounts();
+
+    const rows = getDb()
+      .prepare("SELECT ok, key_source, user_id FROM api_health_log WHERE service = ? ORDER BY ts")
+      .all("alpaca-broker") as Array<{ ok: number; key_source: string | null; user_id: string | null }>;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((row) => row.ok === 1 && row.key_source === "user" && row.user_id === "local")).toBe(true);
+  });
+
+  it("logs an alpaca-broker health failure when the REST SDK call throws", async () => {
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 500 }));
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const { getDb } = await import("../src/lib/db");
+    const gateway = getAlpacaGateway("local");
+    // Force the underlying SDK call to reject so the failure branch logs.
+    (gateway as unknown as { alpaca: { getAccount: () => Promise<never> } }).alpaca.getAccount = async () => {
+      throw new Error("boom");
+    };
+
+    await expect(gateway.getAccounts()).rejects.toThrow("boom");
+
+    const rows = getDb()
+      .prepare("SELECT ok, error_text FROM api_health_log WHERE service = ? ORDER BY ts")
+      .all("alpaca-broker") as Array<{ ok: number; error_text: string | null }>;
+    expect(rows.some((row) => row.ok === 0 && row.error_text === "boom")).toBe(true);
   });
 
   it("falls back to REST client when fetch errors or is rejected", async () => {

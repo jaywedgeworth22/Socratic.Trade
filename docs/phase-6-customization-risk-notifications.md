@@ -5,7 +5,7 @@
 - Add named strategy profiles.
 - Persist policy JSON, prompt text, scoring weights, and active profile selection.
 - Enforce deterministic risk rules in code.
-- Send webhook notifications when configured and audit all notification outcomes.
+- Send configured notifications and audit notification outcomes.
 
 ## Profiles
 
@@ -22,6 +22,13 @@ The existing global policy and prompt are migrated into a default profile.
 in `src/lib/db.ts` (same pattern as other per-user tables).
 
 ## Risk Rules
+
+As of 2026-07-13, daily opening spend is an explicit either/or control:
+`maxDailyPctOfNav` (20% default) or `maxDailyNotional`. The selected mode is normalized on web,
+mobile, profile, and AI-review writes, then resolved once through `src/lib/policy-caps.ts` for
+strategy generation, deterministic review, broker-minimum bumps, approval-time rechecks, and UI
+utilization. Migration v26 changes only the exact former $500 product default to 20% NAV; other
+dollar values remain owner-selected dollar mode.
 
 Policy enforcement includes:
 
@@ -51,4 +58,5 @@ skipped, not failed.
 - Active profile controls policy and prompt used by strategy runs.
 - Dashboard can switch profiles and update profile-backed policy fields.
 - Risk-rule blocks include clear reasons.
-- Every notification attempt is stored in `notification_events` and mirrored in audit events.
+- Legacy strategy/feed notifications are stored in `notification_events`; direct
+  channel delivery is mirrored in audit events (`notify.sent` / `notify.error`).
