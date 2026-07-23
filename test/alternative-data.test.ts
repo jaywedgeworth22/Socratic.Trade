@@ -188,6 +188,10 @@ describe("Finnhub News Enrichment", () => {
 
 describe("Discord Rich Notification Webhook", () => {
   it("formats Discord payload with embeds and color codes", async () => {
+    // Legacy webhook path re-validates its target with a real DNS lookup on every send
+    // (SSRF/rebinding hardening — src/lib/egress-guard.ts); stub it for a hermetic test.
+    const resolveWebhookHost = async () => ["8.8.8.8"];
+
     const { sendNotification } = await import("../src/lib/notifications");
     const { DEFAULT_POLICY } = await import("../src/lib/defaults");
 
@@ -222,7 +226,7 @@ describe("Discord Rich Notification Webhook", () => {
           review: { estimatedNotional: 49.95 }
         }
       },
-      { policy, fetcher: mockFetcher }
+      { policy, fetcher: mockFetcher, resolveWebhookHost }
     );
 
     expect(capturedBody).toBeDefined();
@@ -252,7 +256,7 @@ describe("Discord Rich Notification Webhook", () => {
           }
         }
       },
-      { policy, fetcher: mockFetcher }
+      { policy, fetcher: mockFetcher, resolveWebhookHost }
     );
 
     expect(capturedBody.embeds[0].color).toBe(3066993);
