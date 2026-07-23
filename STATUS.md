@@ -7,6 +7,21 @@ dispatch/cost references. Commit `28a09b84` now keeps the durable `voyage-rerank
 narrows the active provider for the health lane, and uses `estimateRagDispatchCost`. The branch is
 ready for a fresh hosted gate; auto-merge is armed. No production/provider/corpus writes were made.
 
+## 2026-07-21 — Fleet multi-app watchdog + disk follow-ups (GROK4, ops on Hetzner)
+
+**Watchdog does NOT run on the Mac** — it runs on the Hetzner Coolify host and is **enabled on server boot**.
+
+| Item | Status |
+|------|--------|
+| Usage-Monitor litestream retention 7d | PR #714 **merged**; `retention: 168h` on main |
+| Multi-app fleet watchdog | **live**: `fleet-watchdog.service` active+enabled; watches socratic (remediate), congress+usage (alert only); **no host reboot** by default |
+| Old socratic-watchdog | remains parked `…DISABLED-20260721` |
+| Runner disk policy | all 7 runners `EPHEMERAL=true`, `restart: always`; daily `hetzner-disk-guard` prune |
+| Site | health 200 / sha `0eafc7d16c1c…`; disk ~38% used |
+
+Rollout: `docs/rollouts/2026-07-21-fleet-watchdog-disk-followups.md`.
+
+## 2026-07-20 — GROK4 multi-wave Wave A (+C partial) on `grok/multi-wave-a-onward`
 ## 2026-07-22 — Usage telemetry v2 producer adoption (CODEX, `codex/usage-telemetry-v2-20260721`)
 
 Socratic now exact-pins shared `v2.0.0` over HTTPS and emits only strict v2 usage telemetry:

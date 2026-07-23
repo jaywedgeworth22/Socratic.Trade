@@ -577,8 +577,9 @@ export async function alertConnectionFailure(
         { userId: targetUserId, policy: forcedPolicy as any, directBody: body }
       ).catch(() => {});
     }
-  } catch {
+  } catch (err) {
     // Health alerts must never throw
+    console.error("Health alert error:", err);
   }
 }
 

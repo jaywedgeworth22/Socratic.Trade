@@ -1,6 +1,7 @@
 import { getActiveConnectedAccount, listConnectedAccounts, upsertConnectedAccount } from "@/lib/db";
 import { getRobinhoodGateway } from "@/lib/robinhood";
 import { resolveRequestUserId } from "@/lib/request-user";
+import { ALPACA_ALLOWED_HOSTS, validateBrokerBaseUrl } from "@/lib/egress-guard";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 
@@ -129,6 +130,16 @@ export async function POST(req: Request) {
       }
     } else if (broker === "alpaca" || broker === "alpaca-mcp") {
       environment = isAlpacaPaperCredential({ accountNumber: body.accountNumber, apiKey }) ? "paper" : "live";
+      // A user-supplied baseUrl is trusted with the account's API credentials on every broker
+      // call, so it must be an official Alpaca host (or an owner-approved extra host — see
+      // EGRESS_EXTRA_ALLOWED_HOSTS) rather than an arbitrary attacker/typo-controlled endpoint
+      // (SSRF / credential-exfiltration hardening — src/lib/egress-guard.ts).
+      if (typeof body.baseUrl === "string" && body.baseUrl.trim()) {
+        const check = validateBrokerBaseUrl(body.baseUrl.trim(), ALPACA_ALLOWED_HOSTS);
+        if (!check.ok) {
+          return new NextResponse(check.error ?? "baseUrl is not an allowed broker endpoint.", { status: 400 });
+        }
+      }
     } else {
       environment = body.environment === "live" ? "live" : "paper";
     }
