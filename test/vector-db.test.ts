@@ -324,10 +324,10 @@ describe("vector-db", () => {
     // latency and could surface rows from a stale provider authority.
     expect(mocks.query).toHaveBeenCalledTimes(2);
     expect(mocks.query.mock.calls[0][0]).toMatchObject({
-      // Reranking is on by default, so Pinecone over-fetches on the rerank-path cap
-      // (rerankOverFetchK(2), default VECTOR_RERANK_OVERFETCH_K=150) and Voyage reranks back down
-      // to the requested limit. The filter is the tenant-isolation contract under test.
-      topK: 150,
+      // This fixture has no configured OpenRouter/SiliconFlow rerank authority, so retrieval keeps
+      // the dense path at the requested limit instead of silently borrowing the test Voyage embed
+      // client. The filter is the tenant-isolation contract under test.
+      topK: 2,
       includeMetadata: true
     });
     const privateFilter = unwrapCommittedFilter(mocks.query.mock.calls[0][0].filter);
