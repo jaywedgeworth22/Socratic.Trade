@@ -66,8 +66,12 @@ export default function ConsoleHomePage() {
   const primaryDecision = snapshot.socratic?.decisions?.[0];
   const primaryTrace = latest?.proposals?.[0];
   const primaryProposal = primaryTrace?.proposal ?? snapshot.pendingProposals[0]?.proposal;
-  const evidenceRows = deriveEvidenceRows(snapshot, latest, primaryDecision);
-  const actionRows = deriveActionRows(snapshot, latest);
+  const latestProposals =
+    latest?.proposals?.slice(0, 5).map((item) =>
+      decisionFromProposal(`${latest?.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
+    ) ?? snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
+
+  const previousTrades = snapshot.socratic?.decisions?.slice(0, 5).map(decisionFromSocratic) ?? [];
   const frameworkRows = deriveFrameworkRows(snapshot);
   const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
 
@@ -130,19 +134,17 @@ export default function ConsoleHomePage() {
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
         <div className="flex min-w-0 flex-col gap-4">
-          {actionRows.length > 0 ? (
+          {latestProposals.length > 0 ? (
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-[length:var(--con-fs-lg)] font-semibold">Proposals &amp; Actions</h2>
+                <h2 className="text-[length:var(--con-fs-lg)] font-semibold">Latest Strategy Run</h2>
                 <Link href="/console/activity" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
                   Journal <ArrowRight size={12} />
                 </Link>
               </div>
-              {actionRows.map((row) => {
-                const decision = snapshot.socratic?.decisions?.find((d) => d.id === row.id);
-                const trace = latest?.proposals?.find((p) => `${latest?.runId}-${p.proposal.symbol}-${p.status}` === row.id);
-                const pending = snapshot.pendingProposals.find((p) => p.id === row.id);
-                const proposal = trace?.proposal ?? pending?.proposal ?? decision;
+              {latestProposals.map((row) => {
+                const proposal = row.proposal ?? row.decision;
+                const decision = row.decision;
                 
                 return (
                   <ProposalRow
@@ -177,31 +179,7 @@ export default function ConsoleHomePage() {
             </Card>
           )}
 
-          <Card
-            title={
-              <span className="flex items-center gap-1.5">
-                <Database size={13} /> Evidence
-              </span>
-            }
-            action={
-              <Link href="/console/scan" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                Evidence <ArrowRight size={12} />
-              </Link>
-            }
-          >
-            {evidenceRows.length > 0 ? (
-              <div className="con-evidence-grid">
-                {evidenceRows.map((row) => (
-                  <EvidenceCard key={row.title} {...row} />
-                ))}
-              </div>
-            ) : (
-              <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                No decision evidence is available yet. The next run will persist scan evidence, policy reasoning,
-                retrieved evidence, and dissent per decision.
-              </p>
-            )}
-          </Card>
+          
 
           <Card
             title={
@@ -263,24 +241,34 @@ export default function ConsoleHomePage() {
 
           <MarkToMarketCard markToMarket={markToMarket} equityWindow={equityWindow} />
           <PositionsCard snapshot={snapshot} />
+
+          {previousTrades.length > 0 && (
+            <div className="flex flex-col gap-4 mt-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-[length:var(--con-fs-lg)] font-semibold">Previous Trades</h2>
+                <Link href="/console/decisions" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
+                  All Decisions <ArrowRight size={12} />
+                </Link>
+              </div>
+              {previousTrades.map((row) => (
+                <ProposalRow
+                  key={row.id}
+                  row={row}
+                  latest={latest}
+                  proposal={row.proposal}
+                  decision={row.decision}
+                  snapshot={snapshot}
+                  refresh={refresh}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         <aside className="flex min-w-0 flex-col gap-4">
           <RiskUtilizationCard risk={risk} />
 
-          <Card
-            title={
-              <span className="flex items-center gap-1.5">
-                <AlertTriangle size={13} /> Dissent
-              </span>
-            }
-          >
-            <div className="flex flex-col gap-2">
-              {deriveDissentRows(primaryProposal, latest, primaryDecision).map((row) => (
-                <EvidenceCard key={row.title} {...row} />
-              ))}
-            </div>
-          </Card>
+          
 
           <Card
             title={
@@ -482,9 +470,9 @@ type DecisionRowData = {
   href?: string;
   title?: string;
   confidence?: number;
-  /** ISO timestamp of the decision/proposal — rendered top-right as a relative
-   *  "15m ago" (like Journal entries); absent for rows with no known time. */
   at?: string;
+  proposal?: any;
+  decision?: any;
 };
 
 type EvidenceRow = {
@@ -625,22 +613,6 @@ function formatMarketThesis(raw: string, symbol?: string | null): string {
     .replace(/\b[a-z]/g, (char) => char.toUpperCase());
 }
 
-function deriveActionRows(snapshot: DashboardSnapshot, latest: StrategyDecision | undefined): DecisionRowData[] {
-  // When the latest run has proposals, show them with full ThesisNarrative
-  // even if decisions have been persisted — proposals carry richer context.
-  const latestRows =
-    latest?.proposals
-      ?.slice(0, 5)
-      .map((item) =>
-        decisionFromProposal(`${latest.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
-      ) ?? [];
-  if (latestRows.length > 0) return latestRows;
-  // Fall back to persisted decisions when no live proposals exist
-  const persisted = snapshot.socratic?.decisions?.slice(0, 5).map(decisionFromSocratic) ?? [];
-  if (persisted.length > 0) return persisted;
-  return snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
-}
-
 function decisionFromSocratic(decision: SocraticDecisionCase): DecisionRowData {
   const reasons = decision.policyDecision?.reasons ?? [];
   const rationale = decision.policyDecision?.socraticOverride?.applied
@@ -656,7 +628,8 @@ function decisionFromSocratic(decision: SocraticDecisionCase): DecisionRowData {
     href: `/console/decisions/${encodeURIComponent(decision.id)}`,
     title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
     confidence: decision.confidenceScore,
-    at: decision.createdAt
+    at: decision.createdAt,
+    decision
   };
 }
 
@@ -670,7 +643,8 @@ function decisionFromProposal(id: string, proposal: TradeProposal, status: strin
     rationale: withBlockReasons(proposal.rationale, status, reasons),
     title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
     confidence: proposal.confidenceScore,
-    at
+    at,
+    proposal
   };
 }
 
@@ -682,7 +656,7 @@ function decisionFromPending(pending: PendingProposal): DecisionRowData {
   };
 }
 
-function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecision | undefined, decision?: SocraticDecisionCase): EvidenceRow[] {
+function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecision | undefined, decision?: SocraticDecisionCase, proposal?: any): EvidenceRow[] {
   const rows: EvidenceRow[] = [];
   if (decision) {
     for (const item of decision.evidence.slice(0, 5)) {
@@ -723,17 +697,17 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
     for (const candidate of scan.topCandidates.slice(0, 3)) rows.push(evidenceFromCandidate(candidate));
   }
 
-  const proposal = latest?.proposals?.[0]?.proposal ?? snapshot.pendingProposals[0]?.proposal;
-  if (proposal?.proposedByModel) {
+  const p = proposal ?? latest?.proposals?.[0]?.proposal ?? snapshot.pendingProposals[0]?.proposal;
+  if (p?.proposedByModel) {
     rows.push({
       title: "Model attribution",
-      meta: proposal.proposedByModel,
+      meta: p.proposedByModel,
       body: "The proposal stores the model that actually generated it, so later outcome review can score models instead of guessing.",
       tone: "pos"
     });
   }
-  if (proposal?.redTeamVerdict) {
-    const verdict = proposal.redTeamVerdict;
+  if (p?.redTeamVerdict) {
+    const verdict = p.redTeamVerdict;
     if (verdict.available) {
       rows.push({
         title: "Adversarial review",
