@@ -66,6 +66,100 @@ describe("connected accounts route", () => {
     });
   });
 
+  // ITEM 11 (SSRF/credential-exfiltration hardening): a user-supplied Alpaca baseUrl is trusted
+  // with the account's API credentials on every broker call, so it must be an official Alpaca
+  // host over https — see src/lib/egress-guard.ts.
+  it("accepts an explicit baseUrl that matches an official Alpaca host", async () => {
+    const { POST } = await import("../app/api/connected-accounts/route");
+    const response = await POST(new Request("http://localhost/api/connected-accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        broker: "alpaca",
+        accountNumber: "PA1",
+        apiKey: "PK_TEST",
+        apiSecret: "secret",
+        baseUrl: "https://paper-api.alpaca.markets/v2",
+        isActive: true
+      })
+    }));
+    expect(response.status).toBe(200);
+    const { getActiveConnectedAccount } = await import("../src/lib/db");
+    expect(getActiveConnectedAccount()).toMatchObject({ broker: "alpaca", baseUrl: "https://paper-api.alpaca.markets/v2" });
+  });
+
+  it("rejects an Alpaca baseUrl host that isn't an official Alpaca endpoint (400, nothing persisted)", async () => {
+    const { POST } = await import("../app/api/connected-accounts/route");
+    const response = await POST(new Request("http://localhost/api/connected-accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        broker: "alpaca",
+        accountNumber: "PA1",
+        apiKey: "PK_TEST",
+        apiSecret: "secret",
+        baseUrl: "https://attacker.example.com/v2"
+      })
+    }));
+    expect(response.status).toBe(400);
+    const { listConnectedAccounts } = await import("../src/lib/db");
+    expect(listConnectedAccounts()).toHaveLength(0);
+  });
+
+  it("rejects a private/internal Alpaca baseUrl (SSRF attempt), even though it also isn't in the allowlist", async () => {
+    const { POST } = await import("../app/api/connected-accounts/route");
+    const response = await POST(new Request("http://localhost/api/connected-accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        broker: "alpaca-mcp",
+        accountNumber: "PA1",
+        apiKey: "PK_TEST",
+        baseUrl: "https://169.254.169.254/latest/meta-data"
+      })
+    }));
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects a non-https Alpaca baseUrl", async () => {
+    const { POST } = await import("../app/api/connected-accounts/route");
+    const response = await POST(new Request("http://localhost/api/connected-accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        broker: "alpaca",
+        accountNumber: "PA1",
+        apiKey: "PK_TEST",
+        apiSecret: "secret",
+        baseUrl: "http://api.alpaca.markets/v2"
+      })
+    }));
+    expect(response.status).toBe(400);
+  });
+
+  it("accepts an Alpaca baseUrl host added via EGRESS_EXTRA_ALLOWED_HOSTS (owner-controlled extension, no code change)", async () => {
+    const original = process.env.EGRESS_EXTRA_ALLOWED_HOSTS;
+    try {
+      process.env.EGRESS_EXTRA_ALLOWED_HOSTS = "my-self-hosted-gateway.example.com";
+      const { POST } = await import("../app/api/connected-accounts/route");
+      const response = await POST(new Request("http://localhost/api/connected-accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          broker: "alpaca-mcp",
+          accountNumber: "PA1",
+          apiKey: "PK_TEST",
+          baseUrl: "https://my-self-hosted-gateway.example.com/mcp",
+          isActive: true
+        })
+      }));
+      expect(response.status).toBe(200);
+    } finally {
+      if (original === undefined) delete process.env.EGRESS_EXTRA_ALLOWED_HOSTS;
+      else process.env.EGRESS_EXTRA_ALLOWED_HOSTS = original;
+    }
+  });
+
   it("connects a Tradier SANDBOX account (paper) from an explicit environment selector", async () => {
     const { POST } = await import("../app/api/connected-accounts/route");
     const response = await POST(new Request("http://localhost/api/connected-accounts", {
