@@ -322,6 +322,8 @@ jobs:
                 ;;
             esac
           fi
+      - name: Disable lingering sparse-checkout
+        run: git sparse-checkout disable || true
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -343,6 +345,8 @@ jobs:
       # initial checkout and npm install while another runner job was cleaning
       # a stale workspace. Re-checkout at the package-operation boundary so a
       # transient cleanup cannot turn into a false ENOENT failure.
+      - name: Disable lingering sparse-checkout
+        run: git sparse-checkout disable || true
       - name: Refresh checkout before package operations
         uses: actions/checkout@v4
       # verify-hosted only runs when docs-only is false (job-level `if` above), so per-step

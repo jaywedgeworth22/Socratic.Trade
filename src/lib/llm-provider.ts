@@ -9,7 +9,7 @@ export interface LlmEndpoint {
   url: string;
   key?: string;
   model: string;
-  keySource: "operator" | "user";
+  keySource: "operator" | "user" | "none";
   keyRef?: string;
   transport: LlmTransport;
 }
