@@ -8,6 +8,14 @@
 > Keep the external monitor on public `/api/health`; do not expose authenticated `/api/ready` just for
 > monitoring. Verify the dedicated branch with the ordered lint/tsc/test/build gate, then land via
 > `scripts/land.sh` if the owner wants deployment.
+> **2026-07-22 — Retired-provider Usage Monitor cleanup (CODEX, branch
+> `codex/retired-provider-usage-cleanup`).** Keep Alpaca, Tradier, and Robinhood broker runtime
+> behavior and health logging intact, but remove their Usage Monitor emissions and the unused
+> balance-push helper. Suppress retired provider roots and subproviders centrally so Alpaca
+> news/snapshot cannot be reintroduced. Remove dead Intrinio implementation/config/current docs
+> while retaining historical evidence. After PR #1889 merges, adopt its strict-v2 direct-push
+> implementation, preserve partial-ACK/replay cutover semantics, run the Node 24 gate, and open a
+> ready review PR. Do not merge or deploy without owner instruction.
 
 > **2026-07-22 — Usage telemetry v2 + shared-package pin-check combined landing (PR #1889).** The
 > reviewed #1890 workflow correction is subsumed into #1889 to avoid two serialized full CI cycles.

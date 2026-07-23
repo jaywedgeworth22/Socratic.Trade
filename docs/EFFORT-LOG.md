@@ -42,6 +42,7 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
+- **[Socratic.Trade][GROK] Retired-provider Usage Monitor cleanup post-#1889 — IN PROGRESS 2026-07-22.** Merged exact `origin/main` (`bd7068b6` #1889). Live+replay admission filters via `suppressUsageMonitorProvider`; removed `pushBrokerBalance`; FMP paid-control regression added. Worktree `/Users/jay/.codex/worktrees/socratic-retired-provider-cleanup` branch `codex/retired-provider-usage-cleanup`.
 
 - **[Socratic.Trade][GROK] Trade-approval Busy recovery, OpenRouter account-model availability for rotation, and UptimeRobot target diagnosis (branch `codex/trade-approval-redteam-uptime-20260722`, worktree `/Users/jay/.codex/worktrees/trade-approval-redteam-uptime-20260722`, 2026-07-22) — PR #1902 OPEN.** Local land gate green (tsc, 443/5199 tests, build); PR open. UptimeRobot already on `/api/health`. Rollout: `docs/rollouts/2026-07-22-approval-redteam-uptime.md`.
 
@@ -4061,3 +4062,4 @@ brackets; effort S/M/L.
 | 2026-07-20 | Document Summarizer & Abstracts DB Migration | Completed | Added migration 55 for document_abstracts, db-document-abstracts CRUD, document-summarizer engine, and vitest unit tests | AG |
 
 | 2026-07-21 | GROK + CODEX | In Progress | ST multi-day PR stuck: preserve active verify runs; remove absent trading-live targets; keep observer reporting on socratic-deploy; stop smoke-on-PR; remove synthetic enrichment fallback; make bracket permission side-specific; stabilize focused tests | monet/ci-runner-and-queue-fixes |
+| 2026-07-22 | **Retired-provider Usage Monitor cleanup** — stop Socratic.Trade emissions for Tradier/Alpaca/Robinhood, remove dead Intrinio integration/config/current docs, preserve all broker runtime/trading/read/health behavior, and add a central suppression regression | CODEX | **In Progress** — isolated cleanup complete; Node 24 focused gate green (5 files / 209 tests), TypeScript + diff checks green; final central strict-v2 integration and ready PR wait for #1889 to merge | codex/retired-provider-usage-cleanup |
