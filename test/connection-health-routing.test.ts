@@ -216,7 +216,7 @@ describe("Connection Health & Failure Routing", () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
-    db.upsertUserApiKey("local", "siliconflow", "sf-test-key");
+    db.upsertUserApiKey("local", "openrouter", "or-test-key");
 
     for (let i = 0; i < 5; i++) {
       db.logApiHealth({ service: "rag-embed", ok: false, errorText: "OpenRouter down", keySource: "env" });
@@ -237,7 +237,7 @@ describe("Connection Health & Failure Routing", () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
-    db.upsertUserApiKey("local", "openrouter", "sk-or-test-key");
+    db.upsertUserApiKey("local", "voyage", "vy-test-key");
 
     for (let i = 0; i < 5; i++) {
       db.logApiHealth({ service: "rag-embed", ok: false, errorText: "Voyage down", keySource: "env" });
