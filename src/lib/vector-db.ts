@@ -1236,7 +1236,7 @@ async function alertRagConnectionFailure(
   // — see its call site). "rag-embed"/"rag-rerank" are the provider-generic lanes withRagApiHealth
   // now uses for actual embed/rerank call failures (added 2026-07-19) — pass `activeProvider`
   // alongside them so the title/payload still say which vendor is actually behind the failure.
-  service: "pinecone" | "voyage" | "voyage-rerank" | "rag-embed" | "rag-rerank",
+  service: "pinecone" | "voyage" | "voyage-rerank" | "rag-embed" | "rag-rerank" | "openrouter" | "openrouter-rerank" | "siliconflow" | "siliconflow-rerank",
   source: ApiKeySource,
   targetUserId: string,
   operation: string,
@@ -1257,6 +1257,8 @@ async function alertRagConnectionFailure(
       service === "pinecone" ? "Pinecone connection failed"
       : service === "voyage" ? "Voyage connection failed"
       : service === "voyage-rerank" ? "Voyage Rerank connection failed"
+      : service === "openrouter" || service === "openrouter-rerank" ? "OpenRouter connection failed"
+      : service === "siliconflow" || service === "siliconflow-rerank" ? "SiliconFlow connection failed"
       : `${RAG_PROVIDER_DISPLAY_NAMES[activeProvider ?? ""] ?? "RAG"} ${service === "rag-rerank" ? "rerank" : "embed"} connection failed`;
     const body = `${operation}: ${message}`;
     // `provider` carries the ACTUAL active provider when known (rag-embed/rag-rerank), falling back
