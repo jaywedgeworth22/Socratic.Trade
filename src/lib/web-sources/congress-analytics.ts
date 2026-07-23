@@ -9,15 +9,9 @@
 import { audit, getInternalSetting, setInternalSetting } from "../db";
 import {
   congressAnalyticsEnabled,
-  getAppAClusterBuys,
-  getAppAConflicts,
-  getAppAConviction,
-  getAppAMemberLeaderboard,
-  getAppAMemberPerformance,
-  getAppATickerLeaderboard,
-  type AppAConvictionTicker,
-  type AppAMemberRow
-} from "../congress-trade-client";
+  getCongressTradeClient
+} from "../api-clients/congress";
+import type { ConvictionTicker, MemberLeader } from "@jaywedgeworth22/congress-trading-shared";
 import { normalizeSymbol } from "../money";
 import type { CongressAnalytics, WebSourceRefreshResult } from "./types";
 
@@ -79,7 +73,7 @@ export function getCongressAnalyticsOverlay(symbols: string[]): Record<string, C
  * (or App B aggregates /api/analytics/performance/:txId). Returns empty until filer_id resolves on App A
  * (member-leaderboard is empty while members are unresolved).
  */
-export function buildMemberScores(members: AppAMemberRow[]): Map<string, number> {
+export function buildMemberScores(members: MemberLeader[]): Map<string, number> {
   const PERF_FIELDS = ["estVolumeUsd", "tradeCount"]; // App A's real per-member magnitude fields
   const scored: Array<{ name: string; perf: number }> = [];
   for (const m of members) {
@@ -111,13 +105,15 @@ export function buildMemberScores(members: AppAMemberRow[]): Map<string, number>
  */
 export async function buildMemberSkillScores(filerIds: string[]): Promise<Map<string, number>> {
   const map = new Map<string, number>();
+  if (!congressAnalyticsEnabled() || filerIds.length === 0) return map;
   const distinct = Array.from(new Set(filerIds.map((id) => String(id || "").trim()).filter(Boolean))).slice(
     0,
     MAX_SKILL_LOOKUPS
   );
   if (distinct.length === 0) return map;
 
-  const perf = await Promise.all(distinct.map((id) => getAppAMemberPerformance(id).catch(() => null)));
+  const client = getCongressTradeClient();
+  const perf = await Promise.all(distinct.map((id) => client.getMemberPerformance(id).catch(() => null)));
   const scored: Array<{ id: string; alpha: number }> = [];
   distinct.forEach((id, i) => {
     const p = perf[i];
@@ -144,16 +140,17 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
   }
 
   const window = `${windowDays()}d`;
+  const client = getCongressTradeClient();
   const [leaders, clusters, members, convictions, conflicts] = await Promise.all([
-    getAppATickerLeaderboard({ window, limit: TICKER_LIMIT }),
-    getAppAClusterBuys({ window, limit: CLUSTER_LIMIT }),
-    getAppAMemberLeaderboard({ window, limit: MEMBER_LIMIT }),
-    getAppAConviction({ window, limit: TICKER_LIMIT }),
-    getAppAConflicts({ window, limit: CONFLICT_LIMIT })
+    client.getTickerLeaderboard({ window, limit: TICKER_LIMIT }).catch(() => []),
+    client.getClusterBuys({ window, limit: CLUSTER_LIMIT }).catch(() => []),
+    client.getMemberLeaderboard({ window, limit: MEMBER_LIMIT }).catch(() => []),
+    client.getConviction({ window, limit: TICKER_LIMIT }).catch(() => []),
+    client.getConflicts({ window, limit: CONFLICT_LIMIT }).catch(() => [])
   ]);
 
   // Only count convictions with a real score — null means "thin signal" and is not usable data.
-  const usableConvictions = convictions.filter((c) => c.convictionScore !== null);
+  const usableConvictions = convictions.filter((c: ConvictionTicker) => c.convictionScore !== null);
   // Guard only on the core endpoints: conviction/conflicts are supplemental and can return rows even
   // when leaderboard/clusters fail. Including them in the guard would cause a partial overlay
   // (conviction-only) to overwrite a prior complete dataset when the core endpoints are down.
@@ -181,7 +178,7 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
 
   // Conviction scores keyed by normalized ticker — null-score rows excluded (thin signal,
   // not usable data; including them could pull no-signal tickers into the scan via netSentiment).
-  const convictionByTicker = new Map<string, AppAConvictionTicker>();
+  const convictionByTicker = new Map<string, ConvictionTicker>();
   for (const cv of usableConvictions) {
     const sym = normalizeSymbol(cv.ticker);
     if (sym) convictionByTicker.set(sym, cv);
@@ -190,6 +187,7 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
   // Conflict counts keyed by normalized ticker (one conflict trade = one flagged disclosure).
   const conflictsByTicker = new Map<string, number>();
   for (const cf of conflicts) {
+    if (!cf.ticker) continue;
     const sym = normalizeSymbol(cf.ticker);
     if (sym) conflictsByTicker.set(sym, (conflictsByTicker.get(sym) ?? 0) + 1);
   }

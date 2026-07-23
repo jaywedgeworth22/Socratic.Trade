@@ -3,10 +3,75 @@ import {
   getServiceHealthSummaries,
   getServiceHealthLog,
   getAllErrorPatterns,
+  type ServiceHealthSummary,
 } from "@/lib/db-health";
 import { requireAdmin } from "@/lib/auth/admin";
+import { listUserApiKeys, LOCAL_USER, credTierForService } from "@/lib/db-api-keys";
 
 export const dynamic = "force-dynamic";
+
+const EXPECTED_BACKEND_LANES: Array<{ service: string; keySource: string | null }> = [
+  { service: "pinecone", keySource: "env" },
+  { service: "voyage", keySource: "env" },
+  { service: "voyage-rerank", keySource: "env" },
+  { service: "openai", keySource: "user" },
+  { service: "anthropic", keySource: "user" },
+  { service: "gemini", keySource: "user" },
+  { service: "xai", keySource: "user" },
+  { service: "alpaca-broker", keySource: "user" },
+  { service: "robinhood-broker", keySource: "user" },
+  { service: "finnhub", keySource: "env" },
+  { service: "fmp", keySource: "env" },
+  { service: "alpha-vantage", keySource: "env" },
+  { service: "twelvedata", keySource: "env" },
+  { service: "massive", keySource: "env" },
+  { service: "congress.trade", keySource: null },
+  { service: "usage-monitor", keySource: null }
+];
+
+function toCanonicalService(service: string): string {
+  if (service === "alpha-vantage") return "alphavantage";
+  if (service === "alpaca-broker") return "alpaca_paper_api_key";
+  if (service === "robinhood-broker") return "robinhood";
+  if (service === "voyage-rerank") return "voyage";
+  return service;
+}
+
+function withExpectedBackendLanes(services: ServiceHealthSummary[]): ServiceHealthSummary[] {
+  const userKeys = listUserApiKeys(LOCAL_USER);
+  const servicesWithUserKeys = new Set(userKeys.map((k) => k.service));
+  const loggedUserLanes = new Set(services.filter((s) => s.keySource === "user").map((s) => s.service));
+
+  function hasUserKey(service: string) {
+    const canonical = toCanonicalService(service);
+    if (credTierForService(canonical) === "shared-operator-infra") {
+      return false;
+    }
+    return servicesWithUserKeys.has(canonical) || loggedUserLanes.has(service);
+  }
+
+  const filteredServices = services.filter((s) => !(s.keySource === "env" && hasUserKey(s.service)));
+  const byLane = new Map(filteredServices.map((service) => [`${service.service}:${service.keySource ?? ""}`, service]));
+
+  for (const lane of EXPECTED_BACKEND_LANES) {
+    const expectedKeySource = (lane.keySource === "env" && hasUserKey(lane.service)) ? "user" : lane.keySource;
+    const key = `${lane.service}:${expectedKeySource ?? ""}`;
+    if (byLane.has(key)) continue;
+    byLane.set(key, {
+      service: lane.service,
+      keySource: expectedKeySource,
+      lastSuccessTs: null,
+      lastSuccessLatencyMs: null,
+      lastFailureTs: null,
+      lastFailureError: null,
+      callsLastHour: 0,
+      callsLast24h: 0,
+      stoppedWorking: false,
+      stoppedReason: null
+    });
+  }
+  return Array.from(byLane.values());
+}
 
 export async function GET(request: Request) {
   const denied = requireAdmin(request);
@@ -26,7 +91,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ service, keySource: keySourceParam ?? null, log, limit, offset });
   }
 
-  const services = getServiceHealthSummaries();
+  const services = withExpectedBackendLanes(getServiceHealthSummaries());
   const errorPatterns = getAllErrorPatterns();
 
   return NextResponse.json({

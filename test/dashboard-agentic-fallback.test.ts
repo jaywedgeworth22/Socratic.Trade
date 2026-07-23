@@ -10,7 +10,6 @@ import type { BrokerageAccount, ConnectedAccount, TradingPolicy } from "../src/l
 function policy(patch: Partial<TradingPolicy> = {}): TradingPolicy {
   return {
     ...DEFAULT_POLICY,
-    paperMode: false,
     activeBroker: "alpaca",
     accountNumber: "A1",
     connectedAccountId: "acct-1",
@@ -129,37 +128,41 @@ describe("accountReadinessForSnapshot", () => {
     expect(readiness.detail).toContain("balance endpoint rejected");
   });
 
-  it("allows the local Test account when selected", () => {
+  it("allows the local Test-broker account when selected — an account is an account, same readiness path", () => {
+    // TestBrokerGateway.getAccounts() always reports accountNumber "TEST"-shaped, agentic-allowed —
+    // no special-cased bypass anymore, so liveAccounts must include the matching entry like any broker.
     const readiness = accountReadinessForSnapshot({
-      policy: policy({ paperMode: true, activeBroker: "test", accountNumber: "test-local", connectedAccountId: "test-1" }),
+      policy: policy({ activeBroker: "test", accountNumber: "test-local", connectedAccountId: "test-1" }),
       activeAccount: connectedAccount({
         id: "test-1",
         broker: "test",
         accountNumber: "test-local",
         label: "Test"
       }),
-      liveAccounts: []
+      liveAccounts: [brokerageAccount({ accountNumber: "test-local", label: "Test" })]
     });
 
     expect(readiness.ok).toBe(true);
     expect(readiness.detail).toContain("Selected Test account");
   });
 
-  it("does not block the local Test account on portfolio display read errors", () => {
+  it("blocks the local Test-broker account read error like any other broker (no special bypass)", () => {
+    // portfolioReadError still blocks — a Test-broker connected account is no longer exempt from the
+    // standard readiness checks that apply to every other broker.
     const readiness = accountReadinessForSnapshot({
-      policy: policy({ paperMode: true, activeBroker: "test", accountNumber: "TEST", connectedAccountId: "test-1" }),
+      policy: policy({ activeBroker: "test", accountNumber: "TEST", connectedAccountId: "test-1" }),
       activeAccount: connectedAccount({
         id: "test-1",
         broker: "test",
         accountNumber: "TEST",
         label: "Test"
       }),
-      liveAccounts: [],
+      liveAccounts: [brokerageAccount({ accountNumber: "TEST", label: "Test" })],
       portfolioReadError: "Real-time quote for symbol XYZ is unavailable."
     });
 
-    expect(readiness.ok).toBe(true);
-    expect(readiness.reason).toBeUndefined();
-    expect(readiness.detail).toContain("Selected Test account");
+    expect(readiness.ok).toBe(false);
+    expect(readiness.reason).toContain("account data check failed");
+    expect(readiness.detail).toContain("Real-time quote for symbol XYZ is unavailable");
   });
 });

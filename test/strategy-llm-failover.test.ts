@@ -9,11 +9,16 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 // via the next model, recorded loudly (strategy_llm_failover audit + served model/provider on the step).
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
   retrieveContextDetailed: async () => [],
   defaultMinScore: () => 0.3,
+  defaultRelevanceFloor: () => 0.3,
+  defaultDedupeSimilarity: () => 0.6,
+  formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
   storeContexts: async () => {}
 }));
@@ -50,7 +55,7 @@ function geminiOk(): Response {
 
 async function setup(withFallback: boolean): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "fixture");
   upsertUserApiKey("local", "gemini", "test-gemini-key", "fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Failover Test", isActive: true });
@@ -58,25 +63,32 @@ async function setup(withFallback: boolean): Promise<void> {
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    paperMode: true,
-    llmModel: "gpt-4.1-mini",
+    llmModel: "openrouter/openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
     // With fallback: the Bull fails over to gemini, and the Bear also uses gemini so it isn't hit by
     // the primary's 429. Without fallback: single primary endpoint (default behavior).
-    ...(withFallback ? { llmFallbackModels: ["gemini-2.5-flash"], redTeamLlmModel: "gemini-2.5-flash" } : {})
+    ...(withFallback
+      ? {
+          llmFallbackModels: ["openrouter/google/gemini-2.5-flash"],
+          redTeamLlmModel: "openrouter/google/gemini-2.5-flash"
+        }
+      : {})
   });
 }
 
 describe("cross-provider Bull failover (Chat A item 4)", () => {
   it("flag ON: a 429 from the primary transparently serves via the fallback model and is recorded", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
-    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) return new Response("rate limited", { status: 429 });
-      if (href.includes("generativelanguage.googleapis.com")) return geminiOk();
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+        const bodyStr = init?.body ? String(init.body) : "";
+        if (bodyStr.includes("gpt-")) return new Response("rate limited", { status: 429 });
+        return geminiOk();
+      }
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });
@@ -96,13 +108,20 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     const bullStep = result.llmSteps?.find((s) => s.step === "bull");
     expect(bullStep?.provider).toBe("gemini");
     expect(bullStep?.reason ?? "").toMatch(/fallback|served|failed/i);
+    // t3: each proposal is stamped with the FAILOVER-AWARE policy model — the fallback that
+    // actually generated it, in the exact OpenRouter namespace the approval card compares
+    // against `llmFallbackModels`.
+    expect(result.proposals.length).toBeGreaterThan(0);
+    for (const p of result.proposals) {
+      expect(p.proposal.proposedByModel).toBe("openrouter/google/gemini-2.5-flash");
+    }
   }, 30_000);
 
   it("flag OFF (default): a primary 429 is a hard failure — no failover, behavior unchanged", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) return new Response("rate limited", { status: 429 });
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return new Response("rate limited", { status: 429 });
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });

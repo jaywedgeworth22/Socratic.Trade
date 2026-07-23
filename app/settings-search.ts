@@ -150,14 +150,46 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
   },
   {
     id: "guardrails.washSaleGuard",
-    label: "Wash-sale guard (affects all accounts)",
+    label: "Taxable-account wash-sale guard",
     synonyms: ["wash sale", "tax lock", "30 day", "cross account"],
     scope: "account",
     destination: "guardrails",
     legacySection: "tax",
     backingField: "taxSettings.washSaleGuard",
     disclosure: "advanced",
-    help: "Blocks rebuying a stock within 30 days of selling it at a loss — in any of your accounts."
+    help: "For taxable accounts, blocks rebuying a stock within 30 days of selling it at a loss. IRA replacement buys use their own account setting."
+  },
+  {
+    id: "guardrails.washSaleHandling",
+    label: "Taxable-account wash-sale rebuys",
+    synonyms: ["wash sale mode", "wash sale ask", "wash sale auto", "rebuy handling", "tax cost approval"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "tax",
+    backingField: "taxSettings.washSaleHandling",
+    disclosure: "advanced",
+    help: "Let the rebuy proceed with the forfeited tax cost priced into the rationale/receipt (auto — default), route it to you for approval at that price (ask), or block a wash-sale rebuy outright (a stricter opt-in). IRA rebuys are governed by the separate IRA wash-sale setting."
+  },
+  {
+    id: "guardrails.iraWashSaleHandling",
+    label: "IRA taxable-loss rebuys",
+    synonyms: [
+      "ira wash sale",
+      "ignore wash sale",
+      "disregard wash sale",
+      "roth rebuy",
+      "roth wash sale",
+      "roth wash sale ignore",
+      "roth ira wash sale ignore",
+      "rev rul 2008-5",
+      "audit risk"
+    ],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "tax",
+    backingField: "taxSettings.iraWashSaleHandling",
+    disclosure: "advanced",
+    help: "Disregard (default) lets an IRA rebuy of a taxable-loss-locked stock proceed, annotated and audited: brokers don't report cross-account IRA wash sales to the IRS, so this is an explicit audit-risk acceptance made on your behalf by default. Block refuses the rebuy instead (a stricter opt-in) — Rev. Rul. 2008-5 permanently destroys the deduction."
   },
   // Strategy (account scope)
   {
@@ -193,7 +225,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
   {
     id: "settings.brokerConnections",
     label: "Broker connections",
-    synonyms: ["connections", "broker", "alpaca", "robinhood", "test paper live"],
+    synonyms: ["connections", "broker", "alpaca", "robinhood", "tradier", "test paper live"],
     scope: "user",
     destination: "settings/connections",
     legacySection: "connections",

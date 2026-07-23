@@ -16,12 +16,10 @@ import { isIndexUniverse, isValidAppSymbol } from "./index-universes";
 import { normalizeSymbol } from "./money";
 import { notify } from "./notify";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
+import { normalizeExclusivePolicyCaps } from "./policy-normalization";
 import {
-  executeProposal,
-  LiveApprovalConfirmationError,
   rejectProposal,
-  runStrategyOnce,
-  type LiveApprovalConfirmation
+  runStrategyOnce
 } from "./strategy";
 import { addToWatchlist, removeFromWatchlist } from "./watchlist";
 import type {
@@ -34,6 +32,7 @@ import type {
   TaxSettings,
   TradingPolicy
 } from "./types";
+import { executeProposal, LiveApprovalConfirmationError, LiveApprovalConfirmation } from "./strategy-execution";
 
 export const MOBILE_COMMAND_TYPES = [
   "strategy.run_once",
@@ -55,6 +54,24 @@ export const MOBILE_COMMAND_TYPES = [
 
 export type MobileCommandType = (typeof MOBILE_COMMAND_TYPES)[number];
 export type MobileCommandStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+const IMMEDIATE_PROTECTIVE_COMMAND_TYPES = new Set<MobileCommandType>([
+  "strategy.stop",
+  "strategy.close_only",
+  "strategy.liquidating"
+]);
+
+const RISK_INCREASING_QUEUED_COMMAND_TYPES = [
+  "strategy.run_once",
+  "strategy.start",
+  "proposal.approve"
+] as const satisfies readonly MobileCommandType[];
+
+export function isImmediateProtectiveMobileCommandType(
+  commandType: MobileCommandType
+): boolean {
+  return IMMEDIATE_PROTECTIVE_COMMAND_TYPES.has(commandType);
+}
 
 export interface MobileClientInfo {
   platform?: "ios" | "web" | "unknown";
@@ -261,7 +278,7 @@ function normalizeNotificationEvents(value: unknown): NotificationEventType[] | 
 
 function normalizePolicyPatch(raw: unknown): Partial<TradingPolicy> {
   const input = asRecord(raw);
-  for (const forbidden of ["userId", "accountNumber", "connectedAccountId", "activeBroker", "paperMode", "apiKey", "apiSecret", "providerSecret"]) {
+  for (const forbidden of ["userId", "accountNumber", "connectedAccountId", "activeBroker", "apiKey", "apiSecret", "providerSecret"]) {
     if (forbidden in input) {
       throw new MobileCommandValidationError(`${forbidden} cannot be changed through policy.patch.`);
     }
@@ -288,7 +305,6 @@ function normalizePolicyPatch(raw: unknown): Partial<TradingPolicy> {
   if (input.blocklist !== undefined) patch.blocklist = normalizeSymbols(input.blocklist, "blocklist");
 
   const numericFields: Array<[keyof TradingPolicy, number | undefined, number | undefined]> = [
-    ["paperStartingCash", 0, undefined],
     ["maxOrderNotional", 1, 100_000],
     ["maxOrderPctOfNav", 0.01, 100],
     ["maxDailyNotional", 1, undefined],
@@ -559,6 +575,79 @@ function finishCommand(command: MobileCommandRecord, status: "succeeded" | "fail
   return updated;
 }
 
+function cancelQueuedRiskIncreasingCommands(
+  userId: string,
+  exceptCommandId: string,
+  protectiveCommandType: MobileCommandType
+): PublicMobileCommand[] {
+  const database = getDb();
+  const nowIso = new Date().toISOString();
+  const placeholders = RISK_INCREASING_QUEUED_COMMAND_TYPES.map(() => "?").join(",");
+  const cancelled = database.transaction(() => {
+    const rows = database.prepare(`
+      SELECT id
+        , command_type
+        , payload
+      FROM mobile_commands
+      WHERE user_id = ?
+        AND id <> ?
+        AND status = 'queued'
+        AND command_type IN (${placeholders})
+      ORDER BY queued_at ASC
+    `).all(userId, exceptCommandId, ...RISK_INCREASING_QUEUED_COMMAND_TYPES) as Array<{
+      id: string;
+      command_type: MobileCommandType;
+      payload: string;
+    }>;
+    const update = database.prepare(`
+      UPDATE mobile_commands
+      SET status = 'cancelled', error = ?, finished_at = ?, updated_at = ?
+      WHERE id = ? AND user_id = ? AND status = 'queued'
+    `);
+    const records: MobileCommandRecord[] = [];
+    for (const row of rows) {
+      // A queued approval may be an exit: preserve sell/cover approvals only while Close-only
+      // or Liquidating is being applied, so those containment modes can still reduce risk. A
+      // full Stop must cancel every queued approval, including exits, because it promises no
+      // additional broker submission. An approval whose proposal has disappeared is stale work.
+      if (protectiveCommandType !== "strategy.stop" && row.command_type === "proposal.approve") {
+        let proposalId: string | undefined;
+        try {
+          const payload = JSON.parse(row.payload) as Record<string, unknown>;
+          proposalId = typeof payload.proposalId === "string" ? payload.proposalId : undefined;
+        } catch {
+          // Malformed queued payloads cannot execute a valid approval, so they remain cancellable.
+        }
+        const proposal = proposalId ? getProposal(proposalId, userId) : undefined;
+        if (proposal && (proposal.proposal.side === "sell" || proposal.proposal.side === "cover")) {
+          continue;
+        }
+      }
+      const reason = `Cancelled because ${protectiveCommandType} took immediate effect.`;
+      const result = update.run(reason, nowIso, nowIso, row.id, userId);
+      if (result.changes !== 1) continue;
+      const updated = getMobileCommandRecord(row.id, userId);
+      if (updated) records.push(updated);
+    }
+    return records;
+  })() as MobileCommandRecord[];
+
+  for (const command of cancelled) {
+    audit(
+      "mobile_command_cancelled_by_protective_state",
+      {
+        commandId: command.id,
+        commandType: command.commandType,
+        protectiveCommandType,
+        error: command.error
+      },
+      userId
+    );
+    emitMobileCommandEvent(command);
+  }
+  return cancelled.map(toPublicMobileCommand);
+}
+
 function summarizeResult(result: unknown): unknown {
   if (!result || typeof result !== "object") return result;
   const obj = result as Record<string, unknown>;
@@ -575,7 +664,10 @@ function summarizeResult(result: unknown): unknown {
 
 async function setStrategyState(userId: string, state: SystemState): Promise<{ ok: true; systemState: SystemState }> {
   const policy = getPolicy(userId);
-  if (state !== "halted") {
+  // Active is the only state that can authorize new strategy work. The three containment states
+  // must remain available even when a user has an incomplete universe: they are the path to stop
+  // future submissions or allow only exits for an already-held account.
+  if (state === "active") {
     if (!policy.accountNumber) throw new Error("Select an account before changing strategy state.");
     if (policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0) {
       throw new Error("Select at least one base index or additional watchlist symbol before changing strategy state.");
@@ -613,6 +705,7 @@ function applyPolicyPatch(userId: string, patch: Partial<TradingPolicy>): { ok: 
       throw new Error("Select at least one base index or additional watchlist symbol before enabling autonomy.");
     }
   }
+  normalizeExclusivePolicyCaps(next, patch);
   setPolicy(next, userId);
   audit("mobile_policy_patch", { fields: Object.keys(patch) }, userId);
   return { ok: true, policy: getPolicy(userId) };
@@ -708,6 +801,42 @@ export async function executeMobileCommand(command: MobileCommandRecord): Promis
   }
 }
 
+/**
+ * Applies a protective strategy state independently of the global sequential worker. This makes a
+ * Stop authoritative while a long run-once command is awaiting providers. It cannot revoke a broker
+ * request that crossed the submission boundary already; the strategy placement path re-reads the
+ * durable state at its final synchronous pre-submit boundary to block everything after that point.
+ */
+export async function executeProtectiveMobileCommandImmediately(
+  commandId: string,
+  userId: string
+): Promise<PublicMobileCommand> {
+  const current = getMobileCommandRecord(commandId, userId);
+  if (!current) throw new MobileCommandValidationError("Command not found.");
+  if (!isImmediateProtectiveMobileCommandType(current.commandType)) {
+    throw new MobileCommandValidationError("Command is not an immediate protective state action.");
+  }
+  if (current.status !== "queued") return toPublicMobileCommand(current);
+
+  const nowIso = new Date().toISOString();
+  const claimed = getDb().prepare(`
+    UPDATE mobile_commands
+    SET status = 'running', started_at = ?, updated_at = ?
+    WHERE id = ? AND user_id = ? AND status = 'queued'
+  `).run(nowIso, nowIso, commandId, userId);
+  if (claimed.changes !== 1) {
+    return getMobileCommand(commandId, userId) ?? toPublicMobileCommand(current);
+  }
+
+  const running = getMobileCommandRecord(commandId, userId)!;
+  emitMobileCommandEvent(running);
+  const completed = await executeMobileCommand(running);
+  if (completed.status === "succeeded") {
+    cancelQueuedRiskIncreasingCommands(userId, commandId, running.commandType);
+  }
+  return completed;
+}
+
 export async function processPendingMobileCommands(options: { limit?: number } = {}): Promise<{ processed: number }> {
   if (globalForMobileEvents.__mobileCommandWorkerInFlight) return { processed: 0 };
   globalForMobileEvents.__mobileCommandWorkerInFlight = true;
@@ -739,21 +868,21 @@ export function mobileCommandBacklog(): { queued: number; running: number } {
 
 export function mobileControlCatalog() {
   return {
-    version: 1,
+    version: 2,
     auth: {
       mode: "server-session",
       supported: ["Cloudflare Access", "Auth.js session"],
-      phoneStores: "session token only; provider and broker secrets stay server-side"
+      phoneStores: "server session cookie only; provider and broker secrets stay server-side"
     },
     realtime: {
       sse: "/api/mobile/events",
       eventTypes: ["mobile.command", "dashboard.run-complete", "dashboard.proposal", "dashboard.order", "dashboard.market-data", "dashboard.dirty"]
     },
     accountDeletion: {
-      request: "POST /api/mobile/account-deletion/request",
+      request: "GET /api/mobile/account-deletion/request (read-only preview)",
       confirm: "POST /api/mobile/account-deletion/confirm",
       requiredText: "DELETE MY ACCOUNT",
-      note: "Deletes app-side data and server-stored secrets for the signed-in OAuth identity, then the client should sign out."
+      note: "Previewing is read-only. Final confirmation prepares and deletes app-side data and server-stored secrets for the signed-in OAuth identity, then the client should sign out."
     },
     commands: MOBILE_COMMAND_TYPES.map((type) => ({ type }))
   };

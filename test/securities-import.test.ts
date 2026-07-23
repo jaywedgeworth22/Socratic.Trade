@@ -93,6 +93,7 @@ describe("upsertImportedRefs / getImportedRef", () => {
     expect(ref?.industry).toBe("EV");
     expect(ref?.marketCap).toBe(1e12);
   });
+
 });
 
 describe("persistSecuritiesImport + getImportedCacheCounts", () => {

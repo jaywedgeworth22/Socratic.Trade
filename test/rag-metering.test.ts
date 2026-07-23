@@ -27,7 +27,7 @@ afterAll(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 // Dynamic imports so the module cache sees the overridden DATABASE_URL.
-const { recordRagUsage, getRagUsageSummary, meterEmbed, meterRerank, meterPineconeQuery } = await import("../src/lib/rag-metering");
+const { recordRagUsage, getRagUsageSummary, meterEmbed, meterRerank, meterPineconeQuery, meterPineconeUpsert } = await import("../src/lib/rag-metering");
 const { getChunkCoverage, filterNewDocumentChunks, insertDocumentChunks } = await import("../src/lib/db");
 
 function sha16(text: string): string {
@@ -73,9 +73,85 @@ describe("rag-metering", () => {
     expect(alice.reduce((s, r) => s + r.batchCount, 0)).toBeGreaterThan(0);
   });
 
+  // Provider-aware metering (bge-m3-metering-gate, 2026-07-18): meterEmbed/meterRerank used to
+  // hardcode provider: "voyage" on every row regardless of which provider actually served the
+  // call, so an OpenRouter/SiliconFlow bge-m3 call was silently priced and labeled as Voyage. These
+  // guard the fix: a non-voyage provider argument must stamp the true provider on the row AND price
+  // it from that provider's own table, while a caller that omits `provider` entirely now books
+  // OpenRouter exactly as expected for the new unified fleet strategy.
+  describe("provider-aware metering", () => {
+    it("openrouter embed stamps provider='openrouter' and prices at the confirmed bge-m3 rate ($0.01 per 1M tokens)", () => {
+      const text = "OpenRouter bge-m3 embed call for provider-aware metering test.";
+      meterEmbed([text], "baai/bge-m3", "prov-or-embed", "openrouter");
+
+      const row = getRagUsageSummary().find((r) => r.userId === "prov-or-embed" && r.operation === "embed");
+      expect(row).toBeDefined();
+      expect(row!.provider).toBe("openrouter");
+      expect(row!.model).toBe("baai/bge-m3");
+
+      const expectedTokens = Math.max(1, Math.ceil(Buffer.byteLength(text, "utf8") / 4));
+      expect(row!.tokensIn).toBe(expectedTokens);
+      const expectedCost = (expectedTokens * 0.00001) / 1000; // $0.01 / 1M tokens = $0.00001 / 1K tokens
+      expect(row!.costEstUsd).toBeCloseTo(expectedCost, 12);
+    });
+
+    it("openrouter rerank prices PER SEARCH ($0.001/search for <=100 docs), not per token", () => {
+      const documents = ["doc a", "doc b", "doc c"];
+      meterRerank("query text", documents, "cohere/rerank-v3.5", "prov-or-rerank", "openrouter");
+
+      const row = getRagUsageSummary().find((r) => r.userId === "prov-or-rerank" && r.operation === "rerank");
+      expect(row).toBeDefined();
+      expect(row!.provider).toBe("openrouter");
+      // 3 documents fit in one 100-doc search -> flat $0.001, independent of token count.
+      expect(row!.costEstUsd).toBeCloseTo(0.001, 12);
+    });
+
+    it("siliconflow embed stamps provider='siliconflow' and prices bge-m3 at $0.01 per 1M tokens (pins the 10x-mismatch regression)", () => {
+      const text = "siliconflow bge-m3 embed text";
+      meterEmbed([text], "BAAI/bge-m3", "prov-sf-embed", "siliconflow");
+
+      const row = getRagUsageSummary().find((r) => r.userId === "prov-sf-embed" && r.operation === "embed");
+      expect(row).toBeDefined();
+      expect(row!.provider).toBe("siliconflow");
+      expect(row!.model).toBe("BAAI/bge-m3");
+
+      const expectedTokens = Math.max(1, Math.ceil(Buffer.byteLength(text, "utf8") / 4));
+      expect(row!.tokensIn).toBe(expectedTokens);
+      // $0.01 per 1M tokens = $0.00001 per 1K tokens — the SAME rate as OpenRouter's confirmed
+      // baai/bge-m3 above. Pin the exact cost so the SiliconFlow table can't silently drift 10x
+      // again (was `0.00001 / 10` = 0.000001, which this assertion would fail against).
+      const expectedCost = (expectedTokens * 0.00001) / 1000;
+      expect(row!.costEstUsd).toBeCloseTo(expectedCost, 12);
+    });
+
+    it("omitting `provider` now defaults to openrouter", () => {
+      meterEmbed(["unchanged default voyage behavior text"], undefined, "prov-default-embed");
+      const embedRow = getRagUsageSummary().find((r) => r.userId === "prov-default-embed" && r.operation === "embed");
+      expect(embedRow).toBeDefined();
+      expect(embedRow!.provider).toBe("openrouter");
+      expect(embedRow!.model).toBe("baai/bge-m3");
+
+      meterRerank("q", ["d1", "d2"], undefined, "prov-default-rerank");
+      const rerankRow = getRagUsageSummary().find((r) => r.userId === "prov-default-rerank" && r.operation === "rerank");
+      expect(rerankRow).toBeDefined();
+      expect(rerankRow!.provider).toBe("openrouter");
+      expect(rerankRow!.model).toBe("cohere/rerank-v3.5");
+    });
+  });
+
   it("recordRagUsage never throws", () => {
     // Force a bad call that would break if we didn't catch
     expect(() => recordRagUsage({ operation: "embed" as any, tokensIn: -1 })).not.toThrow();
+  });
+
+  it("meters Pinecone upsert estimated write units separately from record count", () => {
+    meterPineconeUpsert(7, "alice", 42);
+
+    const row = getRagUsageSummary().find((r) => r.userId === "alice" && r.provider === "pinecone" && r.operation === "upsert");
+    expect(row).toBeDefined();
+    expect(row!.tokensIn).toBeGreaterThanOrEqual(42);
+    expect(row!.tokensOut).toBeGreaterThanOrEqual(7);
+    expect(row!.batchCount).toBeGreaterThanOrEqual(7);
   });
 
   it("getRagUsageSummary respects sinceIso window", () => {

@@ -70,6 +70,20 @@ describe("getDashboardSnapshot fill/proposal batching", () => {
 
     const userId = `dash-batch-${randomUUID()}`;
 
+    // An account is an account: getDashboardSnapshot only fetches fills/portfolio for an account it
+    // can resolve, and only calls getBrokerGateway when a real connected account is active — so this
+    // test needs one (test infrastructure: broker "test", environment "paper") wired up, matching the
+    // accountNumber "TEST" the proposal/fill rows below are seeded under.
+    db.upsertConnectedAccount({
+      id: `acct-${userId}`,
+      userId,
+      broker: "test",
+      environment: "paper",
+      accountNumber: "TEST",
+      label: "Batching Test Account",
+      isActive: true
+    });
+
     // Seed a proposal + a fill referencing it so both the batched proposal lookup and the fill
     // replay have real rows to walk (and so the audit/unified feed builders exercise getProposalById).
     const proposalId = `prop-${randomUUID()}`;
@@ -131,6 +145,88 @@ describe("getDashboardSnapshot fill/proposal batching", () => {
     expect(getProposalsByIdsSpy).toHaveBeenCalled();
     const batchedIds = getProposalsByIdsSpy.mock.calls.flatMap((args) => args[0] as string[]);
     expect(batchedIds).toContain(proposalId);
+  });
+
+  it("includes red-team efficacy plus the override split in the snapshot", async () => {
+    const db = await import("../src/lib/db");
+    const { getDashboardSnapshot } = await import("../src/lib/dashboard");
+
+    const userId = `dash-red-team-${randomUUID()}`;
+    const connectedAccountId = `acct-${userId}`;
+
+    db.upsertConnectedAccount({
+      id: connectedAccountId,
+      userId,
+      broker: "test",
+      environment: "paper",
+      accountNumber: "TEST",
+      label: "Red Team Snapshot Account",
+      isActive: true
+    });
+
+    db.audit(
+      "proposal_rejected_by_red_team",
+      { runId: "run-rt-1", symbol: "AAPL", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "openai/gpt-4.1-mini" },
+      userId,
+      connectedAccountId
+    );
+    db.insertSkippedCounterfactualCandidate({
+      userId,
+      connectedAccountId,
+      runId: "run-rt-1",
+      symbol: "AAPL",
+      snapshotAt: "2026-06-01T00:00:00.000Z",
+      refPrice: 100,
+      horizonDays: 5,
+      targetDate: "2026-06-06"
+    });
+    db.markSkippedCounterfactualMatured({
+      id: `${userId}:run-rt-1:AAPL:5`,
+      userId,
+      exitDate: "2026-06-06",
+      exitPrice: 90,
+      returnPct: -10
+    });
+
+    db.audit(
+      "red_team_veto_override_requested",
+      { runId: "run-rt-2", symbol: "MSFT", side: "buy", thesisTag: "Momentum", reason: "Too early.", model: "claude-opus", mode: "execute" },
+      userId,
+      connectedAccountId
+    );
+    db.audit(
+      "socratic_override_applied",
+      { runId: "run-rt-2", symbol: "MSFT", side: "buy", conflicts: ["red_team_veto: Too early."], thesis: "Override with logged evidence.", mode: "execute" },
+      userId,
+      connectedAccountId
+    );
+    db.audit(
+      // Historical rows used this name before request and applied states were separated.
+      "red_team_veto_overridden",
+      { runId: "run-rt-3", symbol: "TSLA", side: "buy", thesisTag: "Momentum", reason: "Crowded.", model: "claude-opus", mode: "execute" },
+      userId,
+      connectedAccountId
+    );
+    db.audit(
+      "socratic_override_refused",
+      { runId: "run-rt-3", symbol: "TSLA", side: "buy", conflicts: ["red_team_veto: Crowded."], hardReasons: [], thesis: "Override was refused." },
+      userId,
+      connectedAccountId
+    );
+
+    const snapshot = await getDashboardSnapshot(userId);
+
+    expect(snapshot.redTeamEfficacy).toBeDefined();
+    expect(snapshot.redTeamEfficacy).toMatchObject({
+      totalVetoes: 1,
+      maturedVetoes: 1,
+      overrideVetoes: 2,
+      appliedOverrideVetoes: 1,
+      vetoDecisions: 3,
+      overrideSharePct: 33.3,
+      vetoValueAddRate: 100
+    });
+    expect(snapshot.redTeamEfficacy?.records[0]?.symbol).toBe("AAPL");
   });
 });
 

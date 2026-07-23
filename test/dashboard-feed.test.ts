@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AuditEvent, StrategyDecision } from "../app/dashboard-types";
-import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed, UNIFIED_FEED_MAX_GROUPS } from "../src/lib/dashboard-feed";
+import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed, OPS_AUDIT_KINDS, UNIFIED_FEED_MAX_GROUPS } from "../src/lib/dashboard-feed";
 import type { FillEvent } from "../src/lib/types";
 import { enrichPositionsForDisplay, formatNotificationDisplay, formatShareQuantity, ratingTitle, sentimentTitle } from "../src/lib/dashboard-ui";
 import type { EquityPosition, MarketQuote, NotificationEvent } from "../src/lib/types";
@@ -46,6 +46,8 @@ describe("dashboard feed helpers", () => {
   });
 
   it("formats historical proposal approval audits into short buy/sell titles", () => {
+    // result: "paper" is a legacy value from before the local-simulation execution path was removed
+    // — no code path writes it anymore, but old audit rows can still carry it (see dashboard-feed.ts).
     const audit: AuditEvent[] = [
       {
         id: "a1",
@@ -62,8 +64,27 @@ describe("dashboard feed helpers", () => {
     });
 
     expect(feed[0]?.title).toBe("Buy PLTR Approved");
-    expect(feed[0]?.detail).toContain("Test mode");
+    expect(feed[0]?.detail).toContain("Local simulation (legacy)");
     expect(feed[0]?.companyName).toBe("Palantir Technologies Inc.");
+  });
+
+  it("renders a synchronous broker fill as completed rather than awaiting an update", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "filled-approval",
+          createdAt: "2026-07-14T00:00:00.000Z",
+          kind: "proposal_approved",
+          payload: { proposalId: "filled-proposal", result: "filled", brokerState: "filled", orderId: "order-filled-123" }
+        }
+      ],
+      symbolMetaBySymbol: {},
+      getProposalById: () => ({ proposal: proposal({ symbol: "EXE", side: "buy" }) })
+    });
+
+    expect(feed[0]?.title).toBe("Buy EXE Filled");
+    expect(feed[0]?.detail).toContain("Order filled");
+    expect(feed[0]?.detail).not.toContain("Awaiting next update");
   });
 
   it("formats notification audit rows into compact human-readable text", () => {
@@ -88,8 +109,36 @@ describe("dashboard feed helpers", () => {
 
     const feed = buildAuditFeed({ audit });
 
-    expect(feed[0]?.title).toBe("Buy PLTR Skipped");
+    // NotificationStatus decided vocabulary: skipped -> "Not sent" (never the raw "skipped" word).
+    expect(feed[0]?.title).toBe("Buy PLTR Not sent");
     expect(feed[0]?.detail).toContain("Notifications Webhook");
+  });
+
+  it("attributes the model on a post-mortem reflection, success and failure alike", () => {
+    const audit: AuditEvent[] = [
+      {
+        id: "reflect-ok",
+        createdAt: "2026-07-15T00:00:00.000Z",
+        kind: "post_mortem_reflection",
+        payload: { summary: "Momentum names outperformed in low-vol regimes.", model: "gpt-5.6-sol", provider: "openai", accountNumber: "ACC-1" }
+      },
+      {
+        id: "reflect-failed",
+        createdAt: "2026-07-15T00:05:00.000Z",
+        kind: "post_mortem_reflection",
+        payload: { status: "failed", model: "gpt-5.6-sol", provider: "openai", accountNumber: "ACC-1", reason: "Rate limited (429)" }
+      }
+    ];
+
+    const feed = buildAuditFeed({ audit });
+
+    expect(feed[0]?.title).toBe("Post Mortem Reflection");
+    expect(feed[0]?.detail).toContain("gpt-5.6-sol via Openai");
+    expect(feed[0]?.detail).toContain("Momentum names outperformed");
+
+    expect(feed[1]?.title).toBe("Post-mortem reflection failed");
+    expect(feed[1]?.detail).toContain("gpt-5.6-sol via Openai");
+    expect(feed[1]?.detail).toContain("Rate limited (429)");
   });
 
   it("formats recoverable issue audits into visible fallback diagnostics", () => {
@@ -116,13 +165,32 @@ describe("dashboard feed helpers", () => {
     expect(feed[0]?.detail).toContain("2 repeats suppressed");
   });
 
-  it("preserves generic audit payload details when no compact field is available", () => {
+  it("labels a Red Team override request without claiming that it was applied", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "a-red-request",
+          createdAt: "2026-07-13T00:00:00.000Z",
+          kind: "red_team_veto_override_requested",
+          payload: { symbol: "EXE", side: "buy", reason: "Risk review rejected the entry." }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Red Team Override Requested: EXE");
+    expect(feed[0]?.title).not.toContain("Overridden");
+    expect(feed[0]?.detail).toBe("Risk review rejected the entry.");
+  });
+
+  it("never renders raw JSON inline for an unrecognized audit kind's detail, but keeps it in fullText", () => {
     const feed = buildAuditFeed({
       audit: [
         {
           id: "a-generic",
           createdAt: "2026-06-15T00:04:00.000Z",
           kind: "notify.prefs.set",
+          // Only array-valued fields here — none are scalar, so detail falls all the way back
+          // to "Event recorded" rather than ever inlining the raw JSON.
           payload: {
             channels: ["push", "email"]
           }
@@ -130,9 +198,36 @@ describe("dashboard feed helpers", () => {
       ]
     });
 
-    expect(feed[0]?.title).toBe("notify.prefs.set");
-    expect(feed[0]?.detail).toBe('{"channels":["push","email"]}');
+    expect(feed[0]?.title).toBe("Notify prefs set");
+    expect(feed[0]?.detail).toBe("Event recorded");
+    // The raw payload stays available via the existing fullText/RawToggle affordance.
     expect(feed[0]?.fullText).toBe('{"channels":["push","email"]}');
+  });
+
+  it("derives a plain 'Key: value' detail from up to 3 scalar payload fields for an unrecognized audit kind", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "a-generic-scalar",
+          createdAt: "2026-06-15T00:05:00.000Z",
+          kind: "notify.prefs.set",
+          // None of these keys are recognized by the generic-field detail helper, so this
+          // exercises the scalar-fields fallback specifically. A 4th field checks the 3-field cap.
+          payload: {
+            webhookConfigured: false,
+            retryAttempts: 2,
+            target: "push",
+            note: "dropped by the 3-field cap"
+          }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Notify prefs set");
+    expect(feed[0]?.detail).toBe("Webhook Configured: false · Retry Attempts: 2 · Target: push");
+    // The 4th field is dropped from the compact detail but nothing is lost — it's still in fullText.
+    expect(feed[0]?.detail).not.toContain("note");
+    expect(feed[0]?.fullText).toContain('"note":"dropped by the 3-field cap"');
   });
 
   it("formats notification panel rows with action title and skipped-webhook detail", () => {
@@ -152,8 +247,49 @@ describe("dashboard feed helpers", () => {
     );
 
     expect(item.title).toBe("Sold PLTR");
-    expect(item.detail).toBe("Notification Skipped - Notifications Webhook Not Configured");
+    // NotificationStatus decided vocabulary: skipped -> "Not sent".
+    expect(item.detail).toBe("Not sent - No notification channels enabled.");
     expect(item.companyName).toBe("Palantir Technologies Inc.");
+  });
+
+  it("uses the persisted human-hold title instead of inventing a Red Team outage", () => {
+    const item = formatNotificationDisplay(
+      {
+        id: "hold-reason",
+        createdAt: "2026-07-14T00:00:00.000Z",
+        type: "pending_approval",
+        title: "AAPL awaiting approval (Rationale-diversity hold)",
+        status: "skipped",
+        payload: {
+          proposal: { symbol: "AAPL", side: "buy" },
+          humanReviewReasonTitle: "Rationale-diversity hold"
+        }
+      } satisfies NotificationEvent,
+      {}
+    );
+
+    expect(item.title).toBe("Buy AAPL Awaiting Approval — Rationale-diversity hold");
+    expect(item.title).not.toContain("Red Team Unavailable");
+  });
+
+  it.each([
+    ["not_configured", "Not sent - Notification channel is not configured by the operator."],
+    ["no_target", "Not sent - Notification channel has no delivery target."]
+  ])("maps historical raw delivery reason %s to human UI copy", (error, expected) => {
+    const item = formatNotificationDisplay(
+      {
+        id: `raw-${error}`,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        type: "run_failed",
+        title: "Run failed",
+        status: "skipped",
+        payload: {},
+        error
+      } satisfies NotificationEvent,
+      {}
+    );
+
+    expect(item.detail).toBe(expected);
   });
 
   it("resolves nested proposal ids for blocked notification audits", () => {
@@ -231,7 +367,49 @@ describe("dashboard feed helpers", () => {
     expect(formatShareQuantity(12345.6, "NVDA")).toBe("12,346");
   });
 
-  it("applies Test prefixing, custom notification tags, and grouping correctly in buildUnifiedFeed", () => {
+  it("consolidates ALL runId-tagged audit kinds + run-scoped notifications into one run card (owner request 2026-07-08)", () => {
+    const runId = "run-xyz";
+    const feed = buildUnifiedFeed({
+      audit: [
+        { id: "r1", createdAt: "2026-07-08T14:01:40.000Z", kind: "strategy_run", payload: { runId, status: "completed", summary: "Evaluated 1 proposal(s)." } },
+        // Previously NON-allowlisted run-scoped kinds — each used to render as its own card:
+        { id: "r2", createdAt: "2026-07-08T14:01:03.000Z", kind: "rag_retrieval_status", payload: { runId, rows: [] } },
+        { id: "r3", createdAt: "2026-07-08T14:01:05.000Z", kind: "experience_retrieval", payload: { runId } },
+        { id: "r4", createdAt: "2026-07-08T14:01:06.000Z", kind: "evidence_age_anomaly", payload: { runId } },
+        { id: "r5", createdAt: "2026-07-08T14:01:33.000Z", kind: "llm_call_latency", payload: { runId, step: "bull", durationMs: 9700 } },
+        { id: "r6", createdAt: "2026-07-08T14:01:39.000Z", kind: "socratic_outcome_job", payload: { runId } },
+        // Allowlisted-before kinds still join:
+        { id: "r7", createdAt: "2026-07-08T14:01:40.100Z", kind: "candidates_considered", payload: { runId, llmSteps: [] } },
+        // A DIFFERENT run stays its own group (pushed back >24h to avoid the new feed-storm coalescing):
+        { id: "q1", createdAt: "2026-07-06T13:01:40.000Z", kind: "strategy_run", payload: { runId: "run-other", status: "completed", summary: "ok" } }
+      ],
+      notifications: [
+        // Run-scoped alert (carries runId, no proposalId) — used to be a standalone sibling card.
+        { id: "n-run", createdAt: "2026-07-08T14:01:41.000Z", type: "run_failed", title: "Run failed", status: "sent", payload: { runId, summary: "boom" } }
+      ],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {},
+      getProposalById: () => undefined
+    });
+
+    const runGroup = feed.find((g) => g.id === `run-${runId}`);
+    expect(runGroup).toBeDefined();
+    // ONE card containing all seven audit sub-events plus the run-scoped notification:
+    expect(runGroup!.events).toHaveLength(8);
+    // Title stays anchored on the strategy_run summary event, not a sub-component:
+    expect(runGroup!.events.some((ev) => ev.id === "r1")).toBe(true);
+    const other = feed.find((g) => g.id === "run-run-other");
+    expect(other).toBeDefined();
+    // No stray standalone cards for the consolidated kinds:
+    const strayIds = ["r2", "r3", "r4", "r5", "r6", "r7", "n-run"];
+    for (const g of feed) {
+      if (g.id === `run-${runId}`) continue;
+      for (const ev of g.events) expect(strayIds).not.toContain(ev.id);
+    }
+  });
+
+  it("applies Paper prefixing, custom notification tags, and grouping correctly in buildUnifiedFeed", () => {
     const feed = buildUnifiedFeed({
       audit: [
         {
@@ -282,20 +460,34 @@ describe("dashboard feed helpers", () => {
       getProposalById: () => ({ proposal: proposal({ symbol: "PLTR", side: "buy" }) })
     });
 
+    // Tags are ONLY what the events earned (2026-07-16): the old blanket blocks that
+    // pushed "notification disabled" onto policy groups, "notification failed" onto
+    // every other group, and a forced "paper" tag onto ALL groups were fabricated
+    // labels on real data and were removed.
     const policyGroup = feed.find(g => g.tags.includes("policy change"));
     expect(policyGroup).toBeDefined();
-    expect(policyGroup!.tags).toContain("notification disabled");
+    expect(policyGroup!.tags).not.toContain("notification disabled");
     expect(policyGroup!.tags).not.toContain("notification failed");
+    expect(policyGroup!.tags).not.toContain("paper");
 
     const tradeGroup = feed.find(g => g.proposalId === "p1");
     expect(tradeGroup).toBeDefined();
-    expect(tradeGroup!.title).toBe("Test BUY PLTR");
-    expect(tradeGroup!.tags).toContain("notification failed");
-    expect(tradeGroup!.tags).not.toContain("notification disabled");
+    // fill.source "paper" is always a genuine broker-paper fill now (no local-simulation execution
+    // path exists anymore), so the group title reads "Paper", not "Test".
+    expect(tradeGroup!.title).toBe("Paper BUY PLTR");
+    // "notification disabled" here is EARNED: the group's own n1 notification has
+    // status "skipped" (webhook not configured). "notification failed" would be a
+    // fabrication — nothing in this group failed to send.
+    expect(tradeGroup!.tags).toContain("notification disabled");
+    expect(tradeGroup!.tags).not.toContain("notification failed");
+    expect(tradeGroup!.tags).not.toContain("paper");
 
     const pendingApprovalEvent = tradeGroup!.events.find(ev => ev.id === "n1");
     expect(pendingApprovalEvent).toBeDefined();
-    expect(pendingApprovalEvent!.title).toBe("Test Buy PLTR Awaiting Approval");
+    // Sub-events keep their own formatted title — only the group title (asserted above) carries the
+    // Paper/live-derived prefix. There is no more group-wide "Test "-prefix rewrite of every sub-event
+    // (that rewrite used to mislabel real broker-paper sub-events as "Test").
+    expect(pendingApprovalEvent!.title).toBe("Buy PLTR Awaiting Approval");
   });
 
   it("shows an accepted broker order as pending until it fills or terminates", () => {
@@ -478,8 +670,253 @@ describe("dashboard feed helpers", () => {
     expect(tradeGroup).toBeDefined();
     expect(tradeGroup!.status).toBe("rejected");
     expect(tradeGroup!.detail).toContain("Broker state Rejected");
-    expect(tradeGroup!.detail).toContain("alpaca-order-rejected");
+    // The full broker order id is never shown inline in the detail — only the short tag.
+    expect(tradeGroup!.detail).toContain("Order ALPACAOR");
+    expect(tradeGroup!.detail).not.toContain("alpaca-order-rejected");
     expect(tradeGroup!.detail).not.toContain("Rejected manually");
+    // ...but it's never lost either — the sub-event's fullText carries the complete raw id.
+    const rejectEvent = tradeGroup!.events.find((ev) => ev.id === "audit-broker-reject");
+    expect(rejectEvent?.fullText).toContain("alpaca-order-rejected");
+  });
+
+  it("consolidates a strategy run's audit events into ONE run group with sub-rows (#8)", () => {
+    const runId = "run-consolidate";
+    const feed = buildUnifiedFeed({
+      audit: [
+        {
+          id: "a-run",
+          createdAt: "2026-07-01T10:00:00.000Z",
+          kind: "strategy_run",
+          payload: { runId, status: "completed", summary: "Evaluated 3 proposal(s)." },
+          connectedAccountId: "acct-1"
+        },
+        {
+          id: "a-div",
+          createdAt: "2026-07-01T10:00:01.000Z",
+          kind: "rationale_diversity",
+          payload: { runId, count: 3, meanPairwiseSimilarity: 0.42 }
+        },
+        {
+          id: "a-cand",
+          createdAt: "2026-07-01T10:00:02.000Z",
+          kind: "candidates_considered",
+          payload: { runId, chosen: [{ symbol: "PLTR" }], topSkipped: [] }
+        },
+        {
+          id: "a-snap",
+          createdAt: "2026-07-01T10:00:03.000Z",
+          kind: "signal_snapshot",
+          payload: { runId, asOf: "2026-07-01", signals: [] }
+        }
+      ] as AuditEvent[] & Array<{ connectedAccountId?: string }>,
+      notifications: [],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {},
+      accountLabelById: { "acct-1": "Alpaca Paper" }
+    });
+
+    const runGroups = feed.filter((g) => g.id === `run-${runId}`);
+    expect(runGroups.length).toBe(1);
+    const group = runGroups[0]!;
+    expect(group.events.length).toBe(4);
+    // The strategy_run event is the primary: rendered once as the card's title/detail.
+    expect(group.title).toBe("Strategy run completed");
+    expect(group.detail).toContain("Evaluated 3 proposal(s).");
+    expect(group.status).toBe("completed");
+    // Account attribution from any event in the group reaches the card (#8).
+    expect(group.connectedAccountId).toBe("acct-1");
+    expect(group.accountLabel).toBe("Alpaca Paper");
+    // No stray one-event groups remain for the run-scoped kinds.
+    expect(feed.some((g) => g.id === "audit-a-div" || g.id === "audit-a-cand" || g.id === "audit-a-snap")).toBe(false);
+  });
+
+  it("humanizes web_source_refresh and congress_share_daily ops events (#9, #11)", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "ws-1",
+          createdAt: "2026-07-01T04:00:00.000Z",
+          kind: "web_source_refresh",
+          payload: { id: "congress", ok: true, recordCount: 103, sources: ["congress.trade"] }
+        },
+        {
+          id: "cs-1",
+          createdAt: "2026-07-01T04:01:00.000Z",
+          kind: "congress_share_daily",
+          payload: { ok: false, tickers: 515, priced: 515, posts: 34, failedPosts: 30, sent: [] }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Web source refresh");
+    expect(feed[0]?.detail).toBe("Refreshed 103 congressional-trade entries");
+    expect(feed[0]?.fullText).toContain('"recordCount":103'); // raw JSON stays available behind a toggle
+
+    expect(feed[1]?.title).toBe("Congress daily share");
+    expect(feed[1]?.detail).toBe("515 of 515 tickers priced · 34 posts sent · 30 failed");
+    expect(feed[1]?.fullText).toContain('"failedPosts":30');
+  });
+
+  it("humanizes notify.bridge.error ops events into a one-liner (#39)", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "nbe-1",
+          createdAt: "2026-07-02T04:00:00.000Z",
+          kind: "notify.bridge.error",
+          payload: { type: "pending_approval", error: "ECONNREFUSED: bridge unreachable" }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Notification delivery failed");
+    expect(feed[0]?.detail).toBe("Could not deliver pending_approval notification · ECONNREFUSED: bridge unreachable");
+    expect(feed[0]?.fullText).toContain('"error":"ECONNREFUSED: bridge unreachable"'); // raw JSON stays available behind a toggle
+  });
+
+  it("never renders a raw dotted kind like 'notification.delivery' as its own title (humanized fallback)", () => {
+    // notification.delivery is the per-alert delivery-mechanics audit event every notify() call
+    // writes alongside the notification itself (src/lib/notifications.ts) — with no dedicated
+    // formatAuditEvent branch it used to fall through to the catch-all as the raw string
+    // "Notification.delivery" (humanizeKind only de-underscored, never de-dotted).
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "nd-1",
+          createdAt: "2026-07-17T00:00:00.000Z",
+          kind: "notification.delivery",
+          payload: { notificationEventId: "n-1", type: "fill", status: "skipped" }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Notification delivery");
+    expect(feed[0]?.title).not.toContain(".");
+  });
+
+  it("classifies notification.delivery as an ops kind so it folds into System instead of duplicating the alert row", () => {
+    // Same treatment as notify.sent/notify.error/notify.bridge.error (see OPS_AUDIT_KINDS comment):
+    // the notification's own row already carries the alert's content + status in the main feed,
+    // so this per-channel delivery-mechanics event must not also render as a standalone top-level
+    // card next to it.
+    expect(OPS_AUDIT_KINDS.has("notification.delivery")).toBe(true);
+  });
+
+  it("gives a settings/preference log entry (e.g. data pool consent) no status chip instead of a fabricated 'Completed'", () => {
+    const feed = buildUnifiedFeed({
+      audit: [
+        {
+          id: "consent-1",
+          createdAt: "2026-07-17T00:00:00.000Z",
+          kind: "data_pool_consent",
+          payload: { userId: "local", accepted: true, version: 1 }
+        }
+      ],
+      notifications: [],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {}
+    });
+
+    const group = feed.find((g) => g.id === "audit-consent-1");
+    expect(group).toBeDefined();
+    expect(group!.title).toBe("Data pool consent");
+    // Empty (falsy) status means the console renders no chip at all — never a false "Completed".
+    expect(group!.status).toBe("");
+  });
+
+  it("labels the notification-audit catch-all with the decided NotificationEventType/Status vocabulary", () => {
+    // budget_alert and provider_degraded are two of the types that used to render as a raw,
+    // all-lowercase enum ("budget_alert sent") via humanizeNotificationType.
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "nb-1",
+          createdAt: "2026-07-03T04:00:00.000Z",
+          kind: "notification",
+          payload: { id: "nb-1", createdAt: "2026-07-03T04:00:00.000Z", type: "budget_alert", title: "Strategy run skipped — over budget", status: "sent" }
+        },
+        {
+          id: "nb-2",
+          createdAt: "2026-07-03T04:01:00.000Z",
+          kind: "notification",
+          payload: { id: "nb-2", createdAt: "2026-07-03T04:01:00.000Z", type: "provider_degraded", title: "Finnhub degraded", status: "failed", error: "Timed out" }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Budget alert Sent");
+    expect(feed[1]?.title).toBe("Data provider degraded Delivery failed");
+  });
+
+  it("labels fill and broker-order detail strings with the decided status/order-type vocabulary", () => {
+    const feed = buildUnifiedFeed({
+      audit: [],
+      notifications: [],
+      fills: [
+        {
+          id: "f-partial",
+          accountNumber: "A1",
+          source: "live",
+          symbol: "MSFT",
+          side: "buy",
+          quantity: 5,
+          price: 400,
+          notional: 2000,
+          status: "partially_filled",
+          filledAt: "2026-07-03T00:00:00.000Z"
+        }
+      ],
+      orders: [
+        {
+          id: "order-stop-limit",
+          symbol: "MSFT",
+          side: "buy",
+          type: "stop_limit",
+          state: "accepted",
+          quantity: 5,
+          filledQuantity: 0,
+          createdAt: "2026-07-03T00:00:00.000Z"
+        }
+      ],
+      symbolMetaBySymbol: {}
+    });
+
+    const fillGroup = feed.find((g) => g.id === "fill-f-partial");
+    expect(fillGroup?.detail).toContain("Partially filled");
+    expect(fillGroup?.detail).not.toContain("partially_filled");
+
+    const orderGroup = feed.find((g) => g.id === "order-order-stop-limit");
+    expect(orderGroup?.detail).toContain("Stop-limit");
+    expect(orderGroup?.detail).not.toContain("stop_limit");
+  });
+
+  it("carries a notification's connectedAccountId onto its unified-feed group (#10)", () => {
+    const feed = buildUnifiedFeed({
+      audit: [],
+      notifications: [
+        {
+          id: "n-other-acct",
+          createdAt: "2026-07-01T12:00:00.000Z",
+          type: "pending_approval",
+          title: "Buy PLTR Proposal Pending",
+          status: "skipped",
+          payload: { proposalId: "p-acct", proposal: { symbol: "PLTR", side: "buy" } },
+          connectedAccountId: "acct-test"
+        } as NotificationEvent
+      ],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {},
+      accountLabelById: { "acct-test": "Local simulator" },
+      getProposalById: () => ({ proposal: proposal({ symbol: "PLTR", side: "buy" }) })
+    });
+
+    const group = feed.find((g) => g.proposalId === "p-acct");
+    expect(group).toBeDefined();
+    expect(group!.connectedAccountId).toBe("acct-test");
+    expect(group!.accountLabel).toBe("Local simulator");
   });
 
   it("caps buildUnifiedFeed output at the source-level limit, newest-first", () => {
@@ -490,7 +927,7 @@ describe("dashboard feed helpers", () => {
       id: `f${i}`,
       accountNumber: "CAP1",
       source: "paper",
-      symbol: "AAA",
+      symbol: `AAPL${i}`, // distinct symbol ensures distinct titles so they don't coalesce
       side: "buy",
       quantity: 1,
       price: 10,
@@ -539,7 +976,7 @@ describe("dashboard feed helpers", () => {
       id: `lf${i}`,
       accountNumber: "CAP2",
       source: "paper",
-      symbol: "BBB",
+      symbol: `BBB${i}`, // distinct symbol ensures distinct titles so they don't coalesce
       side: "buy",
       quantity: 1,
       price: 10,

@@ -103,7 +103,7 @@ export async function withLlmGeneration<T>(options: LlmGenerationOptions<T>, run
           generation = startObservation(
             options.name,
             {
-              model: options.model,
+              model: options.model.includes("/") ? options.model.slice(options.model.indexOf("/") + 1) : options.model,
               input: redactForTelemetry(options.input),
               metadata: observationMetadata
             },
@@ -155,7 +155,7 @@ export async function withLlmGeneration<T>(options: LlmGenerationOptions<T>, run
  * veto or a rationale diversity-collapse) so it's queryable alongside the traced generations. This
  * is a fire-and-forget span with metadata/tags — no model input/output. It is a hard no-op when
  * Langfuse is not configured (`langfuseConfigured()` is false), so it never adds runtime cost or a
- * dependency in Test/paper mode. Errors are swallowed (warn-once) so telemetry can never break a run.
+ * dependency when Langfuse isn't set up. Errors are swallowed (warn-once) so telemetry can never break a run.
  */
 export async function recordDecisionObservation(options: {
   name: string;

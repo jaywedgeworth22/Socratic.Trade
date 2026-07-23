@@ -38,6 +38,8 @@ vi.mock("../src/lib/db", () => ({
   resolveApiKey: mocks.resolveApiKey,
   audit: vi.fn(),
   setInternalSetting: vi.fn(),
+  filterNewDocumentChunks: vi.fn((chunks) => chunks),
+  insertDocumentChunks: vi.fn(),
   // retrieveContextDetailed now consults the per-user LLM budget (isOverLlmBudget → getPolicy). With
   // no budget configured, checkLlmDailyBudget short-circuits to ok (both limits +Infinity) without
   // touching the usage ledger, so a bare policy stub is enough to keep these cache tests budget-off.
@@ -48,6 +50,8 @@ vi.mock("../src/lib/db", () => ({
 
 // Spy on the usage metering so we can assert a cache HIT is not metered as a real Voyage call.
 vi.mock("../src/lib/rag-metering", () => ({
+  estimateVoyageDispatchCost: vi.fn(() => 0),
+  estimateRagDispatchCost: vi.fn(() => 0),
   meterEmbed: mocks.meterEmbed,
   meterPineconeQuery: vi.fn(),
   meterPineconeUpsert: vi.fn(),
@@ -74,9 +78,11 @@ beforeEach(() => {
     if (service === "voyage") return process.env.VOYAGE_API_KEY;
     return undefined;
   });
-  mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+  mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
   mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
-  mocks.query.mockResolvedValue({ matches: [{ metadata: { text: "AAPL retrieved filing context" } }] });
+  mocks.query.mockResolvedValue({
+    matches: [{ metadata: { text: "AAPL retrieved filing context", userId: "local", scope: "shared" } }]
+  });
 });
 
 describe("query-embedding LRU cache (G8b)", () => {
@@ -88,7 +94,7 @@ describe("query-embedding LRU cache (G8b)", () => {
 
     expect(mocks.embed).toHaveBeenCalledTimes(1);
     // Pinecone is still queried each time — only the embed call is cached.
-    expect(mocks.query).toHaveBeenCalledTimes(2);
+    expect(mocks.query).toHaveBeenCalledTimes(4); // private + shared pools on each retrieval
   });
 
   it("does NOT meter a cache hit as a Voyage embed call (usage/cost integrity)", async () => {
@@ -140,7 +146,7 @@ describe("query-embedding LRU cache (G8b)", () => {
     mocks.createIndex.mockResolvedValue(undefined);
 
     await storeContext("AAPL guidance", { symbol: "AAPL", source: "sec-8k", timestamp: "2026-06-18", accession: "a1" });
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     await retrieveContextDetailed("AAPL guidance", "AAPL", 2, "local");
 
     // Document embed (storeContext) + query embed (retrieveContextDetailed) — the shared normalized
