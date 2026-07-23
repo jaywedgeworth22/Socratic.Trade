@@ -1,8 +1,35 @@
+## 2026-07-22 — Grok forgotten-PR audit (CURSOR)
+
+Multi-agent review of Grok combined/forgotten lands vs current main. **Closed #1952** (congress
+re-land undoes shared-package + bounded-body hardenings; real verify tsc failure) and **18 stale
+reopens** that were already on main or fought newer main. **Kept open:** fragments #1892 / #1901 /
+#1902 / #1903 (fix then solo-land) and independent #1792 / #1819 / #1842. No product merge/deploy
+from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
+
 # Current Status
 
 ## 2026-07-22 — UI Redesign: Proposal Slide-out Drawer and Inline Approval (ANTIGRAVITY)
 
 Implemented a slide-out drawer for strategy proposals containing the full `ThesisNarrative` and relevant `Evidence`. Replaced the "Market Thesis" hero with a streamlined feed of these clickable `ProposalRow`s and moved historical actions to the bottom of the page. Added inline "Approve Proposal" buttons in the drawer to allow direct approval of pending trades from the dashboard. Rollout note: `docs/rollouts/2026-07-22-proposal-row-drawer.md`. Next: land.sh, PR, await user review.
+## 2026-07-22 — Robinhood cap resilience landing (GROK pickup, branch `codex/robinhood-cap-fix`)
+
+Pickup from CODEX handoff. Node 24 confirmed (`24.18.0` modules=137); `npm rebuild better-sqlite3`
+succeeded. Focused receipt 112/112 green. Landing via `scripts/land.sh` next (merge `origin/main`,
+full tsc/test/build, PR, arm auto-merge). After Coolify auto-deploy, verify exact SHA and a real
+Robinhood cap-only settings save. Handoff: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
+
+## 2026-07-22 — Robinhood guardrail cap resilience (CODEX, branch `codex/robinhood-cap-fix`)
+
+Implemented account-aware opening caps and save resilience. Unchanged-account guardrail saves no
+longer require a transient Robinhood account-list verification; account selection/readiness changes
+and autonomy activation still verify. Absolute opening caps are clamped to feasible account spend
+(buying power for buys, NAV fallback; NAV for daily opening capacity), while percentage mode is the
+default when both dual-mode fields are blank. Added policy-cap and save-resilience regressions.
+Focused policy, execution, wash-sale, and console derivation tests are green (102/102); lint has
+zero errors and the production build passes. The repository's full Vitest command is configured for
+one worker and remained in progress under concurrent fleet load, so it was stopped rather than
+claiming a full-suite receipt. No production account or deployment was touched. Next: review/land
+the branch, then verify the exact deployed SHA and a real Robinhood settings save.
 
 ## 2026-07-21 — Fleet multi-app watchdog + disk follow-ups (GROK4, ops on Hetzner)
 

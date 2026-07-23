@@ -42,6 +42,9 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Grok forgotten-PR audit — DONE 2026-07-22.** Closed #1952 + 18 stale reopens; KEEP #1892/#1901/#1902/#1903 (fix then solo) + #1792/#1819/#1842. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
+
+- **[Socratic.Trade][GROK] Robinhood guardrail cap resilience (branch `codex/robinhood-cap-fix`, worktree `/Users/jay/.codex/worktrees/socratic-robinhood-cap-fix`, 2026-07-22) — In Progress / LANDING.** Pickup from CODEX handoff. `better-sqlite3` rebuilt under Node 24 (modules=137); focused receipt 112/112 green (`washsale-modes`, `final-size-red-autonomous`, `console-live-data-derive`, `policy-caps`, `policy-save-resilience`). Next: `scripts/land.sh` → PR → merge → Coolify auto-deploy + live cap-save verify. Handoff: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
 
 - **[Socratic.Trade][AG] UI Redesign: Proposal Slide-out Drawer and Inline Approval (branch `agent/antigravity-ui-redesign`) — COMPLETED (Pending Review) 2026-07-22.** Replaced the "Market Thesis" hero and autonomous actions feed with a unified Strategy Run summary and mapped proposal feed in `app/console/page.tsx`. Each proposal is now a clickable row that opens a slide-out drawer containing its full `ThesisNarrative` and `Evidence`. Pending proposals can be approved inline directly from the drawer. All local gates (lint, tsc, 4,901 tests, build) verify green. Ready to land. Rollout: `docs/rollouts/2026-07-22-proposal-row-drawer.md`.
 
