@@ -34,6 +34,12 @@ function notifierReturning(results: NotifyChannelResult[]): typeof notify {
   return vi.fn(async () => results) as unknown as typeof notify;
 }
 
+// The legacy webhook path now re-validates its target with a real DNS lookup on every send
+// (SSRF/rebinding hardening — src/lib/egress-guard.ts). "legacy.example" is an IANA-reserved,
+// never-resolving host used deliberately so these tests stay hermetic; inject a stub resolver
+// standing in for a normal public address wherever a test actually reaches sendLegacyWebhook.
+const resolveWebhookHost = async () => ["8.8.8.8"];
+
 function auditPayloads(kind: string): Array<Record<string, unknown>> {
   const rows = getDb().prepare("SELECT payload FROM audit_events WHERE kind = ? ORDER BY created_at ASC").all(kind) as Array<{ payload: string }>;
   return rows.map((row) => JSON.parse(row.payload) as Record<string, unknown>);
@@ -122,7 +128,8 @@ describe("truthful notification delivery aggregation", () => {
         policy: policyFor("fill", "https://legacy.example/hook"),
         userId: "partial",
         notifyImpl: notifierReturning([{ channel: "email", ok: true }]),
-        fetcher: async () => new Response("down", { status: 500 })
+        fetcher: async () => new Response("down", { status: 500 }),
+        resolveWebhookHost
       }
     );
 
@@ -337,7 +344,8 @@ describe("truthful notification delivery aggregation", () => {
         policy: policyFor("fill", "https://legacy.example/hook"),
         userId: "webhook-success",
         notifyImpl: notifierReturning([]),
-        fetcher: async () => new Response(null, { status: 204 })
+        fetcher: async () => new Response(null, { status: 204 }),
+        resolveWebhookHost
       }
     );
 
