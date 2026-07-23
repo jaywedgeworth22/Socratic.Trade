@@ -137,7 +137,15 @@ export function resolveLlmEndpoint(
   if (openRouterCred.key) {
     let model = rawModel;
     if (!model.includes("/")) {
-      if (/^claude/i.test(model)) {
+      if (/^claude-sonnet-latest$/i.test(model)) {
+        model = "anthropic/claude-sonnet-5";
+      } else if (/^claude-haiku-latest$/i.test(model)) {
+        model = "anthropic/claude-3.5-haiku";
+      } else if (/^claude-opus-latest$/i.test(model)) {
+        model = "anthropic/claude-3-opus";
+      } else if (/^claude-fable-latest$/i.test(model)) {
+        model = "anthropic/claude-3.5-sonnet";
+      } else if (/^claude/i.test(model)) {
         model = `anthropic/${model}`;
       } else if (/^grok/i.test(model)) {
         model = `x-ai/${model}`;

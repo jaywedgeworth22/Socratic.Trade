@@ -33,7 +33,7 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.provider).toBe("openrouter");
     expect(endpoint.url).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(endpoint.key).toBe("sk-or-test-key");
-    expect(endpoint.model).toBe("anthropic/claude-sonnet-latest");
+    expect(endpoint.model).toBe("anthropic/claude-sonnet-5");
     expect(endpoint.transport).toBe("chat-completions");
   });
 
