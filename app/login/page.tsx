@@ -8,6 +8,7 @@
 
 import type { ReactNode } from "react";
 import { signIn } from "../../src/lib/auth/auth";
+import { HeaderLogo } from "../console/ui/header-logo";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Sign in" };
@@ -20,12 +21,9 @@ const anyProviderConfigured = googleConfigured || githubConfigured || appleConfi
 export default function LoginPage() {
   return (
     <main className="grid min-h-screen place-items-center bg-bg px-6 text-center">
-      <div className="max-w-md space-y-6">
-        <div className="space-y-2">
-          <h1 className="text-xl font-semibold text-fg">Sign in to the dashboard</h1>
-          <p className="text-sm text-muted">
-            Authentication is required to access this app.
-          </p>
+      <div className="w-full max-w-md space-y-6">
+        <div className="flex justify-center mb-8 px-4 overflow-hidden">
+          <HeaderLogo height={20} />
         </div>
 
         {anyProviderConfigured ? (
@@ -55,7 +53,7 @@ export default function LoginPage() {
               >
                 <button
                   type="submit"
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-border bg-surface px-5 py-2.5 text-sm font-medium text-fg shadow-sm transition-opacity hover:opacity-80"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-line bg-surface px-5 py-2.5 text-sm font-medium text-fg shadow-sm transition-opacity hover:opacity-80"
                 >
                   <GitHubIcon />
                   Sign in with GitHub
@@ -72,7 +70,7 @@ export default function LoginPage() {
                 >
                   <button
                     type="submit"
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-80 dark:bg-white dark:text-neutral-900"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-fg px-5 py-2.5 text-sm font-medium text-bg shadow-sm transition-opacity hover:opacity-80"
                   >
                     <AppleIcon />
                     Sign in with Apple
@@ -89,7 +87,7 @@ export default function LoginPage() {
             )}
           </div>
         ) : (
-          <div className="rounded-md border border-border bg-surface px-4 py-3 text-sm text-muted">
+          <div className="rounded-md border border-line bg-surface px-4 py-3 text-sm text-muted">
             <p>Auth provider not configured.</p>
             <p className="mt-1 text-xs">
               Set <code className="font-mono">AUTH_GOOGLE_ID</code> /{" "}
@@ -101,10 +99,6 @@ export default function LoginPage() {
             </p>
           </div>
         )}
-
-        <p className="text-xs text-muted">
-          Access is restricted. Contact the owner if you need an account.
-        </p>
       </div>
     </main>
   );

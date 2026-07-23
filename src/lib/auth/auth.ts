@@ -28,6 +28,7 @@ import Apple from "next-auth/providers/apple";
 import type { Account, Profile, Session, User } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import type { Provider } from "next-auth/providers";
+import { canonicalizeLegacyAuthEnv } from "../public-origin";
 import { normalizeAuthEmail, selectVerifiedGitHubEmail, type GitHubEmail } from "./github-email";
 import { decodeSessionToken, encodeSessionToken } from "./session-token";
 
@@ -39,6 +40,8 @@ type EmailProfile = Profile & {
   login?: string | null;
 };
 type SessionWithProvider = Session & { loginProvider?: string };
+
+canonicalizeLegacyAuthEnv(process.env);
 
 const providers: Provider[] = [];
 
@@ -88,8 +91,30 @@ async function verifiedGitHubEmail(accessToken: string | undefined, fallbackEmai
   }
 }
 
+// Cross-subdomain session cookie: only when AUTH_COOKIE_DOMAIN is set (e.g. ".socratictrade.com"),
+// so a login on socratictrade.com is also recognized at admin.socratictrade.com. Unset (the default)
+// keeps the standard host-only cookie — zero behavior change. Changing this in production re-scopes
+// the session cookie, so existing sessions must sign in again once.
+const authCookieDomain = process.env.AUTH_COOKIE_DOMAIN?.trim();
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
+  ...(authCookieDomain
+    ? {
+        cookies: {
+          sessionToken: {
+            name: process.env.NODE_ENV === "production" ? "__Secure-authjs.session-token" : "authjs.session-token",
+            options: {
+              httpOnly: true,
+              sameSite: "lax" as const,
+              path: "/",
+              secure: process.env.NODE_ENV === "production",
+              domain: authCookieDomain
+            }
+          }
+        }
+      }
+    : {}),
   providers,
   session: { strategy: "jwt" },
   jwt: {
@@ -137,6 +162,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (name) token.name = name;
       if (image) token.picture = image;
       if (account?.provider) token.loginProvider = account.provider;
+      // Bind account recreation to an actual provider sign-in, not JWT rolling refresh. The
+      // middleware forwards this trusted claim so a pre-deletion cookie cannot clear a tombstone.
+      if (account?.provider) token.loginAt = Date.now();
       return token;
     },
     // Expose display identity on the `session` object returned by `auth()`.

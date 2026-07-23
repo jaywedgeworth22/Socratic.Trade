@@ -10,16 +10,16 @@
 
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
-import { fulfillMarketDataDemand, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { fetchRobinhoodHistoricals } from "./robinhood";
-import { appAClosesToBars, getAppAPrices, getAppASpx } from "./congress-trade-client";
+import { appAClosesToBars, congressReadsEnabled, getCongressTradeClient } from "./api-clients/congress";
 import { BROWSER_UA, politeFetchJson, politeFetchText } from "./web-sources/http";
 
 const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
 const cache = new Map<string, { expiresAt: number; bars: OHLCBar[] }>();
-const KEYED_HISTORY_SERVICES = ["massive", "tradier", "marketstack"] as const;
+const KEYED_HISTORY_SERVICES = ["massive", "marketstack"] as const;
 type CacheScope = "shared" | "private" | "pool";
 
 interface YahooChartResponse {
@@ -61,9 +61,9 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
 
   const keySources: Record<(typeof KEYED_HISTORY_SERVICES)[number], { key?: string; source: ApiKeySource }> = {
     massive: resolveApiKeyWithSource("massive", userId),
-    tradier: resolveApiKeyWithSource("tradier", userId),
     marketstack: resolveApiKeyWithSource("marketstack", userId)
   };
+  const tradierCredential = resolveTradierHistoryCredential();
   const privateCacheKey = historyCacheKey(symbol, userId, "private");
   const poolCacheKey = historyCacheKey(symbol, userId, "pool");
   const sharedCacheKey = historyCacheKey(symbol, userId, "shared");
@@ -95,7 +95,9 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
     // unless CONGRESS_TRADE_READS_ENABLED is on; "shared" scope (App A is a public external source).
     { scope: "shared", fetch: () => fetchAppAHistory(symbol) },
     { scope: cacheScopeForKeySource(keySources.massive.source, userId), fetch: () => fetchMassive(symbol, startDate, keySources.massive.key) },
-    { scope: cacheScopeForKeySource(keySources.tradier.source, userId), fetch: () => fetchTradier(symbol, startDate, keySources.tradier.key) },
+    // Always "shared" — sourced from the owner's own connected broker account, not a per-user key
+    // or consent-gated pool contribution (see resolveTradierHistoryCredential's doc comment).
+    { scope: "shared", fetch: () => fetchTradier(symbol, startDate, tradierCredential.key, tradierCredential.baseUrl) },
     { scope: cacheScopeForKeySource(keySources.marketstack.source, userId), fetch: () => fetchMarketstack(symbol, keySources.marketstack.key) },
     // First-party broker history — inert unless ROBINHOOD_ADAPTER=mcp + OAuth token present.
     // SECURITY: the Robinhood token is per-user, so this tier is FETCHED only when an explicit
@@ -197,12 +199,30 @@ interface TradierHistoryResponse {
   history?: { day?: TradierHistoryDay | TradierHistoryDay[] } | null;
 }
 
+/**
+ * Resolves Tradier's price-history credential from the owner's own CONNECTED broker account
+ * (connected_accounts, broker "tradier") rather than a separate stored API key — the owner connects
+ * Tradier once (even just as a data source, not necessarily as the active EXECUTION broker — see
+ * getConnectedAccountByBroker's doc comment) and that connection's access token becomes the app's
+ * Tradier price-history source too. Always resolves the "local" (owner's) connection regardless of
+ * the requesting userId — a single connected broker naturally serves the whole app, mirroring the
+ * "shared-operator-infra" model every other keyed history provider already uses via an env var, just
+ * sourced from a broker connection instead. Sandbox vs production tracks the connection's own
+ * `environment`, matching tradier.ts's own derivation for order placement.
+ */
+function resolveTradierHistoryCredential(): { key?: string; baseUrl: string } {
+  const acct = getConnectedAccountByBroker("tradier", "local");
+  return {
+    key: acct?.apiKey?.trim() || undefined,
+    baseUrl: acct?.environment === "live" ? "https://api.tradier.com" : "https://sandbox.tradier.com"
+  };
+}
+
 /** Tradier daily history — brokerage-grade, generous rate limits. Best primary source. */
-async function fetchTradier(symbol: string, startDate: string, key?: string): Promise<OHLCBar[] | null> {
+async function fetchTradier(symbol: string, startDate: string, key: string | undefined, baseUrl: string): Promise<OHLCBar[] | null> {
   if (!key) return null;
-  const base = process.env.TRADIER_BASE_URL ?? "https://api.tradier.com";
   try {
-    const url = `${base}/v1/markets/history?symbol=${encodeURIComponent(symbol)}&interval=daily&start=${startDate}`;
+    const url = `${baseUrl}/v1/markets/history?symbol=${encodeURIComponent(symbol)}&interval=daily&start=${startDate}`;
     const json = await politeFetchJson<TradierHistoryResponse>(url, { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" } });
     const day = json?.history?.day;
     const days = Array.isArray(day) ? day : day ? [day] : [];
@@ -354,7 +374,20 @@ export function clearHistoryCache(): void {
  * so the cascade falls through to App B's own providers on a miss. Self-guarded inside the client.
  */
 async function fetchAppAHistory(symbol: string): Promise<OHLCBar[] | null> {
-  const closes = symbol === "^GSPC" ? await getAppASpx() : (await getAppAPrices(symbol))?.closes ?? [];
+  if (!congressReadsEnabled()) return null;
+
+  let closes: any[] = [];
+  try {
+    const client = getCongressTradeClient();
+    if (symbol === "^GSPC") {
+      closes = await client.getSpx();
+    } else {
+      const resp = await client.getPrices(symbol);
+      closes = resp?.closes ?? [];
+    }
+  } catch (err) {
+    // Ignore error, fallback logic kicks in
+  }
   const bars = appAClosesToBars(closes);
   return bars.length >= 2 ? bars : null;
 }

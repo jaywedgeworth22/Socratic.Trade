@@ -1,24 +1,41 @@
 import { NextResponse } from "next/server";
-import { audit, getPolicy } from "@/lib/db";
+import { audit, getPolicy, latestAuditByKind } from "@/lib/db";
 import { dynamicIndexUniversesForPolicy } from "@/lib/index-universes";
 import { mergeGroupedBarData, mergeQuoteData, scanMarket } from "@/lib/market";
 import { allowedSymbolsForPolicy } from "@/lib/policy";
 import { getBrokerGateway } from "@/lib/broker";
 import { fetchRecentGroupedBarsRest } from "@/lib/market-signals/massive";
 import { resolveRequestUserId } from "@/lib/request-user";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import type { EquityPosition } from "@/lib/types";
+import {
+  interactiveScanKey,
+  marketScanQuotesFromAudit,
+  runScanSingleFlight,
+  withScanDeadline
+} from "@/lib/scan-singleflight";
 
 export const dynamic = "force-dynamic";
+const INTERACTIVE_SCAN_BUDGET_MS = 20_000;
 
-// Fresh, standalone market scan for the Market Scan tab — so the table reflects the
-// current enriched market (fundamentals + congressional/insider overlay) instead of
-// the scan captured at the last strategy run. Cheap on repeat calls: scanMarket caches
-// the screener (~5 min) and per-symbol enrichment (~6 h). Read-only; places nothing.
+// Fresh, standalone market scan for the Market Scan tab. It returns current screener,
+// broker, and persisted web-signal data instead of waiting for the next strategy run.
+// Slow fundamentals are reused from that run while prices refresh; deep provider work
+// stays on the scheduled strategy and on-demand ticker paths. Cheap on repeat calls:
+// scanMarket caches the screener (~5 min). Read-only; places nothing.
 export async function GET(request: Request) {
   let userId = "local";
   try {
     userId = resolveRequestUserId(request);
+    // Per-user rate limit: read-only, but each scan fans out to several data providers, so a
+    // tight refresh loop can hammer upstreams. Returns 429 with Retry-After; fails open on limiter error.
+    const limited = enforceRateLimit(userId, "scan", RATE_LIMITS.scan);
+    if (limited) return limited;
     const policy = getPolicy(userId);
+    const latestRunAudit = policy.connectedAccountId
+      ? latestAuditByKind("strategy_run", userId, policy.connectedAccountId)
+      : latestAuditByKind("strategy_run", userId);
+    const seedEnrichment = marketScanQuotesFromAudit(latestRunAudit?.payload, latestRunAudit?.createdAt);
     const symbols = allowedSymbolsForPolicy(policy);
     const gateway = getBrokerGateway(policy, userId);
     let positions: EquityPosition[] = [];
@@ -29,19 +46,35 @@ export async function GET(request: Request) {
         positions = [];
       }
     }
-    // 25 s guard — if data providers hang (Yahoo rate-limit, Massive outage, etc.) the
-    // reverse-proxy would abort at ~30 s and the browser gets a misleading network error
-    // instead of a real 500. Race so we return a JSON response either way.
-    const base = await Promise.race([
-      scanMarket(symbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
-        candidateLimit: policy.marketScanCandidateLimit,
-        outlierReserve: policy.marketScanOutlierReserve,
-        universeFloor: policy.universeFloor
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Market scan timed out — data provider is slow or rate-limited")), 25_000)
+    // Interactive scans are quote/screener refreshes, not deep-ingestion jobs. The
+    // fully enriched strategy scan supplies slow facts locally, while this path avoids
+    // enqueueing hundreds of paced fundamentals calls. Coalesce identical page-mount/
+    // manual-refresh requests so retries cannot multiply work.
+    const dynamicUniverses = dynamicIndexUniversesForPolicy(policy);
+    const scanKey = interactiveScanKey({
+      userId,
+      accountNumber: policy.accountNumber,
+      symbols,
+      candidateLimit: policy.marketScanCandidateLimit,
+      outlierReserve: policy.marketScanOutlierReserve,
+      dynamicUniverses,
+      latestRunAuditId: latestRunAudit?.id,
+      scoringWeights: policy.scoringWeights,
+      universeFloor: policy.universeFloor,
+      positions
+    });
+    const base = await runScanSingleFlight(scanKey, () =>
+      withScanDeadline(INTERACTIVE_SCAN_BUDGET_MS, (signal) =>
+        scanMarket(symbols, positions, policy.scoringWeights, userId, dynamicUniverses, {
+          candidateLimit: policy.marketScanCandidateLimit,
+          outlierReserve: policy.marketScanOutlierReserve,
+          universeFloor: policy.universeFloor,
+          enrichmentMode: "skip",
+          seedEnrichment,
+          signal
+        })
       )
-    ]);
+    );
     // Merge live broker bid/ask quotes for the top candidates, matching the strategy
     // run path (mergeQuoteData) so the table's Bid/Ask and freshest prices are populated.
     let scan = base;

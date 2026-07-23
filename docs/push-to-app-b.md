@@ -3,7 +3,7 @@
 > **For App A's implementer.** App A's existing `app/docs/fmp-data-sharing.md` covers the
 > **pull** side (`/api/market/bundle/{T}`, `/api/transactions`, …). This file is the **push**
 > side: the webhook + SSE contract App B subscribes to. App B is a long-running Next.js server
-> (PM2; e.g. `trading.jays.services`), so **SSE is preferred**; the webhook is the equivalent
+> (PM2; e.g. `socratictrade.com`), so **SSE is preferred**; the webhook is the equivalent
 > fallback. Implement both — App B picks one per deployment.
 >
 > Field names/types below match App B's internal consumer shapes exactly (see
@@ -62,6 +62,22 @@ App B's **must-haves are (a) and (b)**; (c)/(d) are nice-to-have.
 ```
 
 ## 3. Transport A — SSE (preferred)
+
+> **Contract as actually implemented (mutually honored, 2026-07-01).** The envelope below (§2) is the
+> *logical* contract; App A's live wire format differs, and App B adapts to it (Workstream C1):
+> - App A's `GET /api/stream` **requires** `?subscription=<id>` and authenticates a **per-subscription
+>   secret** (via `Authorization: Bearer <secret>` or `?token=`). A consumer first creates an SSE
+>   subscription (`POST /api/subscriptions {delivery:"sse", clientId}` → `{id, secret, streamUrl}`) or
+>   is given an operator-provisioned `id`+`secret`. There is no `?types=`/`?tickers=` query filter — use
+>   the subscription's `filters`.
+> - App A emits per trade: `id:<cursorSeq>\nevent: trade.new\ndata:<raw Transaction JSON>` (the bare
+>   Transaction, **not** the §2 envelope), plus control frames `event: cursor|ping|reconnect|error`.
+> - App B (`src/lib/congress-stream.ts`) connects with `?subscription=` + the Bearer secret, maps each
+>   `trade.new` Transaction into a `congress.trade` envelope before ingesting, and treats the control
+>   frames as no-ops. See `docs/congress-trade-consume.md` §4.
+> App A's own dashboard consumes `event: trade.new` + bare-tx via `EventSource`, so that SSE shape is
+> fixed — App B conforms to it rather than the peer re-enveloping its stream.
+
 ```
 GET https://congress.trade/api/stream
 Headers: Authorization: Bearer <read-token>        (optional; reads are public per App A's doc)

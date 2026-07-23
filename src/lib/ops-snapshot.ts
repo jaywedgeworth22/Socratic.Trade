@@ -1,7 +1,36 @@
 import { getInternalSetting } from "./db-settings";
-import { getDb, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers, peekPolicy } from "./db";
+import { getDb, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers, peekPolicy, getServiceHealthSummaries, databasePath } from "./db";
 import { userHasAnyLlmCredential } from "./db-api-keys";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { computeAccountTradingLiveness } from "./trading-liveness";
+import { statSync, statfsSync, readdirSync } from "fs";
+import { dirname, join } from "path";
+
+function getLitestreamLastSyncAge(dbPath: string): number | null {
+  const litestreamDir = `${dbPath}-litestream`;
+  try {
+    let newestMs = 0;
+    const findNewest = (dir: string) => {
+      const files = readdirSync(dir);
+      for (const file of files) {
+        const fullPath = join(dir, file);
+        const stat = statSync(fullPath);
+        if (stat.isDirectory()) {
+          findNewest(fullPath);
+        } else {
+          if (stat.mtimeMs > newestMs) {
+            newestMs = stat.mtimeMs;
+          }
+        }
+      }
+    };
+    findNewest(litestreamDir);
+    if (newestMs === 0) return null;
+    return Math.round((Date.now() - newestMs) / 1000);
+  } catch {
+    return null;
+  }
+}
 
 const OPS_AUDIT_KINDS = new Set([
   "strategy_run",
@@ -13,7 +42,8 @@ const OPS_AUDIT_KINDS = new Set([
   "policy_violation_cap_exceeded",
   "autonomy_halted_on_boot",
   "order_placement_uncertain",
-  "proposal_skipped_negative_ev"
+  "proposal_skipped_negative_ev",
+  "order_rejected_by_broker"
 ]);
 
 export interface OpsAccountSnapshot {
@@ -32,6 +62,13 @@ export interface OpsAccountSnapshot {
   redTeamLlmKeyConfigured: boolean;
   policyReadError: string | null;
   lastRunStartedAt: string | null;
+  // Handoff 6b.7 (trading-liveness): only populated when systemState === "active" — an
+  // account that isn't running autonomously has nothing to be "live" about. See
+  // trading-liveness.ts for the stale/consecutive-failure thresholds (env-overridable).
+  lastCompletedRunAt: string | null;
+  lastCompletedRunAgeSeconds: number | null;
+  consecutiveFailedRuns: number | null;
+  tradingLivenessDegraded: boolean | null;
 }
 
 export interface OpsStrategyRunRow {
@@ -69,6 +106,8 @@ export interface OpsSnapshot {
   asOf: string;
   schedulerLastTick: string | null;
   schedulerAgeSeconds: number | null;
+  dependencies?: Record<string, { ok: boolean; reason?: string | null; lastFailure?: string | null }>;
+  storage?: Record<string, any> | null;
   users: OpsUserSnapshot[];
 }
 
@@ -98,7 +137,17 @@ function sanitizeAuditDetail(kind: string, payload: unknown): string {
   const reason = typeof p.reason === "string" ? p.reason : "";
   const summary = typeof p.summary === "string" ? p.summary : "";
   const message = typeof p.message === "string" ? p.message : "";
-  return reason || summary || message || JSON.stringify(p).slice(0, 240);
+  const error = typeof p.error === "string" ? p.error : "";
+  const note = typeof p.note === "string" ? p.note : "";
+  const semantic = reason || summary || message || error || note;
+  if (!semantic) return JSON.stringify(p).slice(0, 500);
+  // append key identifiers so failure rows link back to the proposal/order
+  const ids: string[] = [];
+  if (typeof p.refId === "string" && p.refId) ids.push(`refId=${p.refId}`);
+  if (typeof p.proposalId === "string" && p.proposalId) ids.push(`proposalId=${p.proposalId}`);
+  if (typeof p.symbol === "string" && p.symbol) ids.push(`symbol=${p.symbol}`);
+  if (typeof p.runId === "string" && p.runId) ids.push(`runId=${p.runId}`);
+  return ids.length > 0 ? `${semantic} (${ids.join(" ")})` : semantic;
 }
 
 function listOpsStrategyRuns(userId: string, limit: number, labels: Map<string, string>): OpsStrategyRunRow[] {
@@ -123,7 +172,7 @@ function listOpsStrategyRuns(userId: string, limit: number, labels: Map<string, 
         sr.status,
         sr.summary,
         sr.connected_account_id,
-        COUNT(CASE WHEN tp.status = 'placed' THEN 1 END) AS placed_count,
+        COUNT(CASE WHEN tp.status IN ('placed', 'filled') THEN 1 END) AS placed_count,
         COUNT(CASE WHEN tp.status = 'paper' THEN 1 END) AS paper_count,
         COUNT(CASE WHEN tp.status = 'blocked' THEN 1 END) AS blocked_count,
         COUNT(CASE WHEN tp.status = 'proposed' THEN 1 END) AS proposed_count
@@ -200,7 +249,18 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
       try {
         const policy = peekPolicy(userId, account.id);
         const greenEndpoint = resolveLlmEndpoint(policy, userId);
-        const redEndpoint = resolveLlmEndpoint({ llmModel: policy.redTeamLlmModel }, userId);
+        // R16 (single-adversary consolidation): resolve Red with role:"red" — the SAME resolution the
+        // strategy path uses — so these diagnostics can never report Red as "configured" (via the old
+        // treat-Red-as-Green trick + its former default fallback) while the run path fails closed on a
+        // blank/unkeyed Red model. An unset Red now resolves to model "" with no key.
+        const redEndpoint = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions", "red");
+        // Handoff 6b.7: only an actively-autonomous account has a meaningful trading-liveness
+        // reading — a halted/close_only/liquidating account not completing runs is expected, not
+        // degraded.
+        const liveness =
+          policy.systemState === "active"
+            ? computeAccountTradingLiveness(userId, account.id, account.label || account.broker)
+            : null;
         return {
           connectedAccountId: account.id,
           label: account.label || account.broker,
@@ -213,10 +273,18 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
           redTeamLlmModel: policy.redTeamLlmModel ?? null,
           llmProvider: greenEndpoint.provider,
           llmKeyConfigured: Boolean(greenEndpoint.key),
-          redTeamLlmProvider: redEndpoint.provider,
-          redTeamLlmKeyConfigured: Boolean(redEndpoint.key),
+          // With NO model chosen the endpoint's provider/key are meaningless (resolution falls
+          // through to the OpenAI branch on model "") — report them null/false so the snapshot says
+          // "unconfigured", matching the strategy path's fail-closed treatment, instead of leaking
+          // the fall-through provider's key state as if a Red reviewer were configured.
+          redTeamLlmProvider: redEndpoint.model ? redEndpoint.provider : null,
+          redTeamLlmKeyConfigured: Boolean(redEndpoint.model && redEndpoint.key),
           policyReadError: null,
-          lastRunStartedAt: getLastStrategyRunStartedAt(userId, account.id)
+          lastRunStartedAt: getLastStrategyRunStartedAt(userId, account.id),
+          lastCompletedRunAt: liveness?.lastCompletedRunAt ?? null,
+          lastCompletedRunAgeSeconds: liveness?.lastCompletedRunAgeSeconds ?? null,
+          consecutiveFailedRuns: liveness?.consecutiveFailedRuns ?? null,
+          tradingLivenessDegraded: liveness?.degraded ?? null
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -235,7 +303,11 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
           redTeamLlmProvider: null,
           redTeamLlmKeyConfigured: false,
           policyReadError: message,
-          lastRunStartedAt: getLastStrategyRunStartedAt(userId, account.id)
+          lastRunStartedAt: getLastStrategyRunStartedAt(userId, account.id),
+          lastCompletedRunAt: null,
+          lastCompletedRunAgeSeconds: null,
+          consecutiveFailedRuns: null,
+          tradingLivenessDegraded: null
         };
       }
     });
@@ -249,10 +321,62 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     });
   }
 
+  const dependencies: Record<string, { ok: boolean; reason?: string | null; lastFailure?: string | null }> = {};
+  try {
+    const summaries = getServiceHealthSummaries();
+    for (const summary of summaries) {
+      const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
+      if (isGlobal) {
+        dependencies[summary.service] = {
+          ok: !summary.stoppedWorking,
+          reason: summary.stoppedReason,
+          lastFailure: summary.lastFailureError
+        };
+      }
+    }
+  } catch {}
+
+  let storage: Record<string, unknown> | null = null;
+  try {
+    const dbPath = databasePath();
+    const walPath = `${dbPath}-wal`;
+    const dbDir = dirname(dbPath);
+
+    let dbSizeBytes = 0;
+    try {
+      dbSizeBytes = statSync(dbPath).size;
+    } catch {}
+
+    let walSizeBytes = 0;
+    try {
+      walSizeBytes = statSync(walPath).size;
+    } catch {}
+
+    let freeBytes = 0;
+    let totalBytes = 0;
+    try {
+      const stats = statfsSync(dbDir);
+      freeBytes = stats.bavail * stats.bsize;
+      totalBytes = stats.blocks * stats.bsize;
+    } catch {}
+
+    const litestreamAgeSeconds = getLitestreamLastSyncAge(dbPath);
+
+    storage = {
+      dbSizeBytes,
+      walSizeBytes,
+      freeBytes,
+      totalBytes,
+      litestreamAgeSeconds
+    };
+  } catch {}
+
   return {
     asOf: new Date().toISOString(),
     schedulerLastTick: lastTick ?? null,
     schedulerAgeSeconds: Number.isFinite(tickMs) ? Math.round((Date.now() - tickMs) / 1000) : null,
+    dependencies,
+    storage,
     users
   };
 }

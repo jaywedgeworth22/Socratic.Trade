@@ -1,10 +1,90 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { buildExtraFilters, defaultMinScore, isWithinAsOf, rerankMatches } from "../src/lib/vector-db";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+process.env.DATABASE_URL = `file:${join(tmpdir(), `socratic-vector-retrieval-${randomUUID()}.db`)}`;
+
+const {
+  buildExtraFilters,
+  defaultMinScore,
+  filterMatchesForTranscriptRights,
+  isWithinAsOf,
+  matchToChunk,
+  rerankMatches
+} = await import("../src/lib/vector-db");
 
 describe("buildExtraFilters", () => {
-  it("is empty with no options", () => {
+  beforeEach(() => vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "on"));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("is empty with no options while transcript storage/display rights are confirmed", () => {
     expect(buildExtraFilters()).toEqual({});
     expect(buildExtraFilters({})).toEqual({});
+  });
+  it("excludes transcripts from broad and explicit retrieval when rights are unconfirmed", () => {
+    vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "off");
+    // Broad queries preserve server-side recall for legacy vectors that lack doc_type; the
+    // post-fetch guard below removes transcripts before ranking/prompt injection.
+    expect(buildExtraFilters()).toEqual({});
+
+    const mixed = buildExtraFilters({ docType: ["10-k", "earnings-transcript"] }).doc_type as { $in: string[] };
+    expect(new Set(mixed.$in)).toEqual(new Set(["10-k", "10-K"]));
+    expect(buildExtraFilters({ docType: ["earnings-transcript"] })).toEqual({
+      doc_type: { $eq: "__earnings_transcript_rights_unconfirmed__" }
+    });
+
+    const legacy = { id: "legacy", metadata: { source: "sec-edgar" } };
+    const filing = { id: "filing", metadata: { doc_type: "10-k" } };
+    const transcript = { id: "transcript", metadata: { doc_type: "EARNINGS-TRANSCRIPT" } };
+    expect(filterMatchesForTranscriptRights([legacy, filing, transcript])).toEqual([legacy, filing]);
+  });
+  it("leaves broad transcript matches available while rights are confirmed", async () => {
+    const { activateFmpTranscriptRightsGeneration } = await import("../src/lib/web-sources/fmp-transcripts");
+    activateFmpTranscriptRightsGeneration();
+    const matches = [{ id: "transcript", metadata: { doc_type: "earnings-transcript" } }];
+    expect(filterMatchesForTranscriptRights(matches)).toBe(matches);
+  });
+  it("keeps transcripts blocked when the env flag is on but the durable rights gate is revoked", async () => {
+    const {
+      activateFmpTranscriptRightsGeneration
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+    activateFmpTranscriptRightsGeneration();
+    getDb().prepare(`
+      UPDATE fmp_transcript_rights_gate
+      SET generation = generation + 1, status = 'revoked', updated_at = ?
+      WHERE singleton = 1
+    `).run(new Date().toISOString());
+
+    expect(buildExtraFilters({ docType: ["earnings-transcript"] })).toEqual({
+      doc_type: { $eq: "__earnings_transcript_rights_unconfirmed__" }
+    });
+    expect(buildExtraFilters({ source: "fmp-earnings-transcript" })).toEqual({
+      source: { $eq: "__fmp_transcript_rights_unconfirmed__" }
+    });
+    const matches = [{ id: "transcript", metadata: { doc_type: "earnings-transcript", source: "fmp-earnings-transcript" } }];
+    expect(filterMatchesForTranscriptRights(matches)).toEqual([]);
+  });
+  it("admits only the active generation of FMP-derived decision memory", async () => {
+    const {
+      activateFmpTranscriptRightsGeneration,
+      captureFmpTranscriptRightsGeneration
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    activateFmpTranscriptRightsGeneration();
+    const generation = captureFmpTranscriptRightsGeneration()!.generation;
+    const current = {
+      id: "current-derived",
+      metadata: { fmp_derived: true, fmp_rights_generation: generation }
+    };
+    const stale = {
+      id: "stale-derived",
+      metadata: { fmp_derived: true, fmp_rights_generation: generation - 1 }
+    };
+
+    expect(filterMatchesForTranscriptRights([current, stale])).toEqual([current]);
+    vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "off");
+    expect(filterMatchesForTranscriptRights([current, stale])).toEqual([]);
   });
   it("matches doc_type across casings (stored values are inconsistent: '10-K' vs '8-k')", () => {
     // Each requested type expands to original + lower + upper, deduped — so a lowercase filter still
@@ -18,6 +98,14 @@ describe("buildExtraFilters", () => {
   it("builds section / source clauses unchanged", () => {
     expect(buildExtraFilters({ section: "risk_factors" })).toEqual({ section: { $eq: "risk_factors" } });
     expect(buildExtraFilters({ source: "sec-8k" })).toEqual({ source: { $eq: "sec-8k" } });
+  });
+  it("builds an exact connected-account memory filter and fails closed when its id is absent", () => {
+    expect(buildExtraFilters({ accountScope: "exact", connectedAccountId: "account-a" })).toEqual({
+      connected_account_id: { $eq: "account-a" }
+    });
+    expect(buildExtraFilters({ accountScope: "exact" })).toEqual({
+      connected_account_id: { $eq: "__missing_connected_account__" }
+    });
   });
   it("ignores an empty docType array", () => {
     expect(buildExtraFilters({ docType: [] })).toEqual({});
@@ -72,6 +160,34 @@ describe("rerankMatches", () => {
     const out = await rerankMatches(fakeVoyage(() => ({ data: [] })), "q", matches, 2);
     expect(out.map((x) => x.id)).toEqual(["a", "b"]);
   });
+
+  // Item 2 (2026-07-01 RAG workstream): the reranker's own relevanceScore was previously discarded —
+  // rerankMatches only reordered by index, and matchToChunk only read Pinecone's cosine `score`.
+  it("attaches the reranker's relevanceScore onto each reordered match (not just reordering by index)", async () => {
+    const matches = [m("a", "alpha", 0.9), m("b", "beta", 0.8), m("c", "gamma", 0.7)];
+    const voyage = fakeVoyage(() => ({
+      data: [{ index: 2, relevanceScore: 0.95 }, { index: 0, relevanceScore: 0.4 }]
+    }));
+    const out = await rerankMatches(voyage, "q", matches, 2);
+    expect(out.map((x) => x.id)).toEqual(["c", "a"]);
+    // matchToChunk reads _rerankScore into RetrievedChunk.relevanceScore.
+    expect(matchToChunk(out[0]).relevanceScore).toBe(0.95);
+    expect(matchToChunk(out[1]).relevanceScore).toBe(0.4);
+  });
+
+  it("matchToChunk omits relevanceScore when reranking never ran (no _rerankScore on the match)", () => {
+    const chunk = matchToChunk(m("a", "alpha", 0.9));
+    expect(chunk.relevanceScore).toBeUndefined();
+    expect(chunk.score).toBe(0.9); // cosine score is unaffected either way
+  });
+
+  it("does not attach relevanceScore when the reranker response omits it for a given item", async () => {
+    const matches = [m("a", "alpha", 0.9), m("b", "beta", 0.8)];
+    // Reranker returns an index with no relevanceScore field (some responses may omit it).
+    const voyage = fakeVoyage(() => ({ data: [{ index: 1 }, { index: 0 }] }));
+    const out = await rerankMatches(voyage, "q", matches, 2);
+    expect(matchToChunk(out[0]).relevanceScore).toBeUndefined();
+  });
 });
 
 describe("isWithinAsOf (point-in-time guard, incl. 8-K acceptance_datetime)", () => {
@@ -85,5 +201,23 @@ describe("isWithinAsOf (point-in-time guard, incl. 8-K acceptance_datetime)", ()
     expect(isWithinAsOf({ source: "x" }, "2026-03-10")).toBe(true);
     expect(isWithinAsOf({ acceptance_datetime: "2026-03-10" }, undefined)).toBe(true);
     expect(isWithinAsOf({ acceptance_datetime: "2026-03-10" }, "not-a-date")).toBe(true);
+  });
+
+  // R1 (2026-07-01 expert review): published_at is now in the resolution chain, between
+  // acceptance_datetime and as_of/timestamp — a chunk lacking acceptance_datetime but carrying a
+  // dated published_at is still correctly point-in-time-guarded instead of falling through to
+  // "include" via the (today, always-empty) as_of key.
+  it("falls back to published_at when acceptance_datetime is absent", () => {
+    const chunk = { published_at: "2026-03-10", source: "sec-edgar" };
+    expect(isWithinAsOf(chunk, "2026-03-09")).toBe(false); // look-ahead, excluded
+    expect(isWithinAsOf(chunk, "2026-03-10")).toBe(true);
+    expect(isWithinAsOf(chunk, "2026-03-11")).toBe(true);
+  });
+
+  it("acceptance_datetime still takes precedence over published_at when both are present", () => {
+    // acceptance_datetime says "after asOf" (exclude); published_at alone would have said "on/before"
+    // (include) — acceptance_datetime must win since it's the more precise anchor.
+    const chunk = { acceptance_datetime: "2026-03-12", published_at: "2026-03-05" };
+    expect(isWithinAsOf(chunk, "2026-03-10")).toBe(false);
   });
 });

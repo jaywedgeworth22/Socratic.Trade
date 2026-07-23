@@ -20,10 +20,22 @@ export const dynamic = "force-dynamic";
 //
 // Auth: bearer APP_B_INGEST_TOKEN, constant-time. DEFAULT-CLOSED — with no token configured every
 // write is rejected. No-echo guard: a payload tagged with App B's own origin is acked but NOT stored
-// (so a round-trip of our own outbound push is a no-op). insider/shortVolume are accepted-and-ignored
-// on the inbound path (gap-fills are prices/spx/refs only).
+// (so a round-trip of our own outbound push is a no-op).
 //
-// Body (all optional): { refs?, prices?, spx?, origin? } — the same shape as App B's outbound push.
+// DIRECTIONAL ASYMMETRY (why only 3 of the 7 shared SharePayload slots are persisted here — by design;
+// see docs/congress-trade-consume.md §4 and docs/congress-trade-share.md):
+//   - refs / prices / spx  -> PERSISTED (imported_securities_ref / imported_price_eod / imported_spx_eod).
+//     These are App A -> App B gap-fills that warm App B's local EOD cache.
+//   - insider / shortVolume -> App B is the AUTHORITATIVE source (it computes these from SEC/FINRA and
+//     pushes them TO App A); App A never echoes better values back, so there is nothing to store here.
+//   - fundamentals / analyst -> App B reads these from App A on demand via the PULL enrichment tier
+//     (CongressTradeEnrichmentProvider, 6h cache), not this import path.
+// Any of the four non-persisted datasets that DO arrive are ACKNOWLEDGED in the response
+// (`acceptedNotPersisted`) rather than silently dropped, so a future contract change surfaces instead
+// of losing data quietly.
+//
+// Body (all optional): { refs?, prices?, spx?, insider?, shortVolume?, fundamentals?, analyst?, origin? }
+// — the same shape as App B's outbound push (only refs/prices/spx are stored inbound).
 export async function POST(req: Request) {
   if (!verifySecuritiesImportToken(req)) {
     audit("securities_import_rejected", { reason: "token" });
@@ -48,9 +60,29 @@ export async function POST(req: Request) {
     const refs = coerceRefs(rec.refs);
     const prices = coercePrices(rec.prices);
     const spx = coerceCloses(rec.spx);
+
+    // Explicitly acknowledge any non-persisted datasets that arrived, so nothing is silently
+    // discarded (see the directional-asymmetry note in the file header).
+    const acceptedNotPersisted: Record<string, number> = {};
+    for (const key of ["insider", "shortVolume", "fundamentals", "analyst"] as const) {
+      const arr = rec[key];
+      if (Array.isArray(arr) && arr.length > 0) acceptedNotPersisted[key] = arr.length;
+    }
+
     const result = persistSecuritiesImport({ refs, prices, spx }, origin);
-    audit("securities_import", { origin, ...result });
-    return NextResponse.json({ ok: true, origin, ...result, totals: getImportedCacheCounts() });
+    audit("securities_import", { origin, ...result, acceptedNotPersisted });
+    return NextResponse.json({
+      ok: true,
+      origin,
+      ...result,
+      totals: getImportedCacheCounts(),
+      ...(Object.keys(acceptedNotPersisted).length > 0
+        ? {
+            acceptedNotPersisted,
+            note: "insider/shortVolume are App-B-authoritative; fundamentals/analyst are pulled on demand — not persisted on the inbound import path by design",
+          }
+        : {}),
+    });
   } catch (error) {
     audit("securities_import_error", { error: error instanceof Error ? error.message : "unknown" });
     return NextResponse.json({ ok: false, error: "ingest failed" }, { status: 500 });

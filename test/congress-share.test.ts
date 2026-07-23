@@ -4,19 +4,32 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OHLCBar } from "../src/lib/indicators";
 
-// Mock the history cascade so tests never hit the network. Keep toBusinessDay (and everything else)
-// real; only fetchDailyOHLC is replaced.
-vi.mock("../src/lib/history", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/lib/history")>();
-  return { ...actual, fetchDailyOHLC: vi.fn() };
+// Mock the history cascade without importOriginal(). history.ts imports the db barrel, whose
+// outcome-horizon re-export imports history.ts again; importing the original inside this factory can
+// therefore cache a second, real fetchDailyOHLC binding and leak network calls into this suite.
+vi.mock("../src/lib/history", () => {
+  const toBusinessDay = (time: number | string | undefined): string | undefined => {
+    if (typeof time === "number" && Number.isFinite(time)) {
+      const ms = time > 1e12 ? time : time * 1000;
+      return new Date(ms).toISOString().slice(0, 10);
+    }
+    if (typeof time === "string") {
+      if (/^\d{4}-\d{2}-\d{2}/.test(time)) return time.slice(0, 10);
+      const parsed = Date.parse(time);
+      if (Number.isFinite(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+    }
+    return undefined;
+  };
+  return { fetchDailyOHLC: vi.fn(), toBusinessDay };
 });
 
 import { fetchDailyOHLC } from "../src/lib/history";
-import { setInternalSetting } from "../src/lib/db";
 import {
   buildInsiderImport,
   buildShortVolumeImport,
+  canonicalOutboundSymbol,
   chunkPrices,
+  dropInvalidShareRows,
   isCongressDailyShareDue,
   isCongressShareAutoEnabled,
   marketQuoteToAnalyst,
@@ -31,6 +44,8 @@ import {
   shareWithCongressTrade,
   type CongressPrice
 } from "../src/lib/congress-share";
+import { setInternalSetting } from "../src/lib/db";
+import { flushDurableStateNow, resetDurableStateCacheForTests } from "../src/lib/durable-state";
 
 const recentDate = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
@@ -52,6 +67,57 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+// ── Ticker aliasing (item 4) ──────────────────────────────────────────────────────
+
+describe("canonicalOutboundSymbol + alias-resolved outbound tickers", () => {
+  it("resolves shared corporate-action aliases (FB->META, ATVI->MSFT, SQ->XYZ)", () => {
+    expect(canonicalOutboundSymbol("fb")).toBe("META");
+    expect(canonicalOutboundSymbol("ATVI")).toBe("MSFT");
+    expect(canonicalOutboundSymbol(" sq ")).toBe("XYZ");
+    expect(canonicalOutboundSymbol("AAPL")).toBe("AAPL"); // non-aliased passes through
+    expect(canonicalOutboundSymbol("BRK-B")).toBe("BRK-B"); // share-class hyphen preserved
+  });
+
+  it("stamps the canonical ticker on outbound ref / fundamentals / analyst rows", () => {
+    type RefArg = Parameters<typeof marketQuoteToRef>[0];
+    type FundArg = Parameters<typeof marketQuoteToFundamentals>[0];
+    type AnalystArg = Parameters<typeof marketQuoteToAnalyst>[0];
+    expect(marketQuoteToRef({ symbol: "FB" } as unknown as RefArg)?.ticker).toBe("META");
+    expect(marketQuoteToFundamentals({ symbol: "FB", peRatio: 20 } as unknown as FundArg, recentDate(0))?.ticker).toBe("META");
+    expect(marketQuoteToAnalyst({ symbol: "FB", analystRating: "Buy" } as unknown as AnalystArg, recentDate(0))?.ticker).toBe("META");
+  });
+});
+
+// ── Outbound payload validation (item 5) ──────────────────────────────────────────
+
+describe("dropInvalidShareRows — drop malformed rows instead of sending them", () => {
+  it("drops schema-invalid rows per dataset and keeps the valid ones", () => {
+    const { payload, dropped } = dropInvalidShareRows({
+      refs: [{ ticker: "AAPL" }, { ticker: "" }], // "" fails ticker.min(1)
+      spx: [{ date: "2026-06-15", close: 100 }, { date: "not-a-date", close: 1 }], // bad date dropped
+      insider: [{ ticker: "AAPL", date: "2026-06-15", sentiment: 60, buyFilings: 1, sellFilings: 0, buyShares: 1, sellShares: 0, owners: [] }],
+    });
+    expect(payload.refs).toEqual([{ ticker: "AAPL" }]);
+    expect(payload.spx).toEqual([{ date: "2026-06-15", close: 100 }]);
+    expect(payload.insider).toHaveLength(1); // all valid -> untouched
+    expect(dropped).toMatchObject({ refs: 1, spx: 1 });
+    expect(dropped.insider).toBeUndefined();
+  });
+
+  it("shareWithCongressTrade excludes invalid rows from the POST body and counts only what's sent", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "t";
+    let posted: { refs?: unknown[]; origin?: string } | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      posted = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }));
+    const res = await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }, { ticker: "" }] });
+    expect(res.ok).toBe(true);
+    expect(res.sent.refs).toBe(1);
+    expect(posted?.refs).toEqual([{ ticker: "AAPL" }]);
+  });
 });
 
 // ── Mappers ─────────────────────────────────────────────────────────────────────
@@ -253,6 +319,24 @@ describe("shareScanRefs", () => {
     expect((await shareScanRefs(scan))?.ok).toBe(true); // retried, not throttled
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
+
+  it("the per-symbol send throttle survives a simulated process restart", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_ENABLED = "on";
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    expect((await shareScanRefs(scan))?.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    flushDurableStateNow(); // the throttle's debounced write lands in SQLite
+
+    // Simulate a restart: forget the in-memory durable-state cache (the SQLite rows are untouched).
+    resetDurableStateCacheForTests();
+
+    // A fresh process's next scan of the SAME candidates must still see the throttle, not re-POST.
+    expect(await shareScanRefs(scan)).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // unchanged
+  });
 });
 
 // ── Nightly batch + gating ─────────────────────────────────────────────────────────
@@ -317,6 +401,30 @@ describe("runCongressDailyShare", () => {
     const res = await runCongressDailyShare({ now });
     expect(res).toMatchObject({ ok: false, skipped: true, reason: "not-due" });
     expect(mockedFetchDailyOHLC).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates concurrent runs via a shared in-flight promise", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    const bars: OHLCBar[] = [
+      { time: "2026-06-15", close: 100 }
+    ];
+    mockedFetchDailyOHLC.mockResolvedValue(bars);
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => {
+      await new Promise(r => setTimeout(r, 50));
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const now = Date.UTC(2026, 5, 22, 13, 0, 0);
+    setInternalSetting("congress-share:lastDailyRunDate", "2026-06-20");
+
+    const [res1, res2] = await Promise.all([
+      runCongressDailyShare({ now, force: true, symbols: ["AAPL"] }),
+      runCongressDailyShare({ now, force: true, symbols: ["AAPL"] })
+    ]);
+
+    expect(res1).toBe(res2); // Should return the exact same promise/result reference
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // Should only execute one run (which POSTs SPX and prices payload separately)
   });
 });
 

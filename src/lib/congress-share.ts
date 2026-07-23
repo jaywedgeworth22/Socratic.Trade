@@ -16,8 +16,35 @@
 // CONGRESS_TRADE_TOKEN is set AND CONGRESS_SHARE_ENABLED is on. The admin route can trigger a
 // manual run with just the token. The token is a server-only secret — never exposed to the browser.
 
-import { API_PATHS, APP_B_ORIGIN_TAG, type PriceClose, type PriceSeries, type InsiderRow, type ShortVolumeRow, type FundamentalRow, type AnalystRow, SharePayloadSchema } from "@jaywedgeworth22/congress-trading-shared";
+import {
+  API_PATHS,
+  APP_B_ORIGIN_TAG,
+  type PriceClose,
+  type PriceSeries,
+  type InsiderRow,
+  type ShortVolumeRow,
+  type FundamentalRow,
+  type AnalystRow,
+  type SharePayload,
+  resolveTickerAlias,
+  SecurityRefInputSchema,
+  PriceSeriesSchema,
+  PriceCloseSchema,
+  InsiderRowSchema,
+  ShortVolumeRowSchema,
+  FundamentalRowSchema,
+  AnalystRowSchema,
+} from "@jaywedgeworth22/congress-trading-shared";
+import {
+  assertOperationLeaseOwnership,
+  OPERATION_LEASE_GROUPS,
+  runWithOperationLease,
+  throwIfOperationLeaseCancelled,
+  type OperationLeaseAware,
+  type OperationLeaseClaim
+} from "./operation-lease";
 import { audit, getInternalSetting, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting } from "./db";
+import { createDurableMap } from "./durable-state";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import { INDEX_UNIVERSES, symbolsForPolicyUniverse } from "./index-universes";
 import type { OHLCBar } from "./indicators";
@@ -142,17 +169,14 @@ export type CongressShortVol = ShortVolumeRow;
 export type CongressFundamental = FundamentalRow;
 export type CongressAnalyst = AnalystRow;
 
-export interface CongressSharePayload {
+/**
+ * Outbound share payload. Same wire shape as shared `SharePayload`; `refs` may
+ * use the local optional-field builder (`CongressRef`) before schema validation
+ * coerces them to `SecurityRefInput`.
+ */
+export type CongressSharePayload = Omit<SharePayload, "refs"> & {
   refs?: CongressRef[];
-  spx?: PriceClose[];
-  prices?: PriceSeries[];
-  insider?: InsiderRow[];
-  shortVolume?: ShortVolumeRow[];
-  fundamentals?: FundamentalRow[];
-  analyst?: AnalystRow[];
-  /** Provenance tag (defaults to APP_B_ORIGIN on send). Lets a receiver skip rows it originated. */
-  origin?: string;
-}
+};
 
 export interface CongressShareResult {
   ok: boolean;
@@ -177,6 +201,16 @@ export interface CongressShareResult {
 // ── Mappers (pure, unit-testable) ──────────────────────────────────────────────
 
 /**
+ * Canonicalize a symbol for OUTBOUND rows: normalize (trim+upper) then resolve corporate-action
+ * aliases via the shared map (FB->META, SQ->XYZ, ATVI->MSFT, ...). Applied to the `ticker` field of
+ * every row App B sends to App A so a renamed ticker never fragments into a dead-symbol row on App A's
+ * side. Well-formed non-aliased symbols (incl. share-class hyphens like BRK-B) pass through unchanged.
+ */
+export function canonicalOutboundSymbol(symbol: string): string {
+  return resolveTickerAlias(normalizeSymbol(symbol));
+}
+
+/**
  * Map an app MarketQuote/summary to a (partial) company ref. This app only knows
  * name/sector/industry/market-cap — never CIK, exchange, country, ipoDate, etc. — and every name
  * in the screener universe is an equity, so assetClass defaults to "equity". Undefined fields are
@@ -185,7 +219,7 @@ export interface CongressShareResult {
 export function marketQuoteToRef(
   q: Pick<MarketQuote, "symbol" | "companyName" | "sector" | "industry" | "marketCap">
 ): CongressRef | null {
-  const ticker = normalizeSymbol(q.symbol);
+  const ticker = canonicalOutboundSymbol(q.symbol);
   if (!ticker) return null;
   const ref: CongressRef = { ticker, assetClass: "equity" };
   if (q.companyName) ref.companyName = q.companyName;
@@ -210,7 +244,7 @@ export function marketQuoteToFundamentals(
   q: Pick<MarketQuote, "symbol" | "peRatio" | "eps" | "beta" | "dividendYield" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow" | "fcfYield" | "debtToEquity" | "epsGrowth">,
   date: string
 ): CongressFundamental | null {
-  const ticker = normalizeSymbol(q.symbol);
+  const ticker = canonicalOutboundSymbol(q.symbol);
   if (!ticker) return null;
   const row: CongressFundamental = { ticker, date };
   const pe = numOrUndef(q.peRatio); if (pe !== undefined) row.peRatio = pe;
@@ -235,7 +269,7 @@ export function marketQuoteToAnalyst(
   q: Pick<MarketQuote, "symbol" | "analystRating" | "analystBySource" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian">,
   date: string
 ): CongressAnalyst | null {
-  const ticker = normalizeSymbol(q.symbol);
+  const ticker = canonicalOutboundSymbol(q.symbol);
   if (!ticker) return null;
   const counts = { strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0 };
   let haveCounts = false;
@@ -281,7 +315,7 @@ export function ohlcBarsToCloses(bars: OHLCBar[] | null | undefined): CongressCl
 
 /** Build a per-ticker price entry from OHLC bars. currentPrice/currentPriceDate = most recent close. */
 export function ohlcBarsToPriceEntry(symbol: string, bars: OHLCBar[] | null | undefined): CongressPrice | null {
-  const ticker = normalizeSymbol(symbol);
+  const ticker = canonicalOutboundSymbol(symbol);
   if (!ticker) return null;
   const closes = ohlcBarsToCloses(bars);
   if (closes.length === 0) return null;
@@ -313,7 +347,7 @@ export function buildInsiderImport(): CongressInsider[] {
     const a = agg.get(sym);
     if (!sig || !a) continue;
     out.push({
-      ticker: sym,
+      ticker: canonicalOutboundSymbol(sym),
       date: a.date,
       sentiment: sig.insiderSentiment,
       buyFilings: sig.buyFilings,
@@ -338,7 +372,7 @@ export function buildShortVolumeImport(): CongressShortVol[] {
     if (!sig) continue;
     const date = sig.asOf ?? ds?.asOf;
     if (!date) continue;
-    out.push({ ticker: sym, date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
+    out.push({ ticker: canonicalOutboundSymbol(sym), date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
   }
   return out.slice(0, maxDailyTickers());
 }
@@ -351,20 +385,67 @@ function countCloses(payload: CongressSharePayload): number {
   return n;
 }
 
+/** Minimal shape of a shared Zod row schema (avoids importing `z` just for the parameter type). */
+type RowSchema = { safeParse: (value: unknown) => { success: boolean } };
+
+/**
+ * Validate each dataset's rows against the shared row schemas and DROP any that fail, so malformed
+ * data never reaches App A's import endpoint. Validation is PER-ROW (not whole-payload) so one bad
+ * row never suppresses the valid rows in the same dataset — and it filters, rather than logs-and-sends
+ * as the old code did. Rows that pass are returned verbatim (App A's importer accepts the extra
+ * CongressRef fields the strict schema strips, so we never narrow a valid row's payload).
+ * Returns the filtered payload plus a per-dataset dropped-row count for observability.
+ */
+export function dropInvalidShareRows(
+  payload: CongressSharePayload,
+): { payload: CongressSharePayload; dropped: Record<string, number> } {
+  const dropped: Record<string, number> = {};
+  const filterRows = <T>(rows: T[] | undefined, schema: RowSchema, key: string): T[] | undefined => {
+    if (!rows || rows.length === 0) return rows;
+    const valid: T[] = [];
+    let bad = 0;
+    for (const row of rows) {
+      if (schema.safeParse(row).success) valid.push(row);
+      else bad++;
+    }
+    if (bad > 0) dropped[key] = bad;
+    return valid;
+  };
+  return {
+    payload: {
+      ...payload,
+      refs: filterRows(payload.refs, SecurityRefInputSchema, "refs"),
+      prices: filterRows(payload.prices, PriceSeriesSchema, "prices"),
+      spx: filterRows(payload.spx, PriceCloseSchema, "spx"),
+      insider: filterRows(payload.insider, InsiderRowSchema, "insider"),
+      shortVolume: filterRows(payload.shortVolume, ShortVolumeRowSchema, "shortVolume"),
+      fundamentals: filterRows(payload.fundamentals, FundamentalRowSchema, "fundamentals"),
+      analyst: filterRows(payload.analyst, AnalystRowSchema, "analyst"),
+    },
+    dropped,
+  };
+}
+
 /**
  * POST one payload to App A's import endpoint. Idempotent + safe to resend. Self-guarded: never
  * throws — returns a structured result (skipped when no token; ok:false on transport/HTTP error).
  */
 export async function shareWithCongressTrade(payload: CongressSharePayload): Promise<CongressShareResult> {
+  // Drop schema-invalid rows BEFORE building the payload so malformed data never reaches App A;
+  // `sent` (and the empty check) then reflect only what is actually transmitted.
+  const { payload: clean, dropped } = dropInvalidShareRows(payload);
+  if (Object.keys(dropped).length > 0) {
+    console.warn("[congress-share] dropped schema-invalid rows before send:", dropped);
+  }
   const sent = {
-    refs: payload.refs?.length ?? 0,
-    spx: payload.spx?.length ?? 0,
-    prices: payload.prices?.length ?? 0,
-    closes: countCloses(payload),
-    insider: payload.insider?.length ?? 0,
-    shortVolume: payload.shortVolume?.length ?? 0,
-    fundamentals: payload.fundamentals?.length ?? 0,
-    analyst: payload.analyst?.length ?? 0
+    refs: clean.refs?.length ?? 0,
+    spx: clean.spx?.length ?? 0,
+    prices: clean.prices?.length ?? 0,
+    closes: countCloses(clean),
+    insider: clean.insider?.length ?? 0,
+    shortVolume: clean.shortVolume?.length ?? 0,
+    fundamentals: clean.fundamentals?.length ?? 0,
+    analyst: clean.analyst?.length ?? 0
   };
   const token = congressTradeToken();
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
@@ -373,21 +454,13 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 
-  // Validate payload shape before sending (log but don't block — CongressRef uses optional
-  // fields while SecurityRef expects T|null; a mismatch here is expected and non-fatal).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const validation = SharePayloadSchema.safeParse(payload as any);
-  if (!validation.success) {
-    console.warn("[congress-share] payload validation warnings:", validation.error.flatten().fieldErrors);
-  }
-
   const url = `${congressTradeBaseUrl()}${API_PATHS.ADMIN_SECURITIES_IMPORT}`;
   const timeoutMs = Number(process.env.CONGRESS_SHARE_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     // Stamp our origin so the counterpart never echoes our own rows back to us (no-echo-loop guard).
-    const body = { ...payload, origin: payload.origin ?? APP_B_ORIGIN_TAG };
+    const body = { ...clean, origin: clean.origin ?? APP_B_ORIGIN_TAG };
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
@@ -453,10 +526,17 @@ export function chunkPrices(
 
 // ── Scan-refs forwarding (after each scan) ──────────────────────────────────────
 
-// Per-symbol throttle so frequent scans don't re-POST the same refs. globalThis-pinned so Next.js
-// HMR module duplication can't reset it (mirrors the scheduler's stop-monitor guard).
-const refGuardHost = globalThis as unknown as { __congressRefSentAt?: Map<string, number> };
-const refSentAt: Map<string, number> = refGuardHost.__congressRefSentAt ?? (refGuardHost.__congressRefSentAt = new Map());
+// Per-symbol throttle so frequent scans don't re-POST the same refs. Durable (survives a process
+// restart): the app now auto-deploys on every merge to main, and without this a redeploy would make
+// every symbol look "never shared" to the very next scan, re-POSTing refs shared minutes earlier.
+// Low stakes either way (App A's import endpoint is idempotent — worst case is redundant, harmless
+// network calls, per the module header above), so debounced (not immediate) flush is fine here.
+// Lazily created (not at module top level) — see provider-rate-limit.ts's quotaStore() for why
+// eagerly calling createDurableMap() at import time risks a circular-import TDZ crash.
+let refSentAtInstance: ReturnType<typeof createDurableMap<number>> | undefined;
+function refSentAt(): ReturnType<typeof createDurableMap<number>> {
+  return refSentAtInstance ?? (refSentAtInstance = createDurableMap<number>("congress-share-ref-throttle"));
+}
 
 /**
  * Forward the scan's candidate company refs — plus the fundamentals + analyst consensus App B just
@@ -481,7 +561,7 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
     for (const quote of scan.topCandidates ?? []) {
       const ref = marketQuoteToRef(quote);
       if (!ref) continue;
-      const sentAt = refSentAt.get(ref.ticker);
+      const sentAt = refSentAt().get(ref.ticker);
       if (sentAt !== undefined && now - sentAt < ttl) continue; // throttled
       refs.push(ref);
       if (includeFundamentals) {
@@ -492,14 +572,14 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
       }
       claimed.push(ref.ticker);
       // Optimistically claim BEFORE the await so concurrent scans don't double-POST the same ref.
-      refSentAt.set(ref.ticker, now);
+      refSentAt().set(ref.ticker, now);
       if (refs.length >= MAX_REFS_PER_POST) break;
     }
     if (refs.length === 0) return null;
     const result = await shareWithCongressTrade({ refs, fundamentals, analyst });
     if (!result.ok) {
       // Roll back the throttle so a later scan retries the failed refs (don't spam on success).
-      for (const ticker of claimed) refSentAt.delete(ticker);
+      for (const ticker of claimed) refSentAt().delete(ticker);
     }
     return result;
   } catch (err) {
@@ -510,7 +590,7 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
 
 /** Test seam: reset the in-memory scan-refs throttle. */
 export function resetCongressRefThrottle(): void {
-  refSentAt.clear();
+  refSentAt().clear();
 }
 
 // ── Nightly daily-close + S&P-500 batch ─────────────────────────────────────────
@@ -520,10 +600,16 @@ function utcDate(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
-/** True when the once-per-day batch has not yet run for `now`'s UTC date. Pure (no env gate). */
+/** True when the once-per-day batch has not yet run for `now`'s UTC date and isn't in failure backoff. Pure (no env gate). */
 export function isCongressDailyShareDue(now: number): boolean {
   const last = getInternalSetting<string>(LAST_DAILY_RUN_KEY);
-  return last !== utcDate(now);
+  if (last === utcDate(now)) return false;
+  
+  // 60-minute backoff after a failure to prevent unbounded retry storms
+  const lastFailure = getInternalSetting<number>("congress_share_last_failure_ms");
+  if (lastFailure && now - lastFailure < 60 * 60 * 1000) return false;
+  
+  return true;
 }
 
 /** Union of every user's watchlist symbols + policy-universe symbols (what this app monitors). */
@@ -597,6 +683,8 @@ export interface RunCongressDailyShareOptions {
    * Dow 30, …) plus the monitored symbols — for a broad cross-index backfill. Still capped by maxDailyTickers.
    */
   allIndexes?: boolean;
+  /** Opaque durable claim supplied by the outer admin guard; background callers omit it. */
+  operationLeaseClaim?: OperationLeaseClaim;
 }
 
 export interface CongressDailyShareSummary {
@@ -614,25 +702,80 @@ export interface CongressDailyShareSummary {
   responses?: unknown[];
 }
 
+let activeDailySharePromise: Promise<OperationLeaseAware<CongressDailyShareSummary>> | null = null;
+
 /**
  * Collect the monitored universe's daily closes + the S&P-500 (^GSPC) series and POST them to App A
  * in capped chunks. Reuses the app's history cache, so a name fetched earlier in the day is free.
  * Self-guarded; safe to fire-and-forget. The scheduler calls the gated wrapper below; the admin
  * route calls this with force:true.
  */
-export async function runCongressDailyShare(options: RunCongressDailyShareOptions = {}): Promise<CongressDailyShareSummary> {
+export async function runCongressDailyShare(
+  options: RunCongressDailyShareOptions = {}
+): Promise<OperationLeaseAware<CongressDailyShareSummary>> {
+  if (activeDailySharePromise) {
+    return activeDailySharePromise;
+  }
+  
+  const promise = (async () => {
+    const now = options.now ?? Date.now();
+    const empty = {
+      tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
+      posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
+    };
+    if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
+
+    const customUniverse = Array.isArray(options.symbols) && options.symbols.length > 0;
+    if (!options.force && !customUniverse && !isCongressDailyShareDue(now)) {
+      return { ok: false, skipped: true, reason: "not-due", ...empty };
+    }
+
+    const guarded = await runWithOperationLease(
+      {
+        group: OPERATION_LEASE_GROUPS.CONGRESS_SHARE,
+        operation: "congress-share",
+        claim: options.operationLeaseClaim
+      },
+      async (claim, signal) => runCongressDailyShareUnlocked(options, claim, signal)
+    );
+    if (!guarded.acquired) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "operation-in-flight",
+        ...empty,
+        operationLease: guarded.busy
+      };
+    }
+    return guarded.value;
+  })();
+
+  activeDailySharePromise = promise;
+  try {
+    return await promise;
+  } finally {
+    activeDailySharePromise = null;
+  }
+}
+
+async function runCongressDailyShareUnlocked(
+  options: RunCongressDailyShareOptions,
+  operationLeaseClaim: OperationLeaseClaim,
+  operationLeaseSignal: AbortSignal
+): Promise<CongressDailyShareSummary> {
   const now = options.now ?? Date.now();
   const empty = {
     tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
     posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
   };
   if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
-
   const customUniverse = Array.isArray(options.symbols) && options.symbols.length > 0;
+  // Recheck after durable acquisition: another process may have completed and advanced the daily
+  // marker after this caller's cheap pre-check but before it won the lease.
   if (!options.force && !customUniverse && !isCongressDailyShareDue(now)) {
     return { ok: false, skipped: true, reason: "not-due", ...empty };
   }
-
+  assertOperationLeaseOwnership(operationLeaseClaim);
   const baseUniverse = customUniverse
     ? options.symbols!
     : options.allIndexes
@@ -642,6 +785,7 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
 
   // S&P-500 daily closes (^GSPC) — sent once per day regardless of the ticker universe.
   let spx: CongressClose[] = [];
+  throwIfOperationLeaseCancelled(operationLeaseSignal);
   try {
     spx = ohlcBarsToCloses(await fetchDailyOHLC("^GSPC", now));
   } catch (err) {
@@ -659,6 +803,7 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   const perTicker = async (symbols: string[]): Promise<CongressPrice[]> =>
     (
       await mapPool(symbols, concurrency, async (symbol) => {
+        throwIfOperationLeaseCancelled(operationLeaseSignal);
         try {
           return capCloses(ohlcBarsToPriceEntry(symbol, await fetchDailyOHLC(symbol, now)));
         } catch {
@@ -675,6 +820,7 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
     const toISO = toBusinessDay(now) ?? new Date(now).toISOString().slice(0, 10);
     const fromISO = new Date(now - years * 365 * 86_400_000).toISOString().slice(0, 10);
     let seriesBySymbol = new Map<string, OHLCBar[]>();
+    throwIfOperationLeaseCancelled(operationLeaseSignal);
     try {
       seriesBySymbol = await fetchGroupedDailyBarsRange(fromISO, toISO, { tickers: universe });
     } catch (err) {
@@ -711,7 +857,9 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   let failedPosts = 0;
   const sent = { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 };
   for (const payload of payloads) {
+    assertOperationLeaseOwnership(operationLeaseClaim);
     const result = await shareWithCongressTrade(payload);
+    throwIfOperationLeaseCancelled(operationLeaseSignal);
     posts++;
     if (result.ok) {
       responses.push(result.response);
@@ -727,11 +875,16 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
 
   const ok = posts > 0 && failedPosts === 0;
   // Advance the once-per-day marker only for the real scheduled universe (not admin custom-symbol tests).
-  if (ok && !customUniverse) {
+  if (!customUniverse) {
+    assertOperationLeaseOwnership(operationLeaseClaim);
     try {
-      setInternalSetting(LAST_DAILY_RUN_KEY, utcDate(now));
+      if (ok) {
+        setInternalSetting(LAST_DAILY_RUN_KEY, utcDate(now));
+      } else {
+        setInternalSetting("congress_share_last_failure_ms", now);
+      }
     } catch (err) {
-      console.error("[congress-share] failed to persist daily-run marker:", err);
+      console.error("[congress-share] failed to persist daily-run or failure marker:", err);
     }
   }
 
@@ -771,7 +924,9 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
  * Scheduler entry point: run the nightly batch at most once per UTC day, only when automatic
  * sharing is enabled. Self-guarded; returns null when disabled/not due so the tick stays clean.
  */
-export async function runCongressDailyShareIfDue(now: number = Date.now()): Promise<CongressDailyShareSummary | null> {
+export async function runCongressDailyShareIfDue(
+  now: number = Date.now()
+): Promise<OperationLeaseAware<CongressDailyShareSummary> | null> {
   try {
     if (!isCongressShareAutoEnabled()) return null;
     if (!isCongressDailyShareDue(now)) return null;
