@@ -34,13 +34,20 @@ describe("Connection Health & Failure Routing", () => {
     db.getDb().prepare("DELETE FROM audit_events").run();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.PRIMARY_USER_EMAIL;
     delete process.env.RESEND_API_KEY;
     delete process.env.NOTIFY_EMAIL_FROM;
     delete process.env.DB_BOOTSTRAP;
     delete process.env.LITESTREAM_SOCKET_PATH;
     delete process.env.LITESTREAM_STATE_PATH;
+    delete process.env.RAG_EMBED_PROVIDER;
+    // Remove any stored openrouter key seeded by the provider-aware voyage-criticality tests so
+    // activeEmbeddingProvider() resolves back to voyage for the rest of the suite.
+    try {
+      const { db } = await load();
+      db.deleteUserApiKey("local", "openrouter");
+    } catch { /* best-effort */ }
     vi.unstubAllGlobals();
   });
 
@@ -136,14 +143,17 @@ describe("Connection Health & Failure Routing", () => {
     await health.alertStorageWarning("disk_space", "Persistent volume is nearly full");
 
     expect(calls).toEqual(["https://api.resend.com/emails"]);
-    const event = db.listNotificationEvents("local", 10).find((candidate) => candidate.title === "Storage Warning: disk space");
-    expect(event).toMatchObject({ status: "sent", error: undefined });
+    const eventAuditRow = db
+      .getDb()
+      .prepare("SELECT payload FROM audit_events WHERE kind = 'notification' ORDER BY created_at DESC LIMIT 1")
+      .get() as { payload: string } | undefined;
+    expect(JSON.parse(eventAuditRow?.payload ?? "{}")).toMatchObject({ title: "Storage Warning: disk space", status: "sent" });
     const delivery = db
       .getDb()
       .prepare("SELECT payload FROM audit_events WHERE kind = 'notification.delivery' ORDER BY created_at DESC LIMIT 1")
       .get() as { payload: string } | undefined;
     expect(JSON.parse(delivery?.payload ?? "{}")).toMatchObject({
-      notificationEventId: event?.id,
+      notificationEventId: JSON.parse(eventAuditRow?.payload ?? "{}").id,
       status: "sent",
       results: [{ channel: "email", ok: true }]
     });
@@ -196,6 +206,59 @@ describe("Connection Health & Failure Routing", () => {
     expect(body.checks.dependencies.pinecone.ok).toBe(false);
   });
 
+  // Provider-aware RAG criticality (bge-m3-metering-gate, 2026-07-18): the active embed /
+  // rerank lanes fail liveness ONLY while that provider is the ACTIVE embed provider.
+  it("/api/health stays 200 on a hard-stopped openrouter-rerank lane when SiliconFlow is the active embed provider", async () => {
+    const { healthRoute, db } = await load();
+
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    db.upsertUserApiKey("local", "siliconflow", "sf-test-key");
+
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({ service: "openrouter-rerank", ok: false, errorText: "OpenRouter down", keySource: "env" });
+    }
+
+    const response = await healthRoute.GET();
+    expect(response.status).toBe(200); // openrouter-rerank is not active -> not critical
+
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.checks.ragEmbedProvider).toBe("siliconflow");
+  });
+
+  it("/api/health still 503s on a hard-stopped openrouter lane when OpenRouter IS the active embed provider", async () => {
+    const { healthRoute, db } = await load();
+
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    db.upsertUserApiKey("local", "openrouter", "sk-or-test-key");
+
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({ service: "openrouter", ok: false, errorText: "OpenRouter down", keySource: "env" });
+    }
+
+    const response = await healthRoute.GET();
+    expect(response.status).toBe(503);
+
+    const body = await response.json();
+    expect(body.ok).toBe(false);
+    expect(body.checks.ragEmbedProvider).toBe("openrouter");
+    expect(body.checks.dependencies.openrouter.ok).toBe(false);
+  });
+
+  it("/api/health survives a pinned-but-keyless RAG_EMBED_PROVIDER (reports the config error, no 503 loop)", async () => {
+    const { healthRoute, db } = await load();
+
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    process.env.RAG_EMBED_PROVIDER = "openrouter"; // pinned, but no openrouter key configured
+
+    const response = await healthRoute.GET();
+    expect(response.status).toBe(200);
+
+    const body = await response.json();
+    expect(body.checks.ragConfigured).toBe(false);
+    expect(String(body.checks.ragEmbedProviderError)).toMatch(/RAG_EMBED_PROVIDER/);
+  });
+
   it("/api/health remains 200 but lists degraded status for non-critical global dependencies", async () => {
     const { healthRoute, db } = await load();
 
@@ -232,5 +295,94 @@ describe("Connection Health & Failure Routing", () => {
       litestreamDegradedReasons: ["unavailable"]
     });
     expect(body.checks.storageDegraded).toBe(true);
+  });
+
+  // Alpha Vantage daily-cap exhaustion is a quota failure, not a transient connection blip: it
+  // cannot clear before the provider's own daily reset, so re-alerting every generic 6h window is
+  // pure noise for the SAME still-ongoing exhaustion (confirmed prod pattern: 1:31 AM and 8:02 AM
+  // alerts for one exhausted key pool). `opts.cooldownUntil` lets the AV call site stretch the
+  // suppression window to that reset instant instead of the fixed 6h; every other caller (no
+  // cooldownUntil) keeps the fixed window unchanged.
+  describe("alertConnectionFailure cooldown: quota-exhaustion vs generic", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("a quota-exhaustion cooldownUntil suppresses a second alert 7h later, same cap-day", async () => {
+      const { health, notificationsMod } = await load();
+      const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
+
+      const start = Date.parse("2026-07-15T05:31:00Z"); // 1:31 AM ET
+      vi.useFakeTimers();
+      vi.setSystemTime(start);
+      // Simulate the AV call site's actual reset-instant computation: ~12h away, well past a 7h check.
+      const cooldownUntil = new Date(start + 12 * 60 * 60_000).toISOString();
+
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
+      // 7h later: past the GENERIC 6h window, but still well before this cap-day's reset.
+      vi.setSystemTime(start + 7 * 60 * 60_000);
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1); // still suppressed — no 8:02 AM repeat
+    });
+
+    it("a non-quota failure (no cooldownUntil) still re-alerts after the generic 6h window", async () => {
+      const { health, notificationsMod } = await load();
+      const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
+
+      const start = Date.parse("2026-07-15T05:31:00Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(start);
+
+      await health.alertConnectionFailure("finnhub", "env", null, "HTTP 500");
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(start + 7 * 60 * 60_000); // 7h later — past the 6h generic window
+      await health.alertConnectionFailure("finnhub", "env", null, "HTTP 500");
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(2); // re-alerts — behavior unchanged
+    });
+
+    it("alerts again once the cap-day's cooldownUntil instant itself has passed (next reset)", async () => {
+      const { health, notificationsMod } = await load();
+      const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
+
+      const start = Date.parse("2026-07-15T05:31:00Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(start);
+      const firstReset = new Date(start + 2 * 60 * 60_000).toISOString(); // reset only 2h away
+
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil: firstReset });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
+      // Still before the reset — stays suppressed.
+      vi.setSystemTime(start + 60 * 60_000);
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil: firstReset });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
+      // Past the reset instant — this is a NEW cap-day's exhaustion, so it alerts again.
+      vi.setSystemTime(start + 2 * 60 * 60_000 + 1000);
+      const nextReset = new Date(start + 26 * 60 * 60_000).toISOString();
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil: nextReset });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("falls back to the generic 6h window when cooldownUntil is already in the past", async () => {
+      const { health, notificationsMod } = await load();
+      const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
+
+      const start = Date.parse("2026-07-15T05:31:00Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(start);
+      const pastReset = new Date(start - 1000).toISOString(); // already elapsed — defensive/malformed input
+
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil: pastReset });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
+      // 1h later — well inside the generic 6h fallback window — stays suppressed.
+      vi.setSystemTime(start + 60 * 60_000);
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil: pastReset });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });

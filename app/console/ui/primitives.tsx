@@ -14,14 +14,34 @@ export function Card({
   action,
   children,
   className,
-  padded = true
+  padded = true,
+  collapsible = false,
+  defaultOpen = true
 }: {
   title?: ReactNode;
   action?: ReactNode;
   children: ReactNode;
   className?: string;
   padded?: boolean;
+  /** Render the card as a collapsible disclosure (native <details>) with the title as the
+   *  summary and a chevron. Requires a title. Off by default so existing cards are unchanged. */
+  collapsible?: boolean;
+  /** Initial open state when collapsible. Defaults to open so nothing is hidden on first load. */
+  defaultOpen?: boolean;
 }) {
+  if (collapsible && title) {
+    return (
+      <details className={cx("con-card con-disclosure", className)} open={defaultOpen}>
+        <summary className="px-4 py-3">
+          <span className="con-card-title">{title}</span>
+          {action && (
+            <span className="ml-auto" onClick={(e) => e.preventDefault()}>{action}</span>
+          )}
+        </summary>
+        <div className={padded ? "px-4 pb-4 pt-1" : undefined}>{children}</div>
+      </details>
+    );
+  }
   return (
     <section className={cx("con-card", className)}>
       {(title || action) && (
@@ -54,8 +74,9 @@ export function Btn({
   className,
   type = "button",
   title,
+  align,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: "sm" }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: "sm"; align?: "center" | "left" | "right" }) {
   const button = (
     <button
       type={type}
@@ -64,7 +85,7 @@ export function Btn({
     />
   );
   if (title) {
-    return <Tooltip content={title}>{button}</Tooltip>;
+    return <Tooltip content={title} align={align}>{button}</Tooltip>;
   }
   return button;
 }
@@ -73,8 +94,9 @@ export function IconButton({
   label,
   className,
   type = "button",
+  align,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; align?: "center" | "left" | "right" }) {
   const button = (
     <button
       type={type}
@@ -86,7 +108,7 @@ export function IconButton({
       {...rest}
     />
   );
-  return <Tooltip content={label}>{button}</Tooltip>;
+  return <Tooltip content={label} align={align}>{button}</Tooltip>;
 }
 
 // ── Chip ─────────────────────────────────────────────────────────────────────
@@ -105,14 +127,29 @@ export const TONE_VAR: Record<ChipTone, string> = {
   info: "var(--con-info)",
   none: "var(--con-none)",
   paper: "var(--con-paper)",
-  live: "var(--con-live)"
+  // Accent, not --con-live red: .con-chip-live (console.css) deliberately renders the
+  // live state in the accent tint — live trading is this app's normal state, not an
+  // alarm. Dots and chip fallbacks must agree with the chip class.
+  live: "var(--con-accent)"
 };
 
 const CHIP_CLASS: Record<ChipTone, string | undefined> = Object.fromEntries(
   (Object.keys(TONE_VAR) as ChipTone[]).map((tone) => [tone, tone === "muted" ? undefined : `con-chip-${tone}`])
 ) as Record<ChipTone, string | undefined>;
 
-export function Chip({ tone = "muted", className, title, children }: { tone?: ChipTone; className?: string; title?: string; children: ReactNode }) {
+export function Chip({
+  tone = "muted",
+  className,
+  title,
+  align,
+  children
+}: {
+  tone?: ChipTone;
+  className?: string;
+  title?: string;
+  align?: "center" | "left" | "right";
+  children: ReactNode;
+}) {
   const chip = (
     <span className={cx("con-chip", CHIP_CLASS[tone], className)}>
       {children}
@@ -121,7 +158,7 @@ export function Chip({ tone = "muted", className, title, children }: { tone?: Ch
   // Only pay for the Tooltip (state + effects) when there's actually a title —
   // matches the Btn pattern above and avoids per-chip hook overhead in lists.
   if (title) {
-    return <Tooltip content={title}>{chip}</Tooltip>;
+    return <Tooltip content={title} align={align}>{chip}</Tooltip>;
   }
   return chip;
 }
@@ -323,7 +360,7 @@ export function Segmented<T extends string>({
     <div
       role="group"
       aria-label={ariaLabel}
-      className={cx("inline-flex rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-0.5", className)}
+      className={cx("inline-flex rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-0.5", className)}
     >
       {options.map((opt) => {
         const active = value === opt.value;
@@ -392,11 +429,13 @@ export function SignedText({ value, children }: { value: number | null | undefin
 export function Tooltip({
   children,
   content,
-  className
+  className,
+  align = "center"
 }: {
   children: ReactNode;
   content: ReactNode;
   className?: string;
+  align?: "center" | "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
@@ -411,6 +450,13 @@ export function Tooltip({
   }, [open]);
 
   if (!content) return <>{children}</>;
+
+  const alignClass =
+    align === "right"
+      ? "right-0 translate-x-0"
+      : align === "left"
+      ? "left-0 translate-x-0"
+      : "left-1/2 -translate-x-1/2";
 
   return (
     <span
@@ -432,7 +478,10 @@ export function Tooltip({
             exit={{ opacity: 0, y: 2, scale: 0.98 }}
             transition={{ duration: 0.15, ease: "easeOut" }}
             role="tooltip"
-            className="pointer-events-none absolute bottom-full left-1/2 z-[100] mb-2 w-max max-w-xs -translate-x-1/2 rounded-[var(--con-radius-sm)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] px-2.5 py-1.5 text-center text-[length:var(--con-fs-xs)] font-medium leading-snug text-[color:var(--con-fg)] shadow-[var(--con-shadow-lg)]"
+            className={cx(
+              "pointer-events-none absolute bottom-full z-[100] mb-2 w-max max-w-xs rounded-[var(--con-radius-sm)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] px-2.5 py-1.5 text-center text-[length:var(--con-fs-xs)] font-medium leading-snug text-[color:var(--con-fg)] shadow-[var(--con-shadow-lg)]",
+              alignClass
+            )}
           >
             {content}
           </motion.div>

@@ -61,12 +61,18 @@ import { isOverLlmBudget } from "./llm-budget";
 import { buildLlmRequestBody, extractLlmText, llmAuthHeaders, type LlmJsonSchema } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
 import { resolveLlmEndpoint } from "./llm-provider";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
-import { extractLlmUsage, recordLlmUsage } from "./llm-usage";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, normalizeReasoningEffortForModel } from "./llm-request";
+import { extractLlmUsage, providerRequestIdFromPayload, recordLlmUsage } from "./llm-usage";
+import { recommendedReasoningEffortForModel } from "./model-reasoning-recommendations";
 import { sendNotification } from "./notifications";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
-import type { LearnedContextPendingRow, LearnedContextRow, TradingPolicy } from "./types";
+import type {
+  LearnedContextPendingRow,
+  LearnedContextRow,
+  LlmReasoningEffort,
+  TradingPolicy
+} from "./types";
 
 // The reviewer model's default lives in DEFAULT_POLICY.learningReviewModel (a real,
 // explicit "claude-fable-5" value shown in the UI) — NOT a hidden fallback here. This
@@ -119,14 +125,22 @@ function lastConfigKey(userId: string): string {
   return `${LAST_CONFIG_KEY_PREFIX}:${userId}`;
 }
 
-/** Cheap signature of the review CONFIG (mode + model). A change here must force a fresh review of
+function learningReviewReasoningEffort(policy: TradingPolicy): LlmReasoningEffort | undefined {
+  const model = policy.learningReviewModel?.trim();
+  return normalizeReasoningEffortForModel(
+    model,
+    policy.learningReviewReasoningEffort ?? recommendedReasoningEffortForModel(model, "review")
+  );
+}
+
+/** Cheap signature of the review CONFIG (mode + model + reasoning effort). A change here must force a fresh review of
  *  the EXISTING set even when no new lessons arrived: the fingerprint already encodes mode/model,
  *  but the scheduler's trigger gate short-circuits before the fingerprint is ever built, so the
  *  scheduler compares this signature directly (#1). Mirrors the runner's mode/model normalization
  *  (annotate opt-out; a blank model is handled by the no-model skip, not substituted). */
 function reviewConfigSignature(policy: TradingPolicy): string {
   const mode = policy.learningReviewMode === "annotate" ? "annotate" : "decide";
-  return `${mode}|${policy.learningReviewModel?.trim() ?? ""}`;
+  return `${mode}|${policy.learningReviewModel?.trim() ?? ""}|${learningReviewReasoningEffort(policy) ?? "none"}`;
 }
 
 /** ms of the last SUCCESSFUL review (0 if never). Used to count "new since last review". */
@@ -197,12 +211,17 @@ export function evaluateLearningReviewTrigger(userId: string, now: number, polic
  *  excludes the failure-event log: it's noisy (routine 429s/timeouts) and would force a
  *  re-review most days, defeating the point — a genuinely corrupting failure surfaces as a
  *  new fact/mutation, which is already in the items. */
-function reviewFingerprint(pack: LearningReviewContextPack, mode: "annotate" | "decide", model: string): string {
+function reviewFingerprint(
+  pack: LearningReviewContextPack,
+  mode: "annotate" | "decide",
+  model: string,
+  reasoningEffort: LlmReasoningEffort | undefined
+): string {
   const items = pack.items
     .map((it) => `${it.table}|${it.id}|${it.subject}|${it.value}|${it.riskTier}|${it.confidence ?? ""}|${it.at}`)
     .sort();
   const notes = pack.systemHistory.rolloutNotes.map((n) => n.firstLine).sort();
-  return createHash("sha256").update(JSON.stringify({ items, notes, mode, model })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ items, notes, mode, model, reasoningEffort })).digest("hex");
 }
 
 function utcDate(now: number): string {
@@ -657,6 +676,7 @@ export interface LearningReviewRunSummary {
   reason?: string;
   mode?: "annotate" | "decide";
   model?: string;
+  reasoningEffort?: LlmReasoningEffort;
   itemsReviewed: number;
   verdicts: number;
   applied: number;
@@ -705,6 +725,7 @@ export async function runDailyLearningReview(
     audit("learning_review_summary", { mode, itemsReviewed: 0, verdicts: 0, applied: 0, reason: "no-model" }, userId);
     return { ok: false, skipped: true, reason: "no-model", mode, ...empty };
   }
+  const reasoningEffort = learningReviewReasoningEffort(policy);
   const advanceMarker = () => {
     try {
       setInternalSetting(lastRunKey(userId), utcDate(now));
@@ -737,7 +758,7 @@ export async function runDailyLearningReview(
   // Don't waste a call re-reviewing an unchanged set: if the exact items + landed-fix history
   // + review config (mode/model) match the last SUCCESSFUL review, the LLM has nothing new to
   // add. Advance the marker (we checked today) but make no call. `force` always re-runs.
-  const fingerprint = reviewFingerprint(pack, mode, model);
+  const fingerprint = reviewFingerprint(pack, mode, model, reasoningEffort);
   if (!options.force && getInternalSetting<string>(lastFingerprintKey(userId)) === fingerprint) {
     advanceMarker();
     audit("learning_review_summary", { mode, model, itemsReviewed: pack.items.length, verdicts: 0, applied: 0, reason: "unchanged" }, userId);
@@ -775,8 +796,12 @@ export async function runDailyLearningReview(
           systemPrompt: SYSTEM_PROMPT,
           userContent,
           maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.learningReview,
-          reasoningEffort: policy.llmReasoningEffort,
-          schema: LEARNING_REVIEW_SCHEMA
+          reasoningEffort,
+          schema: LEARNING_REVIEW_SCHEMA,
+          userId,
+          keyRef,
+          service: "strategy",
+          feature: "learning-review"
         }
       );
       const traced = await withLlmGeneration(
@@ -808,6 +833,7 @@ export async function runDailyLearningReview(
             keySource,
             keyRef,
             connectedAccountId: policy.connectedAccountId,
+            providerRequestId: providerRequestIdFromPayload(provider, payload),
             ...extractLlmUsage(payload)
           });
           return { text: extractLlmText(payload) };
@@ -820,23 +846,23 @@ export async function runDailyLearningReview(
     // isn't retried on every scheduler tick for the rest of the day.
     advanceMarker();
     const message = error instanceof Error ? error.message : String(error);
-    audit("learning_review_failed", { mode, model, reason: message, itemCount: pack.items.length }, userId);
+    audit("learning_review_failed", { mode, model, reasoningEffort, reason: message, itemCount: pack.items.length }, userId);
     console.error("[learning-review] LLM call failed:", message);
-    return { ok: false, reason: "llm-failed", mode, model, ...empty };
+    return { ok: false, reason: "llm-failed", mode, model, reasoningEffort, ...empty };
   }
 
   const result = parseLearningReviewVerdicts(text);
   if (!result) {
     advanceMarker();
-    audit("learning_review_failed", { mode, model, reason: "parse-failed", itemCount: pack.items.length }, userId);
-    return { ok: false, reason: "parse-failed", mode, model, ...empty };
+    audit("learning_review_failed", { mode, model, reasoningEffort, reason: "parse-failed", itemCount: pack.items.length }, userId);
+    return { ok: false, reason: "parse-failed", mode, model, reasoningEffort, ...empty };
   }
 
   // Annotate (always): one audit per verdict + the run summary.
   for (const verdict of result.reviews) {
     audit(
       "learning_review_verdict",
-      { id: verdict.id, table: verdict.table, verdict: verdict.verdict, confidence: verdict.confidence, reasoning: verdict.reasoning, mode, model },
+      { id: verdict.id, table: verdict.table, verdict: verdict.verdict, confidence: verdict.confidence, reasoning: verdict.reasoning, mode, model, reasoningEffort },
       userId
     );
   }
@@ -880,6 +906,7 @@ export async function runDailyLearningReview(
     {
       mode,
       model,
+      reasoningEffort,
       itemsReviewed: pack.items.length,
       verdicts: result.reviews.length,
       flagged,
@@ -925,7 +952,7 @@ export async function runDailyLearningReview(
           mode === "decide"
             ? `Daily learning review: ${flagged} of ${result.reviews.length} flagged, ${applied.length} applied`
             : `Daily learning review: ${flagged} of ${result.reviews.length} flagged`,
-        payload: { summary: result.summary, mode, model, itemsReviewed: pack.items.length, flagged, applied }
+        payload: { summary: result.summary, mode, model, reasoningEffort, itemsReviewed: pack.items.length, flagged, applied }
       },
       { policy, userId }
     );
@@ -933,7 +960,7 @@ export async function runDailyLearningReview(
     console.error("[learning-review] notification failed:", error);
   }
 
-  return { ok: true, mode, model, itemsReviewed: pack.items.length, verdicts: result.reviews.length, applied: applied.length };
+  return { ok: true, mode, model, reasoningEffort, itemsReviewed: pack.items.length, verdicts: result.reviews.length, applied: applied.length };
 }
 
 /**

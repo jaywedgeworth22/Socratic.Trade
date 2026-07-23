@@ -23,7 +23,7 @@ import type { MarketQuote, PendingProposal, SocraticDecisionCase, SocraticFramew
 import { EquityChart } from "./components/equity-chart";
 import { PositionsCard } from "./components/positions";
 import { deriveDayPnl, deriveMarkToMarket, deriveReality, deriveRiskUtilization, deriveSpend, deriveStateInfo, selectEquityWindow } from "./lib/derive";
-import { EM_DASH, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
+import { cx, EM_DASH, fmtDay, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
 import {
   decisionStatusLabel,
   evidenceKindLabel,
@@ -33,13 +33,13 @@ import {
   plainLabel,
   thesisTagLabel
 } from "./lib/labels";
-import { redTeamFailureMeta } from "./lib/red-team";
+import { redTeamFailureMeta, redTeamVerdictLabel } from "./lib/red-team";
+import { decisionActionLabel, deterministicOutcomePresentation, splitThesisRationale } from "./lib/thesis";
 import { useConsoleData } from "./lib/useConsoleData";
 import { RunOnceButton } from "./components/chrome";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
 import { SymbolButton } from "./ui/symbol-drilldown";
-
-const SIDE_LABEL: Record<string, string> = { buy: "Bought", sell: "Sold", short: "Shorted", cover: "Covered" };
+import { isNotPlacedStatus, sideVerb } from "./lib/action-verbs";
 
 export default function ConsoleHomePage() {
   const { snapshot, refresh } = useConsoleData();
@@ -82,9 +82,14 @@ export default function ConsoleHomePage() {
             <Brain size={13} /> Live thesis
           </div>
           <h1>{deriveThesisHeadline(latest, primaryProposal, primaryDecision)}</h1>
-          <p>{deriveThesisBody(latest, primaryProposal, primaryDecision)}</p>
+          <ThesisNarrative
+            latest={latest}
+            proposal={primaryProposal}
+            decision={primaryDecision}
+            status={primaryDecision?.status ?? primaryTrace?.status}
+          />
           <div className="mt-4 flex flex-wrap gap-2">
-            <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : "pos"} title={state.detail}>
+            <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"} title={state.detail}>
               {state.label}
             </Chip>
             <Chip tone={reality.tone} title={reality.clarification}>
@@ -112,9 +117,18 @@ export default function ConsoleHomePage() {
           </div>
           <p>
             {typeof spend.capNotional === "number"
-              ? `remaining opening authority today, out of ${fmtMoneyWhole(spend.capNotional)}`
+              ? `remaining opening authority today, out of ${
+                  spend.capMode === "pct_nav"
+                    ? `${fmtPct(spend.capConfiguredValue, 1)} of portfolio (${fmtMoneyWhole(spend.capNotional)})`
+                    : `${fmtMoneyWhole(spend.capNotional)} fixed${spend.capPctOfNav != null ? ` (${fmtPct(spend.capPctOfNav, 1)} of portfolio)` : ""}`
+                }`
               : `buying power visible to the active account`}
           </p>
+          {spend.capMode === "dollar" && (spend.capPctOfNav ?? 0) > 100 && (
+            <p className="mt-2 font-semibold text-[color:var(--con-warn)]">
+              This fixed daily cap exceeds the account&apos;s current value; percent mode will track NAV automatically.
+            </p>
+          )}
           <Meter value={spend.usedNotional} max={spend.capNotional} className="mt-3" />
         </div>
       </section>
@@ -155,7 +169,7 @@ export default function ConsoleHomePage() {
             }
             action={
               <Link href="/console/scan" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                Evidence board <ArrowRight size={12} />
+                Evidence <ArrowRight size={12} />
               </Link>
             }
           >
@@ -203,10 +217,23 @@ export default function ConsoleHomePage() {
                   )}
                 </div>
                 <div
-                  className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                  title={dayPnl ? `Baseline: ${fmtMoney(dayPnl.baselineEquity)} at ${fmtExact(dayPnl.baselineAt)}` : undefined}
+                  className={cx(
+                    "mt-0.5 text-[length:var(--con-fs-xs)]",
+                    dayPnl?.isStaleBaseline ? "font-semibold text-[color:var(--con-warn)]" : "text-[color:var(--con-faint)]"
+                  )}
+                  title={
+                    dayPnl
+                      ? dayPnl.isStaleBaseline
+                        ? `Baseline: ${fmtMoney(dayPnl.baselineEquity)} at ${fmtExact(dayPnl.baselineAt)}. No snapshot was persisted between then and today, so this compares across a real gap, not just "yesterday" — treat it as directional only.`
+                        : `Baseline: ${fmtMoney(dayPnl.baselineEquity)} at ${fmtExact(dayPnl.baselineAt)}`
+                      : undefined
+                  }
                 >
-                  {dayPnl ? "vs last snapshot before today" : "no prior-day snapshot yet"}
+                  {dayPnl
+                    ? dayPnl.isStaleBaseline
+                      ? `No recent baseline — comparing to ${fmtDay(dayPnl.baselineAt)}`
+                      : "vs last snapshot before today"
+                    : "no prior-day snapshot yet"}
                 </div>
               </div>
               <Stat label="Cash" value={fmtMoney(portfolio?.cash)} sub={`Buying power ${fmtMoney(portfolio?.buyingPower)}`} />
@@ -280,7 +307,7 @@ export default function ConsoleHomePage() {
                 href={hasFrameworkProposals ? "/console/strategy" : "/console/results#thesis-regime"}
                 className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]"
               >
-                {hasFrameworkProposals ? "Framework" : "Results"} <ArrowRight size={12} />
+                {hasFrameworkProposals ? "Strategy" : "Results"} <ArrowRight size={12} />
               </Link>
             }
           >
@@ -300,7 +327,7 @@ export default function ConsoleHomePage() {
               <div className="sm:hidden">
                 <RunOnceButton snapshot={snapshot} size="sm" />
               </div>
-              <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : "pos"}>{state.label}</Chip>
+              <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"}>{state.label}</Chip>
               {latestRow && (
                 <Chip tone={latestRow.status === "failed" ? "neg" : "muted"}>
                   latest {latestRow.status} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
@@ -308,7 +335,9 @@ export default function ConsoleHomePage() {
               )}
             </div>
             <div className="mt-3 border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              {state.state === "active" && nextRun ? (
+              {state.state === "active" && state.marketOpen === false ? (
+                <span title={state.detail}>{state.detail}</span>
+              ) : state.state === "active" && nextRun ? (
                 <span title={fmtExact(nextRun)}>Next scheduled run {timeUntil(nextRun)} · cadence {snapshot.policy.runCadenceMinutes} min</span>
               ) : state.state === "active" ? (
                 <span title={`Configured cadence: every ${snapshot.policy.runCadenceMinutes} minutes.`}>
@@ -463,16 +492,111 @@ function deriveThesisHeadline(latest: StrategyDecision | undefined, proposal: Tr
   return "Waiting for the next market thesis.";
 }
 
-function deriveThesisBody(latest: StrategyDecision | undefined, proposal: TradeProposal | undefined, decision?: SocraticDecisionCase): string {
-  if (decision?.rationale) {
-    const expression = decision.symbol ? `Current expression: ${decision.side ? `${decision.side.toUpperCase()} ` : ""}${decision.symbol}. ` : "";
-    return `${expression}${decision.rationale}`;
+function ThesisNarrative({
+  latest,
+  proposal,
+  decision,
+  status
+}: {
+  latest: StrategyDecision | undefined;
+  proposal: TradeProposal | undefined;
+  decision?: SocraticDecisionCase;
+  status?: string;
+}) {
+  const rationale = decision?.rationale ?? proposal?.rationale;
+  if (!rationale) {
+    return (
+      <p>
+        {latest?.summary ?? "Run Socratic Trade to form a thesis from the current market, portfolio, evidence, and remembered outcomes."}
+      </p>
+    );
   }
-  if (proposal?.rationale) {
-    return `Current expression: ${proposal.side.toUpperCase()} ${proposal.symbol}. ${proposal.rationale}`;
-  }
-  if (latest?.summary) return latest.summary;
-  return "Run Socratic Trade to form a thesis from the current market, portfolio, evidence, and remembered outcomes.";
+
+  const parts = splitThesisRationale(
+    rationale,
+    decision?.greenTeamRationale ?? proposal?.greenTeamRationale
+  );
+  const redTeam = decision?.redTeamVerdict ?? proposal?.redTeamVerdict;
+  const sizing = decision?.sizingSnapshot ?? proposal?.sizingSnapshot;
+  const outcome = deterministicOutcomePresentation(status, decision?.policyDecision);
+  const symbol = decision?.symbol ?? proposal?.symbol;
+  const side = decision?.side ?? proposal?.side;
+  const expression = symbol ? `Current expression: ${side ? `${side.toUpperCase()} ` : ""}${symbol}. ` : "";
+
+  return (
+    <div className="mt-3 grid gap-3 text-[length:var(--con-fs-sm)] leading-relaxed">
+      <section className="rounded-control border border-[color:var(--con-pos-border)] border-l-4 border-l-[color:var(--con-pos)] bg-[color:var(--con-pos-soft)] px-3 py-2.5">
+        <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-pos)]">
+          Green Team proposal
+        </div>
+        <p className="mt-1">{expression}{parts.greenTeam}</p>
+      </section>
+
+      {(parts.checks || sizing) && (
+        <section className="rounded-control border border-[color:var(--con-line)] px-3 py-2.5">
+          <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-faint)]">
+            Deterministic sizing &amp; risk receipts
+          </div>
+          {sizing && (
+            <p className="mt-1 font-semibold">
+              App-calculated at decision time: {fmtMoney(sizing.estimatedNotional)} = {fmtPct(sizing.estimatedPctOfNav, 2)} of {fmtMoney(sizing.portfolioValue)} NAV.
+              {sizing.sizeBasis === "quantity" && sizing.quantity != null
+                ? ` Broker route: ${sizing.quantity} share${sizing.quantity === 1 ? "" : "s"}.`
+                : sizing.sizeBasis === "notional" && sizing.dollarAmount != null
+                  ? ` Broker route: ${fmtMoney(sizing.dollarAmount)} notional.`
+                  : ""}
+              {sizing.dailyOpeningCap
+                ? ` Daily opening cap: ${
+                    sizing.dailyOpeningCap.mode === "pct_nav"
+                      ? `${fmtPct(sizing.dailyOpeningCap.configuredValue, 1)} of NAV`
+                      : `${fmtMoney(sizing.dailyOpeningCap.configuredValue)} fixed (${fmtPct(sizing.dailyOpeningCap.pctOfNav, 1)} of NAV)`
+                  } = ${fmtMoney(sizing.dailyOpeningCap.effectiveNotional)}.`
+                : ""}
+              {sizing.dailyNotionalUsed != null
+                ? ` Used today: ${fmtMoney(sizing.dailyNotionalUsed)}${
+                    sizing.remainingDailyNotional != null
+                      ? `; remaining: ${fmtMoney(sizing.remainingDailyNotional)}`
+                      : ""
+                  }.`
+                : ""}
+            </p>
+          )}
+          {parts.checks && <p className="mt-1">{parts.checks}</p>}
+        </section>
+      )}
+
+      {redTeam && (
+        <section className="rounded-control border border-[color:var(--con-neg-border)] border-l-4 border-l-[color:var(--con-neg)] bg-[color:var(--con-neg-soft)] px-3 py-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-neg)]">
+              Red Team review
+            </div>
+            <Chip tone={!redTeam.available ? "warn" : redTeam.rejected ? "neg" : "pos"}>
+              {redTeamVerdictLabel(redTeam, decision?.policyDecision?.socraticOverride?.applied, status)}
+            </Chip>
+          </div>
+          <p className="mt-1">{redTeam.reason}</p>
+        </section>
+      )}
+
+      {outcome && (
+        <section
+          className={`rounded-control border px-3 py-2.5 ${
+            outcome.tone === "pos"
+              ? "border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)]"
+              : outcome.tone === "neg"
+                ? "border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)]"
+                : "border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)]"
+          }`}
+        >
+          <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-faint)]">
+            Deterministic outcome · {outcome.label}
+          </div>
+          <p className="mt-1">{outcome.body}</p>
+        </section>
+      )}
+    </div>
+  );
 }
 
 function formatMarketThesis(raw: string, symbol?: string | null): string {
@@ -506,7 +630,7 @@ function decisionFromSocratic(decision: SocraticDecisionCase): DecisionRowData {
   return {
     id: decision.id,
     symbol: decision.symbol ?? "Portfolio",
-    verb: decision.side ? SIDE_LABEL[decision.side] ?? decision.side : "Observed",
+    verb: sideVerb(decision.side, decision.status),
     size: decision.notional ? fmtMoney(decision.notional) : EM_DASH,
     status: decision.status,
     rationale: withBlockReasons(rationale, decision.status, reasons),
@@ -521,7 +645,7 @@ function decisionFromProposal(id: string, proposal: TradeProposal, status: strin
   return {
     id,
     symbol: proposal.symbol,
-    verb: SIDE_LABEL[proposal.side] ?? proposal.side,
+    verb: sideVerb(proposal.side, status),
     size: proposal.dollarAmount ? fmtMoney(proposal.dollarAmount) : proposal.quantity ? `${proposal.quantity} sh` : EM_DASH,
     status,
     rationale: withBlockReasons(proposal.rationale, status, reasons),
@@ -640,8 +764,8 @@ function deriveDissentRows(proposal: TradeProposal | undefined, latest: Strategy
   }
   if (proposal?.redTeamVerdict?.available) {
     rows.push({
-      title: "Red-team objection",
-      meta: proposal.redTeamVerdict.rejected ? "critical" : "survived",
+      title: "Red Team review",
+      meta: redTeamVerdictLabel(proposal.redTeamVerdict),
       body: proposal.redTeamVerdict.reason,
       tone: proposal.redTeamVerdict.rejected ? "neg" : "warn"
     });
@@ -709,11 +833,20 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
     <article className="con-decision-row" title={row.title}>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} showLogo={false} />}
+          {/* Show the company logo (default showLogo=true, logoSize="sm") right
+              before the ticker on autonomous-action rows. Portfolio is a
+              non-ticker pseudo-symbol, so it stays logo-less. */}
+          {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} />}
           <span>{row.verb}</span>
-          <Chip tone={row.status === "blocked" || row.status === "failed" ? "warn" : row.status === "pending" ? "accent" : "pos"}>
+          <Chip tone={row.status === "blocked" || row.status === "failed" || row.status === "not_placed" ? "warn" : row.status === "pending" ? "accent" : "pos"}>
             {decisionStatusLabel(row.status)}
           </Chip>
+          {/* When nothing reached the broker, say so plainly — the tense-matched
+              verb already reads "Buy" (not "Bought"), and this removes any last
+              doubt about whether an order was actually placed. */}
+          {isNotPlacedStatus(row.status) && (
+            <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">· not placed</span>
+          )}
         </div>
         <p>{row.rationale}</p>
       </div>
@@ -907,7 +1040,7 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
           </div>
           <p>{proposal.proposedChange}</p>
           {proposal.aiReview && (
-            <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
+            <div className="mt-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
               <div className="flex items-center gap-2 font-semibold">
                 <Brain size={13} /> AI recommends: {proposal.aiReview.verdict}
               </div>

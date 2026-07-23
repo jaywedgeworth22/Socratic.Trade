@@ -17,7 +17,7 @@
 // (deterministic expiry still applies) when OPENAI_API_KEY is not configured.
 
 import { audit, listPendingProposals, markProposalRevalidated, updateProposalStatus } from "./db";
-import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
 import { interactiveStrategyReasoningEffort, LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
@@ -255,7 +255,11 @@ export async function revalidatePendingProposals(input: {
       // (strategy.ts), so it must use the SAME interactive-reasoning clamp as the Green/Bear/debate
       // steps — otherwise a stored gpt-5.5/high policy sends a high-reasoning call here and can hit
       // the timeout/run-lock this guardrail prevents. (Review: PR #278 follow-up.)
-      reasoningEffort: interactiveStrategyReasoningEffort(model, policy.llmReasoningEffort)
+      reasoningEffort: interactiveStrategyReasoningEffort(model, policy.llmReasoningEffort),
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "proposal-revalidation"
     }
   );
 
@@ -282,10 +286,13 @@ export async function revalidatePendingProposals(input: {
           return { text: undefined, assessments: [] as RevalidationAssessment[] };
         }
         const payload = await response.json();
-        recordLlmUsage({ userId, provider, model, context: "proposal-revalidation", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "proposal-revalidation", keySource, keyRef, connectedAccountId: policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(provider, payload), ...extractLlmUsage(payload) });
         const text = extractLlmText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
         // §4.1 defense-in-depth: tolerate a fenced/prose-wrapped reply before parsing.
+        // STRICT parse — no jsonrepair (Codex P2, PR #1696): a truncated response repaired into a
+        // syntactically valid `withdraw` assessment would withdraw a pending proposal on garbage.
+        // Malformed output takes the catch path below, which leaves the queue untouched.
         const parsed = JSON.parse(extractJsonPayload(text)) as { assessments?: RevalidationAssessment[] };
         return { text, assessments: parsed.assessments ?? [] };
       }

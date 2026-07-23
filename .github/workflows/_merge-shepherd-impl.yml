@@ -10,7 +10,7 @@ on:
 
 jobs:
   shepherd:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, socratic-ci]
     environment: merge-shepherd
     steps:
       - uses: actions/checkout@v4

@@ -10,6 +10,7 @@ import {
   finishStrategyRun,
   getConnectedAccount,
   getPolicy,
+  getActiveStrategyProfile,
   getProposal,
   getStrategyPrompt,
   ingestedAccessionCountsByDocType,
@@ -26,6 +27,7 @@ import {
   transitionProposalIfPending,
   upsertSocraticDecisionCase,
   createSocraticFrameworkProposal,
+  getDb,
   updatePendingProposalReprice,
   updateProposalStatus,
   updateFillEvent
@@ -38,6 +40,9 @@ import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
+import { applyEvidenceBudget } from "./evidence-budget";
+import { createEvidencePack, createEvidenceRef } from "./evidence-pack";
+import { summarizeSourceCoverage } from "./source-value";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { checkBrokerHealth } from "./broker-health";
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
@@ -46,15 +51,17 @@ import { resolveLlmEndpoint } from "./llm-provider";
 import { resolveModelRotationForRun } from "./model-rotation";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload, detectLlmTruncation } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
+import { planLlmProviderAttempts, recordLlmProviderFailure } from "./llm-provider-cooldown";
 import { LlmCredentialRequiredError, LLM_MODEL_REQUIRED_STRATEGY_MESSAGE, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
+import { freshPlacementBlockReason } from "./system-state-placement-guard";
 import { OrderValidationError } from "./types";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
 import { planFundingSells } from "./sell-to-fund";
-import { isRejectedOrCanceledState } from "./broker-side";
+import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState, isBracketOrderClass, isLiveExitOrder } from "./broker-side";
 import {
   calibratedConviction,
   getClosedLotCount,
@@ -65,6 +72,7 @@ import {
   getRegimeScorecard,
   getSectorScorecard,
   getSignalEfficacy,
+  getSourceValueScorecard,
   getSkippedCandidateReturns,
   getThesisRegimeScorecard,
   getThesisScorecard,
@@ -75,9 +83,11 @@ import {
 import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./strategy-tuning";
 import { fractionalKellySuggestion } from "./kelly";
 import { resolveCongressGateMultiplier } from "./congress-score-gate";
-import type { ThesisStat, ThesisRegimeStat } from "./performance";
+import type { ThesisStat, ThesisRegimeStat, SkippedCandidateReturn } from "./performance";
+import { buildSpyReturnToNowMap } from "./backtest";
 import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
+import { effectiveDailyOpeningNotionalCap, resolveDailyOpeningCap } from "./policy-caps";
 import { assessProtectiveExitRepriceDrift, extendedHoursExitBufferBps, marketableLimitExitPrice, repriceStoredProtectiveExit } from "./protective-exit-routing";
 import type { ProtectiveExitQuote } from "./protective-exit-routing";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
@@ -96,28 +106,50 @@ import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { startStrategyLockGuard, StrategyLockOwnershipLostError } from "./strategy-lock-guard";
 import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
+import {
+  assertFmpTranscriptRightsGeneration,
+  captureFmpTranscriptRightsGeneration,
+  fmpTranscriptDerivedProvenance,
+  fmpTranscriptsEnabled,
+  persistFmpTranscriptDerivedArtifact,
+  recordFmpTranscriptDerivedAudit,
+  type FmpTranscriptDerivedProvenance,
+  type FmpTranscriptRightsGenerationClaim
+} from "./web-sources/fmp-transcripts";
+import { earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
-import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan } from "./db";
+import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan, listSyntheticStops } from "./db";
 import type { TakeProfitTrimBand } from "./db";
-import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import {
   collectEvidenceAgeAnomalies,
   computeEmptyDocTypes,
+  containPromptText,
   scanForInjectionAttempts,
   type EvidenceAgeInput,
   type InjectionFinding,
+  type PromptContainmentResult,
+  type PromptTextSource,
   type UntrustedPromptField
 } from "./prompt-safety";
 import { debateProposal, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
+import {
+  captureProposalSizingSnapshot,
+  proposalForFinalSizeRedReview,
+  redTeamSizingFromSnapshot,
+  stampRedTeamResult
+} from "./finalized-sizing-review";
 import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-team-routing";
 import { isEscalationRegime } from "./regime-watch";
+import { getUpcomingEconomicEventsForPrompt } from "./economic-calendar";
+import { compactHeadlinesForPrompt } from "./prompt-headlines";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
 import { computeMultiSignalSeverity } from "./regime-severity";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
@@ -131,13 +163,14 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillEvent, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillEvent, FillSource, HumanReviewReasonCode, HumanReviewReasonReceipt, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
 import type { PositionStopPlan } from "./db-api-keys";
 import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
 import { reconcilePendingFills, flagStalePlacingIntents, reconcilePlacementError, LiveApprovalConfirmation, LiveApprovalConfirmationError, coerceProtectiveExitToMarket } from "./strategy-execution";
+import { runSafetyMaintenance } from "./safety-maintenance";
 import { shouldSkipNegativeExpectancy, applyDeterministicSizing, isRiskAddingOpening, applyRedTeamHalfSize, applyEarningsBlackoutTag, applyCorrelationClusterGate, applyRiskReceipts, shouldEscalateDecision, allowedProposalSides, deterministicBearFilter, mapWithConcurrency } from "./strategy-risk";
 
 /**
@@ -151,8 +184,8 @@ const MAX_SKIPPED_EVIDENCE = 25;
 /**
  * corpus-coverage-receipt (2026-07-06, redesigned same day — see
  * docs/rollouts/2026-07-06-corpus-coverage-receipt.md for the full history): doc types the
- * empty-corpus receipt (below, near `computeEmptyDocTypes`) checks. Deliberately a STATIC
- * allowlist restricted to types whose PRODUCER LEDGER (`ingested_accessions`, via
+ * empty-corpus receipt (below, near `computeEmptyDocTypes`) checks. The base allowlist is restricted
+ * to types whose PRODUCER LEDGER (`ingested_accessions`, via
  * `ingestedAccessionCountsByDocType`) is COMPLETE — i.e. every writer for that type records an
  * accession row, so "zero ingested rows" reliably means "never produced," not "this writer just
  * doesn't track accessions."
@@ -171,12 +204,21 @@ const MAX_SKIPPED_EVIDENCE = 25;
  * on a large fraction of normal runs. Re-add "8-k" here the day an accurate per-doc_type 8-K corpus
  * signal exists (e.g. a `document_chunks.doc_type` column populated by both writers).
  *
- * "earnings-transcript" also stays EXCLUDED (same as before): no ingestion writer exists anywhere
- * in this repo for it, so it is a genuine, permanent zero-producer — including it would fire a
- * receipt on every single run forever, training the operator to ignore the whole receipt. Re-add
- * it the day a producer lands.
+ * "earnings-transcript" has a complete ticker-period ledger through fmp-transcripts.ts, but that
+ * producer is default OFF pending endpoint-plan and content-rights confirmation. It participates in
+ * the empty-corpus receipt only while explicitly enabled; otherwise the default config stays quiet.
+ * Existing transcript chunks remain retrievable after an operator disables future ingestion only
+ * while storage/display rights remain confirmed.
+ * "fundamentals" has a real producer and is requested below, but its producer ledger is not yet
+ * complete enough for the empty-corpus receipt.
  */
-const COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q"];
+const BASE_COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q"];
+
+export function coverageCheckedFilingsDocTypes(): string[] {
+  return fmpTranscriptsEnabled()
+    ? [...BASE_COVERAGE_CHECKED_DOC_TYPES, "earnings-transcript"]
+    : [...BASE_COVERAGE_CHECKED_DOC_TYPES];
+}
 
 // STRATEGY_PROMPT_VERSION is imported at the top and re-exported here so existing consumers/tests
 // can still `import { STRATEGY_PROMPT_VERSION } from "./strategy"`; it lives in its own tiny module
@@ -198,7 +240,8 @@ export interface StrategyLlmStep {
 
 export interface StrategyResult {
   runId: string;
-  status: "completed" | "failed";
+  /** completed = decision cycle ran; skipped = pre-decision gate (budget/market/broker); failed = hard error */
+  status: "completed" | "failed" | "skipped";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
@@ -225,6 +268,17 @@ export function liveApprovalText(symbol: string): string {
 
 export function liveBatchApprovalText(count: number): string {
   return `APPROVE ${count} LIVE ${count === 1 ? "ORDER" : "ORDERS"}`;
+}
+
+/** Appends `next` after `sentence` with exactly one separating period — never two. Red Team
+ *  unavailable/error reasons (red-team.ts's `unavailable(...)` helper) always end their own
+ *  message with a period, so templating a hard-coded "." right after one produced a doubled
+ *  "..' in the "Why your approval is required" card (e.g. "...key in Connections.. No model
+ *  critiqued..."). Trims `sentence` first so trailing whitespace before the period doesn't slip
+ *  through the endsWith check. */
+function appendSentence(sentence: string, next: string): string {
+  const trimmed = sentence.trim();
+  return `${trimmed}${/[.!?]$/.test(trimmed) ? "" : "."} ${next}`;
 }
 
 /**
@@ -288,6 +342,9 @@ export function preVetoTaggedOpeningWillPlace(
     !!p.autonomyOverride.thesis?.trim()
   );
 }
+// LRU deduplication cache for evidence_age_anomaly emissions.
+// Prevents flooding the DB with identical audits on every run cycle.
+const evidenceAgeAnomalyDedup = new Map<string, number>();
 
 export async function runStrategyOnce(
   userId: string = "local",
@@ -301,6 +358,9 @@ export async function runStrategyOnce(
   const connectedAccountId = options.connectedAccountId ?? getPolicy(userId).connectedAccountId;
   
   const runId = crypto.randomUUID();
+  // One immutable point-in-time boundary for every retrieval and evidence receipt in this run.
+  // Passing this through prevents a later retrieval step from seeing data published mid-run.
+  const runAsOf = new Date().toISOString();
   if (!acquireStrategyLock(runId, userId, connectedAccountId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
@@ -322,8 +382,10 @@ export async function runStrategyOnce(
   try {
     // Keep all post-acquire setup inside the protected region. If the run receipt cannot be
     // inserted, the finally block must still stop the heartbeat and release this owner token.
-    insertStrategyRun(runId, userId, connectedAccountId);
+    const activeProfile = getActiveStrategyProfile(userId);
+    const policyRevision = activeProfile ? `${activeProfile.id}@${activeProfile.updatedAt}` : undefined;
     const savedPolicy = getPolicy(userId, connectedAccountId);
+    insertStrategyRun(runId, userId, connectedAccountId, savedPolicy.accountNumber, policyRevision);
     const accountNumber = savedPolicy.accountNumber;
     if (!accountNumber) throw new Error("No account selected.");
     if (savedPolicy.systemState === "halted" && !manualRun) throw new Error("System is halted.");
@@ -344,12 +406,12 @@ export async function runStrategyOnce(
       const reason = "Market is closed (holiday or weekend). Skipping strategy run.";
       console.log(`[Strategy] ${reason}`);
       audit("run_skipped_market_closed", { runId, userId, reason }, userId, connectedAccountId);
-      result = { runId, status: "completed", summary: reason, proposals: [] };
-      finishStrategyRun(runId, "completed", reason, userId);
+      result = { runId, status: "skipped", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "skipped", reason, userId);
       return result;
     }
 
-    // ── Model rotation (owner testing option) ─────────────────────────────
+    // ── Model rotation (comparative-measurement option) ───────────────────
     // "__rotate__" as llmModel / redTeamLlmModel round-robins each run through every curated
     // model whose provider credential resolves, so comparative live history accrues across
     // models (`proposedByModel` already stamps the CONCRETE serving model on each proposal).
@@ -414,11 +476,11 @@ export async function runStrategyOnce(
 
     const gateway = getBrokerGateway(policy, userId);
     lockGuard.assertOwned();
-    await reconcilePendingFills(gateway, policy.accountNumber, userId, connectedAccountId);
-    lockGuard.assertOwned();
-    // Broker-truth reconcile any order-placement intent left "placing" by a prior run that crashed
-    // mid-call: match it against the broker by clientOrderId and recover or abandon it.
-    await flagStalePlacingIntents(gateway, policy.accountNumber, userId, connectedAccountId);
+    
+    // --- Safety Maintenance Coordinator ---
+    // Run fill reconciliation, stale placing-intent recovery, stale-exit handling,
+    // synthetic/broker stops, and expiry sequentially with strict broker-read timeouts.
+    await runSafetyMaintenance(userId, policy as RunnablePolicy, activeAccount!, gateway);
     lockGuard.assertOwned();
 
     // Check broker health before making LLM calls.
@@ -428,8 +490,8 @@ export async function runStrategyOnce(
       const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
       console.warn(`[Strategy] ${reason}`);
       audit("run_skipped_broker_unhealthy", { runId, userId, reason }, userId, connectedAccountId);
-      result = { runId, status: "completed", summary: reason, proposals: [] };
-      finishStrategyRun(runId, "completed", reason, userId);
+      result = { runId, status: "skipped", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "skipped", reason, userId);
       return result;
     }
 
@@ -443,6 +505,88 @@ export async function runStrategyOnce(
     const selected = accounts.find((account) => account.accountNumber === policy.accountNumber);
     if (!selected) throw new Error("Selected account is not available.");
     if (!selected.agenticAllowed) throw new Error("Selected account is not agentic_allowed.");
+
+    // ── Early LLM budget admission (BEFORE market scan / enrichment thrash) ──
+    // Usage-Monitor enforce + daily/monthly ceilings + reservation: risk maintenance
+    // already ran above; from here a skip must not burn scan/enrichment quota.
+    {
+      let earlyEnforce: Awaited<ReturnType<typeof evaluateBudgetForRun>> = { skip: false, downgraded: false };
+      try {
+        earlyEnforce = await evaluateBudgetForRun(userId, { ...policy, ...rotationOverride }, { status: budgetStatus });
+      } catch {
+        /* fail-open */
+      }
+      lockGuard.assertOwned();
+      if (earlyEnforce.skip) {
+        const reason = earlyEnforce.reason ?? "Over usage budget.";
+        audit("usage_budget_enforced", { runId, userId, action: "skip", reason, phase: "early_admission" }, userId, connectedAccountId);
+        await notifyBudgetSkip(userId, policy, runId, reason);
+        lockGuard.assertOwned();
+        const summary = `Strategy run skipped — over usage budget. ${reason}`;
+        result = { runId, status: "skipped", summary, proposals: [] };
+        finishStrategyRun(runId, "skipped", summary, userId);
+        return result;
+      }
+      // Carry early downgrade into later runLlmOverride merge (re-evaluated below for TOCTOU).
+      if (earlyEnforce.downgraded) {
+        /* re-applied at the post-scan choke; early only gates skip */
+      }
+    }
+    {
+      const earlyBudget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
+      let earlySkip = !earlyBudget.ok;
+      let earlySkipReason = earlyBudget.reason ?? "Daily LLM/RAG budget reached.";
+      if (!earlySkip) {
+        const monthly = checkMonthlyLlmSpendCeiling();
+        if (!monthly.ok) {
+          earlySkip = true;
+          earlySkipReason = `Monthly operator LLM spend ceiling reached ($${monthly.totalUsd.toFixed(2)} of $${monthly.ceilingUsd?.toFixed(2)}).`;
+          audit(
+            "usage_budget_enforced",
+            { runId, userId, action: "skip", reason: earlySkipReason, scope: "operator_monthly", phase: "early_admission" },
+            userId,
+            connectedAccountId
+          );
+        }
+      }
+      if (!earlySkip) {
+        const reservation = reserveLlmRunBudget(userId, connectedAccountId);
+        llmReservationId = reservation.reservationId;
+        if (!reservation.ok) {
+          earlySkip = true;
+          earlySkipReason = reservation.reason ?? "LLM budget reservation unavailable.";
+          audit(
+            "strategy_run_suppressed_budget_reservation",
+            { runId, userId, reason: earlySkipReason, phase: "early_admission" },
+            userId,
+            connectedAccountId
+          );
+        }
+      }
+      if (earlySkip && !earlyBudget.ok) {
+        audit(
+          "strategy_run_suppressed_budget",
+          {
+            runId,
+            userId,
+            reason: earlyBudget.reason,
+            tokensToday: earlyBudget.tokensToday,
+            costUsdToday: earlyBudget.costUsdToday,
+            tokenLimit: earlyBudget.tokenLimit,
+            costLimitUsd: earlyBudget.costLimitUsd,
+            phase: "early_admission"
+          },
+          userId,
+          connectedAccountId
+        );
+      }
+      if (earlySkip) {
+        const summary = `Strategy run skipped — ${earlySkipReason} Risk maintenance still ran; market scan and LLM were not started.`;
+        result = { runId, status: "skipped", summary, proposals: [] };
+        finishStrategyRun(runId, "skipped", summary, userId);
+        return result;
+      }
+    }
 
     const allowedSymbols = allowedSymbolsForPolicy(policy);
     // Item 3 (opt-in): thread a sample-gated, audited per-factor nudge from matured missed-opportunity
@@ -488,7 +632,6 @@ export async function runStrategyOnce(
     const runPaperFills = listFillEvents(policy.accountNumber, "paper", 500, userId);
     const prefetchedFills: PrefetchedFills = { liveFills: runLiveFills, paperFills: runPaperFills };
     lockGuard.assertOwned();
-    await notifyStaleLimitOrders({ userId, policy, orders });
 
     // Re-prove ownership before entering the first stateful maintenance phase. The awaited setup
     // above takes real wall time; if its heartbeat failed, snapshots and breaker mutations must not
@@ -610,8 +753,8 @@ export async function runStrategyOnce(
       await notifyBudgetSkip(userId, policy, runId, reason);
       lockGuard.assertOwned();
       const summary = `Strategy run skipped — over usage budget. ${reason}`;
-      result = { runId, status: "completed", summary, proposals: [] };
-      finishStrategyRun(runId, "completed", summary, userId);
+      result = { runId, status: "skipped", summary, proposals: [] };
+      finishStrategyRun(runId, "skipped", summary, userId);
       return result;
     }
     // Run-scoped model override: carried SEPARATELY from `policy` so nothing that persists (setPolicy,
@@ -663,33 +806,31 @@ export async function runStrategyOnce(
     // A reservation failure (over budget OR fail-closed DB error) degrades to "skip LLM", never a failed
     // run. No ceiling configured → reserve returns ok with no id (default OFF preserved). See
     // src/lib/llm-budget.ts and docs/rollouts/2026-07-01-fg-codex-review-fixes.md.
+    // TOCTOU re-check: early admission already reserved headroom; re-read ledger only.
+    // Do not double-reserve (llmReservationId set at early admission). If spend landed between
+    // early check and here, skip LLM for the rest of this run (scan already paid).
     const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
     let skipLlmDueToBudget = !budget.ok;
-    // Operator-level MONTHLY spend ceiling (LLM_SPEND_CEILING) enforced at this same single
-    // choke point so EVERY run entry inherits it — not just the interval scheduler. Event-triggered
-    // runs (triggers.ts -> runStrategyOnce), manual "Run once", and mobile commands all pass through
-    // here, so checking the ceiling only in the scheduler tick let those paths bypass it. Skips only
-    // the LLM proposal step (never the risk breakers above); default OFF when LLM_SPEND_CEILING unset.
     if (!skipLlmDueToBudget) {
       const monthly = checkMonthlyLlmSpendCeiling();
       if (!monthly.ok) {
         skipLlmDueToBudget = true;
         audit(
           "usage_budget_enforced",
-          { runId, userId, action: "skip", reason: `Monthly operator LLM spend ceiling reached ($${monthly.totalUsd.toFixed(2)} of $${monthly.ceilingUsd?.toFixed(2)})`, scope: "operator_monthly" },
+          { runId, userId, action: "skip", reason: `Monthly operator LLM spend ceiling reached ($${monthly.totalUsd.toFixed(2)} of $${monthly.ceilingUsd?.toFixed(2)})`, scope: "operator_monthly", phase: "post_scan_recheck" },
           userId,
           connectedAccountId
         );
       }
     }
-    if (!skipLlmDueToBudget) {
+    if (!skipLlmDueToBudget && !llmReservationId) {
       const reservation = reserveLlmRunBudget(userId, connectedAccountId);
       llmReservationId = reservation.reservationId;
       if (!reservation.ok) {
         skipLlmDueToBudget = true;
         audit(
           "strategy_run_suppressed_budget_reservation",
-          { runId, userId, reason: reservation.reason ?? "reservation_unavailable" },
+          { runId, userId, reason: reservation.reason ?? "reservation_unavailable", phase: "post_scan_recheck" },
           userId,
           connectedAccountId
         );
@@ -698,7 +839,7 @@ export async function runStrategyOnce(
     if (skipLlmDueToBudget && budget.ok === false) {
       audit(
         "strategy_run_suppressed_budget",
-        { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
+        { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd, phase: "post_scan_recheck" },
         userId,
         connectedAccountId
       );
@@ -770,12 +911,13 @@ export async function runStrategyOnce(
     // wide). Best-effort + bounded: a fetch error or insufficient bars simply leaves that name on the
     // fixed/beta stop (or the per-position fallback flat %, resolved downstream).
     const atrStopPctBySymbol: Record<string, number> = {};
+    const candidateAtrStopPctBySymbol: Record<string, number> = {};
     const anyHeldAtrPlan = workingPositions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "atr");
     if ((policy.atrStops === true && (policy.riskRules.stopLossPct ?? 0) > 0) || anyHeldAtrPlan) {
       const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
       const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
-      await Promise.all(
-        workingPositions
+      await Promise.all([
+        ...workingPositions
           .filter((p) => Math.abs(p.quantity) > 0.000001 && p.averageCost > 0)
           .map(async (p) => {
             const sym = normalizeSymbol(p.symbol);
@@ -787,8 +929,21 @@ export async function runStrategyOnce(
             } catch {
               // best-effort — fall back to the fixed/beta stop for this name
             }
-          })
-      );
+          }),
+        ...(marketScan
+          ? marketScan.topCandidates.map(async (c) => {
+              const sym = normalizeSymbol(c.symbol);
+              try {
+                const bars = await fetchDailyOHLC(sym, Date.now(), userId);
+                if (!bars) return;
+                const pct = atrStopPct(atr(bars, period), c.price, multiple);
+                if (typeof pct === "number") candidateAtrStopPctBySymbol[sym] = pct;
+              } catch {
+                // best-effort
+              }
+            })
+          : [])
+      ]);
       lockGuard.assertOwned();
     }
     // Extended-hours protective-exit routing is decided ONCE here (the run knows the wall-clock
@@ -831,6 +986,8 @@ export async function runStrategyOnce(
 
     let ragContext = "";
     let socraticRagAttributions: SocraticRagAttribution[] = [];
+    const fmpRightsClaim = captureFmpTranscriptRightsGeneration();
+    const fmpDerivedProvenance: FmpTranscriptDerivedProvenance[] = [];
     // Advisory prompt-safety receipts (CR-H lane): kind-'safety' evidence items attached to every
     // decision case this run records. Populated by the evidence-age check below and the
     // injection scan inside proposeTrades. Receipts only — never a gate on generation/placement.
@@ -839,12 +996,23 @@ export async function runStrategyOnce(
     // corpus-coverage-receipt (2026-07-06): the filings doc types requested below, hoisted so the
     // coverage receipt after this block can report "requested" alongside "retrieved this run" /
     // "empty" without re-declaring the literal. Advisory only — never affects the retrieval call
-    // itself. NOTE: the coverage receipt itself only CHECKS the COVERAGE_CHECKED_DOC_TYPES subset
-    // (10-k/10-q — narrower than this request list) against retrievedFilingsDocTypes below — "8-k"
-    // and "earnings-transcript" stay in this retrieval request list (harmless — retrieveContextDetailed
-    // just gets more empty filter values) but are deliberately excluded from the coverage check
-    // itself; see COVERAGE_CHECKED_DOC_TYPES's comment near the top of this file.
-    const requestedFilingsDocTypes = ["10-k", "10-q", "8-k", "earnings-transcript"];
+    // itself. NOTE: the coverage receipt only checks ledger-complete types. 10-k/10-q always
+    // participate; earnings-transcript joins only while its default-off producer is explicitly on.
+    // 8-K/fundamentals remain retrieval-only because their ledgers are incomplete. Transcript
+    // retrieval is independently rights-gated: turning off future refresh keeps existing evidence
+    // usable, while withdrawing storage/display confirmation removes it from every RAG consumer.
+    const requestedFilingsDocTypes = [
+      "10-k",
+      "10-q",
+      "8-k",
+      // Transcript retrieval joins when EITHER transcript producer's gate is active: FMP's
+      // durable rights claim, or the EarningsCalls.dev source (key = opt-in, kill-switch off —
+      // see earningscalls-gate.ts). Per-source enforcement stays inside vector-db's
+      // buildExtraFilters/filterMatchesForTranscriptRights; this only controls the REQUEST.
+      ...(fmpRightsClaim || earningsCallsTranscriptsEnabled() ? ["earnings-transcript"] : []),
+      "fundamentals"
+    ];
+    const coverageCheckedDocTypes = coverageCheckedFilingsDocTypes();
     const retrievedFilingsDocTypes = new Set<string>();
     // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): one row per symbol (filings
     // pass) plus one PORTFOLIO row (episodic pass), persisted via the `rag_retrieval_status` audit
@@ -871,61 +1039,106 @@ export async function runStrategyOnce(
         // held name outside the top-3 by score still needs a filings-RAG pass so sell/hold/trim
         // decisions on it are informed. Held symbols are unioned in, never substituted for the
         // top-N, and the top-N ordering/membership is untouched.
-        const topSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 3).map(c => c.symbol), ...heldSymbols]);
-        const contexts = await Promise.all(
-          topSymbols.map(async (sym) => {
-            const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
-            let variants: string[] = [];
-            if (wantMultiQuery) {
-              const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
-              const breakdown = candidate?.factorBreakdown;
-              let dominantFactor: string | undefined;
-              if (breakdown) {
-                let best = -Infinity;
-                for (const [key, value] of Object.entries(breakdown)) {
-                  if (key === "weightedTotal" || typeof value !== "number") continue;
-                  if (value > best) {
-                    best = value;
-                    dominantFactor = key;
+        // CIK map lookup for structured facts mapping
+        const tickerToCik: Record<string, string> = {};
+        try {
+          const { loadCikMap } = await import("./web-sources/sec8k");
+          const cikMap = await loadCikMap(Date.now());
+          if (cikMap) {
+            for (const [cik, tick] of Object.entries(cikMap)) {
+              if (tick) tickerToCik[tick.toUpperCase()] = cik.padStart(10, "0");
+            }
+          }
+        } catch (err) {
+          console.warn("[Strategy] failed to load CIK map for RAG dossiers:", err);
+        }
+
+        const scoutSymbols = marketScan ? marketScan.topCandidates.map((c) => c.symbol) : [];
+        const deepSymbols = uniqueSymbols([...(marketScan?.topCandidates.slice(0, 3).map((c) => c.symbol) || []), ...heldSymbols]);
+        const allSymbols = uniqueSymbols([...scoutSymbols, ...deepSymbols]);
+
+        const contexts: Array<{ sym: string; query: string; chunks: any[]; factsCard: string; insiderCard: string }> = [];
+        const batchSize = 5;
+        for (let i = 0; i < allSymbols.length; i += batchSize) {
+          const chunk = allSymbols.slice(i, i + batchSize);
+          const chunkResults = await Promise.all(
+            chunk.map(async (sym) => {
+              const isDeep = deepSymbols.includes(sym);
+              const limit = isDeep ? 8 : 1;
+              const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+              let variants: string[] = [];
+
+              if (wantMultiQuery && isDeep) {
+                const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
+                const breakdown = candidate?.factorBreakdown;
+                let dominantFactor: string | undefined;
+                if (breakdown) {
+                  let best = -Infinity;
+                  for (const [key, value] of Object.entries(breakdown)) {
+                    if (key === "weightedTotal" || typeof value !== "number") continue;
+                    if (value > best) {
+                      best = value;
+                      dominantFactor = key;
+                    }
                   }
                 }
+                variants = deriveQueryVariants({
+                  symbol: sym,
+                  sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
+                  dominantFactor,
+                  evidenceBulletins: candidate?.evidenceBulletins
+                });
+                if (wantHyde && variants.length > 0) {
+                  const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
+                  variants = [...variants, ...hydePassages];
+                }
               }
-              variants = deriveQueryVariants({
-                symbol: sym,
-                sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
-                dominantFactor,
-                evidenceBulletins: candidate?.evidenceBulletins
+
+              const chunks = await retrieveContextDetailed(query, sym, limit, userId, {
+                docType: requestedFilingsDocTypes,
+                asOf: runAsOf,
+                minScore: defaultMinScore(),
+                minRelevanceScore: defaultRelevanceFloor(),
+                dedupeSimilarity: defaultDedupeSimilarity(),
+                connectedAccountId: policy.connectedAccountId,
+                runId,
+                ...(variants.length > 0 ? { queries: variants } : {}),
+                onStatus: (status) => {
+                  ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
+                }
               });
-              if (wantHyde && variants.length > 0) {
-                // generateHydePassages self-gates on isOverLlmBudget(userId, connectedAccountId) —
-                // 2026-07-05 review fix — mirroring retrieveContextDetailed's own budget gate below.
-                const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
-                variants = [...variants, ...hydePassages];
+
+              // Retrieve structured facts & Form 4 transactions (RAG-B10)
+              const { formatCompanyFactsEvidenceCard, formatInsiderTransactionsEvidenceCard } = await import("./web-sources/sec-facts");
+              let factsCard = "";
+              let insiderCard = "";
+              try {
+                const cik = tickerToCik[sym.toUpperCase()];
+                if (cik) {
+                  factsCard = formatCompanyFactsEvidenceCard(cik);
+                  insiderCard = formatInsiderTransactionsEvidenceCard(cik);
+                }
+              } catch (err) {
+                console.warn(`[Strategy] failed to fetch structured facts for ${sym}:`, err);
               }
-            }
-            const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
-              docType: requestedFilingsDocTypes,
-              minScore: defaultMinScore(),
-              // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor
-              // + near-duplicate suppression (both existed since 2026-07-01 but no caller passed
-              // them, so neither ever ran). dedupeSimilarity is ON by default for this
-              // socratic-decision retrieval path per the composite review's guidance.
-              minRelevanceScore: defaultRelevanceFloor(),
-              dedupeSimilarity: defaultDedupeSimilarity(),
-              connectedAccountId: policy.connectedAccountId,
-              runId,
-              ...(variants.length > 0 ? { queries: variants } : {}),
-              // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): advisory only,
-              // never affects `chunks` — see RetrievalStatus in vector-db.ts.
-              onStatus: (status) => {
-                ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
-              }
-            });
-            return { sym, query, chunks };
-          })
-        );
+
+              return { sym, query, chunks, factsCard, insiderCard };
+            })
+          );
+          contexts.push(...chunkResults);
+        }
+
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
         socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
+        fmpDerivedProvenance.splice(
+          0,
+          fmpDerivedProvenance.length,
+          ...fmpTranscriptDerivedProvenance(socraticRagAttributions)
+        );
+        if (fmpDerivedProvenance.length > 0) {
+          if (!fmpRightsClaim) throw new Error("FMP-derived strategy context has no active rights generation.");
+          assertFmpTranscriptRightsGeneration(fmpRightsClaim);
+        }
         // Evidence-age receipt inputs: a HIGH-relevance chunk dated <24h old is worth a receipt
         // (fresh text steering a same-day decision). Aggregated + audited once below.
         const relevanceFloor = defaultRelevanceFloor();
@@ -939,21 +1152,39 @@ export async function runStrategyOnce(
               relevanceScore: chunk.relevanceScore ?? chunk.score,
               relevanceFloor
             });
-            // corpus-coverage-receipt: track which requested doc types actually produced a chunk
-            // THIS run, regardless of symbol — coverage is corpus-wide, not per-symbol.
             if (chunk.doc_type) retrievedFilingsDocTypes.add(chunk.doc_type.toLowerCase());
           }
         }
-        if (validContexts.length > 0) {
-          // 2026-07-04 RAG quick-wins: prefix each chunk with a compact provenance header
-          // (doc_type/section/symbol/date/relevance) so the model can weight a fresh 8-K over a
-          // stale 10-K and reference which chunk it drew from — see formatChunkWithProvenance.
+
+        if (validContexts.length > 0 || contexts.some((c) => c.factsCard || c.insiderCard)) {
           ragContext = contexts
-            .flatMap((context) => context.chunks.map((chunk) => formatChunkWithProvenance(chunk, context.sym)))
-            .join("\n\n");
+            .map((context) => {
+              const formattedChunks = context.chunks
+                .map((chunk) => formatChunkWithProvenance(chunk, context.sym))
+                .join("\n\n");
+
+              const parts = [`### RAG Dossier for ${context.sym}`];
+              if (context.factsCard) {
+                parts.push(context.factsCard);
+              }
+              if (context.insiderCard) {
+                parts.push(context.insiderCard);
+              }
+              if (formattedChunks) {
+                parts.push(formattedChunks);
+              }
+
+              if (parts.length > 1) {
+                return parts.join("\n\n");
+              }
+              return "";
+            })
+            .filter(Boolean)
+            .join("\n\n---\n\n");
         }
       } catch (e) {
         if (e instanceof StrategyLockOwnershipLostError) throw e;
+        if (e instanceof Error && /FMP transcript rights generation/i.test(e.message)) throw e;
         console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
         // Typed retrieval-status receipt: this catch covers the WHOLE filings pass (e.g. the
         // dynamic `import("./vector-db")` itself throwing), so no per-symbol onStatus callback may
@@ -980,8 +1211,15 @@ export async function runStrategyOnce(
       // learned facts on a held name outside the top-8 still surface, without touching the
       // top-8 BUY-candidate slice itself.
       const learnedSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 8).map((c) => c.symbol), ...heldSymbols]);
-      // regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice).
-      const learnedFacts = retrieveLearnedContextDetailed(userId, learnedSymbols);
+      // Regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice),
+      // but the current connected account is always forwarded so account-scoped retrieval can keep
+      // sibling portfolios' learned facts isolated.
+      const learnedFacts = retrieveLearnedContextDetailed(
+        userId,
+        learnedSymbols,
+        undefined,
+        { connectedAccountId }
+      );
       if (learnedFacts.lines.length > 0) {
         learnedContext = learnedFacts.lines.join("\n");
       }
@@ -999,30 +1237,52 @@ export async function runStrategyOnce(
     }
 
     // ── Evidence-age anomaly receipt (advisory only) ───────────────────────
-    // ONE aggregated audit + ONE kind-'safety' evidence item when same-day evidence (a fresh,
-    // high-relevance RAG chunk or a fact asserted today) entered this run's prompts. No text is
-    // changed, nothing is dropped or blocked — the receipt IS the control.
-    const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(evidenceAgeInputs);
+    // Collect ALL anomalies for the prompt safety receipt first — no dedup
+    // filter, so every piece of same-day evidence that entered this run's
+    // prompts is recorded regardless of recent audit history.
+    const allAnomalies = collectEvidenceAgeAnomalies(evidenceAgeInputs);
+
+    // Audit emission: apply the LRU dedup cache BEFORE the 12-item cap so
+    // already-audited items don't consume slots, then cache only the items
+    // actually emitted (items beyond index 12 are NOT cached, so they can be
+    // picked up on the next run).
+    const uncachedInputs = evidenceAgeInputs.filter((input) => {
+      if (evidenceAgeAnomalyDedup.size > 1000) evidenceAgeAnomalyDedup.clear();
+      const key = `${userId}:${connectedAccountId ?? "global"}:${input.id}`;
+      const now = Date.now();
+      const last = evidenceAgeAnomalyDedup.get(key);
+      return !(last && now - last < 6 * 60 * 60 * 1000);
+    });
+    const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(uncachedInputs);
+    // Cache only items the cap allowed through, so capped-off items can
+    // still reach the audit on the next run.
+    for (const item of evidenceAgeAnomalies) {
+      const key = `${userId}:${connectedAccountId ?? "global"}:${item.id}`;
+      evidenceAgeAnomalyDedup.set(key, Date.now());
+    }
+
     if (evidenceAgeAnomalies.length > 0) {
       audit("evidence_age_anomaly", { runId, items: evidenceAgeAnomalies }, userId, connectedAccountId);
+    }
+    if (allAnomalies.length > 0) {
       promptSafetyEvidence.push({
         kind: "safety",
         tone: "warning",
         title: "Same-day evidence entered this run",
         summary:
-          `${evidenceAgeAnomalies.length} evidence item(s) first seen <24h before this run: ` +
-          `${evidenceAgeAnomalies.map((i) => `${i.label} (${i.kind}, ${i.ageHours}h old)`).join("; ").slice(0, 400)}. ` +
+          `${allAnomalies.length} evidence item(s) first seen <24h before this run: ` +
+          `${allAnomalies.map((i) => `${i.label} (${i.kind}, ${i.ageHours}h old)`).join("; ").slice(0, 400)}. ` +
           "Advisory receipt only — nothing was altered or blocked.",
         source: "prompt-safety",
-        data: evidenceAgeAnomalies
+        data: allAnomalies
       });
     }
 
     // ── Corpus-coverage receipt (advisory only) ────────────────────────────
     // ONE aggregated audit + ONE kind-'safety' evidence item when a COVERAGE-CHECKED filings doc
-    // type (COVERAGE_CHECKED_DOC_TYPES — a static allowlist restricted to types whose producer
-    // ledger is COMPLETE, currently 10-k/10-q; see its comment for why "8-k" and
-    // "earnings-transcript" are excluded) is BOTH not retrieved this run AND has zero ever-ingested
+    // type (coverageCheckedDocTypes — ledger-complete 10-k/10-q plus earnings-transcript only while
+    // its producer is explicitly enabled; see the declaration above) is BOTH not retrieved this run
+    // AND has zero ever-ingested
     // producer rows. Both-conditions is load-bearing — see computeEmptyDocTypes's doc comment.
     // Never touches ragContext/sizing/policy — receipt only.
     if (!skipLlmDueToBudget) {
@@ -1038,7 +1298,7 @@ export async function runStrategyOnce(
         }
         return false;
       };
-      const emptyDocTypes = computeEmptyDocTypes(COVERAGE_CHECKED_DOC_TYPES, retrievedFilingsDocTypes, hasProducerForDocType);
+      const emptyDocTypes = computeEmptyDocTypes(coverageCheckedDocTypes, retrievedFilingsDocTypes, hasProducerForDocType);
       if (emptyDocTypes.length > 0) {
         const coverageSymbols = marketScan.topCandidates.slice(0, 3).map((c) => c.symbol);
         audit(
@@ -1049,8 +1309,8 @@ export async function runStrategyOnce(
         );
         // Copy honesty (owner report 2026-07-09): the old title ("Requested filings doc type never
         // ingested") read on every stock as "a document was looked for and not found" — a per-symbol
-        // lookup failure. The real state is a still-warming shared corpus: SEC ingestion is paced,
-        // so say that, with the actual count. Neutral tone: an advisory warm-up receipt on every
+        // lookup failure. The real state is a still-warming shared corpus: source ingestion is bounded,
+        // so say that without falsely attributing non-SEC document types to EDGAR. Neutral tone: an advisory warm-up receipt on every
         // decision card shouldn't wear the same orange as a real safety warning.
         const ingestedFilingsTotal = Object.values(accessionCountsByDocType).reduce((sum, n) => sum + n, 0);
         promptSafetyEvidence.push({
@@ -1058,9 +1318,9 @@ export async function runStrategyOnce(
           tone: "neutral",
           title: "Filings library still warming up",
           summary:
-            `No ${emptyDocTypes.join(" or ")} filings are in the research library yet ` +
-            `(${ingestedFilingsTotal} filing${ingestedFilingsTotal === 1 ? "" : "s"} ingested so far — SEC ingestion is paced ` +
-            `and fills watchlist/held names first). This decision used the other evidence; nothing was altered or blocked.`,
+            `No ${emptyDocTypes.join(" or ")} documents are in the research library yet ` +
+            `(${ingestedFilingsTotal} document${ingestedFilingsTotal === 1 ? "" : "s"} ingested so far — source ingestion is bounded ` +
+            `and prioritizes watchlist/held names). This decision used the other evidence; nothing was altered or blocked.`,
           source: "prompt-safety",
           data: { emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes }
         });
@@ -1135,7 +1395,8 @@ export async function runStrategyOnce(
           runId,
           regime: regimeForSketch,
           candidates: situationCandidates,
-          connectedAccountId: policy.connectedAccountId
+          connectedAccountId: policy.connectedAccountId,
+          asOf: runAsOf
         });
         lockGuard.assertOwned();
         experienceAnalogs = episodic.analogsBlock ?? "";
@@ -1143,7 +1404,7 @@ export async function runStrategyOnce(
         // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): the episodic pass is
         // cross-symbol, so it gets one PORTFOLIO row rather than a per-symbol one.
         ragRetrievalStatusRows.push({ symbol: "PORTFOLIO", status: episodic.status });
-        if (episodic.injected.length > 0) {
+        if (episodic?.injected && Array.isArray(episodic.injected) && episodic.injected.length > 0) {
           // Run-input persistence: record exactly WHICH analog/coaching vector ids entered this
           // run's prompts (plus the as-of stamp and sketch), so retrieval-usefulness scoring can
           // later join injected ids to this run's realized outcomes. The ids also ride along on
@@ -1154,9 +1415,9 @@ export async function runStrategyOnce(
               runId,
               asOf: episodic.asOf,
               query: episodic.query,
-              analogIds: episodic.injected.filter((ref) => ref.kind === "analog").map((ref) => ref.id),
-              coachingIds: episodic.injected.filter((ref) => ref.kind === "coaching").map((ref) => ref.id),
-              counterexampleIds: episodic.injected.filter((ref) => ref.counterexample).map((ref) => ref.id),
+              analogIds: (episodic.injected || []).filter((ref) => ref?.kind === "analog").map((ref) => ref.id),
+              coachingIds: (episodic.injected || []).filter((ref) => ref?.kind === "coaching").map((ref) => ref.id),
+              counterexampleIds: (episodic.injected || []).filter((ref) => ref?.counterexample).map((ref) => ref.id),
               ...(typeof episodic.topAnalogSimilarity === "number" ? { topAnalogSimilarity: episodic.topAnalogSimilarity } : {})
             },
             userId,
@@ -1245,6 +1506,7 @@ export async function runStrategyOnce(
       commitRotation();
       const proposed = await proposeTrades({
         runId,
+        asOf: runAsOf,
         userId,
         policyAllowlist: allowedSymbols,
         prompt: getStrategyPrompt(userId, connectedAccountId),
@@ -1256,6 +1518,8 @@ export async function runStrategyOnce(
         positions: workingPositions,
         recentOrders: compactRecentOrders(orders),
         marketScan,
+        candidateAtrStopPctBySymbol,
+        atrStopPctBySymbol,
         dailyNotionalUsed: daily.notional,
         dailyOrderCount: daily.openingOrderCount,
         ragContext,
@@ -1264,7 +1528,10 @@ export async function runStrategyOnce(
         ...(ownerCoaching ? { ownerCoaching } : {}),
         drawdownAdvisory,
         budgetAdvisory,
-        prefetched: prefetchedFills
+        prefetched: prefetchedFills,
+        ...(fmpRightsClaim && fmpDerivedProvenance.length > 0
+          ? { fmpRightsClaim, fmpDerivedProvenance }
+          : {})
       });
       lockGuard.assertOwned();
       llmProposals = proposed.proposals;
@@ -1278,20 +1545,46 @@ export async function runStrategyOnce(
         for (const finding of proposed.promptSafetyFindings) {
           byField.set(finding.name, [...(byField.get(finding.name) ?? []), finding]);
         }
+        const containedFields = new Set(proposed.promptContainmentFields ?? []);
         for (const [field, findings] of Array.from(byField.entries()).slice(0, 4)) {
+          const disposition = containedFields.has(field)
+            ? "Instruction-like spans in this untrusted field were replaced with explicit quarantine markers; generation continued."
+            : field === "owner_strategy_prompt"
+              ? "The owner strategy is trusted and remained unchanged; generation continued."
+              : "No instruction-like span required replacement; generation continued.";
           promptSafetyEvidence.push({
             kind: "safety",
             tone: "warning",
             title: `Possible prompt-injection pattern in ${field}`,
             summary:
               `Deterministic scan matched ${findings.map((f) => f.pattern).join(", ")}: "${findings[0].excerpt.slice(0, 240)}". ` +
-              "The text was passed through unmodified — advisory receipt, generation was not blocked.",
+              disposition,
             source: "prompt-safety",
-            data: findings
+            data: {
+              findings,
+              ...(field === "retrievedFinancialContext" && fmpDerivedProvenance.length > 0
+                ? { fmpProvenance: fmpDerivedProvenance }
+                : {})
+            }
           });
         }
       }
     }
+
+    const insertRunProposal = (proposalInput: Parameters<typeof insertProposal>[0]) => {
+      if (fmpRightsClaim && fmpDerivedProvenance.length > 0) {
+        persistFmpTranscriptDerivedArtifact({
+          claim: fmpRightsClaim,
+          artifactType: "strategy-proposal",
+          artifactId: proposalInput.id,
+          userId,
+          provenance: fmpDerivedProvenance,
+          write: () => insertProposal(proposalInput)
+        });
+        return;
+      }
+      insertProposal(proposalInput);
+    };
 
     // Item 6: compute the confidence-calibration curve ONCE per run (not per-proposal) when the flag is on,
     // and thread it into every sizing call. Undefined when off → no DB read and byte-identical behavior.
@@ -1472,6 +1765,27 @@ export async function runStrategyOnce(
     // but route it to a human rather than auto-executing an un-reviewed opening with real capital.
     // The live placement path below checks this set and downgrades these to status "proposed".
     const requiresHumanReview = new Set<TradeProposal>();
+    const humanReviewReasons = new Map<TradeProposal, Map<HumanReviewReasonCode, HumanReviewReasonReceipt>>();
+    const requireHumanReview = (proposal: TradeProposal, receipt: HumanReviewReasonReceipt): void => {
+      const reasons = humanReviewReasons.get(proposal) ?? new Map<HumanReviewReasonCode, HumanReviewReasonReceipt>();
+      reasons.set(receipt.code, receipt);
+      humanReviewReasons.set(proposal, reasons);
+      requiresHumanReview.add(proposal);
+    };
+    const clearHumanReviewReason = (proposal: TradeProposal, reason: HumanReviewReasonCode): void => {
+      const reasons = humanReviewReasons.get(proposal);
+      if (!reasons) return;
+      reasons.delete(reason);
+      if (reasons.size > 0) return;
+      humanReviewReasons.delete(proposal);
+      requiresHumanReview.delete(proposal);
+    };
+    const stampHumanReviewReasons = (source: TradeProposal, target: TradeProposal): HumanReviewReasonReceipt[] => {
+      const receipts = [...(humanReviewReasons.get(source)?.values() ?? [])];
+      if (receipts.length > 0) target.humanReviewReasons = receipts;
+      else delete target.humanReviewReasons;
+      return receipts;
+    };
 
     // ── The SINGLE Red Team review (docs/single-adversary-consolidation.md §3) ──────────────────
     // Universal coverage (O2): every risk-adding opening is reviewed — no conviction gate, no
@@ -1490,12 +1804,17 @@ export async function runStrategyOnce(
         // Pass the run-scoped `runPolicy` explicitly (R17 — rather than letting debateProposal
         // re-read the user-level getPolicy) so the account-scoped Red model/reasoning AND any
         // usage-budget Phase 2 downgrade actually reach the reviewer's model resolution.
+        const finalizedNotional = estimateNotional(proposal);
+        proposal.sizingSnapshot = captureProposalSizingSnapshot({
+          proposal,
+          estimatedNotional: finalizedNotional,
+          policy,
+          portfolioValue: workingPortfolio.totalMarketValue,
+          dailyNotionalUsed: daily.notional
+        });
         const result = await debateProposal(proposal, quote, userId, runPolicy, {
           context: adversaryContext,
-          sizing: {
-            estimatedNotional: estimateNotional(proposal),
-            sizeBasis: typeof proposal.quantity === "number" && proposal.quantity > 0 ? "quantity" : "notional"
-          }
+          sizing: redTeamSizingFromSnapshot(proposal.sizingSnapshot)
         });
         reviewResults.set(proposal, result);
       } catch (error) {
@@ -1523,23 +1842,7 @@ export async function runStrategyOnce(
       {
         // First-class verdict for the approval card's "Red Team Review" block. Keep the
         // rationale-append text below too for backward compatibility with anything reading the string.
-        proposal.redTeamVerdict = {
-          ...(redTeamResult.verdict ? { verdict: redTeamResult.verdict } : {}),
-          rejected: redTeamResult.rejected,
-          available: redTeamResult.available,
-          reason: redTeamResult.reason,
-          // The model that actually served the review — persisted so the approval card's red-team
-          // badge doesn't drift with later policy edits.
-          ...(redTeamResult.model ? { model: redTeamResult.model } : {}),
-          // Universal coverage: every review since the consolidation runs because the trade is a
-          // risk-adding opening. (Legacy persisted verdicts carry the old dissent-trigger values.)
-          trigger: "all_openings",
-          // Structured failure classification ("RED TEAM FAILED" flag) — absent when available.
-          ...(redTeamResult.failureKind ? { failureKind: redTeamResult.failureKind } : {})
-        };
-        if (redTeamResult.model) {
-          proposal.reviewedByModel = redTeamResult.model;
-        }
+        stampRedTeamResult(proposal, redTeamResult);
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
           // Pre-veto override (Veto B): an available-and-rejecting Bear is ADVISORY when the agent
@@ -1557,14 +1860,14 @@ export async function runStrategyOnce(
 
           if (overrideRequested) {
             // ADVISORY path — tag, do NOT continue. FIX #1: emit a DISTINCT audit kind
-            // (red_team_veto_overridden) and DO NOT write the missed-opportunity counterfactual. This
-            // trade may actually EXECUTE, so recording it as a Bear-vetoed missed opportunity would
+            // (red_team_veto_override_requested) and DO NOT write the missed-opportunity
+            // counterfactual. This trade may actually EXECUTE, so recording it as a Bear-vetoed missed opportunity would
             // corrupt getRedTeamEfficacy() (it keys strictly off proposal_rejected_by_red_team joined
             // to the counterfactual return) — double-booking the same symbol as both a missed winner
             // and a real position. Override payoff is measured through the matured-position path
             // (frameworkProposalFromDecision's "Review overridden gate") instead.
             audit(
-              "red_team_veto_overridden",
+              "red_team_veto_override_requested",
               {
                 runId,
                 symbol: proposal.symbol,
@@ -1618,7 +1921,7 @@ export async function runStrategyOnce(
             // paths, so the adversary's most important negative verdict is visible in operator
             // review and learning telemetry, not just the audit feed. Best-effort + non-fatal.
             try {
-              insertProposal({
+              insertRunProposal({
                 userId,
                 executionMode,
                 promptVersion: STRATEGY_PROMPT_VERSION,
@@ -1656,7 +1959,16 @@ export async function runStrategyOnce(
             `[RedTeam] review unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`
           );
           proposal.rationale += routing.note;
-          if (routing.holdForHuman) requiresHumanReview.add(proposal);
+          if (routing.holdForHuman) {
+            requireHumanReview(proposal, {
+              code: "initial_red_team",
+              title: "Red Team review unavailable",
+              summary: appendSentence(
+                `The adversarial review could not run (${describeRedTeamFailureKind(redTeamResult.failureKind)}): ${redTeamResult.reason}`,
+                "No model critiqued this opening, so it requires your review."
+              )
+            });
+          }
           audit(
             "strategy_red_team_unavailable",
             { runId, symbol: proposal.symbol, side: proposal.side, reason: redTeamResult.reason, failureKind: redTeamResult.failureKind, heldForHuman: routing.holdForHuman },
@@ -1670,7 +1982,18 @@ export async function runStrategyOnce(
           // at a size larger than the reviewer approved, never up-sized.
           const haircut = applyRedTeamHalfSize(proposal);
           if (haircut.applied) {
-            proposal.rationale += `\n\nRed Team verdict: approve-at-half — ${redTeamResult.reason} [${haircut.note}]`;
+            if (proposal.sizingSnapshot) {
+              const finalNotional = estimateNotional(proposal);
+              proposal.sizingSnapshot = {
+                ...proposal.sizingSnapshot,
+                estimatedNotional: finalNotional,
+                estimatedPctOfNav:
+                  proposal.sizingSnapshot.portfolioValue > 0
+                    ? Number(((finalNotional / proposal.sizingSnapshot.portfolioValue) * 100).toFixed(4))
+                    : undefined
+              };
+            }
+            proposal.rationale += `\n\nRed Team review — approved at half size: ${redTeamResult.reason} [${haircut.note}]`;
             audit(
               "red_team_approved_at_half",
               { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model, haircut: haircut.note },
@@ -1678,8 +2001,12 @@ export async function runStrategyOnce(
               connectedAccountId
             );
           } else {
-            proposal.rationale += `\n\nRed Team verdict: approve-at-half — ${redTeamResult.reason}\n\n⚠ Half-size is not placeable (${haircut.note}); routed to human approval instead of proceeding at full size.`;
-            requiresHumanReview.add(proposal);
+            proposal.rationale += `\n\nRed Team review — approved at half size: ${redTeamResult.reason}\n\n⚠ Half-size is not placeable (${haircut.note}); routed to human approval instead of proceeding at full size.`;
+            requireHumanReview(proposal, {
+              code: "initial_red_team",
+              title: "Red Team half-size cannot be placed",
+              summary: `Red approved only half size, but the broker cannot place that haircut: ${haircut.note}. The full-size order requires your decision.`
+            });
             audit(
               "red_team_half_size_unplaceable",
               { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model, why: haircut.note, heldForHuman: true },
@@ -1688,7 +2015,7 @@ export async function runStrategyOnce(
             );
           }
         } else {
-          proposal.rationale += `\n\nRed Team Review Survived: ${redTeamResult.reason}`;
+          proposal.rationale += `\n\nRed Team review — approved at full size: ${redTeamResult.reason}`;
         }
       }
       debatedProposals.push(proposal);
@@ -1715,8 +2042,13 @@ export async function runStrategyOnce(
       const openingDiversity = computeRationaleDiversity(gatedOpenings.map((p) => p.rationale));
       if (openingDiversity.collapsed) {
         for (const p of gatedOpenings) {
-          p.rationale += `\n\nRationale-diversity gate: this run's opening proposals collapsed to near-identical reasoning (mean similarity ${openingDiversity.meanPairwiseSimilarity.toFixed(3)} > ${openingDiversity.threshold}); routed to human approval.`;
-          requiresHumanReview.add(p);
+          const collapseSummary = `This run's opening proposals collapsed to near-identical reasoning (mean similarity ${openingDiversity.meanPairwiseSimilarity.toFixed(3)} > ${openingDiversity.threshold}); the strategy could be repeating boilerplate rather than independent evidence.`;
+          p.rationale += `\n\nRationale-diversity gate: ${collapseSummary} Routed to human approval.`;
+          requireHumanReview(p, {
+            code: "rationale_collapse",
+            title: "Rationale-diversity hold",
+            summary: collapseSummary
+          });
         }
         if (gatedOpenings.length > 0) {
           console.warn(`[strategy] Rationale-collapse gate ON — routing ${gatedOpenings.length} opening proposal(s) to human review.`);
@@ -1744,10 +2076,267 @@ export async function runStrategyOnce(
       for (const p of debatedProposals) {
         const isOpening = p.side === "buy" || p.side === "short";
         if (isOpening && p.preVetoReasons?.length && p.autonomyOverride?.requested === true && !!p.autonomyOverride.thesis?.trim()) {
-          requiresHumanReview.add(p);
+          requireHumanReview(p, {
+            code: "pre_veto_override",
+            title: "Owner-preference override requested",
+            summary: `The strategy requested an override of: ${p.preVetoReasons.join(" | ")}. Under the configured propose mode, only you can authorize it.`
+          });
         }
       }
     }
+
+    type BrokerMinimumReviewResult = {
+      review: ReviewedOrder;
+      blockReason?: string;
+      attemptedBumpToNotional?: number;
+    };
+
+    /** Apply the broker-minimum mutation and its mandatory exact-size Red review. This helper is
+     * used both by the sell-to-fund planning preflight and by the placement loop, so the planner
+     * cannot liquidate holdings for an opening whose final broker-adjusted shape later needs a
+     * human decision. */
+    const reviewBrokerMinimumFinalSize = async (input: {
+      sourceProposal: TradeProposal;
+      proposal: TradeProposal;
+      review: ReviewedOrder;
+      dailyNotionalUsed: number;
+      dailyOpeningOrderCount: number;
+      hourlyNotionalUsed: number;
+    }): Promise<BrokerMinimumReviewResult> => {
+      const { sourceProposal, proposal } = input;
+      let review = input.review;
+      const heldForMinimumGuard = workingPositions.find(
+        (position) => normalizeSymbol(position.symbol) === normalizeSymbol(proposal.symbol)
+      );
+      let blockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, {
+        ...proposal,
+        positionQuantity: heldForMinimumGuard?.quantity
+      });
+      let attemptedBumpToNotional: number | undefined;
+      if (blockReason && (policy.brokerMinimumHandling ?? "bump") === "bump") {
+        const effectiveMaxDailyNotional = effectiveDailyOpeningNotionalCap(
+          policy,
+          workingPortfolio.totalMarketValue
+        );
+        const openingCapNotional = Math.min(
+          applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, workingPortfolio)),
+          effectiveMaxDailyNotional - input.dailyNotionalUsed,
+          (policy.maxHourlyNotional ?? Infinity) - input.hourlyNotionalUsed,
+          Number.isFinite(workingPortfolio.buyingPower) && workingPortfolio.buyingPower > 0
+            ? workingPortfolio.buyingPower
+            : Infinity
+        );
+        const openingCountSpent =
+          (proposal.side === "buy" || proposal.side === "short") &&
+          policy.maxDailyOrders != null &&
+          input.dailyOpeningOrderCount >= policy.maxDailyOrders;
+        const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
+          review,
+          policy.activeBroker,
+          {
+            ...proposal,
+            positionQuantity: heldForMinimumGuard?.quantity,
+            positionMarketValue: heldForMinimumGuard?.marketValue
+          },
+          { openingCapNotional: Number.isFinite(openingCapNotional) ? openingCapNotional : undefined }
+        );
+        if (bumpPlan) {
+          const originalSizing = { quantity: proposal.quantity, dollarAmount: proposal.dollarAmount };
+          const originalReview = review;
+          Object.assign(proposal, bumpPlan.patch);
+          review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+          lockGuard.assertOwned();
+          const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, {
+            ...proposal,
+            positionQuantity: heldForMinimumGuard?.quantity
+          });
+          if (!stillBlocked) {
+            proposal.rationale = `${proposal.rationale} [Sized up from $${bumpPlan.fromNotional.toFixed(2)} to meet the broker's minimum order size (brokerMinimumHandling: bump).]`;
+            audit(
+              "order_bumped_broker_minimum",
+              {
+                runId,
+                symbol: proposal.symbol,
+                side: proposal.side,
+                fromNotional: bumpPlan.fromNotional,
+                toNotional: review.estimatedNotional,
+                reason: blockReason
+              },
+              userId,
+              connectedAccountId
+            );
+
+            if (isRiskAddingOpening(proposal, workingPositions)) {
+              const fullBumpedReview = review;
+              const fullBumpedSizing = {
+                quantity: proposal.quantity,
+                dollarAmount: proposal.dollarAmount
+              };
+              proposal.sizingSnapshot = captureProposalSizingSnapshot({
+                proposal,
+                estimatedNotional: fullBumpedReview.estimatedNotional,
+                policy,
+                portfolioValue: workingPortfolio.totalMarketValue,
+                dailyNotionalUsed: input.dailyNotionalUsed
+              });
+              const quote = marketScan.topCandidates.find(
+                (candidate) => normalizeSymbol(candidate.symbol) === normalizeSymbol(proposal.symbol)
+              );
+              let finalRed: RedTeamDebateResult;
+              try {
+                finalRed = await debateProposal(
+                  proposalForFinalSizeRedReview(proposal),
+                  quote,
+                  userId,
+                  runPolicy,
+                  {
+                    context: adversaryContext,
+                    sizing: redTeamSizingFromSnapshot(proposal.sizingSnapshot)
+                  }
+                );
+              } catch (error) {
+                finalRed = {
+                  rejected: false,
+                  available: false,
+                  reason: `Final-size Red Team review threw unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
+                  failureKind: "provider_error"
+                };
+              }
+              lockGuard.assertOwned();
+              stampRedTeamResult(proposal, finalRed);
+              proposal.preVetoReasons = proposal.preVetoReasons?.filter(
+                (reason) => !reason.startsWith("red_team_veto:")
+              );
+              if (proposal.preVetoReasons?.length === 0) delete proposal.preVetoReasons;
+
+              let ownerApprovalReason: string | undefined;
+              if (!finalRed.available) {
+                ownerApprovalReason = `The final broker-adjusted size could not be re-reviewed by Red (${describeRedTeamFailureKind(finalRed.failureKind)}): ${finalRed.reason}`;
+              } else if (finalRed.rejected || finalRed.verdict === "reject") {
+                ownerApprovalReason = `Red rejected the final broker-adjusted size: ${finalRed.reason}`;
+              } else if (finalRed.verdict === "approve-at-half") {
+                const haircut = applyRedTeamHalfSize(proposal);
+                if (!haircut.applied) {
+                  ownerApprovalReason = `Red authorized only half size, but that size is not executable: ${haircut.note}`;
+                } else {
+                  const haircutReview = await gateway.reviewEquityOrder({
+                    accountNumber: policy.accountNumber,
+                    ...proposal
+                  });
+                  lockGuard.assertOwned();
+                  const haircutBlock = describeBrokerMinimumOrderBlock(
+                    haircutReview,
+                    policy.activeBroker,
+                    { ...proposal, positionQuantity: heldForMinimumGuard?.quantity }
+                  );
+                  if (haircutBlock) {
+                    Object.assign(proposal, fullBumpedSizing);
+                    review = fullBumpedReview;
+                    proposal.sizingSnapshot = captureProposalSizingSnapshot({
+                      proposal,
+                      estimatedNotional: fullBumpedReview.estimatedNotional,
+                      policy,
+                      portfolioValue: workingPortfolio.totalMarketValue,
+                      dailyNotionalUsed: input.dailyNotionalUsed
+                    });
+                    ownerApprovalReason = `Red authorized only half size, but the broker rejects that haircut: ${haircutBlock}`;
+                  } else {
+                    review = haircutReview;
+                    proposal.sizingSnapshot = captureProposalSizingSnapshot({
+                      proposal,
+                      estimatedNotional: haircutReview.estimatedNotional,
+                      policy,
+                      portfolioValue: workingPortfolio.totalMarketValue,
+                      dailyNotionalUsed: input.dailyNotionalUsed
+                    });
+                    proposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at half: ${finalRed.reason} [${haircut.note}]`;
+                    audit(
+                      "red_team_approved_at_half_after_broker_minimum",
+                      {
+                        runId,
+                        symbol: proposal.symbol,
+                        side: proposal.side,
+                        model: finalRed.model,
+                        haircut: haircut.note,
+                        finalNotional: haircutReview.estimatedNotional
+                      },
+                      userId,
+                      connectedAccountId
+                    );
+                  }
+                }
+              } else {
+                proposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at full size: ${finalRed.reason}`;
+              }
+
+              clearHumanReviewReason(sourceProposal, "initial_red_team");
+              clearHumanReviewReason(sourceProposal, "final_size_red_team");
+              if (ownerApprovalReason) {
+                requireHumanReview(sourceProposal, {
+                  code: "final_size_red_team",
+                  title: "Final-size Red review needs your decision",
+                  summary: ownerApprovalReason
+                });
+                proposal.rationale += `\n\nRed Team review — final broker-adjusted size requires owner approval: ${ownerApprovalReason}`;
+              }
+              proposal.finalSizeReview = {
+                trigger: "broker_minimum_bump",
+                fromNotional: bumpPlan.fromNotional,
+                toNotional: fullBumpedReview.estimatedNotional,
+                reviewedAt: new Date().toISOString(),
+                ownerApprovalRequired: Boolean(ownerApprovalReason),
+                ...(ownerApprovalReason ? { ownerApprovalReason } : {})
+              };
+              audit(
+                "red_team_rereview_after_broker_minimum",
+                {
+                  runId,
+                  symbol: proposal.symbol,
+                  side: proposal.side,
+                  fromNotional: bumpPlan.fromNotional,
+                  bumpedNotional: fullBumpedReview.estimatedNotional,
+                  finalNotional: review.estimatedNotional,
+                  verdict: finalRed.verdict,
+                  available: finalRed.available,
+                  model: finalRed.model,
+                  ownerApprovalRequired: Boolean(ownerApprovalReason),
+                  ownerApprovalReason
+                },
+                userId,
+                connectedAccountId
+              );
+            }
+          } else {
+            Object.assign(proposal, originalSizing);
+            review = originalReview;
+            attemptedBumpToNotional = bumpPlan.toNotional;
+          }
+          blockReason = stillBlocked ? blockReason : undefined;
+        }
+      }
+      return {
+        review,
+        ...(blockReason ? { blockReason } : {}),
+        ...(attemptedBumpToNotional !== undefined ? { attemptedBumpToNotional } : {})
+      };
+    };
+
+    // Correlation can remove an opening entirely, so it must run before sell-to-fund demand is
+    // calculated. Funding sells are risk-reducing exits and are appended after this gate.
+    const correlationGatedBaseProposals = await applyCorrelationClusterGate(
+      [...proactiveProposals, ...debatedProposals],
+      policy,
+      workingPositions,
+      userId,
+      assertOwned
+    );
+    lockGuard.assertOwned();
+
+    type PreparedBrokerShape = {
+      tradability: { tradable: boolean; reason?: string };
+      minimumReview?: BrokerMinimumReviewResult;
+    };
+    const preparedBrokerShapes = new Map<TradeProposal, PreparedBrokerShape>();
 
     // ── Sell-to-fund-buy (PR 3) ──────────────────────────────────────────────
     // When this run's intended BUYs exceed buying power, optionally raise cash by trimming holdings.
@@ -1756,6 +2345,101 @@ export async function runStrategyOnce(
     // authority (auto-placed only when already in "decide"). Funding sells carry tradeThesisTag
     // "Sell-to-Fund" so the execution loop can route propose-mode ones correctly.
     const sellToFundMode = policy.sellToFundBuy ?? "off";
+    const sellToFundExcludedOpenings = new Set<TradeProposal>();
+    if (sellToFundMode !== "off") {
+      const correlationKept = new Set(correlationGatedBaseProposals);
+      const planningOpenings = debatedProposals.filter((proposal) =>
+        correlationKept.has(proposal) &&
+        (proposal.side === "buy" || proposal.side === "short") &&
+        !requiresHumanReview.has(proposal) &&
+        preVetoTaggedOpeningWillPlace(proposal, policy.socraticOverrideMode)
+      );
+      if (planningOpenings.length > 0) {
+        const symbols = [...new Set(planningOpenings.map((proposal) => normalizeSymbol(proposal.symbol)))];
+        const tradability = await gateway.getEquityTradability(policy.accountNumber, symbols);
+        lockGuard.assertOwned();
+        const planningDaily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
+        const planningHourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
+        for (const proposal of planningOpenings) {
+          proposal.symbol = normalizeSymbol(proposal.symbol);
+          const proposalTradability = tradability[proposal.symbol] ?? {
+            tradable: false,
+            reason: "Symbol is not tradable."
+          };
+          if (!proposalTradability.tradable) {
+            preparedBrokerShapes.set(proposal, { tradability: proposalTradability });
+            sellToFundExcludedOpenings.add(proposal);
+            continue;
+          }
+          const initialReview = await gateway.reviewEquityOrder({
+            accountNumber: policy.accountNumber,
+            ...proposal
+          });
+          lockGuard.assertOwned();
+          const finalSize = await reviewBrokerMinimumFinalSize({
+            sourceProposal: proposal,
+            proposal,
+            review: initialReview,
+            dailyNotionalUsed: planningDaily.notional,
+            dailyOpeningOrderCount: planningDaily.openingOrderCount,
+            hourlyNotionalUsed: planningHourly.notional
+          });
+          preparedBrokerShapes.set(proposal, {
+            tradability: proposalTradability,
+            minimumReview: finalSize
+          });
+          if (finalSize.blockReason || requiresHumanReview.has(proposal)) {
+            sellToFundExcludedOpenings.add(proposal);
+            continue;
+          }
+          let planningDecision = evaluateTradeProposal(proposal, {
+            policy,
+            portfolio: workingPortfolio,
+            positions: workingPositions,
+            dailyNotionalUsed: planningDaily.notional,
+            hourlyNotionalUsed: planningHourly.notional,
+            dailyOrderCount: planningDaily.openingOrderCount,
+            estimatedNotional: finalSize.review.estimatedNotional,
+            marketScan,
+            washSaleLocks,
+            accountTaxationType: activeAccount?.taxationType,
+            accountCapabilities: selected?.capabilities,
+            isLiveExecution: executionMode === "broker/live",
+            priorDayTradeCount: executionMode === "broker/live"
+              ? countDayTradesInLastBusinessDays(policy.accountNumber, 5, new Date(), userId)
+              : 0
+          });
+          if (proposal.preVetoReasons?.length) {
+            planningDecision = {
+              ...planningDecision,
+              approved: false,
+              reasons: [...planningDecision.reasons, ...proposal.preVetoReasons]
+            };
+          }
+          const override = resolveSocraticOverride({
+            proposal,
+            policy,
+            portfolio: workingPortfolio,
+            estimatedNotional: finalSize.review.estimatedNotional,
+            decision: planningDecision
+          });
+          const buyingPowerReasons = override.decision.reasons.filter((reason) =>
+            reason.toLowerCase().includes("exceeds available buying power")
+          );
+          const nonFundingReasons = override.decision.reasons.filter(
+            (reason) => !buyingPowerReasons.includes(reason)
+          );
+          const buyingPowerOnlyFundingIntent =
+            buyingPowerReasons.length > 0 && nonFundingReasons.length === 0;
+          if (
+            override.routeToHuman ||
+            (!override.decision.approved && !buyingPowerOnlyFundingIntent)
+          ) {
+            sellToFundExcludedOpenings.add(proposal);
+          }
+        }
+      }
+    }
     let fundingSells: TradeProposal[] = [];
     let sellToFundNote = "";
     if (sellToFundMode !== "off") {
@@ -1767,11 +2451,19 @@ export async function runStrategyOnce(
       // Also exclude a pre-veto-TAGGED opening that won't auto-execute (no override thesis / mode !=
       // execute): the fold-in below keeps it blocked, so — like the pre-tag-not-drop hard drop — it
       // must contribute $0 and never trigger funding sells (preVetoTaggedOpeningWillPlace).
-      const intendedOpeningNotional = debatedProposals.filter((p) => isOpening(p) && !requiresHumanReview.has(p) && preVetoTaggedOpeningWillPlace(p, policy.socraticOverrideMode)).reduce((sum, p) => {
-        const price = currentPrices[normalizeSymbol(p.symbol)] ?? p.referencePrice ?? 0;
-        const notional = p.dollarAmount ?? (p.quantity ? p.quantity * price : 0);
-        return sum + (Number.isFinite(notional) ? notional : 0);
-      }, 0);
+      const intendedOpeningNotional = debatedProposals
+        .filter((p) =>
+          isOpening(p) &&
+          !requiresHumanReview.has(p) &&
+          !sellToFundExcludedOpenings.has(p) &&
+          preVetoTaggedOpeningWillPlace(p, policy.socraticOverrideMode)
+        )
+        .reduce((sum, p) => {
+          const preparedNotional = preparedBrokerShapes.get(p)?.minimumReview?.review.estimatedNotional;
+          const price = currentPrices[normalizeSymbol(p.symbol)] ?? p.referencePrice ?? 0;
+          const notional = preparedNotional ?? p.dollarAmount ?? (p.quantity ? p.quantity * price : 0);
+          return sum + (Number.isFinite(notional) ? notional : 0);
+        }, 0);
       // Never sell a name we're trading this run (buy targets, or already-proposed exits/trims).
       const exclude = [
         ...debatedProposals.filter(isOpening).map((p) => normalizeSymbol(p.symbol)),
@@ -1799,14 +2491,7 @@ export async function runStrategyOnce(
       }
     }
 
-    const gatedProposals = await applyCorrelationClusterGate(
-      [...fundingSells, ...proactiveProposals, ...debatedProposals],
-      policy,
-      workingPositions,
-      userId,
-      assertOwned
-    );
-    lockGuard.assertOwned();
+    const gatedProposals = [...fundingSells, ...correlationGatedBaseProposals];
 
     // Advisory correlation/stress/earnings-proximity receipts on the final opening proposal set —
     // receipts only, never a gate. See applyRiskReceipts's doc comment for the flag semantics.
@@ -1842,57 +2527,116 @@ export async function runStrategyOnce(
     // full-set warning above remains here.)
 
     const results = completedProposalResults;
-    const recordSocraticDecision = (input: {
+    type SocraticDecisionRecordInput = {
       proposalId: string;
       proposal: TradeProposal;
       decision: PolicyDecision;
       status: string;
       review?: ReviewedOrder;
       overrideResolution?: SocraticOverrideResolution;
-    }) => {
+    };
+    const buildSocraticCaseFile = (input: SocraticDecisionRecordInput): SocraticDecisionCase => {
+      const now = new Date().toISOString();
+      return {
+        ...buildSocraticDecisionCase({
+          userId,
+          connectedAccountId,
+          runId,
+          proposalId: input.proposalId,
+          accountNumber: policy.accountNumber,
+          proposal: input.proposal,
+          status: socraticStatusFromProposalStatus(input.status),
+          authority: policy.strategyAuthority,
+          decision: input.decision,
+          review: input.review,
+          marketScan,
+          ragAttributions: socraticRagAttributions,
+          overrideResolution: input.overrideResolution,
+          // Run-level advisory prompt-safety receipts (injection scan + evidence-age anomalies).
+          ...(promptSafetyEvidence.length > 0 ? { extraEvidence: promptSafetyEvidence } : {}),
+          // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06) — persistence only.
+          ...(ragRetrievalStatusRows.length > 0 ? { ragRetrievalStatus: ragRetrievalStatusRows } : {})
+        }),
+        createdAt: now,
+        updatedAt: now
+      } satisfies SocraticDecisionCase;
+    };
+    const reportSocraticCaseWriteFailure = (input: SocraticDecisionRecordInput, err: unknown): string => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[strategy] Socratic decision recording failed:", message);
       try {
-        const now = new Date().toISOString();
-        const caseFile = {
-          ...buildSocraticDecisionCase({
-            userId,
-            connectedAccountId,
-            runId,
-            proposalId: input.proposalId,
-            accountNumber: policy.accountNumber,
-            proposal: input.proposal,
-            status: socraticStatusFromProposalStatus(input.status),
-            authority: policy.strategyAuthority,
-            decision: input.decision,
-            review: input.review,
-            marketScan,
-            ragAttributions: socraticRagAttributions,
-            overrideResolution: input.overrideResolution,
-            // Run-level advisory prompt-safety receipts (injection scan + evidence-age anomalies).
-            ...(promptSafetyEvidence.length > 0 ? { extraEvidence: promptSafetyEvidence } : {}),
-            // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06) — persistence only.
-            ...(ragRetrievalStatusRows.length > 0 ? { ragRetrievalStatus: ragRetrievalStatusRows } : {})
-          }),
-          createdAt: now,
-          updatedAt: now
-        } satisfies SocraticDecisionCase;
+        audit(
+          "socratic_case_write_failed",
+          { runId, proposalId: input.proposalId, symbol: input.proposal.symbol, status: input.status, error: message },
+          userId,
+          connectedAccountId
+        );
+      } catch { /* audit itself must not throw */ }
+      return message;
+    };
+
+    const persistSocraticCaseFile = (
+      caseFile: SocraticDecisionCase,
+      caseInput: SocraticDecisionRecordInput,
+      proposalInput?: Parameters<typeof insertProposal>[0]
+    ): void => {
+      const database = getDb();
+      const framework = frameworkProposalFromDecision(caseFile);
+      const writeCore = () => {
+        if (proposalInput) insertProposal(proposalInput);
         upsertSocraticDecisionCase(caseFile);
-        void indexSocraticDecisionMemory(caseFile).catch((err) => {
+      };
+      const hasFmpProvenance = Boolean(fmpRightsClaim && fmpDerivedProvenance.length > 0);
+
+      if (hasFmpProvenance && fmpRightsClaim) {
+        persistFmpTranscriptDerivedArtifact({
+          claim: fmpRightsClaim,
+          artifactType: "strategy-decision",
+          artifactId: caseFile.id,
+          userId,
+          provenance: fmpDerivedProvenance,
+          write: () => {
+            writeCore();
+            if (framework) createSocraticFrameworkProposal(framework);
+          }
+        });
+      } else {
+        database.transaction(writeCore)();
+        if (framework) {
+          try {
+            createSocraticFrameworkProposal(framework);
+          } catch (err) {
+            reportSocraticCaseWriteFailure(caseInput, err);
+          }
+        }
+      }
+    };
+
+    const indexSocraticCaseFile = (caseFile: SocraticDecisionCase): void => {
+      void indexSocraticDecisionMemory(caseFile)
+        .catch((err) => {
           console.warn("[strategy] Socratic memory indexing failed:", err instanceof Error ? err.message : String(err));
         });
-        const framework = frameworkProposalFromDecision(caseFile);
-        if (framework) createSocraticFrameworkProposal(framework);
+    };
+
+    const recordSocraticDecision = (input: SocraticDecisionRecordInput): void => {
+      try {
+        const caseFile = buildSocraticCaseFile(input);
+        persistSocraticCaseFile(caseFile, input);
+        indexSocraticCaseFile(caseFile);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn("[strategy] Socratic decision recording failed:", message);
-        try {
-          audit(
-            "socratic_case_write_failed",
-            { runId, proposalId: input.proposalId, symbol: input.proposal.symbol, status: input.status, error: message },
-            userId,
-            connectedAccountId
-          );
-        } catch { /* audit itself must not throw */ }
+        if (/FMP transcript rights generation/i.test(message)) throw err;
+        reportSocraticCaseWriteFailure(input, err);
       }
+    };
+    const insertProposalWithSocraticDecision = (
+      proposalInput: Parameters<typeof insertProposal>[0],
+      caseInput: SocraticDecisionRecordInput
+    ): void => {
+      const caseFile = buildSocraticCaseFile(caseInput);
+      persistSocraticCaseFile(caseFile, caseInput, proposalInput);
+      indexSocraticCaseFile(caseFile);
     };
 
     for (const proposal of proposals) {
@@ -1900,12 +2644,26 @@ export async function runStrategyOnce(
       // then re-prove ownership again immediately before a broker placement below.
       lockGuard.assertOwned();
       const normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
-      const tradability = await gateway.getEquityTradability(policy.accountNumber, [normalizedProposal.symbol]);
-      lockGuard.assertOwned();
-      if (!tradability[normalizedProposal.symbol]?.tradable) {
-        const decision = { approved: false, reasons: [tradability[normalizedProposal.symbol]?.reason ?? "Symbol is not tradable."] };
+      const preparedBrokerShape = preparedBrokerShapes.get(proposal);
+      let proposalTradability = preparedBrokerShape?.tradability;
+      if (!proposalTradability) {
+        const tradability = await gateway.getEquityTradability(
+          policy.accountNumber,
+          [normalizedProposal.symbol]
+        );
+        lockGuard.assertOwned();
+        proposalTradability = tradability[normalizedProposal.symbol] ?? {
+          tradable: false,
+          reason: "Symbol is not tradable."
+        };
+      }
+      if (!proposalTradability.tradable) {
+        const decision = {
+          approved: false,
+          reasons: [proposalTradability.reason ?? "Symbol is not tradable."]
+        };
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked" });
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         await sendNotification(
@@ -1921,93 +2679,35 @@ export async function runStrategyOnce(
         continue;
       }
 
-      let review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
-      lockGuard.assertOwned();
-
       // Hoisted above the broker-minimum guard: the bump planner bounds opening bumps by the
       // remaining daily/hourly budget. Values are unchanged for the post-guard consumers (the
       // skip path `continue`s without placing anything).
       const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
       const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
 
-      // Broker-minimum pre-flight guard. Default handling is BUMP (owner ruling 2026-07-09: an
-      // order that lands under the broker's minimum dollar/fractional size — e.g. Robinhood's $1
-      // floor, typically a pct-of-NAV-clamped trim on a small account — is raised TO the floor and
-      // placed, honestly audited, rather than skipped). brokerMinimumHandling = "skip" restores the
-      // old behavior: block it before the broker's guaranteed reject, with a cooldown-gated alert.
-      // Bumps the planner can't make safe/executable (unknown floor, unknown held position on
-      // exits, opening bumps past the policy cap or remaining daily/hourly budget) fall back to
-      // that skip path. positionQuantity lets the guard exempt a whole-position dust exit
-      // (Robinhood allows selling an entire fractional position even below its $1 minimum) and
-      // caps sell-bumps at the full position; dollar-based exits convert to position-bounded
-      // quantity orders. The bumped order is re-reviewed by the broker and then continues into
-      // evaluateTradeProposal like any other — a bump never bypasses policy evaluation.
-      const heldForMinimumGuard = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
-      let brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
-      let attemptedBumpToNotional: number | undefined;
-      if (brokerMinimumBlockReason && (policy.brokerMinimumHandling ?? "bump") === "bump") {
-        // Max placeable OPENING notional = the policy engine's own per-order cap (incl. its 5%
-        // headroom — evaluateTradeProposal enforces the headroomed value, and deterministic
-        // sizing already declines its floor-raise against the same number) further bounded by
-        // the remaining daily/hourly budget. Anything the planner bumps past this would be
-        // policy-rejected every run — and a cap breach can demote authority via
-        // autoRevertOnCapBreach, which the app must never self-inflict with its own up-sizing.
-        const effectiveMaxDailyNotional = Math.min(
-          policy.maxDailyNotional ?? Infinity,
-          policy.maxDailyPctOfNav ? (policy.maxDailyPctOfNav / 100) * workingPortfolio.totalMarketValue : Infinity
-        );
-        const openingCapNotional = Math.min(
-          applyOpeningOrderHeadroom(openingPolicyNotionalCap(normalizedProposal, policy, workingPortfolio)),
-          effectiveMaxDailyNotional - dailyNow.notional,
-          (policy.maxHourlyNotional ?? Infinity) - hourlyNow.notional,
-          // Mirror policy.ts's buying-power gate (binds when finite && > 0): a bump past available
-          // buying power would be policy-rejected every run instead of falling back to skip.
-          Number.isFinite(workingPortfolio.buyingPower) && workingPortfolio.buyingPower > 0 ? workingPortfolio.buyingPower : Infinity
-        );
-        // Daily ORDER-COUNT budget (not just notional): when the opening-order count is already
-        // spent, no bump can make this order placeable — planning one would only manufacture the
-        // policy rejection (and authority demotion) this block exists to avoid.
-        const openingCountSpent =
-          (normalizedProposal.side === "buy" || normalizedProposal.side === "short") &&
-          policy.maxDailyOrders != null &&
-          dailyNow.openingOrderCount >= policy.maxDailyOrders;
-        const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
-          review,
-          policy.activeBroker,
-          { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity, positionMarketValue: heldForMinimumGuard?.marketValue },
-          { openingCapNotional: Number.isFinite(openingCapNotional) ? openingCapNotional : undefined }
-        );
-        if (bumpPlan) {
-          const originalSizing = { quantity: normalizedProposal.quantity, dollarAmount: normalizedProposal.dollarAmount };
-          const originalReview = review;
-          Object.assign(normalizedProposal, bumpPlan.patch);
-          review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
-          lockGuard.assertOwned();
-          const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
-          if (!stillBlocked) {
-            // Receipt honesty: the rationale narrates the pre-bump size, so annotate the
-            // up-sizing the same way other size-changing steps do.
-            normalizedProposal.rationale = `${normalizedProposal.rationale} [Sized up from $${bumpPlan.fromNotional.toFixed(2)} to meet the broker's minimum order size (brokerMinimumHandling: bump).]`;
-            audit(
-              "order_bumped_broker_minimum",
-              { runId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, fromNotional: bumpPlan.fromNotional, toNotional: review.estimatedNotional, reason: brokerMinimumBlockReason },
-              userId,
-              connectedAccountId
-            );
-          } else {
-            // Failed bump: restore the original sizing + review so the skip receipt shows what
-            // the strategy actually proposed, and record that a bump was attempted.
-            Object.assign(normalizedProposal, originalSizing);
-            review = originalReview;
-            attemptedBumpToNotional = bumpPlan.toNotional;
-          }
-          brokerMinimumBlockReason = stillBlocked ? brokerMinimumBlockReason : undefined;
-        }
+      let minimumReview = preparedBrokerShape?.minimumReview;
+      if (!minimumReview) {
+        const initialReview = await gateway.reviewEquityOrder({
+          accountNumber: policy.accountNumber,
+          ...normalizedProposal
+        });
+        lockGuard.assertOwned();
+        minimumReview = await reviewBrokerMinimumFinalSize({
+          sourceProposal: proposal,
+          proposal: normalizedProposal,
+          review: initialReview,
+          dailyNotionalUsed: dailyNow.notional,
+          dailyOpeningOrderCount: dailyNow.openingOrderCount,
+          hourlyNotionalUsed: hourlyNow.notional
+        });
       }
+      const review = minimumReview.review;
+      const brokerMinimumBlockReason = minimumReview.blockReason;
+      const attemptedBumpToNotional = minimumReview.attemptedBumpToNotional;
       if (brokerMinimumBlockReason) {
         const decision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review });
         audit(
           "order_skipped_broker_minimum",
@@ -2016,7 +2716,7 @@ export async function runStrategyOnce(
           connectedAccountId
         );
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: [brokerMinimumBlockReason] });
-        if (shouldAlertBrokerMinimumOrderBlock(policy.accountNumber, normalizedProposal.symbol)) {
+        if (shouldAlertBrokerMinimumOrderBlock(userId, policy.accountNumber, normalizedProposal.symbol)) {
           await sendNotification(
             {
               type: "block",
@@ -2124,7 +2824,13 @@ export async function runStrategyOnce(
           userId,
           connectedAccountId
         );
-        if (overrideResolution.routeToHuman) requiresHumanReview.add(proposal);
+        if (overrideResolution.routeToHuman) {
+          requireHumanReview(proposal, {
+            code: "override_resolution",
+            title: "Socratic override needs your decision",
+            summary: `The strategy wants to override the configured preference${overrideResolution.conflicts.length > 0 ? `: ${overrideResolution.conflicts.join(" | ")}` : "."}`
+          });
+        }
       } else if (overrideResolution.requested) {
         audit(
           "socratic_override_refused",
@@ -2140,6 +2846,8 @@ export async function runStrategyOnce(
           connectedAccountId
         );
       }
+
+      const activeHumanReviewReasons = stampHumanReviewReasons(proposal, normalizedProposal);
 
       if (!decision.approved) {
         // ── Escalation framework ─────────────────────────────────────────────────────────────
@@ -2158,8 +2866,10 @@ export async function runStrategyOnce(
             // DB (approvedEscalationsFromDecision). No client payload can create or alter it.
             escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
           };
-          insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: escalatedDecision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: escalatedDecision, status: "proposed", review, overrideResolution });
+          insertProposalWithSocraticDecision(
+            { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: escalatedDecision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
+            { proposalId, proposal: normalizedProposal, decision: escalatedDecision, status: "proposed", review, overrideResolution }
+          );
           audit(
             "proposal_escalated",
             {
@@ -2196,7 +2906,7 @@ export async function runStrategyOnce(
 
         const proposalId = crypto.randomUUID();
         lockGuard.assertOwned();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         await sendNotification(
@@ -2236,7 +2946,7 @@ export async function runStrategyOnce(
         const heldReason = brokerHeldExitBlockReason(heldExit);
         const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
         const proposalId = crypto.randomUUID();
-        insertProposal({
+        insertRunProposal({
           userId,
           executionMode,
           id: proposalId,
@@ -2274,8 +2984,10 @@ export async function runStrategyOnce(
       // robust to any reordering by the cluster gate.)
       if (sellToFundMode === "propose" && normalizedProposal.tradeThesisTag === "Sell-to-Fund") {
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
-        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
+        insertProposalWithSocraticDecision(
+          { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
+          { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
+        );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} funding sell awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
@@ -2293,13 +3005,16 @@ export async function runStrategyOnce(
         // de-risk exit reads "surfaced for your approval" under propose authority (never falsely
         // "proceeding") — so no separate corrective note is needed here.
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
-        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [] });
+        const primaryHumanReviewReason = activeHumanReviewReasons[0];
+        insertProposalWithSocraticDecision(
+          { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
+          { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
+        );
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: activeHumanReviewReasons.map((reason) => `${reason.title}: ${reason.summary}`) });
         await sendNotification(
           {
             type: "pending_approval",
-            title: `${normalizedProposal.symbol} awaiting approval`,
+            title: `${normalizedProposal.symbol} awaiting approval${primaryHumanReviewReason ? ` (${primaryHumanReviewReason.title})` : ""}`,
             // R18 — a propose-mode insert must carry the adversary-unavailable flag too (this
             // branch runs BEFORE the requiresHumanReview one, so without this the flag would only
             // ever surface under decide authority).
@@ -2308,6 +3023,7 @@ export async function runStrategyOnce(
               proposalId,
               proposal: normalizedProposal,
               review,
+              ...(primaryHumanReviewReason ? { humanReviewReasonTitle: primaryHumanReviewReason.title, humanReviewReasons: activeHumanReviewReasons } : {}),
               ...(decision.adversaryUnavailable
                 ? { adversaryUnavailable: true, adversaryUnavailableReason: decision.adversaryUnavailableReason }
                 : {})
@@ -2323,16 +3039,17 @@ export async function runStrategyOnce(
       // routed to a human instead of auto-executed with real capital.
       if (requiresHumanReview.has(proposal)) {
         const proposalId = crypto.randomUUID();
-        const failureKindSuffix = normalizedProposal.redTeamVerdict?.failureKind
-          ? ` (${describeRedTeamFailureKind(normalizedProposal.redTeamVerdict.failureKind)})`
-          : "";
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
-        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [`Red Team review unavailable${failureKindSuffix}; routed to human approval.`] });
+        const primaryHumanReviewReason = activeHumanReviewReasons[0];
+        const pendingReason = activeHumanReviewReasons.map((reason) => `${reason.title}: ${reason.summary}`).join(" ");
+        insertProposalWithSocraticDecision(
+          { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
+          { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
+        );
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [pendingReason] });
         await sendNotification(
           {
             type: "pending_approval",
-            title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`,
+            title: `${normalizedProposal.symbol} awaiting approval (${primaryHumanReviewReason?.title ?? "owner review required"})`,
             // §5.2 — payload metadata flag so formatNotificationDisplay can PRESERVE this title
             // instead of unconditionally overwriting pending_approval titles.
             payload: {
@@ -2340,6 +3057,8 @@ export async function runStrategyOnce(
               proposalId,
               proposal: normalizedProposal,
               review,
+              humanReviewReasonTitle: primaryHumanReviewReason?.title ?? "Owner review required",
+              humanReviewReasons: activeHumanReviewReasons,
               ...(decision.adversaryUnavailable
                 ? { adversaryUnavailable: true, adversaryUnavailableReason: decision.adversaryUnavailableReason }
                 : {})
@@ -2368,7 +3087,7 @@ export async function runStrategyOnce(
         // Persist a REJECTED decision, not the earlier approved one — a blocked live order must not
         // leave an `approved: true` row in the decision/audit ledger.
         const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
-        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertRunProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: blockedDecision, status: "blocked", review, overrideResolution });
         audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
@@ -2392,22 +3111,86 @@ export async function runStrategyOnce(
       // try/catch so one broker outage can't abort the rest of the run's risk exits.
       const refId = crypto.randomUUID();
       const proposalId = crypto.randomUUID();
-      insertProposal({
-        userId,
-        id: proposalId,
-        runId,
-        accountNumber: policy.accountNumber,
+      const placingCaseInput: SocraticDecisionRecordInput = {
+        proposalId,
         proposal: normalizedProposal,
         decision,
-        review,
-        estimatedNotional: review.estimatedNotional,
-        refId,
         status: "placing",
-        executionMode,
-        promptVersion: STRATEGY_PROMPT_VERSION
-      });
+        review,
+        overrideResolution
+      };
+      try {
+        insertProposalWithSocraticDecision(
+          {
+            userId,
+            id: proposalId,
+            runId,
+            accountNumber: policy.accountNumber,
+            proposal: normalizedProposal,
+            decision,
+            review,
+            estimatedNotional: review.estimatedNotional,
+            refId,
+            status: "placing",
+            executionMode,
+            promptVersion: STRATEGY_PROMPT_VERSION
+          },
+          placingCaseInput
+        );
+      } catch (error) {
+        const message = reportSocraticCaseWriteFailure(placingCaseInput, error);
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [`Decision evidence could not be persisted before placement: ${message}`] });
+        await sendNotification(
+          {
+            type: "run_failed",
+            title: `${normalizedProposal.symbol} order not submitted — decision receipt persistence failed`,
+            payload: { runId, proposalId, refId, error: message, reconcile: "not_submitted" }
+          },
+          { policy, userId }
+        );
+        lockGuard.assertOwned();
+        continue;
+      }
 
       let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
+      const protectiveStateBlock = freshPlacementBlockReason({
+        userId,
+        connectedAccountId,
+        side: normalizedProposal.side
+      });
+      if (protectiveStateBlock) {
+        const blockedDecision: PolicyDecision = {
+          ...decision,
+          approved: false,
+          reasons: [...decision.reasons, protectiveStateBlock]
+        };
+        updateProposalStatus(
+          proposalId,
+          "blocked",
+          undefined,
+          review,
+          review.estimatedNotional,
+          userId,
+          undefined,
+          protectiveStateBlock,
+          blockedDecision
+        );
+        audit(
+          "order_blocked_fresh_protective_state",
+          {
+            runId,
+            proposalId,
+            refId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            reason: protectiveStateBlock
+          },
+          userId,
+          connectedAccountId
+        );
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [protectiveStateBlock] });
+        continue;
+      }
       try {
         execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal, refId });
       } catch (placeError) {
@@ -2420,8 +3203,9 @@ export async function runStrategyOnce(
         // Neither case is "uncertain", so we abort the placement loop immediately.
         if (placeError instanceof OrderValidationError || /\bHTTP 4\d\d\b/i.test(message)) {
           const status = placeError instanceof OrderValidationError ? "blocked" : "rejected_by_broker";
-          updateProposalStatus(proposalId, status, undefined, review, review.estimatedNotional, userId, undefined, message);
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: { ...decision, approved: false, reasons: [...decision.reasons, message] }, status, review, overrideResolution });
+          const transitionDecision =
+            status === "blocked" ? { ...decision, approved: false, reasons: [...decision.reasons, message] } : decision;
+          updateProposalStatus(proposalId, status, undefined, review, review.estimatedNotional, userId, undefined, message, transitionDecision);
           if (status === "rejected_by_broker") {
             audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
           } else {
@@ -2443,6 +3227,7 @@ export async function runStrategyOnce(
           gateway,
           accountNumber: policy.accountNumber,
           userId,
+          connectedAccountId,
           proposalId,
           refId,
           proposal: normalizedProposal,
@@ -2453,12 +3238,19 @@ export async function runStrategyOnce(
           runId
         });
         if (outcome.kind === "placed") {
-          updateProposalStatus(proposalId, "placed", outcome.orderId, review, review.estimatedNotional, userId);
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
+          const recoveredStatus = outcome.fillStatus === "filled" ? "filled" : "placed";
+          updateProposalStatus(
+            proposalId,
+            recoveredStatus,
+            outcome.orderId,
+            review,
+            outcome.fillStatus === "filled" ? outcome.fill?.notional ?? review.estimatedNotional : review.estimatedNotional,
+            userId
+          );
           auditWashSaleProceed(decision, { runId, proposalId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
           audit("order_placement_recovered_inline", { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: normalizedProposal.side }, userId, connectedAccountId);
           resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
-          results.push({ proposal: normalizedProposal, status: "placed", reasons: [], orderId: outcome.orderId });
+          results.push({ proposal: normalizedProposal, status: recoveredStatus, reasons: [], orderId: outcome.orderId });
           await sendNotification(
             { type: "fill", title: `${sym} live order ${outcome.state} (recovered after placement error)`, payload: { runId, proposalId, refId, fill: outcome.fill, reconcile: "recovered" } },
             { policy, userId }
@@ -2470,7 +3262,6 @@ export async function runStrategyOnce(
         if (outcome.kind === "declined") {
           const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
           updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: { ...decision, approved: false, reasons: [...decision.reasons, declinedMsg] }, status: "rejected_by_broker", review, overrideResolution });
           audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, connectedAccountId);
           results.push({ proposal: normalizedProposal, status: "error", reasons: [declinedMsg] });
           await sendNotification(
@@ -2483,7 +3274,6 @@ export async function runStrategyOnce(
         if (outcome.kind === "not_placed") {
           const note = "Broker reachable; no order carries our idempotency key — the order never reached the broker. Safe to retry.";
           updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
           audit("order_confirmed_not_placed", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message }, userId, connectedAccountId);
           results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order not placed (safe to retry): ${message}`] });
           await sendNotification(
@@ -2497,7 +3287,6 @@ export async function runStrategyOnce(
         // retries next run, and emit the (protected) "verify with broker" alert. This is the ONLY
         // path that still produces a perpetual-until-confirmed alert.
         updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, outcome.error);
-        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
         audit("order_placement_uncertain", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: outcome.error, brokerUnreachable: true }, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] });
         await sendNotification(
@@ -2514,17 +3303,9 @@ export async function runStrategyOnce(
       // "placed" would tell the user/dashboard a live order exists when the broker already
       // declined it — broker-agnostic via isRejectedOrCanceledState (handles both spellings and
       // known terminal-decline states across brokers).
-      if (isRejectedOrCanceledState(execution.state)) {
+      if (isRejectedOrCanceledState(execution.state) && !hasBrokerReportedFill(execution)) {
         const message = `Broker declined the order (state: ${execution.state}).`;
         updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
-        recordSocraticDecision({
-          proposalId,
-          proposal: normalizedProposal,
-          decision: { ...decision, approved: false, reasons: [...decision.reasons, message] },
-          status: "rejected_by_broker",
-          review,
-          overrideResolution
-        });
         audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
         await sendNotification(
@@ -2535,28 +3316,83 @@ export async function runStrategyOnce(
         continue;
       }
 
-      updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
-      recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
+      const hasPricedFill = hasBrokerReportedPricedFill(execution);
+      const terminalAfterPartialFill = isRejectedOrCanceledState(execution.state) && hasPricedFill;
+      const fillStatus = (execution.state === "filled" && hasPricedFill) || terminalAfterPartialFill
+        ? "filled"
+        : execution.state === "partially_filled" && hasPricedFill
+          ? "partially_filled"
+          : "pending_reconciliation";
+      const proposalStatus = fillStatus === "filled" ? "filled" : "placed";
+      if (!execution.orderId && fillStatus !== "filled") {
+        const message = `Broker returned ${execution.state} without an order id; keeping the idempotent intent pending until refId reconciliation confirms the order.`;
+        updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, message);
+        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, brokerState: execution.state, missingOrderId: true }, userId, connectedAccountId);
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
+        await sendNotification(
+          { type: "run_failed", title: `${normalizedProposal.symbol} order accepted without broker id — recovery pending`, payload: { runId, proposalId, refId, state: execution.state, reconcile: "uncertain" } },
+          { policy, userId }
+        );
+        lockGuard.assertOwned();
+        continue;
+      }
+      const executedNotional =
+        hasPricedFill
+          ? Math.abs(execution.filledQuantity! * execution.averagePrice!)
+          : undefined;
       // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
-      auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
       const preFillPosition = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
-      const fill = recordFillFromProposal({
-        userId,
-        accountNumber: policy.accountNumber,
-        proposalId,
-        runId,
-        source: learningSource,
-        executionMode,
-        proposal: normalizedProposal,
-        review,
-        execution,
-        marketScan,
-        status: execution.state === "filled" ? "filled" : "pending_reconciliation",
-        existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
-      });
-      results.push({ proposal: normalizedProposal, status: "placed", reasons: [], orderId: execution.orderId });
+      let fill: FillEvent;
+      try {
+        fill = getDb().transaction(() => {
+          const receipt = recordFillFromProposal({
+            userId,
+            connectedAccountId,
+            accountNumber: policy.accountNumber,
+            proposalId,
+            runId,
+            source: learningSource,
+            executionMode,
+            proposal: normalizedProposal,
+            review,
+            execution,
+            marketScan,
+            status: fillStatus,
+            existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
+          });
+          updateProposalStatus(
+            proposalId,
+            proposalStatus,
+            execution.orderId,
+            review,
+            fillStatus === "filled" ? executedNotional ?? receipt.notional : review.estimatedNotional,
+            userId
+          );
+          return receipt;
+        }).immediate();
+      } catch (receiptError) {
+        const detail = receiptError instanceof Error ? receiptError.message : String(receiptError);
+        const message = `Broker confirmed order ${execution.orderId}, but its local fill receipt could not be committed: ${detail}`;
+        updateProposalStatus(proposalId, "placing", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+        audit("order_placement_uncertain", { runId, proposalId, refId, orderId: execution.orderId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, brokerState: execution.state, receiptPersistenceFailed: true, error: detail }, userId, connectedAccountId);
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [message], orderId: execution.orderId });
+        await sendNotification(
+          { type: "run_failed", title: `${normalizedProposal.symbol} broker order confirmed — local receipt recovery pending`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state, error: detail, reconcile: "uncertain" } },
+          { policy, userId }
+        );
+        lockGuard.assertOwned();
+        continue;
+      }
+      auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
+      results.push({ proposal: normalizedProposal, status: proposalStatus, reasons: [], orderId: execution.orderId });
       await sendNotification(
-        { type: "fill", title: `${normalizedProposal.symbol} live order ${execution.state}`, payload: { runId, proposalId, fill } },
+        {
+          type: "fill",
+          title: terminalAfterPartialFill
+            ? `${normalizedProposal.symbol} partially filled, then ${execution.state}`
+            : `${normalizedProposal.symbol} live order ${execution.state}`,
+          payload: { runId, proposalId, fill }
+        },
         { policy, userId }
       );
       // Push so open dashboards refresh on an autonomously-placed order (the approval path
@@ -2584,13 +3420,20 @@ export async function runStrategyOnce(
         regime: runRegime,
         side: r.proposal.side,
         status: r.status,
-        thesisTag: r.proposal.tradeThesisTag
+        thesisTag: r.proposal.tradeThesisTag,
+        scoringWeights: runPolicy.scoringWeights
       })
     );
     const skippedEvidence = (marketScan?.topCandidates ?? [])
       .filter((candidate) => !chosenSymbols.has(normalizeSymbol(candidate.symbol)))
       .slice(0, MAX_SKIPPED_EVIDENCE)
-      .map((candidate) => buildCandidateEvidence(candidate, { symbol: candidate.symbol, chosen: false, regime: runRegime }));
+      .map((candidate) => buildCandidateEvidence(candidate, {
+        symbol: candidate.symbol,
+        chosen: false,
+        regime: runRegime,
+        scoringWeights: runPolicy.scoringWeights
+      }));
+    const sourceCoverage = summarizeSourceCoverage(marketScan?.topCandidates ?? []);
 
     // Counterfactual decision index: which names we bought vs the top-ranked names we
     // passed. The skipped half now carries full evidence (was symbol/score/sector/change
@@ -2608,6 +3451,7 @@ export async function runStrategyOnce(
     audit("signal_snapshot", {
       runId,
       asOf: new Date().toISOString(),
+      sourceCoverage,
       signals: [...chosenEvidence, ...skippedEvidence]
     }, userId, connectedAccountId);
     void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25, connectedAccountId })
@@ -2626,27 +3470,43 @@ export async function runStrategyOnce(
       .catch((e) => console.error("[outcome-engine] maturation error:", e));
 
     const placed = results.filter((r) => r.status === "placed").length;
+    const filled = results.filter((r) => r.status === "filled").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
-    const tradeCount = placed + proposed;
-    const summary = [
-      `Evaluated ${results.length} proposal(s).`,
-      `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} Trade${tradeCount === 1 ? "" : "s"}.`,
-      placed > 0 ? `Placed: ${placed}.` : "",
-      proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
-      expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
-      revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
-        ? `Re-checked ${revalidation.checked} pending: kept ${revalidation.reaffirmed}, withdrew ${revalidation.withdrawn}.`
-        : "",
-      sellToFundNote
-    ]
-      .filter(Boolean)
-      .join(" ");
+    const tradeCount = placed + filled + proposed;
+    // If LLM was suppressed mid-run (budget TOCTOU after scan) and nothing was proposed/placed
+    // by the decision path, this is a skip — not a successful "evaluated 0 proposals" completion.
+    const finishStatus: "completed" | "skipped" =
+      skipLlmDueToBudget && tradeCount === 0 && results.length === 0 ? "skipped" : "completed";
+    const summary = skipLlmDueToBudget && finishStatus === "skipped"
+      ? [
+          "Strategy run skipped — LLM/RAG budget or reservation blocked reasoning after risk maintenance.",
+          expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
+          sellToFundNote
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : [
+          `Evaluated ${results.length} proposal(s).`,
+          skipLlmDueToBudget
+            ? "LLM proposal step was suppressed by budget (risk/expiry work still ran)."
+            : `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} Trade${tradeCount === 1 ? "" : "s"}.`,
+          placed > 0 ? `Placed: ${placed}.` : "",
+          filled > 0 ? `Filled: ${filled}.` : "",
+          proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
+          expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
+          revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
+            ? `Re-checked ${revalidation.checked} pending: kept ${revalidation.reaffirmed}, withdrew ${revalidation.withdrawn}.`
+            : "",
+          sellToFundNote
+        ]
+          .filter(Boolean)
+          .join(" ");
 
     // Persist diversity result as an advisory audit event (no schema migration needed).
     // Account-attributed like strategy_run/signal_snapshot so the Activity feed can say
     // WHICH account's run this analyzed (#8).
     audit("rationale_diversity", { runId, llmSteps, ...rationaleDiversity }, userId, connectedAccountId);
-    finishStrategyRun(runId, "completed", summary, userId);
+    finishStrategyRun(runId, finishStatus, summary, userId);
     recordPortfolioSnapshot({
       userId,
       runId,
@@ -2656,7 +3516,7 @@ export async function runStrategyOnce(
       portfolio,
       positions
     });
-    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, llmSteps, rationaleDiversity };
+    result = { runId, status: finishStatus, summary, proposals: results, marketScan, accountNumber: policy.accountNumber, llmSteps, rationaleDiversity };
     
     // Phase 7: Async trigger post-mortem reflection. Skipped when LLM work was budget/reservation-suppressed
     // (it spends LLM via withLlmGeneration + semantic gate, whose checks read only the committed ledger, not
@@ -3006,10 +3866,14 @@ interface ProposeTradesResult {
    * decision-case evidence. NEVER affects the proposals themselves.
    */
   promptSafetyFindings?: InjectionFinding[];
+  /** Fields whose untrusted instruction-like spans were quarantined before either model saw them. */
+  promptContainmentFields?: string[];
 }
 
 async function proposeTrades(input: {
   runId: string;
+  /** Immutable point-in-time boundary captured when the strategy run acquired its lock. */
+  asOf: string;
   userId: string;
   policyAllowlist: string[];
   prompt: string;
@@ -3023,6 +3887,9 @@ async function proposeTrades(input: {
   dailyOrderCount: number;
   ragContext?: string;
   learnedContext?: string;
+  /** Exact licensed provenance plus the durable generation captured before retrieval. */
+  fmpRightsClaim?: FmpTranscriptRightsGenerationClaim;
+  fmpDerivedProvenance?: FmpTranscriptDerivedProvenance[];
   /**
    * Episodic decision memory blocks (2026-07-04 composite review A1). Pre-formatted, labeled,
    * ADVISORY-ONLY strings injected into BOTH the Bull and Bear userContent (evidence parity):
@@ -3041,6 +3908,8 @@ async function proposeTrades(input: {
    */
   budgetAdvisory?: string;
   prefetched?: PrefetchedFills;
+  candidateAtrStopPctBySymbol?: Record<string, number>;
+  atrStopPctBySymbol?: Record<string, number>;
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
@@ -3056,7 +3925,8 @@ async function proposeTrades(input: {
   if (!resolvedModel) throw new LlmCredentialRequiredError(LLM_MODEL_REQUIRED_STRATEGY_MESSAGE);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
-  const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
+  const dailyOpeningCap = resolveDailyOpeningCap(input.policy, input.portfolio.totalMarketValue);
+  const remainingNotional = Math.max(0, (dailyOpeningCap?.notional ?? Infinity) - input.dailyNotionalUsed);
   const remainingOrders = Math.max(0, input.policy.maxDailyOrders - input.dailyOrderCount);
 
   // Phase 2 fix: build a full symbol→sector map from ALL scan candidates (not just
@@ -3104,6 +3974,16 @@ async function proposeTrades(input: {
   // Signal efficacy: realized win rate of buys that had a congressional/insider tailwind
   // at entry vs the baseline — so the agent learns which evidence actually predicts wins.
   const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
+  // Outcome-linked leave-one-provider-out telemetry. This is explicitly observational and
+  // selection-biased; only mature directional buckets are shown to the model, and no automatic
+  // scoring-weight mutation is performed from it.
+  const sourceValueScorecard = input.policy.accountNumber
+    ? getSourceValueScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched, {
+        connectedAccountId: input.policy.connectedAccountId
+      })
+        .filter((row) => row.learningStatus !== "insufficient")
+        .slice(0, 12)
+    : [];
   // Confidence calibration: realized outcomes by the agent's own entry confidence band —
   // since confidence now drives position size, this surfaces over/under-confidence.
   const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
@@ -3116,9 +3996,24 @@ async function proposeTrades(input: {
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
-  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14, connectedAccountId: input.policy.connectedAccountId })
-    .filter((row) => row.returnPct >= 3)
-    .slice(0, 8);
+  // Balanced counterfactual feedback (regret AND vindication): showing only missed winners
+  // (returnPct >= 3) meant the sole lesson the model could ever draw was "you are too cautious".
+  // Fetch a wider matured window, annotate each row with SPY's return over its own entry→now
+  // window (single SPY OHLC fetch, reusing the tuner's benchmark plumbing; a failed fetch simply
+  // omits benchmarkReturnPct — never fabricated), then split the 8-row budget between labeled
+  // missed_winner and avoided_loser rows.
+  const cfOptions = { limit: 24, maxAgeDays: 14, connectedAccountId: input.policy.connectedAccountId };
+  const cfDates = Array.from(
+    new Set(
+      getSkippedCandidateReturns(currentPrices, input.userId, cfOptions)
+        .map((row) => row.asOf?.slice(0, 10))
+        .filter((d): d is string => Boolean(d))
+    )
+  );
+  const cfBenchmark = cfDates.length > 0 ? await buildSpyReturnToNowMap(cfDates).catch(() => new Map<string, number>()) : undefined;
+  const skippedCounterfactuals = selectBalancedCounterfactuals(
+    getSkippedCandidateReturns(currentPrices, input.userId, { ...cfOptions, benchmarkReturnBySnapshotDate: cfBenchmark })
+  );
   const taxSummary = input.policy.accountNumber
     ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId, input.prefetched)
     : null;
@@ -3183,11 +4078,13 @@ async function proposeTrades(input: {
   // execution time as a backstop. Declared here (before the prompt) so both the prompt and schema use it.
   const allowedSides = allowedProposalSides(input.policy, input.activeAccount);
   const shortAllowed = allowedSides.includes("short");
+  // The owner strategy is the sole trusted prompt-text source and is preserved byte-for-byte.
+  const trustedStrategyPrompt = containPromptText({ source: "owner_strategy", text: input.prompt }).sanitizedText;
   const systemPrompt = buildBullSystem({
     shortAllowed,
     executionMode,
     executionModeClarification,
-    strategyPrompt: input.prompt,
+    strategyPrompt: trustedStrategyPrompt,
     // reflection deliberately NOT interpolated into the SYSTEM prompt anymore (prompt-safety
     // lane, agentic-strategy@1.5.0): the post-mortem writer persists raw LLM output, so it rides
     // in userContent as the fenced `reflectionSummary` DATA field below instead.
@@ -3197,7 +4094,8 @@ async function proposeTrades(input: {
     holdingHorizon: input.policy.holdingHorizon ?? "swing",
     maxSymbolExposurePct: input.policy.maxSymbolExposurePct ?? 0,
     stopLossPct: input.policy.riskRules.stopLossPct ?? 8,
-    takeProfitPct: input.policy.riskRules.takeProfitPct ?? 20
+    takeProfitPct: input.policy.riskRules.takeProfitPct ?? 20,
+    shortStopLossPct: input.policy.riskRules.shortStopLossPct ?? 8
   });
 
   // Delta-only macro: macro moves slowly, so on repeat runs send just the changed
@@ -3223,6 +4121,12 @@ async function proposeTrades(input: {
   // Market-wide regime/sentiment from free, no-key sources (Cboe tail-risk, CFTC positioning,
   // Fama-French factor regime). Cached 6h; failure-tolerant — never blocks a run.
   const marketSignals = await getMarketSignals(input.userId).catch(() => undefined);
+
+  // Forward economic-event awareness (handoff 3.5): the next ~5 calendar days of scheduled
+  // HIGH-impact US events (CPI/FOMC/NFP class) from the daily-watermarked FMP calendar ingest.
+  // Key-gated + fail-open: no key, an ingest failure, or an empty calendar all yield [] and the
+  // prompt block below is OMITTED entirely — never fabricated, never an empty scaffold.
+  const upcomingEconomicEvents = await getUpcomingEconomicEventsForPrompt(input.userId).catch(() => []);
 
   // Multi-signal regime severity (Lane 5, composite review E/high/S follow-up): blends VIX term
   // structure, HY credit spread, and market breadth (+ VVIX/SKEW when available) into one
@@ -3267,11 +4171,428 @@ async function proposeTrades(input: {
       : Infinity
   );
   const preferredMaxOrderNotional = applyOpeningOrderHeadroom(effectiveMaxOrderNotional);
+  const promptContainmentReceipts: Array<{ field: string; result: PromptContainmentResult }> = [];
+  const containData = (source: PromptTextSource, field: string, text: string | undefined): string => {
+    const result = containPromptText({ source, text: text ?? "" });
+    if (result.status !== "clean" && result.status !== "trusted") {
+      promptContainmentReceipts.push({ field, result });
+    }
+    return result.sanitizedText;
+  };
+  const containedRagContext = containData("rag", "retrievedFinancialContext", input.ragContext);
+  if (input.fmpRightsClaim && (input.fmpDerivedProvenance?.length ?? 0) > 0) {
+    assertFmpTranscriptRightsGeneration(input.fmpRightsClaim);
+  }
+  const containedLearnedContext = containData("learned", "learnedContext", input.learnedContext);
+  const containedReflection = containData("reflection", "reflection_summary", reflection);
+  const containedExperienceAnalogs = containData("learned", "closestHistoricalAnalogs", input.experienceAnalogs);
+  const containedOwnerCoaching = containData("coach", "ownerCoaching", input.ownerCoaching);
+  // Only mutate a prompt-only clone. Stored/source evidence remains byte-for-byte intact for audit.
+  const promptMarketScan = input.marketScan
+    ? {
+        ...input.marketScan,
+        topCandidates: input.marketScan.topCandidates.map((candidate) => {
+          const sym = normalizeSymbol(candidate.symbol);
+          return {
+            ...candidate,
+            // Handoff 3.6: the prompt clone carries the COMPACTED headline sample (markup-stripped,
+            // near-duplicate-deduped, capped at HEADLINES_PER_CANDIDATE, each headline kept whole —
+            // never truncated mid-claim), with EVERY injected headline containment-sanitized.
+            // compactCandidateForPrompt applies the same compaction, so clone == injection.
+            ...(candidate.headlines
+              ? {
+                  headlines: compactHeadlinesForPrompt(candidate.headlines).map((headline) =>
+                    containData("news", `headlines:${sym}`, headline)
+                  )
+                }
+              : {}),
+            ...(candidate.evidenceBulletins
+              ? {
+                  evidenceBulletins: candidate.evidenceBulletins.map((bulletin, index) =>
+                    index < 3 ? containData("unknown", `smartMoney:${sym}`, bulletin) : bulletin
+                  )
+                }
+              : {})
+          };
+        })
+      }
+    : undefined;
+  const compactPromptMarketScan = compactMarketScanForPrompt(promptMarketScan, input.candidateAtrStopPctBySymbol);
+  const evidenceSourceCoverage = summarizeSourceCoverage(input.marketScan?.topCandidates ?? []);
+  const decisionAsOf = input.asOf;
+  const evidenceSubject = input.policy.connectedAccountId ?? input.policy.accountNumber ?? input.userId;
+  const textEvidenceInputs = [
+    {
+      key: "rag",
+      text: containedRagContext,
+      priority: 100,
+      ref: createEvidenceRef({
+        kind: "retrieved-financial-context",
+        subject: evidenceSubject,
+        source: {
+          family: "filings",
+          name: "vector-retrieval",
+          status: containedRagContext ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: decisionAsOf,
+          provenance: { provider: "vector-db", locator: null, upstreamHash: null, lineage: ["strategy-rag"] }
+        },
+        content: containedRagContext
+      })
+    },
+    {
+      key: "coaching",
+      text: containedOwnerCoaching,
+      priority: 95,
+      ref: createEvidenceRef({
+        kind: "owner-coaching",
+        subject: evidenceSubject,
+        source: {
+          family: "learning",
+          name: "owner-coaching",
+          status: containedOwnerCoaching ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: decisionAsOf,
+          provenance: { provider: "experience-memory", locator: null, upstreamHash: null, lineage: ["owner-coaching"] }
+        },
+        content: containedOwnerCoaching
+      })
+    },
+    {
+      key: "learned",
+      text: containedLearnedContext,
+      priority: 90,
+      ref: createEvidenceRef({
+        kind: "learned-context",
+        subject: evidenceSubject,
+        source: {
+          family: "learning",
+          name: "learned-context",
+          status: containedLearnedContext ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: decisionAsOf,
+          provenance: { provider: "relational-learning", locator: null, upstreamHash: null, lineage: ["learned-context"] }
+        },
+        content: containedLearnedContext
+      })
+    },
+    {
+      key: "analogs",
+      text: containedExperienceAnalogs,
+      priority: 85,
+      ref: createEvidenceRef({
+        kind: "historical-analogs",
+        subject: evidenceSubject,
+        source: {
+          family: "learning",
+          name: "historical-analogs",
+          status: containedExperienceAnalogs ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: decisionAsOf,
+          provenance: { provider: "experience-memory", locator: null, upstreamHash: null, lineage: ["episodic-retrieval"] }
+        },
+        content: containedExperienceAnalogs
+      })
+    },
+    {
+      key: "reflection",
+      text: containedReflection,
+      priority: 80,
+      ref: createEvidenceRef({
+        kind: "account-reflection",
+        subject: evidenceSubject,
+        source: {
+          family: "learning",
+          name: "post-mortem-reflection",
+          status: containedReflection ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: decisionAsOf,
+          provenance: { provider: "post-mortem", locator: null, upstreamHash: null, lineage: ["account-reflection"] }
+        },
+        content: containedReflection
+      })
+    }
+  ] as const;
+  // Variable-length prose shares one deterministic budget. Structured candidates/portfolio/macro
+  // are separately compacted and bounded before this point, so they cannot crowd out every filing
+  // or learned lesson. Every truncation/omission receives a model-visible and audited receipt.
+  const evidenceBudget = applyEvidenceBudget(
+    textEvidenceInputs.map(({ ref, text, priority }) => ({ ref, text, priority })),
+    {
+      maxCharacters: 48_000,
+      maxTokenEstimate: 12_000,
+      familyQuotas: {
+        filings: { maxCharacters: 24_000, maxTokenEstimate: 6_000 },
+        learning: { maxCharacters: 28_000, maxTokenEstimate: 7_000 }
+      }
+    }
+  );
+  const includedEvidenceText = new Map(evidenceBudget.included.map((item) => [item.evidenceId, item.text]));
+  const budgetedText = (key: (typeof textEvidenceInputs)[number]["key"]): string => {
+    const item = textEvidenceInputs.find((candidate) => candidate.key === key);
+    return item ? includedEvidenceText.get(item.ref.id) ?? "" : "";
+  };
+  const budgetedRagContext = budgetedText("rag");
+  const budgetedLearnedContext = budgetedText("learned");
+  const budgetedReflection = budgetedText("reflection");
+  const budgetedExperienceAnalogs = budgetedText("analogs");
+  const budgetedOwnerCoaching = budgetedText("coaching");
+
+  const structuredEvidence = [
+    createEvidenceRef({
+      kind: "broker-account-state",
+      subject: evidenceSubject,
+      source: {
+        family: "broker",
+        name: "portfolio-and-orders",
+        status: input.activeAccount ? "success" : "no_data",
+        observedAt: decisionAsOf,
+        asOf: decisionAsOf,
+        retrievedAt: decisionAsOf,
+        provenance: {
+          provider: input.activeAccount?.broker ?? "broker-gateway",
+          locator: input.policy.connectedAccountId ?? null,
+          upstreamHash: null,
+          lineage: ["connected-account", "strategy-run"]
+        }
+      },
+      content: JSON.stringify({ portfolio: input.portfolio, positions: input.positions, recentOrders: input.recentOrders })
+    }),
+    createEvidenceRef({
+      kind: "market-candidate-set",
+      subject: "equity-universe",
+      source: {
+        family: "market",
+        name: "ranked-market-scan",
+        status: compactPromptMarketScan ? "success" : "no_data",
+        observedAt: input.marketScan?.generatedAt ?? null,
+        asOf: input.marketScan?.generatedAt ?? null,
+        retrievedAt: decisionAsOf,
+        provenance: {
+          provider: input.marketScan?.source || "market-scan",
+          locator: null,
+          upstreamHash: null,
+          lineage: ["market-scan", "candidate-ranking", "prompt-compaction"]
+        }
+      },
+      content: JSON.stringify({ scan: compactPromptMarketScan ?? null, sourceCoverage: evidenceSourceCoverage })
+    }),
+    createEvidenceRef({
+      kind: "macro-regime-state",
+      subject: "market-regime",
+      source: {
+        family: "macro",
+        name: "macro-and-market-regime",
+        status: "success",
+        observedAt: decisionAsOf,
+        asOf: decisionAsOf,
+        retrievedAt: decisionAsOf,
+        provenance: { provider: "macro-cascade", locator: null, upstreamHash: null, lineage: ["macro", "derived-metrics"] }
+      },
+      content: JSON.stringify({ currentMarketRegime, macroeconomicData, macroDerived, marketInternals, marketSignals, regimeSeverity })
+    }),
+    createEvidenceRef({
+      kind: "account-performance-state",
+      subject: evidenceSubject,
+      source: {
+        family: "learning",
+        name: "realized-performance-scorecards",
+        status: "success",
+        observedAt: decisionAsOf,
+        asOf: decisionAsOf,
+        retrievedAt: decisionAsOf,
+        provenance: { provider: "performance-db", locator: input.policy.connectedAccountId ?? null, upstreamHash: null, lineage: ["fills", "scorecards"] }
+      },
+      content: JSON.stringify({
+        thesisOutcomes: thesisScorecard.slice(0, 12),
+        regimeOutcomes: regimeScorecard.slice(0, 8),
+        comboOutcomes: thesisRegimeScorecard,
+        signalEfficacy,
+        sourceValueScorecard,
+        confidenceCalibration,
+        sectorOutcomes: sectorScorecard,
+        factorOutcomes: factorScorecard,
+        skippedCounterfactuals
+      })
+    })
+  ];
+  const evidencePack = createEvidencePack({
+    decisionKey: input.runId,
+    evidence: [...textEvidenceInputs.map(({ ref }) => ref), ...structuredEvidence]
+  });
+  const evidenceManifest = {
+    contractVersion: evidencePack.contractVersion,
+    packHash: evidencePack.packHash,
+    greenRedParityHash: evidencePack.greenRedParityHash,
+    refs: evidencePack.evidence.map((ref) => ({
+      id: ref.id,
+      contentHash: ref.contentHash,
+      kind: ref.kind,
+      subject: ref.subject,
+      family: ref.source.family,
+      source: ref.source.name,
+      status: ref.source.status,
+      observedAt: ref.source.observedAt,
+      asOf: ref.source.asOf,
+      retrievedAt: ref.source.retrievedAt,
+      provider: ref.source.provenance.provider
+    }))
+  };
+  audit(
+    "strategy_evidence_pack",
+    {
+      runId: input.runId,
+      packHash: evidencePack.packHash,
+      greenRedParityHash: evidencePack.greenRedParityHash,
+      refs: evidenceManifest.refs,
+      budget: {
+        usedCharacters: evidenceBudget.usedCharacters,
+        usedTokenEstimate: evidenceBudget.usedTokenEstimate,
+        receipts: evidenceBudget.receipts.filter((receipt) => receipt.originalCharacters > 0)
+      }
+    },
+    input.userId,
+    input.policy.connectedAccountId
+  );
+  audit(
+    "strategy_source_coverage",
+    {
+      runId: input.runId,
+      candidateCount: input.marketScan?.topCandidates.length ?? 0,
+      providers: evidenceSourceCoverage,
+      sourceValueRows: sourceValueScorecard
+    },
+    input.userId,
+    input.policy.connectedAccountId
+  );
+  const rawStopPlans = input.policy.accountNumber ? getStopPlans(input.policy.accountNumber, input.userId) : {};
+  const stopPlanBySymbol = filterStopPlansByLiveBasis(rawStopPlans, input.positions);
+  const stopPlanRationaleBySymbol: Record<string, string | undefined> = {};
+  for (const sym of Object.keys(stopPlanBySymbol)) {
+    stopPlanRationaleBySymbol[sym] = rawStopPlans[sym]?.rationale;
+  }
+  const activeSyntheticStops = input.policy.accountNumber ? listSyntheticStops(input.policy.accountNumber, input.userId) : [];
+  const syntheticStopBySymbol = new Map<string, any>(activeSyntheticStops.map((s: any) => [normalizeSymbol(s.symbol), s]));
+
+  const activeProtection = input.positions.map((pos) => {
+    const sym = normalizeSymbol(pos.symbol);
+    const planStyle = stopPlanBySymbol[sym] ?? "default";
+    const rationale = stopPlanRationaleBySymbol[sym];
+    
+    const symbolOrders = (input.recentOrders as EquityOrder[]).filter(
+      (o) => normalizeSymbol(o.symbol) === sym
+    );
+    const positionSide = pos.quantity > 0 ? "long" : "short";
+    const openExitOrders = symbolOrders.filter(
+      (o) => isLiveExitOrder(o, positionSide)
+    );
+
+    const hasBracket = openExitOrders.some((o) => isBracketOrderClass(o.orderClass));
+    const hasSimpleStop = openExitOrders.some((o) => o.type === "stop_market" || o.type === "stop_limit");
+    const hasNativeTrail = openExitOrders.some((o) => (o.type as string) === "trailing_stop_market" || (o.type as string) === "trailing_stop_limit");
+    
+    const synStop = syntheticStopBySymbol.get(sym);
+
+    let enforcementLane: "bracket" | "broker_stop" | "native_trail" | "synthetic" | "NONE" = "NONE";
+    if (hasBracket) enforcementLane = "bracket";
+    else if (hasNativeTrail) enforcementLane = "native_trail";
+    else if (hasSimpleStop) enforcementLane = "broker_stop";
+    else if (synStop) enforcementLane = "synthetic";
+
+    const unprotected = enforcementLane === "NONE";
+
+    let effectiveStopPrice: number | undefined;
+    if (enforcementLane === "bracket" || enforcementLane === "broker_stop") {
+      const stopOrder = openExitOrders.find((o) => o.type === "stop_market" || o.type === "stop_limit");
+      effectiveStopPrice = stopOrder?.stopPrice;
+    } else if (enforcementLane === "synthetic" && synStop) {
+      const isShort = pos.quantity < 0;
+      effectiveStopPrice = isShort 
+        ? synStop.extremePrice * (1 + synStop.trailPercent / 100)
+        : synStop.extremePrice * (1 - synStop.trailPercent / 100);
+    }
+
+    if (effectiveStopPrice !== undefined) {
+      effectiveStopPrice = Number(effectiveStopPrice.toFixed(2));
+    }
+
+    const mark = pos.marketValue / pos.quantity;
+    let distancePct: number | undefined;
+    let distanceR: number | undefined;
+    if (effectiveStopPrice !== undefined && mark > 0) {
+      distancePct = Number((Math.abs(mark - effectiveStopPrice) / mark * 100).toFixed(2));
+      const atrPct = input.atrStopPctBySymbol?.[sym];
+      if (atrPct && atrPct > 0) {
+        distanceR = Number((distancePct / atrPct).toFixed(2));
+      }
+    }
+
+    const trailHwm = synStop ? Number(synStop.extremePrice.toFixed(2)) : undefined;
+
+    let holdingDays: number | undefined;
+    if (input.policy.accountNumber) {
+      try {
+        const query = getDb().prepare(`
+          SELECT julianday('now') - julianday(timestamp) as holding_days
+          FROM fill_events
+          WHERE account_number = ? AND symbol = ? AND side = ?
+          ORDER BY timestamp ASC LIMIT 1
+        `).get(input.policy.accountNumber, sym, pos.quantity > 0 ? "buy" : "short") as { holding_days: number } | undefined;
+        if (query) {
+          holdingDays = Math.max(0, Math.round(query.holding_days));
+        }
+      } catch {
+        // best-effort fallback
+      }
+    }
+
+    const q = input.marketScan?.quotesBySymbol[sym];
+    const daysToEarnings = q?.daysToEarnings;
+    const earningsDate = typeof daysToEarnings === "number"
+      ? new Date(Date.now() + daysToEarnings * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      : undefined;
+
+    const restingExitOrders = openExitOrders.map((o) => ({
+      id: o.id,
+      type: o.type,
+      qty: o.quantity,
+      limitPrice: o.limitPrice,
+      stopPrice: o.stopPrice
+    }));
+
+    return compactPromptObject({
+      symbol: pos.symbol,
+      qty: pos.quantity,
+      averageCost: Number(pos.averageCost.toFixed(2)),
+      marketValue: Number(pos.marketValue.toFixed(2)),
+      currentPrice: Number(mark.toFixed(2)),
+      planStyle,
+      rationale,
+      enforcementLane,
+      effectiveStopPrice,
+      effectiveStopDistancePct: distancePct,
+      effectiveStopDistanceR: distanceR,
+      trailHwm,
+      restingExitOrders: restingExitOrders.length > 0 ? restingExitOrders : undefined,
+      holdingDays,
+      earningsDate,
+      unprotected: unprotected ? true : undefined
+    });
+  });
+
   const userContent = {
-    currentDate: new Date().toISOString(),
+    currentDate: decisionAsOf,
+    evidenceManifest,
+    evidenceBudgetReceipts: evidenceBudget.receipts.filter((receipt) => receipt.originalCharacters > 0),
     executionMode,
     executionModeClarification,
     currentMarketRegime,
+    activeProtection,
     ...(regimeSeverity
       ? {
           regimeSeverity: {
@@ -3285,15 +4606,39 @@ async function proposeTrades(input: {
           }
         }
       : {}),
+    // Forward calendar (handoff 3.5): scheduled high-impact US macro events in the next ~5 days,
+    // adjacent to the regime label so event timing informs entries/sizing around macro catalysts.
+    // Entire block omitted when there is no real calendar data.
+    ...(upcomingEconomicEvents.length > 0
+      ? {
+          upcomingEconomicEvents: {
+            note: "Scheduled HIGH-impact US economic events (FMP economic calendar) within the next 5 calendar days — e.g. CPI, FOMC, NFP. Weigh event timing when opening or sizing positions around these macro catalysts; this is context, not a block. An event carrying timingNote already printed today (or may have) — read it as a fresh release, not a pending catalyst.",
+            events: upcomingEconomicEvents.map((event) => ({
+              event: event.event,
+              date: event.date,
+              ...(event.impact ? { impact: event.impact } : {}),
+              ...(event.timingNote ? { timingNote: event.timingNote } : {})
+            }))
+          }
+        }
+      : {}),
     portfolio: input.portfolio,
     positions: input.positions,
     recentOrders: input.recentOrders,
     allowedSymbols: allowedSymbolsForPrompt,
-    marketScan: compactMarketScanForPrompt(input.marketScan),
+    marketScan: compactPromptMarketScan,
     limits: {
       maxOrderNotional: Number.isFinite(effectiveMaxOrderNotional) ? Number(effectiveMaxOrderNotional.toFixed(2)) : undefined,
       preferredMaxOrderNotional: Number.isFinite(preferredMaxOrderNotional) ? Number(preferredMaxOrderNotional.toFixed(2)) : undefined,
       maxOrderPctOfNav: input.policy.maxOrderPctOfNav,
+      dailyOpeningCap: dailyOpeningCap
+        ? {
+            mode: dailyOpeningCap.mode,
+            configuredValue: dailyOpeningCap.configuredValue,
+            effectiveNotional: Number(dailyOpeningCap.notional.toFixed(2)),
+            pctOfNav: dailyOpeningCap.pctOfNav != null ? Number(dailyOpeningCap.pctOfNav.toFixed(2)) : undefined
+          }
+        : undefined,
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
     },
@@ -3331,29 +4676,39 @@ async function proposeTrades(input: {
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
     ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
     ...(signalEfficacy.length > 1 ? { signalEfficacy } : {}),
+    ...(sourceValueScorecard.length > 0
+      ? {
+          sourceValueScorecard: {
+            caveat: "Observational leave-one-winning-provider-out telemetry; selection-biased and not causal. Use as a reason to investigate or cross-check, never as sole trade evidence.",
+            rows: sourceValueScorecard
+          }
+        }
+      : {}),
+    ...(evidenceSourceCoverage.length > 0 ? { evidenceSourceCoverage } : {}),
     ...(confidenceCalibration.length > 1 ? { confidenceCalibration } : {}),
     ...(sectorScorecard.length > 0 ? { sectorOutcomes: sectorScorecard } : {}),
     ...(factorScorecard.length > 0 ? { factorOutcomes: factorScorecard } : {}),
     ...(skippedCounterfactuals.length > 0 ? { skippedCounterfactuals } : {}),
     ...(taxContext ? { taxContext } : {}),
-    ...(input.ragContext ? { retrievedFinancialContext: input.ragContext } : {}),
-    ...(input.learnedContext ? { learnedContext: input.learnedContext } : {}),
+    ...(budgetedRagContext ? { retrievedFinancialContext: budgetedRagContext } : {}),
+    ...(budgetedLearnedContext ? { learnedContext: budgetedLearnedContext } : {}),
     // Historical reflection RELOCATED here from the Bull SYSTEM prompt (prompt-safety lane): it is
     // persisted raw LLM output, so it enters as fenced, labeled user-role DATA — the system prompt
     // references it by name and the data-not-command clause covers it.
-    ...(reflection ? { reflectionSummary: `<reflection_summary>\n${reflection}\n</reflection_summary>` } : {}),
+    ...(budgetedReflection ? { reflectionSummary: `<reflection_summary>\n${budgetedReflection}\n</reflection_summary>` } : {}),
     // Episodic decision memory (composite review A1): labeled analogs + owner-coaching blocks.
     // Mirrored into the Red Team review's adversaryContext below — evidence parity between the
     // strategist and its reviewer is the point.
-    ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
-    ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {})
+    ...(budgetedExperienceAnalogs ? { closestHistoricalAnalogs: budgetedExperienceAnalogs } : {}),
+    ...(budgetedOwnerCoaching ? { ownerCoaching: budgetedOwnerCoaching } : {})
   };
 
   // ── Advisory prompt-injection scan (CR-H prompt-safety lane) ─────────────
   // Deterministic receipts over the UNTRUSTED text blocks entering the Bull/Bear prompts. The
-  // per-candidate fields mirror EXACTLY what compactCandidateForPrompt injects (news = first 2
-  // headlines, smartMoney = first 3 bulletins). Detection IS the control: on a hit we audit and
-  // surface evidence — the text is NEVER altered or dropped, and generation always proceeds.
+  // per-candidate fields mirror EXACTLY what compactCandidateForPrompt injects (news = the
+  // compacted headline sample, max HEADLINES_PER_CANDIDATE; smartMoney = first 3 bulletins).
+  // Raw source text is scanned for reviewability; instruction-like spans in untrusted fields
+  // were already quarantined in the prompt-only copy.
   const untrustedPromptFields: UntrustedPromptField[] = [
     { name: "owner_strategy_prompt", text: input.prompt },
     { name: "reflection_summary", text: reflection },
@@ -3364,7 +4719,7 @@ async function proposeTrades(input: {
     ...(input.marketScan?.topCandidates ?? []).flatMap((candidate) => {
       const sym = normalizeSymbol(candidate.symbol);
       const fields: UntrustedPromptField[] = [];
-      const news = candidate.headlines?.slice(0, 2) ?? [];
+      const news = compactHeadlinesForPrompt(candidate.headlines);
       if (news.length > 0) fields.push({ name: `headlines:${sym}`, text: news.join("\n") });
       const bulletins = candidate.evidenceBulletins?.slice(0, 3) ?? [];
       if (bulletins.length > 0) fields.push({ name: `smartMoney:${sym}`, text: bulletins.join("\n") });
@@ -3372,17 +4727,45 @@ async function proposeTrades(input: {
     })
   ];
   const promptSafetyFindings = scanForInjectionAttempts(untrustedPromptFields);
+  const writeFmpAwareAudit = (kind: string, payload: unknown) => {
+    if (input.fmpRightsClaim && (input.fmpDerivedProvenance?.length ?? 0) > 0) {
+      recordFmpTranscriptDerivedAudit({
+        claim: input.fmpRightsClaim,
+        kind,
+        payload,
+        userId: input.userId,
+        connectedAccountId: input.policy.connectedAccountId,
+        provenance: input.fmpDerivedProvenance ?? []
+      });
+      return;
+    }
+    audit(kind, payload, input.userId, input.policy.connectedAccountId);
+  };
   if (promptSafetyFindings.length > 0) {
-    audit(
+    writeFmpAwareAudit(
       "prompt_injection_suspected",
       {
         runId: input.runId,
         fields: [...new Set(promptSafetyFindings.map((f) => f.name))],
         patterns: [...new Set(promptSafetyFindings.map((f) => f.pattern))],
         findings: promptSafetyFindings.slice(0, 12).map((f) => ({ ...f, excerpt: f.excerpt.slice(0, 240) }))
-      },
-      input.userId,
-      input.policy.connectedAccountId
+      }
+    );
+  }
+  if (promptContainmentReceipts.length > 0) {
+    writeFmpAwareAudit(
+      "prompt_injection_contained",
+      {
+        runId: input.runId,
+        receipts: promptContainmentReceipts.slice(0, 24).map(({ field, result }) => ({
+          field,
+          source: result.source,
+          status: result.status,
+          truncated: result.truncated,
+          patterns: result.findings.map((finding) => finding.pattern),
+          excerpts: result.quarantinedExcerpts.slice(0, 4).map(({ pattern, excerpt, replacement }) => ({ pattern, excerpt, replacement }))
+        }))
+      }
     );
   }
 
@@ -3390,8 +4773,16 @@ async function proposeTrades(input: {
   const llmSteps: StrategyLlmStep[] = [];
 
   const recordStep = (step: StrategyLlmStep, options: { includeInResult?: boolean } = {}) => {
-    if (options.includeInResult !== false) llmSteps.push(step);
-    audit("llm_step", { runId: input.runId, ...step }, input.userId, input.policy.connectedAccountId);
+    let provider = step.provider;
+    if (provider === "openrouter" && step.model && step.model.includes("/")) {
+      const raw = step.model.split("/")[0];
+      if (raw === "google") provider = "gemini";
+      else if (raw === "mistralai") provider = "mistral";
+      else provider = raw;
+    }
+    const mappedStep = { ...step, provider };
+    if (options.includeInResult !== false) llmSteps.push(mappedStep);
+    audit("llm_step", { runId: input.runId, ...mappedStep }, input.userId, input.policy.connectedAccountId);
   };
 
   const autonomyOverrideSchema = {
@@ -3435,6 +4826,21 @@ async function proposeTrades(input: {
     ]
   };
 
+  // Keep the structured-output vocabulary bounded to the exact scan candidates plus
+  // positions that may legitimately need an exit. The deterministic post-parse boundary
+  // below remains authoritative: providers do not all enforce JSON-schema constraints
+  // identically, and this enum alone cannot express the side-dependent opening rule.
+  const candidateSymbols = uniqueSymbols((input.marketScan?.topCandidates ?? []).map((candidate) => candidate.symbol));
+  const heldSymbols = uniqueSymbols(input.positions.map((position) => position.symbol));
+  const proposalSymbols = uniqueSymbols([...candidateSymbols, ...heldSymbols]);
+  const proposalSymbolSchema = proposalSymbols.length > 0
+    ? {
+        type: "string",
+        enum: proposalSymbols,
+        description: "A normalized topCandidates symbol, or a current holding when proposing an exit."
+      }
+    : { type: "string" };
+
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -3446,26 +4852,9 @@ async function proposeTrades(input: {
         items: {
           type: "object",
           additionalProperties: false,
-          required: [
-            "symbol",
-            "side",
-            "type",
-            "quantity",
-            "dollarAmount",
-            "limitPrice",
-            "stopPrice",
-            "timeInForce",
-            "marketHours",
-            "rationale",
-            "tradeThesisTag",
-            "confidenceScore",
-            "autonomyOverride",
-            "bracketStopLoss",
-            "bracketTakeProfit",
-            "stopPlan"
-          ],
+          required: [...BULL_PROPOSAL_REQUIRED_KEYS],
           properties: {
-            symbol: { type: "string" },
+            symbol: proposalSymbolSchema,
             // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
             // i.e. policy.shortSellingEnabled AND the connected account reports shortSelling. Default long-only.
             side: { enum: allowedSides },
@@ -3498,7 +4887,11 @@ async function proposeTrades(input: {
       userContent: JSON.stringify(userContent),
       schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-      reasoningEffort: bullReasoningEffort
+      reasoningEffort: bullReasoningEffort,
+      userId: input.userId,
+      keyRef: llmKeyRef,
+      service: "strategy",
+      feature: "strategy"
     }
   );
 
@@ -3506,7 +4899,20 @@ async function proposeTrades(input: {
   // entry that has a credential. Empty list => primary only (default; byte-identical behavior). On a
   // TRANSIENT failure (HTTP 429/5xx or timeout) the SAME request is re-issued against the next model.
   const bullAttempts = [
-    { url, provider, model, transport, key: openaiKey, keySource: llmKeySource, keyRef: llmKeyRef, body }
+    {
+      url,
+      provider,
+      model,
+      transport,
+      key: openaiKey,
+      keySource: llmKeySource,
+      keyRef: llmKeyRef,
+      body,
+      // Proposal attribution is a policy/display contract: retain the exact configured
+      // identifier (including an `openrouter/` namespace) so approval readers can compare
+      // it directly to the primary and fallback chain. `model` stays API-normalized.
+      proposalModel: input.policy.llmModel?.trim() || model
+    }
   ];
   const fallbackModelList = Array.isArray(input.policy.llmFallbackModels) ? input.policy.llmFallbackModels : [];
   for (const fallbackModel of fallbackModelList.filter((m): m is string => typeof m === "string").map((m) => m.trim()).filter(Boolean)) {
@@ -3520,6 +4926,7 @@ async function proposeTrades(input: {
       key: ep.key,
       keySource: ep.keySource,
       keyRef: ep.keyRef,
+      proposalModel: fallbackModel,
       body: buildLlmRequestBody(
         { provider: ep.provider, transport: ep.transport },
         {
@@ -3528,16 +4935,32 @@ async function proposeTrades(input: {
           userContent: JSON.stringify(userContent),
           schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
           maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, input.policy.llmReasoningEffort)
+          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, input.policy.llmReasoningEffort),
+          userId: input.userId,
+          keyRef: ep.keyRef,
+          service: "strategy",
+          feature: "strategy"
         }
       )
     });
   }
+  // Cross-run cooldown planning (handoff 6b.4): lanes that just failed with a rate/quota error are
+  // skipped (audited per skip) instead of being re-discovered dead every run; when EVERY lane is
+  // cooling the full chain still runs, least-recently-failed first. Kill switch:
+  // LLM_PROVIDER_COOLDOWN_DISABLED=1 (restores the unfiltered chain exactly).
+  const plannedBullAttempts = planLlmProviderAttempts(bullAttempts, {
+    step: "bull",
+    runId: input.runId,
+    userId: input.userId,
+    connectedAccountId: input.policy.connectedAccountId
+  });
   // Which endpoint actually served the run (starts as the primary; updated on failover). Transport
   // and keySource are tracked too so the served step/audit trail reports the FALLBACK's transport
   // (e.g. anthropic-messages vs the primary's responses), not the primary's — accurate money-path tracing.
-  let bullServedProvider = provider;
-  let bullServedModel = model;
+  let { provider: bullServedProvider, model: bullServedModel } = remapOpenRouterTelemetry(provider, model);
+  // Keep proposal attribution in policy namespace; telemetry below intentionally uses its
+  // canonical provider/model pair so usage and benchmark history remain mergeable.
+  let bullServedProposalModel = bullAttempts[0].proposalModel;
   let bullServedTransport = transport;
   let bullServedKeySource = llmKeySource;
   let bullFailoverNote: string | undefined;
@@ -3545,8 +4968,8 @@ async function proposeTrades(input: {
   const bullStepBase = {
     step: "bull" as const,
     label: "Green Team proposal",
-    provider,
-    model,
+    provider: bullServedProvider,
+    model: bullServedModel,
     transport,
     keySource: llmKeySource
   };
@@ -3578,7 +5001,7 @@ async function proposeTrades(input: {
     bullResult = await withLlmGeneration(
       {
         name: "trading.strategy.bull",
-        model,
+        model: bullServedModel,
         userId: input.userId,
         connectedAccountId: input.policy.connectedAccountId,
         input: summarizeOpenAiRequest(body),
@@ -3598,10 +5021,10 @@ async function proposeTrades(input: {
       },
       async () => {
         let lastError: unknown;
-        for (let i = 0; i < bullAttempts.length; i++) {
-          const attempt = bullAttempts[i];
-          const isLast = i === bullAttempts.length - 1;
-          const next = bullAttempts[i + 1];
+        for (let i = 0; i < plannedBullAttempts.length; i++) {
+          const attempt = plannedBullAttempts[i];
+          const isLast = i === plannedBullAttempts.length - 1;
+          const next = plannedBullAttempts[i + 1];
           try {
             const bullSoftTimeoutMs = strategyLlmTimeoutMs(attempt.model, input.policy.llmReasoningEffort);
             // Reasoning-class-aware SOFT wall-clock: a thinking-enabled model gets the widened bound.
@@ -3622,6 +5045,19 @@ async function proposeTrades(input: {
 
             if (!response.ok) {
               const detail = await response.text();
+              // Cross-run memory: a rate/quota failure cools this provider lane so the NEXT run
+              // skips it instead of re-discovering it dead (no-op for non-quota failures).
+              recordLlmProviderFailure({
+                provider: attempt.provider,
+                keySource: attempt.keySource,
+                status: response.status,
+                detail,
+                model: attempt.model,
+                step: "bull",
+                runId: input.runId,
+                userId: input.userId,
+                connectedAccountId: input.policy.connectedAccountId
+              });
               if (!isLast && isRetryableLlmStatus(response.status)) {
                 lastError = new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
                 console.warn(`[Bull] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
@@ -3631,13 +5067,18 @@ async function proposeTrades(input: {
               throw new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
             }
             const payload = await response.json();
-            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, connectedAccountId: input.policy.connectedAccountId, ...extractLlmUsage(payload) });
-            if (i > 0) {
-              bullServedProvider = attempt.provider;
-              bullServedModel = attempt.model;
+            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, connectedAccountId: input.policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(attempt.provider, payload), ...extractLlmUsage(payload) });
+            bullServedProposalModel = attempt.proposalModel;
+            // Served-by-fallback detection compares the ATTEMPT to the configured primary (not
+            // `i > 0`): cooldown planning can drop the primary from the chain entirely, making a
+            // fallback the first attempt.
+            const { provider: servedCanonicalProvider, model: servedCanonicalModel } = remapOpenRouterTelemetry(attempt.provider, attempt.model);
+            if (servedCanonicalModel !== remapOpenRouterTelemetry(provider, model).model || servedCanonicalProvider !== remapOpenRouterTelemetry(provider, model).provider) {
+              bullServedProvider = servedCanonicalProvider;
+              bullServedModel = servedCanonicalModel;
               bullServedTransport = attempt.transport;
               bullServedKeySource = attempt.keySource;
-              bullFailoverNote = `Primary Green Team model ${model}/${provider} was unavailable; served by fallback ${attempt.model}/${attempt.provider} (attempt ${i + 1}/${bullAttempts.length}).`;
+              bullFailoverNote = `Primary Green Team model ${model}/${provider} was unavailable; served by fallback ${attempt.model}/${attempt.provider} (attempt ${i + 1}/${plannedBullAttempts.length}).`;
             }
             const text = extractLlmText(payload);
             const truncated = detectLlmTruncation(payload);
@@ -3657,13 +5098,58 @@ async function proposeTrades(input: {
             try {
               // R10 — fence/prose-tolerant extraction on the PRIMARY (Green/Bull) parse path too:
               // fenced JSON on the proposal step must not degrade to zero proposals.
-              const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
-              return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
+              try {
+                const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
+                return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
+              } catch {
+                // AMBIGUITY GUARD before repair (Codex P1, round 9), mirroring the Red Team's:
+                // a malformed reply carrying MORE THAN ONE `proposals` payload (e.g. a
+                // schema-complete block followed by a corrective `{"proposals":[]}`) must not be
+                // repaired from whichever block extraction keeps — contradictory output degrades
+                // to zero proposals exactly as it did pre-repair. Counted on the raw text with
+                // JSON \uXXXX escapes decoded so an escaped key cannot hide the second block.
+                const escapeNormalizedBullText = text.replace(/\\u([0-9a-fA-F]{4})/g, (_whole, hex: string) =>
+                  String.fromCharCode(Number.parseInt(hex, 16))
+                );
+                // Quotes OPTIONAL (Codex P1, round 10): jsonrepair accepts unquoted JSON5 keys,
+                // so a corrective `{proposals: []}` block must count too. The lookbehind stops
+                // word-suffix matches (e.g. "counterproposals:"); a prose mention still counting
+                // fails CLOSED to zero proposals, the accepted direction on this guard.
+                const proposalsKeyOccurrences = (escapeNormalizedBullText.match(/(?<![\w"'])["']?proposals["']?\s*:/g) ?? []).length;
+                if (proposalsKeyOccurrences > 1) {
+                  throw new Error(`Bull reply contained ${proposalsKeyOccurrences} proposals blocks (ambiguous); refusing repair.`);
+                }
+                // ANY trailing balanced JSON value counts as ambiguous too (Codex P1, round 11):
+                // a corrective bare array (`... Correction: []`) carries no proposals key but
+                // still contradicts the first block. Quote-tolerant scan, since the whole point
+                // of this path is that the reply may be single-quoted.
+                const firstBlockEnd = firstQuoteTolerantBlockEnd(escapeNormalizedBullText);
+                if (firstBlockEnd !== -1 && /[[{]/.test(escapeNormalizedBullText.slice(firstBlockEnd + 1))) {
+                  throw new Error("Bull reply contained trailing JSON after the first block (ambiguous); refusing repair.");
+                }
+                // Strict parse failed — retry WITH local jsonrepair, then gate every recovered
+                // proposal through the schema-completeness filter: repair can close a proposal
+                // truncated mid-object, and such partials must not reach sizing where defaults
+                // would fabricate the missing judgment fields (Codex P1, PR #1696). This
+                // generative path is the ONLY repair opt-in; Red Team / revalidation / tuning
+                // parse strictly and stay fail-closed.
+                const parsed = JSON.parse(extractJsonPayload(text, { repair: true })) as { proposals?: unknown[] };
+                const { kept, dropped } = filterRepairedProposals(
+                  parsed.proposals ?? [],
+                  allowedSides,
+                  proposalSymbols.length > 0 ? proposalSymbols : undefined
+                );
+                if (dropped > 0) {
+                  console.warn(`[Bull] jsonrepair recovered the payload but ${dropped} proposal(s) were incomplete (truncation artifacts) and were dropped; keeping ${kept.length}.`);
+                  audit("strategy_bull_repaired_partial_dropped", { runId: input.runId, model: attempt.model, dropped, kept: kept.length }, input.userId, input.policy.connectedAccountId);
+                }
+                return { text, proposals: kept, truncated, wireOutputCap, finishReason };
+              }
             } catch (parseError) {
               // A truncated/malformed model response must not crash the whole autonomous
               // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
               // record a DISTINCT truncation reason instead of a silent no-op (see below).
-              console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", parseError);
+              console.warn("Bull Agent response local healing failed; degrading to zero proposals this run");
               return { text, proposals: [] as TradeProposal[], truncated, wireOutputCap, finishReason };
             }
           } catch (err) {
@@ -3687,13 +5173,34 @@ async function proposeTrades(input: {
     throw new StrategyLlmStepFailure(reason, llmSteps, error);
   }
 
-  const rawBullProposals = sanitizeProposals(bullResult.proposals, maxProposals).map(p => ({
+  const sanitizedBullProposals = sanitizeProposals(bullResult.proposals, maxProposals);
+  const { accepted: candidateBoundBullProposals, rejected: offCandidateOpenings } =
+    enforceCandidateSetForOpenings(sanitizedBullProposals, input.marketScan?.topCandidates ?? []);
+  for (const rejected of offCandidateOpenings) {
+    audit(
+      "proposal_rejected_off_candidate_opening",
+      {
+        runId: input.runId,
+        symbol: normalizeSymbol(rejected.symbol),
+        side: rejected.side,
+        candidateCount: candidateSymbols.length,
+        candidates: candidateSymbols
+      },
+      input.userId,
+      input.policy.connectedAccountId
+    );
+  }
+  const rawBullProposals = candidateBoundBullProposals.map(p => ({
     ...p,
+    // Preserve the proposing model's own thesis before deterministic sizing/risk receipts and the
+    // Red Team review are appended to the legacy all-in-one rationale string.
+    greenTeamRationale: p.rationale,
     entryMarketRegime: currentMarketRegime,
     ...(regimeSeverity ? { entryRegimeSeverity: Number(regimeSeverity.severity.toFixed(2)) } : {}),
-    // FAILOVER-AWARE attribution: the model that actually served this run (not necessarily
-    // policy.llmModel). Persisted with the proposal so approval-time attribution stays accurate.
-    proposedByModel: bullServedModel
+    // FAILOVER-AWARE attribution: the policy-namespaced model that actually served this run
+    // (not necessarily policy.llmModel). Preserve that namespace so approval-time primary and
+    // fallback comparisons remain exact; telemetry above is canonicalized independently.
+    proposedByModel: bullServedProposalModel
   }));
   // TRUNCATION-AWARE: if the Bull answer hit the output-token cap, a zero/partial parse is NOT a
   // genuine "do nothing" — record a DISTINCT reason + audit so it's diagnosable and never a silent
@@ -3712,7 +5219,7 @@ async function proposeTrades(input: {
         cap: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
         wireOutputCap: bullResult.wireOutputCap,
         finishReason: bullResult.finishReason,
-        parsedProposals: rawBullProposals.length,
+        parsedProposals: sanitizedBullProposals.length,
         provider,
         model
       },
@@ -3783,20 +5290,9 @@ async function proposeTrades(input: {
     typeof candidate.sym === "string" && proposedSymbols.has(normalizeSymbol(candidate.sym))
   );
   const adversaryContext: RedTeamReviewContext = {
-    currentDate: userContent.currentDate,
-    currentMarketRegime: userContent.currentMarketRegime,
-    ...(userContent.regimeSeverity ? { regimeSeverity: userContent.regimeSeverity } : {}),
-    macroeconomicData: userContent.macroeconomicData,
-    limits: userContent.limits,
-    socraticAuthority: userContent.socraticAuthority,
-    portfolio: input.portfolio,
-    positions: input.positions,
-    ...(sectorComposition ? { sectorComposition } : {}),
-    ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
-    ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
-    ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
-    ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
-    ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {}),
+    // Spread the complete Green evidence object rather than reconstructing a lossy subset. The
+    // content-addressed parity hash lets audits prove both stages received the same evidence.
+    ...userContent,
     candidatesUnderReview
   };
 
@@ -3804,7 +5300,10 @@ async function proposeTrades(input: {
     proposals: bullProposals,
     llmSteps,
     adversaryContext,
-    ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {})
+    ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {}),
+    ...(promptContainmentReceipts.length > 0
+      ? { promptContainmentFields: [...new Set(promptContainmentReceipts.map(({ field }) => field))] }
+      : {})
   };
 }
 
@@ -3845,6 +5344,12 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
       side: order.side,
       type: order.type,
       state: order.state,
+      // orderClass, stopPrice, and limitPrice are needed by activeProtection
+      // evaluation (isBracketOrderClass, broker-stop detection) downstream in
+      // proposeTrades — don't drop them from the compaction.
+      ...(order.orderClass ? { orderClass: order.orderClass } : {}),
+      ...(order.stopPrice !== undefined ? { stopPrice: order.stopPrice } : {}),
+      ...(order.limitPrice !== undefined ? { limitPrice: order.limitPrice } : {}),
       ...(order.dollarAmount ? { dollarAmount: order.dollarAmount } : {}),
       ...(quantity ? { quantity } : {}),
       ...(order.averagePrice ? { avgPrice: order.averagePrice } : {}),
@@ -3859,7 +5364,7 @@ function hasRealAsk(quote: MarketQuote): boolean {
   return Boolean(quote.ask && quote.ask > 0 && !quote.syntheticAsk);
 }
 
-function compactMarketScanForPrompt(marketScan?: MarketScan) {
+function compactMarketScanForPrompt(marketScan?: MarketScan, candidateAtrStopPctBySymbol?: Record<string, number>) {
   if (!marketScan) return undefined;
   const hasAskData = marketScan.topCandidates.some(hasRealAsk);
   return {
@@ -3873,19 +5378,57 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
     cacheTtlMs: marketScan.cacheTtlMs,
     cached: marketScan.cached,
     hasAskData,
-    topCandidates: marketScan.topCandidates.map(compactCandidateForPrompt),
+    topCandidates: marketScan.topCandidates.map((c, i) => compactCandidateForPrompt(c, i, candidateAtrStopPctBySymbol)),
     instructions: hasAskData
       ? "Ask-relative buy limits are allowed only for candidates that include ask."
       : "No ask prices are available in this scan. Do not invent ask-relative limit prices."
   };
 }
 
-function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
+export type LabeledSkippedCounterfactual = SkippedCandidateReturn & { label: "missed_winner" | "avoided_loser" };
+
+/**
+ * Split the bounded counterfactual budget between BOTH feedback directions: `missed_winner` rows the
+ * model skipped that then rose >= 3% (regret) and `avoided_loser` rows it skipped that then fell
+ * <= -3% (vindication). One-sided regret-only feedback can only ever teach "you are too cautious".
+ * Each direction gets half of `cap`; an underfilled side donates its remainder to the other, so the
+ * total row count stays bounded at `cap`. Pure; exported for tests.
+ */
+export function selectBalancedCounterfactuals(rows: SkippedCandidateReturn[], cap = 8): LabeledSkippedCounterfactual[] {
+  const winners = rows.filter((row) => row.returnPct >= 3).sort((a, b) => b.returnPct - a.returnPct);
+  const losers = rows.filter((row) => row.returnPct <= -3).sort((a, b) => a.returnPct - b.returnPct);
+  const winnerCount = Math.min(winners.length, Math.max(Math.floor(cap / 2), cap - losers.length));
+  const loserCount = Math.min(losers.length, cap - winnerCount);
+  return [
+    ...winners.slice(0, winnerCount).map((row) => ({ ...row, label: "missed_winner" as const })),
+    ...losers.slice(0, loserCount).map((row) => ({ ...row, label: "avoided_loser" as const }))
+  ];
+}
+
+/** Round to 1 decimal for prompt compactness; undefined (dropped by compactPromptObject) when not finite. */
+function round1(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? Math.round(value * 10) / 10 : undefined;
+}
+
+/** Analyst-target upside % = (targetMean − price) / price, 1dp. Undefined (omitted) when either input is absent. */
+function targetUpsidePct(quote: { price?: number; targetMean?: number }): number | undefined {
+  const { price, targetMean } = quote;
+  if (typeof price !== "number" || !(price > 0) || typeof targetMean !== "number" || !(targetMean > 0)) return undefined;
+  return Math.round(((targetMean - price) / price) * 1000) / 10;
+}
+
+// Exported for tests (prompt-field wiring assertions); only compactMarketScanForPrompt calls it in production.
+export function compactCandidateForPrompt(
+  quote: MarketScan["topCandidates"][number],
+  index: number,
+  candidateAtrStopPctBySymbol?: Record<string, number>
+): Record<string, unknown> {
   // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread —
   // it would wrongly anchor ask-relative limit-price reasoning. Emit each side only when it is not
   // synthetic (compactPromptObject drops undefined keys, matching hasAskData).
   const realBid = !quote.syntheticBid ? quote.bid : undefined;
   const realAsk = !quote.syntheticAsk ? quote.ask : undefined;
+  const sym = normalizeSymbol(quote.symbol);
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
@@ -3902,8 +5445,15 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     de: quote.debtToEquity,
     epsGr: quote.epsGrowth,
     pb: quote.pbRatio,
+    // FMP quality + analyst-target fields (already PERCENT numbers where % applies). Omitted
+    // entirely when the provider had no data — never a placeholder value.
+    roa: round1(quote.returnOnAssets),
+    grossMarginPct: round1(quote.grossProfitMargin),
+    tgtMean: quote.targetMean,
+    tgtUpsidePct: targetUpsidePct(quote),
     shortFloat: quote.shortPercentOfFloat,
     beta: quote.beta,
+    atrStopPct: candidateAtrStopPctBySymbol?.[sym] ? Number(candidateAtrStopPctBySymbol[sym].toFixed(2)) : undefined,
     earnIn: quote.daysToEarnings,
     instOwn: quote.institutionOwnershipPct,
     iv: quote.nearTheMoneyIv,
@@ -3924,7 +5474,10 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     smartMoney: quote.evidenceBulletins?.slice(0, 3),
     rating: quote.analystRating,
     ratingScore: quote.analystScore,
-    news: quote.headlines?.slice(0, 2),
+    // Handoff 3.6: bounded RAW headline sample — markup-stripped, near-duplicate-deduped, capped
+    // at HEADLINES_PER_CANDIDATE, each headline whole (never truncated mid-claim). The upstream
+    // pipeline stores bare titles (no per-headline source/timestamp), so none is fabricated here.
+    news: compactHeadlinesForPrompt(quote.headlines),
     sec: quote.sector,
     ind: quote.industry,
     posMV: quote.positionMarketValue,
@@ -4009,6 +5562,190 @@ function recordLlmOutcome(
 // "./strategy" unchanged.
 export { filterStopPlansByLiveBasis };
 
+/**
+ * Every key the Bull structured-output schema marks `required` on a proposal object (values may
+ * still be null where the schema allows it). Single source for the schema literal AND the
+ * post-repair completeness gate below — they must never drift.
+ */
+export const BULL_PROPOSAL_REQUIRED_KEYS = [
+  "symbol",
+  "side",
+  "type",
+  "quantity",
+  "dollarAmount",
+  "limitPrice",
+  "stopPrice",
+  "timeInForce",
+  "marketHours",
+  "rationale",
+  "tradeThesisTag",
+  "confidenceScore",
+  "autonomyOverride",
+  "bracketStopLoss",
+  "bracketTakeProfit",
+  "stopPlan"
+] as const;
+
+/**
+ * Completeness gate for proposals recovered via jsonrepair (Codex P1, PR #1696): repair proves
+ * SYNTAX, not completeness — a response truncated mid-proposal repairs into an object missing
+ * its tail fields, and `sanitizeProposals` only checks symbol/side/type before sizing fills the
+ * rest with defaults. A repaired proposal is kept only when every schema-required key is present
+ * and the three human-judgment fields carry real values (non-empty rationale/tradeThesisTag,
+ * finite confidenceScore) — anything less is a truncation artifact, not a trade idea.
+ */
+/**
+ * End index of the first balanced {...}/[...] block, scanning BOTH quote styles (the strict
+ * extractor's scanner is deliberately double-quote-only). Used by the Bull ambiguity guard to
+ * detect a trailing corrective JSON value — e.g. `{'proposals':[...]} Correction: []` — which
+ * carries no `proposals:` key yet contradicts the first block (Codex P1, round 11).
+ */
+export function firstQuoteTolerantBlockEnd(text: string): number {
+  const start = text.search(/[[{]/);
+  if (start === -1) return -1;
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === "{" || ch === "[") depth += 1;
+    else if (ch === "}" || ch === "]") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function isSchemaShapedStopPlan(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const o = value as Record<string, unknown>;
+  return (
+    "rationale" in o &&
+    (o.rationale === null || typeof o.rationale === "string") &&
+    typeof o.style === "string" &&
+    ["default", "fixed", "atr", "trailing", "none"].includes(o.style) &&
+    // "none" carries no stop at all — the schema prose requires a plain-language justification,
+    // and a repaired response must not strip protection without one.
+    (o.style !== "none" || (typeof o.rationale === "string" && o.rationale.trim() !== ""))
+  );
+}
+
+function isSchemaShapedAutonomyOverride(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const o = value as Record<string, unknown>;
+  return (
+    typeof o.requested === "boolean" &&
+    typeof o.thesis === "string" && o.thesis.trim() !== "" &&
+    Array.isArray(o.preferenceConflicts) && o.preferenceConflicts.every((item) => typeof item === "string") &&
+    (o.invalidation === null || typeof o.invalidation === "string") &&
+    (o.cashDeploymentPct === null || (typeof o.cashDeploymentPct === "number" && Number.isFinite(o.cashDeploymentPct)))
+  );
+}
+
+export function filterRepairedProposals(
+  proposals: unknown[],
+  // The RUN's schema enum, not the global four (Codex P1, round 8): when shortSellingEnabled is
+  // off or the account lacks short capability, the strict path rejects short/cover at
+  // `side: { enum: allowedSides }` — and the policy-level short gate is deliberately
+  // owner-overrideable, so the repair path must enforce the same schema boundary.
+  allowedSides: readonly string[] = ["buy", "sell", "short", "cover"],
+  // The RUN's symbol enum (Codex P1, round 10): the schema restricts symbols to the scan's
+  // candidates plus current holdings; a repaired `sell` on an UNHELD symbol bypasses both the
+  // openings candidate gate (buy/short only) and the policy holdings check, and Alpaca infers
+  // open-vs-close from `side: sell` — an unintended short. undefined mirrors the schema's
+  // bare-string fallback when the run has no candidates/holdings to enumerate.
+  allowedSymbols?: readonly string[]
+): { kept: TradeProposal[]; dropped: number } {
+  const kept: TradeProposal[] = [];
+  let dropped = 0;
+  for (const candidate of proposals) {
+    const record = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+      ? (candidate as Record<string, unknown>)
+      : undefined;
+    const complete =
+      record !== undefined &&
+      BULL_PROPOSAL_REQUIRED_KEYS.every((key) => key in record) &&
+      // Key presence alone is not enough (Codex P2, round 2): a repaired json_object-mode
+      // response can carry schema-INVALID values (numeric symbol, object side), and
+      // `sanitizeProposals` calls `normalizeSymbol(proposal.symbol)` → `.trim()` which would
+      // throw and abort the entire run instead of taking the zero-proposal path. Type-check
+      // the identity/enum fields the downstream pipeline dereferences unconditionally.
+      typeof record.symbol === "string" && record.symbol.trim() !== "" &&
+      (allowedSymbols === undefined || allowedSymbols.includes(normalizeSymbol(record.symbol))) &&
+      typeof record.side === "string" &&
+      allowedSides.includes(record.side) &&
+      typeof record.type === "string" &&
+      ["market", "limit", "stop_market", "stop_limit"].includes(record.type) &&
+      typeof record.rationale === "string" && record.rationale.trim() !== "" &&
+      // Playbook membership, not just non-emptiness (Codex P1, round 6): a fabricated tag has
+      // no scorecard history, so shouldSkipNegativeExpectancy treats it as unproven and a
+      // repaired reply could bypass a proven negative thesis's skip gate.
+      typeof record.tradeThesisTag === "string" &&
+      (THESIS_PLAYBOOK as readonly string[]).includes(record.tradeThesisTag) &&
+      typeof record.confidenceScore === "number" && Number.isFinite(record.confidenceScore) &&
+      // Numeric/null sizing fields (Codex P2, round 3): repair can deliver `dollarAmount: "100"`,
+      // which sanitize preserves via ?? and Robinhood later dereferences with .toFixed —
+      // crashing the run instead of taking the zero-proposal path. null stays allowed (the
+      // schema is nullable here); anything else must be a finite number.
+      (["quantity", "dollarAmount", "limitPrice", "stopPrice", "bracketStopLoss", "bracketTakeProfit"] as const)
+        .every((key) => record[key] === null || (typeof record[key] === "number" && Number.isFinite(record[key] as number))) &&
+      // Schema range for conviction (Codex P1, round 5): the contract bounds confidenceScore to
+      // 1-100; sanitize would CLAMP a repaired 999 to maximum conviction instead of rejecting it.
+      (record.confidenceScore as number) >= 1 && (record.confidenceScore as number) <= 100 &&
+      // Enum membership, exactly as declared (Codex P1, rounds 4-5): timeInForce/marketHours are
+      // NON-NULL enums in the schema — a repaired null would ride sanitize's defaults (gfd,
+      // regular_hours) into silently chosen order semantics, and Alpaca maps any other string
+      // to gtc.
+      (record.timeInForce === "gfd" || record.timeInForce === "gtc") &&
+      (record.marketHours === "regular_hours" || record.marketHours === "extended_hours" || record.marketHours === "all_day_hours") &&
+      // stopPlan must satisfy its subschema (Codex P1, round 5): a repaired {style:"default"}
+      // missing the required rationale key would otherwise carry a RESET instruction that
+      // clears the position's persisted fixed/atr/trailing/none plan at fill commit.
+      (record.stopPlan === null || isSchemaShapedStopPlan(record.stopPlan)) &&
+      // A repaired autonomyOverride must satisfy the override subschema (Codex P1, round 4):
+      // sanitize coerces a nested-object thesis to "[object Object]", which
+      // resolveSocraticOverride would treat as a REAL thesis and use to pass preference gates
+      // under socraticOverrideMode: "execute". requested must be boolean and thesis a real
+      // string before a repaired proposal may carry an override request at all.
+      (record.autonomyOverride === null || isSchemaShapedAutonomyOverride(record.autonomyOverride));
+    if (complete && record !== undefined) {
+      // additionalProperties: false, enforced by PROJECTION (Codex P1, round 7): a validated
+      // record may still smuggle unvalidated extras — e.g. a repaired `bracketStopLimit` that
+      // the Alpaca adapter would honor, turning the protective stop into a stop-limit order the
+      // declared schema rejects. Rebuild the kept proposal from exactly the schema's keys, and
+      // project the two nested objects onto THEIR declared keys for the same reason.
+      const projected: Record<string, unknown> = {};
+      for (const key of BULL_PROPOSAL_REQUIRED_KEYS) projected[key] = record[key];
+      if (projected.stopPlan && typeof projected.stopPlan === "object") {
+        const sp = projected.stopPlan as Record<string, unknown>;
+        projected.stopPlan = { style: sp.style, rationale: sp.rationale ?? null };
+      }
+      if (projected.autonomyOverride && typeof projected.autonomyOverride === "object") {
+        const ao = projected.autonomyOverride as Record<string, unknown>;
+        projected.autonomyOverride = {
+          requested: ao.requested,
+          thesis: ao.thesis,
+          preferenceConflicts: ao.preferenceConflicts,
+          invalidation: ao.invalidation ?? null,
+          cashDeploymentPct: ao.cashDeploymentPct ?? null
+        };
+      }
+      kept.push(projected as unknown as TradeProposal);
+    } else {
+      dropped += 1;
+    }
+  }
+  return { kept, dropped };
+}
+
 export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
   return proposals
     .filter((proposal) => proposal.symbol && proposal.side && proposal.type)
@@ -4078,6 +5815,33 @@ export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradePro
 }
 
 /**
+ * Enforce the exact normalized market-scan candidate boundary after provider parsing.
+ *
+ * Buy/short openings must name a current `marketScan.topCandidates` member. Sell/cover
+ * proposals deliberately bypass this boundary: deterministic exit validation still owns
+ * held-position correctness, and an existing position must remain eligible to exit even
+ * when it falls outside the current scan.
+ */
+export function enforceCandidateSetForOpenings(
+  proposals: TradeProposal[],
+  topCandidates: ReadonlyArray<Pick<MarketQuote, "symbol">>
+): { accepted: TradeProposal[]; rejected: TradeProposal[] } {
+  const candidateSymbols = new Set(topCandidates.map((candidate) => normalizeSymbol(candidate.symbol)));
+  const accepted: TradeProposal[] = [];
+  const rejected: TradeProposal[] = [];
+
+  for (const proposal of proposals) {
+    const isOpening = proposal.side === "buy" || proposal.side === "short";
+    if (isOpening && !candidateSymbols.has(normalizeSymbol(proposal.symbol))) {
+      rejected.push(proposal);
+    } else {
+      accepted.push(proposal);
+    }
+  }
+  return { accepted, rejected };
+}
+
+/**
  * Stamp an opening proposal with the entry anchor (referencePrice) the deterministic entry-drift
  * guard compares against at approval time, and — on brokers with native bracket support (Alpaca),
  * when policy.brokerBracketsEnabled is not disabled — attach broker-held stop-loss/take-profit legs
@@ -4131,10 +5895,72 @@ export function enrichOpeningProposal(
   }
 
   const bracketsEnabled = policy.brokerBracketsEnabled !== false; // default ON
-  const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
+  // Tradier gained native OTOCO/OTO bracket support alongside Alpaca's order_class bracket — see
+  // tradier.ts's placeEquityOrder isBracket branch and cancelBracketSiblingLegs.
+  const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp" || policy.activeBroker === "tradier";
   const dollarOrderBracketQty = next.dollarAmount != null && next.quantity == null ? Math.floor(next.dollarAmount / entryPrice) : undefined;
   const canUseWholeShareBracket = dollarOrderBracketQty == null || dollarOrderBracketQty >= 1;
-  if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket) {
+  // Tradier market-entry brackets are not supported (Tradier's multi-leg entry only accepts
+  // limit/stop/stop_limit — see tradier.ts placeEquityOrder). Strip them BEFORE the whole-share
+  // branch runs; the old else-if was unreachable for whole-share Tradier market orders because
+  // the preceding whole-share condition always matched first, so the proposal carried brackets
+  // that Tradier's gateway then silently ignored (Codex review, PR #1705).
+  //
+  // BUT: the marketable-limit conversion a few lines below turns a qualifying `market` entry into a
+  // `limit` order — a type Tradier's native bracket DOES support. If that conversion will apply, this
+  // is NOT a "Tradier market entry" for bracket purposes: the legs must survive to the converted limit
+  // order, and the whole-share branch below must run to (re)compute them. Predict the conversion here
+  // and exclude that case, or the entry ends up a limit order with no native broker-held protection
+  // (PR #1701 finding 2 — the strip ran before the conversion). The predicate mirrors the conversion
+  // gate below exactly (including the whole-share qty check).
+  const willBecomeMarketableLimit =
+    policy.marketableLimitEntries === true &&
+    next.type === "market" &&
+    next.dollarAmount != null &&
+    next.dollarAmount > 0 &&
+    (policy.permittedOrderTypes?.includes("limit") ?? true) &&
+    Math.floor(next.dollarAmount / entryPrice) >= 1;
+  // The whole-share quantity and price the marketable-limit conversion below WILL use, computed up
+  // front so the bracket legs anchor to the ACTUAL entry (the converted limit) rather than the
+  // pre-conversion reference. A buy converts to ask+buffer, which can sit meaningfully ABOVE the
+  // reference on a wide/stale spread; a take-profit priced off the lower reference could then land
+  // at/below the real fill, rejecting the OTOCO or arming an instant-loss exit (Codex review, PR
+  // #1738). This is the SINGLE source of truth: the conversion block below reuses these exact values,
+  // so the anchored brackets and the applied limit can never drift apart. `marketableLimitPrice` is
+  // `undefined` when the conversion will NOT actually apply — including the pathological case where a
+  // stored buffer drives the computed limit non-positive (e.g. a legacy `marketableLimitBufferBps` of
+  // 10000 makes a short's `bid*(1-1.0)` = 0), which the policy route can persist on unrelated saves.
+  const marketableLimitQty = willBecomeMarketableLimit && next.dollarAmount != null ? Math.floor(next.dollarAmount / entryPrice) : 0;
+  const marketableLimitPrice: number | undefined = (() => {
+    if (!willBecomeMarketableLimit || marketableLimitQty < 1) return undefined;
+    const quote = marketScan.quotesBySymbol[sym];
+    const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
+    const buffer = bufferBps / 10_000;
+    const realAsk = !quote?.syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
+    const realBid = !quote?.syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
+    const p = proposal.side === "buy"
+      ? round2((realAsk ?? refPrice) * (1 + buffer))
+      : round2((realBid ?? refPrice) * (1 - buffer));
+    return p > 0 ? p : undefined;
+  })();
+  // A Tradier `market` entry is exempt from the market-bracket strip ONLY when the marketable-limit
+  // conversion will ACTUALLY apply — i.e. `marketableLimitPrice` is defined. Gating on the predicate
+  // alone (`willBecomeMarketableLimit`) wrongly exempted the non-positive-limit case above, so the
+  // order stayed `type: "market"` (the conversion block no-ops) yet its OTOCO legs were preserved and
+  // handed to a Tradier gateway that can't carry brackets on a market entry (Codex review, PR #1738).
+  const isTradierMarket = policy.activeBroker === "tradier" && next.type === "market" && marketableLimitPrice === undefined;
+  // Anchor bracket legs to the converted limit when the conversion applies; otherwise the reference
+  // price, unchanged from before (so the non-converting path keeps identical behavior).
+  const bracketAnchorPrice = marketableLimitPrice ?? entryPrice;
+  if (bracketsEnabled && isTradierMarket && (next.bracketStopLoss != null || next.bracketTakeProfit != null)) {
+    next = {
+      ...next,
+      bracketStopLoss: undefined,
+      bracketTakeProfit: undefined,
+      rationale: next.rationale + `\n\n[Risk] Tradier native entry brackets are not supported for market entry orders. The bracket legs have been stripped; this position will have no native broker-held protection (and fixed/atr plans have no synthetic-stop monitor fallback).`
+    };
+  }
+  if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket && !isTradierMarket) {
     const flatStopPct = proposal.side === "short"
       ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
       : (policy.riskRules?.stopLossPct ?? 0);
@@ -4182,26 +6008,32 @@ export function enrichOpeningProposal(
     } else {
       const llmStop = next.bracketStopLoss;
       const llmStopValid = typeof llmStop === "number" && Number.isFinite(llmStop) && llmStop > 0 &&
-        (proposal.side === "buy" ? llmStop < entryPrice : llmStop > entryPrice);
+        (proposal.side === "buy" ? llmStop < bracketAnchorPrice : llmStop > bracketAnchorPrice);
       if (next.bracketStopLoss != null && !llmStopValid) next = { ...next, bracketStopLoss: undefined };
     }
     if (plan !== "trailing" && plan !== "none") {
       const llmTake = next.bracketTakeProfit;
       const llmTakeValid = typeof llmTake === "number" && Number.isFinite(llmTake) && llmTake > 0 &&
-        (proposal.side === "buy" ? llmTake > entryPrice : llmTake < entryPrice);
+        (proposal.side === "buy" ? llmTake > bracketAnchorPrice : llmTake < bracketAnchorPrice);
       if (next.bracketTakeProfit != null && !llmTakeValid) next = { ...next, bracketTakeProfit: undefined };
     }
     // Long: stop below / take above entry. Short: stop above / take below (price up = loss).
     if (proposal.side === "buy") {
-      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 - stopPct / 100)) };
-      if (plan !== "trailing" && plan !== "none" && takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 + takePct / 100)) };
+      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(bracketAnchorPrice * (1 - stopPct / 100)) };
+      if (plan !== "trailing" && plan !== "none" && takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(bracketAnchorPrice * (1 + takePct / 100)) };
     } else {
-      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 + stopPct / 100)) };
-      if (plan !== "trailing" && plan !== "none" && takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 - takePct / 100)) };
+      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(bracketAnchorPrice * (1 + stopPct / 100)) };
+      if (plan !== "trailing" && plan !== "none" && takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(bracketAnchorPrice * (1 - takePct / 100)) };
     }
   } else if (bracketsEnabled && brokerSupportsBrackets && !canUseWholeShareBracket) {
     next = {
       ...next,
+      // The execution contract must match the receipt. Leaving any LLM-supplied bracket field on
+      // the proposal makes Alpaca route it as a whole-share bracket and reject the fractional
+      // dollar order, even though the rationale says the native bracket was skipped.
+      bracketStopLoss: undefined,
+      bracketTakeProfit: undefined,
+      bracketStopLimit: undefined,
       rationale: next.rationale + `\n\n[Risk] Native Alpaca bracket skipped because ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(entryPrice)} intended entry price; this avoids a broker rejection for sub-share brackets.`
     };
   } else if (bracketsEnabled && !brokerSupportsBrackets && (policy.riskRules?.stopLossPct ?? 0) > 0) {
@@ -4215,42 +6047,23 @@ export function enrichOpeningProposal(
     };
   }
 
-  // Marketable-limit entries: convert a deterministic OPENING market order into a limit priced
-  // through the quote, so a fast tape can't fill it arbitrarily past the quote. Requires a notional
-  // (dollar-routed) market order and a whole-share quantity ≥ 1 (sub-share notional can't be cleanly
-  // expressed as a quantity-based limit); otherwise we leave it as a market order.
-  if (
-    policy.marketableLimitEntries === true &&
-    next.type === "market" &&
-    next.dollarAmount != null &&
-    next.dollarAmount > 0 &&
-    (policy.permittedOrderTypes?.includes("limit") ?? true)
-  ) {
-    const quote = marketScan.quotesBySymbol[sym];
-    const qty = Math.floor(next.dollarAmount / entryPrice);
-    if (qty >= 1) {
-      const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
-      const buffer = bufferBps / 10_000;
-      // A synthesized (price-derived) Yahoo spread is not a real quote — never anchor the
-      // marketable-limit through it. Judge each side INDEPENDENTLY: a synthetic ask must not discard a
-      // real bid (or vice-versa), e.g. a quote-only ask alongside a later provider's real bid. Fall
-      // back to refPrice only for the side that is actually synthetic so the limit is honest.
-      const realAsk = !quote?.syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
-      const realBid = !quote?.syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
-      const limitPrice = proposal.side === "buy"
-        ? round2((realAsk ?? refPrice) * (1 + buffer))
-        : round2((realBid ?? refPrice) * (1 - buffer));
-      if (limitPrice > 0) {
-        next = {
-          ...next,
-          type: "limit",
-          limitPrice,
-          quantity: qty,
-          dollarAmount: undefined,
-          rationale: next.rationale + `\n\n[Execution] Marketable-limit entry: ${qty} sh @ limit $${limitPrice} (${bufferBps} bps through the ${proposal.side === "buy" ? "ask" : "bid"}) instead of a raw market order, to cap fast-tape slippage.`
-        };
-      }
-    }
+  // Marketable-limit entries: apply the conversion computed up front (marketableLimitPrice/Qty) — the
+  // SAME price the bracket legs above were anchored to, so the OTOCO legs and the entry limit can
+  // never disagree (Codex review, PR #1738). Converts a deterministic OPENING market order into a
+  // limit priced through the quote so a fast tape can't fill it arbitrarily past the quote; requires a
+  // notional (dollar-routed) market order and a whole-share quantity >= 1 (sub-share notional can't be
+  // cleanly expressed as a quantity-based limit). When those don't hold, marketableLimitPrice is
+  // undefined and this no-ops, leaving the raw market order — identical to before this refactor.
+  if (marketableLimitPrice !== undefined && marketableLimitQty >= 1) {
+    const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
+    next = {
+      ...next,
+      type: "limit",
+      limitPrice: marketableLimitPrice,
+      quantity: marketableLimitQty,
+      dollarAmount: undefined,
+      rationale: next.rationale + `\n\n[Execution] Marketable-limit entry: ${marketableLimitQty} sh @ limit $${marketableLimitPrice} (${bufferBps} bps through the ${proposal.side === "buy" ? "ask" : "bid"}) instead of a raw market order, to cap fast-tape slippage.`
+    };
   }
   return next;
 }

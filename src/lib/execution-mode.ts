@@ -70,7 +70,7 @@ export function deriveExecutionState(policy: ExecutionPolicy, activeAccount?: Ex
       submitsBrokerOrders: true,
       clarification:
         isTestAccount
-          ? "The Test Account uses simulated fills and cannot reach real money."
+          ? "The internal test broker uses deterministic fills and is not a product account."
           : `${brokerLabel(activeAccount.broker)} Paper is a broker-hosted sandbox account; real capital is not at risk.`,
       isHealthy: health?.isHealthy ?? true,
       healthReason: health?.reason

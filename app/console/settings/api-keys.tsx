@@ -1,16 +1,17 @@
 "use client";
 
 /** API keys — per-user provider keys over /api/keys. The server NEVER returns
- *  a stored key value (GET is status-only: configured + source), so this UI
- *  never shows one either: a key is written once and thereafter only described.
- *  "Server key" means the operator's env credential is serving you — you can
- *  still store your own, which always wins. */
+ *  a usable key value: GET is status-only (configured + source) PLUS an elided
+ *  first-8/last-4 preview of the key that actually resolves, so you can tell
+ *  WHICH of several keys for one provider is serving you. A key is still
+ *  written once and never shown in full again. "Server key" means the
+ *  operator's env credential is serving you — you can still store your own,
+ *  which always wins. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleApiError } from "../lib/api";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Field, TextInput } from "../ui/primitives";
-import { ListSection, ListRow, LabeledContent } from "../../ui/ios-components";
 import { deleteApiKey, listApiKeys, saveApiKey, type ApiKeyEntry } from "./lib";
 
 const getSourceCopy = (source: ApiKeyEntry["source"], credName: string) => {
@@ -84,15 +85,19 @@ export function ApiKeysCard() {
   };
 
   return (
-    <ListSection title="API keys">
+    <Card title="API keys">
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Optional provider keys, stored per user on the server. Keys are write-only: once saved they are never displayed
-        again — only whether one is set and where it came from. Everything works without any of these; each key just
-        unlocks the data or models it names.
+        Provider keys, stored per user on the server. Keys are write-only: once saved the full value is never displayed
+        again — only whether one is set, where it came from, and the first and last few characters of the key that
+        actually resolves. <strong className="font-semibold text-[color:var(--con-muted)]">Required for strategy runs:</strong>{" "}
+        an LLM key (OpenRouter is the production path) so Green/Red team models can propose and debate.{" "}
+        <strong className="font-semibold text-[color:var(--con-muted)]">Optional enrichment:</strong> Finnhub, FMP, FRED,
+        and similar data providers deepen the scan — without them the app still uses free floors (e.g. Yahoo). Market
+        data, positions, and guardrails work without optional keys; autonomous proposals do not.
       </p>
 
       {loadError && (
-        <p className="mb-3 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+        <p className="mb-3 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
           {loadError} — showing nothing rather than something stale.{" "}
           <button type="button" className="font-semibold underline" onClick={() => void load()} title="Try loading the key list again.">
             Retry
@@ -101,138 +106,146 @@ export function ApiKeysCard() {
       )}
 
       {entries === null && !loadError && (
-        <ListRow>
-          <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading key status…</p>
-        </ListRow>
+        <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading key status…</p>
       )}
 
-      <div className="flex flex-col gap-6 w-full">
+      <div className="flex flex-col gap-3">
         {byCategory.map(([category, list]) => (
           <div key={category}>
-            <div className="text-[length:var(--con-fs-sm)] font-semibold mb-2 ml-1" title={`Keys in the "${category}" group.`}>
+            <div className="con-card-title mb-1.5" title={`Keys in the "${category}" group.`}>
               {category}
             </div>
-            <div className="rounded-xl overflow-hidden shadow-sm">
+            <div className="flex flex-col divide-y divide-[color:var(--con-line)] rounded-control border border-[color:var(--con-line)]">
               {list.map((entry) => {
                 const credName = entry.credentialName ?? "key";
                 const source = getSourceCopy(entry.source, credName);
                 const isEditing = editing === entry.service;
                 const isConfirmingDelete = confirmingDelete === entry.service;
                 return (
-                  <ListRow key={entry.service}>
-                    <div className="w-full">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span className="font-semibold" title={entry.unlocks}>
-                            {entry.label}
-                          </span>
-                          <Chip tone={source.tone} title={source.title}>
-                            {source.chip}
-                          </Chip>
-                          {entry.source === "user" && entry.updatedAt && (
-                            <span
-                              className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                              title="When you last saved a key for this service."
-                            >
-                              saved <Ago iso={entry.updatedAt} />
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <a
-                            href={entry.docsUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] hover:underline"
-                            title={`Opens ${entry.label}'s own site, where keys are created. (new tab)`}
+                  <div
+                    key={entry.service}
+                    tabIndex={0}
+                    className="px-3 py-2.5 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="font-semibold" title={entry.unlocks}>
+                          {entry.label}
+                        </span>
+                        <Chip tone={source.tone} title={source.title}>
+                          {source.chip}
+                        </Chip>
+                        {entry.preview && (
+                          <code
+                            className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5 font-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+                            title={`The ${credName} that actually resolves for you, with the middle elided. First and last characters only — enough to tell this ${credName} apart from another one for the same provider, never enough to use.`}
                           >
-                            get a key ↗
-                          </a>
+                            {entry.preview}
+                          </code>
+                        )}
+                        {entry.source === "user" && entry.updatedAt && (
+                          <span
+                            className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+                            title="When you last saved a key for this service."
+                          >
+                            saved <Ago iso={entry.updatedAt} />
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <a
+                          href={entry.docsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] hover:underline"
+                          title={`Opens ${entry.label}'s own site, where keys are created. (new tab)`}
+                        >
+                          get a key ↗
+                        </a>
+                        <Btn
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy !== null}
+                          onClick={() => {
+                            setEditing(isEditing ? null : entry.service);
+                            setConfirmingDelete(null);
+                          }}
+                          title={
+                            entry.source === "user"
+                              ? `Replace your stored ${credName} with a new value. The old one is overwritten server-side.`
+                              : `Store your own ${credName} for this service.`
+                          }
+                        >
+                          {isEditing ? "Close" : entry.source === "user" ? "Replace" : `Add ${credName}`}
+                        </Btn>
+                        {entry.source === "user" && (
                           <Btn
                             size="sm"
-                            variant="ghost"
+                            variant="dangerOutline"
                             disabled={busy !== null}
                             onClick={() => {
-                              setEditing(isEditing ? null : entry.service);
-                              setConfirmingDelete(null);
+                              setConfirmingDelete(isConfirmingDelete ? null : entry.service);
+                              setEditing(null);
                             }}
-                            title={
-                              entry.source === "user"
-                                ? `Replace your stored ${credName} with a new value. The old one is overwritten server-side.`
-                                : `Store your own ${credName} for this service.`
-                            }
+                            title={`Delete your stored ${credName} from the server. Falls back to the server ${credName} if one exists.`}
                           >
-                            {isEditing ? "Close" : entry.source === "user" ? "Replace" : `Add ${credName}`}
+                            Remove
                           </Btn>
-                          {entry.source === "user" && (
-                            <Btn
-                              size="sm"
-                              variant="dangerOutline"
-                              disabled={busy !== null}
-                              onClick={() => {
-                                setConfirmingDelete(isConfirmingDelete ? null : entry.service);
-                                setEditing(null);
-                              }}
-                              title={`Delete your stored ${credName} from the server. Falls back to the server ${credName} if one exists.`}
-                            >
-                              Remove
-                            </Btn>
-                          )}
+                        )}
+                      </div>
+                    </div>
+                    <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title={entry.envVar ? `Server-side env var for this service: ${entry.envVar}` : undefined}>
+                      {entry.unlocks}
+                    </p>
+                    {isConfirmingDelete && (
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-control border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-2.5">
+                        <span className="text-[length:var(--con-fs-xs)]">
+                          Remove your {entry.label} {credName}? This can&apos;t be undone — you&apos;d have to paste a new {credName}.
+                        </span>
+                        <div className="flex gap-2">
+                          <Btn size="sm" variant="ghost" onClick={() => setConfirmingDelete(null)} title={`Keep the ${credName}.`}>
+                            Cancel
+                          </Btn>
+                          <Btn
+                            size="sm"
+                            variant="danger"
+                            disabled={busy !== null}
+                            onClick={() => void removeKey(entry)}
+                            title={`Delete the stored ${credName} now.`}
+                          >
+                            {busy === entry.service ? "Removing…" : `Remove ${credName}`}
+                          </Btn>
                         </div>
                       </div>
-                      <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title={entry.envVar ? `Server-side env var for this service: ${entry.envVar}` : undefined}>
-                        {entry.unlocks}
-                      </p>
-                      {isConfirmingDelete && (
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-2.5">
-                          <span className="text-[length:var(--con-fs-xs)]">
-                            Remove your {entry.label} {credName}? This can&apos;t be undone — you&apos;d have to paste a new {credName}.
-                          </span>
-                          <div className="flex gap-2">
-                            <Btn size="sm" variant="ghost" onClick={() => setConfirmingDelete(null)} title={`Keep the ${credName}.`}>
-                              Cancel
-                            </Btn>
-                            <Btn
-                              size="sm"
-                              variant="danger"
-                              disabled={busy !== null}
-                              onClick={() => void removeKey(entry)}
-                              title={`Delete the stored ${credName} now.`}
-                            >
-                              {busy === entry.service ? "Removing…" : `Remove ${credName}`}
-                            </Btn>
-                          </div>
-                        </div>
-                      )}
-                      {isEditing && (
-                        <KeyEditor
-                          entry={entry}
-                          busy={busy === entry.service}
-                          onCancel={() => setEditing(null)}
-                          onSave={async (value, label) => {
-                            setBusy(entry.service);
-                            try {
-                              await saveApiKey(entry.service, value, label);
-                              await load();
-                              setEditing(null);
-                              toast.push("pos", `${entry.label} ${credName} saved`, "Stored server-side. It won't be shown again.");
-                            } catch (error) {
-                              toast.push("neg", `Could not save ${credName}`, error instanceof ConsoleApiError ? error.message : String(error));
-                            } finally {
-                              setBusy(null);
-                            }
-                          }}
-                        />
-                      )}
-                    </div>
-                  </ListRow>
+                    )}
+                    {isEditing && (
+                      <KeyEditor
+                        entry={entry}
+                        busy={busy === entry.service}
+                        onCancel={() => setEditing(null)}
+                        onSave={async (value, label) => {
+                          setBusy(entry.service);
+                          try {
+                            await saveApiKey(entry.service, value, label);
+                            await load();
+                            setEditing(null);
+                            toast.push("pos", `${entry.label} ${credName} saved`, "Stored server-side. It won't be shown again.");
+                          } catch (error) {
+                            toast.push("neg", `Could not save ${credName}`, error instanceof ConsoleApiError ? error.message : String(error));
+                          } finally {
+                            setBusy(null);
+                          }
+                        }}
+                      />
+                    )}
+                  </div>
                 );
               })}
             </div>
           </div>
         ))}
       </div>
-    </ListSection>
+    </Card>
   );
 }
 
@@ -253,7 +266,7 @@ function KeyEditor({
   const credName = entry.credentialName ?? "key";
 
   return (
-    <div className="mt-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5">
+    <div className="mt-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5">
       <div className="grid gap-2.5 sm:grid-cols-[1fr_auto]">
         <div className="grid gap-2.5 sm:grid-cols-2">
           <Field

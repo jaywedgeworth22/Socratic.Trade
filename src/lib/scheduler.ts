@@ -6,11 +6,13 @@
 
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
-import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
+import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getInternalSetting, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
+import { isEarningsCallsRefreshDue, refreshEarningsCallsTranscriptsIfDue } from "./earningscalls-transcripts";
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { checkBrokerHealth } from "./broker-health";
+import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { markStaleRunningRuns } from "./db-execution";
 import { checkRegimeFlip } from "./regime-watch";
@@ -22,14 +24,112 @@ import { maybeAutoTuneWeights } from "./auto-tune-scheduler";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
-import type { TradingPolicy } from "./types";
-import { triggerEngineEnabled, triggerMode } from "./triggers";
-import { getTechnicalWatchlist, isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
+import { isLiveOrderState } from "./broker-side";
+import type { EquityOrder, TradingPolicy } from "./types";
+import { drainMaterialEventQueue, triggerEngineEnabled, triggerMode } from "./triggers";
+import {
+  getTechnicalWatchlist,
+  isFilingIngestDue,
+  isFmpTranscriptRefreshDue,
+  refreshDueWebSources,
+  refreshFilingBodies,
+  refreshFmpTranscripts
+} from "./web-sources";
 import { symbolsForPolicyUniverse } from "./index-universes";
 import { acquireOrRenewLeadership, releaseLease, LEASE_OWNER } from "./scheduler-lease";
 import { reconcilePendingFills } from "./strategy-execution";
+import { safeErrorMessage } from "./telemetry-sanitize";
+import { runStPrimaryBridgeWriterIfDue } from "./st-primary-bridge-writer";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
+export const MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY = "scheduler:managedVectorReconcile:lastAttempt";
+export const MANAGED_VECTOR_RECONCILE_LAST_SUCCESS_KEY = "scheduler:managedVectorReconcile:lastSuccess";
+export const MANAGED_VECTOR_RECONCILE_SUCCESS_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+export const MANAGED_VECTOR_RECONCILE_RETRY_INTERVAL_MS = 60 * 60 * 1_000;
+
+type PersistedTimestamp = string | number | null | undefined;
+
+function timestampMs(value: PersistedTimestamp): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function elapsed(now: number, marker: PersistedTimestamp, intervalMs: number): boolean {
+  const markerMs = timestampMs(marker);
+  return markerMs === undefined || now - markerMs >= intervalMs;
+}
+
+/** Pure cadence decision for the global managed-vector repair pass. */
+export function isManagedVectorReconcileDue(
+  now: number,
+  lastAttemptAt?: PersistedTimestamp,
+  lastSuccessAt?: PersistedTimestamp
+): boolean {
+  if (!Number.isFinite(now)) return false;
+  if (!elapsed(now, lastSuccessAt, MANAGED_VECTOR_RECONCILE_SUCCESS_INTERVAL_MS)) return false;
+  return elapsed(now, lastAttemptAt, MANAGED_VECTOR_RECONCILE_RETRY_INTERVAL_MS);
+}
+
+export type ManagedVectorReconcileRun = {
+  status: "success" | "busy" | "failed";
+  result?: { skipped?: boolean };
+};
+
+export function drainingAccountLiveOrders(orders: readonly EquityOrder[]): EquityOrder[] {
+  return orders.filter((order) => isLiveOrderState(order.state));
+}
+
+const managedVectorReconcileGuardHost = globalThis as unknown as {
+  __schedulerManagedVectorReconcileInFlight?: Promise<ManagedVectorReconcileRun | null>;
+};
+
+/**
+ * Run the global managed-vector repair pass when its persisted cadence allows it.
+ *
+ * This is intentionally independent of user/account state: the reconciler's default scope is the
+ * global `local` tenant. The promise guard is pinned to globalThis so HMR/module duplication cannot
+ * start a second provider/SQLite repair in the same process.
+ */
+export async function reconcileManagedVectorRecordsIfDue(now = Date.now()): Promise<ManagedVectorReconcileRun | null> {
+  const existing = managedVectorReconcileGuardHost.__schedulerManagedVectorReconcileInFlight;
+  if (existing) return existing;
+
+  const run = (async (): Promise<ManagedVectorReconcileRun | null> => {
+    try {
+      const lastAttemptAt = getInternalSetting<PersistedTimestamp>(MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY);
+      const lastSuccessAt = getInternalSetting<PersistedTimestamp>(MANAGED_VECTOR_RECONCILE_LAST_SUCCESS_KEY);
+      if (!isManagedVectorReconcileDue(now, lastAttemptAt, lastSuccessAt)) return null;
+
+      setInternalSetting(MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY, new Date(now).toISOString());
+      const { reconcileManagedVectorRecords } = await import("./vector-db");
+      // Scheduled maintenance is observation-only. Provider list inventory is eventually
+      // consistent, so destructive repair requires an explicit operator invocation after review.
+      const result = await reconcileManagedVectorRecords({ dryRun: true });
+      if (result.skipped) {
+        console.warn("[scheduler] managed-vector reconciliation busy; retry deferred");
+        return { status: "busy", result };
+      }
+
+      setInternalSetting(MANAGED_VECTOR_RECONCILE_LAST_SUCCESS_KEY, new Date(now).toISOString());
+      return { status: "success", result };
+    } catch (error) {
+      console.error(`[scheduler] managed-vector reconciliation failed: ${safeErrorMessage(error)}`);
+      return { status: "failed" };
+    }
+  })();
+
+  const guardPromise = run;
+  managedVectorReconcileGuardHost.__schedulerManagedVectorReconcileInFlight = guardPromise;
+  try {
+    return await run;
+  } finally {
+    if (managedVectorReconcileGuardHost.__schedulerManagedVectorReconcileInFlight === guardPromise) {
+      delete managedVectorReconcileGuardHost.__schedulerManagedVectorReconcileInFlight;
+    }
+  }
+}
 
 /**
  * Single-leader is the fail-safe default. Unset, empty, and whitespace-only values stay ON;
@@ -193,6 +293,9 @@ export function reconcileAutonomyOnBoot(): void {
     console.log("[scheduler] AUTONOMY_RESUME_ON_BOOT=1 — persisted 'active' autonomy will resume");
     return;
   }
+  // Collect halted accounts per user so we can fire ONE summary notification per boot (not one
+  // per account) after the reconcile loop finishes, rather than notifying inline per account.
+  const haltedByUser = new Map<string, string[]>();
   for (const userId of listUsers()) {
     // Per-user autoResumeOnBoot setting (default false) — the individual opt-in replaces
     // the old global env var. Each user independently decides whether their accounts resume.
@@ -204,7 +307,8 @@ export function reconcileAutonomyOnBoot(): void {
     // "active" would otherwise auto-resume the moment the multi-account scheduler iterates it.
     // A user with no connected accounts still has a base policy (accountId undefined), so reconcile
     // that too (preserves the original single-account interlock behavior).
-    const accountIds: Array<string | undefined> = listConnectedAccounts(userId).map((a) => a.id);
+    const accounts = listConnectedAccounts(userId);
+    const accountIds: Array<string | undefined> = accounts.map((a) => a.id);
     if (accountIds.length === 0) accountIds.push(undefined);
     for (const accountId of accountIds) {
       try {
@@ -213,12 +317,54 @@ export function reconcileAutonomyOnBoot(): void {
           setPolicy({ ...policy, systemState: "halted" }, userId, accountId);
           audit("autonomy_halted_on_boot", { from: "active", to: "halted", reason: "autoResumeOnBoot not enabled" }, userId, accountId);
           console.warn(`[scheduler] autonomy was 'active' for ${userId}/${accountId ?? "(base)"} at boot; reverted to 'halted' (enable autoResumeOnBoot in Settings to auto-resume).`);
+          const label = accountId ? (accounts.find((a) => a.id === accountId)?.label ?? accountId) : "(base account)";
+          const labels = haltedByUser.get(userId) ?? [];
+          labels.push(label);
+          haltedByUser.set(userId, labels);
         }
       } catch (err) {
         console.error(`[scheduler] boot autonomy reconcile failed for ${userId}/${accountId ?? "(base)"}:`, err);
       }
     }
   }
+  // Fire-and-forget: notification delivery must never block or fail boot. sendNotification already
+  // catches its own channel errors internally, but this catch is the backstop against a synchronous
+  // throw (e.g. a policy lookup failure) reaching the caller of reconcileAutonomyOnBoot().
+  for (const [userId, accountLabels] of haltedByUser) {
+    notifyAutonomyHaltedOnBoot(userId, accountLabels).catch((err) => {
+      console.error(`[scheduler] boot-halt notification failed for ${userId}:`, err);
+    });
+  }
+}
+
+/** One summary notification per user per boot when reconcileAutonomyOnBoot halted at least one of
+ *  their accounts — so a deploy/restart silently disarming live autonomy doesn't go unnoticed until
+ *  the owner happens to check Settings. Forces the event into that send's enabledEvents so it
+ *  delivers even for accounts whose persisted notification preferences predate this event type. */
+async function notifyAutonomyHaltedOnBoot(userId: string, accountLabels: string[]): Promise<void> {
+  const accountsList = accountLabels.join(", ");
+  const activeAccountId = getActiveConnectedAccount(userId)?.id;
+  const policy = getPolicy(userId, activeAccountId);
+  const forcedPolicy: TradingPolicy = {
+    ...policy,
+    notificationSettings: {
+      ...policy.notificationSettings,
+      enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "autonomy_halted_on_boot" as const]))
+    }
+  };
+  const title =
+    accountLabels.length === 1
+      ? `Autonomy halted on boot: ${accountsList}`
+      : `Autonomy halted on boot for ${accountLabels.length} accounts`;
+  const body =
+    `Autonomy was reverted from 'active' to 'halted' because the app restarted (deploy or crash restart).\n` +
+    `Affected account(s): ${accountsList}.\n` +
+    `Re-arm autonomy in Settings when ready. To skip this halt on future restarts, enable ` +
+    `"auto-resume on boot" for this user in Settings, or set AUTONOMY_RESUME_ON_BOOT=1.`;
+  await sendNotification(
+    { type: "autonomy_halted_on_boot", title, payload: { accountLabels } },
+    { userId, policy: forcedPolicy, directBody: body }
+  );
 }
 
 export function getSchedulerState(userId: string = "local", connectedAccountId?: string): {
@@ -303,6 +449,31 @@ async function tick(): Promise<void> {
   // leader is not masked by idle followers. Fire-and-forget + self-guarded — can't break a tick.
   void sendSentrySchedulerCheckIn();
 
+  // Drain durable material-event inboxes on every leader tick, independent of SEC ingestion
+  // flags. Events may be produced by filings, transcripts, broker state, or operator actions;
+  // gating this on one source would strand queued work indefinitely.
+  try {
+    drainMaterialEventQueue();
+  } catch (err) {
+    console.error("[scheduler] material-event drain error:", err);
+  }
+
+  // Global managed-vector crash repair is cadence-gated and single-flight. It must never block or
+  // throw into trading work; failed or lease-busy attempts persist their hourly retry marker.
+  void reconcileManagedVectorRecordsIfDue();
+
+  // Default-off, cadence-gated export of only the primary local user's Gemini
+  // and DeepSeek credentials to the isolated Usage Monitor bridge path. The
+  // writer is self-guarded and returns sanitized status codes without throwing
+  // into trading work.
+  void runStPrimaryBridgeWriterIfDue().then((result) => {
+    if (result.status === "error") {
+      console.error(
+        `[scheduler] ST primary credential bridge failed (${result.errorCode ?? "unknown"})`
+      );
+    }
+  });
+
   // Refresh backend web sources (congressional trades, etc.) independently of the
   // trading loop — these are low-frequency (cadence-gated, ~daily) data reads that
   // keep the dashboard + agent context fresh even while autonomous trading is paused.
@@ -314,14 +485,15 @@ async function tick(): Promise<void> {
   // free-safe 5/min so the raised paid default can't 429-storm. No-op until due; fully self-guarded.
   void runProviderTierCheckIfDue().catch((err) => console.error("[scheduler] provider-tier check error:", err));
 
-  // 10-K/10-Q body ingest (TTL cadence, gated on paid Voyage key signal).
-  // Collects the union of all user watchlists + policy universes so the shared
-  // corpus covers every symbol any active user is monitoring. Fire-and-forget;
-  // errors are captured inside refreshFilingBodies and audited there.
+  // 10-K/10-Q bodies and default-OFF FMP transcripts have separate producer cadences, request
+  // budgets, and cursors. They share the durable RAG_REINDEX operation lease and this demand-first
+  // symbol collection so both corpora prioritize held/watchlisted/recent-candidate names.
   // Gated on the operator monthly spend ceiling too: RAG (Voyage/Pinecone) spend counts toward
   // LLM_SPEND_CEILING, and this refresh runs BEFORE the strategy-run ceiling check below, so without
   // this guard a breached ceiling would still let the weekly filing-body ingest spend.
-  if (isFilingIngestDue() && checkMonthlyLlmSpendCeiling().ok) {
+  const filingIngestDue = isFilingIngestDue();
+  const transcriptIngestDue = isFmpTranscriptRefreshDue();
+  if ((filingIngestDue || transcriptIngestDue) && checkMonthlyLlmSpendCeiling().ok) {
     // DEMAND-FIRST ordering: ingestion is capped per run, so queue order decides which
     // symbols' filings the strategy can actually retrieve against. Watchlist names and the
     // last scan's candidate set (which force-includes held positions) go first; the broad
@@ -344,8 +516,41 @@ async function tick(): Promise<void> {
         // don't let a single user's DB error block the others
       }
     }
-    void refreshFilingBodies(Array.from(symbolSet)).catch((err) =>
-      console.error("[scheduler] filing-body refresh error:", err)
+    const symbols = Array.from(symbolSet);
+    // These producers spend from the same Voyage/Pinecone budgets and share the durable RAG_REINDEX
+    // lease. Keep their scheduler admission ordered too, so a same-tick refresh does not make one
+    // producer race into a benign busy result while the other starts embedding.
+    void (async () => {
+      if (filingIngestDue) {
+        try {
+          await refreshFilingBodies(symbols);
+        } catch (err) {
+          console.error("[scheduler] filing-body refresh error:", err);
+        }
+      }
+      if (transcriptIngestDue) {
+        try {
+          await refreshFmpTranscripts(symbols);
+        } catch {
+          // The connector captures sanitized failures in its result/audit. Do not print a thrown
+          // provider error here: it could contain request context and transcript bodies are untrusted.
+          console.error("[scheduler] FMP transcript refresh failed before a result was recorded");
+        }
+      }
+    })();
+  }
+
+  // Once-per-UTC-day EarningsCalls.dev transcript pass (dormant without EARNINGSCALLS_API_KEY;
+  // kill-switch EARNINGSCALLS_DISABLED=1). Holdings-first selection, durable 180/month
+  // reserve-before-call budget under the plan's HARD 200/month — see
+  // src/lib/earningscalls-transcripts.ts. Gated on the monthly LLM/RAG spend ceiling like the
+  // filing/FMP-transcript producers above (its ingest spends Voyage/Pinecone), and serialized
+  // with them via the shared durable RAG_REINDEX operation lease (acquired inside the producer,
+  // like refreshFilingBodies/refreshFmpTranscripts; a busy lease is a benign deferred pass —
+  // the daily watermark is untouched, so a later tick retries). Self-guarded.
+  if (isEarningsCallsRefreshDue() && checkMonthlyLlmSpendCeiling().ok) {
+    void refreshEarningsCallsTranscriptsIfDue().catch((err) =>
+      console.error("[scheduler] earningscalls transcript refresh error:", err instanceof Error ? err.message : err)
     );
   }
 
@@ -372,6 +577,16 @@ async function tick(): Promise<void> {
     void runDailyLearningReviewIfDue(userId).catch((err) =>
       console.error(`[scheduler] learning-review error for ${userId}:`, err)
     );
+  }
+
+  // Once-per-day retrieval-usefulness join (handoff 4.1): credit the analog/coaching vector ids
+  // each decision case injected (ragAttributions) with that case's matured outcome, into the
+  // retrieval_usefulness_stats aggregates. Bounded batch, credited-ledger watermark (idempotent),
+  // SQLite-only — no provider or LLM calls. Advisory observability + a bounded ranking nudge.
+  for (const userId of listUsers()) {
+    void import("./retrieval-usefulness")
+      .then(({ runRetrievalUsefulnessJoinIfDue }) => runRetrievalUsefulnessJoinIfDue(userId))
+      .catch((err) => console.error(`[scheduler] retrieval-usefulness join error for ${userId}:`, err));
   }
 
   // Atlas public-repo port: evaluate armed price alerts against live quotes every tick.
@@ -452,7 +667,7 @@ async function tick(): Promise<void> {
         if (account.isDraining) {
           if (brokerGateway && policy.accountNumber) {
             void brokerGateway.getEquityOrders(policy.accountNumber).then(async (orders) => {
-              const openOrders = orders.filter(o => o.state === "open" || o.state === "partially_filled");
+              const openOrders = drainingAccountLiveOrders(orders);
               for (const o of openOrders) {
                 await brokerGateway.cancelEquityOrder(policy.accountNumber!, o.id).catch((err: unknown) => {
                   console.error(`[scheduler] draining account cancel error for order ${o.id}:`, err);
@@ -488,11 +703,12 @@ async function tick(): Promise<void> {
         const protectiveState =
           policy.systemState === "active" ||
           policy.systemState === "close_only" ||
-          policy.systemState === "liquidating";
+          policy.systemState === "liquidating" ||
+          (policy.systemState === "halted" && policy.riskRules?.protectWhileHalted === true);
 
         // R2: synthetic trailing-stop monitor — runs every tick in states where risk-reducing exits
         // are allowed. `close_only` and `liquidating` must not disable the very protection that can
-        // reduce exposure after a breaker trips. `halted` remains the only no-order state.
+        // reduce exposure after a breaker trips. `halted` remains the only no-order state unless protectWhileHalted is active.
         if (protectiveState && !stopMonitorInFlight.has(key)) {
           stopMonitorInFlight.add(key);
           void runSyntheticStopMonitor(userId, policy, true)

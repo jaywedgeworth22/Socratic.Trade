@@ -29,6 +29,7 @@ const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
   "learningReviewEnabled",
   "learningReviewMode",
   "learningReviewModel",
+  "learningReviewReasoningEffort",
   "learningReviewMinNewLessons",
   "learningReviewMaxWaitDays",
   // Typed confirmation for high-impact live actions is an OWNER preference, not a
@@ -38,7 +39,11 @@ const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
   // per-account values — reads strip it from account rows, and with no user-level
   // value stored yet it falls back to the DEFAULT_POLICY value (true = required),
   // the safe direction. No legacy seed on purpose (sole-user, no compat tax).
-  "requireTypedConfirmation"
+  "requireTypedConfirmation",
+  "fmpRealTimeDataEnabled",
+  "fmpMacroDataEnabled",
+  "fmpEventsDataEnabled",
+  "fmpFundamentalsDataEnabled"
 ]);
 
 const LEGACY_STRATEGY_MODEL_FIELDS: Array<keyof TradingPolicy> = ["llmModel", "redTeamLlmModel", "llmReasoningEffort"];
@@ -48,6 +53,7 @@ const LEARNING_REVIEW_POLICY_FIELDS: Array<keyof TradingPolicy> = [
   "learningReviewEnabled",
   "learningReviewMode",
   "learningReviewModel",
+  "learningReviewReasoningEffort",
   "learningReviewMinNewLessons",
   "learningReviewMaxWaitDays"
 ];
@@ -254,10 +260,13 @@ export function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
         policy.notificationSettings?.enabledEvents ?? DEFAULT_POLICY.notificationSettings.enabledEvents
     }
   };
-  if ((merged.maxDailyNotional ?? 0) >= 500_000) {
-    merged.maxDailyNotional = DEFAULT_POLICY.maxDailyNotional;
-    if (merged.maxDailyOrders > DEFAULT_POLICY.maxDailyOrders) merged.maxDailyOrders = DEFAULT_POLICY.maxDailyOrders;
-  }
+  // DEFAULT_POLICY now uses account-relative daily sizing. Preserve an older account's explicit
+  // dollar mode instead of silently layering the new percent default on top; when both are truly
+  // present, percent wins consistently with normalizeExclusivePolicyCaps and the UI.
+  const explicitDailyPct = typeof policyWithoutLegacyFields.maxDailyPctOfNav === "number" && policyWithoutLegacyFields.maxDailyPctOfNav > 0;
+  const explicitDailyNotional = typeof policyWithoutLegacyFields.maxDailyNotional === "number" && policyWithoutLegacyFields.maxDailyNotional > 0;
+  if (explicitDailyPct) delete merged.maxDailyNotional;
+  else if (explicitDailyNotional) delete merged.maxDailyPctOfNav;
   if ((merged.maxOrderNotional ?? 0) > 100_000) merged.maxOrderNotional = 100_000;
   return merged;
 }
@@ -424,10 +433,10 @@ function migrateLegacyStrategyModelFieldsToAccounts(userId: string): void {
 }
 
 /** Write only the user-level fields of a policy to user_settings.policy. */
-function writeUserPolicyFields(userId: string, policy: TradingPolicy): void {
+function writeUserPolicyFields(userId: string, policy: TradingPolicy, emitAudit = true): void {
   migrateLegacyStrategyModelFieldsToAccounts(userId);
   const userFields = pickUserFields(policy);
-  setUserSetting(userId, "policy", userFields);
+  setUserSetting(userId, "policy", userFields, { auditPolicyChange: emitAudit });
 }
 
 /** The user-level base policy (active library profile, else legacy user_settings). */
@@ -562,19 +571,21 @@ export function setPolicy(policy: TradingPolicy, userId: string = "local", conne
 
   if (account) {
     // ── Tiered write: user fields → user_settings, account fields → account_strategy_state ──
-    writeUserPolicyFields(userId, merged);
+    writeUserPolicyFields(userId, merged, false);
     syncActiveProfile({ policy: pickAccountFields(merged) as TradingPolicy, scoringWeights: merged.scoringWeights }, userId);
     writeAccountStrategyState(userId, account.id, {
       policy: pickAccountFields(merged) as TradingPolicy,
       prompt: getStrategyPrompt(userId, account.id),
       scoringWeights: merged.scoringWeights
     });
+    audit("policy_change", { userId, key: "policy", value: merged }, userId, account.id);
   } else {
     // ── No connected account: store the full policy in user_settings (backward compat) ──
     // Users without a connected account (legacy single-user mode) keep the old behaviour:
     // the full policy is stored as a single blob under user_settings.policy.
-    setUserSetting(userId, "policy", merged);
+    setUserSetting(userId, "policy", merged, { auditPolicyChange: false });
     syncActiveProfile({ policy: merged, scoringWeights: merged.scoringWeights }, userId);
+    audit("policy_change", { userId, key: "policy", value: merged }, userId);
   }
 }
 
@@ -588,12 +599,15 @@ export function getStrategyPrompt(userId: string = "local", connectedAccountId?:
 }
 
 export function setStrategyPrompt(prompt: string, userId: string = "local", connectedAccountId?: string): void {
-  setUserSetting(userId, "strategyPrompt", prompt);
+  setUserSetting(userId, "strategyPrompt", prompt, { auditPolicyChange: false });
   syncActiveProfile({ prompt }, userId);
   const account = resolveAccount(userId, connectedAccountId);
   if (account) {
     const base = getPolicy(userId, account.id);
     writeAccountStrategyState(userId, account.id, { policy: base, prompt, scoringWeights: base.scoringWeights });
+    audit("policy_change", { userId, key: "strategyPrompt", value: prompt }, userId, account.id);
+  } else {
+    audit("policy_change", { userId, key: "strategyPrompt", value: prompt }, userId);
   }
 }
 

@@ -99,7 +99,13 @@ export function brokerHeldExitBlockReason(availability: BrokerHeldExitAvailabili
   );
 }
 
-function requestedExitQuantity(proposal: TradeProposal): number | undefined {
+/** Exported so UI derivations (e.g. app/console/lib/derive.ts's approval-card P/L estimate)
+ *  can reuse the SAME shares-being-sold math as the broker-held-exit-availability check
+ *  above, instead of re-deriving it and risking drift. Structural param (only the sizing
+ *  fields) so narrow client-side proposal shapes (mobile snapshot) can call it too. */
+export function requestedExitQuantity(
+  proposal: Pick<TradeProposal, "quantity" | "dollarAmount" | "limitPrice" | "stopPrice" | "referencePrice">
+): number | undefined {
   if (proposal.quantity != null) return Math.abs(proposal.quantity);
   if (proposal.dollarAmount != null) {
     const price = proposal.limitPrice ?? proposal.stopPrice ?? proposal.referencePrice;

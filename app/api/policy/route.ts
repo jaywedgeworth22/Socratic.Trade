@@ -8,7 +8,7 @@ import {
   setPolicy,
   setStrategyPrompt
 } from "@/lib/db";
-import { llmModelFamily } from "@/lib/llm-provider";
+import { llmModelFamily, modelCredentialService } from "@/lib/llm-provider";
 import { isModelRotationSentinel } from "@/lib/llm-request";
 import { isIndexUniverse, normalizeIncludedIndices } from "@/lib/index-universes";
 import { getBrokerGateway } from "@/lib/broker";
@@ -31,6 +31,7 @@ import {
   normalizeMarketScanOutlierReserve
 } from "@/lib/scan-settings";
 import { ALL_LLM_REASONING_EFFORTS, isDisallowedInteractiveStrategyReasoningConfig, resolveReviewerReasoningEffort } from "@/lib/llm-request";
+import { validateWebhookUrl } from "@/lib/egress-guard";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import type { IndexUniverse, NotificationEventType, TradingPolicy } from "@/lib/types";
 import { NextResponse } from "next/server";
@@ -146,7 +147,11 @@ export async function PUT(request: Request) {
     return new NextResponse("learningReviewModel must be a non-empty model id.", { status: 400 });
   }
   stripNullsDeep(policy as unknown as Record<string, unknown>);
-  normalizeExclusivePolicyCaps(policy);
+  const capFields = ["maxOrderNotional", "maxOrderPctOfNav", "maxDailyNotional", "maxDailyPctOfNav"] as const;
+  const capPreference = capFields.some((key) => Object.prototype.hasOwnProperty.call(body, key))
+    ? body as Partial<TradingPolicy>
+    : current;
+  normalizeExclusivePolicyCaps(policy, capPreference);
   // Only enforce the interactive gpt-5.5/high-reasoning rejection when THIS request actually
   // changes the model/effort combination. validatePolicy runs against the MERGED policy, so a
   // stored gpt-5.5+high config used to fail EVERY unrelated save (notification prefs, short
@@ -171,7 +176,11 @@ export async function PUT(request: Request) {
     // THIS request actually sets/changes it — otherwise a stored out-of-range value would 400 EVERY
     // unrelated save. A stale stored value is already safe at run time (validatedMarketableLimitBufferBps
     // defaults/clamps it); only a write that changes the field must pass the bound.
-    enforceMarketableLimitBufferRule: policy.tuning?.marketableLimitBufferBps !== current.tuning?.marketableLimitBufferBps
+    enforceMarketableLimitBufferRule: policy.tuning?.marketableLimitBufferBps !== current.tuning?.marketableLimitBufferBps,
+    // Same MERGED-policy scoping as above: only re-run the (network) egress check when THIS
+    // request actually sets/changes webhookUrl — a DNS blip on an already-saved, working
+    // webhook must not block every unrelated policy save (notification prefs, caps, ...).
+    enforceWebhookUrlRule: policy.notificationSettings.webhookUrl !== current.notificationSettings.webhookUrl
   });
   if (validationError) return new NextResponse(validationError, { status: 400 });
   // Validation above is intentionally side-effect free. Apply the policy and optional prompt in one
@@ -204,6 +213,7 @@ async function validatePolicy(
     enforceKeyedGreenModelRule?: boolean;
     enforceKeyedRedModelRule?: boolean;
     enforceMarketableLimitBufferRule?: boolean;
+    enforceWebhookUrlRule?: boolean;
   } = {}
 ): Promise<string | undefined> {
   // Invalid legacy watchlist / ignore-list symbols are sanitized out in the PUT handler above, so stale
@@ -224,6 +234,9 @@ async function validatePolicy(
   if (policy.learningReviewMode !== undefined && !["annotate", "decide"].includes(policy.learningReviewMode)) return "learningReviewMode must be annotate or decide.";
   if (policy.brokerMinimumHandling !== undefined && !["bump", "skip"].includes(policy.brokerMinimumHandling)) return "brokerMinimumHandling must be bump or skip.";
   if (policy.learningReviewModel !== undefined && (typeof policy.learningReviewModel !== "string" || policy.learningReviewModel.trim().length === 0 || policy.learningReviewModel.length > 64)) return "learningReviewModel must be a non-empty model id.";
+  if (policy.learningReviewReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.learningReviewReasoningEffort)) {
+    return "learningReviewReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
+  }
   if (policy.learningReviewMinNewLessons !== undefined && (!Number.isInteger(policy.learningReviewMinNewLessons) || policy.learningReviewMinNewLessons < 1 || policy.learningReviewMinNewLessons > 1000)) return "learningReviewMinNewLessons must be an integer between 1 and 1000.";
   if (policy.learningReviewMaxWaitDays !== undefined && (!Number.isInteger(policy.learningReviewMaxWaitDays) || policy.learningReviewMaxWaitDays < 1 || policy.learningReviewMaxWaitDays > 365)) return "learningReviewMaxWaitDays must be an integer between 1 and 365.";
   // Owner directive 2026-07-07: a chosen model must belong to a provider the user holds a key for
@@ -236,12 +249,24 @@ async function validatePolicy(
   // from credential-resolvable models (src/lib/model-rotation.ts), so the keyed guarantee is upheld
   // at serve time, not save time.
   if ((options.enforceKeyedGreenModelRule ?? true) && typeof policy.llmModel === "string" && policy.llmModel.trim() && !isModelRotationSentinel(policy.llmModel)) {
-    const provider = llmModelFamily(policy.llmModel);
-    if (!resolveLlmCredential(provider, userId).key) return `Add an API key for ${provider} before selecting ${policy.llmModel.trim()} as your strategist (green team) model.`;
+    // Universal OpenRouter routing (#1703): every model is served through the OpenRouter credential,
+    // so the save-gate keys on THAT in production — a valid curated/qualified id must not be rejected
+    // for lack of an unused native key when the OpenRouter key is present. modelCredentialService
+    // mirrors resolveLlmEndpoint (native family only under NODE_ENV=test).
+    const provider = modelCredentialService(policy.llmModel);
+    if (!resolveLlmCredential(provider, userId).key) {
+      return provider === "openrouter"
+        ? `Add an OpenRouter API key before selecting ${policy.llmModel.trim()} as your strategist (green team) model — all models are served through OpenRouter.`
+        : `Add an API key for ${provider} before selecting ${policy.llmModel.trim()} as your strategist (green team) model.`;
+    }
   }
   if ((options.enforceKeyedRedModelRule ?? true) && typeof policy.redTeamLlmModel === "string" && policy.redTeamLlmModel.trim() && !isModelRotationSentinel(policy.redTeamLlmModel)) {
-    const provider = llmModelFamily(policy.redTeamLlmModel);
-    if (!resolveLlmCredential(provider, userId).key) return `Add an API key for ${provider} before selecting ${policy.redTeamLlmModel.trim()} as your reviewer (red team) model.`;
+    const provider = modelCredentialService(policy.redTeamLlmModel);
+    if (!resolveLlmCredential(provider, userId).key) {
+      return provider === "openrouter"
+        ? `Add an OpenRouter API key before selecting ${policy.redTeamLlmModel.trim()} as your reviewer (red team) model — all models are served through OpenRouter.`
+        : `Add an API key for ${provider} before selecting ${policy.redTeamLlmModel.trim()} as your reviewer (red team) model.`;
+    }
   }
   if (policy.llmReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.llmReasoningEffort)) {
     return "llmReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
@@ -265,7 +290,10 @@ async function validatePolicy(
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
   if (policy.maxOrderPctOfNav !== undefined && (policy.maxOrderPctOfNav <= 0 || policy.maxOrderPctOfNav > 100)) return "maxOrderPctOfNav must be between 0 and 100.";
+  if (policy.maxDailyNotional !== undefined && policy.maxDailyNotional <= 0) return "maxDailyNotional must be positive.";
+  if (policy.maxDailyPctOfNav !== undefined && (policy.maxDailyPctOfNav <= 0 || policy.maxDailyPctOfNav > 100)) return "maxDailyPctOfNav must be between 0 and 100.";
   if (policy.maxDailyNotional !== undefined && policy.maxOrderNotional !== undefined && policy.maxDailyNotional < policy.maxOrderNotional) return "maxDailyNotional must be at least maxOrderNotional.";
+  if (policy.maxDailyPctOfNav !== undefined && policy.maxOrderPctOfNav !== undefined && policy.maxDailyPctOfNav < policy.maxOrderPctOfNav) return "maxDailyPctOfNav must be at least maxOrderPctOfNav.";
   if (policy.maxSymbolExposurePct !== undefined && (policy.maxSymbolExposurePct <= 0 || policy.maxSymbolExposurePct > 100)) return "maxSymbolExposurePct must be between 0 and 100.";
   if (policy.maxPortfolioBeta !== undefined && (!Number.isFinite(policy.maxPortfolioBeta) || policy.maxPortfolioBeta <= 0 || policy.maxPortfolioBeta > 10)) return "maxPortfolioBeta must be a positive number (≤ 10).";
   if (policy.maxAvgCorrelation !== undefined && (!Number.isFinite(policy.maxAvgCorrelation) || policy.maxAvgCorrelation <= 0 || policy.maxAvgCorrelation > 1)) return "maxAvgCorrelation must be between 0 (off) and 1.";
@@ -338,6 +366,9 @@ async function validatePolicy(
   if (policy.llmFallbackModels !== undefined && (!Array.isArray(policy.llmFallbackModels) || policy.llmFallbackModels.some((m) => typeof m !== "string"))) {
     return "llmFallbackModels must be an array of model-id strings.";
   }
+  if (policy.redTeamFallbackModels !== undefined && (!Array.isArray(policy.redTeamFallbackModels) || policy.redTeamFallbackModels.some((m) => typeof m !== "string"))) {
+    return "redTeamFallbackModels must be an array of model-id strings.";
+  }
   if (policy.tuning) {
     // tuning.redTeamConvictionThreshold was removed 2026-07-07 (single-adversary consolidation O2:
     // the Red Team reviews EVERY risk-adding opening — no conviction gate). Stale values in stored
@@ -361,12 +392,13 @@ async function validatePolicy(
     if (gateOnRationaleCollapse !== undefined && typeof gateOnRationaleCollapse !== "boolean") return "tuning.gateOnRationaleCollapse must be a boolean.";
     if (skipNegativeExpectancyEdgePct !== undefined && (!Number.isFinite(skipNegativeExpectancyEdgePct) || skipNegativeExpectancyEdgePct < -100 || skipNegativeExpectancyEdgePct > 100)) return "tuning.skipNegativeExpectancyEdgePct must be between -100 and 100.";
   }
-  if (policy.notificationSettings.webhookUrl?.trim()) {
-    try {
-      new URL(policy.notificationSettings.webhookUrl);
-    } catch {
-      return "webhookUrl must be a valid URL.";
-    }
+  if (policy.notificationSettings.webhookUrl?.trim() && (options.enforceWebhookUrlRule ?? true)) {
+    // Full SSRF egress check (protocol + DNS + private/loopback/link-local/metadata address
+    // rejection) — see src/lib/egress-guard.ts. Re-run again immediately before every send in
+    // src/lib/notifications.ts, so this save-time check is a fast-fail UX nicety, not the sole
+    // line of defense.
+    const check = await validateWebhookUrl(policy.notificationSettings.webhookUrl.trim());
+    if (!check.ok) return check.error ?? "webhookUrl is not allowed.";
   }
   if (policy.systemState === "active" && !policy.accountNumber) return "Select an account before enabling autonomy.";
   if (policy.systemState === "active" && policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0) return "Select at least one base index or additional watchlist symbol before enabling autonomy.";

@@ -33,6 +33,8 @@ vi.mock("../src/lib/observability", () => ({
 }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -55,7 +57,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 // Two near-identical proposals so the post-gate rationale-diversity check collapses. (Every
@@ -77,7 +79,7 @@ function makeFetchStub() {
   const bullProposals = [COLLAPSED_PROPOSAL("AAPL"), COLLAPSED_PROPOSAL("MSFT")];
   return async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = init?.body ? String(init.body) : "{}";
       if (body.includes("Red Team Risk Agent") || body.includes("red_team_verdict")) {
         return new Response(
@@ -112,15 +114,15 @@ function makeFetchStub() {
 
 async function seed() {
   const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "t");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "t");
   const id = randomUUID();
   upsertConnectedAccount({ id, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Test", isActive: true });
   setActiveConnectedAccount(id);
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    llmModel: "gpt-4.1-mini",
-    redTeamLlmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL", "MSFT"],
     strategyAuthority: "decide"
@@ -129,7 +131,7 @@ async function seed() {
 
 describe("observability stamping (G10)", () => {
   it("stamps promptVersion on the bull + red-team review generations, a verdict in the review output, and a diversity-collapse observation", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeFetchStub());
 
     await seed();

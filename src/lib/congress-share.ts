@@ -44,6 +44,7 @@ import {
   type OperationLeaseClaim
 } from "./operation-lease";
 import { audit, getInternalSetting, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting } from "./db";
+import { createDurableMap } from "./durable-state";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import { INDEX_UNIVERSES, symbolsForPolicyUniverse } from "./index-universes";
 import type { OHLCBar } from "./indicators";
@@ -525,10 +526,17 @@ export function chunkPrices(
 
 // ── Scan-refs forwarding (after each scan) ──────────────────────────────────────
 
-// Per-symbol throttle so frequent scans don't re-POST the same refs. globalThis-pinned so Next.js
-// HMR module duplication can't reset it (mirrors the scheduler's stop-monitor guard).
-const refGuardHost = globalThis as unknown as { __congressRefSentAt?: Map<string, number> };
-const refSentAt: Map<string, number> = refGuardHost.__congressRefSentAt ?? (refGuardHost.__congressRefSentAt = new Map());
+// Per-symbol throttle so frequent scans don't re-POST the same refs. Durable (survives a process
+// restart): the app now auto-deploys on every merge to main, and without this a redeploy would make
+// every symbol look "never shared" to the very next scan, re-POSTing refs shared minutes earlier.
+// Low stakes either way (App A's import endpoint is idempotent — worst case is redundant, harmless
+// network calls, per the module header above), so debounced (not immediate) flush is fine here.
+// Lazily created (not at module top level) — see provider-rate-limit.ts's quotaStore() for why
+// eagerly calling createDurableMap() at import time risks a circular-import TDZ crash.
+let refSentAtInstance: ReturnType<typeof createDurableMap<number>> | undefined;
+function refSentAt(): ReturnType<typeof createDurableMap<number>> {
+  return refSentAtInstance ?? (refSentAtInstance = createDurableMap<number>("congress-share-ref-throttle"));
+}
 
 /**
  * Forward the scan's candidate company refs — plus the fundamentals + analyst consensus App B just
@@ -553,7 +561,7 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
     for (const quote of scan.topCandidates ?? []) {
       const ref = marketQuoteToRef(quote);
       if (!ref) continue;
-      const sentAt = refSentAt.get(ref.ticker);
+      const sentAt = refSentAt().get(ref.ticker);
       if (sentAt !== undefined && now - sentAt < ttl) continue; // throttled
       refs.push(ref);
       if (includeFundamentals) {
@@ -564,14 +572,14 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
       }
       claimed.push(ref.ticker);
       // Optimistically claim BEFORE the await so concurrent scans don't double-POST the same ref.
-      refSentAt.set(ref.ticker, now);
+      refSentAt().set(ref.ticker, now);
       if (refs.length >= MAX_REFS_PER_POST) break;
     }
     if (refs.length === 0) return null;
     const result = await shareWithCongressTrade({ refs, fundamentals, analyst });
     if (!result.ok) {
       // Roll back the throttle so a later scan retries the failed refs (don't spam on success).
-      for (const ticker of claimed) refSentAt.delete(ticker);
+      for (const ticker of claimed) refSentAt().delete(ticker);
     }
     return result;
   } catch (err) {
@@ -582,7 +590,7 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
 
 /** Test seam: reset the in-memory scan-refs throttle. */
 export function resetCongressRefThrottle(): void {
-  refSentAt.clear();
+  refSentAt().clear();
 }
 
 // ── Nightly daily-close + S&P-500 batch ─────────────────────────────────────────
@@ -694,6 +702,8 @@ export interface CongressDailyShareSummary {
   responses?: unknown[];
 }
 
+let activeDailySharePromise: Promise<OperationLeaseAware<CongressDailyShareSummary>> | null = null;
+
 /**
  * Collect the monitored universe's daily closes + the S&P-500 (^GSPC) series and POST them to App A
  * in capped chunks. Reuses the app's history cache, so a name fetched earlier in the day is free.
@@ -703,36 +713,49 @@ export interface CongressDailyShareSummary {
 export async function runCongressDailyShare(
   options: RunCongressDailyShareOptions = {}
 ): Promise<OperationLeaseAware<CongressDailyShareSummary>> {
-  const now = options.now ?? Date.now();
-  const empty = {
-    tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
-    posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
-  };
-  if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
-
-  const customUniverse = Array.isArray(options.symbols) && options.symbols.length > 0;
-  if (!options.force && !customUniverse && !isCongressDailyShareDue(now)) {
-    return { ok: false, skipped: true, reason: "not-due", ...empty };
+  if (activeDailySharePromise) {
+    return activeDailySharePromise;
   }
-
-  const guarded = await runWithOperationLease(
-    {
-      group: OPERATION_LEASE_GROUPS.CONGRESS_SHARE,
-      operation: "congress-share",
-      claim: options.operationLeaseClaim
-    },
-    async (claim, signal) => runCongressDailyShareUnlocked(options, claim, signal)
-  );
-  if (!guarded.acquired) {
-    return {
-      ok: true,
-      skipped: true,
-      reason: "operation-in-flight",
-      ...empty,
-      operationLease: guarded.busy
+  
+  const promise = (async () => {
+    const now = options.now ?? Date.now();
+    const empty = {
+      tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
+      posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
     };
+    if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
+
+    const customUniverse = Array.isArray(options.symbols) && options.symbols.length > 0;
+    if (!options.force && !customUniverse && !isCongressDailyShareDue(now)) {
+      return { ok: false, skipped: true, reason: "not-due", ...empty };
+    }
+
+    const guarded = await runWithOperationLease(
+      {
+        group: OPERATION_LEASE_GROUPS.CONGRESS_SHARE,
+        operation: "congress-share",
+        claim: options.operationLeaseClaim
+      },
+      async (claim, signal) => runCongressDailyShareUnlocked(options, claim, signal)
+    );
+    if (!guarded.acquired) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "operation-in-flight",
+        ...empty,
+        operationLease: guarded.busy
+      };
+    }
+    return guarded.value;
+  })();
+
+  activeDailySharePromise = promise;
+  try {
+    return await promise;
+  } finally {
+    activeDailySharePromise = null;
   }
-  return guarded.value;
 }
 
 async function runCongressDailyShareUnlocked(

@@ -7,6 +7,9 @@ import type {
   PolicyDecision,
   RecentProposal,
   ReviewedOrder,
+  SocraticDecisionCase,
+  SocraticDecisionStatus,
+  SocraticEvidenceItem,
   TradeProposal
 } from "./types";
 
@@ -29,6 +32,215 @@ function proposalTagFallbacks(parsedProposal: unknown): { tradeThesisTag?: strin
     tradeThesisTag: nonEmptyString(record?.tradeThesisTag),
     entryMarketRegime: nonEmptyString(record?.entryMarketRegime)
   };
+}
+
+function parseJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Keep the case-file lifecycle as specific as the durable proposal ledger. Collapsing broker
+ * rejection, unconfirmed placement, expiry, and human rejection into one generic state made the
+ * console and the embedded memory tell materially different stories about what actually happened. */
+function socraticStatusFromProposalStatus(status: string): SocraticDecisionStatus {
+  if (status === "placed" || status === "paper") return "placed";
+  if (status === "filled") return "filled";
+  if (status === "proposed") return "proposed";
+  if (status === "placing") return "placing";
+  if (status === "blocked") return "blocked";
+  if (status === "rejected" || status === "rejected_by_red_team") return "rejected";
+  if (status === "rejected_by_broker") return "rejected_by_broker";
+  if (status === "not_placed" || status === "placing_failed") return "not_placed";
+  if (status === "expired") return "expired";
+  if (status === "withdrawn") return "withdrawn";
+  if (status === "error" || status === "failed") return "error";
+  return "planned";
+}
+
+function proposalAction(proposal: TradeProposal, notional?: number): string {
+  const size =
+    typeof notional === "number" && Number.isFinite(notional) && notional > 0
+      ? `$${Math.round(notional).toLocaleString("en-US")}`
+      : proposal.dollarAmount
+        ? `$${Math.round(proposal.dollarAmount).toLocaleString("en-US")}`
+        : proposal.quantity
+          ? `${proposal.quantity} sh`
+          : "unsized";
+  return `${proposal.side.toUpperCase()} ${proposal.symbol.toUpperCase()} ${size}`;
+}
+
+function lifecycleEvidence(input: {
+  status: SocraticDecisionStatus;
+  action: string;
+  decision: PolicyDecision;
+  errorMessage?: string;
+  symbol: string;
+}): SocraticEvidenceItem {
+  const reasons = input.decision.reasons.filter(Boolean).join(" | ");
+  const error = input.errorMessage?.trim();
+  const suffix = error ? `: ${error}` : "";
+  switch (input.status) {
+    case "placed":
+      return { kind: "policy", title: "Order placed", summary: `${input.action} was submitted and confirmed by the broker.`, symbol: input.symbol, tone: "positive", data: input.decision };
+    case "filled":
+      return { kind: "policy", title: "Order filled", summary: `${input.action} was filled by the broker.`, symbol: input.symbol, tone: "positive", data: input.decision };
+    case "placing":
+      return { kind: "policy", title: "Placement pending confirmation", summary: `${input.action} was submitted, but broker acceptance is not yet confirmed${suffix}.`, symbol: input.symbol, tone: "warning", data: input.decision };
+    case "proposed":
+      return { kind: "policy", title: "Awaiting approval", summary: `${input.action} has not been placed and is waiting for a human decision.`, symbol: input.symbol, tone: "warning", data: input.decision };
+    case "blocked":
+      return { kind: "policy", title: "Blocked before placement", summary: `Deterministic checks blocked ${input.action}${reasons ? `: ${reasons}` : suffix}.`, symbol: input.symbol, tone: "negative", data: input.decision };
+    case "rejected":
+      return { kind: "policy", title: "Rejected before placement", summary: `${input.action} was declined before any broker placement.`, symbol: input.symbol, tone: "negative", data: input.decision };
+    case "rejected_by_broker":
+      return { kind: "policy", title: "Rejected by broker", summary: `The broker declined ${input.action}${suffix}.`, symbol: input.symbol, tone: "negative", data: input.decision };
+    case "not_placed":
+      return { kind: "policy", title: "Order not placed", summary: `No broker order was confirmed for ${input.action}${suffix}.`, symbol: input.symbol, tone: "negative", data: input.decision };
+    case "expired":
+      return { kind: "policy", title: "Proposal expired", summary: `${input.action} aged out before placement.`, symbol: input.symbol, tone: "warning", data: input.decision };
+    case "withdrawn":
+      return { kind: "policy", title: "Proposal withdrawn", summary: `${input.action} was withdrawn by the strategy before placement.`, symbol: input.symbol, tone: "warning", data: input.decision };
+    case "error":
+      return { kind: "policy", title: "Placement failed", summary: `${input.action} was not confirmed as placed${suffix}.`, symbol: input.symbol, tone: "negative", data: input.decision };
+    default:
+      return { kind: "policy", title: "Decision recorded", summary: `${input.action} was recorded without a terminal placement outcome.`, symbol: input.symbol, tone: "neutral", data: input.decision };
+  }
+}
+
+type SocraticLifecycleRow = {
+  id: string;
+  evidence: string;
+  dissent: string;
+  autonomy_override: string | null;
+};
+
+type ProposalLifecycleRow = {
+  status: string;
+  proposal: string;
+  decision: string;
+  review: string | null;
+  estimated_notional: number | null;
+  error_message: string | null;
+};
+
+/** Synchronize the already-created Socratic case inside the SAME SQLite transaction as each
+ * proposal transition. This prevents a case from remaining "proposed" after a human approval,
+ * broker decline, crash recovery, expiry, or withdrawal. It also refreshes execution-time sizing
+ * and Red/policy receipts when the order JSON changed after generation. */
+function syncSocraticDecisionLifecycle(
+  database: ReturnType<typeof getDb>,
+  proposalId: string,
+  userId: string
+): string | undefined {
+  const existing = database
+    .prepare("SELECT id, evidence, dissent, autonomy_override FROM socratic_decisions WHERE user_id = ? AND (id = ? OR proposal_id = ?) ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1")
+    .get(userId, proposalId, proposalId, proposalId) as SocraticLifecycleRow | undefined;
+  if (!existing) return undefined;
+  const row = database
+    .prepare("SELECT status, proposal, decision, review, estimated_notional, error_message FROM trade_proposals WHERE id = ? AND user_id = ?")
+    .get(proposalId, userId) as ProposalLifecycleRow | undefined;
+  if (!row) return undefined;
+
+  const proposal = parseJson<TradeProposal | undefined>(row.proposal, undefined);
+  const decision = parseJson<PolicyDecision | undefined>(row.decision, undefined);
+  if (!proposal || !decision) return undefined;
+  const review = parseJson<ReviewedOrder | undefined>(row.review, undefined);
+  const status = socraticStatusFromProposalStatus(row.status);
+  const notional = row.estimated_notional ?? review?.estimatedNotional ?? proposal.dollarAmount;
+  const action = proposalAction(proposal, notional);
+  const priorEvidence = parseJson<SocraticEvidenceItem[]>(existing.evidence, []);
+  const evidence = [
+    lifecycleEvidence({
+      status,
+      action,
+      decision,
+      ...(row.error_message ? { errorMessage: row.error_message } : {}),
+      symbol: proposal.symbol.toUpperCase()
+    }),
+    ...priorEvidence.filter((item) => item.kind !== "policy")
+  ].slice(0, 8);
+
+  const priorDissent = parseJson<SocraticEvidenceItem[]>(existing.dissent, []);
+  const preservedDissent = priorDissent.filter((item) => item.kind !== "red_team" && item.kind !== "policy");
+  const dissent: SocraticEvidenceItem[] = [];
+  if (proposal.redTeamVerdict?.available) {
+    const overridden =
+      decision.socraticOverride?.applied === true || proposal.redTeamVerdict.humanOverrideApplied === true;
+    dissent.push({
+      kind: "red_team",
+      title: proposal.redTeamVerdict.rejected
+        ? overridden
+          ? "Red Team rejection (overridden)"
+          : "Red Team rejection"
+        : "Red Team review",
+      summary: proposal.redTeamVerdict.reason,
+      source: proposal.redTeamVerdict.model,
+      symbol: proposal.symbol.toUpperCase(),
+      tone: proposal.redTeamVerdict.rejected && !overridden ? "negative" : "warning",
+      data: proposal.redTeamVerdict
+    });
+  }
+  if (!decision.approved) {
+    for (const reason of decision.reasons.filter(Boolean).slice(0, 3)) {
+      dissent.push({ kind: "policy", title: "Policy refusal", summary: reason, symbol: proposal.symbol.toUpperCase(), tone: "warning" });
+    }
+  }
+  dissent.push(...preservedDissent);
+
+  const priorOverride = parseJson<SocraticDecisionCase["autonomyOverride"] | undefined>(existing.autonomy_override, undefined);
+  const autonomyOverride = proposal.autonomyOverride || priorOverride
+    ? {
+        ...(priorOverride ?? {}),
+        ...(proposal.autonomyOverride ?? {}),
+        applied: decision.socraticOverride?.applied === true,
+        conflicts: decision.socraticOverride?.conflicts ?? priorOverride?.conflicts ?? proposal.autonomyOverride?.preferenceConflicts ?? []
+      }
+    : undefined;
+
+  const info = database
+    .prepare(
+      `UPDATE socratic_decisions SET
+         status = ?, rationale = ?, green_team_rationale = COALESCE(?, green_team_rationale),
+         sizing_snapshot = COALESCE(?, sizing_snapshot), action = ?, notional = COALESCE(?, notional),
+         red_team = COALESCE(?, red_team), policy_decision = ?, evidence = ?, dissent = ?,
+         autonomy_override = COALESCE(?, autonomy_override), updated_at = ?
+       WHERE id = ? AND user_id = ?`
+    )
+    .run(
+      status,
+      proposal.rationale,
+      proposal.greenTeamRationale ?? null,
+      proposal.sizingSnapshot ? JSON.stringify(proposal.sizingSnapshot) : null,
+      action,
+      notional ?? null,
+      proposal.redTeamVerdict ? JSON.stringify(proposal.redTeamVerdict) : null,
+      JSON.stringify(decision),
+      JSON.stringify(evidence),
+      JSON.stringify(dissent.slice(0, 6)),
+      autonomyOverride ? JSON.stringify(autonomyOverride) : null,
+      new Date().toISOString(),
+      existing.id,
+      userId
+    );
+  return info.changes === 1 ? existing.id : undefined;
+}
+
+function reindexSocraticDecisionAfterLifecycleSync(decisionId: string | undefined, userId: string): void {
+  if (!decisionId) return;
+  void import("./db-socratic")
+    .then(async ({ getSocraticDecisionCase }) => {
+      const decision = getSocraticDecisionCase(decisionId, userId);
+      if (!decision) return;
+      const { indexSocraticDecisionMemory } = await import("./socratic-memory");
+      await indexSocraticDecisionMemory(decision);
+    })
+    .catch((error) => {
+      console.warn("[db-proposals] Socratic lifecycle re-index failed:", error instanceof Error ? error.message : String(error));
+    });
 }
 
 export function listPendingProposals(accountNumber: string, userId: string = "local"): PendingProposal[] {
@@ -233,22 +445,27 @@ export function updateProposalStatus(
   errorMessage?: string,
   decision?: PolicyDecision
 ): void {
-  getDb()
-    .prepare(
-      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), error_message = COALESCE(?, error_message), decision = COALESCE(?, decision), placed_at = CASE WHEN ? IN ('placed', 'paper', 'placing') THEN COALESCE(placed_at, CURRENT_TIMESTAMP) ELSE placed_at END WHERE id = ? AND user_id = ?"
-    )
-    .run(
-      status,
-      orderId ?? null,
-      review ? JSON.stringify(review) : null,
-      estimatedNotional ?? null,
-      refId ?? null,
-      errorMessage ?? null,
-      decision ? JSON.stringify(decision) : null,
-      status,
-      id,
-      userId
-    );
+  const database = getDb();
+  const syncedDecisionId = database.transaction(() => {
+    const info = database
+      .prepare(
+        "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), error_message = COALESCE(?, error_message), decision = COALESCE(?, decision), placed_at = CASE WHEN ? IN ('placed', 'filled', 'paper', 'placing') THEN COALESCE(placed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ELSE placed_at END WHERE id = ? AND user_id = ?"
+      )
+      .run(
+        status,
+        orderId ?? null,
+        review ? JSON.stringify(review) : null,
+        estimatedNotional ?? null,
+        refId ?? null,
+        errorMessage ?? null,
+        decision ? JSON.stringify(decision) : null,
+        status,
+        id,
+        userId
+      );
+    return info.changes === 1 ? syncSocraticDecisionLifecycle(database, id, userId) : undefined;
+  })();
+  reindexSocraticDecisionAfterLifecycleSync(syncedDecisionId, userId);
 }
 
 /**
@@ -264,27 +481,77 @@ export function claimProposalForExecution(
   id: string,
   toStatus: string,
   userId: string = "local",
-  opts: { review?: ReviewedOrder; estimatedNotional?: number; refId?: string; executionMode?: ExecutionMode; proposal?: TradeProposal } = {}
+  opts: {
+    review?: ReviewedOrder;
+    estimatedNotional?: number;
+    refId?: string;
+    executionMode?: ExecutionMode;
+    proposal?: TradeProposal;
+    decision?: PolicyDecision;
+    /** Called inside the claim transaction only when the proposal has no durable Socratic case.
+     * The callback must synchronously insert that case or the claim fails closed. */
+    createSocraticDecisionCase?: () => void;
+  } = {}
 ): boolean {
   // `proposal` lets the approval path persist EXECUTION-TIME sizing (a broker-minimum bump, an
   // approval-time protective-exit reprice) into the row before placement. Crash-recovery
   // (flagStalePlacingIntents) books fills from this stored JSON, so it must reflect the order
   // actually sent to the broker, not the original ask — and Recent/Activity hydrate from it too.
-  const info = getDb()
-    .prepare(
-      "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), execution_mode = COALESCE(?, execution_mode), proposal = COALESCE(?, proposal) WHERE id = ? AND user_id = ? AND status = 'proposed'"
-    )
-    .run(
-      toStatus,
-      opts.review ? JSON.stringify(opts.review) : null,
-      opts.estimatedNotional ?? null,
-      opts.refId ?? null,
-      opts.executionMode ?? null,
-      opts.proposal ? JSON.stringify(opts.proposal) : null,
-      id,
-      userId
-    );
-  return info.changes === 1;
+  const database = getDb();
+  const rollbackLostFallbackClaim = new Error("proposal claim lost after fallback case creation");
+  let result: { claimed: boolean; decisionId: string | undefined };
+  try {
+    result = database.transaction(() => {
+      // BEGIN IMMEDIATE (invoked below) makes the proposal-state check, optional legacy-case repair,
+      // and CAS one write-locked unit across processes. Never create a proposed case for a row that
+      // already expired, was rejected, or was claimed elsewhere.
+      const pendingProposal = database
+        .prepare("SELECT id FROM trade_proposals WHERE id = ? AND user_id = ? AND status = 'proposed' LIMIT 1")
+        .get(id, userId) as { id: string } | undefined;
+      if (!pendingProposal) return { claimed: false, decisionId: undefined };
+      const anyDecisionCase = database
+        .prepare("SELECT id FROM socratic_decisions WHERE user_id = ? AND (id = ? OR proposal_id = ?) LIMIT 1")
+        .get(userId, id, id) as { id: string } | undefined;
+      let createdFallbackCase = false;
+      if (!anyDecisionCase && opts.createSocraticDecisionCase) {
+        opts.createSocraticDecisionCase();
+        createdFallbackCase = true;
+      }
+      const decisionCase = database
+        .prepare("SELECT id FROM socratic_decisions WHERE user_id = ? AND (id = ? OR proposal_id = ?) AND status = 'proposed' LIMIT 1")
+        .get(userId, id, id) as { id: string } | undefined;
+      if (!decisionCase) {
+        if (createdFallbackCase) throw rollbackLostFallbackClaim;
+        return { claimed: false, decisionId: undefined };
+      }
+      const info = database
+        .prepare(
+          "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), execution_mode = COALESCE(?, execution_mode), proposal = COALESCE(?, proposal), decision = COALESCE(?, decision), placed_at = CASE WHEN ? IN ('placed', 'filled', 'paper', 'placing') THEN COALESCE(placed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ELSE placed_at END WHERE id = ? AND user_id = ? AND status = 'proposed' AND EXISTS (SELECT 1 FROM socratic_decisions sd WHERE sd.user_id = trade_proposals.user_id AND (sd.id = trade_proposals.id OR sd.proposal_id = trade_proposals.id) AND sd.status = 'proposed')"
+        )
+        .run(
+          toStatus,
+          opts.review ? JSON.stringify(opts.review) : null,
+          opts.estimatedNotional ?? null,
+          opts.refId ?? null,
+          opts.executionMode ?? null,
+          opts.proposal ? JSON.stringify(opts.proposal) : null,
+          opts.decision ? JSON.stringify(opts.decision) : null,
+          toStatus,
+          id,
+          userId
+        );
+      if (info.changes !== 1 && createdFallbackCase) throw rollbackLostFallbackClaim;
+      return {
+        claimed: info.changes === 1,
+        decisionId: info.changes === 1 ? syncSocraticDecisionLifecycle(database, id, userId) : undefined
+      };
+    }).immediate();
+  } catch (error) {
+    if (error === rollbackLostFallbackClaim) return false;
+    throw error;
+  }
+  reindexSocraticDecisionAfterLifecycleSync(result.decisionId, userId);
+  return result.claimed;
 }
 
 /**
@@ -301,19 +568,27 @@ export function transitionProposalIfPending(
   userId: string = "local",
   opts: { review?: ReviewedOrder; estimatedNotional?: number; decision?: PolicyDecision } = {}
 ): boolean {
-  const info = getDb()
-    .prepare(
-      "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), decision = COALESCE(?, decision) WHERE id = ? AND user_id = ? AND status = 'proposed'"
-    )
-    .run(
-      toStatus,
-      opts.review ? JSON.stringify(opts.review) : null,
-      opts.estimatedNotional ?? null,
-      opts.decision ? JSON.stringify(opts.decision) : null,
-      id,
-      userId
-    );
-  return info.changes === 1;
+  const database = getDb();
+  const result = database.transaction(() => {
+    const info = database
+      .prepare(
+        "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), decision = COALESCE(?, decision) WHERE id = ? AND user_id = ? AND status = 'proposed'"
+      )
+      .run(
+        toStatus,
+        opts.review ? JSON.stringify(opts.review) : null,
+        opts.estimatedNotional ?? null,
+        opts.decision ? JSON.stringify(opts.decision) : null,
+        id,
+        userId
+      );
+    return {
+      transitioned: info.changes === 1,
+      decisionId: info.changes === 1 ? syncSocraticDecisionLifecycle(database, id, userId) : undefined
+    };
+  })();
+  reindexSocraticDecisionAfterLifecycleSync(result.decisionId, userId);
+  return result.transitioned;
 }
 
 /**
@@ -328,15 +603,35 @@ export function transitionProposalIfPending(
  */
 export function updatePendingProposalReprice(
   id: string,
-  input: { proposal: TradeProposal; estimatedNotional?: number },
+  input: {
+    proposal: TradeProposal;
+    estimatedNotional?: number;
+    review?: ReviewedOrder;
+    decision?: PolicyDecision;
+  },
   userId: string = "local"
 ): boolean {
-  const info = getDb()
-    .prepare(
-      "UPDATE trade_proposals SET proposal = ?, estimated_notional = COALESCE(?, estimated_notional) WHERE id = ? AND user_id = ? AND status = 'proposed'"
-    )
-    .run(JSON.stringify(input.proposal), input.estimatedNotional ?? null, id, userId);
-  return info.changes === 1;
+  const database = getDb();
+  const result = database.transaction(() => {
+    const info = database
+      .prepare(
+        "UPDATE trade_proposals SET proposal = ?, estimated_notional = COALESCE(?, estimated_notional), review = COALESCE(?, review), decision = COALESCE(?, decision) WHERE id = ? AND user_id = ? AND status = 'proposed'"
+      )
+      .run(
+        JSON.stringify(input.proposal),
+        input.estimatedNotional ?? null,
+        input.review ? JSON.stringify(input.review) : null,
+        input.decision ? JSON.stringify(input.decision) : null,
+        id,
+        userId
+      );
+    return {
+      updated: info.changes === 1,
+      decisionId: info.changes === 1 ? syncSocraticDecisionLifecycle(database, id, userId) : undefined
+    };
+  })();
+  reindexSocraticDecisionAfterLifecycleSync(result.decisionId, userId);
+  return result.updated;
 }
 
 /**
@@ -364,10 +659,11 @@ export function listStalePlacingProposals(
   }));
 }
 
-/** Idempotency for chat-drafted proposals: the id of an existing still-`proposed` row for a runId. */
-export function findProposedIdByRunId(runId: string, userId: string = "local"): string | null {
+/** Idempotency for chat-drafted proposals: one draft/runId remains one proposal across its entire
+ * lifecycle, including retries racing approval or arriving after a fill. */
+export function findProposalIdByRunId(runId: string, userId: string = "local"): string | null {
   const row = getDb()
-    .prepare("SELECT id FROM trade_proposals WHERE run_id = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC LIMIT 1")
+    .prepare("SELECT id FROM trade_proposals WHERE run_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT 1")
     .get(runId, userId) as { id: string } | undefined;
   return row?.id ?? null;
 }
@@ -382,9 +678,17 @@ function ensureReferencePrice(proposal: unknown): unknown {
   if (!proposal || typeof proposal !== "object") return proposal;
   const p = proposal as Record<string, unknown>;
   const ref = Number(p.referencePrice);
-  if (Number.isFinite(ref) && ref > 0) return proposal;
+  // Provenance lets the approval-time re-anchor (src/lib/approval-reprice.ts) distinguish a
+  // genuine decision-time quote (reprice-eligible, even when the limit equals it exactly) from
+  // this function's defensive copy of the limit price (a hard price — never repriced). Without
+  // it, equality is the only heuristic and genuine at-market limits would wrongly stay stale.
+  if (Number.isFinite(ref) && ref > 0) {
+    return p.referencePriceProvenance ? proposal : { ...p, referencePriceProvenance: "provided" };
+  }
   const fallback = Number(p.limitPrice) || Number(p.stopPrice);
-  if (Number.isFinite(fallback) && fallback > 0) return { ...p, referencePrice: fallback };
+  if (Number.isFinite(fallback) && fallback > 0) {
+    return { ...p, referencePrice: fallback, referencePriceProvenance: "limit-fallback" };
+  }
   return proposal;
 }
 

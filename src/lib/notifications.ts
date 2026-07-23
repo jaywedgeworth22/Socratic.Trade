@@ -1,23 +1,82 @@
-import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent } from "./db";
-import { notify } from "./notify";
-import type { NotificationEvent, NotificationEventType, NotifyChannelId, NotifyChannelResult, TradingPolicy } from "./types";
+import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent, getDb, reserveOptionAlert, releaseOptionAlertReservation } from "./db";
+import { notify, type NotifyDispatchDeps } from "./notify";
+import { validateWebhookUrl, type HostResolver } from "./egress-guard";
+import type { NotificationEvent, NotificationEventType, NotifyChannelId, NotifyChannelResult, TradingPolicy, OptionPosition } from "./types";
 
 type Fetcher = typeof fetch;
 type NotifyDispatcher = typeof notify;
+type NotificationDeliveryControl = Pick<NotifyDispatchDeps, "assertActive" | "signal">;
 
 type SendNotificationOptions = {
   policy?: TradingPolicy;
   fetcher?: Fetcher;
   timeoutMs?: number;
   userId?: string;
+  connectedAccountId?: string;
   /** Override the compact bridge body while keeping delivery inside the enabled-event gate. */
   directBody?: string;
   /** Injectable dispatcher/deps keep failure and caller-routing tests offline. */
   notifyImpl?: NotifyDispatcher;
   notifyDeps?: Parameters<NotifyDispatcher>[2];
   /** Extra operator-only lane (for example the configured fallback email), invoked after gating. */
-  additionalDelivery?: () => Promise<NotifyChannelResult[]>;
+  additionalDelivery?: (control?: NotificationDeliveryControl) => Promise<NotifyChannelResult[]>;
+  /** Cooperative ownership fence for callers whose work may be superseded while delivery awaits. */
+  assertActive?: () => void;
+  /** Cancellation signal paired with assertActive for in-flight delivery and retry waits. */
+  signal?: AbortSignal;
+  /** Injectable DNS resolver for the legacy webhook's egress guard (SSRF hardening — see
+   *  src/lib/egress-guard.ts). Defaults to real DNS; tests inject a stub. */
+  resolveWebhookHost?: HostResolver;
 };
+
+function assertNotificationActive(options: SendNotificationOptions): void {
+  options.assertActive?.();
+  if (options.notifyDeps?.assertActive !== options.assertActive) {
+    options.notifyDeps?.assertActive?.();
+  }
+  for (const signal of [options.signal, options.notifyDeps?.signal]) {
+    if (!signal?.aborted) continue;
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("Notification delivery ownership was lost.");
+  }
+}
+
+function combineNotificationSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const active = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  if (active.length === 0) return undefined;
+  if (active.length === 1 || typeof AbortSignal.any !== "function") return active[0];
+  return AbortSignal.any(active);
+}
+
+function guardedNotifyDeps(
+  deps: NotifyDispatchDeps | undefined,
+  assertActive: (() => void) | undefined,
+  signal: AbortSignal | undefined
+): NotifyDispatchDeps {
+  const nestedAssert = deps?.assertActive;
+  const combinedAssert = assertActive || nestedAssert
+    ? () => {
+        assertActive?.();
+        nestedAssert?.();
+      }
+    : undefined;
+  const combinedSignal = combineNotificationSignals(signal, deps?.signal);
+  return {
+    ...deps,
+    ...(combinedAssert ? { assertActive: combinedAssert } : {}),
+    ...(combinedSignal ? { signal: combinedSignal } : {})
+  };
+}
+
+function notificationDeliveryControl(options: SendNotificationOptions): NotificationDeliveryControl {
+  const hasGuard = options.assertActive !== undefined || options.notifyDeps?.assertActive !== undefined;
+  const signal = combineNotificationSignals(options.signal, options.notifyDeps?.signal);
+  return {
+    ...(hasGuard ? { assertActive: () => assertNotificationActive(options) } : {}),
+    ...(signal ? { signal } : {})
+  };
+}
 
 const CHANNEL_LABELS: Record<NotifyChannelId, string> = {
   push: "Phone push",
@@ -27,6 +86,12 @@ const CHANNEL_LABELS: Record<NotifyChannelId, string> = {
 };
 
 export const NO_NOTIFICATION_CHANNELS_REASON = "No notification channels enabled.";
+
+// Types that emit their own in-app audit rows before calling sendNotification.
+// Skip writing a second in-app notification_events row for them to avoid double-writing.
+const DIRECT_NOTIFY_SKIP_SET: ReadonlySet<NotificationEventType> = new Set([
+  "storage_warning"
+]);
 
 // The ntfy push channel (notify.ts's CHANNELS.push.send) carries the message TITLE as a raw HTTP
 // header value. The Fetch/Headers spec requires header values to be ByteString (Latin-1, code
@@ -70,41 +135,63 @@ export async function sendNotification(
   },
   options: SendNotificationOptions = {}
 ): Promise<NotificationEvent> {
+  assertNotificationActive(options);
   const userId = options.userId ?? "local";
   const policy = options.policy ?? getPolicy(userId);
+  const connectedAccountId = options.connectedAccountId ?? policy.connectedAccountId;
+  assertNotificationActive(options);
   const settings = policy.notificationSettings;
   const webhookUrl = settings.webhookUrl?.trim();
 
   if (!settings.enabledEvents.includes(input.type)) {
-    return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId, policy.connectedAccountId);
+    assertNotificationActive(options);
+    return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId, connectedAccountId);
   }
 
   const results: NotifyChannelResult[] = [];
   const bridgeErrors: string[] = [];
   try {
-    results.push(
-      ...(await sendDirectNotification(input, userId, {
-        skipWebhook: !!webhookUrl,
-        directBody: options.directBody,
-        notifyImpl: options.notifyImpl,
-        notifyDeps: options.notifyDeps
-      }))
-    );
+    assertNotificationActive(options);
+    const directResults = await sendDirectNotification(input, userId, {
+      skipWebhook: !!webhookUrl,
+      directBody: options.directBody,
+      notifyImpl: options.notifyImpl,
+      notifyDeps: options.notifyDeps,
+      assertActive: options.assertActive,
+      signal: options.signal
+    });
+    assertNotificationActive(options);
+    results.push(...directResults);
   } catch (error) {
-    bridgeErrors.push(recordBridgeError(input.type, userId, "direct", error, policy.connectedAccountId));
+    assertNotificationActive(options);
+    bridgeErrors.push(recordBridgeError(input.type, userId, "direct", error, connectedAccountId));
   }
 
   if (options.additionalDelivery) {
     try {
-      results.push(...(await options.additionalDelivery()));
+      assertNotificationActive(options);
+      const additionalResults = await options.additionalDelivery(notificationDeliveryControl(options));
+      assertNotificationActive(options);
+      results.push(...additionalResults);
     } catch (error) {
-      bridgeErrors.push(recordBridgeError(input.type, userId, "additional", error, policy.connectedAccountId));
+      assertNotificationActive(options);
+      bridgeErrors.push(recordBridgeError(input.type, userId, "additional", error, connectedAccountId));
     }
   }
 
   if (webhookUrl) {
-    const legacyWebhookResult = await sendLegacyWebhook(input, webhookUrl, options.fetcher ?? fetch, options.timeoutMs ?? 5000);
+    assertNotificationActive(options);
+    const legacyWebhookResult = await sendLegacyWebhook(
+      input,
+      webhookUrl,
+      options.fetcher ?? fetch,
+      options.timeoutMs ?? 5000,
+      options.signal,
+      options.resolveWebhookHost
+    );
+    assertNotificationActive(options);
     results.push(legacyWebhookResult);
+    assertNotificationActive(options);
     audit(
       legacyWebhookResult.ok ? "notify.sent" : "notify.error",
       {
@@ -115,12 +202,15 @@ export async function sendNotification(
         ...(legacyWebhookResult.error ? { error: legacyWebhookResult.error, attempts: 1 } : {})
       },
       userId,
-      policy.connectedAccountId
+      connectedAccountId
     );
   }
 
+  assertNotificationActive(options);
   const outcome = deriveDeliveryOutcome(results, bridgeErrors);
-  const event = record(input, outcome.status, webhookUrl, outcome.reason, userId, policy.connectedAccountId);
+  assertNotificationActive(options);
+  const event = record(input, outcome.status, webhookUrl, outcome.reason, userId, connectedAccountId);
+  assertNotificationActive(options);
   audit(
     "notification.delivery",
     {
@@ -131,7 +221,7 @@ export async function sendNotification(
       bridgeErrors
     },
     userId,
-    policy.connectedAccountId
+    connectedAccountId
   );
   return event;
 }
@@ -140,8 +230,15 @@ async function sendLegacyWebhook(
   input: { type: NotificationEventType; title: string; payload: unknown },
   webhookUrl: string,
   fetcher: Fetcher,
-  timeoutMs: number
+  timeoutMs: number,
+  callerSignal?: AbortSignal,
+  resolveHost?: HostResolver
 ): Promise<NotifyChannelResult> {
+  // Re-validate on every send (not just when the URL was saved) — see src/lib/egress-guard.ts.
+  const check = await validateWebhookUrl(webhookUrl, { resolveHost });
+  if (!check.ok) {
+    return { channel: "webhook", ok: false, error: check.error ?? "webhook URL is not allowed." };
+  }
   const isDiscord = webhookUrl.includes("discord.com/api/webhooks") || webhookUrl.includes("discordapp.com/api/webhooks");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -158,7 +255,9 @@ async function sendLegacyWebhook(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payloadBody),
-      signal: controller.signal
+      // Never transparently follow a redirect to an unvalidated target.
+      redirect: "manual",
+      signal: combineNotificationSignals(callerSignal, controller.signal)
     });
     if (!response.ok) {
       return { channel: "webhook", ok: false, error: `Webhook returned HTTP ${response.status}.` };
@@ -179,6 +278,8 @@ async function sendDirectNotification(
     directBody?: string;
     notifyImpl?: NotifyDispatcher;
     notifyDeps?: Parameters<NotifyDispatcher>[2];
+    assertActive?: () => void;
+    signal?: AbortSignal;
   } = {}
 ): Promise<NotifyChannelResult[]> {
   const basePrefs = options.notifyDeps?.prefs;
@@ -188,6 +289,7 @@ async function sendDirectNotification(
         return { ...current, channels: current.channels.filter((channel) => channel !== "webhook") };
       })()
     : basePrefs;
+  const deps = guardedNotifyDeps(options.notifyDeps, options.assertActive, options.signal);
   return (options.notifyImpl ?? notify)(
     userId,
     {
@@ -196,7 +298,7 @@ async function sendDirectNotification(
       kind: input.type,
       data: input.payload
     },
-    { ...options.notifyDeps, ...(prefs ? { prefs } : {}) }
+    { ...deps, ...(prefs ? { prefs } : {}) }
   );
 }
 
@@ -253,9 +355,20 @@ function directNotificationBody(input: { type: NotificationEventType; title: str
       const fill = asRecord(payload.fill);
       if (!fill) return input.title;
       const side = fill.side ? String(fill.side).toUpperCase() : "ORDER";
+      const symbol = fill.symbol ? ` ${fill.symbol}` : "";
+      // recordFillFromProposal (performance.ts) zeroes quantity/price/notional on a "pending_reconciliation"
+      // receipt when the broker hasn't reported a fill price yet — that's a pre-confirmation placeholder,
+      // not a real $0 fill. Rendering the zeros verbatim reads as "BUY 0 JPM pending_reconciliation ($0.00)".
+      // Key off status + absence of a priced fill (not just quantity === 0, which can be legitimately 0 on a
+      // dollar-sized order awaiting its broker price) so a genuinely zero-priced CONFIRMED fill (status
+      // "filled"/"partially_filled") still renders normally below.
+      if (isPlaceholderFillReceipt(fill)) {
+        const estimate = estimatedFillNotional(fill);
+        const est = estimate !== undefined ? ` (~$${estimate.toFixed(2)} est.)` : "";
+        return `${side}${symbol} — order accepted by broker; fill not yet confirmed${est}`.trim();
+      }
       const status = fill.status ? ` ${String(fill.status)}` : "";
       const quantity = fill.quantity != null ? ` ${fill.quantity}` : "";
-      const symbol = fill.symbol ? ` ${fill.symbol}` : "";
       const notional = Number.isFinite(Number(fill.notional)) ? ` ($${Number(fill.notional).toFixed(2)})` : "";
       return `${side}${quantity}${symbol}${status}${notional}`.trim();
     }
@@ -273,8 +386,19 @@ function directNotificationBody(input: { type: NotificationEventType; title: str
       return `Approval needed for ${side}${symbol}`.trim();
     }
     case "kill_switch":
-    case "run_failed":
-      return String(payload.summary ?? input.title);
+    case "run_failed": {
+      // Every run_failed emission site (strategy.ts, strategy-execution.ts) puts the actual broker
+      // rejection/decline/uncertainty detail under payload.reason or payload.error, never
+      // payload.summary — summary is only ever populated by the order-agnostic "Strategy run failed"
+      // emitter. Falling straight through to the title (as this used to) duplicated the title as the
+      // body, e.g. SMS "BAC order rejected by broker\nBAC order rejected by broker", silently
+      // dropping the real reason. kill_switch sites split the same way: the scheduled-halt emitter
+      // carries summary, while the circuit-breaker and volatility-brake halts carry only reason —
+      // so this shared fallback chain surfaces the breaker/brake reason for those too instead of
+      // repeating the title.
+      const detail = payload.summary ?? payload.reason ?? payload.error;
+      return String(detail ?? input.title);
+    }
     case "limit_order_stale":
       return String(payload.summary ?? input.title);
     case "proposal_withdrawn":
@@ -301,6 +425,27 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+/** True when `fill` is a recordFillFromProposal pre-confirmation placeholder receipt (status
+ *  "pending_reconciliation" with no priced fill yet) rather than a real, priced fill — see the
+ *  "fill" case in directNotificationBody for why this can't key off quantity/notional alone. */
+function isPlaceholderFillReceipt(fill: unknown): boolean {
+  const record = asRecord(fill);
+  const price = Number(record.price);
+  const hasPricedFill = Number.isFinite(price) && price > 0;
+  return record.status === "pending_reconciliation" && !hasPricedFill;
+}
+
+/** Best-effort pre-fill notional estimate for a placeholder receipt, read from the review/proposal
+ *  that recordFillFromProposal stamps onto `fill.raw` — NEVER fabricated when neither is present. */
+function estimatedFillNotional(fill: unknown): number | undefined {
+  const raw = asRecord(asRecord(fill).raw);
+  const reviewEstimate = Number(asRecord(raw.review).estimatedNotional);
+  if (Number.isFinite(reviewEstimate) && reviewEstimate > 0) return reviewEstimate;
+  const dollarAmount = Number(asRecord(raw.proposal).dollarAmount);
+  if (Number.isFinite(dollarAmount) && dollarAmount > 0) return dollarAmount;
+  return undefined;
+}
+
 function formatDiscordPayload(input: {
   type: NotificationEventType;
   title: string;
@@ -318,12 +463,24 @@ function formatDiscordPayload(input: {
       if (fill) {
         fields.push(
           { name: "Symbol", value: String(fill.symbol), inline: true },
-          { name: "Side", value: String(fill.side).toUpperCase(), inline: true },
-          { name: "Status", value: String(fill.status), inline: true },
-          { name: "Quantity", value: String(fill.quantity), inline: true },
-          { name: "Price", value: `$${Number(fill.price).toFixed(2)}`, inline: true },
-          { name: "Notional", value: `$${Number(fill.notional).toFixed(2)}`, inline: true }
+          { name: "Side", value: String(fill.side).toUpperCase(), inline: true }
         );
+        // See directNotificationBody's "fill" case for why a "pending_reconciliation" receipt with
+        // no priced fill is a placeholder, not a real $0.00 fill — same guard, Discord embed fields.
+        if (isPlaceholderFillReceipt(fill)) {
+          const estimate = estimatedFillNotional(fill);
+          fields.push(
+            { name: "Status", value: "Order accepted by broker; fill not yet confirmed", inline: true },
+            { name: "Notional", value: estimate !== undefined ? `~$${estimate.toFixed(2)} est.` : "Pending", inline: true }
+          );
+        } else {
+          fields.push(
+            { name: "Status", value: String(fill.status), inline: true },
+            { name: "Quantity", value: String(fill.quantity), inline: true },
+            { name: "Price", value: `$${Number(fill.price).toFixed(2)}`, inline: true },
+            { name: "Notional", value: `$${Number(fill.notional).toFixed(2)}`, inline: true }
+          );
+        }
       }
       if (payload?.runId) {
         fields.push({ name: "Run ID", value: String(payload.runId), inline: false });
@@ -376,7 +533,10 @@ function formatDiscordPayload(input: {
     }
     case "kill_switch": {
       color = 10181046; // Purple
-      description = payload?.summary ?? "Kill switch triggered.";
+      // Same field split as directNotificationBody: the circuit-breaker and volatility-brake
+      // halts carry only payload.reason, so Discord must fall back to it too or those two real
+      // production alerts render the generic text while SMS shows the specific reason.
+      description = payload?.summary ?? payload?.reason ?? "Kill switch triggered.";
       if (payload?.runId) {
         fields.push({ name: "Run ID", value: String(payload.runId), inline: false });
       }
@@ -398,7 +558,10 @@ function formatDiscordPayload(input: {
     }
     case "run_failed": {
       color = 15158332; // Red
-      description = payload?.summary ?? "Strategy run failed.";
+      // Mirrors directNotificationBody's run_failed fallback chain — most emission sites carry the
+      // real broker rejection/decline/uncertainty detail under payload.reason or payload.error, not
+      // payload.summary (see that case for the full explanation).
+      description = payload?.summary ?? payload?.reason ?? payload?.error ?? "Strategy run failed.";
       if (payload?.runId) {
         fields.push({ name: "Run ID", value: String(payload.runId), inline: false });
       }
@@ -484,16 +647,30 @@ function record(
   userId: string = "local",
   connectedAccountId?: string
 ): NotificationEvent {
-  const event = insertNotificationEvent({
-    userId,
-    connectedAccountId,
-    type: input.type,
-    title: input.title,
-    status,
-    webhookUrl: webhookUrl ? maskWebhookUrl(webhookUrl) : undefined,
-    payload: input.payload,
-    error
-  });
+  const isSkippedInApp = DIRECT_NOTIFY_SKIP_SET.has(input.type);
+  const event: NotificationEvent = isSkippedInApp
+    ? {
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        type: input.type,
+        title: input.title,
+        status,
+        webhookUrl: webhookUrl ? maskWebhookUrl(webhookUrl) : undefined,
+        payload: input.payload,
+        error,
+        connectedAccountId
+      }
+    : insertNotificationEvent({
+        userId,
+        connectedAccountId,
+        type: input.type,
+        title: input.title,
+        status,
+        webhookUrl: webhookUrl ? maskWebhookUrl(webhookUrl) : undefined,
+        payload: input.payload,
+        error
+      });
+
   audit("notification", event, userId, connectedAccountId);
   return event;
 }
@@ -505,5 +682,161 @@ function maskWebhookUrl(value: string): string {
     return url.toString();
   } catch {
     return value;
+  }
+}
+
+export async function checkAndDispatchOptionAlerts(
+  userId: string,
+  connectedAccountId: string,
+  accountNumber: string,
+  options: OptionPosition[],
+  gateway: any
+): Promise<void> {
+  const db = getDb();
+  // Only successfully-delivered events are tracked as sent; skipped or failed
+  // events must not prevent future delivery when the user enables the alert type.
+  const recentAlerts = db.prepare(
+    `SELECT payload FROM notification_events
+     WHERE user_id = ? AND type = 'option_alert' AND status = 'sent'
+       AND COALESCE(connected_account_id, '') = ?`
+  ).all(userId, connectedAccountId) as Array<{ payload: string }>;
+
+  const sentAlerts = new Set<string>();
+  for (const row of recentAlerts) {
+    try {
+      const payload = JSON.parse(row.payload);
+      if (payload.symbol && payload.alertType) {
+        sentAlerts.add(`${payload.symbol}:${payload.alertType}`);
+      }
+    } catch {}
+  }
+
+  // Deliver a single (symbol, alertType) alert AT MOST ONCE across concurrent snapshot builds.
+  // The in-memory `sentAlerts` read above is a fast/historical dedupe (already-delivered alerts),
+  // but it is read once at the top — two concurrent requests both see the alert as unsent and both
+  // would deliver it. `reserveOptionAlert` closes that race with an atomic DB claim; only the winner
+  // sends. If the send does not actually deliver (alert type disabled, or a webhook failure — status
+  // != "sent"), the claim is released so the alert stays deliverable on a later cycle, matching the
+  // historical "only status='sent' dedupes" behavior. On success the claim persists as the dedupe.
+  const deliverAlert = async (
+    symbol: string,
+    alertType: string,
+    input: { type: NotificationEventType; title: string; payload: unknown }
+  ): Promise<void> => {
+    const key = `${symbol}:${alertType}`;
+    if (sentAlerts.has(key)) return;
+    if (!reserveOptionAlert(userId, connectedAccountId, symbol, alertType)) return;
+    let delivered = false;
+    try {
+      const event = await sendNotification(input, { userId, connectedAccountId });
+      delivered = event.status === "sent";
+    } finally {
+      if (delivered) {
+        sentAlerts.add(key);
+      } else {
+        releaseOptionAlertReservation(userId, connectedAccountId, symbol, alertType);
+      }
+    }
+  };
+
+  const optionsExpiringSoon = options.filter((p) => {
+    if (!p.expirationDate) return false;
+    const days = Math.ceil((new Date(p.expirationDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+    return days >= 0 && days <= 3;
+  });
+
+  const underlyingPrices: Record<string, number> = {};
+  if (optionsExpiringSoon.length > 0) {
+    const underlyings = Array.from(new Set(optionsExpiringSoon.map((p) => p.underlyingSymbol)));
+    try {
+      const quotes = await gateway.getEquityQuotes(accountNumber, underlyings);
+      for (const sym of underlyings) {
+        if (quotes[sym]?.price) {
+          underlyingPrices[sym] = quotes[sym].price;
+        }
+      }
+    } catch (err) {
+      console.warn("[OptionAlerts] failed to fetch underlying quotes:", err);
+    }
+  }
+
+  for (const p of options) {
+    const symbol = p.symbol;
+    const qty = p.quantity;
+    
+    // 1. Assignment / first appearance alert
+    {
+      const detail = `New option position detected: ${qty > 0 ? "Long" : "Short"} ${Math.abs(qty)} contracts of ${symbol} at average cost $${p.averageCost}.`;
+      await deliverAlert(symbol, "appearance", {
+        type: "option_alert",
+        title: `New Option: ${qty > 0 ? "Bought" : "Sold"} ${Math.abs(qty)}x ${symbol}`,
+        payload: {
+          symbol,
+          underlyingSymbol: p.underlyingSymbol,
+          expirationDate: p.expirationDate,
+          optionType: p.optionType,
+          strikePrice: p.strikePrice,
+          quantity: qty,
+          averageCost: p.averageCost,
+          marketValue: p.marketValue,
+          alertType: "appearance",
+          detail
+        }
+      });
+    }
+
+    // 2. Expiry alert (<= 3 days)
+    if (p.expirationDate) {
+      const days = Math.ceil((new Date(p.expirationDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+      if (days >= 0 && days <= 3) {
+        const detail = `Option position ${symbol} expires in ${days} days (on ${p.expirationDate}).`;
+        await deliverAlert(symbol, "expiry", {
+          type: "option_alert",
+          title: `Option Expiring: ${symbol} (${days}d remaining)`,
+          payload: {
+            symbol,
+            underlyingSymbol: p.underlyingSymbol,
+            expirationDate: p.expirationDate,
+            optionType: p.optionType,
+            strikePrice: p.strikePrice,
+            quantity: qty,
+            averageCost: p.averageCost,
+            marketValue: p.marketValue,
+            alertType: "expiry",
+            daysRemaining: days,
+            detail
+          }
+        });
+
+        // 3. ITM-at-expiry status alert
+        const underlyingPrice = underlyingPrices[p.underlyingSymbol];
+        if (underlyingPrice !== undefined) {
+          const isItm = p.optionType === "call"
+            ? underlyingPrice > p.strikePrice
+            : underlyingPrice < p.strikePrice;
+
+          if (isItm) {
+            const detail = `Option ${symbol} is In-the-Money at expiry. Underlying price is $${underlyingPrice}, strike is $${p.strikePrice}.`;
+            await deliverAlert(symbol, "itm", {
+              type: "option_alert",
+              title: `Option ITM at Expiry: ${symbol}`,
+              payload: {
+                symbol,
+                underlyingSymbol: p.underlyingSymbol,
+                expirationDate: p.expirationDate,
+                optionType: p.optionType,
+                strikePrice: p.strikePrice,
+                quantity: qty,
+                averageCost: p.averageCost,
+                marketValue: p.marketValue,
+                alertType: "itm",
+                underlyingPrice,
+                detail
+              }
+            });
+          }
+        }
+      }
+    }
   }
 }

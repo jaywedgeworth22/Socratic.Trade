@@ -65,8 +65,6 @@ function brokerName(broker: string | undefined): string {
       return "Alpaca";
     case "robinhood":
       return "Robinhood";
-    case "test":
-      return "Test Account";
     case "tradier":
       return "Tradier";
     default:
@@ -145,7 +143,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
         disabled={isActive || busyId !== null}
         onClick={() => guardAction(() => void switchTo(account.id))}
         className={cx(
-          "con-scope-row flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left",
+          "con-scope-row flex w-full items-start gap-2 rounded-control border px-3 py-2 text-left",
           isActive ? "border-[color:var(--con-accent-border)]" : "border-[color:var(--con-line)]"
         )}
       >
@@ -187,7 +185,13 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     // relative wrapper: the dropdown anchors to the trigger's own left edge (the
     // scope sits at the LEFT of the bar, so anchoring here can't overflow off the
     // left the way a right-aligned menu would). flex sizing lives on the wrapper
-    // so the trigger fills it.
+    // so the trigger fills it. On phones the selector is min-w-0 flex-1: it absorbs
+    // exactly the space left by the fixed-width chrome controls (state chip, avatar,
+    // run-once, run-state) — never a fixed floor, which would overflow the row on a
+    // narrow (≤360px Android) viewport (Codex review, PR #1708). Legibility instead of
+    // an "N.." clip comes from the reduced button padding (px-2.5) + truncate: at 360px
+    // the leftover is ~73px, enough for "No con…"/the broker name, and it only grows
+    // from there. Paired with the tighter mobile gap/padding on the header row (shell.tsx).
     <div className="relative min-w-0 flex-1 sm:flex-none sm:min-w-[190px] sm:max-w-[300px]">
       <button
         ref={triggerRef}
@@ -197,7 +201,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
         aria-expanded={open}
         // items-start + a small chevron nudge aligns the chevron with the first
         // (account-name) line rather than floating between the two label lines.
-        className="flex w-full items-start gap-2 overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)]"
+        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-2.5 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:px-3"
         title="Switch which account this console shows"
       >
         <span className="min-w-0 flex-1">
@@ -221,14 +225,14 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
           <div
             role="menu"
             aria-label="Account scope"
-            className="con-menu-drop absolute left-0 top-[calc(100%+4px)] z-50 flex max-h-[min(70vh,480px)] w-[min(92vw,360px)] flex-col gap-2 overflow-y-auto rounded-xl border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3 shadow-xl"
+            className="con-menu-drop absolute left-0 top-[calc(100%+4px)] z-50 flex max-h-[min(70vh,480px)] w-[min(92vw,360px)] flex-col gap-2 overflow-y-auto rounded-card border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3 shadow-xl"
           >
             <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
               One account is loaded at a time. Switching rescopes everything — balances, guardrails, approvals, run
               state, and decision history.
             </p>
             {ordered.length === 0 ? (
-              <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
+              <div className="rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
                 <div className="flex items-center gap-2">
                   <span className="font-semibold">No account connected</span>
                   <Chip tone="none">NO ACCOUNT</Chip>
@@ -242,10 +246,10 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
             )}
             <div className="my-0.5 h-px bg-[color:var(--con-line)]" />
             <Link
-              href="/console/settings#brokers"
+              href="/console/connections#brokers"
               role="menuitem"
               onClick={close}
-              className="con-scope-row flex w-full items-center gap-2 rounded-lg border border-[color:var(--con-line)] px-3 py-2 text-[length:var(--con-fs-sm)] font-medium"
+              className="con-scope-row flex w-full items-center gap-2 rounded-control border border-[color:var(--con-line)] px-3 py-2 text-[length:var(--con-fs-sm)] font-medium"
               title="Add, remove, or reconnect broker accounts"
             >
               <SlidersHorizontal size={14} className="shrink-0 text-[color:var(--con-faint)]" />
@@ -280,14 +284,14 @@ export function StateChip({ snapshot }: { snapshot: DashboardSnapshot }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex shrink-0 items-center gap-2 rounded-lg border border-transparent px-1.5 py-1 text-left transition-colors sm:border-[color:var(--con-line-strong)] sm:bg-[color:var(--con-surface-2)] sm:px-3 sm:py-1.5 sm:hover:border-[color:var(--con-accent)]"
+        className="flex shrink-0 items-center gap-2 rounded-control border border-transparent px-1.5 py-1 text-left transition-colors sm:border-[color:var(--con-line-strong)] sm:bg-[color:var(--con-surface-2)] sm:px-3 sm:py-1.5 sm:hover:border-[color:var(--con-accent)]"
         title={info.detail}
       >
-        <Dot tone={STATE_TONE[info.tone]} pulse={info.state === "active" && snapshot.policy.strategyAuthority === "decide"} />
+        <Dot tone={STATE_TONE[info.tone]} pulse={info.state === "active" && info.marketOpen !== false && snapshot.policy.strategyAuthority === "decide"} />
         <span className="flex flex-col leading-tight sm:flex-row sm:items-center sm:gap-1">
           <span className="whitespace-nowrap text-[length:var(--con-fs-xs)] font-semibold sm:text-[length:var(--con-fs-sm)]">{word}</span>
           {mode && (
-            <span className="whitespace-nowrap text-[10px] text-[color:var(--con-muted)] sm:text-[length:var(--con-fs-sm)] sm:font-semibold sm:text-inherit sm:before:content-['·_']">
+            <span className="whitespace-nowrap text-[length:var(--con-fs-2xs)] text-[color:var(--con-muted)] sm:text-[length:var(--con-fs-sm)] sm:font-semibold sm:text-inherit sm:before:content-['·_']">
               {mode}
             </span>
           )}
@@ -448,7 +452,7 @@ function ControlSheet({
         {options
           .filter((o) => o.available)
           .map((o) => (
-            <div key={o.id} className="rounded-lg border border-[color:var(--con-line)] p-3">
+            <div key={o.id} className="rounded-control border border-[color:var(--con-line)] p-3">
               <div className="flex items-center justify-between gap-3">
                 <span className={cx("font-semibold", o.id === "stop" && "text-[color:var(--con-neg)]")}>{o.title}</span>
                 {o.id === "stop" && (
@@ -523,7 +527,7 @@ export function TypedConfirm({
       ? "border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)]"
       : "border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)]";
   return (
-    <div className={cx("mt-3 rounded-lg border p-3", frameClass)}>
+    <div className={cx("mt-3 rounded-control border p-3", frameClass)}>
       {note && <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{note}</p>}
       <label className="con-label">
         Type exactly: <span className="con-mono text-[color:var(--con-fg)]">{phrase}</span>
@@ -568,16 +572,16 @@ function deriveRunBlock(snapshot: DashboardSnapshot): RunBlock | null {
       title: "No LLM key is configured",
       detail:
         "Proposal generation is LLM-driven, so a manual run needs a working LLM provider key. Market data, positions, and guardrails all work without one — only runs and chat are gated.",
-      fixHref: "/console/settings#api-keys",
-      fixLabel: "Open Settings → API keys"
+      fixHref: "/console/connections#api-keys",
+      fixLabel: "Open Connections → API keys"
     };
   }
   if (snapshot.accountReadiness && !snapshot.accountReadiness.ok) {
     return {
       title: snapshot.accountReadiness.reason ?? "The account isn't ready to run",
       detail: snapshot.accountReadiness.detail,
-      fixHref: "/console/settings#brokers",
-      fixLabel: "Open Settings → Broker accounts"
+      fixHref: "/console/connections#brokers",
+      fixLabel: "Open Connections → Broker accounts"
     };
   }
   return null;
@@ -598,15 +602,15 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
       title: "Choose your team models",
       detail: message,
       fixHref: "/console/strategy#models",
-      fixLabel: "Open Framework → Models"
+      fixLabel: "Open Strategy → Models"
     };
   }
   if (status === 412 || m.includes("llm provider") || m.includes("llm key") || m.includes("provider key")) {
     return {
       title: "No LLM key is configured",
       detail: message,
-      fixHref: "/console/settings#api-keys",
-      fixLabel: "Open Settings → API keys"
+      fixHref: "/console/connections#api-keys",
+      fixLabel: "Open Connections → API keys"
     };
   }
   if (m.includes("kill switch")) {
@@ -647,8 +651,8 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
     return {
       title: "Account problem",
       detail: message,
-      fixHref: "/console/settings#brokers",
-      fixLabel: "Open Settings → Broker accounts"
+      fixHref: "/console/connections#brokers",
+      fixLabel: "Open Connections → Broker accounts"
     };
   }
   return {
@@ -659,7 +663,17 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
   };
 }
 
-export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot; size?: "sm" }) {
+export function RunOnceButton({
+  snapshot,
+  size,
+  iconOnly
+}: {
+  snapshot: DashboardSnapshot;
+  size?: "sm";
+  /** Icon-only rendering for the phone chrome bar, where the full label doesn't fit
+   *  but the hero's "Run once" call-to-action still needs a reachable control. */
+  iconOnly?: boolean;
+}) {
   const { refresh } = useConsoleData();
   const toast = useToast();
   const [running, setRunning] = useState(false);
@@ -703,10 +717,16 @@ export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot;
   return (
     <>
       <Btn
-        variant="primary"
+        // iconOnly (phone chrome bar) sits directly beside the filled/soft-green
+        // Start button with no text label of its own — a solid primary fill there
+        // read as a second, ambiguous "start" control (owner report). Outline keeps
+        // it reachable and clearly actionable without competing with Start as a
+        // second primary-looking CTA. The labeled desktop button keeps its filled look.
+        variant={iconOnly ? "outline" : "primary"}
         size={size}
         disabled={running}
         onClick={() => void run()}
+        aria-label={iconOnly ? (running ? "Running…" : "Run once") : undefined}
         title={
           preflight
             ? `Blocked: ${preflight.title}. Click to see why and where to fix it.`
@@ -714,7 +734,7 @@ export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot;
         }
       >
         <Play size={13} />
-        {running ? "Running…" : "Run once"}
+        {iconOnly ? null : running ? "Running…" : "Run once"}
       </Btn>
 
       <Sheet open={block !== null} onClose={() => setBlock(null)} title="Run once can't go ahead">
@@ -726,7 +746,7 @@ export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot;
             </div>
             <p className="leading-relaxed text-[color:var(--con-muted)]">{block.detail}</p>
             {block.note && (
-              <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+              <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
                 {block.note}
               </p>
             )}
@@ -819,7 +839,7 @@ export function UserMenu({
         aria-label={`Signed in as ${user.email ?? who} — account menu`}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] sm:h-8 sm:w-8"
+        className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] sm:h-8 sm:w-8"
       >
         <Avatar imageUrl={user.imageUrl} size="h-full w-full" iconSize={15} />
       </button>
@@ -828,7 +848,7 @@ export function UserMenu({
         <>
           {/* invisible click-away backdrop; the panel sits above it */}
           <div className="fixed inset-0 z-40" onClick={close} aria-hidden />
-          <div className="con-menu-drop absolute right-2 top-[calc(100%+2px)] z-50 w-[min(92vw,340px)] rounded-xl border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-4 shadow-xl">
+          <div className="con-menu-drop absolute right-2 top-[calc(100%+2px)] z-50 w-[min(92vw,340px)] rounded-card border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-4 shadow-xl">
             <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[color:var(--con-line)] text-[color:var(--con-muted)]">
@@ -843,9 +863,9 @@ export function UserMenu({
                   </div>
                 </div>
               </div>
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-[color:var(--con-line)] px-3 py-2">
+              <div className="flex items-center justify-between gap-3 rounded-control border border-[color:var(--con-line)] px-3 py-2">
                 <span className="text-[color:var(--con-muted)]">Theme</span>
-                <div className="flex items-center gap-1 rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-bg)] p-0.5">
+                <div className="flex items-center gap-1 rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-bg)] p-0.5">
                   {(["light", "dark", "system"] as const).map((t) => {
                     const active = theme === t;
                     const Icon = t === "dark" ? Moon : t === "light" ? Sun : Monitor;
@@ -857,10 +877,10 @@ export function UserMenu({
                         title={THEME_WORD[t]}
                         aria-label={`Set theme to ${THEME_WORD[t]}`}
                         className={cx(
-                          "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[length:var(--con-fs-xs)] transition-colors",
+                          "flex items-center gap-1.5 rounded-control px-2.5 py-1 text-[length:var(--con-fs-xs)] transition-colors",
                           active
-                            ? "bg-[color:var(--con-surface)] text-[color:var(--con-text)] font-medium shadow-sm border border-[color:var(--con-line)]"
-                            : "text-[color:var(--con-muted)] hover:text-[color:var(--con-text)] border border-transparent"
+                            ? "bg-[color:var(--con-surface)] text-[color:var(--con-fg)] font-medium shadow-sm border border-[color:var(--con-line)]"
+                            : "text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)] border border-transparent"
                         )}
                       >
                         <Icon size={13} />
@@ -874,15 +894,29 @@ export function UserMenu({
                 Signing out only ends this browser session. The strategy keeps its current run state on the server —
                 it does not stop, start, or sell anything.
               </p>
-              {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
-              <a
-                href="/logout"
-                className="con-btn con-btn-outline self-start"
-                title="End this browser session and return to the sign-in page. Does not change the strategy's run state."
-              >
-                <LogOut size={14} />
-                Sign out
-              </a>
+              <div className="flex items-center gap-2">
+                {/* Operator-only admin portal entry — the phone-reachable twin of the
+                    desktop chrome's Admin link (the chrome bar has no room on phones). */}
+                {user.isAdmin && (
+                  <a
+                    href="/admin"
+                    className="con-btn con-btn-outline"
+                    title="Admin portal — operator diagnostics: connections, LLM spend, RAG coverage, server."
+                  >
+                    <ShieldCheck size={14} />
+                    Admin portal
+                  </a>
+                )}
+                {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
+                <a
+                  href="/logout"
+                  className="con-btn con-btn-outline"
+                  title="End this browser session and return to the sign-in page. Does not change the strategy's run state."
+                >
+                  <LogOut size={14} />
+                  Sign out
+                </a>
+              </div>
             </div>
           </div>
         </>

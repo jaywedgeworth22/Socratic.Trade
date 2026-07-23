@@ -37,7 +37,8 @@ export const ADMIN_OPERATION_LIMITS = {
   "congress-score-eval": { limit: 6, windowMs: 10 * 60_000, concurrencyGroup: "congress-score-eval", concurrencyScope: "admin" },
   "congress-share": { limit: 2, windowMs: 60 * 60_000, concurrencyGroup: "congress-share", concurrencyScope: "manual-admin" },
   "refresh-websource": { limit: 4, windowMs: 10 * 60_000, concurrencyGroup: "refresh-websource", concurrencyScope: "manual-admin" },
-  "robinhood-probe": { limit: 20, windowMs: 5 * 60_000, concurrencyGroup: "robinhood-probe", concurrencyScope: "admin" }
+  "robinhood-probe": { limit: 20, windowMs: 5 * 60_000, concurrencyGroup: "robinhood-probe", concurrencyScope: "admin" },
+  "sec-ingest-seed": { limit: 6, windowMs: 60 * 60_000, concurrencyGroup: "sec-ingest-seed", concurrencyScope: "manual-admin" }
 } as const satisfies Record<string, AdminOperationLimit>;
 
 export type AdminOperationName = keyof typeof ADMIN_OPERATION_LIMITS;
@@ -50,7 +51,8 @@ export interface AdminOperationGuardOptions {
 const FIXED_DURABLE_GROUPS: Partial<Record<AdminOperationName, OperationLeaseGroup>> = {
   "reindex-8k": OPERATION_LEASE_GROUPS.RAG_REINDEX,
   "reindex-10k": OPERATION_LEASE_GROUPS.RAG_REINDEX,
-  "congress-share": OPERATION_LEASE_GROUPS.CONGRESS_SHARE
+  "congress-share": OPERATION_LEASE_GROUPS.CONGRESS_SHARE,
+  "sec-ingest-seed": OPERATION_LEASE_GROUPS.SEC_INGEST_SEED
 };
 
 type AdminOperationGuardHost = typeof globalThis & {

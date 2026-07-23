@@ -30,6 +30,8 @@ type DecisionRow = {
   authority: string;
   thesis: string;
   rationale: string;
+  green_team_rationale: string | null;
+  sizing_snapshot: string | null;
   action: string;
   thesis_tag: string | null;
   regime: string | null;
@@ -94,6 +96,10 @@ function rowToDecision(row: DecisionRow): SocraticDecisionCase {
     authority: row.authority as StrategyAuthority,
     thesis: row.thesis,
     rationale: row.rationale,
+    ...(row.green_team_rationale ? { greenTeamRationale: row.green_team_rationale } : {}),
+    ...(row.sizing_snapshot
+      ? { sizingSnapshot: parseJson<SocraticDecisionCase["sizingSnapshot"] | undefined>(row.sizing_snapshot, undefined) }
+      : {}),
     action: row.action,
     ...(row.thesis_tag ? { thesisTag: row.thesis_tag } : {}),
     ...(row.regime ? { regime: row.regime } : {}),
@@ -150,6 +156,75 @@ function updateDecisionLifecycle(
   return getSocraticDecisionCase(existing.id, userId);
 }
 
+// Live in-row coach-note window. Notes beyond this cap age off into
+// socratic_coach_note_archive (migration 53) instead of being silently dropped.
+const COACH_NOTES_LIVE_CAP = 20;
+
+/**
+ * Shared core for both coach-note append paths (appendSocraticDecisionCoachNote and
+ * attachSocraticDecisionCoachPrimitives). Archives any note(s) that age off the live window and
+ * persists the live row in ONE db.transaction so a crash between the two writes can never lose a
+ * note — it either has not yet aged off (still in the live row) or has already been archived
+ * (row committed) before the live row commits alongside it. `extraPatch.lessons`, when supplied,
+ * is written atomically with the coach-note update (used by attachSocraticDecisionCoachPrimitives'
+ * lesson-promotion path) so that path performs exactly one write instead of two.
+ *
+ * `noteOrdinal` is a unique, monotone-going-forward per-decision ordinal used only to give the
+ * new note's vector doc a stable, collision-free accession — NOT a historical index (pre-port
+ * note history is unknowable, per the migration-53 comment in db.ts).
+ */
+function applyCoachNoteAppend(
+  existing: SocraticDecisionCase,
+  cleanedNote: string,
+  userId: string,
+  extraPatch: Partial<Pick<SocraticDecisionCase, "lessons">> = {}
+): {
+  coachNotes: string[];
+  archivedCount: number;
+  noteOrdinal: number;
+  appendedAt: string;
+  firstArchivedSeq?: number;
+  lastArchivedSeq?: number;
+} {
+  const database = getDb();
+  const appendedAt = new Date().toISOString();
+  return database.transaction(() => {
+    const archiveCountBefore = (
+      database
+        .prepare("SELECT COUNT(*) AS count FROM socratic_coach_note_archive WHERE user_id = ? AND decision_id = ?")
+        .get(userId, existing.id) as { count: number }
+    ).count;
+    const noteOrdinal = archiveCountBefore + existing.coachNotes.length;
+    const nextAll = [...existing.coachNotes, cleanedNote].filter(Boolean);
+    const overflowCount = Math.max(0, nextAll.length - COACH_NOTES_LIVE_CAP);
+    const overflow = nextAll.slice(0, overflowCount);
+    const coachNotes = nextAll.slice(-COACH_NOTES_LIVE_CAP);
+
+    let firstArchivedSeq: number | undefined;
+    let lastArchivedSeq: number | undefined;
+    const insertArchive = database.prepare(
+      `INSERT INTO socratic_coach_note_archive (id, user_id, decision_id, connected_account_id, note, note_seq, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    overflow.forEach((noteText, index) => {
+      const seq = archiveCountBefore + index;
+      if (firstArchivedSeq === undefined) firstArchivedSeq = seq;
+      lastArchivedSeq = seq;
+      insertArchive.run(crypto.randomUUID(), userId, existing.id, existing.connectedAccountId ?? null, noteText, seq, appendedAt);
+    });
+
+    // Same transaction as the archive inserts above — see function doc comment.
+    upsertSocraticDecisionCase({
+      ...existing,
+      userId,
+      coachNotes,
+      lessons: extraPatch.lessons ?? existing.lessons
+    });
+
+    return { coachNotes, archivedCount: overflow.length, noteOrdinal, appendedAt, firstArchivedSeq, lastArchivedSeq };
+  })();
+}
+
 function reindexDecisionMemory(updated: SocraticDecisionCase, mode: "await" | "fire-and-forget"): Promise<void> | void {
   const run = async () => {
     const { indexSocraticDecisionMemory } = await import("./socratic-memory");
@@ -178,6 +253,8 @@ export function upsertSocraticDecisionCase(input: {
   authority: StrategyAuthority;
   thesis: string;
   rationale: string;
+  greenTeamRationale?: string;
+  sizingSnapshot?: SocraticDecisionCase["sizingSnapshot"];
   action: string;
   thesisTag?: string;
   regime?: string;
@@ -200,10 +277,10 @@ export function upsertSocraticDecisionCase(input: {
     .prepare(
       `INSERT INTO socratic_decisions (
         id, user_id, connected_account_id, run_id, proposal_id, account_number, symbol, side, status,
-        authority, thesis, rationale, action, thesis_tag, regime, confidence_score, notional, model,
-        red_team, policy_decision, evidence, rag_attributions, dissent, outcome, autonomy_override,
-        lessons, coach_notes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        authority, thesis, rationale, green_team_rationale, sizing_snapshot, action, thesis_tag, regime,
+        confidence_score, notional, model, red_team, policy_decision, evidence, rag_attributions,
+        dissent, outcome, autonomy_override, lessons, coach_notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         connected_account_id = excluded.connected_account_id,
         run_id = excluded.run_id,
@@ -215,6 +292,8 @@ export function upsertSocraticDecisionCase(input: {
         authority = excluded.authority,
         thesis = excluded.thesis,
         rationale = excluded.rationale,
+        green_team_rationale = excluded.green_team_rationale,
+        sizing_snapshot = excluded.sizing_snapshot,
         action = excluded.action,
         thesis_tag = excluded.thesis_tag,
         regime = excluded.regime,
@@ -245,6 +324,8 @@ export function upsertSocraticDecisionCase(input: {
       input.authority,
       input.thesis,
       input.rationale,
+      input.greenTeamRationale ?? null,
+      input.sizingSnapshot ? JSON.stringify(input.sizingSnapshot) : null,
       input.action,
       input.thesisTag ?? null,
       input.regime ?? null,
@@ -296,11 +377,41 @@ export function getSocraticDecisionCase(id: string, userId: string = "local"): S
 export function appendSocraticDecisionCoachNote(id: string, note: string, userId: string = "local"): SocraticDecisionCase | undefined {
   const existing = getSocraticDecisionCase(id, userId);
   if (!existing) return undefined;
-  const coachNotes = [...existing.coachNotes, note.trim()].filter(Boolean).slice(-20);
-  const updated = updateDecisionLifecycle(existing, userId, { coachNotes });
+  const cleanedNote = note.trim();
+  const { archivedCount, noteOrdinal, appendedAt, firstArchivedSeq, lastArchivedSeq } = applyCoachNoteAppend(existing, cleanedNote, userId);
+  const updated = getSocraticDecisionCase(id, userId);
   audit("socratic_decision_coached", { decisionId: id, note }, userId, existing.connectedAccountId);
+  if (archivedCount > 0) {
+    audit(
+      "socratic_decision_coach_notes_archived",
+      { decisionId: id, count: archivedCount, firstNoteSeq: firstArchivedSeq, lastNoteSeq: lastArchivedSeq },
+      userId,
+      existing.connectedAccountId
+    );
+  }
   if (updated) {
-    reindexDecisionMemory(updated, "fire-and-forget");
+    // An empty/whitespace-only note is a no-op append (the .filter(Boolean) inside
+    // applyCoachNoteAppend drops it) — skip archive/vector emission for it entirely and fall back
+    // to the plain re-index, matching the pre-port behavior of this edge case.
+    if (cleanedNote) {
+      // Sequential, not Promise.all: a verified vi.mock concurrent-dynamic-import race in the old
+      // branch's test harness means these two dynamic imports/awaits must never run concurrently.
+      void (async () => {
+        await reindexDecisionMemory(updated, "await");
+        const { indexCoachNoteMemory } = await import("./socratic-memory");
+        await indexCoachNoteMemory(updated, cleanedNote, noteOrdinal, appendedAt);
+      })().catch((err) => {
+        console.warn("[db-socratic] coach-note vector write degraded:", err instanceof Error ? err.message : String(err));
+        audit(
+          "socratic_vector_write_degraded",
+          { docType: "coach-note", decisionId: id, reason: String(err instanceof Error ? err.message : err) },
+          userId,
+          existing.connectedAccountId
+        );
+      });
+    } else {
+      reindexDecisionMemory(updated, "fire-and-forget");
+    }
   }
   return updated;
 }
@@ -319,18 +430,28 @@ export async function attachSocraticDecisionCoachPrimitives(
   if (!existing) return undefined;
   const cleanedNote = input.note.trim();
   if (!cleanedNote) return undefined;
-  const coachNotes = [...existing.coachNotes, cleanedNote].filter(Boolean).slice(-20);
   const lessonCandidate = (input.lessonText ?? cleanedNote).trim();
+  // Newly-added test: the array-dedup below makes this the correct "is this actually new" check —
+  // re-promoting text already present in decision.lessons must not re-emit a lesson vector.
+  const isNewLesson = input.promoteTo === "lesson" && Boolean(lessonCandidate) && !existing.lessons.includes(lessonCandidate);
   const promotedLesson =
     input.promoteTo === "lesson" && lessonCandidate
       ? [...existing.lessons, lessonCandidate].filter((value, index, list) => Boolean(value) && list.indexOf(value) === index).slice(-12)
       : existing.lessons;
-  const updated = updateDecisionLifecycle(existing, userId, {
-    coachNotes,
+  const { archivedCount, noteOrdinal, appendedAt, firstArchivedSeq, lastArchivedSeq } = applyCoachNoteAppend(existing, cleanedNote, userId, {
     lessons: promotedLesson
   });
+  const updated = getSocraticDecisionCase(id, userId);
   if (!updated) return undefined;
   audit("socratic_decision_coached", { decisionId: id, note: cleanedNote }, userId, existing.connectedAccountId);
+  if (archivedCount > 0) {
+    audit(
+      "socratic_decision_coach_notes_archived",
+      { decisionId: id, count: archivedCount, firstNoteSeq: firstArchivedSeq, lastNoteSeq: lastArchivedSeq },
+      userId,
+      existing.connectedAccountId
+    );
+  }
   if (input.promoteTo === "lesson" && lessonCandidate) {
     audit("socratic_decision_coach_promoted", { decisionId: id, kind: "lesson", lesson: lessonCandidate }, userId, existing.connectedAccountId);
   }
@@ -353,6 +474,31 @@ export async function attachSocraticDecisionCoachPrimitives(
     audit("socratic_decision_coach_promoted", { decisionId: id, kind: "framework", frameworkProposalId: frameworkId }, userId, existing.connectedAccountId);
   }
   await reindexDecisionMemory(updated, "await");
+  const { indexCoachNoteMemory, indexPromotedLessonMemory } = await import("./socratic-memory");
+  try {
+    await indexCoachNoteMemory(updated, cleanedNote, noteOrdinal, appendedAt);
+  } catch (err) {
+    console.warn("[db-socratic] coach-note vector write degraded:", err instanceof Error ? err.message : String(err));
+    audit(
+      "socratic_vector_write_degraded",
+      { docType: "coach-note", decisionId: id, reason: String(err instanceof Error ? err.message : err) },
+      userId,
+      existing.connectedAccountId
+    );
+  }
+  if (isNewLesson) {
+    try {
+      await indexPromotedLessonMemory(updated, lessonCandidate);
+    } catch (err) {
+      console.warn("[db-socratic] lesson vector write degraded:", err instanceof Error ? err.message : String(err));
+      audit(
+        "socratic_vector_write_degraded",
+        { docType: "lesson", decisionId: id, reason: String(err instanceof Error ? err.message : err) },
+        userId,
+        existing.connectedAccountId
+      );
+    }
+  }
   return {
     decision: updated,
     ...(frameworkProposal ? { frameworkProposal } : {}),
@@ -366,6 +512,37 @@ export async function attachSocraticDecisionCoachPrimitives(
  * outcome is absent or still 'open', and which were not re-measured more recently than
  * `measuredBefore` (bounded recheck cadence). Oldest first so long-owed cases mature first.
  */
+/**
+ * User-scoped read of coach notes that aged off the live window (migration 53). Cross-user ids
+ * (a decision belonging to a different user) return an empty array — never another user's notes.
+ */
+export function listArchivedCoachNotes(
+  decisionId: string,
+  userId: string = "local"
+): Array<{ id: string; note: string; noteSeq: number; archivedAt: string; connectedAccountId?: string }> {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, note, note_seq, archived_at, connected_account_id
+       FROM socratic_coach_note_archive
+       WHERE user_id = ? AND decision_id = ?
+       ORDER BY note_seq ASC`
+    )
+    .all(userId, decisionId) as Array<{
+      id: string;
+      note: string;
+      note_seq: number;
+      archived_at: string;
+      connected_account_id: string | null;
+    }>;
+  return rows.map((row) => ({
+    id: row.id,
+    note: row.note,
+    noteSeq: row.note_seq,
+    archivedAt: row.archived_at,
+    ...(row.connected_account_id ? { connectedAccountId: row.connected_account_id } : {})
+  }));
+}
+
 export function listSocraticDecisionCasesNeedingOutcome(
   userId: string = "local",
   opts: { limit?: number; measuredBefore?: string; connectedAccountId?: string } = {}
@@ -374,7 +551,7 @@ export function listSocraticDecisionCasesNeedingOutcome(
   const measuredBefore = opts.measuredBefore ?? new Date().toISOString();
   const clauses = [
     "user_id = ?",
-    "status IN ('placed', 'blocked', 'rejected')",
+    "status IN ('placed', 'blocked', 'rejected', 'filled', 'rejected_by_broker')",
     "(outcome IS NULL OR (json_extract(outcome, '$.status') = 'open' AND COALESCE(json_extract(outcome, '$.measuredAt'), '') <= ?))"
   ];
   const args: unknown[] = [userId, measuredBefore];
@@ -454,8 +631,11 @@ export async function writeSocraticDecisionLessons(id: string, lessons: string[]
   if (updated) {
     // AWAITED for the same reason as writeSocraticDecisionOutcome; non-fatal on failure.
     try {
-      const { indexSocraticDecisionMemory } = await import("./socratic-memory");
+      const { indexSocraticDecisionMemory, indexLessonMemory } = await import("./socratic-memory");
       await indexSocraticDecisionMemory(updated);
+      await Promise.all(
+        cleaned.map((lesson, lessonIndex) => indexLessonMemory({ decision: updated, lesson, lessonIndex }))
+      );
     } catch (err) {
       console.warn("[db-socratic] re-index after lessons write failed:", err instanceof Error ? err.message : String(err));
     }
@@ -476,7 +656,7 @@ export interface SocraticOutcomeCoverage {
 }
 
 export function getSocraticOutcomeCoverage(userId: string = "local", connectedAccountId?: string): SocraticOutcomeCoverage {
-  const clauses = ["user_id = ?", "status IN ('placed', 'blocked', 'rejected')"];
+  const clauses = ["user_id = ?", "status IN ('placed', 'filled', 'blocked', 'rejected', 'rejected_by_broker')"];
   const args: unknown[] = [userId];
   if (connectedAccountId) {
     clauses.push("connected_account_id = ?");

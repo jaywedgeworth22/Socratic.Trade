@@ -14,11 +14,18 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { MarketQuote, MarketScan } from "../src/lib/types";
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
   storeContext: async () => {},
   storeContexts: async () => {}
+}));
+
+// Order-state assertions do not cover delivery; keep notification I/O out of this focused suite.
+vi.mock("../src/lib/notifications", () => ({
+  sendNotification: async () => ({ id: "test", status: "skipped" })
 }));
 
 // The market scan inside executeProposal is incidental to what this file verifies (broker

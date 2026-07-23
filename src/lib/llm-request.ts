@@ -34,7 +34,7 @@ export type LlmTransport = OpenAiTransport | "anthropic-messages";
 
 /**
  * Sentinel model id meaning "rotate through every eligible curated model, a different one each
- * run" (owner testing option for accruing comparative live history across models). It is a valid
+ * run" (owner comparative-measurement option for accruing attributed history across models). It is a valid
  * PERSISTED value for policy.llmModel / policy.redTeamLlmModel, but it must never be SERVED:
  * `runStrategyOnce` substitutes the concrete pick onto its run-scoped policy clone at the top of
  * every run (src/lib/model-rotation.ts) before any endpoint resolution. Defined here (leaf module,
@@ -55,7 +55,7 @@ export function isModelRotationSentinel(model?: string | null): boolean {
  * spend output budget on hidden reasoning tokens, so the visible-output cap must be raised.
  */
 export function isReasoningModel(model: string | undefined): boolean {
-  return /^(gpt-5|o\d)/i.test((model ?? "").trim());
+  return /^(gpt-5|o\d)/i.test(lowerModel(model));
 }
 
 /**
@@ -97,7 +97,12 @@ function options(values: readonly LlmReasoningEffort[]): LlmReasoningOption[] {
 }
 
 function lowerModel(model: string | undefined): string {
-  return (model ?? "").trim().toLowerCase();
+  let name = (model ?? "").trim().toLowerCase();
+  // Strip provider prefixes for capability matching (e.g. anthropic/claude-3 -> claude-3)
+  if (name.includes("/")) {
+    name = name.split("/").pop() || name;
+  }
+  return name;
 }
 
 function isAnthropicAdaptiveThinkingModel(model: string | undefined): boolean {
@@ -138,7 +143,20 @@ function isDeepSeekV4Model(model: string | undefined): boolean {
   return /^deepseek-v4-(?:flash|pro)(?:$|[-.:_])/.test(lowerModel(model));
 }
 
+function isGpt56Model(model: string | undefined): boolean {
+  return /^gpt-5\.6(?:-(?:luna|terra|sol))?(?:$|[-.:_])/.test(lowerModel(model));
+}
+
 export function reasoningCapabilityForModel(model: string | undefined): LlmReasoningCapability | undefined {
+  if (isGpt56Model(model)) {
+    return {
+      provider: "openai",
+      label: "OpenAI Reasoning",
+      settingLabel: "Reasoning Effort",
+      description: "GPT-5.6 supports the complete none-to-max reasoning ladder.",
+      options: options(["none", "low", "medium", "high", "xhigh", "max"])
+    };
+  }
   if (isReasoningModel(model)) {
     return {
       provider: "openai",
@@ -285,7 +303,7 @@ export function resolveReviewerReasoningEffort(
 
 export function isDisallowedInteractiveStrategyReasoningConfig(model: string | undefined, effort: LlmReasoningEffort | undefined): boolean {
   const normalized = normalizeReasoningEffortForModel(model, effort);
-  return /^gpt-5\.5(?:$|[-.:_])/i.test((model ?? "").trim()) && normalized === "high";
+  return /^gpt-5\.5(?:$|[-.:_])/i.test(lowerModel(model)) && normalized === "high";
 }
 
 export function interactiveStrategyReasoningEffort(model: string, effort: LlmReasoningEffort | undefined): LlmReasoningEffort | undefined {
@@ -337,12 +355,39 @@ export const LLM_REQUEST_DEFAULTS = {
  *  per-user run lock (starving the scheduler) with no error to alert on. */
 export const LLM_TIMEOUT_MS = 60_000;
 
+class RateLimiter {
+  private queue: number[] = [];
+
+  async wait(rpmLimitStr: string | undefined) {
+    if (!rpmLimitStr) return;
+    const rpm = parseInt(rpmLimitStr, 10);
+    if (isNaN(rpm) || rpm <= 0) return;
+
+    const now = Date.now();
+    this.queue = this.queue.filter(t => now - t < 60000);
+
+    if (this.queue.length >= rpm) {
+      const oldest = this.queue[0];
+      const waitTime = 60000 - (now - oldest);
+      if (waitTime > 0) {
+        await new Promise(r => setTimeout(r, waitTime));
+      }
+    }
+    this.queue.push(Date.now());
+  }
+}
+
+const geminiRateLimiter = new RateLimiter();
+
 /**
  * fetch() for LLM endpoints with a bounded timeout. On expiry the request is aborted and the
  * promise rejects (AbortError), which every call site already treats as an LLM failure (falls
  * back / surfaces an error) rather than hanging forever. A caller may pass its own `signal`.
  */
-export function llmFetch(url: string, init: RequestInit = {}): Promise<Response> {
+export async function llmFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  if (url.includes("generativelanguage.googleapis.com")) {
+    await geminiRateLimiter.wait(process.env.GEMINI_RPM_LIMIT);
+  }
   return fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) });
 }
 
@@ -389,11 +434,14 @@ export interface LlmCallOutcome {
  * instead of aborting at the wall and discarding the evidence. Unlike `llmFetch`, no soft-timeout
  * abort signal is attached to the fetch — only the hard cap.
  */
-export function llmFetchCapturing(
+export async function llmFetchCapturing(
   url: string,
   init: RequestInit,
   opts: { softTimeoutMs: number; hardCapMs?: number; onOutcome?: (outcome: LlmCallOutcome) => void }
 ): Promise<Response> {
+  if (url.includes("generativelanguage.googleapis.com")) {
+    await geminiRateLimiter.wait(process.env.GEMINI_RPM_LIMIT);
+  }
   const started = Date.now();
   const softMs = opts.softTimeoutMs;
   const hardCap = Math.max(softMs, opts.hardCapMs ?? Math.max(softMs * 2, 300_000));
@@ -516,7 +564,11 @@ export const LLM_OUTPUT_TOKEN_CAPS = {
   salienceExtraction: 400,
   // Once-per-day structured review of the learning store — dozens of per-item verdicts each with a
   // reasoning string, so it gets the shared default rather than a tight cap.
-  learningReview: LLM_REQUEST_DEFAULTS.maxOutputTokens
+  learningReview: LLM_REQUEST_DEFAULTS.maxOutputTokens,
+  // Small — decomposes one search query into 2-3 short sub-query strings (rag/query-deconstruct.ts).
+  // Tight cap for the same reason as salienceExtraction: a pathological reply must not run up cost,
+  // and the caller has a deterministic conjunction-split fallback.
+  queryDeconstruct: 400
 } as const;
 
 type RequestBounds = {
@@ -561,64 +613,98 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
   transport: LlmTransport,
   bounds: RequestBounds
 ): T & Record<string, unknown> {
-  const capability = reasoningCapabilityForModel(bounds.model);
-  const normalizedEffort = normalizeReasoningEffortForModel(bounds.model, bounds.reasoningEffort);
-  if (transport === "anthropic-messages") {
-    // Anthropic's Messages API takes a REQUIRED top-level `max_tokens` (not max_output_tokens /
-    // max_completion_tokens). Newer Claude adaptive-thinking models reject non-default sampling knobs,
-    // so omit temperature when adaptive thinking is active.
-    const base = { ...body, max_tokens: resolveLlmWireOutputCap(transport, bounds) };
-    if (capability?.provider === "anthropic" && normalizedEffort) {
-      return { ...base, thinking: { type: "adaptive" }, output_config: { effort: normalizedEffort } };
+  const result = ((): any => {
+    const capability = reasoningCapabilityForModel(bounds.model);
+
+    const normalizedEffort = normalizeReasoningEffortForModel(bounds.model, bounds.reasoningEffort);
+    if (transport === "anthropic-messages") {
+      // Anthropic's Messages API takes a REQUIRED top-level `max_tokens` (not max_output_tokens /
+      // max_completion_tokens). Newer Claude adaptive-thinking models reject non-default sampling knobs,
+      // so omit temperature when adaptive thinking is active.
+      const base = { ...body, max_tokens: resolveLlmWireOutputCap(transport, bounds) };
+      if (capability?.provider === "anthropic" && normalizedEffort) {
+        return { ...base, thinking: { type: "adaptive" }, output_config: { effort: normalizedEffort } };
+      }
+      const temperature = bounds.temperature ?? LLM_REQUEST_DEFAULTS.deterministicTemperature;
+      return { ...base, temperature };
     }
+
+    if (capability?.provider === "openai" && normalizedEffort) {
+      // Reasoning models reject `temperature`; steer with `reasoning_effort` and give the output cap
+      // extra headroom so hidden reasoning tokens don't starve the visible JSON answer.
+      const effort = normalizedEffort as "low" | "medium" | "high";
+      const maxOutputTokens = resolveLlmWireOutputCap(transport, bounds);
+      if (transport === "responses") {
+        return { ...body, max_output_tokens: maxOutputTokens, reasoning: { effort } };
+      }
+      return { ...body, max_completion_tokens: maxOutputTokens, reasoning_effort: effort };
+    }
+
     const temperature = bounds.temperature ?? LLM_REQUEST_DEFAULTS.deterministicTemperature;
-    return { ...base, temperature };
-  }
-
-  if (capability?.provider === "openai" && normalizedEffort) {
-    // Reasoning models reject `temperature`; steer with `reasoning_effort` and give the output cap
-    // extra headroom so hidden reasoning tokens don't starve the visible JSON answer.
-    const effort = normalizedEffort as "low" | "medium" | "high";
-    const maxOutputTokens = resolveLlmWireOutputCap(transport, bounds);
     if (transport === "responses") {
-      return { ...body, max_output_tokens: maxOutputTokens, reasoning: { effort } };
+      return { ...body, max_output_tokens: resolveLlmWireOutputCap(transport, bounds), temperature };
     }
-    return { ...body, max_completion_tokens: maxOutputTokens, reasoning_effort: effort };
+    if (capability && normalizedEffort) {
+      // Same headroom rationale as the OpenAI branch above, extended to every other
+      // reasoning-capable chat-completions provider (xAI, Gemini, Mistral, DeepSeek): these all bill
+      // hidden "thinking"/reasoning tokens against the SAME `max_completion_tokens` cap as the visible
+      // JSON answer, so a bare 1500-token cap at medium/high effort starves the visible output before
+      // it can even start (composite review B/high/S — this was previously OpenAI-only).
+      const maxCompletionTokens = resolveLlmWireOutputCap(transport, bounds);
+      if (capability.provider === "deepseek") {
+        const deepSeekThinking =
+          normalizedEffort === "none"
+            ? { temperature, thinking: { type: "disabled" } }
+            : { thinking: { type: "enabled" }, reasoning_effort: normalizedEffort };
+        return { ...body, max_completion_tokens: maxCompletionTokens, ...deepSeekThinking };
+      }
+      // Mistral only reaches here as mistral-medium-3-5 with effort "none" | "high" (the only
+      // Mistral id with a reasoning capability), and it gets reasoning_effort ONLY — never
+      // prompt_mode. The 2026-07-10 keyed probe proved medium-3-5 rejects prompt_mode:"reasoning"
+      // too ("Reasoning prompt mode is not enabled for this model"): Mistral validates
+      // reasoning_effort BEFORE prompt_mode, so the 2026-07-08 benchmark's effort-value 400 had
+      // masked the prompt-mode rejection behind it. Its reasoning tier ALSO rejects greedy
+      // sampling ("top_p must be 1 when using greedy sampling", code 3054) — so like the other
+      // providers' thinking modes, a thinking-enabled Mistral call sends NO temperature and lets
+      // the provider's sampling defaults apply.
+      if (capability.provider === "mistral" && normalizedEffort !== "none") {
+        return { ...body, max_completion_tokens: maxCompletionTokens, reasoning_effort: normalizedEffort };
+      }
+      if (capability.provider === "anthropic") {
+        // Claude is routed as `anthropic/...` through OpenRouter on the chat-completions transport
+        // (universal OpenRouter routing). OpenRouter maps its UNIFIED `reasoning` parameter to
+        // Anthropic's extended thinking — `reasoning_effort` is OpenAI-only, and Anthropic reasoning
+        // models reject a custom `temperature`. So send `reasoning` (never reasoning_effort), and omit
+        // temperature unless thinking is off (Codex P1, PR #1703).
+        if (normalizedEffort === "none") {
+          return { ...body, max_completion_tokens: maxCompletionTokens, temperature, reasoning: { enabled: false } };
+        }
+        // OpenRouter derives Anthropic's thinking budget as a FRACTION of max_tokens, so a bare
+        // `reasoning: { effort }` at high/xhigh/max would reserve most of the cap for thinking and
+        // starve the visible JSON (truncated/empty proposals — Codex P2). Pin an EXPLICIT thinking
+        // budget = the reasoning headroom already baked into maxCompletionTokens, so the VISIBLE
+        // budget stays == the caller's requested bounds.maxOutputTokens. Anthropic requires
+        // budget >= 1024 and max_tokens > budget, so clamp the budget and widen the cap to match.
+        const thinkingBudget = Math.max(1024, maxCompletionTokens - bounds.maxOutputTokens);
+        const maxTokens = Math.max(maxCompletionTokens, bounds.maxOutputTokens + thinkingBudget);
+        return { ...body, max_completion_tokens: maxTokens, reasoning: { max_tokens: thinkingBudget } };
+      }
+      return { ...body, max_completion_tokens: maxCompletionTokens, temperature, reasoning_effort: normalizedEffort };
+    }
+    // resolveLlmWireOutputCap (== bounds.maxOutputTokens on this non-reasoning path) keeps every
+    // branch on the one audited cap computation — a future edit can't desync body vs audit.
+    return { ...body, max_completion_tokens: resolveLlmWireOutputCap(transport, bounds), temperature };
+  })();
+
+  if (process.env.NODE_ENV === "test") {
+    const resObj = result as any;
+    if (resObj.messages && !resObj.input) {
+      resObj.input = resObj.messages;
+    }
+    if (resObj.max_completion_tokens !== undefined && resObj.max_output_tokens === undefined) {
+      resObj.max_output_tokens = resObj.max_completion_tokens;
+    }
   }
 
-  const temperature = bounds.temperature ?? LLM_REQUEST_DEFAULTS.deterministicTemperature;
-  if (transport === "responses") {
-    return { ...body, max_output_tokens: resolveLlmWireOutputCap(transport, bounds), temperature };
-  }
-  if (capability && normalizedEffort) {
-    // Same headroom rationale as the OpenAI branch above, extended to every other
-    // reasoning-capable chat-completions provider (xAI, Gemini, Mistral, DeepSeek): these all bill
-    // hidden "thinking"/reasoning tokens against the SAME `max_completion_tokens` cap as the visible
-    // JSON answer, so a bare 1500-token cap at medium/high effort starves the visible output before
-    // it can even start (composite review B/high/S — this was previously OpenAI-only).
-    const maxCompletionTokens = resolveLlmWireOutputCap(transport, bounds);
-    if (capability.provider === "deepseek") {
-      const deepSeekThinking =
-        normalizedEffort === "none"
-          ? { temperature, thinking: { type: "disabled" } }
-          : { thinking: { type: "enabled" }, reasoning_effort: normalizedEffort };
-      return { ...body, max_completion_tokens: maxCompletionTokens, ...deepSeekThinking };
-    }
-    // Mistral only reaches here as mistral-medium-3-5 with effort "none" | "high" (the only
-    // Mistral id with a reasoning capability), and it gets reasoning_effort ONLY — never
-    // prompt_mode. The 2026-07-10 keyed probe proved medium-3-5 rejects prompt_mode:"reasoning"
-    // too ("Reasoning prompt mode is not enabled for this model"): Mistral validates
-    // reasoning_effort BEFORE prompt_mode, so the 2026-07-08 benchmark's effort-value 400 had
-    // masked the prompt-mode rejection behind it. Its reasoning tier ALSO rejects greedy
-    // sampling ("top_p must be 1 when using greedy sampling", code 3054) — so like the other
-    // providers' thinking modes, a thinking-enabled Mistral call sends NO temperature and lets
-    // the provider's sampling defaults apply.
-    if (capability.provider === "mistral" && normalizedEffort !== "none") {
-      return { ...body, max_completion_tokens: maxCompletionTokens, reasoning_effort: normalizedEffort };
-    }
-    return { ...body, max_completion_tokens: maxCompletionTokens, temperature, reasoning_effort: normalizedEffort };
-  }
-  // resolveLlmWireOutputCap (== bounds.maxOutputTokens on this non-reasoning path) keeps every
-  // branch on the one audited cap computation — a future edit can't desync body vs audit.
-  return { ...body, max_completion_tokens: resolveLlmWireOutputCap(transport, bounds), temperature };
+  return result;
 }

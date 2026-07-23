@@ -1,7 +1,7 @@
 "use client";
 
 /** Model stats drawer — the info affordance next to the Proposer/Reviewer/Strategist model
- *  pickers on the Framework (strategy) page and the AI review picker. One small button per
+ *  pickers on the Strategy page and the AI review picker. One small button per
  *  select opens a sheet listing every catalog model with cost per call and latency (live
  *  figures when this user has enough real traffic, otherwise the standardized
  *  offline benchmark — the 2026-07-08 full sweep, topped up 2026-07-10 for
@@ -275,7 +275,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
         </p>
         {loading && <p className="py-4 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading model stats…</p>}
         {error && !loading && (
-          <p className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+          <p className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
             {error}
           </p>
         )}
@@ -284,6 +284,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
             <table className="con-table w-full">
               <thead>
                 <tr>
+                  <th className="text-left">Provider</th>
                   <th className="text-left">Model</th>
                   <th className="text-left">Cost / call</th>
                   {isStrategist ? (
@@ -349,15 +350,20 @@ function ProviderRows({
 }) {
   return (
     <>
-      <tr>
-        <td colSpan={4} className="pt-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)]">
-          {label}
-        </td>
-      </tr>
-      {models.map((model) => {
+      {models.map((model, idx) => {
         const s = byModel.get(model);
         return (
-          <tr key={model}>
+          <tr key={model} className={idx === 0 ? "border-t border-[color:var(--con-border)]" : ""}>
+            {idx === 0 && (
+              <td
+                rowSpan={models.length}
+                className="align-middle pr-4 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)]"
+              >
+                <div className="max-sm:[writing-mode:vertical-rl] max-sm:rotate-180 sm:whitespace-nowrap flex items-center justify-center min-h-[4rem] sm:min-h-0 sm:block sm:h-auto">
+                  {label}
+                </div>
+              </td>
+            )}
             <td className="whitespace-nowrap font-medium">{model}</td>
             <td>
               <CostCell s={s} />
