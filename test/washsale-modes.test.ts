@@ -604,13 +604,7 @@ describe("time-context gate escalations (closed allowlist)", () => {
     // Daily budget has plenty of room — ONLY the per-order cap trips.
     const decision = evaluateTradeProposal(
       { ...buy, dollarAmount: 60_000 },
-      ctx(policyWith({ maxDailyNotional: 100_000 }), {
-        ...cleanLocks,
-        estimatedNotional: 60_000,
-        // Keep the daily budget above the test order so this assertion remains
-        // about the hard per-order cap only.
-        portfolio: { ...portfolio, buyingPower: 100_000 }
-      })
+      ctx(policyWith({ maxDailyNotional: 100_000 }), { ...cleanLocks, estimatedNotional: 60_000 })
     );
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("exceeds the maximum order limit");

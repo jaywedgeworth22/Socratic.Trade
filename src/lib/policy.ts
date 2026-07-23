@@ -20,7 +20,7 @@ import { getUserWashSaleLockProvenance, type WashSaleLockMap } from "./tax";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
 import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./market-regime";
-import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap } from "./policy-caps";
+import { effectiveDailyOpeningNotionalCap } from "./policy-caps";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -489,11 +489,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     );
   }
 
-  const effectiveMaxOrderNotional = effectiveOpeningOrderNotionalCap(
-    context.policy,
-    context.portfolio.totalMarketValue,
-    context.portfolio.buyingPower,
-    proposal.side === "short" ? "short" : "buy"
+  const effectiveMaxOrderNotional = Math.min(
+    context.policy.maxOrderNotional ?? Infinity,
+    context.policy.maxOrderPctOfNav ? (context.policy.maxOrderPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
   );
   if (isOpening && estimatedNotional > effectiveMaxOrderNotional) {
     reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${effectiveMaxOrderNotional.toFixed(2)}`);
