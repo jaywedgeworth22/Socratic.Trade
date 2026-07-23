@@ -178,6 +178,10 @@ export function resolveLlmEndpoint(
         model = "openai/gpt-5.4-nano";
       } else if (/^gpt-4o-latest$/i.test(model)) {
         model = "openai/gpt-4o";
+      } else if (/^mistral-medium-latest$/i.test(model)) {
+        model = "mistralai/mistral-medium-3.5";
+      } else if (/^mistral-small-latest$/i.test(model)) {
+        model = "mistralai/mistral-small-2603";
       } else if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
         model = `mistralai/${model}`;
       } else if (/^deepseek-flash-latest$/i.test(model)) {
