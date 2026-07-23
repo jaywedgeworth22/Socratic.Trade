@@ -1,4 +1,4 @@
-// Flat ESLint config (ESLint 10 + eslint-config-next 16).
+// Flat ESLint config (ESLint 9 + eslint-config-next 16).
 //
 // `eslint-config-next/core-web-vitals` already spreads the base Next config
 // (React, React-Hooks, import, jsx-a11y, @next/next) and adds the
@@ -34,9 +34,13 @@ export default [
       ".tools/**",
       "**/worktrees/**",
       "scratch/**",
+      "ds-bundle/**",
+      ".design-sync/**",
+      ".ds-sync/**",
     ],
   },
   {
+    files: [ "**/*.{js,jsx,mjs,ts,tsx,mts,cts}" ],
     // Baseline triage: these rules have a pre-existing backlog of violations
     // (mostly `any` in tests and an opinionated effect rule). They are pinned to
     // "warn" so the required `verify` CI gate is green today while still

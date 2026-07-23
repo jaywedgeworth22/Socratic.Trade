@@ -6,14 +6,18 @@
  *  provides — no invented data. */
 
 import { useMemo, useState } from "react";
-import type { FillEvent, NotificationEvent, RecentProposal, StrategyRunRow } from "@/lib/types";
+import type { FillEvent, RecentProposal, StrategyRunRow } from "@/lib/types";
 import { OPS_AUDIT_KINDS, type UnifiedActivitySubEvent } from "@/lib/dashboard-feed";
 import type { UnifiedActivityGroup } from "../../dashboard-types";
 import { activeConnectedAccount, realityForMode } from "../lib/derive";
 import { cx, dayKey, fmtDay, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
+import { feedStatusLabel } from "../lib/labels";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
-import { Ago, Card, Chip, Empty, SignedText, type ChipTone } from "../ui/primitives";
+import { AlertCenter } from "../components/alert-center";
+import { Ago, Card, Chip, Empty, SignedText, Tooltip, type ChipTone } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
+import { destinationLabel } from "../components/nav";
 
 type Tab = "all" | "runs" | "fills" | "alerts";
 
@@ -21,7 +25,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: "all", label: "All" },
   { id: "runs", label: "Runs" },
   { id: "fills", label: "Fills" },
-  { id: "alerts", label: "Alerts" }
+  { id: "alerts", label: "Alert center" }
 ];
 
 export default function ActivityPage() {
@@ -30,17 +34,17 @@ export default function ActivityPage() {
   if (!snapshot) return null;
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-[length:var(--con-fs-lg)] font-bold">Activity</h1>
-        <div className="flex gap-1 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1">
+        <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console/activity")}</h1>
+        <div className="flex gap-1 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1">
           {TABS.map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
               className={cx(
-                "rounded-md px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
+                "rounded-control px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
                 tab === t.id
                   ? "bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]"
                   : "text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)]"
@@ -55,7 +59,15 @@ export default function ActivityPage() {
       {tab === "all" && <UnifiedFeed groups={snapshot.unifiedFeed ?? []} />}
       {tab === "runs" && <RunsList runs={snapshot.strategyRuns ?? []} recentProposals={snapshot.recentProposals ?? []} />}
       {tab === "fills" && <FillsList fills={snapshot.performance?.fills ?? []} />}
-      {tab === "alerts" && <AlertsList notifications={snapshot.notifications ?? []} />}
+      {tab === "alerts" && (
+        <AlertCenter
+          notifications={snapshot.notifications ?? []}
+          connectedAccounts={snapshot.connectedAccounts}
+          symbolMetaBySymbol={snapshot.symbolMetaBySymbol}
+          activeAccountId={activeConnectedAccount(snapshot)?.id}
+          maxItems={100}
+        />
+      )}
     </div>
   );
 }
@@ -140,7 +152,7 @@ function RawToggle({ text }: { text: string | undefined }) {
   return (
     <details className="mt-1">
       <summary className="cursor-pointer text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">raw data</summary>
-      <pre className="con-mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-[color:var(--con-surface-2)] p-2 text-[10px] leading-relaxed text-[color:var(--con-muted)]">
+      <pre className="con-mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-control bg-[color:var(--con-surface-2)] p-2 text-[length:var(--con-fs-2xs)] leading-relaxed text-[color:var(--con-muted)]">
         {text}
       </pre>
     </details>
@@ -199,7 +211,7 @@ function FeedGroupCard({ g, multiAccount }: { g: UnifiedActivityGroup; multiAcco
             {g.detail}
           </span>
         </span>
-        {g.status && <Chip tone={statusTone(g.status)}>{g.status}</Chip>}
+        {g.status && <Chip tone={statusTone(g.status)}>{feedStatusLabel(g.status)}</Chip>}
         <span className="text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
           <Ago iso={g.updatedAt} />
         </span>
@@ -310,16 +322,33 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                   Run · <Ago iso={run.startedAt} /> · {runDuration(run)}
                 </span>
                 <span className="con-num block text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
-                  {run.proposedCount} proposed · {run.placedCount} placed · {run.paperCount} simulated · {run.blockedCount} blocked
+                  {run.proposedCount} proposed · {run.placedCount} placed · {run.paperCount > 0 ? `${run.paperCount} paper · ` : ""}{run.blockedCount} blocked
                 </span>
               </span>
-              <Chip tone={run.status === "failed" ? "neg" : run.status === "running" ? "accent" : "pos"}>{run.status}</Chip>
+              <Chip
+                tone={
+                  run.status === "failed"
+                    ? "neg"
+                    : run.status === "running"
+                      ? "accent"
+                      : run.status === "skipped"
+                        ? "warn"
+                        : "pos"
+                }
+              >
+                {feedStatusLabel(run.status)}
+              </Chip>
             </summary>
             <div className="border-t border-[color:var(--con-line)] py-2">
               {run.summary && <p className="mb-2 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">{run.summary}</p>}
               {run.status === "completed" && run.totalCount === 0 && (
                 <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                  Did nothing on purpose — no candidate cleared the bar this run.
+                  No candidate cleared the bar this run — deliberate hold after a full evaluation.
+                </p>
+              )}
+              {run.status === "skipped" && (
+                <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+                  Pre-decision skip (budget, market closed, or broker health) — not a successful evaluation.
                 </p>
               )}
               {proposals.length > 0 ? (
@@ -327,7 +356,7 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                   {proposals.map((p) => {
                     const r = realityForMode(p.executionMode);
                     return (
-                      <li key={p.id} className="rounded-lg border border-[color:var(--con-line)] p-2.5 text-[length:var(--con-fs-xs)]">
+                      <li key={p.id} className="rounded-control border border-[color:var(--con-line)] p-2.5 text-[length:var(--con-fs-xs)]">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-[length:var(--con-fs-sm)] font-bold">
                             {SIDE_LABEL[p.proposal.side] ?? p.proposal.side} <SymbolButton symbol={p.proposal.symbol} showLogo={false} />
@@ -341,14 +370,16 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                                   ? `${fmtQty(p.proposal.quantity)} sh`
                                   : EM_DASH}
                           </span>
-                          <Chip tone={statusTone(p.status)}>{p.status}</Chip>
+                          <Chip tone={statusTone(p.status)}>{feedStatusLabel(p.status)}</Chip>
                           <Chip tone={r.tone}>{r.word}</Chip>
                           {typeof p.performanceSinceProposalPct === "number" && (
-                            <span title="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
-                              <SignedText value={p.performanceSinceProposalPct}>
-                                since: {fmtPct(p.performanceSinceProposalPct, 2, true)}
-                              </SignedText>
-                            </span>
+                            <Tooltip content="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
+                              <span>
+                                <SignedText value={p.performanceSinceProposalPct}>
+                                  since: {fmtPct(p.performanceSinceProposalPct, 2, true)}
+                                </SignedText>
+                              </span>
+                            </Tooltip>
                           )}
                         </div>
                         <p className="mt-1 leading-relaxed text-[color:var(--con-muted)]">{p.proposal.rationale}</p>
@@ -404,7 +435,7 @@ function FillsList({ fills }: { fills: FillEvent[] }) {
             </Chip>
             {f.status !== "filled" && (
               <Chip tone={statusTone(f.status)} title="Recorded intent awaiting broker-truth reconciliation — it cannot double-place.">
-                {f.status}
+                {feedStatusLabel(f.status)}
               </Chip>
             )}
             <span className="ml-auto text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
@@ -414,52 +445,5 @@ function FillsList({ fills }: { fills: FillEvent[] }) {
         );
       }}
     />
-  );
-}
-
-// ── Alerts / notifications ───────────────────────────────────────────────────
-
-function AlertsList({ notifications }: { notifications: NotificationEvent[] }) {
-  const { snapshot } = useConsoleData();
-  const activeAccountId = snapshot ? activeConnectedAccount(snapshot)?.id : undefined;
-  const multiAccount = (snapshot?.connectedAccounts.length ?? 0) > 1;
-  const { sorted, hiddenOtherAccount } = useMemo(() => {
-    const all = [...notifications].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    // Notifications are user-wide rows (#10): show this account's and untagged legacy
-    // ones (labeled), never another account's.
-    const inScope = all.filter((n) => !n.connectedAccountId || n.connectedAccountId === activeAccountId);
-    return { sorted: inScope.slice(0, 100), hiddenOtherAccount: all.length - inScope.length };
-  }, [notifications, activeAccountId]);
-  return (
-    <div className="flex flex-col gap-4">
-      {hiddenOtherAccount > 0 && (
-        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          {hiddenOtherAccount} alert{hiddenOtherAccount === 1 ? "" : "s"} from your other accounts{" "}
-          {hiddenOtherAccount === 1 ? "is" : "are"} not shown — switch the account scope to see them.
-        </p>
-      )}
-      <DayGroups
-        items={sorted}
-        timestamp={(n) => n.createdAt}
-        emptyText="No notification events yet."
-        renderItem={(n) => (
-          <div key={n.id} className="con-card flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-[length:var(--con-fs-sm)]">
-            <Chip tone={n.type === "kill_switch" ? "neg" : n.type === "pending_approval" ? "accent" : "muted"}>{n.type}</Chip>
-            <span className="min-w-0 flex-1 truncate font-semibold">{n.title}</span>
-            {!n.connectedAccountId && multiAccount && (
-              <Chip tone="muted" title="Recorded without an account tag — it may concern any of your accounts.">
-                account unknown
-              </Chip>
-            )}
-            <Chip tone={statusTone(n.status)} title={n.error ?? undefined}>
-              {n.status}
-            </Chip>
-            <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              <Ago iso={n.createdAt} />
-            </span>
-          </div>
-        )}
-      />
-    </div>
   );
 }

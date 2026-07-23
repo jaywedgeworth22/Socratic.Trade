@@ -9,7 +9,16 @@
  * key credentials. We use the REST API here, so no S3 signing is needed.)
  */
 
-import { getInternalSetting, resolveApiKey } from "../db";
+import { getInternalSetting, resolveApiKeyWithSource } from "../db";
+
+let cachedFetchWithRetry: typeof import("../data-providers").fetchWithRetry | undefined;
+async function getFetchWithRetry() {
+  if (!cachedFetchWithRetry) {
+    const mod = await import("../data-providers");
+    cachedFetchWithRetry = mod.fetchWithRetry;
+  }
+  return cachedFetchWithRetry;
+}
 
 export interface FullMarketBreadth {
   /** % of the full US universe advancing day-over-day. */
@@ -50,15 +59,19 @@ export function massiveApiBase(): string {
 // If the provider-tier watchdog (provider-tier.ts) detected the Massive key is on the FREE tier
 // (e.g. the paid sub lapsed), clamp the effective limit to the free-safe 5/min so we don't 429-storm
 // the raised paid default. Read from the persisted tier status, cached 60s to keep the reserve path
-// cheap. Key string mirrors PROVIDER_TIER_STATUS_KEY (kept literal to avoid a massive↔provider-tier
-// import cycle). Defaults to "not free" on any read error, so detection can only ever lower the cap.
+// cheap. Checks the "local" user's per-user key first (the scheduler runs the tier check for "local"),
+// then falls back to the legacy shared key for backward compat with pre-per-user-scoping data.
+// Defaults to "not free" on any read error, so detection can only ever lower the cap.
 const FREE_SAFE_MAX_CALLS_PER_MINUTE = 5;
 let tierClampCache = { at: 0, free: false };
 function massiveDetectedFree(now: number): boolean {
   if (now - tierClampCache.at < 60_000) return tierClampCache.free;
   let free = false;
   try {
-    const status = getInternalSetting<Record<string, { tier?: string }>>("providerTier:status");
+    // Per-user key (new — the scheduler writes this for "local")
+    let status = getInternalSetting<Record<string, { tier?: string }>>("providerTier:status:local");
+    // Legacy shared key (pre-2026-07-06) — fallback so existing data still clamps
+    if (!status) status = getInternalSetting<Record<string, { tier?: string }>>("providerTier:status");
     free = status?.massive?.tier === "free";
   } catch {
     free = false;
@@ -99,7 +112,7 @@ export interface GroupedDailyBar { ticker: string; open?: number; high?: number;
  * across more asset classes but object download is plan-gated (403 "forbidden") on this account.
  */
 export async function fetchGroupedBarsRest(date: string, userId?: string): Promise<GroupedDailyBar[] | null> {
-  const key = resolveApiKey("massive", userId);
+  const { key, source } = resolveApiKeyWithSource("massive", userId);
   if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   const cacheKey = `${userId ?? "local"}:${date}`;
   const cached = groupedBarsCache.get(cacheKey);
@@ -110,7 +123,17 @@ export async function fetchGroupedBarsRest(date: string, userId?: string): Promi
   const timeout = setTimeout(() => controller.abort(), 20000);
   try {
     const url = `${massiveApiBase()}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true`;
-    const res = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${key}` } });
+    // Tracked provider boundary (usage-compliance WS1 gap #1): same circuit breaker, health
+    // logging, and usage.jays.services call-volume telemetry as MassiveEnrichmentProvider in
+    // data-providers.ts. `retries: 0` because reserveMassiveRestCall() above reserved exactly ONE
+    // call — fetchWithRetry's contract says exact-quota reservers must not hide an uncounted
+    // internal 429 retry inside one logical call.
+    const fetchWithRetry = await getFetchWithRetry();
+    const res = await fetchWithRetry(
+      url,
+      { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${key}` } },
+      { service: "massive", keySource: source, userId, apiKey: key, retries: 0 }
+    );
     clearTimeout(timeout);
     if (!res.ok) return null;
     const json = (await res.json()) as GroupedResponse;
@@ -164,7 +187,7 @@ interface MassiveNewsResponse {
 const newsCache = new Map<string, { expiresAt: number; data: MarketNewsItem[] }>();
 
 export async function fetchMassiveNews(limit = 8, userId?: string): Promise<MarketNewsItem[]> {
-  const key = resolveApiKey("massive", userId);
+  const { key, source } = resolveApiKeyWithSource("massive", userId);
   if (!key) return [];
   const now = Date.now();
   const cacheKey = `${userId ?? "local"}:${limit}`;
@@ -174,11 +197,17 @@ export async function fetchMassiveNews(limit = 8, userId?: string): Promise<Mark
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
-    const res = await fetch(`${massiveApiBase()}/v2/reference/news?order=desc&limit=${limit}`, {
-      cache: "no-store",
-      signal: controller.signal,
-      headers: { Authorization: `Bearer ${key}` }
-    });
+    // Tracked provider boundary — see fetchGroupedBarsRest for the retries: 0 rationale.
+    const fetchWithRetry = await getFetchWithRetry();
+    const res = await fetchWithRetry(
+      `${massiveApiBase()}/v2/reference/news?order=desc&limit=${limit}`,
+      {
+        cache: "no-store",
+        signal: controller.signal,
+        headers: { Authorization: `Bearer ${key}` }
+      },
+      { service: "massive", keySource: source, userId, apiKey: key, retries: 0 }
+    );
     clearTimeout(timeout);
     if (!res.ok) return [];
     const json = (await res.json()) as MassiveNewsResponse;
@@ -208,13 +237,24 @@ function recentDates(n: number, now: number): string[] {
   return out;
 }
 
-async function fetchGrouped(date: string, key: string): Promise<Map<string, { close: number; vol: number }> | null> {
+async function fetchGrouped(
+  date: string,
+  key: string,
+  keySource?: string,
+  userId?: string
+): Promise<Map<string, { close: number; vol: number }> | null> {
   if (!reserveMassiveRestCall()) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const url = `${massiveApiBase()}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true`;
-    const res = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${key}` } });
+    // Tracked provider boundary — see fetchGroupedBarsRest for the retries: 0 rationale.
+    const fetchWithRetry = await getFetchWithRetry();
+    const res = await fetchWithRetry(
+      url,
+      { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${key}` } },
+      { service: "massive", keySource, userId, apiKey: key, retries: 0 }
+    );
     clearTimeout(timeout);
     if (!res.ok) return null;
     const json = (await res.json()) as GroupedResponse;
@@ -242,14 +282,14 @@ const breadthCache: { expiresAt: number; data: FullMarketBreadth | undefined } =
 
 export async function fetchFullMarketBreadth(now: number = Date.now(), userId?: string): Promise<FullMarketBreadth | undefined> {
   if (breadthCache.data && breadthCache.expiresAt > now) return breadthCache.data;
-  const key = resolveApiKey("massive", userId);
+  const { key, source } = resolveApiKeyWithSource("massive", userId);
   if (!key) return undefined;
 
   // Collect the two most recent trading days that have data.
   const days: Array<{ date: string; map: Map<string, { close: number; vol: number }> }> = [];
   const maxDateProbes = Math.floor(numericEnv("MASSIVE_BREADTH_MAX_DATE_PROBES", 5, 1));
   for (const date of recentDates(maxDateProbes, now)) {
-    const map = await fetchGrouped(date, key);
+    const map = await fetchGrouped(date, key, source, userId);
     if (map && map.size > 100) days.push({ date, map });
     if (days.length === 2) break;
   }

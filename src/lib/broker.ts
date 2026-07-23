@@ -1,6 +1,7 @@
 import type { BrokerGateway, EquityOrderInput, ExecutedOrder, TradingPolicy } from "./types";
 import { getRobinhoodGateway, getTestGateway } from "./robinhood";
 import { getAlpacaGateway } from "./alpaca";
+import { getTradierGateway } from "./tradier";
 import { getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { deriveExecutionState } from "./execution-mode";
 import { assertLivePreflight } from "./preflight-live-guard";
@@ -17,6 +18,9 @@ function resolveGateway(policy: TradingPolicy, userId: string): BrokerGateway {
   // path without hitting real Alpaca/Robinhood. It is not a product default.
   if (policy.activeBroker === "test") {
     return getTestGateway(userId);
+  }
+  if (policy.activeBroker === "tradier") {
+    return getTradierGateway(userId, policy.connectedAccountId);
   }
   // No connected account: an account is an account, and with none connected the app cannot
   // place orders. There is no local-simulation fallback.

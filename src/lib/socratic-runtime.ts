@@ -1,4 +1,5 @@
 import { normalizeSymbol } from "./money";
+import { isHardGateReason } from "./policy";
 import type { RetrievedChunk } from "./vector-db";
 import type {
   MarketQuote,
@@ -26,60 +27,16 @@ export interface SocraticOverrideResolution {
   decision: PolicyDecision;
 }
 
-const OVERRIDEABLE_PATTERNS = [
-  "System is halted.",
-  "System is close-only.",
-  "Allowed universe is required.",
-  "is not in the allowed universe",
-  "orders are not permitted",
-  "Extended-hours orders are disabled.",
-  "entry_drift:",
-  "staleness_gate:",
-  "exceeds the maximum order limit",
-  "leaves less than",
-  "Daily notional limit",
-  "Hourly notional limit",
-  "Daily opening-order count limit",
-  "ADV cap",
-  "crisis/inverted-regime cap",
-  "maxShortExposurePct",
-  "Projected total short exposure",
-  "Projected gross exposure",
-  "Projected net exposure",
-  "Projected portfolio beta",
-  "Projected",
-  "Stop-loss rule blocks adding",
-  "Take-profit rule blocks adding",
-  "Cannot average up on short"
-];
-
-const HARD_PATTERNS = [
-  "No Robinhood account is selected.",
-  "not tradable",
-  "buying power",
-  "Sell quantity exceeds",
-  "Cover quantity exceeds",
-  "exit must specify",
-  "margin_minimum:",
-  "wash-sale",
-  "wash sale",
-  "Fractional or dollar-based orders must be regular-hours only.",
-  "connected account does not support short selling",
-  "short-selling is disabled",
-  "Short proposals must carry a mandatory stop-loss",
-  "broker",
-  "PERMANENTLY",
-  "Bracket orders require"
-];
-
-function reasonMatches(reason: string, patterns: string[]): boolean {
-  const lower = reason.toLowerCase();
-  return patterns.some((pattern) => lower.includes(pattern.toLowerCase()));
-}
-
+/**
+ * Owner guardrail philosophy (2026-07-05): a policy block is overridable by the agent's logged
+ * `autonomyOverride` thesis UNLESS it is a hard gate — the account boundary or a physical / broker /
+ * regulatory / accounting impossibility. This is a DENYLIST (overridable-by-default), inverted from the
+ * former hand-maintained allowlist so a new risk-preference gate is overridable automatically instead
+ * of silently un-overridable. The hard/preference split is the single source of truth in the risk
+ * engine (policy.isHardGateReason), co-located with the gates that produce the reasons.
+ */
 function overrideableReason(reason: string): boolean {
-  if (reasonMatches(reason, HARD_PATTERNS)) return false;
-  return reasonMatches(reason, OVERRIDEABLE_PATTERNS);
+  return !isHardGateReason(reason);
 }
 
 export function resolveSocraticOverride(input: {
@@ -282,13 +239,23 @@ function evidenceForDecision(input: {
 function dissentForDecision(proposal: TradeProposal, decision: PolicyDecision, overrideResolution?: SocraticOverrideResolution): SocraticEvidenceItem[] {
   const rows: SocraticEvidenceItem[] = [];
   if (proposal.redTeamVerdict?.available) {
+    // Distinguish "Bear rejected AND blocked" from "Bear rejected but OVERRIDDEN & executed": an
+    // overridden veto is advisory (a logged rationale let the opening proceed), so it reads as a
+    // warning, not a hard negative, and the title says so.
+    const overridden = overrideResolution?.applied === true;
     rows.push({
       kind: "red_team",
-      title: proposal.redTeamVerdict.rejected ? "Red Team rejection" : "Red Team objection",
-      summary: proposal.redTeamVerdict.reason,
+      title: proposal.redTeamVerdict.rejected
+        ? overridden
+          ? "Red Team rejection (overridden)"
+          : "Red Team rejection"
+        : "Red Team objection",
+      summary: overridden
+        ? `${proposal.redTeamVerdict.reason} — overridden by a logged autonomy thesis; trade allowed to proceed.`
+        : proposal.redTeamVerdict.reason,
       source: proposal.redTeamVerdict.model,
       symbol: normalizeSymbol(proposal.symbol),
-      tone: proposal.redTeamVerdict.rejected ? "negative" : "warning",
+      tone: proposal.redTeamVerdict.rejected && !overridden ? "negative" : "warning",
       data: proposal.redTeamVerdict
     });
   }
@@ -329,6 +296,12 @@ export function buildSocraticDecisionCase(input: {
   marketScan?: MarketScan;
   ragAttributions?: SocraticRagAttribution[];
   overrideResolution?: SocraticOverrideResolution;
+  /** Run-level advisory receipts appended to the evidence list (e.g. kind 'safety'
+   * prompt-injection / evidence-age items from src/lib/prompt-safety.ts). */
+  extraEvidence?: SocraticEvidenceItem[];
+  /** Typed retrieval-status receipt for this run (typed-retrieval-status, 2026-07-06) — see
+   * `SocraticDecisionCase.ragRetrievalStatus`. Persistence only, never rendered. */
+  ragRetrievalStatus?: { symbol: string; status: string; reason?: string }[];
 }): Omit<SocraticDecisionCase, "createdAt" | "updatedAt"> {
   const ragAttributions = input.ragAttributions ?? [];
   const notional = input.review?.estimatedNotional ?? input.proposal.dollarAmount;
@@ -352,6 +325,8 @@ export function buildSocraticDecisionCase(input: {
     authority: input.authority,
     thesis: input.proposal.tradeThesisTag,
     rationale: input.proposal.rationale,
+    ...(input.proposal.greenTeamRationale ? { greenTeamRationale: input.proposal.greenTeamRationale } : {}),
+    ...(input.proposal.sizingSnapshot ? { sizingSnapshot: input.proposal.sizingSnapshot } : {}),
     action: formatAction(input.proposal, notional),
     thesisTag: input.proposal.tradeThesisTag,
     regime: input.proposal.entryMarketRegime,
@@ -360,20 +335,38 @@ export function buildSocraticDecisionCase(input: {
     ...(input.proposal.proposedByModel ? { model: input.proposal.proposedByModel } : {}),
     ...(input.proposal.redTeamVerdict ? { redTeamVerdict: input.proposal.redTeamVerdict } : {}),
     policyDecision: input.decision,
-    evidence: evidenceForDecision({
-      proposal: input.proposal,
-      status: input.status,
-      decision: input.decision,
-      marketScan: input.marketScan,
-      ragAttributions,
-      notional,
-      overrideResolution: input.overrideResolution
-    }),
+    evidence: [
+      ...evidenceForDecision({
+        proposal: input.proposal,
+        status: input.status,
+        decision: input.decision,
+        marketScan: input.marketScan,
+        ragAttributions,
+        notional,
+        overrideResolution: input.overrideResolution
+      }),
+      // Appended AFTER the per-proposal evidence (which is capped at 8) so safety receipts are
+      // never crowded out by candidate/market rows.
+      //
+      // This ordering is DELIBERATE and safety-load-bearing, not incidental: kind-'safety' items
+      // (prompt-injection / evidence-age receipts from src/lib/prompt-safety.ts) land at the TAIL
+      // of this array. Downstream summarizers that feed the RAG/lesson-learning prompts take a
+      // fixed-size PREFIX slice — socratic-memory.ts summarizeEvidence does .slice(0, 5) and
+      // outcome-engine.ts's lesson pass does decisionCase.evidence.slice(0, 6) — so as long as a
+      // case has >5/>6 proposal-evidence rows ahead of them, the tail-appended safety items are
+      // excluded from what gets summarized back into memory/lessons. Do NOT reorder extraEvidence
+      // to the front (or otherwise make it appear before the slice cutoff): that would let a
+      // detected injection attempt's own excerpt text ride into the RAG/lesson corpus, creating a
+      // detection -> memory -> re-detection feedback loop where the scanner's receipts become
+      // future "learned" input. Keep safety receipts append-only and tail-positioned.
+      ...(input.extraEvidence ?? [])
+    ],
     ragAttributions: ragAttributions.filter((row) => normalizeSymbol(row.symbol) === normalizeSymbol(input.proposal.symbol)),
+    ...(input.ragRetrievalStatus && input.ragRetrievalStatus.length > 0 ? { ragRetrievalStatus: input.ragRetrievalStatus } : {}),
     dissent: dissentForDecision(input.proposal, input.decision, input.overrideResolution),
     ...(override ? { autonomyOverride: override } : {}),
     lessons: [
-      input.status === "placed" ? "Track realized outcome against the stated thesis and invalidation note." : "",
+      input.status === "placed" || input.status === "filled" ? "Track realized outcome against the stated thesis and invalidation note." : "",
       input.status === "blocked" && input.proposal.autonomyOverride?.requested ? "Override request did not clear the hard/preference split; review classifier or mandate." : "",
       input.overrideResolution?.applied ? "Owner preference gate was explicitly overridden; measure whether the autonomy judgment improved returns." : ""
     ].filter(Boolean),
@@ -416,10 +409,16 @@ export function frameworkProposalFromDecision(decision: SocraticDecisionCase): O
 }
 
 export function socraticStatusFromProposalStatus(status: string): SocraticDecisionStatus {
-  if (status === "placed") return "placed";
+  if (status === "placed" || status === "paper") return "placed";
+  if (status === "filled") return "filled";
   if (status === "proposed") return "proposed";
+  if (status === "placing") return "placing";
   if (status === "blocked") return "blocked";
-  if (status === "rejected" || status === "rejected_by_broker") return "rejected";
-  if (status === "error" || status === "placing_failed") return "error";
+  if (status === "rejected" || status === "rejected_by_red_team") return "rejected";
+  if (status === "rejected_by_broker") return "rejected_by_broker";
+  if (status === "not_placed" || status === "placing_failed") return "not_placed";
+  if (status === "expired") return "expired";
+  if (status === "withdrawn") return "withdrawn";
+  if (status === "error" || status === "failed") return "error";
   return "planned";
 }

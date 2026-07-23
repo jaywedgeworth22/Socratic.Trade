@@ -1,21 +1,30 @@
 "use client";
 
-/** Guardrails — the deterministic cage, essentials first (max order, daily
- *  caps, stop-loss, daily-loss breaker, autonomy, extended hours), then the
- *  advanced rulebook grouped the way the domain groups it. Editing uses a
- *  review-and-commit model with asymmetric friction: tightening is one click,
- *  loosening brokerage-account authority requires typing CONFIRM. Autonomy has its own
+/** Guardrails — the deterministic cage: essentials first (max order, daily
+ *  caps, daily-loss breaker, autonomy, schedule, short selling), then EVERY
+ *  protective stop rule together under the stop-flow diagram (distance
+ *  fallback chain, trailing overlay, broker-held → app-monitor enforcement),
+ *  then Tax treatment (moved here from Strategy in the 2026-07-16 IA
+ *  restructure — self-contained, own auto-save), then the advanced rulebook
+ *  grouped the way the domain groups it. Editing uses a review-and-commit
+ *  model with asymmetric friction: tightening is one click, loosening
+ *  brokerage-account authority requires typing CONFIRM. Autonomy has its own
  *  ritual: Autopilot costs a typed word, going back to Ask-first is one tap. */
 
 import { useMemo, useState } from "react";
 import { toggleIncludedIndex } from "@/lib/index-universes";
-import type { IndexUniverse, OrderType, TaxationType } from "@/lib/types";
+import type { IndexUniverse, OrderType, TaxationType, TradingPolicy } from "@/lib/types";
+import type { DashboardSnapshot } from "../../dashboard-types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
-import { activeConnectedAccount, deriveReality } from "../lib/derive";
+import { activeConnectedAccount, deriveReality, deriveRiskUtilization, type UtilizationMeter } from "../lib/derive";
+import { fmtMoney, fmtMoneyWhole, fmtNum, fmtPct } from "../lib/format";
+import { isBlank } from "../lib/policy-diff";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Btn, Card, Chip, Field, Select, TextInput } from "../ui/primitives";
+import { Btn, Card, Chip, Dash, Field, Meter, Select, TextInput } from "../ui/primitives";
 import { TypedConfirm } from "../components/chrome";
+import { orderTypeLabel } from "../orders/lib";
 import {
   AdvancedGroup,
   PolicyDualModeRow,
@@ -23,6 +32,7 @@ import {
   PolicySaveBar,
   usePolicyDraft
 } from "../components/policy-form";
+import { TaxSettingsCard } from "../strategy/tax-settings";
 import {
   ALL_DEFS,
   ENTRY_QUALITY,
@@ -32,12 +42,13 @@ import {
   INDICES,
   ORDER_TYPES,
   PANIC_BRAKE,
+  PROTECTIVE_STOPS,
   SOCRATIC_OVERRIDE,
   SHORTS,
-  STOPS_PLUMBING,
   TAX_RULES,
   UNIVERSE_FLOOR
 } from "./field-defs";
+import { StopFlowDiagram } from "./stop-flow";
 
 function parseSymbols(text: string): string[] {
   return text
@@ -50,11 +61,124 @@ function isIraTaxation(taxationType: TaxationType | undefined): boolean {
   return taxationType === "roth_ira" || taxationType === "traditional_ira";
 }
 
+/** "market" → "Market", "stop_market" → "Stop-market". orderTypeLabel (../orders/lib)
+ *  already does the underscore→hyphen swap; this only capitalizes the leading letter,
+ *  matching the decided plain-English order-type vocabulary. */
+function orderTypeChoiceLabel(type: string): string {
+  const label = orderTypeLabel(type);
+  return label ? label.charAt(0).toUpperCase() + label.slice(1) : label;
+}
+
+function orderTypeChoiceTitle(type: OrderType): string {
+  const label = orderTypeChoiceLabel(type);
+  if (type === "market") return "Allow market orders when immediacy is more important than a limit price.";
+  if (type === "limit") return "Allow limit orders that cap the acceptable fill price.";
+  if (type === "stop_market") return "Allow stop-market orders for protective exits and stop-triggered trades.";
+  if (type === "stop_limit") return "Allow stop-limit orders that require both a stop trigger and a limit price.";
+  return `Allow ${label} orders when the broker supports them.`;
+}
+
+/** Exposure utilization derive.ts doesn't already expose (deriveRiskUtilization only covers
+ *  daily notional/orders/invested capital) — computed locally from the same snapshot fields,
+ *  mirroring the CURRENT-state formulas the policy engine uses for its own projected checks
+ *  (src/lib/policy.ts): gross = Σ|marketValue|, net = Σ marketValue, short = Σ|marketValue|
+ *  where quantity < 0, symbol = the single largest |marketValue| among held positions. Missing
+ *  equity data renders the band undefined (row shows "—"), never a fabricated 0 — a real empty
+ *  portfolio still yields real 0% bands once equity is known. */
+function deriveExposureUtilization(snapshot: DashboardSnapshot, policy: TradingPolicy) {
+  const positions = snapshot.positions ?? [];
+  const equity = snapshot.portfolio?.totalMarketValue;
+  const hasEquity = typeof equity === "number" && equity > 0;
+  const pctBand = (used: number, limit: number | undefined): UtilizationMeter => ({
+    used,
+    limit,
+    pct: typeof limit === "number" && limit > 0 ? (used / limit) * 100 : undefined
+  });
+
+  const largest = positions.reduce<{ symbol: string; value: number } | undefined>((max, p) => {
+    const value = Math.abs(p.marketValue);
+    return !max || value > max.value ? { symbol: p.symbol, value } : max;
+  }, undefined);
+
+  const gross = positions.reduce((sum, p) => sum + Math.abs(p.marketValue), 0);
+  const net = positions.reduce((sum, p) => sum + p.marketValue, 0);
+  const short = positions.reduce((sum, p) => (p.quantity < 0 ? sum + Math.abs(p.marketValue) : sum), 0);
+
+  return {
+    symbolNotional: largest ? { ...pctBand(largest.value, policy.maxSymbolExposureNotional), symbol: largest.symbol } : undefined,
+    symbolPct: largest && hasEquity ? { ...pctBand((largest.value / equity!) * 100, policy.maxSymbolExposurePct), symbol: largest.symbol } : undefined,
+    grossPct: hasEquity ? pctBand((gross / equity!) * 100, policy.maxGrossExposurePct) : undefined,
+    netPct: hasEquity ? pctBand((Math.abs(net) / equity!) * 100, policy.maxNetExposurePct) : undefined,
+    shortPct: hasEquity ? pctBand((short / equity!) * 100, policy.maxShortExposurePct) : undefined
+  };
+}
+
+/** Inline utilization sub-label for a numeric cap row: "used X of Y · pct%" plus a Meter,
+ *  matching the Risk utilization card pattern on the dashboard (page.tsx RiskUtilizationCard).
+ *  `band` undefined means no current-usage data applies to this cap — renders "—", never a
+ *  fabricated 0 (see format.ts convention). */
+function CapUtilization({
+  band,
+  kind,
+  note,
+  daily
+}: {
+  band: (UtilizationMeter & { symbol?: string }) | undefined;
+  kind: "money" | "pct" | "count";
+  note?: string;
+  /** True for caps that reset every day (daily notional/orders) — the sub-label reads
+   *  "Used $1,200 of $5,000 today" instead of the point-in-time "Current usage" wording
+   *  used for exposure caps, which have no daily reset. */
+  daily?: boolean;
+}) {
+  const fmtUsed = (v: number) => (kind === "money" ? fmtMoney(v) : kind === "pct" ? fmtPct(v, 1) : fmtNum(v));
+  const fmtLimit = (v: number) => (kind === "money" ? fmtMoneyWhole(v) : kind === "pct" ? fmtPct(v, 1) : fmtNum(v));
+  const title = band?.symbol ? `Largest position: ${band.symbol}${note ? ` — ${note}` : ""}` : note;
+
+  if (!band) {
+    return (
+      <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title={title}>
+        Current usage: <Dash />
+      </p>
+    );
+  }
+  // Unclamped: values over the cap must pass through as >100 so Meter's own breach
+  // state (hatched fill + "+X% over" tooltip) can surface instead of a solid full bar.
+  const ratio = band.pct ?? 0;
+  return (
+    <div className="mt-1" title={title}>
+      <div className="flex items-center justify-between gap-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        <span>{daily ? "Used" : "Current usage"}</span>
+        <span className="con-num">
+          {fmtUsed(band.used)} of {typeof band.limit === "number" ? fmtLimit(band.limit) : "no cap"}
+          {daily ? " today" : ""}
+          {band.pct !== undefined ? ` · ${fmtPct(band.pct, 1)}` : ""}
+        </span>
+      </div>
+      <Meter value={ratio} max={100} />
+    </div>
+  );
+}
+
 const DEF_BY_PATH = new Map(ALL_DEFS.map((def) => [def.path, def]));
-const ESSENTIAL_FIELD_PATHS = new Set(["maxOrderNotional", "maxOrderPctOfNav"]);
+const ESSENTIAL_FIELD_PATHS = new Set([
+  "maxOrderNotional",
+  "maxOrderPctOfNav",
+  "maxDailyNotional",
+  "maxDailyPctOfNav"
+]);
+// Splits the tail of ESSENTIALS (§field-defs) into its own "Schedule" sub-heading —
+// purely visual regrouping, no field-def or behavior changes (see PR notes 2026-07-16).
+const SCHEDULE_FIELD_PATHS = new Set(["runCadenceMinutes", "runDuringExtendedHours", "permitExtendedHours"]);
 const EXPOSURE_FIELD_PATHS = new Set(["maxSymbolExposureNotional", "maxSymbolExposurePct"]);
 
 export default function GuardrailsPage() {
+  const { snapshot } = useConsoleData();
+  if (!snapshot) return null;
+  return <AccountScopedGuardrailsPage key={snapshot.policy.connectedAccountId ?? "no-account"} />;
+}
+
+function AccountScopedGuardrailsPage() {
   const { snapshot } = useConsoleData();
   const draft = usePolicyDraft();
   const [universeDraft, setUniverseDraft] = useState<{
@@ -68,6 +192,8 @@ export default function GuardrailsPage() {
   const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
   if (!snapshot || !reality) return null;
   const policy = snapshot.policy;
+  const risk = deriveRiskUtilization(snapshot);
+  const exposure = deriveExposureUtilization(snapshot, policy);
 
   // Universe / arrays are replace-whole-value fields → extraPatch.
   const extraPatch: PolicyPatchBody = {};
@@ -97,52 +223,119 @@ export default function GuardrailsPage() {
   });
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Guardrails</h1>
         <Chip tone={reality.tone}>
           {reality.word} · {reality.phrase}
         </Chip>
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          for {reality.account?.label ?? "no connected account"} — mandates, preference gates, and hard execution constraints
+          for {reality.account?.label ?? "no connected account"} — authority, caps, and hard execution constraints
         </span>
       </div>
 
       <AutonomyCard />
 
-      <Card title="Essentials">
+      <Card title="Essentials" collapsible defaultOpen>
         <div className="divide-y divide-[color:var(--con-line)]">
-          <PolicyDualModeRow
-            label="Max Per Order"
-            moneyDef={DEF_BY_PATH.get("maxOrderNotional")!}
-            pctDef={DEF_BY_PATH.get("maxOrderPctOfNav")!}
-            policy={policy}
-            draft={draft}
-            hint="Choose one expression for the per-order opening cap. Switching modes clears the other value before save."
-          />
-          {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path)).map((def) => (
+          <div>
+            <PolicyDualModeRow
+              label="Max Per Order"
+              moneyDef={DEF_BY_PATH.get("maxOrderNotional")!}
+              pctDef={DEF_BY_PATH.get("maxOrderPctOfNav")!}
+              policy={policy}
+              draft={draft}
+              hint="Choose one expression for the per-order opening cap. Switching modes clears the other value before save."
+            />
+            <CapUtilization
+              band={undefined}
+              kind="money"
+              note="Per-order caps apply to each order individually — no cumulative usage is tracked against this limit."
+            />
+          </div>
+          <div>
+            <PolicyDualModeRow
+              label="Max Spend Per Day"
+              moneyDef={DEF_BY_PATH.get("maxDailyNotional")!}
+              pctDef={DEF_BY_PATH.get("maxDailyPctOfNav")!}
+              policy={policy}
+              draft={draft}
+              hint="Choose one daily opening budget. Percent is the account-relative default; switching modes clears the other value before save."
+            />
+            <CapUtilization band={risk.dailyNotional} kind="money" daily />
+          </div>
+          {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path) && !SCHEDULE_FIELD_PATHS.has(def.path)).map((def) => (
+            <div key={def.path}>
+              <PolicyFieldRow def={def} policy={policy} draft={draft} />
+              {def.path === "maxDailyOrders" && <CapUtilization band={risk.dailyOrders} kind="count" daily />}
+            </div>
+          ))}
+          <div className="con-card-title pt-3">Schedule</div>
+          {ESSENTIALS.filter((def) => SCHEDULE_FIELD_PATHS.has(def.path)).map((def) => (
+            <div key={def.path}>
+              <PolicyFieldRow def={def} policy={policy} draft={draft} />
+            </div>
+          ))}
+          <div className="con-card-title pt-3">Short selling</div>
+          {SHORTS.map((def) => (
+            <div key={def.path}>
+              <PolicyFieldRow def={def} policy={policy} draft={draft} />
+              {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" />}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card title="Protective stops" collapsible defaultOpen>
+        <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Every rule that exits a losing (or protects a winning) position, in one place. The diagram shows how they
+          compose for this account right now: each lane falls back left → right, trailing runs alongside, and the app
+          monitor backstops whatever the broker can&apos;t hold.
+        </p>
+        <StopFlowDiagram policy={policy} />
+        <div className="mt-3 divide-y divide-[color:var(--con-line)]">
+          {PROTECTIVE_STOPS.map((def) => (
             <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
           ))}
         </div>
       </Card>
 
-      <Card title="Advanced rulebook" padded={false}>
+      {/* Tax treatment — account-scoped like the rest of this page; moved here from
+          Strategy in the 2026-07-16 IA restructure, directly above the Advanced
+          rulebook's Tax rules group that references it. Self-contained (own
+          auto-save) — not wired into the PolicySaveBar draft machinery below.
+          The id anchor is a deep-link target. */}
+      <div id="tax" className="scroll-mt-28">
+        <TaxSettingsCard />
+      </div>
+
+      <Card title="Advanced rulebook" padded={false} collapsible defaultOpen>
         <div className="px-4 pb-2">
           <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             Everything below ships with safe defaults — you never have to touch it. One rule everywhere: a cap that
             demanded an exit can never block that exit.
           </p>
           <AdvancedGroup title="Exposure caps">
-            <PolicyDualModeRow
-              label="Max In One Stock"
-              moneyDef={DEF_BY_PATH.get("maxSymbolExposureNotional")!}
-              pctDef={DEF_BY_PATH.get("maxSymbolExposurePct")!}
-              policy={policy}
-              draft={draft}
-              hint="Choose whether the single-symbol exposure cap is a dollar ceiling or a share of portfolio value."
-            />
+            <div>
+              <PolicyDualModeRow
+                label="Max In One Stock"
+                moneyDef={DEF_BY_PATH.get("maxSymbolExposureNotional")!}
+                pctDef={DEF_BY_PATH.get("maxSymbolExposurePct")!}
+                policy={policy}
+                draft={draft}
+                hint="Choose whether the single-symbol exposure cap is a dollar ceiling or a share of portfolio value."
+              />
+              <CapUtilization
+                band={isBlank(policy.maxSymbolExposurePct) ? exposure.symbolNotional : exposure.symbolPct}
+                kind={isBlank(policy.maxSymbolExposurePct) ? "money" : "pct"}
+              />
+            </div>
             {EXPOSURE.filter((def) => !EXPOSURE_FIELD_PATHS.has(def.path)).map((def) => (
-              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
+              <div key={def.path}>
+                <PolicyFieldRow def={def} policy={policy} draft={draft} />
+                {def.path === "maxGrossExposurePct" && <CapUtilization band={exposure.grossPct} kind="pct" />}
+                {def.path === "maxNetExposurePct" && <CapUtilization band={exposure.netPct} kind="pct" />}
+              </div>
             ))}
           </AdvancedGroup>
           <AdvancedGroup title="Socratic override">
@@ -155,18 +348,8 @@ export default function GuardrailsPage() {
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>
-          <AdvancedGroup title="Protective stops plumbing">
-            {STOPS_PLUMBING.map((def) => (
-              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
-            ))}
-          </AdvancedGroup>
           <AdvancedGroup title="Volatility panic brake">
             {PANIC_BRAKE.map((def) => (
-              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
-            ))}
-          </AdvancedGroup>
-          <AdvancedGroup title="Short selling">
-            {SHORTS.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>
@@ -177,10 +360,10 @@ export default function GuardrailsPage() {
           </AdvancedGroup>
           <AdvancedGroup title="Tax rules">
             <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              The wash-sale guard itself (on/off, account type, rates) lives in Settings → Tax treatment. These rules
-              tune what a rebuy lockout means for this account and how strict it is.
+              The wash-sale guard itself (on/off, account type, rates) lives in the Tax treatment card above. These
+              rules tune what a rebuy lockout means for this account and how strict it is.
             </p>
-            <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+            <div className="mt-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
               {isIra ? (
                 <>
                   <strong className="text-[color:var(--con-fg)]">IRA mode:</strong> same-account wash sales are not a
@@ -206,10 +389,12 @@ export default function GuardrailsPage() {
               <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                 {INDICES.map((idx) => {
                   const on = indices.includes(idx.id);
+                  const title = `Include ${idx.label} in the base scan universe. Overlapping S&P and Nasdaq families replace each other.`;
                   return (
-                    <label key={idx.id} className="flex cursor-pointer items-center gap-2 text-[length:var(--con-fs-sm)]">
+                    <label key={idx.id} title={title} className="flex cursor-pointer items-center gap-2 text-[length:var(--con-fs-sm)]">
                       <input
                         type="checkbox"
+                        title={title}
                         checked={on}
                         onChange={(e) => {
                           const checked = e.currentTarget.checked;
@@ -235,6 +420,7 @@ export default function GuardrailsPage() {
               <Field label="Always include (symbols)" hint="Comma or space separated. Exempt from the universe floor." htmlFor="add-syms">
                 <TextInput
                   id="add-syms"
+                  title="Comma or space separated tickers that stay in the scan universe even if they miss the normal universe floor."
                   value={universeDraft.additionalSymbols ?? (policy.additionalSymbols ?? []).join(", ")}
                   onChange={(e) => setUniverseDraft((d) => ({ ...d, additionalSymbols: e.target.value }))}
                 />
@@ -242,6 +428,7 @@ export default function GuardrailsPage() {
               <Field label="Never touch (blocklist)" hint="Blocking a stock never blocks selling it — exits are always allowed." htmlFor="block-syms">
                 <TextInput
                   id="block-syms"
+                  title="Comma or space separated tickers the strategy must not open. Exits are still allowed."
                   value={universeDraft.blocklist ?? (policy.blocklist ?? []).join(", ")}
                   onChange={(e) => setUniverseDraft((d) => ({ ...d, blocklist: e.target.value }))}
                 />
@@ -255,10 +442,12 @@ export default function GuardrailsPage() {
               <div className="flex flex-wrap gap-3">
                 {ORDER_TYPES.map((t) => {
                   const on = orderTypes.includes(t);
+                  const title = orderTypeChoiceTitle(t);
                   return (
-                    <label key={t} className="flex cursor-pointer items-center gap-2 text-[length:var(--con-fs-sm)]">
+                    <label key={t} title={title} className="flex cursor-pointer items-center gap-2 text-[length:var(--con-fs-sm)]">
                       <input
                         type="checkbox"
+                        title={title}
                         checked={on}
                         onChange={() =>
                           setUniverseDraft((d) => ({
@@ -267,7 +456,7 @@ export default function GuardrailsPage() {
                           }))
                         }
                       />
-                      {t.replace("_", " ")}
+                      {orderTypeChoiceLabel(t)}
                     </label>
                   );
                 })}
@@ -281,6 +470,7 @@ export default function GuardrailsPage() {
               >
                 <Select
                   id="stf"
+                  title="Choose how the strategy should raise cash when intended buys exceed buying power. Off means never sell just to fund buys."
                   value={universeDraft.sellToFundBuy ?? policy.sellToFundBuy ?? "off"}
                   onChange={(e) => setUniverseDraft((d) => ({ ...d, sellToFundBuy: e.target.value }))}
                 >
@@ -322,7 +512,7 @@ function AutonomyCard() {
   const setAuthority = async (authority: "propose" | "decide") => {
     setBusy(true);
     try {
-      await savePolicy({ strategyAuthority: authority });
+      await savePolicy({ strategyAuthority: authority }, snapshot.policy.connectedAccountId);
       await refresh();
       setArming(false);
       setTyped("");
@@ -352,11 +542,22 @@ function AutonomyCard() {
           </p>
         </div>
         {decide ? (
-          <Btn variant="pos" size="sm" disabled={busy} onClick={() => void setAuthority("propose")}>
+          <Btn
+            variant="pos"
+            size="sm"
+            disabled={busy}
+            title="Switch this account back to Ask-first, so every trade waits for approval."
+            onClick={() => void setAuthority("propose")}
+          >
             {busy ? "Switching…" : "Switch to Ask-first"}
           </Btn>
         ) : (
-          <Btn variant="outline" size="sm" onClick={() => setArming((v) => !v)}>
+          <Btn
+            variant="outline"
+            size="sm"
+            title="Open the typed confirmation for Autopilot on this account."
+            onClick={() => setArming((v) => !v)}
+          >
             Turn on Autopilot…
           </Btn>
         )}

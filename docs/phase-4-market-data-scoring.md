@@ -159,6 +159,27 @@ coverage and licensing fit.
 - Source-provided VWAP is attributed when present and omitted when unavailable.
 - The strategy prompt asks for ask-relative limit prices only when ask data exists.
 
+## Interactive scan reliability and FMP routing (2026-07-15)
+
+The interactive `/api/scan` path no longer starts the full multi-provider fundamentals
+cascade. A default 30-candidate configuration widens to 150 preselection symbols; on a
+cold process, Finnhub alone can enqueue 750 calls at 50/min. The old 25-second
+`Promise.race` returned 500 without cancelling that work, and user retries multiplied
+the queue. Interactive scans now return the real Nasdaq/broker scan plus persisted web
+signals, reuse only slow facts from a completed strategy scan no more than 24 hours old,
+replace every price/event-sensitive field, coalesce identical refreshes, and bound Nasdaq
+at eight seconds. A Nasdaq outage shows the last strategy scan with explicit stale
+attribution instead of a blank table. Strategy/scheduler scans keep full enrichment, and
+ticker sheets fetch bounded, per-user/symbol-coalesced data for any valid symbol.
+
+FMP's live lane now uses stable `profile`, `ratios-ttm`, `grades-consensus`, and
+`insider-trading/search` endpoints (plus opt-in price targets), with header auth and
+per-field provenance. `ratios-ttm` maps valuation, leverage, returns, margin, and yield;
+`profile` maps issuer identity/classification, beta, dividend yield, and 52-week range.
+Congressional disclosures stay owned by Congress.Trade rather than duplicated per
+symbol. The cadence/entitlement expansion map is maintained in
+`docs/fmp-capabilities.md`.
+
 ## Data-source breadth (2026-07-01, branch `claude/trading-audit-d-e-dpw0h7`)
 
 Audit work-split "Chat D" (`docs/reviews/2026-07-01-audit-work-split.md`) closed additive
