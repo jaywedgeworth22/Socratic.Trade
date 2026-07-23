@@ -43,6 +43,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **[Socratic.Trade][GROK] Retired-provider Usage Monitor cleanup post-#1889 — IN PROGRESS 2026-07-22.** Merged exact `origin/main` (`bd7068b6` #1889). Live+replay admission filters via `suppressUsageMonitorProvider`; removed `pushBrokerBalance`; FMP paid-control regression added. Worktree `/Users/jay/.codex/worktrees/socratic-retired-provider-cleanup` branch `codex/retired-provider-usage-cleanup`.
+- **[Socratic.Trade][GROK] Dark mode near-black retint (branch `grok/dark-mode-near-black`) — PR #1956 OPEN / AUTO-MERGE ARMED 2026-07-22.** Public `.dark` + console dark tokens → `#0a0a0a` neutral charcoal; mesh opacity cut for login logo contrast. Local gate green (tsc/test 5196/build). PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/1956. Rollout: `docs/rollouts/2026-07-22-dark-mode-near-black.md`.
 - **[Socratic.Trade][CURSOR] Salvage #1906 market-data rename-vs-acquisition via shared pkg — IN PROGRESS / landing.** Uses classifyTickerAlias/resolveContinuousTicker; no v2 downgrade. #1914 skipped (main already bumps). Rollout: `docs/rollouts/2026-07-22-congress-market-data-alias-split.md`.
 - **[Socratic.Trade][CURSOR] Grok forgotten-PR audit — DONE 2026-07-22.** Closed #1952 + 18 stale reopens; KEEP #1892/#1901/#1902/#1903 (fix then solo) + #1792/#1819/#1842. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
@@ -4067,3 +4068,4 @@ brackets; effort S/M/L.
 
 | 2026-07-21 | GROK + CODEX | In Progress | ST multi-day PR stuck: preserve active verify runs; remove absent trading-live targets; keep observer reporting on socratic-deploy; stop smoke-on-PR; remove synthetic enrichment fallback; make bracket permission side-specific; stabilize focused tests | monet/ci-runner-and-queue-fixes |
 | 2026-07-22 | **Retired-provider Usage Monitor cleanup** — stop Socratic.Trade emissions for Tradier/Alpaca/Robinhood, remove dead Intrinio integration/config/current docs, preserve all broker runtime/trading/read/health behavior, and add a central suppression regression | CODEX | **In Progress** — isolated cleanup complete; Node 24 focused gate green (5 files / 209 tests), TypeScript + diff checks green; final central strict-v2 integration and ready PR wait for #1889 to merge | codex/retired-provider-usage-cleanup |
+| 2026-07-22 | ANTIGRAVITY | Completed | Fix Admin panel UI bugs (Go Back button, Server Metrics 0% fallbacks, RAG table DB noise filtering, API Connection mapping) | fix/admin-ui-polish |
