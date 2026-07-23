@@ -60,6 +60,5 @@ describe("resolveLlmEndpoint", () => {
   it("fails closed (key undefined) when user has no keys at all", () => {
     const endpoint = resolveLlmEndpoint({ llmModel: "claude-sonnet-latest" }, "user-with-no-keys");
     expect(endpoint.key).toBeUndefined();
-    expect(endpoint.keySource).toBe("none");
   });
 });

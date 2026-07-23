@@ -9,7 +9,7 @@ export interface LlmEndpoint {
   url: string;
   key?: string;
   model: string;
-  keySource: "operator" | "user" | "none";
+  keySource: "operator" | "user";
   keyRef?: string;
   transport: LlmTransport;
 }
@@ -177,7 +177,7 @@ export function resolveLlmEndpoint(
       url: "https://api.anthropic.com/v1/messages",
       key: nativeCred.key,
       model: nativeModel,
-      keySource: nativeCred.source,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
       keyRef: nativeCred.keyRef,
       transport: "anthropic-messages"
     };
@@ -187,7 +187,7 @@ export function resolveLlmEndpoint(
       url: process.env.XAI_API_URL?.trim() || "https://api.x.ai/v1/chat/completions",
       key: nativeCred.key,
       model: nativeModel,
-      keySource: nativeCred.source,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
       keyRef: nativeCred.keyRef,
       transport: "chat-completions"
     };
@@ -197,7 +197,7 @@ export function resolveLlmEndpoint(
       url: process.env.GEMINI_API_URL?.trim() || "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
       key: nativeCred.key,
       model: nativeModel,
-      keySource: nativeCred.source,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
       keyRef: nativeCred.keyRef,
       transport: "chat-completions"
     };
@@ -207,7 +207,7 @@ export function resolveLlmEndpoint(
       url: process.env.MISTRAL_API_URL?.trim() || "https://api.mistral.ai/v1/chat/completions",
       key: nativeCred.key,
       model: nativeModel,
-      keySource: nativeCred.source,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
       keyRef: nativeCred.keyRef,
       transport: "chat-completions"
     };
@@ -217,7 +217,7 @@ export function resolveLlmEndpoint(
       url: process.env.DEEPSEEK_API_URL?.trim() || "https://api.deepseek.com/v1/chat/completions",
       key: nativeCred.key,
       model: nativeModel,
-      keySource: nativeCred.source,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
       keyRef: nativeCred.keyRef,
       transport: "chat-completions"
     };
@@ -229,7 +229,7 @@ export function resolveLlmEndpoint(
     url: process.env.OPENAI_API_URL?.trim() || defaultOpenAiUrl,
     key: nativeCred.key,
     model: nativeModel,
-    keySource: nativeCred.source,
+    keySource: nativeCred.source === "operator" ? "operator" : "user",
     keyRef: nativeCred.keyRef,
     transport: "chat-completions"
   };

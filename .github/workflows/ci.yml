@@ -83,6 +83,8 @@ jobs:
       docs-only: ${{ steps.check.outputs.docs_only }}
       route: ${{ steps.route.outputs.route }}
     steps:
+      - name: Disable lingering sparse-checkout
+        run: git sparse-checkout disable || true
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request'
         with:
@@ -256,6 +258,8 @@ jobs:
               ;;
           esac
           echo "node: v$version"
+      - name: Disable lingering sparse-checkout
+        run: git sparse-checkout disable || true
       - uses: actions/checkout@v4
       # NOTE: deliberately NO actions/setup-node here. The self-hosted Mac uses the Homebrew
       # Node 24 installation selected above; setup-node's npm cache post-action wedges on
