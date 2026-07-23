@@ -25,7 +25,7 @@ export interface LlmUsageOpts {
 }
 
 /** The chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
-export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter";
+export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter";
 
 /** Sum usage across the (possibly multi-step) tool loop and record one ledger row.
  *  `providerRequestId` is only meaningful when the loop made exactly ONE provider request

@@ -86,6 +86,10 @@ from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
 # Current Status
 
+## 2026-07-23 — Gemini Reasoning Temperature Fix (ANTIGRAVITY)
+
+Fixed an issue where Gemini 3.1 Pro Preview (and other reasoning-enabled Gemini models) would fail when used for the Red Team due to passing `temperature` to the provider. The LLM request shaper (`withLlmRequestBounds` in `src/lib/llm-request.ts`) now correctly omits `temperature` for Gemini models when `reasoning_effort` is enabled, matching the existing behavior for Anthropic, OpenAI, Mistral, and DeepSeek. `npx tsc --noEmit` verified clean. Rollout: `docs/rollouts/2026-07-23-gemini-temperature-fix.md`.
+
 ## 2026-07-22 — Admin UI Polish (ANTIGRAVITY, branch `fix/admin-ui-polish`)
 
 Fixed Admin panel UI bugs:
@@ -3018,11 +3022,22 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## 2026-07-11 — Truthful notification delivery status (CODEX, current-main replacement branch)
 ## What was just completed
+- 2026-07-23 Gemini Reasoning Temp: Fixed model canonicalization regexes in `src/lib/model-identity.ts` for strictly stripping provider prefixes, and fixed corresponding unit tests in `model-rotation.test.ts` and `console-models.test.ts`. Also updated `usage-compliance-classifier.test.ts` assertions. All changes pushed to PR #1978 and tested against Node 24 natively.
 - Native Apple sign-in, login/logo updates, Model Stats drawer changes, and mobile overlap fixes
   were recorded by the AG lane. Their original PRs #1525 and #1526 are closed without merge, so
   there is no pending branch handoff to land from either PR.
 
 ## Current Status
+
+## 2026-07-23 — Gemini Reasoning Temp (ANTIGRAVITY, branch `fix/gemini-reasoning-temp`)
+
+Fixed logic bugs in model ID stripping that broke rotation for model variants:
+1. `src/lib/model-identity.ts` regex was updated to cleanly handle vendor prefixes and `-latest` suffixes properly.
+2. `test/model-rotation.test.ts` updated to match the correct curated rotation pool keys without failures.
+3. Node 24 binaries for `better-sqlite3` were recompiled and tested cleanly via `scripts/land.sh`.
+
+All 5267 tests and the Next.js build passed. Rollout: `docs/rollouts/2026-07-23-gemini-reasoning-temp.md`.
+
 
 ## 2026-07-22 — Admin UI Polish (ANTIGRAVITY, branch `fix/admin-ui-polish`)
 
