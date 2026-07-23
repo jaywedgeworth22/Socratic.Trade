@@ -20,9 +20,9 @@ import type { FieldDef } from "../lib/policy-diff";
 const ADVISORY_NOTE = "Advisory: the agent decides and logs everything — adjust or override this at any time.";
 
 export const ESSENTIALS: FieldDef[] = [
-  { path: "maxOrderNotional", label: "Max per order", kind: "money", optional: true, looserWhen: "up", hint: "Hard dollar cap on any single order. Blank = no per-order dollar cap (the % of portfolio cap below still applies)." },
+  { path: "maxOrderNotional", label: "Max per order", kind: "money", optional: true, looserWhen: "up", hint: "Hard dollar cap on any single order. The effective cap never exceeds current buying power/NAV. Blank = no per-order dollar cap (the % of portfolio cap below still applies)." },
   { path: "maxOrderPctOfNav", label: "Max per order (% of portfolio)", kind: "pct", optional: true, looserWhen: "up" },
-  { path: "maxDailyNotional", label: "Max spend per day", kind: "money", optional: true, looserWhen: "up", hint: "Opening orders only — protective exits never consume this cap." },
+  { path: "maxDailyNotional", label: "Max spend per day", kind: "money", optional: true, looserWhen: "up", hint: "Opening orders only — protective exits never consume this cap. The effective cap never exceeds current buying power/NAV." },
   { path: "maxDailyPctOfNav", label: "Max spend per day (% of portfolio)", kind: "pct", optional: true, looserWhen: "up", hint: "Opening orders only. This account-relative mode rises and falls with current portfolio value." },
   { path: "maxDailyOrders", label: "Max opening orders per day", kind: "int", looserWhen: "up" },
   { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: `Advisory circuit breaker: if the account loses this much in a day, it logs a receipt and tells the agent — which decides how to react (default: advisory, no auto-halt). Hard enforcement (auto-close positions or a full trading halt on breach) is a separate account-level setting. Blank = off. ${ADVISORY_NOTE}` },
