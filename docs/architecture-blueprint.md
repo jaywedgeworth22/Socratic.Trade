@@ -4,11 +4,21 @@ This document establishes a target architectural blueprint, database schemas, ty
 
 **Implementation status:** this document is not a statement that every control already exists in runtime code. Sections below describe the desired architecture and should be implemented incrementally with tests, rollout notes, and status updates as each slice lands. As of 2026-06-20, the first runtime slice is live for tri-state execution derivation/labels, LLM-facing mode language, shared OpenAI output caps, and the RAG tenant-safety controls in Sections 4.1, 4.4.1, and part of 4.4.3. Runtime labels now use **Test**, **Paper**, and **Brokerage**: Test is the app's local simulator, Paper is an optional broker-hosted sandbox account a user chooses to connect, and Brokerage is a live broker production account. Pinecone metadata/query tenant IDs are sanitized, but Pinecone/Voyage API-key lookup still uses the raw app user ID.
 
+> **Superseded note (2026-07-03):** This document's proposed design (a
+> legacy paper-mode Tri-State model with a local Test simulator) was NOT the
+> design that shipped. The actual removal (see
+> `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`) deleted
+> the legacy paper-mode policy and the local Test/simulator state entirely — execution
+> mode is now derived purely from a connected account's `environment`
+> (`broker/paper` or `broker/live`), with no connected account meaning the
+> app simply cannot place orders. The rest of this document is left as a
+> historical design record; do not use it as a guide to current behavior.
+
 ---
 
 ## 1. Decoupled Tri-State Execution Model
 
-The core execution engine should be upgraded from a binary state (`paperMode` true/false) to a decoupled Tri-State Execution Model. This model separates the *strategy analysis* mode from the *broker-account environment*, enabling robust local simulation, sandbox broker validation, and live capital execution.
+The core execution engine should be upgraded from a binary legacy paper-mode switch to a decoupled Tri-State Execution Model. This historical proposal separated the *strategy analysis* mode from the *broker-account environment*, enabling robust local simulation, sandbox broker validation, and live capital execution. It was superseded by the 2026-07-03 removal described above.
 
 ### 1.1 Derivation Logic
 
@@ -16,7 +26,7 @@ The target active execution state is resolved dynamically by combining the curre
 
 ```
                   ┌──────────────────────────────┐
-                  │   policy.paperMode === true  │
+                  │ removed legacy policy enabled │
                   └──────────────┬───────────────┘
                                  │ Yes
                                  ▼
@@ -26,7 +36,7 @@ The target active execution state is resolved dynamically by combining the curre
                                  │ No
                                  ▼
                  ┌───────────────────────────────┐
-                 │   policy.paperMode === false  │
+                 │ removed legacy policy disabled │
                  └──────────────┬────────────────┘
                                 │
          ┌──────────────────────┴──────────────────────┐
@@ -40,13 +50,13 @@ The target active execution state is resolved dynamically by combining the curre
 
 #### State Definitions
 1. **Test (Local Simulator)**:
-   - **Trigger**: `policy.paperMode === true`.
+   - **Trigger**: removed legacy paper-mode policy enabled.
    - **Behavior**: All order processing, position tracking, and fills are handled by the local SQLite database state machine. Zero network calls are made to external broker execution endpoints.
 2. **Paper (Broker Sandbox)**:
-   - **Trigger**: `policy.paperMode === false` AND `activeAccount.environment === "paper"`.
+   - **Trigger**: removed legacy paper-mode policy disabled AND `activeAccount.environment === "paper"`.
    - **Behavior**: Orders are routed to the broker's sandbox/paper environment when the user has connected one (for example, Alpaca Paper). Account balance, buying power, and position queries are routed to that broker's paper endpoints.
 3. **Brokerage (Live Capital)**:
-   - **Trigger**: `policy.paperMode === false` AND `activeAccount.environment === "live"`.
+   - **Trigger**: removed legacy paper-mode policy disabled AND `activeAccount.environment === "live"`.
    - **Behavior**: Orders are routed directly to the broker's live production API (e.g., Alpaca Live API or Robinhood MCP). Fills execute in real-time using real capital.
 
 ---
@@ -597,7 +607,7 @@ Instructions:
 2. Cross-reference the regime with historical performance:
    - Learn from 'thesisOutcomes', 'regimeOutcomes', and 'comboOutcomes' to avoid repeating unprofitable patterns.
    - Demand higher conviction for sectors or factors with weak historical win rates.
-3. Analyze the candidate list. Candidates are pre-filtered (score >= 40) and abbreviated:
+3. Analyze the candidate list. Candidates are locally ranked to the configured scan cap, with notable below-cutoff outliers eligible for the reserve, and abbreviated:
    - 'sym': symbol, 'px': price, 'vol': volume, 'mktCap': marketCap, 'chgPct': change %, 'pe': P/E, 'pb': P/B, 'div': dividend, 'fcf': FCF Yield, 'de': D/E, 'epsGr': EPS Growth, 'shortFloat': short float %, 'secRelStr': SEC relevance, 'senateNet': Senate Net, 'newsSent': news sentiment, 'insiderSent': insider sentiment, 'posMV': position market value.
 4. Construct long or short trade proposals based on clear catalysts and scoring edges.
 5. Provide a confidence score (1-100) and assign one of the 10 tags from the THESIS_PLAYBOOK.

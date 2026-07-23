@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Fetch the production ops diagnostic snapshot (strategy runs, per-account state, audit).
+# Requires OPS_DIAGNOSTIC_TOKEN in the environment (Cursor Cloud Secrets or local export).
+# The same token must be set on trading-live (see docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md).
+set -euo pipefail
+
+HOST="${OPS_SNAPSHOT_HOST:-https://socratictrade.com}"
+RUNS="${OPS_SNAPSHOT_RUNS:-20}"
+AUDIT="${OPS_SNAPSHOT_AUDIT:-40}"
+OUT="${OPS_SNAPSHOT_OUT:-}"
+
+TOKEN="${OPS_DIAGNOSTIC_TOKEN:-${ADMIN_REINDEX_TOKEN:-}}"
+if [ -z "$TOKEN" ]; then
+  echo "error: OPS_DIAGNOSTIC_TOKEN is not set." >&2
+  echo "Add it in Cursor Dashboard -> Cloud Agents -> Secrets (Runtime Secret)." >&2
+  echo "Use the same value on trading-live and restart pm2 trading." >&2
+  exit 1
+fi
+
+URL="${HOST}/api/ops/snapshot?runs=${RUNS}&audit=${AUDIT}"
+echo "==> GET ${URL}" >&2
+
+if [ -n "$OUT" ]; then
+  curl -fsS -H "x-ops-token: ${TOKEN}" "$URL" -o "$OUT"
+  echo "==> wrote ${OUT}" >&2
+else
+  curl -fsS -H "x-ops-token: ${TOKEN}" "$URL"
+fi
