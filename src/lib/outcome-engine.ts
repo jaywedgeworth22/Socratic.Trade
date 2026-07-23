@@ -23,13 +23,23 @@
 // "N/M resolved (X%)" on the job receipt). Advisory throughout — this writes memory, never gates.
 import {
   audit,
+  claimDueJobs,
+  completeDueJob,
+  enqueueDueJob,
+  failDueJob,
+  getDueJobStats,
+  getConnectedAccount,
   getPolicy,
   getSkippedCounterfactualByRunSymbol,
+  getSkippedCounterfactualByRunSymbolHorizon,
   getSkippedCounterfactualCoverage,
+  getSocraticDecisionCase,
   getSocraticOutcomeCoverage,
   listFillEvents,
   listFillEventsByProposalId,
   listSocraticDecisionCasesNeedingOutcome,
+  markDueJobUnresolvable,
+  updateSkippedCounterfactualOutcomes,
   writeSocraticDecisionLessons,
   writeSocraticDecisionOutcome
 } from "./db";
@@ -41,11 +51,12 @@ import { buildLlmRequestBody, extractLlmText, llmAuthHeaders } from "./llm-call"
 import { humanizeLlmError } from "./llm-errors";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
-import { extractLlmUsage, recordLlmUsage } from "./llm-usage";
+import { extractLlmUsage, providerRequestIdFromPayload, recordLlmUsage } from "./llm-usage";
 import { addTradingDays } from "./market-calendar";
 import { normalizeSymbol } from "./money";
 import { withLlmGeneration } from "./observability";
 import {
+  buildIntradaySampleJobSpecs,
   closeAtOrAfter,
   computeDailyHorizonRows,
   computeIntradayHorizonRows,
@@ -57,7 +68,7 @@ import {
 } from "./outcome-horizons";
 import { calculatePnl, type ClosedLot } from "./performance";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
-import type { FillEvent, SocraticDecisionCase, SocraticOutcomeHorizonRow } from "./types";
+import type { FillEvent, OrderSide, SocraticDecisionCase, SocraticOutcomeHorizonRow } from "./types";
 
 const DAY_MS = 86_400_000;
 const DEFAULT_CASE_LIMIT = 25;
@@ -265,7 +276,7 @@ async function measureCase(
   let realizedLot: ClosedLot | undefined;
   let note: string | undefined;
 
-  if (decisionCase.status === "placed") {
+  if (decisionCase.status === "placed" || decisionCase.status === "filled") {
     const fills = listFillEventsByProposalId(decisionCase.proposalId ?? decisionCase.id, ctx.userId).filter(
       (fill) => normalizeSymbol(fill.symbol) === symbol
     );
@@ -329,6 +340,15 @@ async function measureCase(
   if (!basisPrice || !Number.isFinite(basisAtMs ?? NaN)) return undefined;
   const basisAt = basisAtMs as number;
 
+  // 1.5) Durable due-jobs: enqueue 'sample_intraday_horizon' jobs (15m/1h after basisAt) the moment
+  // this case's entry basis is known, so sampling survives process downtime instead of depending on
+  // a strategy run coincidentally landing inside the narrow tolerance window below. Idempotent via
+  // dedupe_key (decision:<caseId>:<horizon>) — safe to call on every measureCase pass for this case.
+  // Belt-and-suspenders with the inline sampling in step 2: mergeHorizonRows treats an existing
+  // terminal row as authoritative, so whichever path (worker or inline) samples first wins and the
+  // other becomes a no-op merge, never a duplicate/conflicting row.
+  enqueueIntradayDecisionSampleJobs(decisionCase, symbol, basisPrice, basisAt, priceBasisPrefix);
+
   // 2) Intraday horizons: sample a live quote ONLY when a 15m/1h window is currently open and not
   //    already terminal — the cheap sampling path. Missed windows terminate honestly.
   const existingTerminal = new Set(
@@ -378,7 +398,7 @@ async function measureCase(
 
   const allHorizonsTerminal = outcomes.length === 4;
   const okRows = outcomes.filter((row) => row.resolution === "ok");
-  if (decisionCase.status !== "placed" && allHorizonsTerminal) {
+  if (decisionCase.status !== "placed" && decisionCase.status !== "filled" && allHorizonsTerminal) {
     const headline = pickHeadlineRow(okRows);
     if (headline && typeof headline.returnPct === "number") {
       return {
@@ -400,6 +420,250 @@ async function measureCase(
   // Still maturing (placed-with-open-lot, or horizons not yet due): write the partial ledger so the
   // memory doc reflects everything measured so far; the job re-visits after recheckMs.
   return { status: "open", note, measuredAt: ctx.nowIso, outcomes };
+}
+
+/** Fire-safe enqueue of the 15m/1h 'sample_intraday_horizon' due-jobs for a decision case whose
+ * entry basis was just resolved. Never throws into measureCase's caller. */
+function enqueueIntradayDecisionSampleJobs(
+  decisionCase: SocraticDecisionCase,
+  symbol: string,
+  basisPrice: number,
+  basisAtMs: number,
+  priceBasisPrefix: string
+): void {
+  try {
+    const specs = buildIntradaySampleJobSpecs({
+      caseKind: "decision",
+      caseId: decisionCase.id,
+      runId: decisionCase.runId,
+      symbol,
+      basisPrice,
+      basisAtMs,
+      side: decisionCase.side,
+      priceBasisPrefix
+    });
+    for (const spec of specs) {
+      enqueueDueJob({
+        jobType: "sample_intraday_horizon",
+        dedupeKey: spec.dedupeKey,
+        dueAt: spec.dueAt,
+        notAfter: spec.notAfter,
+        payload: spec.payload,
+        userId: decisionCase.userId,
+        connectedAccountId: decisionCase.connectedAccountId
+      });
+    }
+  } catch (err) {
+    console.warn("[outcome-engine] intraday sample job enqueue failed:", err instanceof Error ? err.message : String(err));
+  }
+}
+
+// ── Durable due-jobs worker: 'sample_intraday_horizon' ───────────────────────────────────────────
+// Drains jobs enqueued above (from either the decision-case or the counterfactual pipeline) that
+// are now due: samples a live quote, writes the same SocraticOutcomeHorizonRow shape the inline
+// samplableNow path in measureCase writes, through the SAME merge path (mergeHorizonRows +
+// writeSocraticDecisionOutcome / markSkippedCounterfactual*), so there is exactly one code path for
+// "what a resolved 15m/1h row looks like" regardless of which trigger sampled it.
+
+interface IntradaySampleJobPayload {
+  caseKind: "decision" | "counterfactual";
+  caseId: string;
+  /** The owning decision/signal-snapshot run, carried explicitly from enqueue time. Required for
+   * caseKind 'counterfactual' (the exact-match lookup key); optional/informational for 'decision'
+   * (which is looked up directly by caseId). */
+  runId?: string;
+  symbol: string;
+  /** Only present for caseKind === 'counterfactual' — the exact horizon_days of the owning row. */
+  horizonDays?: number;
+  horizon: "15m" | "1h";
+  basisPrice: number;
+  basisAtMs: number;
+  side?: OrderSide;
+  priceBasisPrefix: string;
+}
+
+function parseIntradaySampleJobPayload(raw: Record<string, unknown>): IntradaySampleJobPayload | undefined {
+  const caseKind = raw.caseKind === "decision" || raw.caseKind === "counterfactual" ? raw.caseKind : undefined;
+  const caseId = typeof raw.caseId === "string" ? raw.caseId : undefined;
+  const runId = typeof raw.runId === "string" ? raw.runId : undefined;
+  const symbol = typeof raw.symbol === "string" ? raw.symbol : undefined;
+  const horizonDays = typeof raw.horizonDays === "number" && Number.isFinite(raw.horizonDays) ? raw.horizonDays : undefined;
+  const horizon = raw.horizon === "15m" || raw.horizon === "1h" ? raw.horizon : undefined;
+  const basisPrice = typeof raw.basisPrice === "number" && Number.isFinite(raw.basisPrice) ? raw.basisPrice : undefined;
+  const basisAtMs = typeof raw.basisAtMs === "number" && Number.isFinite(raw.basisAtMs) ? raw.basisAtMs : undefined;
+  const side = raw.side === "buy" || raw.side === "sell" || raw.side === "short" || raw.side === "cover" ? raw.side : undefined;
+  const priceBasisPrefix = typeof raw.priceBasisPrefix === "string" ? raw.priceBasisPrefix : undefined;
+  if (!caseKind || !caseId || !symbol || !horizon || basisPrice === undefined || basisAtMs === undefined || !priceBasisPrefix) {
+    return undefined;
+  }
+  // For 'counterfactual' jobs, runId + horizonDays are required for the exact-match lookup — a
+  // payload missing either (e.g. a pre-fix enqueued job surviving a deploy) cannot be resolved
+  // precisely and is treated as malformed rather than silently falling back to a fuzzy match.
+  if (caseKind === "counterfactual" && (!runId || horizonDays === undefined)) {
+    return undefined;
+  }
+  return { caseKind, caseId, runId, symbol, horizonDays, horizon, basisPrice, basisAtMs, side, priceBasisPrefix };
+}
+
+export interface DrainDueIntradaySampleJobsResult {
+  drained: number;
+  completed: number;
+  unresolvable: number;
+  /** Jobs that hit a caught error this pass (owning case not found, quote fetch/exception, etc.) and
+   * were routed through failDueJob — MOST of these are retried (pushed-out due_at, back to
+   * 'pending'), not terminally failed (db-jobs.ts has no 'failed' status; failDueJob only ever
+   * yields 'pending' or 'unresolvable'). Named to avoid implying a persisted "failed" job state —
+   * see review finding #3: this used to be called `failed`, which collided in meaning with
+   * getDueJobStats().failed, a status value nothing ever produces. */
+  erroredRetried: number;
+}
+
+/**
+ * Claim and process up to `limit` due 'sample_intraday_horizon' jobs. For each: sample a live quote
+ * (via `fetchQuote`, defaulting to the same defaultQuoteFetcher the inline path uses), compute the
+ * horizon row with computeIntradayHorizonRows, merge it into the owning decision case / skipped
+ * counterfactual's persisted outcomes via the exact same helpers writeSocraticDecisionOutcome /
+ * markSkippedCounterfactualMatured-adjacent path uses, then complete/fail/unresolvable the job.
+ * Never throws — a per-job failure is caught, failDueJob'd (retried with backoff or terminated), and
+ * draining continues with the rest of the batch.
+ */
+export async function drainDueIntradaySampleJobs(
+  now: number = Date.now(),
+  options: { limit?: number; leaseMs?: number; claimant?: string; fetchQuote?: OutcomeQuoteFetcher } = {}
+): Promise<DrainDueIntradaySampleJobsResult> {
+  const fetchQuote = options.fetchQuote ?? defaultQuoteFetcher;
+  const claimant = options.claimant ?? `outcome-engine:${process.pid}`;
+  const jobs = claimDueJobs("sample_intraday_horizon", {
+    limit: options.limit ?? 20,
+    leaseMs: options.leaseMs ?? 5 * 60_000,
+    claimant,
+    now: new Date(now)
+  });
+
+  let completed = 0;
+  let unresolvable = 0;
+  let erroredRetried = 0;
+
+  for (const job of jobs) {
+    try {
+      const payload = parseIntradaySampleJobPayload(job.payload);
+      if (!payload) {
+        markDueJobUnresolvable(job.id, claimant, "malformed_payload");
+        unresolvable += 1;
+        continue;
+      }
+
+      const nowIso = new Date(now).toISOString();
+      const elapsedMs = now - payload.basisAtMs;
+      const horizonSpec = INTRADAY_HORIZONS.find((h) => h.horizon === payload.horizon);
+      const pastWindow = horizonSpec ? elapsedMs > horizonSpec.ms + horizonSpec.toleranceMs : true;
+
+      const existingOutcomes = readExistingOutcomes(payload, job.userId ?? "local");
+      if (existingOutcomes?.some((row) => row.horizon === payload.horizon && row.resolution === "ok")) {
+        // The inline path (or an earlier worker pass) already resolved this horizon — nothing to do.
+        completeDueJob(job.id, claimant, { skipped: "already_resolved" }, nowIso);
+        completed += 1;
+        continue;
+      }
+
+      const quotePrice = pastWindow ? undefined : await fetchQuote(payload.symbol, job.userId).catch(() => undefined);
+      const rows = computeIntradayHorizonRows({
+        basisPrice: payload.basisPrice,
+        basisAtMs: payload.basisAtMs,
+        side: payload.side,
+        nowMs: now,
+        quotePrice,
+        priceBasisPrefix: payload.priceBasisPrefix,
+        measuredAt: nowIso
+      });
+      const row = rows.find((r) => r.horizon === payload.horizon);
+
+      if (!row) {
+        // Window still open and no quote sampled yet — not an error, just not due for completion.
+        // Leave the job claimed; its lease will expire and a later drain pass retries the sample.
+        continue;
+      }
+
+      const wrote = await writeIntradaySampleRow(payload, row, job.userId ?? "local");
+      if (!wrote) {
+        failDueJob(job.id, claimant, "owning_case_not_found");
+        erroredRetried += 1;
+        continue;
+      }
+
+      if (row.resolution === "unresolvable") {
+        completeDueJob(job.id, claimant, { resolution: "unresolvable", reason: row.reason }, nowIso);
+        unresolvable += 1;
+      } else {
+        completeDueJob(job.id, claimant, { resolution: "ok", returnPct: row.returnPct }, nowIso);
+        completed += 1;
+      }
+    } catch (err) {
+      failDueJob(job.id, claimant, err instanceof Error ? err.message : String(err));
+      erroredRetried += 1;
+    }
+  }
+
+  if (jobs.length > 0) {
+    audit("due_jobs_intraday_sample_drain", {
+      drained: jobs.length,
+      completed,
+      unresolvable,
+      erroredRetried,
+      stats: getDueJobStats("sample_intraday_horizon")
+    });
+  }
+
+  return { drained: jobs.length, completed, unresolvable, erroredRetried };
+}
+
+/** Existing persisted outcome rows for the job's owning case, read fresh so the "already resolved
+ * by the inline path" check can't race a stale in-payload snapshot. Looks up the counterfactual by
+ * its exact natural key (runId + symbol + horizonDays, all carried explicitly in the job payload
+ * since the enqueue-time fix) rather than parsing caseId — a caseId is an opaque identifier, not a
+ * format contract, so string-splitting it was fragile and (worse) ignored horizonDays entirely,
+ * silently matching the wrong row whenever a run/symbol pair had more than one horizon. */
+function readExistingOutcomes(payload: IntradaySampleJobPayload, userId: string): SocraticOutcomeHorizonRow[] | undefined {
+  if (payload.caseKind === "decision") {
+    return getSocraticDecisionCase(payload.caseId, userId)?.outcome?.outcomes;
+  }
+  if (!payload.runId || payload.horizonDays === undefined) return undefined;
+  const counterfactual = getSkippedCounterfactualByRunSymbolHorizon(userId, payload.runId, payload.symbol, payload.horizonDays);
+  return counterfactual?.outcomes;
+}
+
+/** Merge one freshly-computed horizon row into the owning case's persisted outcomes and write it
+ * back through the SAME writer the case's own maturation pass uses. Returns false when the owning
+ * case/counterfactual no longer exists (e.g. deleted) — not an error, just nothing to write. */
+async function writeIntradaySampleRow(
+  payload: IntradaySampleJobPayload,
+  row: SocraticOutcomeHorizonRow,
+  userId: string
+): Promise<boolean> {
+  if (payload.caseKind === "decision") {
+    const decisionCase = getSocraticDecisionCase(payload.caseId, userId);
+    if (!decisionCase) return false;
+    const outcomes = mergeHorizonRows(decisionCase.outcome?.outcomes, [row]);
+    const status = decisionCase.outcome?.status ?? "open";
+    await writeSocraticDecisionOutcome(
+      payload.caseId,
+      { status, returnPct: decisionCase.outcome?.returnPct, pnlUsd: decisionCase.outcome?.pnlUsd, note: decisionCase.outcome?.note, measuredAt: row.maturedAt ?? new Date().toISOString(), outcomes },
+      userId
+    );
+    return true;
+  }
+
+  if (!payload.runId || payload.horizonDays === undefined) return false;
+  const counterfactual = getSkippedCounterfactualByRunSymbolHorizon(userId, payload.runId, payload.symbol, payload.horizonDays);
+  if (!counterfactual) return false;
+  const outcomes = mergeHorizonRows(counterfactual.outcomes, [row]);
+  // The counterfactual pipeline's own writer (markSkippedCounterfactualMatured /
+  // markSkippedCounterfactualUnresolvable) requires an exit bar / terminal-reason argument this
+  // worker doesn't have — an intraday sample alone doesn't close the whole counterfactual, only one
+  // horizon row within it. Persist via the shared low-level updater instead (no-ops harmlessly once
+  // the row has already gone terminal, since that writer is also status='pending'-gated).
+  updateSkippedCounterfactualOutcomes(counterfactual.id, userId, outcomes);
+  return true;
 }
 
 /** Longest resolved horizon wins the headline: 1w > 1d > 1h > 15m. */
@@ -501,8 +765,22 @@ async function generatePostMortemLessons(
     decisionCase.connectedAccountId
   );
 
-  // Route each lesson through the shared learned-context ingestion (origin 'autonomous'): the
-  // fail-closed classifier decides fact-vs-risk tier; risk-tier lessons land in the approval inbox.
+  // Route each lesson through the account-scoped learned-context boundary. A historical case without
+  // an attributable connected account may retain its embedded case/lesson, but it cannot enter a
+  // decision prompt as portfolio-wide context because its paper/live provenance is unknowable.
+  const lessonAccount = decisionCase.connectedAccountId
+    ? getConnectedAccount(decisionCase.connectedAccountId, userId)
+    : undefined;
+  if (!lessonAccount) {
+    audit(
+      "learned_context.account_provenance_missing",
+      { userId, decisionId: decisionCase.id, connectedAccountId: decisionCase.connectedAccountId ?? null },
+      userId,
+      decisionCase.connectedAccountId
+    );
+    return { written: true };
+  }
+
   for (const { lesson, direction } of parsed.lessons) {
     try {
       await ingestLearned(
@@ -515,7 +793,8 @@ async function generatePostMortemLessons(
           source: "inferred",
           confidence: 0.55
         },
-        "autonomous"
+        "autonomous",
+        { connectedAccountId: lessonAccount.id, accountEnvironment: lessonAccount.environment }
       );
     } catch (err) {
       console.warn("[outcome-engine] ingestLearned for lesson failed:", err instanceof Error ? err.message : String(err));
@@ -525,15 +804,27 @@ async function generatePostMortemLessons(
   return { written: true };
 }
 
-/** Real LLM call (same plumbing as post-mortem.ts). Returns undefined when no key is configured. */
-async function callLessonLlm(userId: string, userContent: string): Promise<string | undefined> {
+/**
+ * Real LLM call (same plumbing as post-mortem.ts). Returns undefined when no key is configured.
+ *
+ * INTENTIONALLY EXEMPT from strategy.ts's run-scoped usage-budget model downgrade: this job runs
+ * fire-and-forget, detached from any single `runStrategyOnce` call's lifetime (it matures cases
+ * across accounts/runs and can still be in flight after the triggering run returns), so there is no
+ * single well-defined "this run's downgrade" to hand it. It always re-reads the owner's persisted
+ * (undowngraded) policy — same behavior as before the usage-budget downgrade existed.
+ */
+export async function callLessonLlm(userId: string, userContent: string): Promise<string | undefined> {
   const policy = getPolicy(userId);
   const { url, key, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(
     policy,
     userId,
     "https://api.openai.com/v1/chat/completions"
   );
-  if (!key) return undefined;
+  // No-defaults / rotation-sentinel safety net: resolveLlmEndpoint maps an unconfigured OR "__rotate__"
+  // model to "" outside a strategy run (rotation is resolved only inside runStrategyOnce), so a blank
+  // model with a present key must be treated as unconfigured — skip cleanly rather than POST model:""
+  // (which 400s on every post-mortem lesson call). Same contract as strategy-tuning's local-rules gate.
+  if (!key || !model) return undefined;
 
   const body = buildLlmRequestBody(
     { provider, transport },
@@ -542,7 +833,11 @@ async function callLessonLlm(userId: string, userContent: string): Promise<strin
       systemPrompt: LESSON_SYSTEM_PROMPT,
       userContent,
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection,
-      reasoningEffort: policy.llmReasoningEffort
+      reasoningEffort: policy.llmReasoningEffort,
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "outcome-postmortem"
     }
   );
 
@@ -570,7 +865,7 @@ async function callLessonLlm(userId: string, userContent: string): Promise<strin
         return { text: undefined };
       }
       const payload = await response.json();
-      recordLlmUsage({ userId, provider, model, context: "outcome-postmortem", keySource, keyRef, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId, provider, model, context: "outcome-postmortem", keySource, keyRef, connectedAccountId: policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(provider, payload), ...extractLlmUsage(payload) });
       const text = extractLlmText(payload);
       return { text: typeof text === "string" ? text : undefined };
     }

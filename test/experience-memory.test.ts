@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   storeContexts: mocks.storeContexts,
   storeContext: async () => {},
   retrieveContext: async () => [],
@@ -146,10 +148,11 @@ describe("closed-lot write hook (recordFillFromProposal → recordClosedLotExper
     const [documents, userId, options] = mocks.storeContexts.mock.calls[0]! as unknown as [
       Array<{ text: string; metadata: Record<string, unknown> }>,
       string,
-      { dedupKeyPrefix?: string }
+      { dedupKeyPrefix?: string; scope?: string }
     ];
     expect(userId).toBe("local");
     expect(options?.dedupKeyPrefix).toBe("experience-memory");
+    expect(options?.scope).toBe("private");
     expect(documents).toHaveLength(1);
     const doc = documents[0]!;
 
@@ -250,6 +253,63 @@ describe("situation-sketch query shape", () => {
     // Distinct from the filings pass query built in strategy.ts.
     expect(sketch).not.toContain("Significant financial events, SEC filings, and macro catalysts");
   });
+
+  it("drops candidates beyond index 3 when none are marked held (regression: non-held path unchanged)", async () => {
+    const { buildSituationSketch } = await import("../src/lib/experience-memory");
+    const sketch = buildSituationSketch({
+      regime: "Neutral",
+      candidates: [
+        { symbol: "AAPL" },
+        { symbol: "MSFT" },
+        { symbol: "GOOGL" },
+        { symbol: "AMZN" } // index 3, not held — must NOT appear (byte-identical to slice(0, 3))
+      ]
+    });
+    expect(sketch).toContain("AAPL");
+    expect(sketch).toContain("MSFT");
+    expect(sketch).toContain("GOOGL");
+    expect(sketch).not.toContain("AMZN");
+  });
+
+  it("includes a held candidate beyond the top-3 cutoff (held-position retrieval scope fix)", async () => {
+    const { buildSituationSketch } = await import("../src/lib/experience-memory");
+    const sketch = buildSituationSketch({
+      regime: "Neutral",
+      candidates: [
+        { symbol: "AAPL" },
+        { symbol: "MSFT" },
+        { symbol: "GOOGL" },
+        { symbol: "ORCL", sector: "Technology", held: true } // held, appended past top-3
+      ]
+    });
+    expect(sketch).toContain("AAPL");
+    expect(sketch).toContain("MSFT");
+    expect(sketch).toContain("GOOGL");
+    expect(sketch).toContain("ORCL");
+    expect(sketch).toContain("sector Technology");
+  });
+
+  it("caps total candidates folded into the sketch so a large held book can't unbound the query", async () => {
+    const { buildSituationSketch } = await import("../src/lib/experience-memory");
+    const heldSymbols = ["ORCL", "IBM", "CSCO", "INTC", "QCOM"]; // 5 held, only 3 fit the budget (6 - 3 top)
+    const sketch = buildSituationSketch({
+      regime: "Neutral",
+      candidates: [
+        { symbol: "AAPL" },
+        { symbol: "MSFT" },
+        { symbol: "GOOGL" },
+        ...heldSymbols.map((symbol) => ({ symbol, held: true }))
+      ]
+    });
+    const includedHeld = heldSymbols.filter((symbol) => sketch.includes(symbol));
+    expect(includedHeld.length).toBe(3);
+    // First-in-order held candidates win the budget (deterministic, not arbitrary).
+    expect(sketch).toContain("ORCL");
+    expect(sketch).toContain("IBM");
+    expect(sketch).toContain("CSCO");
+    expect(sketch).not.toContain("INTC");
+    expect(sketch).not.toContain("QCOM");
+  });
 });
 
 describe("decision-time retrieval (retrieveDecisionExperiences)", () => {
@@ -275,6 +335,7 @@ describe("decision-time retrieval (retrieveDecisionExperiences)", () => {
     const result = await retrieveDecisionExperiences({
       userId: "local",
       runId,
+      connectedAccountId: "account-a",
       regime: "Risk-On",
       candidates: [{ symbol: "NVDA", sector: "Technology", dominantFactor: "momentum" }],
       asOf
@@ -286,12 +347,14 @@ describe("decision-time retrieval (retrieveDecisionExperiences)", () => {
       string,
       number,
       string,
-      { docType?: string[]; matchAllSymbols?: boolean; asOf?: string }
+      { docType?: string[]; matchAllSymbols?: boolean; asOf?: string; connectedAccountId?: string; accountScope?: string }
     ];
     expect(query).toContain("market regime Risk-On");
     expect(options.docType).toEqual(["socratic-decision", "coach-note", "lesson"]);
     expect(options.matchAllSymbols).toBe(true);
     expect(options.asOf).toBe(asOf);
+    expect(options.connectedAccountId).toBe("account-a");
+    expect(options.accountScope).toBe("exact");
 
     // Same-run neighbors (entry OR exit side) are excluded — no self-retrieval, no lookahead.
     const injectedIds = result.injected.map((ref) => ref.id);
