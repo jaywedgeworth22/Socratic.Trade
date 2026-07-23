@@ -3,6 +3,13 @@
 Public + console dark backgrounds retinted from blue/slate/navy to neutral
 near-black `#0a0a0a` for logo contrast on `/login` and cleaner cockpit surfaces.
 Dark mesh orb opacity cut sharply. Docs: `docs/rollouts/2026-07-22-dark-mode-near-black.md`.
+## 2026-07-22 — Grok forgotten-PR audit (CURSOR)
+
+Multi-agent review of Grok combined/forgotten lands vs current main. **Closed #1952** (congress
+re-land undoes shared-package + bounded-body hardenings; real verify tsc failure) and **18 stale
+reopens** that were already on main or fought newer main. **Kept open:** fragments #1892 / #1901 /
+#1902 / #1903 (fix then solo-land) and independent #1792 / #1819 / #1842. No product merge/deploy
+from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
 # Current Status
 
