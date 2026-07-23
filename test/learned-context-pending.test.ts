@@ -35,6 +35,10 @@ import { userIdForEmail } from "../src/lib/auth/identity";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${process.env.TMPDIR ?? "/tmp"}/learned-context-pending-test-${Date.now()}.db`;
+  // These tests use KEYWORD-flagged risk candidates (the keyword layer returns 'risk' before the gate
+  // ever calls the LLM) and assert the pending-queue routing / approval safety invariants. Turn the LLM
+  // gate OFF so the suite is fully offline; the gate's behavior is covered in test/semantic-gate.test.ts.
+  process.env.LEARNED_CONTEXT_SEMANTIC_GATE = "off";
   getDb();
 });
 
@@ -82,6 +86,10 @@ function seedDirectivePending(userId: string): LearnedContextPendingRow {
     source: "inferred",
     origin: "autonomous",
     riskTier: "strategy-directive",
+    connectedAccountId: null,
+    accountEnvironment: null,
+    learningScope: "portfolio",
+    transferState: "not_applicable",
     classifierReason: "producer-tagged strategy-directive; queued for human confirmation",
     createdAt: new Date().toISOString(),
     status: "pending",
@@ -91,8 +99,8 @@ function seedDirectivePending(userId: string): LearnedContextPendingRow {
 }
 
 describe("risk-tier confirmation queue — ingest routing", () => {
-  it("an AUTONOMOUS risk candidate is QUEUED (pending row created, not dropped, not written)", () => {
-    const r = ingestLearned(USER_A, riskCandidate, "autonomous");
+  it("an AUTONOMOUS risk candidate is QUEUED (pending row created, not dropped, not written)", async () => {
+    const r = await ingestLearned(USER_A, riskCandidate, "autonomous");
     expect(r.written).toBeNull();
     expect(r.dropped).toBeNull();
     expect(r.pending).not.toBeNull();
@@ -107,9 +115,9 @@ describe("risk-tier confirmation queue — ingest routing", () => {
     expect(listAudit(50, USER_A).some((a) => a.kind === "learned_context.pending")).toBe(true);
   });
 
-  it("a CHAT risk candidate is HARD-CAPPED: dropped, never queued", () => {
+  it("a CHAT risk candidate is HARD-CAPPED: dropped, never queued", async () => {
     const before = listPendingLearnedContext(USER_A, "pending").length;
-    const r = ingestLearned(
+    const r = await ingestLearned(
       USER_A,
       { kind: "pattern", subject: "growth", value: "lean much harder into growth", intent: "lean much harder into growth" },
       "chat"
@@ -160,7 +168,7 @@ describe("approve — strategy-directive APPENDS an attributed prompt block (ide
 });
 
 describe("approve — risk PROMOTES to advisory row WITHOUT mutating numeric policy", () => {
-  it("creates a learned_context row AND leaves getPolicy() byte-identical", () => {
+  it("creates a learned_context row AND leaves getPolicy() byte-identical", async () => {
     // Seed a known, non-default numeric policy so a mutation would be detectable.
     const seeded = { ...getPolicy(USER_A), maxOrderNotional: 12_345, maxDailyNotional: 67_890 };
     setPolicy(seeded, USER_A);
@@ -168,7 +176,7 @@ describe("approve — risk PROMOTES to advisory row WITHOUT mutating numeric pol
     const policyBefore = JSON.stringify(getPolicy(USER_A));
     const promptBefore = getStrategyPrompt(USER_A);
 
-    const r = ingestLearned(USER_A, riskCandidate, "ingest");
+    const r = await ingestLearned(USER_A, riskCandidate, "ingest");
     const id = r.pendingId!;
     expect(r.pending?.riskTier).toBe("risk");
 
@@ -187,12 +195,12 @@ describe("approve — risk PROMOTES to advisory row WITHOUT mutating numeric pol
 });
 
 describe("reject — nothing is applied", () => {
-  it("marks rejected, writes no learned_context row, leaves prompt + policy unchanged", () => {
+  it("marks rejected, writes no learned_context row, leaves prompt + policy unchanged", async () => {
     const policyBefore = JSON.stringify(getPolicy(USER_A));
     const promptBefore = getStrategyPrompt(USER_A);
     const advisoryBefore = listLearnedContext(USER_A).length;
 
-    const r = ingestLearned(
+    const r = await ingestLearned(
       USER_A,
       { kind: "pattern", subject: "leverage", value: "use 2x leverage on conviction names" },
       "autonomous"
@@ -212,8 +220,8 @@ describe("reject — nothing is applied", () => {
 });
 
 describe("ownership isolation — user B cannot touch user A's pending row", () => {
-  it("approve/reject by user B returns 404 and changes nothing; list is per-user", () => {
-    const r = ingestLearned(USER_A, { kind: "pattern", subject: "drawdown", value: "tolerate 20% drawdown" }, "autonomous");
+  it("approve/reject by user B returns 404 and changes nothing; list is per-user", async () => {
+    const r = await ingestLearned(USER_A, { kind: "pattern", subject: "drawdown", value: "tolerate 20% drawdown" }, "autonomous");
     const id = r.pendingId!;
 
     // User B's list never shows user A's row.

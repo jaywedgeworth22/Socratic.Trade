@@ -1,11 +1,34 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import dns from "node:dns";
+import { withSentryConfig } from "@sentry/nextjs";
 
+dns.setDefaultResultOrder("ipv4first");
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   outputFileTracingRoot: __dirname,
+  async headers() {
+    return [
+      {
+        // /framework is human-eyes-only: never indexed, cached, archived, or
+        // used for AI training. Enforcement is layered — these headers are the
+        // published opt-out; the route itself gates on user-agent and renders
+        // content client-side only (see app/framework/).
+        source: "/framework",
+        headers: [
+          {
+            key: "X-Robots-Tag",
+            value: "noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai"
+          },
+          { key: "Cache-Control", value: "private, no-store, max-age=0" },
+          // TDM Reservation Protocol (W3C TDMRep): reserve text-and-data-mining rights.
+          { key: "tdm-reservation", value: "1" }
+        ]
+      }
+    ];
+  },
   serverExternalPackages: ["better-sqlite3", "@pinecone-database/pinecone", "voyageai"],
   webpack: (config, { isServer, nextRuntime }) => {
     if (!isServer || nextRuntime === "edge") {
@@ -18,7 +41,19 @@ const nextConfig = {
         "node:path": false,
         "node:crypto": false,
         "node:zlib": false,
-        "node:stream": false
+        "node:stream": false,
+        // src/lib/egress-guard.ts (SSRF guard) statically imports node:dns/node:net. It is
+        // Node-runtime-only in practice (imported by src/lib/notify.ts and notifications.ts,
+        // which instrumentation.ts's register() reaches via a dynamic, non-webpackIgnore'd
+        // `await import("./src/lib/db")` -> db.ts's `export * from "./db-health"` ->
+        // db-health.ts's dynamic `import("./notify")`/`import("./notifications")`). Because
+        // instrumentation.ts is compiled by webpack for the edge runtime too (see the
+        // node:dns webpackIgnore comment in that file), webpack still has to resolve this
+        // whole chain for the edge/client targets even though it never runs there — same
+        // class of problem as better-sqlite3 and the node:fs/path/crypto/zlib/stream stubs
+        // above, just for two builtins nothing needed until this guard existed.
+        "node:dns": false,
+        "node:net": false
       };
       config.resolve.fallback = {
         ...(config.resolve.fallback ?? {}),
@@ -27,7 +62,9 @@ const nextConfig = {
         util: false,
         crypto: false,
         zlib: false,
-        stream: false
+        stream: false,
+        dns: false,
+        net: false
       };
     }
     return config;
@@ -40,4 +77,46 @@ const nextConfig = {
   }
 };
 
-export default nextConfig;
+// Sentry build wrapper: injects the client/server/edge config imports and (when a
+// build-time SENTRY_AUTH_TOKEN is present) uploads source maps so production stack
+// traces are de-minified. With no auth token it is inert — no upload, no events.
+// Source-map upload only runs when org + project + authToken are all set.
+export default withSentryConfig(nextConfig, {
+  // For all available options, see:
+  // https://www.npmjs.com/package/@sentry/webpack-plugin#options
+
+  org: process.env.SENTRY_ORG || "jays-services",
+
+  project: process.env.SENTRY_PROJECT || "socratic-trade",
+
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+
+  // Only print logs for uploading source maps in CI
+  silent: !process.env.CI,
+
+  // For all available options, see:
+  // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
+
+  // Upload a larger set of source maps for prettier stack traces (increases build time)
+  widenClientFileUpload: true,
+
+  // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
+  // This can increase your server load as well as your hosting bill.
+  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
+  // side errors will fail.
+  // tunnelRoute: "/monitoring",
+
+  webpack: {
+    // Enables automatic instrumentation of Vercel Cron Monitors. (Does not yet work with App Router route handlers.)
+    // See the following for more information:
+    // https://docs.sentry.io/product/crons/
+    // https://vercel.com/docs/cron-jobs
+    automaticVercelMonitors: true,
+
+    // Tree-shaking options for reducing bundle size
+    treeshake: {
+      // Automatically tree-shake Sentry logger statements to reduce bundle size
+      removeDebugLogging: true,
+    },
+  }
+});

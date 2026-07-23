@@ -9,8 +9,8 @@ than merged.
 
 Actions taken:
 - **Worktree repair.** The four `~/apps/trading-*` worktrees had stale `.git`
-  pointers (still referencing the pre-move `~/Documents/Robinhood Agentic Trading`
-  path) and could not run git. Fixed with `git worktree repair` from the main
+  pointers (still referencing the pre-move Documents checkout path) and could
+  not run git. Fixed with `git worktree repair` from the main
   checkout; all four resolve again.
 - **`main` verified green:** `npx tsc --noEmit` clean, `npm test` 307 passing (40
   files), `npm run build` green.

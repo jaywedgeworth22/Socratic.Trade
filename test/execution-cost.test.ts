@@ -41,25 +41,36 @@ describe("applyExecutionCost — adverse direction", () => {
   });
 });
 
-describe("executionCostConfig — default OFF", () => {
+describe("executionCostConfig — default ON", () => {
   afterEach(() => {
     delete process.env.PAPER_EXECUTION_COST_MODEL;
     delete process.env.PAPER_EXECUTION_COST_BASE_BPS;
     delete process.env.PAPER_EXECUTION_IMPACT_COEFF;
   });
 
-  it("is disabled with no env set", () => {
-    expect(executionCostConfig().enabled).toBe(false);
+  it("is ENABLED with no env set (default ON)", () => {
+    const cfg = executionCostConfig();
+    expect(cfg.enabled).toBe(true);
+    // Default base slippage is 1 bps (conservative, non-zero).
+    expect(cfg.baseSlippageBps).toBe(1);
+    expect(cfg.impactCoeff).toBe(10); // default impact coeff
   });
 
-  it("enables via the flag", () => {
+  it("can be disabled with an explicit opt-out flag", () => {
+    for (const val of ["0", "false", "off", "no"]) {
+      process.env.PAPER_EXECUTION_COST_MODEL = val;
+      expect(executionCostConfig().enabled).toBe(false);
+    }
+  });
+
+  it("truthy flag values keep it enabled", () => {
     process.env.PAPER_EXECUTION_COST_MODEL = "on";
     const cfg = executionCostConfig();
     expect(cfg.enabled).toBe(true);
-    expect(cfg.impactCoeff).toBe(10); // default
+    expect(cfg.impactCoeff).toBe(10);
   });
 
-  it("enables via a positive base bps and reads overrides", () => {
+  it("a positive base bps override is used when set, keeps it enabled", () => {
     process.env.PAPER_EXECUTION_COST_BASE_BPS = "8";
     process.env.PAPER_EXECUTION_IMPACT_COEFF = "20";
     const cfg = executionCostConfig();

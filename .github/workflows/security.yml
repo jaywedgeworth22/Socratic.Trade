@@ -1,0 +1,61 @@
+name: Security
+
+on:
+  pull_request:
+  # Required for the GitHub merge queue: the `gitleaks` check must run on the
+  # queue's temporary merge_group branch, or queued PRs hang forever.
+  merge_group:
+  push:
+    branches:
+      - main
+  # Cost note (2026-07-05): dropped the duplicate `agent/**` push trigger — agent
+  # branches run `gitleaks` via their PR (`pull_request`) already. NOTE: gitleaks is
+  # deliberately NOT given a docs-only fast path — a leaked secret in a *.md/docs file
+  # is still a leak, so it must scan every diff including documentation.
+  schedule:
+    - cron: "41 10 * * 1"
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    # 2026-07-18: GitHub-hosted `ubuntu-latest` is not assigning runners for this repo
+    # (runner_id=0/no step logs), so the required secret scan runs on Coolify socratic-ci (trading-live Mac is often offline).
+    runs-on: [self-hosted, socratic-ci]
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Refuse untrusted PR source
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "::error::Fork PRs cannot run this job."
+            exit 1
+          fi
+          actor="${{ github.actor }}"
+          if printf '%s' "$actor" | grep -Eq '\[bot\]$'; then
+            case "$actor" in
+              'cursor[bot]'|'dependabot[bot]')
+                echo "Trusted same-repo bot: $actor"
+                ;;
+              *)
+                echo "::error::Bot PRs cannot run this job (untrusted bot: $actor)."
+                exit 1
+                ;;
+            esac
+          fi
+      - uses: actions/checkout@v4
+        with:
+          # Gitleaks must see full history: a secret added and removed in an
+          # earlier PR commit must remain scannable, as must scheduled history.
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gitleaks-action's optional SARIF artifact upload assumes the workspace is under HOME.
+          # Coolify's runner workspace is /_work, so the upload fails after a clean scan.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
