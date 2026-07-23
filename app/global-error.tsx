@@ -20,9 +20,9 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
             block (--bg, --fg, --muted, --accent, --accent-fg, --line). */}
         <style>{`
           @media (prefers-color-scheme: dark) {
-            .global-error-main { background: #111827 !important; color: #e7eef6 !important; }
-            .global-error-message { color: #b8c3d0 !important; }
-            .global-error-digest { color: #a0b0c0 !important; }
+            .global-error-main { background: #0a0a0a !important; color: #f0f0f0 !important; }
+            .global-error-message { color: #b0b0b0 !important; }
+            .global-error-digest { color: #969696 !important; }
             .global-error-button {
               border-color: #58c7d3 !important;
               background: #58c7d3 !important;
@@ -38,7 +38,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
             placeItems: "center",
             padding: 24,
             background: "#f8fafc",
-            color: "#111827",
+            color: "#0a0a0a",
             fontFamily:
               '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
           }}
@@ -58,8 +58,8 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
               onClick={reset}
               className="global-error-button"
               style={{
-                border: "1px solid #111827",
-                background: "#111827",
+                border: "1px solid #0a0a0a",
+                background: "#0a0a0a",
                 color: "#fff",
                 borderRadius: 6,
                 padding: "10px 14px",
