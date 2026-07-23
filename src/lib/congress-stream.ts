@@ -20,7 +20,6 @@
 
 import { applyCongressEvent, type CongressEvent } from "./congress-trade-events";
 import { logApiHealth } from "./db-health";
-import { CongressTradeClient, SseParser, type SseMessage, type Subscription } from "@jaywedgeworth22/congress-trading-shared";
 
 const DEFAULT_PATH = "/api/stream";
 const MAX_BACKOFF_MS = 60_000;
@@ -164,8 +163,9 @@ export async function connectOnce(): Promise<void> {
   }
   const controller = new AbortController();
   state.controller = controller;
+  const token = readToken();
   const startedAt = Date.now();
-  const res = await fetch(streamUrl(sub.id), {
+  const res = await fetch(streamUrl(), {
     headers: {
       accept: "text/event-stream",
       authorization: `Bearer ${sub.secret}`, // App A reads the subscription secret from Bearer or ?token
@@ -204,8 +204,9 @@ export async function connectOnce(): Promise<void> {
     throw new Error(`SSE connect failed: HTTP ${res.status}${retryMsg}`);
   }
   state.backoffMs = INITIAL_BACKOFF_MS; // healthy connection → reset backoff
-  // Connection-health signal for the admin Connections page (App B's side of the App A → App B
-  // real-time link). Re-fires on each (re)connect within App A's ~25min stream lifetime.
+  // Connection-health signal for the admin Connections page (App B's side of the
+  // App A → App B real-time link). Re-fires on each (re)connect within App A's
+  // ~25min stream lifetime; connection failures log ok:false below.
   logApiHealth({ service: "congress.trade:sse", ok: true, latencyMs: Date.now() - startedAt });
 
   const reader = res.body.getReader();
@@ -236,35 +237,12 @@ async function runLoop(): Promise<void> {
     try {
       await connectOnce();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("[congress-stream] connection error:", msg);
-      
-      // Do not pollute api_health_log or loop infinitely if we legitimately lack credentials
-      if (msg.includes("no subscription configured")) {
-        console.warn("[congress-stream] disabling stream until credentials are provided.");
-        state.closing = true;
-        break;
-      }
-
-      // Record ALL failures in api_health_log so the admin dashboard shows current state.
-      // logApiHealth already detects 429|rate limit in error text and suppresses Sentry
-      // alerts via skipSentry (see db-health.ts line 172-174), so rate-limit backpressure
-      // events are recorded without noise.
+      console.error("[congress-stream] connection error:", err instanceof Error ? err.message : err);
       logApiHealth({
         service: "congress.trade:sse",
         ok: false,
-        errorText: msg,
+        errorText: err instanceof Error ? err.message : String(err),
       });
-
-      // Back off on 429 explicitly, using the parsed Retry-After seconds if available
-      const retryMatch = msg.match(/HTTP 429 \(Retry-After: (\d+)\)/);
-      if (retryMatch) {
-        const sec = parseInt(retryMatch[1], 10);
-        state.backoffMs = Math.max(state.backoffMs, sec * 1000);
-      } else if (msg.includes("HTTP 429")) {
-        // Default to a 60s backoff if 429 but no Retry-After
-        state.backoffMs = Math.max(state.backoffMs, 60_000);
-      }
     }
     if (state.closing) break;
     await sleep(state.backoffMs);
