@@ -28,4 +28,17 @@ describe("account scoping (T14)", () => {
     // The rolling hourly window mirrors the same scoping.
     expect(notionalInLastMinutes("", 60, new Date(), user).notional).toBe(10);
   });
+
+  it("can read the latest strategy-run audit for one connected account without cross-account bleed", async () => {
+    const { audit, latestAuditByKind } = await import("../src/lib/db");
+    const user = `audit-scope-${randomUUID()}`;
+    const accountA = randomUUID();
+    const accountB = randomUUID();
+
+    audit("strategy_run", { runId: "run-a", status: "failed", summary: "Account Mismatch", accountNumber: "A" }, user, accountA);
+    audit("strategy_run", { runId: "run-b", status: "completed", summary: "ok", accountNumber: "B" }, user, accountB);
+
+    expect((latestAuditByKind("strategy_run", user, accountA)?.payload as { runId?: string }).runId).toBe("run-a");
+    expect((latestAuditByKind("strategy_run", user, accountB)?.payload as { runId?: string }).runId).toBe("run-b");
+  });
 });

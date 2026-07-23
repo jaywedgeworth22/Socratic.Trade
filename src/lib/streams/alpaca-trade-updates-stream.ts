@@ -5,10 +5,18 @@
 // On a fill / partial_fill it runs the deterministic fill handler (reconcile + dashboard refresh).
 // Opt-in (STREAMS_ALPACA_TRADE_UPDATES_ENABLED); no-op without Alpaca keys.
 
-import { resolveApiKey } from "../db";
+import { resolveAlpacaStreamAccount } from "../db";
 import { onBrokerFill } from "../fills";
+import { fromAlpacaSymbol } from "../money";
 
-const TRADE_WS_URL = process.env.ALPACA_TRADE_WS_URL || "wss://paper-api.alpaca.markets/stream";
+// Paper and live Alpaca accounts authenticate against DIFFERENT trade_updates hosts — a live
+// key gets HTTP 401 against the paper host and vice versa. An explicit env override always
+// wins; otherwise the host is picked per-connection from the resolved account's environment
+// (see resolveAlpacaStreamAccount), not hardcoded to paper.
+function tradeWsUrl(environment: "paper" | "live"): string {
+  if (process.env.ALPACA_TRADE_WS_URL) return process.env.ALPACA_TRADE_WS_URL;
+  return environment === "live" ? "wss://api.alpaca.markets/stream" : "wss://paper-api.alpaca.markets/stream";
+}
 const MAX_BACKOFF_MS = 60_000;
 
 interface StreamState {
@@ -34,25 +42,25 @@ export function startAlpacaTradeUpdatesStream(): void {
     console.warn("[stream:alpaca-trades] global WebSocket unavailable; not starting.");
     return;
   }
-  // Process-level background worker (no per-request user): keyed to the `local` operator.
+  // Process-level background worker (no per-request user): keyed to the `local` operator's
+  // active connected Alpaca account (falls back to the legacy standalone key pair).
   // Multi-user fill streaming is a deferred refactor — fills observed here are the operator's.
-  const key = resolveApiKey("alpaca_paper_api_key", "local");
-  const secret = resolveApiKey("alpaca_paper_secret_key", "local");
-  if (!key) {
+  const creds = resolveAlpacaStreamAccount("local");
+  if (!creds) {
     console.warn("[stream:alpaca-trades] missing Alpaca API key; not starting.");
     return;
   }
   state.started = true;
-  connect(key, secret || undefined);
+  connect(creds.apiKey, creds.apiSecret, creds.environment);
 }
 
-function connect(key: string, secret?: string): void {
+function connect(key: string, secret: string | undefined, environment: "paper" | "live"): void {
   if (state.closing) return;
   let ws: WebSocket;
   try {
-    ws = new WebSocket(TRADE_WS_URL);
+    ws = new WebSocket(tradeWsUrl(environment));
   } catch {
-    scheduleReconnect(key, secret);
+    scheduleReconnect(key, secret, environment);
     return;
   }
   ws.binaryType = "arraybuffer";
@@ -94,7 +102,7 @@ function connect(key: string, secret?: string): void {
       if (ev !== "fill" && ev !== "partial_fill") return;
       const order = (data.order ?? {}) as Record<string, unknown>;
       const orderId = String(order.id ?? "");
-      const symbol = order.symbol ? String(order.symbol) : undefined;
+      const symbol = order.symbol ? fromAlpacaSymbol(String(order.symbol)) : undefined;
       const dedup = `${orderId}:${ev}:${String(data.timestamp ?? "")}`;
       if (state.seen.has(dedup)) return;
       state.seen.add(dedup);
@@ -108,15 +116,15 @@ function connect(key: string, secret?: string): void {
   };
   ws.onclose = () => {
     state.ws = undefined;
-    scheduleReconnect(key, secret);
+    scheduleReconnect(key, secret, environment);
   };
 }
 
-function scheduleReconnect(key: string, secret?: string): void {
+function scheduleReconnect(key: string, secret: string | undefined, environment: "paper" | "live"): void {
   if (state.closing) return;
   const delay = Math.min(state.backoffMs, MAX_BACKOFF_MS);
   state.backoffMs = Math.min(state.backoffMs * 2, MAX_BACKOFF_MS);
-  setTimeout(() => connect(key, secret), delay);
+  setTimeout(() => connect(key, secret, environment), delay);
 }
 
 export function stopAlpacaTradeUpdatesStream(): void {

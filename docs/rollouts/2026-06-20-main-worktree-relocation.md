@@ -2,14 +2,14 @@
 
 ## Summary
 
-The `main` (integration / review / merge) worktree moved on disk from
-`~/Documents/Robinhood Agentic Trading` → `~/Code/Agentic Trading`. Re-mapped
+The `main` (integration / review / merge) worktree moved on disk from the old
+Documents checkout to `~/Code/Agentic Trading`. Re-mapped
 every doc/script reference to the new path. Only the path strings changed — no
 behavior, ports, branches, or the multi-worktree model itself changed.
 
 ## Why
 
-The old `~/Documents/Robinhood Agentic Trading` directory no longer exists; the
+The old Documents checkout directory no longer exists; the
 canonical repo (the `.git` dir, branch `main`) now lives at
 `~/Code/Agentic Trading`. Verified via `git worktree list`: this checkout is the
 `main` worktree, and the old Documents path is gone. The new folder name also
@@ -22,9 +22,8 @@ drops the "Robinhood" prefix, consistent with the broker-neutral rename
   `~/apps/trading-claude` (4100), `~/apps/trading-codex` (4101),
   `~/apps/trading-antigravity` (4102), and production `~/apps/trading-live`
   (4000). Verified all four still present via `git worktree list` + `ls`.
-- Lines that reference "Robinhood Agentic Trading" as a *project name* (vs a
-  folder) were left intact — e.g. the broker-neutral rename note in `STATUS.md`
-  and `docs/rollouts/2026-06-20-project-rename-alignment.md`.
+- Product-name references and folder-path references were treated separately so
+  broker-neutral copy changes would not obscure the worktree relocation.
 - `CLAUDE.md` is a symlink to `AGENTS.md`, so editing `AGENTS.md` updated both.
 
 ## Files
@@ -45,7 +44,7 @@ drops the "Robinhood" prefix, consistent with the broker-neutral rename
 
 - `git worktree list` — confirmed `/Users/jay/Code/Agentic Trading` is `main`;
   agent worktrees + `trading-live` still registered.
-- `ls` on each old dir — `~/Documents/Robinhood Agentic Trading` MISSING; all
+- `ls` on each old dir — old Documents checkout MISSING; all
   four `~/apps/trading-*` EXIST.
 - `grep -rn "Documents/Robinhood\|Robinhood%20Agentic"` across `*.md`/`*.sh`/
   `*.json`/`*.ts`/`*.tsx` (excl. `node_modules`/`.next`) — 0 matches after edit.

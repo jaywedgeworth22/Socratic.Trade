@@ -1,0 +1,288 @@
+"use client";
+
+/** Market Scan column definitions for the console. Every column carries a
+ *  plain-language header tooltip (what it means + where it comes from) and a
+ *  per-cell tooltip with the field's OWN provenance from `quote.sources` —
+ *  attribution is always the specific provider that supplied the value, never
+ *  a hardcoded name. Missing data renders as "—"; P/E follows the repo rule:
+ *  "n/a" = negative/zero earnings (a real computed no-ratio state, decided by
+ *  `eps`), "—" = the data simply wasn't available. */
+
+import type { ReactNode } from "react";
+import type { MarketQuote } from "@/lib/types";
+import { friendlySource, ratingTitle, receivedLabel, sentimentTitle } from "@/lib/dashboard-ui";
+import { fmtMoney, fmtPct } from "../lib/format";
+import { Chip, Dash, SignedText } from "../ui/primitives";
+import { SymbolButton } from "../ui/symbol-drilldown";
+
+const compactNum = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+
+/** "Label\nSource: <provider>\nReceived <time>" — provenance strictly from the
+ *  field's own recorded source; with no source the line is simply omitted. */
+export function fieldTitle(label: string, source?: string, asOf?: string): string {
+  const parts = [label];
+  if (source) parts.push(`Source: ${friendlySource(source)}`);
+  const received = receivedLabel(asOf);
+  if (received) parts.push(received);
+  return parts.join("\n");
+}
+
+/** Price provenance is two-stage server-side: enrichment can refine the
+ *  screener price (recording `sources.price`), and a later live broker/Yahoo
+ *  quote merge (mergeQuoteData in src/lib/market.ts) can replace the price
+ *  again — that merge updates the quote-level `provider` but NOT
+ *  `sources.price`, so the two can legitimately disagree. Reading only
+ *  `sources.price` would misattribute a merged live price to the older
+ *  provider. When they agree (or only one is recorded) name it; when both
+ *  exist and differ, name both honestly — the pipeline doesn't record which
+ *  value survived, so we never guess a single winner. */
+function priceTitle(q: MarketQuote): string {
+  const quoteProvider = q.provider;
+  const enrichedPrice = q.sources?.price;
+  const parts = ["Last price"];
+  if (quoteProvider && enrichedPrice && friendlySource(quoteProvider) !== friendlySource(enrichedPrice)) {
+    parts.push(`Source: ${friendlySource(quoteProvider)} + ${friendlySource(enrichedPrice)} (merged quote + enrichment)`);
+  } else {
+    const single = quoteProvider ?? enrichedPrice;
+    if (single) parts.push(`Source: ${friendlySource(single)}`);
+  }
+  const received = receivedLabel(q.asOf);
+  if (received) parts.push(received);
+  return parts.join("\n");
+}
+
+function SentimentChip({ value }: { value: number }) {
+  const tone = value >= 60 ? "pos" : value <= 40 ? "neg" : "muted";
+  const word = value >= 60 ? "Positive" : value <= 40 ? "Negative" : "Neutral";
+  return (
+    <Chip tone={tone}>
+      {word} · {value}
+    </Chip>
+  );
+}
+
+function RatingChip({ label, score }: { label: string; score?: number }) {
+  const tone = typeof score === "number" ? (score >= 65 ? "pos" : score <= 40 ? "neg" : "muted") : "muted";
+  return <Chip tone={tone}>{typeof score === "number" ? `${label} · ${score}` : label}</Chip>;
+}
+
+export interface ScanColumn {
+  id: string;
+  label: string;
+  /** Concise plain-language header tooltip: meaning + methodology + source. */
+  headerTitle: string;
+  /** Right-aligned tabular numerals (adds the con-table `num` class). */
+  num?: boolean;
+  /** Value the column sorts on; undefined always sorts last. */
+  sortValue: (q: MarketQuote) => number | string | undefined;
+  render: (q: MarketQuote) => ReactNode;
+  cellTitle?: (q: MarketQuote) => string | undefined;
+}
+
+export const SCAN_COLUMNS: ScanColumn[] = [
+  {
+    id: "symbol",
+    label: "Symbol",
+    headerTitle: "Ticker symbol — click one to open the drilldown with a price chart and key stats. Hover a row for the company name.",
+    sortValue: (q) => q.symbol,
+    render: (q) => (
+      <span className="flex items-center gap-1.5 whitespace-nowrap">
+        {/* Pass the row's own quote so the drilldown renders the SAME scan the
+            table shows — a page-refreshed scan can be fresher than the run
+            capture the sheet would otherwise resolve from. */}
+        <SymbolButton
+          symbol={q.symbol}
+          quote={q}
+          title={q.companyName ? `${q.companyName} — open ${q.symbol} details` : `Open ${q.symbol} details`}
+        />
+        {/* marketValue = quantity × mark (see src/lib/dashboard.ts / alpaca.ts),
+            so a SHORT position carries a NEGATIVE value — any non-zero value is
+            an open position, and the sign distinguishes direction. */}
+        {typeof q.positionMarketValue === "number" && Number.isFinite(q.positionMarketValue) && q.positionMarketValue !== 0 && (
+          q.positionMarketValue < 0 ? (
+            <Chip
+              tone="warn"
+              title={`You hold a SHORT position in ${q.symbol} — about ${fmtMoney(Math.abs(q.positionMarketValue))} of market value at scan time (position value is negative because it's owed).`}
+            >
+              short
+            </Chip>
+          ) : (
+            <Chip tone="accent" title={`You hold a position in ${q.symbol} — about ${fmtMoney(q.positionMarketValue)} at scan time.`}>
+              held
+            </Chip>
+          )
+        )}
+      </span>
+    ),
+    cellTitle: (q) => q.companyName
+  },
+  {
+    id: "score",
+    label: "Score",
+    headerTitle:
+      "Composite 0–100 scan score — a weighted blend of liquidity, momentum, value, quality, volatility, sentiment and diversification factors, computed by the scanner (weights are configurable in strategy settings). Higher = ranked more attractive this run.",
+    num: true,
+    sortValue: (q) => q.score,
+    // Defensive typeof: historical/compact run captures may omit per-quote
+    // fields the current MarketScan type marks required.
+    render: (q) => (typeof q.score === "number" ? <span className="font-semibold">{q.score.toFixed(1)}</span> : <Dash />),
+    cellTitle: (q) =>
+      typeof q.score === "number"
+        ? fieldTitle(
+            `Scan score ${q.score.toFixed(1)}/100 — computed by the scanner from this run's per-factor inputs, not a provider value.`,
+            undefined,
+            q.asOf
+          )
+        : "No scan score was recorded for this candidate."
+  },
+  {
+    id: "price",
+    label: "Price",
+    headerTitle: "Last traded price (may be delayed). Hover a cell for the provider(s) that supplied it.",
+    num: true,
+    sortValue: (q) => q.price,
+    render: (q) => (q.price > 0 ? fmtMoney(q.price) : <Dash />),
+    cellTitle: (q) => priceTitle(q)
+  },
+  {
+    id: "change",
+    label: "Chg",
+    headerTitle: "Intraday change — percent move vs the prior session's close. Green up, red down.",
+    num: true,
+    sortValue: (q) => q.intradayChangePct,
+    render: (q) =>
+      typeof q.intradayChangePct === "number" && Number.isFinite(q.intradayChangePct) ? (
+        <SignedText value={q.intradayChangePct}>{fmtPct(q.intradayChangePct, 2, true)}</SignedText>
+      ) : (
+        <Dash />
+      ),
+    cellTitle: (q) => fieldTitle("Intraday change vs prior close", q.sources?.intradayChangePct, q.asOf)
+  },
+  {
+    id: "volume",
+    label: "Vol",
+    headerTitle: "Shares traded today (some providers report the 10-day average after hours).",
+    num: true,
+    sortValue: (q) => (q.volume > 0 ? q.volume : undefined),
+    render: (q) => (q.volume > 0 ? compactNum.format(q.volume) : <Dash />),
+    cellTitle: (q) => fieldTitle("Share volume", q.sources?.volume, q.asOf)
+  },
+  {
+    id: "peRatio",
+    label: "P/E",
+    headerTitle:
+      "Price-to-earnings ratio = price ÷ trailing 12-month earnings per share; lower is cheaper relative to earnings. \"n/a\" = negative or zero earnings (no meaningful ratio); \"—\" = the data wasn't available.",
+    num: true,
+    sortValue: (q) => (typeof q.peRatio === "number" && q.peRatio > 0 ? q.peRatio : undefined),
+    render: (q) =>
+      typeof q.peRatio === "number" && q.peRatio > 0 ? (
+        q.peRatio.toFixed(1)
+      ) : typeof q.eps === "number" && q.eps <= 0 ? (
+        <span className="text-[color:var(--con-faint)]">n/a</span>
+      ) : (
+        <Dash />
+      ),
+    cellTitle: (q) => {
+      if (typeof q.peRatio === "number" && q.peRatio > 0) return fieldTitle("P/E ratio", q.sources?.peRatio, q.asOf);
+      if (typeof q.eps === "number" && q.eps <= 0) {
+        return fieldTitle("n/a — trailing earnings are negative or zero, so there is no meaningful P/E ratio.", q.sources?.eps, q.asOf);
+      }
+      return "P/E wasn't available from any provider for this symbol.";
+    }
+  },
+  {
+    id: "epsGrowth",
+    label: "EPS gr",
+    headerTitle: "Earnings-per-share growth, year over year. Positive = earnings expanding.",
+    num: true,
+    sortValue: (q) => q.epsGrowth,
+    render: (q) =>
+      typeof q.epsGrowth === "number" ? (
+        <SignedText value={q.epsGrowth}>{fmtPct(q.epsGrowth * 100, 0, true)}</SignedText>
+      ) : (
+        <Dash />
+      ),
+    cellTitle: (q) => fieldTitle("EPS growth (year over year)", q.sources?.epsGrowth, q.asOf)
+  },
+  {
+    id: "dividendYield",
+    label: "Div",
+    headerTitle: "Annual dividend yield = trailing dividends per share ÷ price.",
+    num: true,
+    sortValue: (q) => q.dividendYield,
+    render: (q) => (typeof q.dividendYield === "number" ? fmtPct(q.dividendYield, 2) : <Dash />),
+    cellTitle: (q) => fieldTitle("Dividend yield", q.sources?.dividendYield, q.asOf)
+  },
+  {
+    id: "sentiment",
+    label: "Sentiment",
+    headerTitle: "News sentiment 0–100 (50 = neutral), scored from recent headlines. Hover a cell for the headlines behind the number.",
+    sortValue: (q) => q.sentiment,
+    render: (q) => (typeof q.sentiment === "number" ? <SentimentChip value={q.sentiment} /> : <Dash />),
+    cellTitle: (q) => sentimentTitle(q)
+  },
+  {
+    id: "analystScore",
+    label: "Rating",
+    headerTitle: "Analyst consensus 0–100, blended across providers (Strong Buy = 100 … Strong Sell = 0). Hover a cell for the per-provider breakdown.",
+    sortValue: (q) => q.analystScore,
+    render: (q) => (q.analystRating ? <RatingChip label={q.analystRating} score={q.analystScore} /> : <Dash />),
+    cellTitle: (q) => ratingTitle(q)
+  },
+  {
+    id: "senateTrades",
+    label: "Congress",
+    headerTitle:
+      "Net recent congressional trading = distinct members buying minus selling over the last ~60 days. Positive = net buying. Hover a cell for the disclosures behind the number.",
+    num: true,
+    sortValue: (q) => (q.senateTrades ?? 0) !== 0 ? q.senateTrades : q.congressCompositeSignedScore ?? q.congressCompositeScore,
+    render: (q) =>
+      typeof q.senateTrades === "number" ? (
+        <div className="flex flex-col">
+          <SignedText value={q.senateTrades}>{q.senateTrades > 0 ? `+${q.senateTrades}` : String(q.senateTrades)}</SignedText>
+          {q.congressCompositeScore !== undefined && q.congressCompositeScore > 0 && (
+            <span className="text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)] whitespace-nowrap">
+              Score: {q.congressCompositeSignedScore ?? q.congressCompositeScore}
+            </span>
+          )}
+        </div>
+      ) : q.congressCompositeScore !== undefined && q.congressCompositeScore > 0 ? (
+        <span className="text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)] whitespace-nowrap">
+          {q.congressCompositeDirection === "SELL" ? "SELL" : "BUY"} · {q.congressCompositeSignedScore ?? q.congressCompositeScore}
+        </span>
+      ) : (
+        <Dash />
+      ),
+    cellTitle: (q) => {
+      if (typeof q.senateTrades === "number") {
+        const header = `Net congressional activity ${q.senateTrades > 0 ? "+" : ""}${q.senateTrades} (distinct members buying minus selling, ~60 days).`;
+        const scoreNote = q.congressCompositeScore ? `Composite Score: ${q.congressCompositeSignedScore ?? q.congressCompositeScore} (Conviction, Consensus, Skill, Flow, Freshness)` : undefined;
+        const bulletins = q.evidenceBulletins?.length ? q.evidenceBulletins.join("\n") : undefined;
+        const source = q.sources?.senateTrades ? `Source: ${friendlySource(q.sources.senateTrades)}` : undefined;
+        return [header, scoreNote, bulletins, source].filter(Boolean).join("\n");
+      }
+      if (q.congressCompositeScore) {
+        return `Congress composite score: ${q.congressCompositeSignedScore ?? q.congressCompositeScore} (${q.congressCompositeDirection === "SELL" ? "SELL signal" : q.congressCompositeDirection === "BUY" ? "BUY signal" : "NEUTRAL"} — Conviction, Consensus, Skill, Flow, Freshness). No individual trade disclosures available.`;
+      }
+      return "No recent congressional disclosures for this symbol.";
+    }
+  },
+  {
+    id: "sector",
+    label: "Sector",
+    headerTitle: "Company sector classification.",
+    sortValue: (q) => q.sector,
+    render: (q) =>
+      q.sector ? (
+        <span className="inline-block max-w-[10rem] truncate align-bottom text-[color:var(--con-muted)]">{q.sector}</span>
+      ) : (
+        <Dash />
+      ),
+    cellTitle: (q) =>
+      q.sector
+        ? fieldTitle(q.industry && q.industry !== q.sector ? `${q.sector} · ${q.industry}` : q.sector, q.sources?.sector, q.asOf)
+        : "Sector wasn't available from any provider for this symbol."
+  }
+];
+
+export const DEFAULT_VISIBLE_SCAN_COLUMN_IDS = SCAN_COLUMNS.map((column) => column.id);
