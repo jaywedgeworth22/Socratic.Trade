@@ -43,6 +43,11 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 
+- **[Socratic.Trade][CODEX] Shared-package pin-check queue unblock (original PR #1890, now subsumed into telemetry PR #1889) — SUBSUMED / COMBINED LANDING IN PROGRESS 2026-07-22.** The reviewed workflow fix removes the pull-request path filter and installs Node 24 before its comparison script. Its exact history is merged into #1889 so the workflow and telemetry changes consume one protected gate. PR #1890 is closed as superseded with its branch retained and reopenable; #1780 was already closed. Combined Node 24 verification passes 5 files / 71 tests, TypeScript, scoped ESLint, workflow YAML parsing, and diff-check. Auto-merge remains off pending final-head hosted checks and zero-thread verification.
+- **[Socratic.Trade][CODEX] CI pending-run collapse (branch `codex/ci-queue-collapse`, 2026-07-22) — IN PROGRESS.** Removed `github.sha` from the required CI concurrency group while retaining `cancel-in-progress: false`; every SHA had previously created a distinct group and accumulated duplicate queued verifies. Added a workflow regression. Verification and landing are next; active runs are not being cancelled. Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
+
+- **[CODEX] Native iOS mobile-first product replacement — COMPLETED 2026-07-22 via PR #1859; secure OAuth handoff follow-up PR #1886 is open.** Phase 1 is merged to `main` with the five-tab shell, server-authoritative safety gates, canonical XcodeGen project, and verifier-bound opaque web-auth implementation. Follow-up #1886 completes the PKCE exchange hardening so session credentials never enter the custom callback URL; it remains pending protected merge. Worktree `/Users/jay/apps/socratic-mobile-first-ios`; no production native distribution is claimed until TestFlight/App Store release.
+- **[Socratic.Trade][CODEX] Usage telemetry v2 producer adoption (branch `codex/usage-telemetry-v2-20260721`, worktree `/Users/jay/.codex/worktrees/socratic-telemetry-v2`, combined PR #1889) — IMPLEMENTED / RECEIVER GATE CLEARED / LOCAL GATE PASS 2026-07-22.** Exact-pins immutable shared `v2.0.0` over HTTPS; fresh and replay traffic use only strict v2 identities and typed ACKs. A schema-valid partial ACK is a failed delivery unless it covers the full sent batch with zero rejects, preserving live retries and durable replay watermarks. One synchronous `BEGIN IMMEDIATE` startup cutover seeds all three ledgers to current high-water, records skipped pre-v2 receipts, and prevents producer work before the boundary exists; no legacy sender remains. Owner-authorized tradeoff: the bounded pre-v2 remainder is not replayed, avoiding duplicate money at the cost of possible loss for any row not already live-pushed under v1. The #1890 workflow fix is subsumed into #1889; combined Node 24 verification passes 5 files / 71 tests, TypeScript, scoped ESLint, workflow YAML parsing, and diff-check. Usage-Monitor exact main `2bc276497ae28441762768911f34eb5e8e2fdd30` is committed live on Oracle. Auto-merge is held pending final-head hosted checks and zero-thread verification; exact Coolify deploy and postdeploy ACK receipts follow. Rollout: `docs/rollouts/2026-07-22-usage-telemetry-v2-producer.md`.
 - **[CODEX] Native iOS mobile-first product replacement — IN PROGRESS 2026-07-22.** Phase 1 (#1859) and the verifier-bound opaque web-auth handoff (#1886) are merged to `main`; a narrow follow-up is in progress because post-merge review found middleware blocked the first unauthenticated code exchange. It will allow only `/api/mobile/auth/exchange`, whose one-time code and device verifier remain the authorization proof until the route sets the HTTP-only Auth.js cookie. Worktree `/Users/jay/apps/socratic-mobile-first-ios`; no production native distribution is claimed until TestFlight/App Store release.
 - **[Socratic.Trade][CODEX] CI pending-run collapse (branch `codex/ci-queue-collapse`, 2026-07-22) — IN PROGRESS.** Removed `github.sha` from the required CI concurrency group while retaining `cancel-in-progress: false`; every SHA had previously created a distinct group and accumulated duplicate queued verifies. Added a workflow regression. Verification and landing are next; active runs are not being cancelled. Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
 
@@ -611,6 +616,31 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[fleet/Hetzner][GROK] Multi-app fleet-watchdog + litestream 7d + runner EPHEMERAL (2026-07-21) — COMPLETED (ops on host; docs in ST rollout).** Not Mac-local. `fleet-watchdog.service` enabled on boot watches socratictrade.com (container restart only), congress.trade + usage.jays.services (alert only). Host reboot OFF (ALLOW_HOST_REBOOT=0); skips remediations during Coolify builds; old socratic-watchdog stays parked. Usage-Monitor PR #714 merged (snapshot retention 168h). All github-runners EPHEMERAL=true + restart always + daily disk-guard prune. Rollout: `docs/rollouts/2026-07-21-fleet-watchdog-disk-followups.md`.
+
+
+- **[Socratic.Trade][CLAUDE] Durable pre-network stop-placement intent + atomic idempotent
+  recovered fills — Codex findings 5/6 (branch `claude/stop-intent-idempotency`, head `761b524b`
+  = gate-verified merge of `8f6160bd` + main `b4dd8a54`) — LANDING 2026-07-18, lane 6 (final) of
+  a serial landing train.** Item 5: `reconcileBrokerProtectiveStops` writes a durable intent row
+  (new table `broker_stop_placement_intents`, migration **v53**, keyed by the submitted
+  client_order_id) BEFORE `placeEquityOrder`, deletes it on every definite outcome, and on a
+  lost reply adopts the already-accepted live order by clientOrderId instead of placing a
+  duplicate full-size stop (evidence rules: adopt on live match; clear only when a REAL order
+  list shows no match; skip the symbol when the list is unavailable). Item 6: all delete+book
+  recovered-stop-fill pairs (9 sites post-merge, incl. main's #1738 marker-lane pair) go through
+  one `deleteAndBookBrokerStopFill` transaction, plus migration **v54**'s partial UNIQUE index
+  scoped to `raw.brokerHeldProtectiveStop=1` proposal-less fills with idempotent-replay handling
+  in `insertFillEvent`. Adversarially verified with the filled-order fill-loss MUST-FIX applied +
+  regression-tested: a visible-but-TERMINAL intent order WITH executed quantity was previously
+  treated as dead (fill lost + stale-sized re-place/over-sell); now
+  `deleteIntentAndBookStopFill` books it atomically and placement defers to a fresh position
+  read; 8 suites / 250 tests green on the merged tree. Verifier advisories: intent table not yet
+  in account-deletion sweeps (rows self-clean, orphans inert — kept off #1738-touched
+  account-deletion.ts deliberately); `bookBrokerHeldStopFill` is side-agnostic-by-test but the
+  reconciler is long-only today. v53/v54 numbering re-verified at merge. Rollout:
+  `docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
+- **[Socratic.Trade][AG] BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`) — COMPLETED 2026-07-18; deployed to production via auto-deploy-on-merge.** Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `all: true` or `symbols: ["*"]` which resolves all tickers in the database and cleans their local RAG chunk cache rows in batches of 50. Created `scripts/reindex-all.ts` command-line reindexing tool. Fixed pre-existing unit test failures in `securities-import.test.ts` and `token-budget-ceiling.test.ts` (race conditions resolved using fake timers). Installed missing `@opentelemetry` packages to resolve Next.js webpack production build loading issues. Fully verified with typechecks, 100% green tests, and production build.
 - **[Socratic.Trade][CURSOR] LLM cooldown + draining-account purge safety (PR #1845, branch `cursor/critical-bug-management-2b05`) — IN PROGRESS → landing.** Code + rollout present; STATUS/EFFORT-LOG filled for handoff gate. Commit author identity: subsequent commits use noreply; squash-merge lands under PR merge identity.
 
 
