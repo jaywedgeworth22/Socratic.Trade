@@ -1,5 +1,10 @@
 # Active Implementation Plan
 
+> **2026-07-23 - Unstick remaining open PRs (CURSOR).** Five open PRs (#1901/#1902/#1792/#1819/#1842)
+> refreshed onto current `main`, conflict-resolved where real, auto-merge armed. Effort board
+> corrected for already-merged rows (#1892 and related). Next: wait hosted verify → auto-merge;
+> then RAG enablement remains Planned (telemetry/eval before `RAG_CORPUS_WIDE_LEXICAL`).
+
 > **2026-07-22 - RAG review remediation follow-up (CODEX).** PR #1892's latest review pass found
 > five correctness gaps. Keep local FTS recall active when paid rerank/hybrid budget degradation
 > trips; classify source-backed 8-K rows without a `sec_filings` join; include immutable occurrence
