@@ -132,9 +132,9 @@ export function resolveLlmEndpoint(
   const rawModel = resolveRoleModel(policy, role);
   const family = llmModelFamily(rawModel);
 
-  // 1. Primary path: User-provided OpenRouter key
+  // 1. Primary path: OpenRouter key (user or operator failover when enabled)
   const openRouterCred = resolveLlmCredential("openrouter", userId);
-  if (openRouterCred.key && openRouterCred.source === "user") {
+  if (openRouterCred.key) {
     let model = rawModel;
     if (!model.includes("/")) {
       if (/^claude/i.test(model)) {
@@ -161,7 +161,7 @@ export function resolveLlmEndpoint(
       url,
       key: openRouterCred.key,
       model,
-      keySource: "user",
+      keySource: openRouterCred.source === "operator" ? "operator" : "user",
       keyRef: openRouterCred.keyRef,
       transport: "chat-completions"
     };
