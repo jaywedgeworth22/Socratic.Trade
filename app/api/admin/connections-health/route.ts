@@ -29,6 +29,7 @@ const EXPECTED_BACKEND_LANES: Array<{ service: string; keySource: string | null 
   { service: "alpha-vantage", keySource: "env" },
   { service: "twelvedata", keySource: "env" },
   { service: "massive", keySource: "env" },
+  { service: "earningscalls-dev-rapidapi", keySource: "env" },
   { service: "congress.trade", keySource: null },
   { service: "usage-monitor", keySource: null }
 ];
@@ -62,6 +63,14 @@ function toCanonicalService(service: string): string {
 }
 
 function withExpectedBackendLanes(services: ServiceHealthSummary[]): ServiceHealthSummary[] {
+  // Map legacy names to canonical names before matching expectations
+  for (const s of services) {
+    if (s.service === "earningscall") {
+      s.service = "earningscalls-dev-rapidapi";
+      s.keySource = "env";
+    }
+  }
+
   const userKeys = listUserApiKeys(LOCAL_USER);
   const servicesWithUserKeys = new Set(userKeys.map((k) => k.service));
   const loggedUserLanes = new Set(services.filter((s) => s.keySource === "user").map((s) => s.service));

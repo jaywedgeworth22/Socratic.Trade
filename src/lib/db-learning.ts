@@ -1146,6 +1146,7 @@ export function getChunkSourceBreakdown(): ChunkSourceBreakdownRow[] {
         SELECT symbol, source, content_hash FROM document_chunks
         WHERE content_hash NOT IN (SELECT DISTINCT content_hash FROM chunk_occurrences)
       )
+      WHERE source NOT LIKE '________-____-____-____-____________#c%'
       GROUP BY symbol, source
     `)
     .all() as Array<{ symbol: string; source: string; chunk_count: number }>;
