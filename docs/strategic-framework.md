@@ -38,22 +38,29 @@ market. It can:
   *place small orders automatically*.
 - Record everything it does and grade its own past decisions so it can improve.
 
-### Three levels of "real money," on purpose
+### Two levels of "real money," on purpose
 
-It is built so that **doing nothing dangerous is the default.** There are three
-modes, and you have to deliberately move up each step:
+It is built so that **doing nothing dangerous is the default.** Execution mode
+is derived purely from the `environment` of whichever broker account you've
+connected — there is no local simulator and no separate "Test mode" toggle:
 
-1. **Test mode (default):** A pretend account on your own computer. Fake cash,
-   fake fills. Real market data, but no real money can move. This is where it
-   lives unless you change it.
-2. **Paper mode:** A practice account hosted by a real broker (e.g. Alpaca's
-   "paper" sandbox). Still fake money, but the order actually travels to a
-   broker's system, so it is a more realistic rehearsal.
-3. **Brokerage mode:** A real account with real money. Orders here can actually
-   buy and sell, and only when *every* safety rule allows it.
+1. **Paper mode (default entry point):** A practice account hosted by a real
+   broker (e.g. Alpaca's "paper" sandbox). Fake money, but the order actually
+   travels to a broker's system — realistic fills, latency, and market
+   hours. If you haven't connected a broker account at all, the app simply
+   **cannot place any orders** — there is no fake local-simulation fallback.
+2. **Brokerage (live) mode:** A real account with real money. Orders here can
+   actually buy and sell, and only when *every* safety rule allows it.
+   Approving a live proposal now also requires a typed confirmation tied to
+   the proposal, account, execution mode, and estimated order size, so a
+   stale tab or script cannot approve a real-money order with an empty POST.
 
-> **Honesty note:** Most of the value and most of the testing happens in Test
-> and Paper mode. Real-money mode is intentionally hard to reach and wrapped in
+The app records the exact execution mode (`broker/paper` or `broker/live`)
+next to proposals, fills, and portfolio snapshots, so paper and live activity
+are never mixed together in the learning and accounting layers.
+
+> **Honesty note:** Most of the value and most of the testing happens in
+> Paper mode. Real-money mode is intentionally hard to reach and wrapped in
 > limits. Treat this whole system as **experimental**. It is not a product that
 > promises profits, and nothing here is investment advice.
 
@@ -285,7 +292,7 @@ This section is the point of the document. Read it.
 - **The factor weights are unproven guesses** (see Section 4).
 - **There is no real backtester.** The strategy has **not** been rigorously
   tested against decades of historical data to see how it *would* have performed.
-  It is validated mostly by running forward in Test/Paper mode. This is a **major**
+  It is validated mostly by running forward in Paper mode. This is a **major**
   limitation: a strategy can look fine in a few weeks of calm markets and fall
   apart in a crash. Treat any short-term results with heavy skepticism.
 - **Cold start.** With fewer than 20 completed trades, the "learning" is barely
@@ -299,6 +306,10 @@ This section is the point of the document. Read it.
 - **Short selling is high-risk and not fully proven.** Guardrails exist, but the
   accounting and broker behavior for short/cover trades are flagged in the code
   as needing more verification before being trusted with real money.
+- **Candidate weight changes are still not fully proven out-of-sample.** The app
+  has an IC/OOS harness, but proposed scoring-weight patches still need a true
+  candidate-vs-current-policy validation path before they should be treated as
+  proven improvements.
 
 ### About the plumbing
 - **It runs as a single local process.** The scheduler isn't distributed or
@@ -352,6 +363,21 @@ This section is the point of the document. Read it.
 
 ## Changelog
 
+- **2026-07-03** — Removed the local "Test mode" simulator and `policy.paperMode`
+  from the codebase (see `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`).
+  Updated the "Three levels of real money" section to the two modes that
+  actually exist now — Paper and Brokerage/Live — both derived purely from a
+  connected broker account's `environment`; with no connected account the app
+  cannot place any orders (no fake local-simulation fallback).
+- **2026-06-23** — Expert safety/UI pass: persisted execution mode separately
+  from paper/live source buckets; hardened Alpaca bracket-dollar orders; kept
+  close-only protective stop/reconciliation maintenance alive; added server-side
+  typed confirmation for live approvals; made the mode banner compact-only
+  instead of hideable; added a readiness strip; tightened consent failure
+  behavior; repaired Litestream command/env drift; and fixed vector credential
+  lookup so raw app user IDs are used for key resolution while sanitized IDs
+  remain in vector metadata/filters. Remaining weaknesses now explicitly include
+  candidate-vs-baseline OOS validation and richer RAG/provider diagnostics.
 - **2026-06-21** — Initial plain-English framework written, summarizing the
   design across `PLAN.md`, `PROJECT.md`, `README.md`, and the phase docs
   (especially `docs/phase-7-strategy.md` for the learning loop, `docs/phase-4-…`

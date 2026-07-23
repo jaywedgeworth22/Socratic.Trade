@@ -7,8 +7,8 @@
 
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { getDb } from "../src/lib/db";
-import { AnthropicLLM, getLLM, MockLLM, OpenAILLM } from "../src/lib/chat/llm";
-import { DISCLAIMER } from "../src/lib/chat/prompt";
+import { AnthropicLLM, chatProviderForModel, getLLM, llmForModel, MockLLM, OpenAILLM } from "../src/lib/chat/llm";
+import { buildSystem, DISCLAIMER, SYSTEM_PROMPT } from "../src/lib/chat/prompt";
 import type { LlmRunArgs, ToolSchema } from "../src/lib/chat/types";
 
 // Shared LlmRunArgs fixture — minimal but valid.
@@ -57,7 +57,7 @@ describe("OpenAILLM — ChatLLM contract", () => {
 
   it("returns text from a plain (no-tool) response", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("Hello from OpenAI!"));
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport);
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);
     const result = await llm.run(baseArgs);
 
     expect(result.text).toBe("Hello from OpenAI!");
@@ -73,7 +73,7 @@ describe("OpenAILLM — ChatLLM contract", () => {
       capturedMessages = body.messages.map((m) => ({ role: m.role, content: m.content }));
       return Promise.resolve(chatResponse("ok"));
     });
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport);
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);
     await llm.run({ ...baseArgs, system: "sys-prompt", message: "user-msg" });
 
     expect(capturedMessages[0]).toMatchObject({ role: "system", content: "sys-prompt" });
@@ -82,7 +82,7 @@ describe("OpenAILLM — ChatLLM contract", () => {
 
   it("passes the api key in the second argument to transport", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
-    const llm = new OpenAILLM("sk-my-key", "gpt-4o-mini", transport);
+    const llm = new OpenAILLM("sk-my-key", "openai/gpt-4o-mini", transport);
     await llm.run(baseArgs);
 
     const apiKey = transport.mock.calls[0][1];
@@ -91,7 +91,7 @@ describe("OpenAILLM — ChatLLM contract", () => {
 
   it("includes OpenAI tools array when tool schemas are provided", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport);
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);
     const tools: ToolSchema[] = [
       { name: "get_quote", description: "Get a stock quote", input_schema: { type: "object", properties: { symbol: { type: "string" } } } }
     ];
@@ -109,7 +109,7 @@ describe("OpenAILLM — ChatLLM contract", () => {
       .mockResolvedValueOnce(chatResponse("AAPL is at $200."));
 
     const executeTool = vi.fn().mockResolvedValue({ symbol: "AAPL", price_usd: 200, as_of: "2026-06-21" });
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport);
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);
     const tools: ToolSchema[] = [
       { name: "get_quote", description: "Get a stock quote", input_schema: { type: "object", properties: { symbol: { type: "string" } } } }
     ];
@@ -129,7 +129,7 @@ describe("OpenAILLM — ChatLLM contract", () => {
       .mockResolvedValueOnce(chatResponse("TSLA price noted."));
 
     const executeTool = vi.fn().mockResolvedValue({ symbol: "TSLA", price_usd: 180, as_of: "2026-06-21T00:00:00Z" });
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport);
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);
     const tools: ToolSchema[] = [{ name: "get_quote", description: "q", input_schema: {} }];
     const result = await llm.run({ ...baseArgs, tools, executeTool });
 
@@ -143,7 +143,7 @@ describe("OpenAILLM — ChatLLM contract", () => {
     const transport = vi.fn().mockResolvedValue({
       choices: [{ message: { role: "assistant", content: null }, finish_reason: "stop" }]
     });
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport);
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);
     const result = await llm.run(baseArgs);
 
     expect(result.text).toBe(DISCLAIMER);
@@ -155,7 +155,7 @@ describe("OpenAILLM — ChatLLM contract", () => {
       .mockResolvedValueOnce(chatResponse("Could not get quote."));
 
     const executeTool = vi.fn().mockRejectedValue(new Error("network timeout"));
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport);
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);
     const tools: ToolSchema[] = [{ name: "get_quote", description: "q", input_schema: {} }];
     const result = await llm.run({ ...baseArgs, tools, executeTool });
 
@@ -165,7 +165,7 @@ describe("OpenAILLM — ChatLLM contract", () => {
 
   it("replays prior turns in the messages array for multi-turn context", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("second reply"));
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport);
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);
     const history = [
       { role: "user" as const, text: "first user message" },
       { role: "assistant" as const, text: "first assistant reply" }
@@ -184,7 +184,7 @@ describe("OpenAILLM — ChatLLM contract", () => {
 
   it("drops a leading assistant history turn to satisfy OpenAI alternation requirement", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport);
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);
     // History starting with an assistant turn (edge case during race conditions).
     const history = [{ role: "assistant" as const, text: "stale assistant prefix" }];
     await llm.run({ ...baseArgs, history });
@@ -194,6 +194,77 @@ describe("OpenAILLM — ChatLLM contract", () => {
     // After the system message the first non-system role must be user, not assistant.
     const nonSystem = msgs.filter((m) => m.role !== "system");
     expect(nonSystem[0].role).toBe("user");
+  });
+});
+
+// ── AnthropicLLM prompt-caching unit tests ──────────────────────────────────
+
+describe("AnthropicLLM — prompt-caching cache_control", () => {
+  /** Minimal Anthropic-style text response. */
+  function anthropicResponse(text: string) {
+    return { content: [{ type: "text", text }], stop_reason: "end_turn" };
+  }
+
+  it("sends system as an array of content blocks (not a plain string)", async () => {
+    let capturedBody: any = null;
+    const transport = vi.fn().mockImplementation((body: any) => {
+      capturedBody = body;
+      return Promise.resolve(anthropicResponse("ok"));
+    });
+    const llm = new AnthropicLLM("ant-test", "claude-sonnet-4-6", transport);
+    await llm.run({ ...baseArgs, system: SYSTEM_PROMPT });
+
+    expect(Array.isArray(capturedBody.system)).toBe(true);
+  });
+
+  it("marks the entire system as ephemeral when system equals SYSTEM_PROMPT exactly", async () => {
+    let capturedBody: any = null;
+    const transport = vi.fn().mockImplementation((body: any) => {
+      capturedBody = body;
+      return Promise.resolve(anthropicResponse("ok"));
+    });
+    const llm = new AnthropicLLM("ant-test", "claude-sonnet-4-6", transport);
+    await llm.run({ ...baseArgs, system: SYSTEM_PROMPT });
+
+    const systemBlocks: any[] = capturedBody.system;
+    expect(systemBlocks).toHaveLength(1);
+    expect(systemBlocks[0].text).toBe(SYSTEM_PROMPT);
+    expect(systemBlocks[0].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("splits stable prefix (ephemeral) and dynamic suffix (uncached) when user memory is present", async () => {
+    let capturedBody: any = null;
+    const transport = vi.fn().mockImplementation((body: any) => {
+      capturedBody = body;
+      return Promise.resolve(anthropicResponse("ok"));
+    });
+    const llm = new AnthropicLLM("ant-test", "claude-sonnet-4-6", transport);
+    const systemWithMemory = buildSystem("Hold AAPL long-term.");
+    await llm.run({ ...baseArgs, system: systemWithMemory });
+
+    const systemBlocks: any[] = capturedBody.system;
+    // Two blocks: stable prefix (cached) + dynamic suffix (not cached).
+    expect(systemBlocks).toHaveLength(2);
+    expect(systemBlocks[0].text).toBe(SYSTEM_PROMPT);
+    expect(systemBlocks[0].cache_control).toEqual({ type: "ephemeral" });
+    // Dynamic suffix should NOT have cache_control.
+    expect(systemBlocks[1].cache_control).toBeUndefined();
+    expect(systemBlocks[1].text).toContain("Hold AAPL long-term.");
+  });
+
+  it("sends unrecognised system string as a single uncached block", async () => {
+    let capturedBody: any = null;
+    const transport = vi.fn().mockImplementation((body: any) => {
+      capturedBody = body;
+      return Promise.resolve(anthropicResponse("ok"));
+    });
+    const llm = new AnthropicLLM("ant-test", "claude-sonnet-4-6", transport);
+    await llm.run({ ...baseArgs, system: "custom override system prompt" });
+
+    const systemBlocks: any[] = capturedBody.system;
+    expect(systemBlocks).toHaveLength(1);
+    expect(systemBlocks[0].text).toBe("custom override system prompt");
+    expect(systemBlocks[0].cache_control).toBeUndefined();
   });
 });
 
@@ -215,36 +286,197 @@ describe("getLLM provider routing", () => {
 
   it("returns MockLLM when CHAT_LLM=openai but no key is available", () => {
     const savedLlm = process.env.CHAT_LLM;
-    const savedKey = process.env.OPENAI_API_KEY;
+    const savedKey = process.env.OPENROUTER_API_KEY;
     process.env.CHAT_LLM = "openai";
-    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     const llm = getLLM();
     expect(llm).toBeInstanceOf(MockLLM);
     process.env.CHAT_LLM = savedLlm;
-    if (savedKey !== undefined) process.env.OPENAI_API_KEY = savedKey;
+    if (savedKey !== undefined) process.env.OPENROUTER_API_KEY = savedKey;
   });
 
-  it("returns OpenAILLM when CHAT_LLM=openai and OPENAI_API_KEY is set", () => {
+  it("returns MockLLM when CHAT_LLM=openai + key but NO explicit CHAT_LLM_MODEL (no model defaults)", () => {
     const savedLlm = process.env.CHAT_LLM;
-    const savedKey = process.env.OPENAI_API_KEY;
+    const savedKey = process.env.OPENROUTER_API_KEY;
+    const savedModel = process.env.CHAT_LLM_MODEL;
     process.env.CHAT_LLM = "openai";
-    process.env.OPENAI_API_KEY = "sk-test-key";
+    process.env.OPENROUTER_API_KEY = "sk-test-key";
+    delete process.env.CHAT_LLM_MODEL;
+    const llm = getLLM();
+    expect(llm).toBeInstanceOf(MockLLM);
+    process.env.CHAT_LLM = savedLlm;
+    if (savedKey !== undefined) process.env.OPENROUTER_API_KEY = savedKey;
+    else delete process.env.OPENROUTER_API_KEY;
+    if (savedModel !== undefined) process.env.CHAT_LLM_MODEL = savedModel;
+  });
+
+  it("returns OpenAILLM when CHAT_LLM=openai, OPENROUTER_API_KEY and CHAT_LLM_MODEL are set", () => {
+    const savedLlm = process.env.CHAT_LLM;
+    const savedKey = process.env.OPENROUTER_API_KEY;
+    const savedModel = process.env.CHAT_LLM_MODEL;
+    process.env.CHAT_LLM = "openai";
+    process.env.OPENROUTER_API_KEY = "sk-test-key";
+    process.env.CHAT_LLM_MODEL = "openai/gpt-4.1-mini";
     const llm = getLLM();
     expect(llm).toBeInstanceOf(OpenAILLM);
     process.env.CHAT_LLM = savedLlm;
-    if (savedKey !== undefined) process.env.OPENAI_API_KEY = savedKey;
-    else delete process.env.OPENAI_API_KEY;
+    if (savedKey !== undefined) process.env.OPENROUTER_API_KEY = savedKey;
+    else delete process.env.OPENROUTER_API_KEY;
+    if (savedModel !== undefined) process.env.CHAT_LLM_MODEL = savedModel;
+    else delete process.env.CHAT_LLM_MODEL;
   });
 
-  it("returns AnthropicLLM when CHAT_LLM=anthropic and ANTHROPIC_API_KEY is set", () => {
+  it("returns AnthropicLLM when CHAT_LLM=anthropic, ANTHROPIC_API_KEY and CHAT_LLM_MODEL are set", () => {
     const savedLlm = process.env.CHAT_LLM;
     const savedKey = process.env.ANTHROPIC_API_KEY;
+    const savedModel = process.env.CHAT_LLM_MODEL;
     process.env.CHAT_LLM = "anthropic";
     process.env.ANTHROPIC_API_KEY = "ant-test-key";
+    process.env.CHAT_LLM_MODEL = "claude-haiku-4-5";
     const llm = getLLM();
     expect(llm).toBeInstanceOf(AnthropicLLM);
     process.env.CHAT_LLM = savedLlm;
     if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
     else delete process.env.ANTHROPIC_API_KEY;
+    if (savedModel !== undefined) process.env.CHAT_LLM_MODEL = savedModel;
+    else delete process.env.CHAT_LLM_MODEL;
+  });
+});
+
+// ── llmForModel: model-name → provider routing across all five providers ─────
+
+describe("chatProviderForModel — model name → provider", () => {
+  it("derives the provider from the model-name prefix", () => {
+    expect(chatProviderForModel("claude-haiku-4-5")).toBe("anthropic");
+    expect(chatProviderForModel("xai/grok-4.3")).toBe("xai");
+    expect(chatProviderForModel("gemini-2.5-flash")).toBe("gemini");
+    expect(chatProviderForModel("mistral-large-2512")).toBe("mistral");
+    expect(chatProviderForModel("ministral-3b-latest")).toBe("mistral");
+    expect(chatProviderForModel("deepseek-v4-flash")).toBe("deepseek");
+    expect(chatProviderForModel("deepseek-v4-pro")).toBe("deepseek");
+    expect(chatProviderForModel("gpt-5.4-mini")).toBe("openai");
+    expect(chatProviderForModel("o4-mini")).toBe("openai");
+  });
+});
+
+describe("llmForModel — multi-provider routing", () => {
+  // Every LLM provider key; the helper below presents exactly one (or none) so we can prove the
+  // model routes to its own provider and never silently borrows a different provider's key.
+  const KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"] as const;
+
+  beforeAll(() => {
+    process.env.DATABASE_URL = `file:${process.env.TMPDIR ?? "/tmp"}/chat-llm-model-routing-${Date.now()}.db`;
+    process.env.LLM_OPERATOR_FALLBACK = "on"; // env key serves a keyless user (operator-funded failover)
+    getDb();
+  });
+
+  function withOnlyKey(present: (typeof KEYS)[number] | null, fn: () => void) {
+    const saved: Record<string, string | undefined> = {};
+    for (const k of KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    if (present) process.env[present] = `key-for-${present}`;
+    try {
+      fn();
+    } finally {
+      for (const k of KEYS) {
+        if (saved[k] !== undefined) process.env[k] = saved[k];
+        else delete process.env[k];
+      }
+    }
+  }
+
+  it("returns MockLLM for an empty or 'mock' model", () => {
+    expect(llmForModel("", "u_mock")).toBeInstanceOf(MockLLM);
+    expect(llmForModel("mock", "u_mock")).toBeInstanceOf(MockLLM);
+  });
+
+  it("routes claude-* to AnthropicLLM with an Anthropic key", () => {
+    withOnlyKey("ANTHROPIC_API_KEY", () => {
+      expect(llmForModel("claude-haiku-4-5", "u_anthropic")).toBeInstanceOf(AnthropicLLM);
+    });
+  });
+
+  it("routes gpt-*/grok-*/gemini-*/mistral-* to OpenAILLM with that provider's key", () => {
+    withOnlyKey("OPENAI_API_KEY", () => expect(llmForModel("gpt-5.4-mini", "u_openai")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("XAI_API_KEY", () => expect(llmForModel("xai/grok-4.3", "u_xai")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("GEMINI_API_KEY", () => expect(llmForModel("gemini-2.5-flash", "u_gemini")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("MISTRAL_API_KEY", () => expect(llmForModel("mistral-medium-3-5", "u_mistral")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("DEEPSEEK_API_KEY", () => expect(llmForModel("deepseek-v4-flash", "u_deepseek")).toBeInstanceOf(OpenAILLM));
+  });
+
+  it("does NOT borrow another provider's key — a non-OpenAI model with only an OpenAI key is MockLLM", () => {
+    withOnlyKey("OPENAI_API_KEY", () => {
+      expect(llmForModel("gemini-2.5-flash", "u_gem2")).toBeInstanceOf(MockLLM);
+      expect(llmForModel("mistral-large-2512", "u_mis2")).toBeInstanceOf(MockLLM);
+      expect(llmForModel("claude-sonnet-4-6", "u_ant2")).toBeInstanceOf(MockLLM);
+      expect(llmForModel("xai/grok-4.3", "u_xai2")).toBeInstanceOf(MockLLM);
+    });
+  });
+
+  it("returns MockLLM when no provider key is available at all", () => {
+    withOnlyKey(null, () => {
+      expect(llmForModel("gpt-5.4-mini", "u_none")).toBeInstanceOf(MockLLM);
+      expect(llmForModel("gemini-2.5-flash", "u_none")).toBeInstanceOf(MockLLM);
+    });
+  });
+});
+
+// ── MockLLM labels every answer ──────────────────────────────────────────────
+
+describe("MockLLM — labels every reply as a mock response", () => {
+  it("prefixes 'Mock Response: ' on a plain chat reply (and keeps the disclaimer)", async () => {
+    const res = await new MockLLM().run({ system: "", message: "hello there", tools: [], executeTool: async () => ({ ok: true }) });
+    expect(res.text.startsWith("Mock Response: ")).toBe(true);
+    expect(res.text).toContain("not personalized financial advice"); // disclaimer still present
+  });
+
+  it("labels a tool-backed answer exactly once (no double prefix)", async () => {
+    const res = await new MockLLM().run({
+      system: "",
+      message: "what's on my watchlist?",
+      tools: [],
+      executeTool: async (name: string) => (name === "list_watchlist" ? { watchlist: [] } : { ok: true })
+    });
+    expect(res.text.startsWith("Mock Response: ")).toBe(true);
+    expect(res.text.indexOf("Mock Response: ")).toBe(res.text.lastIndexOf("Mock Response: "));
+  });
+});
+
+// ── Token-cap parameter: max_completion_tokens for OpenAI reasoning models ────
+
+describe("OpenAILLM — token-cap param by model/provider", () => {
+  it("sends max_completion_tokens (not max_tokens) for OpenAI reasoning models", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "gpt-5.4-mini", transport, {}, "openai").run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.max_completion_tokens).toBeGreaterThan(0);
+    expect(body.max_tokens).toBeUndefined();
+  });
+
+  it("sends max_tokens for OpenAI classic (non-reasoning) models", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport).run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.max_tokens).toBeGreaterThan(0);
+    expect(body.max_completion_tokens).toBeUndefined();
+  });
+
+  it("uses provider-aware reasoning bounds for reasoning-capable OpenAI-compatible providers", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "gemini-2.5-flash", transport, {}, "gemini").run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.max_completion_tokens).toBeGreaterThan(0);
+    expect(body.reasoning_effort).toBe("medium");
+    expect(body.max_tokens).toBeUndefined();
+  });
+
+  it("sends the selected complete GPT-5.6 effort ladder value", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "gpt-5.6-sol", transport, {}, "openai", "max").run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.reasoning_effort).toBe("max");
+    expect(body.max_completion_tokens).toBeGreaterThan(10_000);
   });
 });

@@ -1,0 +1,204 @@
+import { describe, expect, it } from "vitest";
+import { inferExternalCashFlows, normalizeAgainstBenchmark, FLOW_MATERIALITY_MIN_USD } from "../src/lib/benchmark";
+import type { EquityCurvePoint, FillEvent } from "../src/lib/types";
+
+function curve(points: Array<[string, number]>): EquityCurvePoint[] {
+  return points.map(([timestamp, equity]) => ({ timestamp, equity, source: "paper" as const }));
+}
+
+function cashCurve(points: Array<[string, number, number]>): EquityCurvePoint[] {
+  return points.map(([timestamp, equity, cash]) => ({ timestamp, equity, cash, source: "live" as const }));
+}
+
+function fill(input: { filledAt: string; side: FillEvent["side"]; notional: number }): FillEvent {
+  return {
+    id: `f-${input.filledAt}-${input.side}`,
+    accountNumber: "A1",
+    source: "live",
+    symbol: "AAPL",
+    side: input.side,
+    quantity: 1,
+    price: input.notional,
+    notional: input.notional,
+    status: "filled",
+    filledAt: input.filledAt
+  };
+}
+
+describe("normalizeAgainstBenchmark", () => {
+  it("bases both series to 100 and computes returns + excess", () => {
+    const equity = curve([
+      ["2026-01-02T16:00:00.000Z", 100_000],
+      ["2026-01-03T16:00:00.000Z", 110_000] // +10%
+    ]);
+    const spy = [
+      { date: "2026-01-02", close: 500 },
+      { date: "2026-01-03", close: 525 } // +5%
+    ];
+    const r = normalizeAgainstBenchmark(equity, spy)!;
+    expect(r).not.toBeNull();
+    expect(r.equityIndex[0].index).toBe(100);
+    expect(r.benchmarkIndex[0].index).toBe(100);
+    expect(r.accountReturnPct).toBeCloseTo(10, 5);
+    expect(r.benchmarkReturnPct).toBeCloseTo(5, 5);
+    expect(r.excessReturnPct).toBeCloseTo(5, 5);
+    expect(r.benchmarkSymbol).toBe("SPY");
+    expect(r.startDate).toBe("2026-01-02");
+    expect(r.endDate).toBe("2026-01-03");
+  });
+
+  it("reports underperformance as negative excess", () => {
+    const equity = curve([
+      ["2026-02-02T16:00:00Z", 100_000],
+      ["2026-02-09T16:00:00Z", 98_000] // -2%
+    ]);
+    const spy = [
+      { date: "2026-02-02", close: 500 },
+      { date: "2026-02-09", close: 515 } // +3%
+    ];
+    const r = normalizeAgainstBenchmark(equity, spy)!;
+    expect(r.accountReturnPct).toBeCloseTo(-2, 5);
+    expect(r.benchmarkReturnPct).toBeCloseTo(3, 5);
+    expect(r.excessReturnPct).toBeCloseTo(-5, 5);
+  });
+
+  it("carries the benchmark close forward for non-trading-day snapshots", () => {
+    // Snapshot on a Sunday (2026-01-04) with no SPY bar that day → uses Friday's (01-02) close.
+    const equity = curve([
+      ["2026-01-02T16:00:00Z", 100_000],
+      ["2026-01-04T16:00:00Z", 105_000]
+    ]);
+    const spy = [
+      { date: "2026-01-02", close: 500 },
+      { date: "2026-01-05", close: 510 }
+    ];
+    const r = normalizeAgainstBenchmark(equity, spy)!;
+    // 01-04 carries forward 01-02 close (500) → benchmark index stays 100 on that date.
+    const p = r.benchmarkIndex.find((x) => x.date === "2026-01-04");
+    expect(p?.index).toBe(100);
+  });
+
+  it("collapses multiple same-day snapshots to the last equity of the day", () => {
+    const equity = curve([
+      ["2026-03-02T14:00:00Z", 100_000],
+      ["2026-03-02T20:00:00Z", 101_000], // later same day wins
+      ["2026-03-03T16:00:00Z", 103_000]
+    ]);
+    const spy = [
+      { date: "2026-03-02", close: 400 },
+      { date: "2026-03-03", close: 404 }
+    ];
+    const r = normalizeAgainstBenchmark(equity, spy)!;
+    // base equity = 101_000 (last on 03-02); 03-03 = 103_000 → +1.98%
+    expect(r.accountReturnPct).toBeCloseTo(1.98, 1);
+    expect(r.points).toBe(2);
+  });
+
+  it("returns null on insufficient data", () => {
+    expect(normalizeAgainstBenchmark(curve([["2026-01-02T16:00:00Z", 100_000]]), [{ date: "2026-01-02", close: 1 }, { date: "2026-01-03", close: 2 }])).toBeNull();
+    expect(normalizeAgainstBenchmark(curve([["2026-01-02T16:00:00Z", 100_000], ["2026-01-03T16:00:00Z", 1]]), [])).toBeNull();
+  });
+
+  it("ignores non-positive equity points", () => {
+    const equity = curve([
+      ["2026-04-01T16:00:00Z", 0], // dropped
+      ["2026-04-02T16:00:00Z", 100_000],
+      ["2026-04-03T16:00:00Z", 102_000]
+    ]);
+    const spy = [
+      { date: "2026-04-02", close: 500 },
+      { date: "2026-04-03", close: 505 }
+    ];
+    const r = normalizeAgainstBenchmark(equity, spy)!;
+    expect(r.startDate).toBe("2026-04-02");
+    expect(r.points).toBe(2);
+  });
+
+  it("marks the unadjusted result cashFlowAdjusted:false (default behavior unchanged)", () => {
+    const equity = curve([
+      ["2026-01-02T16:00:00Z", 100_000],
+      ["2026-01-03T16:00:00Z", 110_000]
+    ]);
+    const spy = [
+      { date: "2026-01-02", close: 500 },
+      { date: "2026-01-03", close: 525 }
+    ];
+    const r = normalizeAgainstBenchmark(equity, spy)!;
+    expect(r.accountReturnPct).toBeCloseTo(10, 5);
+    expect(r.cashFlowAdjusted).toBe(false);
+    expect(r.netExternalFlows).toBeUndefined();
+  });
+
+  it("neutralizes a withdrawal via time-weighted chaining (the owner's -80% bug)", () => {
+    // $100k account; owner withdraws $80k with no trading. Raw growth reads -80%;
+    // TWR with the inferred -$80k flow reads ~0%.
+    const equity = cashCurve([
+      ["2026-05-01T16:00:00Z", 100_000, 100_000],
+      ["2026-05-02T16:00:00Z", 20_000, 20_000]
+    ]);
+    const spy = [
+      { date: "2026-05-01", close: 500 },
+      { date: "2026-05-02", close: 500 }
+    ];
+    const flows = inferExternalCashFlows(equity, []);
+    expect(flows.get("2026-05-02")).toBeCloseTo(-80_000, 2);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.cashFlowAdjusted).toBe(true);
+    expect(r.netExternalFlows).toBeCloseTo(-80_000, 2);
+    expect(r.accountReturnPct).toBeCloseTo(0, 2);
+    // Without the flows map the old distorted figure comes back — pinned so the fix is visible.
+    const raw = normalizeAgainstBenchmark(equity, spy)!;
+    expect(raw.accountReturnPct).toBeCloseTo(-80, 2);
+  });
+
+  it("does not misread trade-driven cash changes as transfers", () => {
+    // Cash fell $50k because the account BOUGHT $50k of stock — equity unchanged, no flow.
+    const equity = cashCurve([
+      ["2026-05-01T16:00:00Z", 100_000, 100_000],
+      ["2026-05-02T16:00:00Z", 100_000, 50_000]
+    ]);
+    const flows = inferExternalCashFlows(equity, [fill({ filledAt: "2026-05-02T15:00:00Z", side: "buy", notional: 50_000 })]);
+    expect(flows.size).toBe(0);
+  });
+
+  it("keeps genuine performance visible alongside a deposit", () => {
+    // $100k grows 10% AND a $100k deposit lands: equity 100k → 210k, cash +100k external.
+    const equity = cashCurve([
+      ["2026-06-01T16:00:00Z", 100_000, 100_000],
+      ["2026-06-02T16:00:00Z", 210_000, 200_000]
+    ]);
+    const spy = [
+      { date: "2026-06-01", close: 500 },
+      { date: "2026-06-02", close: 500 }
+    ];
+    // $10k of the equity rise is a market gain on positions... this fixture holds everything
+    // in cash terms: cash went 100k → 200k with no trades = +100k external flow.
+    const flows = inferExternalCashFlows(equity, []);
+    expect(flows.get("2026-06-02")).toBeCloseTo(100_000, 2);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.cashFlowAdjusted).toBe(true);
+    // TWR: 210k / (100k + 100k) − 1 = +5%
+    expect(r.accountReturnPct).toBeCloseTo(5, 2);
+  });
+
+  it("ignores sub-threshold cash drift (dividends/fees are not transfers)", () => {
+    const equity = cashCurve([
+      ["2026-07-01T16:00:00Z", 100_000, 10_000],
+      ["2026-07-02T16:00:00Z", 100_020, 10_020] // +$20 < max(0.5% of 100k, $25)
+    ]);
+    const flows = inferExternalCashFlows(equity, []);
+    expect(FLOW_MATERIALITY_MIN_USD).toBeGreaterThan(20);
+    expect(flows.size).toBe(0);
+  });
+
+  it("returns no flows when the curve has no cash data (synthetic curves)", () => {
+    const flows = inferExternalCashFlows(
+      curve([
+        ["2026-08-01T16:00:00Z", 100_000],
+        ["2026-08-02T16:00:00Z", 50_000]
+      ]),
+      []
+    );
+    expect(flows.size).toBe(0);
+  });
+});
