@@ -86,12 +86,12 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
   switch (family) {
     case "anthropic":
       if (/haiku/i.test(lower)) return "claude-haiku-4.5";
-      if (/opus/i.test(lower)) return "claude-opus-4.6";
-      if (/fable/i.test(lower)) return "claude-sonnet-4.6";
+      if (/opus/i.test(lower)) return "claude-opus-4.8";
+      if (/fable/i.test(lower)) return "claude-fable-5";
       return "claude-sonnet-5";
 
     case "xai":
-      if (/build/i.test(lower)) return "grok-4.5";
+      if (/build/i.test(lower)) return "grok-build-0.1";
       return "grok-4.5";
 
     case "gemini":
@@ -101,11 +101,11 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
 
     case "deepseek":
       if (/r1|reasoner/i.test(lower)) return "deepseek-reasoner";
-      if (/pro/i.test(lower)) return "deepseek-chat-v3.1";
-      return "deepseek-v3.2";
+      if (/pro/i.test(lower)) return "deepseek-v4-pro";
+      return "deepseek-v4-flash";
 
     case "mistral":
-      if (/medium/i.test(lower)) return "mistral-medium-3.1";
+      if (/medium/i.test(lower)) return "mistral-medium-3.5";
       return "mistral-small-2603";
 
     case "meta":
@@ -147,12 +147,14 @@ export function resolveLlmEndpoint(
       } else if (/^claude-haiku-latest$/i.test(model)) {
         model = "anthropic/claude-haiku-4.5";
       } else if (/^claude-opus-latest$/i.test(model)) {
-        model = "anthropic/claude-opus-4.6";
+        model = "anthropic/claude-opus-4.8";
       } else if (/^claude-fable-latest$/i.test(model)) {
-        model = "anthropic/claude-sonnet-4.6";
+        model = "anthropic/claude-fable-5";
       } else if (/^claude/i.test(model)) {
         model = `anthropic/${model}`;
-      } else if (/^grok-latest$/i.test(model) || /^grok-build-latest$/i.test(model)) {
+      } else if (/^grok-build-latest$/i.test(model)) {
+        model = "x-ai/grok-build-0.1";
+      } else if (/^grok-latest$/i.test(model)) {
         model = "x-ai/grok-4.5";
       } else if (/^grok/i.test(model)) {
         model = `x-ai/${model}`;
@@ -179,9 +181,9 @@ export function resolveLlmEndpoint(
       } else if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
         model = `mistralai/${model}`;
       } else if (/^deepseek-flash-latest$/i.test(model)) {
-        model = "deepseek/deepseek-v3.2";
+        model = "deepseek/deepseek-v4-flash";
       } else if (/^deepseek-pro-latest$/i.test(model)) {
-        model = "deepseek/deepseek-chat-v3.1";
+        model = "deepseek/deepseek-v4-pro";
       } else if (/^deepseek-r1-latest$/i.test(model)) {
         model = "deepseek/deepseek-r1";
       } else if (/^deepseek/i.test(model)) {
