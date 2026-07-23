@@ -11,8 +11,23 @@ import type { EquityPosition, PendingProposal, Portfolio, PriceAlert, WatchlistI
 export type AlertResult = { symbol: string; op: string; price: number } | { error: string };
 export type WatchlistResult = { ok: boolean; item: { symbol: string; deduped: boolean } } | { error: string };
 
+/** Realized + unrealized P&L and win rate, live and paper buckets (field names mirror PerformanceSummary). */
+export interface PortfolioPnlResult {
+  liveRealizedPnl: number;
+  paperRealizedPnl: number;
+  liveUnrealizedPnl: number;
+  paperUnrealizedPnl: number;
+  liveWinRate: number;
+  paperWinRate: number;
+}
+/** One scorecard bucket (thesis or regime). Field names mirror ThesisStat/RegimeStat. */
+export interface ScorecardRow { key: string; trades: number; winRate: number; avgReturnPct: number; totalPnl: number }
+export interface PerformanceSummaryResult { byThesis: ScorecardRow[]; byRegime: ScorecardRow[] }
+
 export interface ToolDeps {
   getQuote(symbol: string, userId: string): Promise<ChatQuote>;
+  getFundamentals?(symbol: string, userId: string): Promise<any>;
+  getMarketSignals?(userId: string): Promise<any>;
   searchKnowledge(args: { query: string; ticker?: string; doc_type?: string; as_of?: string; k?: number }, userId: string): Promise<KbChunk[]>;
   createAlert(userId: string, input: { symbol: string; op: string; price: number; note?: string }): AlertResult;
   watchlistAdd(userId: string, symbol: string): WatchlistResult;
@@ -22,6 +37,14 @@ export interface ToolDeps {
   listWatchlist?(userId: string): WatchlistItem[];
   listAlerts?(userId: string): PriceAlert[];
   listOpenProposals?(userId: string): PendingProposal[];
+  getPortfolioPnl?(userId: string): Promise<PortfolioPnlResult | null>;
+  getPerformanceSummary?(userId: string): PerformanceSummaryResult | null;
+  getReflection?(userId: string): string;
+  // Robinhood-backed read-only research (optional; the tool returns a clear "not supported"/"not
+  // connected" message when the dep isn't wired or the user has no Robinhood connection).
+  getEarningsCalendar?(userId: string, args: { start_date?: string; days?: number; high_market_cap?: boolean }): Promise<any>;
+  getOptionChain?(userId: string, underlyingSymbol: string): Promise<any>;
+  searchInstrument?(userId: string, args: { query: string; asset_type?: string; limit?: number }): Promise<any>;
   accountLabel?: string;
 }
 
@@ -200,6 +223,136 @@ export function buildTools(): Record<string, ToolDef> {
       input_schema: { type: "object", additionalProperties: false, properties: {} },
       async execute(_input, ctx) {
         return { proposals: ctx.deps.listOpenProposals ? ctx.deps.listOpenProposals(ctx.userId) : [] };
+      }
+    },
+
+    get_fundamentals: {
+      readOnly: true,
+      description: "Get rich fundamentals, company profiles, analyst ratings, price targets, sector, division, peRatio, dividendYield, beta, etc. for a ticker.",
+      input_schema: { type: "object", additionalProperties: false, required: ["symbol"], properties: { symbol: { type: "string" } } },
+      async execute(input, ctx) {
+        if (!ctx.deps.getFundamentals) return { error: "NOT_SUPPORTED" };
+        return ctx.deps.getFundamentals(canonicalTicker(String(input.symbol ?? "")), ctx.userId);
+      }
+    },
+
+    get_market_signals: {
+      readOnly: true,
+      description: "Get market-wide regime/sentiment signals, including top gainers, top losers, market breadth, volatility indices, CFTC futures spec positioning, etc.",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+      async execute(_input, ctx) {
+        if (!ctx.deps.getMarketSignals) return { error: "NOT_SUPPORTED" };
+        return ctx.deps.getMarketSignals(ctx.userId);
+      }
+    },
+
+    get_portfolio_pnl: {
+      readOnly: true,
+      description:
+        "Get the user's realized and unrealized profit/loss and win rate (live and paper). Call for " +
+        "'how much have I made/lost', 'my P&L', 'am I up or down' questions.",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+      async execute(_input, ctx) {
+        return { pnl: ctx.deps.getPortfolioPnl ? await ctx.deps.getPortfolioPnl(ctx.userId) : null };
+      }
+    },
+
+    get_performance_summary: {
+      readOnly: true,
+      description:
+        "Get a breakdown of the user's realized trading performance by thesis and by market regime " +
+        "(trades, win rate, average return %, total P&L). Call for 'how is my strategy doing', " +
+        "'which theses/regimes work', 'performance summary' questions.",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+      async execute(_input, ctx) {
+        return ctx.deps.getPerformanceSummary ? ctx.deps.getPerformanceSummary(ctx.userId) ?? { byThesis: [], byRegime: [] } : { byThesis: [], byRegime: [] };
+      }
+    },
+
+    get_reflection: {
+      readOnly: true,
+      description:
+        "Get the latest auto-generated post-mortem reflection summarizing what has been working and not " +
+        "in the user's recent trading. Call for 'what have I learned', 'reflection', 'post-mortem', 'lessons' questions.",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+      async execute(_input, ctx) {
+        const reflection = ctx.deps.getReflection ? ctx.deps.getReflection(ctx.userId) : "";
+        return { reflection: reflection || null };
+      }
+    },
+
+    get_earnings_calendar: {
+      readOnly: true,
+      description:
+        "List earnings reports scheduled across the market over a date window (up to 31 days), " +
+        "optionally limited to high-market-cap names. Call for 'what reports this week', 'upcoming " +
+        "earnings', 'who reports on <date>' questions. For a specific known ticker, prefer fundamentals.",
+      input_schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          start_date: { type: "string" },
+          days: { type: "integer", minimum: -31, maximum: 31 },
+          high_market_cap: { type: "boolean" }
+        }
+      },
+      async execute(input, ctx) {
+        if (!ctx.deps.getEarningsCalendar) return { error: "NOT_SUPPORTED" };
+        // Server-side validation — the model's input is untrusted regardless of any schema claim.
+        const days = Number(input.days);
+        return ctx.deps.getEarningsCalendar(ctx.userId, {
+          start_date: typeof input.start_date === "string" ? input.start_date : undefined,
+          days: Number.isInteger(days) && days !== 0 && days >= -31 && days <= 31 ? days : undefined,
+          high_market_cap: input.high_market_cap === true
+        });
+      }
+    },
+
+    get_option_chain: {
+      readOnly: true,
+      description:
+        "Look up the option chain (expiration dates + contract set) for an underlying ticker. Research " +
+        "and discovery only — this NEVER places, modifies, or prices an option order. Call for 'what " +
+        "expirations/strikes does <symbol> have', 'show me <symbol> options' questions.",
+      input_schema: { type: "object", additionalProperties: false, required: ["symbol"], properties: { symbol: { type: "string" } } },
+      async execute(input, ctx) {
+        if (!ctx.deps.getOptionChain) return { error: "NOT_SUPPORTED" };
+        const symbol = canonicalTicker(String(input.symbol ?? ""));
+        if (!symbol) return { error: "INVALID_INPUT", details: "symbol required" };
+        return ctx.deps.getOptionChain(ctx.userId, symbol);
+      }
+    },
+
+    search_instrument: {
+      readOnly: true,
+      description:
+        "Resolve a natural-language company name, ticker, crypto pair, or index to concrete instruments. " +
+        "Call when the user names an asset by (partial) name rather than a ticker, or you need to " +
+        "disambiguate which symbol they mean before answering.",
+      input_schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: {
+          query: { type: "string" },
+          asset_type: { type: "string", enum: ["instrument", "currency_pair", "market_index"] },
+          limit: { type: "integer", minimum: 1, maximum: 20 }
+        }
+      },
+      async execute(input, ctx) {
+        if (!ctx.deps.searchInstrument) return { error: "NOT_SUPPORTED" };
+        const query = String(input.query ?? "").trim();
+        if (!query) return { error: "INVALID_INPUT", details: "query required" };
+        const assetType =
+          input.asset_type === "instrument" || input.asset_type === "currency_pair" || input.asset_type === "market_index"
+            ? input.asset_type
+            : undefined;
+        const limit = Number(input.limit);
+        return ctx.deps.searchInstrument(ctx.userId, {
+          query,
+          asset_type: assetType,
+          limit: Number.isInteger(limit) && limit >= 1 && limit <= 20 ? limit : undefined
+        });
       }
     }
   };
