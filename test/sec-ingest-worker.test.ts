@@ -111,8 +111,12 @@ describe("SEC Ingestion Worker and State Machine (P5)", () => {
 
     // Lexical FTS rows are written only after storeDocument reports a committed document —
     // and they ARE written (the worker pipeline is the FTS producer for queued ingests).
-    const ftsRows = db.prepare("SELECT symbol, accession FROM document_chunks_fts WHERE accession = ?").all(accession) as any[];
+    // Accession key matches storeDocument doc_id / chunk_occurrences (vectorDocId), not bare SEC accession.
+    const ftsRows = db.prepare(
+      "SELECT symbol, accession FROM document_chunks_fts WHERE accession = ?"
+    ).all(`${accession}:1:document.html`) as any[];
     expect(ftsRows.length).toBeGreaterThan(0);
     expect(ftsRows[0].symbol).toBe("AAPL");
+    expect(ftsRows[0].accession).toBe(`${accession}:1:document.html`);
   });
 });

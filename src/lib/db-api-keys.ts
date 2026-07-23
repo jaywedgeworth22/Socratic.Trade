@@ -276,7 +276,6 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   fintechstudios: "FINTECH_STUDIOS_API_KEY",
   powerintell: "FINTECH_STUDIOS_API_KEY",
   tiingo: "TIINGO_API_KEY",
-  intrinio: "INTRINIO_API_KEY",
   twelvedata: "TWELVEDATA_API_KEY",
   logodev: "LOGO_DEV_TOKEN",
   logodev_secret: "LOGO_DEV_SECRET_KEY"
@@ -320,7 +319,6 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   alpaca_paper_secret_key: "alpaca_paper_secret_key",
   apify_api_token: "apify",
   tiingo_api_key: "tiingo",
-  intrinio_api_key: "intrinio",
   twelve_data: "twelvedata",
   twelve_data_api_key: "twelvedata",
   twelvedata_api_key: "twelvedata",
@@ -459,7 +457,6 @@ const API_KEY_TIER: Record<string, CredTier> = {
   siliconflow: "shared-operator-infra", // alternative embeds/reranker provider for the shared corpus
   sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
   tiingo: "shared-operator-infra",
-  intrinio: "shared-operator-infra",
   twelvedata: "shared-operator-infra",
   logodev: "shared-operator-infra",
   logodev_secret: "shared-operator-infra"

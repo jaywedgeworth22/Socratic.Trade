@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildSocraticDecisionCase, type SocraticOverrideResolution } from "../src/lib/socratic-runtime";
+import { buildSocraticDecisionCase, ragAttributionsFromChunks, type SocraticOverrideResolution } from "../src/lib/socratic-runtime";
+import { stableRagEvidenceRef } from "../src/lib/rag/evidence-consumption";
 import type { PolicyDecision, TradeProposal } from "../src/lib/types";
 
 const proposal: TradeProposal = {
@@ -80,5 +81,49 @@ describe("Socratic Red Team dissent receipts", () => {
 
     expect(result.dissent[0]?.title).toBe("Red Team rejection (overridden)");
     expect(result.dissent[0]?.summary).toContain("trade allowed to proceed");
+  });
+});
+
+describe("Socratic RAG attribution identity", () => {
+  it("matches the prompt-consumption ref for an id-less chunk with immutable coordinates", () => {
+    const chunk = {
+      id: "",
+      text: "Revenue grew.",
+      score: 0.91,
+      relevanceScore: 0.83,
+      source: "sec-edgar",
+      doc_type: "10-k",
+      section: "MD&A",
+      url: "https://www.sec.gov/example",
+      as_of: "2026-02-01T00:00:00.000Z",
+      scope: "shared" as const,
+      metadata: {
+        accession: "0001",
+        chunk_ordinal: 7,
+        content_hash: "content-hash",
+        vector_namespace: "managed",
+        tenant_scope: "tenant:shared"
+      }
+    };
+
+    const expectedRef = stableRagEvidenceRef({
+      symbol: "AAPL",
+      source: "sec-edgar",
+      docType: "10-k",
+      accession: "0001",
+      section: "MD&A",
+      ordinal: 7,
+      contentHash: "content-hash",
+      vectorNamespace: "managed",
+      scope: "shared",
+      tenantScope: "tenant:shared",
+      title: "MD&A",
+      url: "https://www.sec.gov/example",
+      publishedAt: "2026-02-01T00:00:00.000Z",
+      score: 0.91,
+      relevanceScore: 0.83
+    });
+
+    expect(ragAttributionsFromChunks("aapl", "revenue", [chunk])[0]?.evidenceRef).toBe(expectedRef);
   });
 });
