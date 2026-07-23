@@ -14,12 +14,20 @@ const mocks = vi.hoisted(() => ({ retrieveContextDetailed: vi.fn() }));
 
 vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
-  return { ...actual, retrieveContextDetailed: mocks.retrieveContextDetailed };
+  return { ...actual, managedVectorLedgerAuthority: vi.fn(), retrieveContextDetailed: mocks.retrieveContextDetailed };
 });
 
-beforeAll(() => {
+let orchestrator: typeof import("../src/lib/chat/orchestrator");
+
+beforeAll(async () => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-orch-search-knowledge-${randomUUID()}.db`)}`;
-});
+  // One-time import of the orchestrator module graph — it pulls in effectively the whole app
+  // (vector-db/Pinecone/Voyage SDKs, data-providers, broker, memory stores): ~15s cold even solo,
+  // slower under full-suite CPU contention. Importing it inside a test body charged that cost to
+  // the FIRST test's 20s testTimeout — the source of this file's full-suite flake. beforeAll gets
+  // its own explicit budget; the tests themselves are millisecond-fast.
+  orchestrator = await import("../src/lib/chat/orchestrator");
+}, 120_000);
 
 describe("buildProductionDeps().searchKnowledge — R13 provenance payload", () => {
   beforeEach(() => {
@@ -40,8 +48,7 @@ describe("buildProductionDeps().searchKnowledge — R13 provenance payload", () 
         url: "https://sec.gov/x"
       }
     ]);
-    const { buildProductionDeps } = await import("../src/lib/chat/orchestrator");
-    const deps = buildProductionDeps();
+    const deps = orchestrator.buildProductionDeps();
 
     const results = await deps.searchKnowledge({ query: "supply chain risk", ticker: "AAPL" }, "local");
 
@@ -88,8 +95,7 @@ describe("buildProductionDeps().searchKnowledge — R13 provenance payload", () 
         doc_type: "8-k"
       }
     ]);
-    const { buildProductionDeps } = await import("../src/lib/chat/orchestrator");
-    const deps = buildProductionDeps();
+    const deps = orchestrator.buildProductionDeps();
 
     const results = await deps.searchKnowledge({ query: "buyback", ticker: "AAPL" }, "local");
 
@@ -102,8 +108,7 @@ describe("buildProductionDeps().searchKnowledge — R13 provenance payload", () 
     mocks.retrieveContextDetailed.mockResolvedValue([
       { id: "x", text: "t", score: 0.42, source: "s", as_of: new Date().toISOString(), doc_type: "8-k" }
     ]);
-    const { buildProductionDeps } = await import("../src/lib/chat/orchestrator");
-    const deps = buildProductionDeps();
+    const deps = orchestrator.buildProductionDeps();
 
     const results = await deps.searchKnowledge({ query: "q", ticker: "AAPL" }, "local");
     expect(results[0]!.score).toBe(0.42);
@@ -111,8 +116,7 @@ describe("buildProductionDeps().searchKnowledge — R13 provenance payload", () 
   });
 
   it("returns [] when no ticker is provided (unchanged existing behavior)", async () => {
-    const { buildProductionDeps } = await import("../src/lib/chat/orchestrator");
-    const deps = buildProductionDeps();
+    const deps = orchestrator.buildProductionDeps();
     const results = await deps.searchKnowledge({ query: "q" }, "local");
     expect(results).toEqual([]);
     expect(mocks.retrieveContextDetailed).not.toHaveBeenCalled();

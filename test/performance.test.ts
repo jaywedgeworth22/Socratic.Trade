@@ -1,20 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { mergeQuoteData } from "../src/lib/market";
 import {
   calculatePnl,
   getClosedLotCount,
   getConfidenceCalibration,
   getFactorScorecard,
+  getRedTeamEfficacy,
   getRegimeScorecard,
   getSectorScorecard,
   getSignalEfficacy,
   getSkippedCandidateReturns,
   getThesisRegimeScorecard,
   getThesisScorecard,
-  recordFillFromProposal
+  recordFillFromProposal,
+  type PrefetchedFills
 } from "../src/lib/performance";
 import type { FillEvent, MarketScan, OrderSide, TradeProposal } from "../src/lib/types";
 
@@ -59,6 +61,50 @@ describe("calculatePnl", () => {
     insertFillEvent(pending);
     // A pending broker-paper fill contributes no realized/unrealized P&L until the broker reports
     // execution (status flips to "filled") — verified above via calculatePnl directly.
+  });
+
+  it("does not substitute proposal or review prices into an unpriced broker receipt", () => {
+    const pending = recordFillFromProposal({
+      accountNumber: `UNPRICED-${randomUUID()}`,
+      source: "live",
+      executionMode: "broker/live",
+      proposal: {
+        symbol: "AAPL",
+        side: "buy",
+        type: "limit",
+        quantity: 1,
+        limitPrice: 200,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: "broker price still unknown",
+        tradeThesisTag: "test",
+        entryMarketRegime: "test"
+      },
+      review: { estimatedNotional: 200, alerts: [], raw: { price: 200 } },
+      marketScan: marketScanWithQuote("AAPL", 201),
+      execution: { orderId: "unpriced-order", refId: "unpriced-ref", state: "filled", filledQuantity: 1, raw: {} },
+      status: "pending_reconciliation"
+    });
+
+    expect(pending).toMatchObject({ status: "pending_reconciliation", quantity: 1, price: 0, notional: 0 });
+  });
+
+  it("accounts for the executed quantity of a still-working partial fill", () => {
+    const partial = fill({
+      id: "live-partial",
+      source: "live",
+      executionMode: "broker/live",
+      brokerOrderId: "broker-partial-1",
+      status: "partially_filled",
+      side: "buy",
+      quantity: 2,
+      price: 100,
+      notional: 200
+    });
+
+    const pnl = calculatePnl([partial], { AAPL: 110 });
+    expect(pnl.openLots).toMatchObject([{ symbol: "AAPL", quantity: 2, entryPrice: 100 }]);
+    expect(pnl.unrealized).toBe(20);
   });
 
   it("turns approved dollar Paper orders into quantity fills when a market quote is present", () => {
@@ -289,6 +335,109 @@ describe("getThesisScorecard", () => {
     const rows = getSkippedCandidateReturns({ AAPL: 110 }, userA);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ runId: "run-skip-a", symbol: "AAPL", returnPct: 10, dominantFactor: "momentum" });
+  });
+
+  it("getRedTeamEfficacy joins Bear-veto audit events to matured counterfactual returns, per model", async () => {
+    const { audit, insertSkippedCounterfactualCandidate, markSkippedCounterfactualMatured } = await import("../src/lib/db");
+    const userId = `redteam-eff-${randomUUID()}`;
+
+    // Veto 1 (model A): would have LOST money — the Bear added value.
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-1", symbol: "AAPL", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "openai/gpt-4.1-mini" }, userId);
+    insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-1", symbol: "AAPL", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 100, horizonDays: 5, targetDate: "2026-06-06" });
+    markSkippedCounterfactualMatured({ id: `${userId}:run-rt-1:AAPL:5`, userId, exitDate: "2026-06-06", exitPrice: 90, returnPct: -10 });
+
+    // Veto 2 (model A): would have WON — a survivor-risk hit (the veto missed a winner).
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-2", symbol: "MSFT", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "openai/gpt-4.1-mini" }, userId);
+    insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-2", symbol: "MSFT", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 200, horizonDays: 5, targetDate: "2026-06-06" });
+    markSkippedCounterfactualMatured({ id: `${userId}:run-rt-2:MSFT:5`, userId, exitDate: "2026-06-06", exitPrice: 220, returnPct: 10 });
+
+    // Veto 3 (model B, unmatured): counted in totalVetoes but not maturedVetoes.
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-3", symbol: "NVDA", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "claude-opus" }, userId);
+    insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-3", symbol: "NVDA", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 300, horizonDays: 5, targetDate: "2026-06-06" });
+
+    const efficacy = getRedTeamEfficacy(userId);
+    expect(efficacy.totalVetoes).toBe(3);
+    expect(efficacy.maturedVetoes).toBe(2);
+    expect(efficacy.maturedCoveragePct).toBeCloseTo((2 / 3) * 100, 1);
+    expect(efficacy.vetoValueAddRate).toBe(50); // 1 of 2 matured vetoes avoided a loser
+    expect(efficacy.survivorRiskHitRate).toBe(50); // 1 of 2 matured vetoes missed a winner
+    expect(efficacy.avgReturnPct).toBe(0); // (-10 + 10) / 2
+
+    const modelA = efficacy.byModel.find((m) => m.model === "openai/gpt-4.1-mini");
+    expect(modelA?.maturedVetoes).toBe(2);
+    expect(modelA?.vetoValueAddRate).toBe(50);
+    expect(modelA?.survivorRiskHitRate).toBe(50);
+    // Model B has zero MATURED vetoes, so it's absent from byModel (never a fabricated 0/0 row).
+    expect(efficacy.byModel.find((m) => m.model === "claude-opus")).toBeUndefined();
+
+    expect(efficacy.records).toHaveLength(2);
+  });
+
+  it("getRedTeamEfficacy side-adjusts SHORT vetoes (a short's counterfactual close-price-up is a value-add)", async () => {
+    const { audit, insertSkippedCounterfactualCandidate, markSkippedCounterfactualMatured } = await import("../src/lib/db");
+    const userId = `redteam-eff-short-${randomUUID()}`;
+
+    // A vetoed SHORT whose price ROSE (raw returnPct positive) means the short thesis would have
+    // LOST money — the veto added value. Side-adjusted returnPct should be negative.
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-short", symbol: "TSLA", side: "short", thesisTag: "Breakdown", reason: "Squeeze risk.", model: "openai/gpt-4.1-mini" }, userId);
+    insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-short", symbol: "TSLA", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 100, horizonDays: 5, targetDate: "2026-06-06" });
+    markSkippedCounterfactualMatured({ id: `${userId}:run-rt-short:TSLA:5`, userId, exitDate: "2026-06-06", exitPrice: 120, returnPct: 20 });
+
+    const efficacy = getRedTeamEfficacy(userId);
+    expect(efficacy.records[0]?.returnPct).toBe(-20);
+    expect(efficacy.vetoValueAddRate).toBe(100);
+  });
+
+  it("getRedTeamEfficacy computes unattributed model rollups from full history, not the recent record slice", async () => {
+    const { audit, insertSkippedCounterfactualCandidate, markSkippedCounterfactualMatured } = await import("../src/lib/db");
+    const userId = `redteam-eff-unattributed-${randomUUID()}`;
+
+    for (let i = 0; i < 13; i += 1) {
+      const runId = `run-rt-unattributed-${i}`;
+      const symbol = `T${i}`;
+      audit("proposal_rejected_by_red_team", { runId, symbol, side: "buy", thesisTag: "Momentum", reason: "Legacy unstamped veto." }, userId);
+      insertSkippedCounterfactualCandidate({ userId, runId, symbol, snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 100, horizonDays: 5, targetDate: "2026-06-06" });
+      markSkippedCounterfactualMatured({ id: `${userId}:${runId}:${symbol}:5`, userId, exitDate: "2026-06-06", exitPrice: 90, returnPct: -10 });
+    }
+
+    const efficacy = getRedTeamEfficacy(userId, { limit: 2 });
+
+    expect(efficacy.records).toHaveLength(2);
+    expect(efficacy.byModel.find((m) => m.model === "unattributed")).toMatchObject({
+      maturedVetoes: 13,
+      vetoValueAddRate: 100,
+      survivorRiskHitRate: 0,
+      avgReturnPct: -10
+    });
+  });
+
+  it("getRedTeamEfficacy scans audits BY KIND — a flood of newer other-kind audits cannot evict veto history", async () => {
+    const { audit } = await import("../src/lib/db");
+    const userId = `redteam-eff-kind-${randomUUID()}`;
+
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-old", symbol: "AAPL", side: "buy", reason: "Overbought.", model: "openai/gpt-4.1-mini" }, userId);
+    // Ten newer audit rows of OTHER kinds — more than the auditLimit below. Under the old
+    // all-kind scan (LIMIT applied before the kind filter), these would push the veto out
+    // of the window entirely and the scorecard would report zero veto history.
+    for (let i = 0; i < 10; i += 1) {
+      audit("signal_snapshot", { runId: `run-noise-${i}`, signals: [] }, userId);
+    }
+
+    const efficacy = getRedTeamEfficacy(userId, { auditLimit: 5 });
+    expect(efficacy.totalVetoes).toBe(1);
+  });
+
+  it("getRedTeamEfficacy excludes EXIT vetoes from totals (no counterfactual is ever recorded for them)", async () => {
+    const { audit } = await import("../src/lib/db");
+    const userId = `redteam-eff-exit-${randomUUID()}`;
+
+    // A vetoed SELL (exit) is audited by the strategy but never gets a counterfactual row —
+    // counting it in totalVetoes would permanently depress maturation coverage.
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-exit", symbol: "AAPL", side: "sell", reason: "Premature exit.", model: "openai/gpt-4.1-mini" }, userId);
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-open", symbol: "MSFT", side: "buy", reason: "Overbought.", model: "openai/gpt-4.1-mini" }, userId);
+
+    const efficacy = getRedTeamEfficacy(userId);
+    expect(efficacy.totalVetoes).toBe(1);
   });
 
   it("groups realized outcomes by the sector each position was opened in", async () => {
@@ -680,3 +829,38 @@ function marketScanWithQuote(symbol: string, price: number): MarketScan {
     }
   };
 }
+
+describe("PrefetchedFills optimization", () => {
+  it("uses prefetched fills instead of calling listFillEvents when supplied", async () => {
+    const db = await import("../src/lib/db");
+    const spy = vi.spyOn(db, "listFillEvents");
+    
+    const prefetched: PrefetchedFills = {
+      liveFills: [
+        fill({ id: "b1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: "PREFETCH1", symbol: "AAPL" }),
+        fill({ id: "s1", side: "sell", quantity: 1, price: 110, notional: 110, accountNumber: "PREFETCH1", symbol: "AAPL" })
+      ],
+      paperFills: []
+    };
+
+    spy.mockClear();
+
+    // Call all the optimized scorecards with prefetched fills
+    getSectorScorecard("PREFETCH1", "live", {}, "local", prefetched);
+    getThesisRegimeScorecard("PREFETCH1", "live", {}, "local", prefetched);
+    getClosedLotCount("PREFETCH1", "live", "local", prefetched);
+    getSignalEfficacy("PREFETCH1", "live", {}, "local", prefetched);
+    getFactorScorecard("PREFETCH1", "live", {}, "local", undefined, prefetched);
+    getConfidenceCalibration("PREFETCH1", "live", {}, "local", prefetched);
+
+    // listFillEvents should not have been called!
+    expect(spy).not.toHaveBeenCalled();
+
+    // Call without prefetched and listFillEvents should be called
+    spy.mockClear();
+    getSectorScorecard("PREFETCH1", "live", {}, "local");
+    expect(spy).toHaveBeenCalled();
+
+    spy.mockRestore();
+  });
+});

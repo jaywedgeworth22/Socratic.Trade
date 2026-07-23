@@ -9,7 +9,12 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const userId = resolveRequestUserId(request);
   const consent = getDataPoolConsent(userId);
-  return NextResponse.json({ ...consent, currentVersion: DATA_POOL_CONSENT_VERSION, needsConsent: !(consent.accepted && consent.version >= DATA_POOL_CONSENT_VERSION) });
+  // A recorded DECLINE resolves the gate too: any answer at the current consent version stands
+  // until a version bump re-asks. (The never-answered default is version 0; setDataPoolConsent
+  // always stamps the current version, for accepts and declines alike.) Actual pooling remains
+  // gated on hasDataPoolConsent(), which requires an explicit accept — declining only stops the
+  // blocking dialog from re-appearing on every console load.
+  return NextResponse.json({ ...consent, currentVersion: DATA_POOL_CONSENT_VERSION, needsConsent: !((consent.version ?? 0) >= DATA_POOL_CONSENT_VERSION) });
 }
 
 export async function POST(request: Request) {

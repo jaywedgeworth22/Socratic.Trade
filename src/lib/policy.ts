@@ -19,6 +19,8 @@ import { dynamicIndexUniversesForPolicy, symbolsForPolicyUniverse } from "./inde
 import { getUserWashSaleLockProvenance, type WashSaleLockMap } from "./tax";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
+import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./market-regime";
+import { effectiveDailyOpeningNotionalCap } from "./policy-caps";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -57,8 +59,8 @@ export interface PolicyContext {
    */
   approvedEscalations?: ApprovedEscalation[];
   /**
-   * The BUYING ConnectedAccount's taxationType (db row, as configured in Settings → Tax
-   * treatment). This is the SOURCE OF TRUTH for the account's tax regime — it wins over
+   * The BUYING ConnectedAccount's taxationType (db row, set on the account itself in Settings →
+   * Broker accounts). This is the SOURCE OF TRUTH for the account's tax regime — it wins over
    * policy.taxSettings.taxationType (see dashboard.ts's tax-summary overlay) and must be
    * threaded here because legacy/manually-configured IRA accounts may have capabilities absent
    * (or reporting "brokerage") AND a policy taxSettings without taxationType; without this the
@@ -93,10 +95,13 @@ export const MARGIN_MINIMUM_EQUITY = 2_000;
 export const OPENING_ORDER_HEADROOM_PCT = 5;
 
 /**
- * "auto" wash-sale handling: a locked rebuy proceeds only when its expected edge (dollars) is at
- * least this multiple of the priced tax cost (disallowed loss × shortTermRatePct). 3× is the
- * owner-approved "sane multiple" — the trade's conviction-weighted profit target must clearly
- * dominate a CERTAIN, immediate tax cost before the system spends it autonomously.
+ * RECEIPT-ONLY LABEL (no longer a gate threshold — owner decision 2026-07-03). Historically "auto"
+ * wash-sale handling required the expected edge to clear this multiple of the priced tax cost
+ * before proceeding; the owner rejected that as pseudo-math (the "expected edge" side of the
+ * comparison was itself derived from the LLM's own confidenceScore/bracketTakeProfit outputs, so
+ * the gate was re-arithmetizing the model's judgment rather than adding an independent check).
+ * "auto" now always proceeds; this constant is retained only to label
+ * decision.washSale.edgeMultiple on the receipt so historical records stay self-describing.
  */
 export const WASH_SALE_AUTO_EDGE_MULTIPLE = 3;
 
@@ -155,9 +160,12 @@ export function isIraTaxRegime(
 }
 
 /**
- * Deterministic expected edge (dollars) used by the "auto" wash-sale guard.
+ * RECEIPT TELEMETRY, not a gate (owner decision 2026-07-03 — see WASH_SALE_AUTO_EDGE_MULTIPLE).
+ * Computes the "expected edge" (dollars) for a wash-sale-locked BUY under "auto" handling, purely
+ * to record it on decision.washSale for transparency; it no longer decides whether the buy
+ * proceeds ("auto" always proceeds).
  *
- * Signal choice (documented per the owner spec — "pick the most defensible signal"):
+ * Signal choice (documented per the original owner spec — "pick the most defensible signal"):
  *
  *   expectedEdge$ = estimatedNotional × (takeProfit% / 100) × (confidenceScore / 100)
  *
@@ -168,9 +176,8 @@ export function isIraTaxRegime(
  * proposal-level bracketTakeProfit (with a known referencePrice) takes precedence over the
  * policy-level percentage because it is the more specific target for THIS trade.
  *
- * Fail-safe degradation: a missing/invalid conviction, target, or notional yields $0 edge, which
- * always FAILS the guard — when the upside can't be priced, the system never spends a certain,
- * priced tax cost on it.
+ * Degradation: a missing/invalid conviction, target, or notional yields $0 — an honest "could not
+ * price the upside" receipt value, not a failure of anything.
  */
 export function washSaleExpectedEdgeUsd(
   proposal: TradeProposal,
@@ -230,6 +237,67 @@ export function applyOpeningOrderHeadroom(value: number): number {
   return Math.floor(value * (100 - OPENING_ORDER_HEADROOM_PCT)) / 100;
 }
 
+/**
+ * Owner guardrail philosophy (2026-07-05): the ONLY hard rules are the account boundary and the
+ * physical / broker / regulatory / accounting IMPOSSIBILITIES below — orders that literally cannot be
+ * placed, or that the broker or IRS would reject regardless of the agent's intent. EVERYTHING else the
+ * policy engine blocks is a RISK PREFERENCE the agent may self-override with a logged `autonomyOverride`
+ * thesis (see resolveSocraticOverride). This is the single source of truth for that hard/preference
+ * split, co-located with the gates that produce the reasons: a reason matching a hard pattern is never
+ * overridable; every OTHER block is overridable by DEFAULT, so a new preference gate added later is
+ * overridable automatically instead of accidentally hard (the old allowlist had the opposite,
+ * fail-restrictive default).
+ *
+ * Stays HARD (a "can't-do-it" fact, not a guardrail restraining the agent):
+ *  - account boundary — no account selected;
+ *  - accounting truths — can't sell/cover more than held/short; malformed order missing qty;
+ *  - broker rejections — insufficient buying power, symbol not tradable, "broker" errors,
+ *    account can't short, fractional/dollar orders outside regular hours;
+ *  - regulatory — the live margin-account minimum (FINRA Notice 26-10, the PDT successor);
+ *  - IRA wash-sale permanent-harm lockout — it has its OWN owner control
+ *    (taxSettings.iraWashSaleHandling), so it is governed there, not double-overridden ad hoc.
+ *
+ * Deliberately NOT hard (agent-overridable preferences): every exposure / notional / count / ADV /
+ * beta / sector cap, the crisis cap, universe & order-type limits, extended-hours, entry-drift /
+ * staleness, stop / take-profit rules, short-stop-required, policy-level "short-selling disabled",
+ * and systemState (halted / close-only / liquidating).
+ */
+export const HARD_GATE_REASON_PATTERNS: readonly string[] = [
+  "No Robinhood account is selected.", // account boundary — the one absolute rule
+  "not tradable", // broker: symbol not tradable
+  "buying power", // broker/accounting: can't spend more than available
+  "Sell quantity exceeds", // accounting: can't sell more than held
+  "Cover quantity exceeds", // accounting: can't cover more than short
+  "exit must specify", // malformed order
+  "margin_minimum:", // regulatory: live margin minimum (FINRA 26-10 / PDT successor)
+  "does not support short selling", // broker capability (NOT the policy toggle "short-selling is disabled in policy")
+  "Fractional or dollar-based orders must be regular-hours only.", // broker execution constraint
+  "broker", // any broker-originated rejection
+  "wash-sale", // IRA wash-sale — governed by taxSettings.iraWashSaleHandling (its own override)
+  "wash sale",
+  "PERMANENTLY" // IRA wash-sale permanent-harm lockout
+];
+
+/**
+ * True when a policy block is a HARD, non-overridable gate (account boundary + physical / broker /
+ * regulatory / accounting impossibility). Everything else is an overridable risk preference. Used by
+ * the Socratic self-override path (socratic-runtime.resolveSocraticOverride) to decide which blocks an
+ * `autonomyOverride` thesis may pass. Substring, case-insensitive — the reason strings are produced
+ * right here in evaluateTradeProposal.
+ */
+export function isHardGateReason(reason: string): boolean {
+  const lower = reason.toLowerCase();
+  // Pre-veto tags (`deterministic_bear_veto:` / `red_team_veto:` from the pre-policy-veto-advisory
+  // flow in strategy.ts) are ADVISORY preferences BY CONSTRUCTION, regardless of the free-text reason
+  // after the prefix. A Red Team veto's reason is unconstrained LLM natural language and can
+  // coincidentally contain a hard-gate substring ("broker", "buying power", "PERMANENTLY", "wash
+  // sale"); classifying by the prefix here stops the substring scan from misclassifying a pre-veto
+  // tag as hard and silently refusing a valid override. These prefixes are ONLY produced by that
+  // tagging, so this can never mask a real hard gate.
+  if (lower.startsWith("deterministic_bear_veto:") || lower.startsWith("red_team_veto:")) return false;
+  return HARD_GATE_REASON_PATTERNS.some((pattern) => lower.includes(pattern.toLowerCase()));
+}
+
 export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyContext): PolicyDecision {
   const reasons: string[] = [];
   // Escalatable failures (closed allowlist — see GateEscalationKind). Only the reasons pushed
@@ -264,14 +332,25 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     reasons.push(`${proposal.type} orders are not permitted.`);
   }
   // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
-  // configured (treating stop-loss rules as an implicit green-light for bracket risk management).
-  // Permissive default — brackets should be encouraged when stop rules are active.
+  // configured (treating stop-loss rules as an implicit green-light for bracket risk management) OR
+  // when this proposal carries an explicit per-position "fixed"/"atr" stop plan — that plan pins a
+  // bracket stop regardless of the account's own stopLossPct (STOP_PLAN_FALLBACK_STOP_PCT on a bare
+  // account, universal availability), so a bare account with no bracket permission and no base stop
+  // configured would otherwise reject the exact proposal the owner/LLM deliberately chose to protect
+  // (Codex review, PR #1371). Permissive default — brackets should be encouraged when stop rules (or
+  // an explicit per-position plan) are active.
   if (proposal.bracketTakeProfit != null || proposal.bracketStopLoss != null) {
+    const applicableStopLossPct =
+      proposal.side === "short" ? context.policy.riskRules?.shortStopLossPct : context.policy.riskRules?.stopLossPct;
     const bracketPermitted =
       context.policy.permittedOrderTypes.includes("bracket" as any) ||
-      (context.policy.riskRules?.stopLossPct != null && context.policy.riskRules.stopLossPct > 0);
+      (applicableStopLossPct != null && applicableStopLossPct > 0) ||
+      proposal.stopPlan?.style === "fixed" ||
+      proposal.stopPlan?.style === "atr";
     if (!bracketPermitted) {
-      reasons.push('Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct risk rule.');
+      reasons.push(
+        'Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct / shortStopLossPct risk rule.'
+      );
     }
   }
   if (proposal.side !== "sell" && proposal.side !== "cover" && !context.policy.permitExtendedHours && proposal.marketHours !== "regular_hours") {
@@ -363,8 +442,25 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
         : `the connected account does not support short selling`;
       reasons.push(`Order side "${proposal.side}" rejected: ${why}.`);
     } else {
-      if (!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) {
-        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct).`);
+      // An explicit per-position stopPlan satisfies the mandatory-stop requirement the same way it
+      // satisfies the bracket-permission gate above: "fixed"/"atr"/"trailing" guarantee this short a
+      // real stop (via STOP_PLAN_FALLBACK_STOP_PCT or the trailing lane) even on an account with no
+      // account-wide shortStopLossPct configured (Codex review, PR #1371). An explicit "none" ALSO
+      // satisfies this gate (owner decision, 2026-07-15 — "if the LLM decides it does not want a stop
+      // plan, that is okay"): the mandatory-stop-loss requirement exists to prevent an accidental,
+      // un-stopped short, not to override a deliberate, rationale-backed owner/LLM choice to carry
+      // one without a stop — same "real trading, owner's risk" precedent as `stopPlan: "none"` never
+      // being hard-blocked elsewhere in this file. An explicit "default" does NOT satisfy this gate —
+      // it defers to the account's own precedence, which in this branch has no shortStopLossPct
+      // configured, so it guarantees nothing; only fixed/atr/trailing/none are genuine, deliberate
+      // choices with a known outcome.
+      const hasExplicitStopPlan =
+        proposal.stopPlan?.style === "fixed" ||
+        proposal.stopPlan?.style === "atr" ||
+        proposal.stopPlan?.style === "trailing" ||
+        proposal.stopPlan?.style === "none";
+      if ((!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) && !hasExplicitStopPlan) {
+        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct, or an explicit stopPlan).`);
       }
       if (context.policy.maxShortOrderNotional && estimatedNotional > context.policy.maxShortOrderNotional) {
         reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the max short order limit of $${context.policy.maxShortOrderNotional}`);
@@ -436,9 +532,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       }
     }
   }
-  const effectiveMaxDailyNotional = Math.min(
-    context.policy.maxDailyNotional ?? Infinity,
-    context.policy.maxDailyPctOfNav ? (context.policy.maxDailyPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
+  const effectiveMaxDailyNotional = effectiveDailyOpeningNotionalCap(
+    context.policy,
+    context.portfolio.totalMarketValue
   );
   // Daily/hourly notional + daily order-count failures are TIME-CONTEXT gates: the budget they
   // guard replenishes on its own (midnight / rolling hour), so they are escalatable — a pending
@@ -502,39 +598,44 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   // locked set. This gate is server-side only and stays the single point of truth.
   //
   // taxSettings.washSaleHandling decides what a lockout MEANS for a TAXABLE buyer:
-  //   "block" (default) — refuse the buy outright (the original behavior, byte-compatible).
+  //   "block"           — refuse the buy outright (the original hard-stop behavior). Available as
+  //                       a stricter opt-in; no longer the default (owner decision 2026-07-03).
   //   "ask"             — refuse here, but mark the failure ESCALATABLE with the priced cost
   //                       (disallowed loss × shortTermRatePct). The strategy loop turns it into
   //                       a pending-approval card (both propose and decide authority). Approving
   //                       that card re-runs THIS gate with a server-stored override token
   //                       (context.approvedEscalations, read from the proposal row the server
   //                       itself wrote) — the ONLY way a locked buy passes in "ask" mode.
-  //   "auto"            — deterministic guard: proceed only when the proposal's expected edge
-  //                       (washSaleExpectedEdgeUsd) is >= WASH_SALE_AUTO_EDGE_MULTIPLE × the
-  //                       priced cost; otherwise refuse with the math in the reason. Both
-  //                       outcomes are recorded on decision.washSale — never silent.
+  //   "auto" (DEFAULT)  — ALWAYS proceeds (owner decision 2026-07-03: a deterministic edge-vs-cost
+  //                       veto here would just re-arithmetize the LLM's own outputs — confidence,
+  //                       bracket target — against an arbitrary multiple, not add independent
+  //                       judgment). The priced tax cost (washSaleExpectedEdgeUsd,
+  //                       estimatedTaxCostUsd) still rides decision.washSale as RECEIPT telemetry
+  //                       and is threaded into the strategist prompt (taxContext.washSaleRebuyCosts)
+  //                       so the model weighs it against conviction itself — never silent, never a
+  //                       hard block, unless an operator explicitly opts into "block" or "ask".
   //
   // IRA-REPLACEMENT RULE (Rev. Rul. 2008-5): when the BUYING account is a roth/traditional
   // IRA and the symbol is locked, the binding loss is by construction from a TAXABLE account
   // (IRA losses never contribute locks — see tax.ts), and buying the replacement inside the IRA
   // PERMANENTLY destroys the disallowed loss. Governed by taxSettings.iraWashSaleHandling:
-  //   "block" — optional strict mode: hard block in EVERY washSaleHandling mode, ignoring override tokens,
-  //     and — unlike the taxable-buyer lockout — even when the per-account washSaleGuard flag is
-  //     off: resolveTaxSettings deliberately force-disables that flag for IRAs (a wash sale has
-  //     no benefit INSIDE the account), so it cannot switch off the cross-account
-  //     permanent-harm rule.
-  //   "disregard" (default) — the buy PROCEEDS through the normal
-  //     authority flow (all other gates unchanged). Rationale: brokers do not report
+  //   "block" — hard block in EVERY washSaleHandling mode, ignoring override tokens, and —
+  //     unlike the taxable-buyer lockout — even when the per-account washSaleGuard flag is off:
+  //     resolveTaxSettings deliberately force-disables that flag for IRAs (a wash sale has no
+  //     benefit INSIDE the account), so it cannot switch off the cross-account permanent-harm
+  //     rule. Available as a stricter per-account opt-in; no longer the default.
+  //   "disregard" (DEFAULT) — the buy PROCEEDS through the normal authority flow (all other
+  //     gates unchanged). Rationale (owner decision 2026-07-03): brokers do not report
   //     cross-account IRA wash sales to the IRS — the rule only bites under audit — so
-  //     respecting it is the account owner's call. NEVER silent: decision.washSale records
-  //     outcome "ira_disregarded" with the verbatim IRA_WASH_SALE_DISREGARD_NOTE plus the
-  //     priced provenance, the run loop / approval path audit it
-  //     (wash_sale_ira_disregarded), and the note renders wherever the purchase shows.
+  //     respecting it is the account owner's call, not a hard system stop. NEVER silent:
+  //     decision.washSale records outcome "ira_disregarded" with the verbatim
+  //     IRA_WASH_SALE_DISREGARD_NOTE plus the priced provenance, the run loop / approval path
+  //     audit it (wash_sale_ira_disregarded), and the note renders wherever the purchase shows.
   //     Override tokens stay irrelevant to IRA outcomes in both settings.
   if (proposal.side === "buy") {
     const taxSettings = context.policy.taxSettings;
     const guardOn = taxSettings?.washSaleGuard ?? true;
-    const handling: WashSaleHandling = taxSettings?.washSaleHandling ?? "block";
+    const handling: WashSaleHandling = taxSettings?.washSaleHandling ?? DEFAULT_TAX_SETTINGS.washSaleHandling ?? "auto";
     // IRA detection. The ConnectedAccount row (context.accountTaxationType) is the SOURCE OF
     // TRUTH: when the row states a regime it DECIDES — a stale IRA value left behind in policy
     // taxSettings must not reclassify a now-taxable account (that would apply the Rev. Rul.
@@ -571,7 +672,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
             entry.token.length > 0
         );
         if (buyerIsIra) {
-          const iraHandling: IraWashSaleHandling = taxSettings?.iraWashSaleHandling ?? "disregard";
+          const iraHandling: IraWashSaleHandling = taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard";
           if (iraHandling === "disregard") {
             // Owner-approved opt-in: proceed, annotated + audited (see the gate comment above).
             // No reason is pushed, so the buy flows through the normal authority path; every
@@ -634,34 +735,21 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
           });
           washSaleAudit = { ...auditBase, outcome: "ask_escalated" };
         } else if (handling === "auto") {
+          // Owner decision (2026-07-03): "auto" ALWAYS proceeds — no deterministic threshold veto.
+          // The removed edge-vs-cost gate re-arithmetized the LLM's OWN outputs (confidenceScore,
+          // bracketTakeProfit) against an arbitrary WASH_SALE_AUTO_EDGE_MULTIPLE constant, so it
+          // wasn't an independent check — it was second-guessing the model with its own numbers.
+          // The priced tax cost is real deterministic information, so it stays: it rides the
+          // decision as RECEIPT telemetry (never a veto) and is threaded into the strategist
+          // prompt (taxContext.washSaleRebuyCosts) so the model can weigh it against conviction
+          // itself, explaining that tradeoff in the rationale.
           const expectedEdgeUsd = washSaleExpectedEdgeUsd(proposal, context.policy, estimatedNotional);
-          const requiredEdgeUsd =
-            estimatedTaxCostUsd != null ? round2(estimatedTaxCostUsd * WASH_SALE_AUTO_EDGE_MULTIPLE) : undefined;
-          if (estimatedTaxCostUsd != null && requiredEdgeUsd != null && expectedEdgeUsd >= requiredEdgeUsd) {
-            washSaleAudit = {
-              ...auditBase,
-              outcome: "auto_proceeded",
-              expectedEdgeUsd,
-              requiredEdgeUsd,
-              edgeMultiple: WASH_SALE_AUTO_EDGE_MULTIPLE
-            };
-          } else {
-            reasons.push(
-              `wash_sale_auto_skip: rebuying ${symbol} forfeits ` +
-                (estimatedTaxCostUsd != null ? `~${dollars(estimatedTaxCostUsd)}` : "an unpriceable amount") +
-                ` of tax deduction (wash sale — ${lockNote}), and the expected edge ${dollars(expectedEdgeUsd)}` +
-                (requiredEdgeUsd != null
-                  ? ` is below the required ${WASH_SALE_AUTO_EDGE_MULTIPLE}x cost = ${dollars(requiredEdgeUsd)}.`
-                  : ` cannot clear a cost that could not be priced (fail-safe skip).`)
-            );
-            washSaleAudit = {
-              ...auditBase,
-              outcome: "auto_skipped",
-              expectedEdgeUsd,
-              ...(requiredEdgeUsd != null ? { requiredEdgeUsd } : {}),
-              edgeMultiple: WASH_SALE_AUTO_EDGE_MULTIPLE
-            };
-          }
+          washSaleAudit = {
+            ...auditBase,
+            outcome: "auto_proceeded",
+            expectedEdgeUsd,
+            edgeMultiple: WASH_SALE_AUTO_EDGE_MULTIPLE
+          };
         } else {
           reasons.push(
             `${symbol} is in a 30-day wash-sale lockout (${lockNote}); rebuying now would disallow that loss` +
@@ -844,9 +932,15 @@ function deRiskInCrisisReason(
   return `Opening ${normalizeSymbol(proposal.symbol)} exposure ${openingExposurePct.toFixed(2)}% exceeds crisis/inverted-regime cap ${cap}%.`;
 }
 
+// Typed-enum adoption (risk lane): classify the persisted regime label once via the shared source
+// of truth in ./market-regime instead of an ad-hoc substring match, so a regime relabel can't
+// silently desync this crisis/inverted opening-exposure cap from the bear filter and escalation
+// gates. Canonical-label behavior is unchanged (pinned by test/market-regime.test.ts and the
+// crisis-cap cases in test/policy.test.ts): "Crisis (Extreme Volatility)" and "Cautious (Inverted
+// Curve)" trip the cap, "Risk-Off (High Volatility)"/"Neutral"/"Risk-On" do not. A non-canonical
+// free-text label now reads non-crisis/inverted rather than accidentally matching a substring.
 function isCrisisOrInvertedRegime(regime?: string): boolean {
-  const normalized = regime?.toLowerCase() ?? "";
-  return normalized.includes("crisis") || normalized.includes("inverted");
+  return isCrisisOrInvertedMarketRegime(regimeFromLabel(regime));
 }
 
 function projectedExposurePct(
@@ -897,10 +991,28 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
   const beta = context.marketScan?.quotesBySymbol[normalizeSymbol(proposal.symbol)]?.beta;
   const betaStops = context.policy.betaScaledStops === true;
 
+  // Mark for add-to-loser: prefer live scan quote, then proposal limit/stop, then avgCost.
+  // Market/dollar openings often have no limit/stop — using only those made drawdown always 0
+  // so the rule never fired on the common path (expert review 2026-07-20).
+  const markForAddToLoser = (sym: string, proposal: TradeProposal, avgCost: number): number => {
+    const q = context.marketScan?.quotesBySymbol[normalizeSymbol(sym)];
+    const fromScan =
+      (typeof q?.price === "number" && q.price > 0 ? q.price : undefined) ??
+      (typeof q?.bid === "number" && typeof q?.ask === "number" && q.bid > 0 && q.ask > 0
+        ? (q.bid + q.ask) / 2
+        : undefined);
+    if (fromScan && fromScan > 0) return fromScan;
+    if (typeof position.marketValue === "number" && Math.abs(position.quantity) > 0) {
+      const fromMv = Math.abs(position.marketValue / position.quantity);
+      if (fromMv > 0) return fromMv;
+    }
+    return proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+  };
+
   if (proposal.side === "buy") {
     if (position.quantity > 0) {
       const avgCost = position.averageCost;
-      const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+      const currentPrice = markForAddToLoser(proposal.symbol, proposal, avgCost);
       const drawdownPct = ((avgCost - currentPrice) / avgCost) * 100;
       const returnPct = ((currentPrice - avgCost) / avgCost) * 100;
 
@@ -927,12 +1039,13 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
   } else if (proposal.side === "short") {
     if (position.quantity < 0) {
       const avgCost = position.averageCost;
-      const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+      const currentPrice = markForAddToLoser(proposal.symbol, proposal, avgCost);
       const drawdownPct = ((currentPrice - avgCost) / avgCost) * 100; // Inverse math for short: price up means loss
 
       const effShortStopPct = betaScaledStopPct(context.policy.riskRules?.shortStopLossPct ?? 0, beta, betaStops);
       if (effShortStopPct > 0 && drawdownPct > effShortStopPct) {
-        return `Cannot average up on short: Position is down ${drawdownPct.toFixed(2)}%, exceeding short stop-loss limit of ${context.policy.riskRules.shortStopLossPct}%.`;
+        const limitLabel = effShortStopPct;
+        return `Cannot average up on short: Position is down ${drawdownPct.toFixed(2)}%, exceeding short stop-loss limit of ${limitLabel}%.`;
       }
     }
   }

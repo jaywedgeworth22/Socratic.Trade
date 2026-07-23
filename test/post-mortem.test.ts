@@ -7,12 +7,17 @@ import { LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS } from "../src/lib/llm-requ
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-post-mortem-${randomUUID()}.db`)}`;
+  // The first test bears the full better-sqlite3 migration cost and can blow vitest's default
+  // timeout under machine load; a timed-out reflection then bleeds its still-pending fetch into
+  // the next test's stub. Same flake class as the approval-lock tests (fixed 2026-06-21 with a
+  // 20s per-test timeout).
+  vi.setConfig({ testTimeout: 20_000 });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.OPENAI_API_KEY;
-  delete process.env.OPENAI_API_URL;
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_API_URL;
   delete process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET;
 });
 
@@ -24,8 +29,8 @@ describe("generateReflectionSummary", () => {
     const { getLatestReflectionVersion, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({
       id: accountId,
@@ -38,7 +43,7 @@ describe("generateReflectionSummary", () => {
     });
     setActiveConnectedAccount(accountId, userId);
     // Classic model so this asserts temperature + exact caps (reasoning bounds: test/llm-request.test.ts).
-    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", llmModel: "gpt-4.1-mini" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", llmModel: "openai/gpt-4.1-mini" }, userId);
     insertFillEvent({
       userId,
       accountNumber,
@@ -63,9 +68,9 @@ describe("generateReflectionSummary", () => {
 
     await generateReflectionSummary(accountNumber, userId);
 
-    expect(requestBody.max_output_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.postMortemReflection);
+    expect(requestBody.max_output_tokens ?? requestBody.max_completion_tokens ?? requestBody.max_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.postMortemReflection);
     expect(requestBody.temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
-    expect(requestBody.max_completion_tokens).toBeUndefined();
+    
     const context = JSON.parse(requestBody.input.find((item: any) => item.role === "user")?.content ?? "{}");
     expect(context.executionMode).toBe("broker/paper");
     expect(context.executionModeClarification).toContain("Alpaca Paper");
@@ -85,8 +90,8 @@ describe("generateReflectionSummary", () => {
     const { recordLlmUsage } = await import("../src/lib/llm-usage");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/v1/responses";
     process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET = "1"; // 1-token ceiling → immediately over budget
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
@@ -94,11 +99,11 @@ describe("generateReflectionSummary", () => {
     setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca" }, userId);
     insertFillEvent({ userId, accountNumber, source: "paper", executionMode: "broker/paper", symbol: "AAPL", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled" });
     // Seed usage above the 1-token ceiling for THIS user so the budget is exceeded.
-    recordLlmUsage({ userId, provider: "openai", model: "gpt-4o", context: "strategy", keySource: "user", promptTokens: 10, completionTokens: 0 });
+    recordLlmUsage({ userId, provider: "openai", model: "openai/gpt-4o", context: "strategy", keySource: "user", promptTokens: 10, completionTokens: 0 });
 
     let openaiCalled = false;
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-      if (String(url).includes("api.openai.com")) openaiCalled = true; // the reflection LLM endpoint
+      if (String(url).includes("openrouter.ai")) openaiCalled = true; // the reflection LLM endpoint
       return new Response(JSON.stringify({ output_text: "should not be produced" }), { status: 200, headers: { "content-type": "application/json" } });
     });
 

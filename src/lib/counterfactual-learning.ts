@@ -1,15 +1,27 @@
 import {
+  enqueueDueJob,
   getCounterfactualLearningWatermark,
   insertSkippedCounterfactualCandidate,
   listPendingSkippedCounterfactuals,
   listSignalSnapshotAuditAfter,
   markSkippedCounterfactualChecked,
   markSkippedCounterfactualMatured,
-  setCounterfactualLearningWatermark
+  markSkippedCounterfactualUnresolvable,
+  setCounterfactualLearningWatermark,
+  skippedCounterfactualId
 } from "./db";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import type { OHLCBar } from "./indicators";
+import { addTradingDays, marketDateOf } from "./market-calendar";
 import { normalizeSymbol } from "./money";
+import {
+  buildIntradaySampleJobSpecs,
+  computeDailyHorizonRows,
+  computeIntradayHorizonRows,
+  mergeHorizonRows,
+  normalizeDailyBars,
+  UNRESOLVABLE_AFTER_TRADING_DAYS
+} from "./outcome-horizons";
 import type { MarketFactor, MarketFactorBreakdown } from "./types";
 
 const DAY_MS = 86_400_000;
@@ -36,6 +48,9 @@ export interface CounterfactualMaterializationResult {
   candidatesInserted: number;
   pendingChecked: number;
   materialized: number;
+  /** Rows terminally marked 'unresolvable' this run (kill-survivorship: delisted/renamed symbols
+   * whose price series never resolved within the bounded recheck window). */
+  markedUnresolvable: number;
 }
 
 interface SignalSnapshotPayload {
@@ -108,6 +123,11 @@ export async function materializeSkippedCandidateCounterfactuals(
   const barsBySymbol = new Map<string, OHLCBar[] | null>();
   let pendingChecked = 0;
   let materialized = 0;
+  let markedUnresolvable = 0;
+  const nowDate = new Date(now).toISOString().slice(0, 10);
+  // One SPY series per run for the spyExcessPct of every matured row's daily horizons. A failed
+  // SPY fetch simply omits spyExcessPct (never fabricated) — the symbol's own return still lands.
+  const spyBars = pending.length > 0 ? normalizeDailyBars(await fetchOHLC("SPY", now, userId).catch(() => null)) : [];
 
   for (const candidate of pending) {
     let bars = barsBySymbol.get(candidate.symbol);
@@ -116,9 +136,46 @@ export async function materializeSkippedCandidateCounterfactuals(
       barsBySymbol.set(candidate.symbol, bars);
     }
 
+    // Multi-horizon rows (15m/1h/1d/1w). The skipped pipeline has no placement-time quote sampling
+    // path, so intraday horizons here always resolve to 'unresolvable(no_intraday_source)' once the
+    // sampling window has passed — recorded honestly rather than fabricated from daily bars.
+    const normalizedBars = bars ? normalizeDailyBars(bars) : null;
+    const outcomes = mergeHorizonRows(
+      candidate.outcomes,
+      [
+        ...computeIntradayHorizonRows({
+          basisPrice: candidate.refPrice,
+          basisAtMs: Date.parse(candidate.snapshotAt),
+          nowMs: now,
+          priceBasisPrefix: "ref_price",
+          measuredAt: nowIso
+        }),
+        ...computeDailyHorizonRows({
+          basisPrice: candidate.refPrice,
+          basisDate: candidate.snapshotAt.slice(0, 10),
+          bars: normalizedBars,
+          spyBars,
+          nowDate,
+          priceBasisPrefix: "ref_price",
+          measuredAt: nowIso
+        })
+      ]
+    );
+
     const exit = bars ? selectExitBar(bars, candidate.targetDate) : undefined;
     if (!exit) {
-      markSkippedCounterfactualChecked(candidate.id, userId, nowIso);
+      // Kill-survivorship: past the bounded recheck window with still no bar at/after target, the
+      // row becomes terminally 'unresolvable' WITH a reason instead of pending forever (delisted /
+      // renamed / never-covered symbols must stay countable in every denominator).
+      const unresolvableAfter = addTradingDays(candidate.targetDate, UNRESOLVABLE_AFTER_TRADING_DAYS);
+      if (nowDate > unresolvableAfter) {
+        const reason = !normalizedBars || normalizedBars.length === 0 ? "no_price_series" : "no_bar_at_or_after_target";
+        if (markSkippedCounterfactualUnresolvable({ id: candidate.id, userId, reason, outcomes, checkedAt: nowIso })) {
+          markedUnresolvable += 1;
+        }
+      } else {
+        markSkippedCounterfactualChecked(candidate.id, userId, nowIso);
+      }
       pendingChecked += 1;
       continue;
     }
@@ -131,6 +188,7 @@ export async function materializeSkippedCandidateCounterfactuals(
         exitDate: exit.date,
         exitPrice: exit.close,
         returnPct,
+        outcomes,
         checkedAt: nowIso
       })
     ) {
@@ -143,7 +201,8 @@ export async function materializeSkippedCandidateCounterfactuals(
     auditRowsScanned: auditRows.length,
     candidatesInserted,
     pendingChecked,
-    materialized
+    materialized,
+    markedUnresolvable
   };
 }
 
@@ -155,6 +214,50 @@ export async function materializeSkippedCandidateCounterfactuals(
  * propose but a human/policy then rejected. Additive: reuses insertSkippedCounterfactualCandidate
  * (INSERT OR IGNORE) so it never double-counts and writes no fills/orders. Returns true if inserted.
  */
+/**
+ * Enqueue the pair of 'sample_intraday_horizon' due-jobs (15m/1h) for a skipped-candidate
+ * counterfactual whose (refPrice, snapshotAt) basis is known immediately at insert time. Fire-safe
+ * by construction — enqueueDueJob is a plain INSERT OR IGNORE and never throws; wrapped anyway so a
+ * future change to that guarantee can't take the counterfactual pipeline down with it.
+ */
+function enqueueIntradaySampleJobs(input: {
+  caseId: string;
+  runId: string;
+  symbol: string;
+  horizonDays: number;
+  refPrice: number;
+  snapshotAt: string;
+  regime?: string;
+  userId: string;
+  connectedAccountId?: string;
+}): void {
+  try {
+    const specs = buildIntradaySampleJobSpecs({
+      caseKind: "counterfactual",
+      caseId: input.caseId,
+      runId: input.runId,
+      symbol: input.symbol,
+      horizonDays: input.horizonDays,
+      basisPrice: input.refPrice,
+      basisAtMs: Date.parse(input.snapshotAt),
+      priceBasisPrefix: "ref_price"
+    });
+    for (const spec of specs) {
+      enqueueDueJob({
+        jobType: "sample_intraday_horizon",
+        dedupeKey: spec.dedupeKey,
+        dueAt: spec.dueAt,
+        notAfter: spec.notAfter,
+        payload: spec.payload,
+        userId: input.userId,
+        connectedAccountId: input.connectedAccountId
+      });
+    }
+  } catch (err) {
+    console.warn("[counterfactual-learning] intraday sample job enqueue failed:", err instanceof Error ? err.message : String(err));
+  }
+}
+
 export function recordRejectedProposalCounterfactual(input: {
   userId?: string;
   connectedAccountId?: string;
@@ -175,7 +278,7 @@ export function recordRejectedProposalCounterfactual(input: {
   const horizonDays = boundedInteger(input.horizonDays ?? envHorizonDays(), 1, 252, DEFAULT_HORIZON_DAYS);
   const targetDate = targetBusinessDate(snapshotAt, horizonDays);
   if (!targetDate) return false;
-  return insertSkippedCounterfactualCandidate({
+  const inserted = insertSkippedCounterfactualCandidate({
     userId,
     connectedAccountId: input.connectedAccountId,
     runId: input.runId,
@@ -187,6 +290,19 @@ export function recordRejectedProposalCounterfactual(input: {
     regime: nonEmpty(input.regime),
     now: new Date(nowMs).toISOString()
   });
+  if (inserted) {
+    enqueueIntradaySampleJobs({
+      caseId: skippedCounterfactualId(userId, input.runId, symbol, horizonDays),
+      runId: input.runId,
+      symbol,
+      horizonDays,
+      refPrice,
+      snapshotAt,
+      userId,
+      connectedAccountId: input.connectedAccountId
+    });
+  }
+  return inserted;
 }
 
 function ingestSignalSnapshot(
@@ -225,6 +341,16 @@ function ingestSignalSnapshot(
       })
     ) {
       inserted += 1;
+      enqueueIntradaySampleJobs({
+        caseId: skippedCounterfactualId(context.userId, snapshot.runId, symbol, context.horizonDays),
+        runId: snapshot.runId,
+        symbol,
+        horizonDays: context.horizonDays,
+        refPrice,
+        snapshotAt,
+        userId: context.userId,
+        connectedAccountId: context.connectedAccountId
+      });
     }
   }
   return inserted;
@@ -238,10 +364,20 @@ function selectExitBar(bars: OHLCBar[], targetDate: string): { date: string; clo
     .find((bar) => bar.date >= targetDate);
 }
 
+/**
+ * TRADING-day horizon target (see `market-calendar.addTradingDays` for the full historical
+ * note): `horizonDays` trading sessions after `snapshotAt`'s MARKET-day calendar date,
+ * honoring weekends and full-close holidays — NOT `horizonDays * 86_400_000` ms of calendar
+ * time. The anchor date is derived in America/New_York (`marketDateOf`), not UTC: an
+ * after-hours ET snapshot (e.g. Mon 19:30 ET = Tue 00:30 UTC) counts sessions from Monday's
+ * market day; the earlier UTC conversion delayed those horizons by one session (Codex review
+ * on PR #365). Named `targetBusinessDate` to match `backtest.ts`'s identical helper (kept as
+ * separate thin wrappers since each module owns its own snapshot-parsing/validation contract).
+ */
 function targetBusinessDate(snapshotAt: string, horizonDays: number): string | undefined {
-  const time = Date.parse(snapshotAt);
-  if (!Number.isFinite(time)) return undefined;
-  return new Date(time + horizonDays * DAY_MS).toISOString().slice(0, 10);
+  const snapshotDate = marketDateOf(snapshotAt);
+  if (!snapshotDate) return undefined;
+  return addTradingDays(snapshotDate, horizonDays);
 }
 
 function envHorizonDays(): number {
