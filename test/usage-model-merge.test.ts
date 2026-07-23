@@ -77,7 +77,7 @@ describe("aggregateUsageByModel", () => {
       row({ provider: "openai", model: "gpt-5.4-mini", costUsd: 9 })
     ];
     const aggs = aggregateUsageByModel(rows);
-    expect(aggs.map((a) => a.canonicalId)).toEqual(["gpt-5.4-mini", "claude-sonnet-5"]);
+    expect(aggs.map((a) => a.canonicalId)).toEqual(["gpt-mini-latest", "claude-sonnet-latest"]);
   });
 
   it("does not mutate the input rows (read-only aggregation)", () => {

@@ -85,19 +85,19 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
 
   switch (family) {
     case "anthropic":
-      if (/haiku/i.test(lower)) return "claude-3-5-haiku-latest";
-      if (/opus/i.test(lower)) return "claude-3-opus-latest";
-      if (/fable/i.test(lower)) return "claude-3-5-sonnet-latest";
-      return "claude-3-5-sonnet-latest";
+      if (/haiku/i.test(lower)) return "claude-3-5-haiku-20241022";
+      if (/opus/i.test(lower)) return "claude-3-opus-20240229";
+      if (/fable/i.test(lower)) return "claude-3-5-sonnet-20241022";
+      return "claude-3-5-sonnet-20241022";
 
     case "xai":
-      if (/build/i.test(lower)) return "grok-2-latest";
-      return "grok-latest";
+      if (/build/i.test(lower)) return "grok-beta";
+      return "grok-2-1212";
 
     case "gemini":
-      if (/flash.*lite/i.test(lower)) return "gemini-2.5-flash-lite";
-      if (/pro/i.test(lower)) return "gemini-2.5-pro";
-      return "gemini-2.5-flash";
+      if (/flash.*lite/i.test(lower)) return "gemini-2.0-flash-lite";
+      if (/pro/i.test(lower)) return "gemini-1.5-pro";
+      return "gemini-2.0-flash";
 
     case "deepseek":
       if (/r1|reasoner/i.test(lower)) return "deepseek-reasoner";
@@ -134,7 +134,7 @@ export function resolveLlmEndpoint(
 
   // 1. Primary path: User-provided OpenRouter key
   const openRouterCred = resolveLlmCredential("openrouter", userId);
-  if (openRouterCred.key) {
+  if (openRouterCred.key && openRouterCred.source === "user") {
     let model = rawModel;
     if (!model.includes("/")) {
       if (/^claude/i.test(model)) {
@@ -161,7 +161,7 @@ export function resolveLlmEndpoint(
       url,
       key: openRouterCred.key,
       model,
-      keySource: openRouterCred.source === "operator" ? "operator" : "user",
+      keySource: "user",
       keyRef: openRouterCred.keyRef,
       transport: "chat-completions"
     };

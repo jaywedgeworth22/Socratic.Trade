@@ -111,12 +111,13 @@ function isAnthropicAdaptiveThinkingModel(model: string | undefined): boolean {
     /^claude-fable-5(?:$|[-.:_])/.test(normalized) ||
     /^claude-mythos-5(?:$|[-.:_])/.test(normalized) ||
     /^claude-opus-4-(?:6|7|8)(?:$|[-.:_])/.test(normalized) ||
-    /^claude-sonnet-(?:5|4-6)(?:$|[-.:_])/.test(normalized)
+    /^claude-sonnet-(?:5|4-6)(?:$|[-.:_])/.test(normalized) ||
+    /^claude-(?:sonnet|haiku|opus|fable)-latest(?:$|[-.:_])/.test(normalized)
   );
 }
 
 function isXaiReasoningModel(model: string | undefined): boolean {
-  return /^grok-4(?:\.3)?(?:$|[-.:_])/.test(lowerModel(model));
+  return /^(grok-4(?:\.3)?|grok-(?:build-)?latest)(?:$|[-.:_])/i.test(lowerModel(model));
 }
 
 function isGeminiModel(model: string | undefined): boolean {
@@ -124,27 +125,19 @@ function isGeminiModel(model: string | undefined): boolean {
 }
 
 function geminiAllowsThinkingOff(model: string | undefined): boolean {
-  return /^gemini-2\.5-(?:flash|flash-lite)(?:$|[-.:_])/.test(lowerModel(model));
+  return /^(gemini-2\.5-(?:flash|flash-lite)|gemini-flash(?:-lite)?-latest)(?:$|[-.:_])/.test(lowerModel(model));
 }
 
-// Mistral reasoning capability is deliberately narrow (benchmark 2026-07-08: 0/12 calls
-// succeeded under the old family-wide map). Provider-enforced facts from Mistral's own 400s:
-// mistral-medium-3-5 accepts reasoning_effort ∈ {high, none} ONLY ("reasoning_effort medium
-// is not supported for this model, supported values: [high, none]"), and mistral-small-2603
-// rejects the reasoning prompt mode outright ("Reasoning prompt mode is not enabled for this
-// model"). Every other Mistral-family id (small, large, magistral, codestral, …) gets NO
-// reasoning capability — a plain chat-completions body is the only shape known valid across
-// the family, and the catalog only offers small-2603/medium-3-5 anyway.
 function isMistralReasoningEffortModel(model: string | undefined): boolean {
-  return /^mistral-medium-3-5(?:$|[-.:_])/.test(lowerModel(model));
+  return /^(mistral-medium-3-5|mistral-medium-latest)(?:$|[-.:_])/.test(lowerModel(model));
 }
 
 function isDeepSeekV4Model(model: string | undefined): boolean {
-  return /^deepseek-v4-(?:flash|pro)(?:$|[-.:_])/.test(lowerModel(model));
+  return /^(deepseek-v4-(?:flash|pro)|deepseek-(?:flash|pro)-latest)(?:$|[-.:_])/.test(lowerModel(model));
 }
 
 function isGpt56Model(model: string | undefined): boolean {
-  return /^gpt-5\.6(?:-(?:luna|terra|sol))?(?:$|[-.:_])/.test(lowerModel(model));
+  return /^(gpt-5\.6|gpt-(?:nano|mini|luna|terra|sol|4o)-latest)(?:$|[-.:_])/i.test(lowerModel(model));
 }
 
 export function reasoningCapabilityForModel(model: string | undefined): LlmReasoningCapability | undefined {
