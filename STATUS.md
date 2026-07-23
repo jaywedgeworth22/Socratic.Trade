@@ -100,6 +100,18 @@ from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
 # Current Status
 
+## 2026-07-22 — Retired-provider Usage Monitor cleanup (GROK peer co-work, branch `codex/retired-provider-usage-cleanup`)
+
+Removed Usage Monitor emissions from the Alpaca, Tradier, and Robinhood broker adapters while
+preserving their trading, account-read, and API-health behavior. Removed the unused Intrinio
+implementation, API-key configuration, environment example, and current forward-looking docs;
+historical rollout/review/handoff evidence remains intact. A central provider-family policy
+suppresses the retired broker roots and their subproviders (including Alpaca news/snapshot) on both
+live `recordProviderCall` admission and durable provider-dispatch/replay paths
+(`createProviderDispatchUsageMonitorEvent` returns null; replay drops nulls and advances
+watermarks). `pushBrokerBalance` is removed. Paid FMP control traffic remains eligible. Integrated
+on top of #1889 exact merge `bd7068b6` (strict-v2 IDs/ACK/watermark/cutover preserved). Rollout:
+`docs/rollouts/2026-07-22-retired-provider-usage-cleanup.md`.
 ## 2026-07-23 — Gemini Reasoning Temperature Fix (ANTIGRAVITY)
 
 Fixed an issue where Gemini 3.1 Pro Preview (and other reasoning-enabled Gemini models) would fail when used for the Red Team due to passing `temperature` to the provider. The LLM request shaper (`withLlmRequestBounds` in `src/lib/llm-request.ts`) now correctly omits `temperature` for Gemini models when `reasoning_effort` is enabled, matching the existing behavior for Anthropic, OpenAI, Mistral, and DeepSeek. `npx tsc --noEmit` verified clean. Rollout: `docs/rollouts/2026-07-23-gemini-temperature-fix.md`.

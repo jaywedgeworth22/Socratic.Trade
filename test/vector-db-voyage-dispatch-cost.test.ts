@@ -179,11 +179,12 @@ describe("Provider-dispatch PUSH boundary is always cost-free externally", () =>
       estimatedCostUsd: 0.0042
     });
 
-    expect(event.service).toBe("provider-dispatch");
-    expect(event.provider).toBe("voyage");
-    expect(event.costUsd).toBeUndefined();
-    expect(event.metricType).toBe("usage");
-    expect(event.billingMode).toBe("estimated");
+    expect(event).not.toBeNull();
+    expect(event!.service).toBe("provider-dispatch");
+    expect(event!.provider).toBe("voyage");
+    expect(event!.costUsd).toBeUndefined();
+    expect(event!.metricType).toBe("usage");
+    expect(event!.billingMode).toBe("estimated");
   });
 
   it("stays cost-free even if a real actualCostUsd is ever supplied (defense against re-plumbing cost through this boundary)", async () => {
@@ -202,8 +203,9 @@ describe("Provider-dispatch PUSH boundary is always cost-free externally", () =>
       actualCostUsd: 0.0039
     });
 
-    expect(event.costUsd).toBeUndefined();
-    expect(event.metricType).toBe("usage");
+    expect(event).not.toBeNull();
+    expect(event!.costUsd).toBeUndefined();
+    expect(event!.metricType).toBe("usage");
   });
 
   it("stays cost-free for a zero-cost provider too (FMP convention unaffected)", async () => {
@@ -221,7 +223,8 @@ describe("Provider-dispatch PUSH boundary is always cost-free externally", () =>
       estimatedCostUsd: 0
     });
 
-    expect(event.costUsd).toBeUndefined();
-    expect(event.metricType).toBe("usage");
+    expect(event).not.toBeNull();
+    expect(event!.costUsd).toBeUndefined();
+    expect(event!.metricType).toBe("usage");
   });
 });
