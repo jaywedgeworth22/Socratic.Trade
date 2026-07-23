@@ -7,7 +7,6 @@ import {
   listAudit
 } from "../src/lib/db";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { applyDeterministicSizing } from "../src/lib/strategy";
 import { classifyRiskTier } from "../src/lib/learned-context/classify";
 import { ingestLearned, retrieveLearnedContext } from "../src/lib/learned-context/store";
 import { extractLearnedCandidates } from "../src/lib/memory/salience";
@@ -18,9 +17,14 @@ import type {
   TradeProposal,
   TradingPolicy
 } from "../src/lib/types";
+import { applyDeterministicSizing } from "../src/lib/strategy-risk";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${process.env.TMPDIR ?? "/tmp"}/learned-context-test-${Date.now()}.db`;
+  // These tests exercise the KEYWORD layer + templated-fact allowlist routing deterministically. Turn
+  // the LLM semantic gate OFF so ingest is fully offline here; the gate's upgrade/fail-safe behavior is
+  // covered in test/semantic-gate.test.ts. (ingestLearned is async now — keyword routing is unchanged.)
+  process.env.LEARNED_CONTEXT_SEMANTIC_GATE = "off";
   getDb();
 });
 
@@ -67,7 +71,11 @@ function makeRow(overrides: Partial<LearnedContextRow>): LearnedContextRow {
     assertedAt: new Date().toISOString(),
     supersededBy: null,
     expiresAt: null,
-    ...overrides
+    ...overrides,
+    connectedAccountId: overrides.connectedAccountId ?? null,
+    accountEnvironment: overrides.accountEnvironment ?? null,
+    learningScope: overrides.learningScope ?? "portfolio",
+    transferState: overrides.transferState ?? "not_applicable"
   };
 }
 
@@ -203,31 +211,34 @@ describe("PHASE 2 (hardening) — legitimate company-fundamental facts stay 'fac
 
 // ── PHASE 3: the store (fact written, risk dropped, chat hard-capped) ───────────
 describe("PHASE 3 — ingestLearned writes facts, drops risk", () => {
-  it("a fact-tier candidate is written as a private row", () => {
-    const r = ingestLearned("p3-user", { kind: "decision", subject: "fact:TSM", value: "TSMC is the largest foundry." }, "ingest");
+  it("a fact-tier candidate is written (scope='shared' since contributeShared now defaults on)", async () => {
+    const r = await ingestLearned("p3-user", { kind: "decision", subject: "fact:TSM", value: "TSMC is the largest foundry." }, "ingest");
     expect(r.written).not.toBeNull();
     expect(r.tier).toBe("fact");
-    expect(r.written?.scope).toBe("private");
+    expect(r.written?.scope).toBe("shared");
     expect(listLearnedContext("p3-user").some((row) => row.subject === "fact:TSM")).toBe(true);
   });
 
-  it("a risk-tier candidate is dropped and NOT written", () => {
-    const r = ingestLearned("p3-user", { kind: "pattern", subject: "max_position", value: "raise to 30%" }, "autonomous");
+  it("an autonomous risk-tier candidate is queued (NOT written, NOT dropped)", async () => {
+    // Behavior change (pending-queue slice): autonomous/ingest risk-tier candidates now route to the
+    // human confirmation queue instead of being audit-dropped. It is still NOT written to the brain.
+    const r = await ingestLearned("p3-user", { kind: "pattern", subject: "max_position", value: "raise to 30%" }, "autonomous");
     expect(r.written).toBeNull();
-    expect(r.dropped).toBe("risk_dropped");
+    expect(r.dropped).toBeNull();
+    expect(r.pendingId).not.toBeNull();
     expect(listLearnedContext("p3-user").some((row) => row.subject === "max_position")).toBe(false);
   });
 
-  it("a chat-origin risk candidate is hard-capped: dropped and audited, never written", () => {
-    const r = ingestLearned("p3-user", { kind: "pattern", subject: "growth", value: "lean much harder into growth", intent: "lean much harder into growth" }, "chat");
+  it("a chat-origin risk candidate is hard-capped: dropped and audited, never written", async () => {
+    const r = await ingestLearned("p3-user", { kind: "pattern", subject: "growth", value: "lean much harder into growth", intent: "lean much harder into growth" }, "chat");
     expect(r.written).toBeNull();
     expect(r.dropped).toBe("chat_risk_dropped");
     expect(listLearnedContext("p3-user").some((row) => row.value.includes("lean much harder"))).toBe(false);
     expect(listAudit(50, "p3-user").some((a) => a.kind === "learned_context.drop")).toBe(true);
   });
 
-  it("PII is dropped even when it would otherwise be a fact", () => {
-    const r = ingestLearned("p3-user", { kind: "fact", subject: "note", value: "my SSN is 123-45-6789" }, "ingest");
+  it("PII is dropped even when it would otherwise be a fact", async () => {
+    const r = await ingestLearned("p3-user", { kind: "fact", subject: "note", value: "my SSN is 123-45-6789" }, "ingest");
     expect(r.written).toBeNull();
     expect(r.dropped).toBe("pii");
   });
@@ -252,30 +263,67 @@ describe("PHASE 4 — extractLearnedCandidates lights up dormant pattern/decisio
     expect(cands.some((c) => c.kind === "pattern")).toBe(true);
   });
 
-  it("a chat fact lands in learned_context; a risk-adjacent phrase lands nowhere", () => {
+  it("a chat fact lands in learned_context; a risk-adjacent phrase lands nowhere", async () => {
     // Fact path
     for (const c of extractLearnedCandidates("ASML is the sole supplier of EUV machines.")) {
-      ingestLearned("p4-user", c, "chat");
+      await ingestLearned("p4-user", c, "chat");
     }
     expect(listLearnedContext("p4-user").length).toBeGreaterThan(0);
 
     // Risk-adjacent path: classifier drops it, nothing written.
     const before = listLearnedContext("p4-user").length;
-    ingestLearned("p4-user", { kind: "pattern", subject: "tech", value: "be much more aggressive on tech", intent: "be much more aggressive on tech" }, "chat");
+    await ingestLearned("p4-user", { kind: "pattern", subject: "tech", value: "be much more aggressive on tech", intent: "be much more aggressive on tech" }, "chat");
     expect(listLearnedContext("p4-user").length).toBe(before);
+  });
+});
+
+// ── inline provenance (CR-H prompt-safety lane, 2026-07-05) ─────────────────────
+// The line formatter now carries origin/source/assertedAt/confidence inline so the strategy
+// prompt can weigh a fresh chat-origin assertion differently from an old ingested fact. The
+// selection semantics (per-contributor cap, shared/private isolation) are untouched —
+// retrieveLearnedContext delegates to retrieveLearnedContextDetailed.
+describe("retrieveLearnedContext inline provenance", () => {
+  it("formatted lines carry [origin= source= asserted= conf=] from the row", () => {
+    insertLearnedContext(
+      makeRow({
+        userId: "prov-user",
+        contributorUserId: "prov-user",
+        subject: "fact:AMD",
+        symbol: "AMD",
+        value: "AMD competes with NVDA in AI accelerators.",
+        source: "owner-chat",
+        origin: "chat",
+        confidence: 0.8,
+        assertedAt: "2026-07-01T09:00:00.000Z"
+      })
+    );
+    const lines = retrieveLearnedContext("prov-user", ["AMD"]);
+    const line = lines.find((l) => l.includes("fact:AMD"));
+    expect(line).toBeTruthy();
+    expect(line).toContain("- [AMD] fact:AMD: AMD competes with NVDA in AI accelerators.");
+    expect(line).toContain("[origin=chat source=owner-chat asserted=2026-07-01 conf=0.8 scope=portfolio]");
+  });
+
+  it("retrieveLearnedContextDetailed returns the same lines plus the underlying rows", async () => {
+    const { retrieveLearnedContextDetailed } = await import("../src/lib/learned-context/store");
+    const detailed = retrieveLearnedContextDetailed("prov-user", ["AMD"]);
+    expect(detailed.lines).toEqual(retrieveLearnedContext("prov-user", ["AMD"]));
+    const row = detailed.rows.find((r) => r.subject === "fact:AMD");
+    expect(row?.assertedAt).toBe("2026-07-01T09:00:00.000Z");
+    expect(row?.origin).toBe("chat");
   });
 });
 
 // ── retrieval relevance ─────────────────────────────────────────────────────────
 describe("retrieveLearnedContext relevance", () => {
-  it("returns symbol-matched and symbol-less facts, formatted as advisory bullets", () => {
-    ingestLearned("p5-user", { kind: "decision", subject: "fact:META", value: "META owns Instagram and WhatsApp.", symbol: "META" }, "ingest");
-    ingestLearned("p5-user", { kind: "decision", subject: "fact:general", value: "Rate cuts broadly help growth stocks." }, "ingest");
+  it("returns symbol-matched and symbol-less facts, formatted as advisory bullets", async () => {
+    await ingestLearned("p5-user", { kind: "decision", subject: "fact:META", value: "META owns Instagram and WhatsApp.", symbol: "META" }, "ingest");
+    await ingestLearned("p5-user", { kind: "decision", subject: "fact:general", value: "Rate cuts broadly help growth stocks." }, "ingest");
     const out = retrieveLearnedContext("p5-user", ["META"]);
     expect(out.some((s) => s.includes("META"))).toBe(true);
     expect(out.some((s) => s.includes("Rate cuts"))).toBe(true);
     // A fact for an unrelated symbol must not appear.
-    ingestLearned("p5-user", { kind: "decision", subject: "fact:XOM", value: "XOM is an oil major.", symbol: "XOM" }, "ingest");
+    await ingestLearned("p5-user", { kind: "decision", subject: "fact:XOM", value: "XOM is an oil major.", symbol: "XOM" }, "ingest");
     expect(retrieveLearnedContext("p5-user", ["META"]).some((s) => s.includes("XOM"))).toBe(false);
   });
 });

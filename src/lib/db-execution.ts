@@ -1,0 +1,483 @@
+// db-execution.ts — DAILY_RESET_TIME_ZONE, daily stats, day-trade counting,
+// run lock (acquireStrategyLock / releaseStrategyLock), strategy runs.
+import { audit, getDb } from "./db";
+import type { StrategyRunRow } from "./types";
+
+/**
+ * IANA timezone whose civil midnight defines the daily-notional reset boundary. Made explicit so the
+ * daily cap resets deterministically regardless of the server process's local TZ — the old
+ * `setHours(0,0,0,0)` silently used `process.env.TZ`. US equities trade on the NYSE calendar, so the
+ * market day (America/New_York) is the natural boundary. (T13)
+ */
+export const DAILY_RESET_TIME_ZONE = "America/New_York";
+
+/** UTC instant of civil midnight, in `timeZone`, for the calendar day containing `now`. (T13) */
+export function startOfDayInTimeZone(now: Date, timeZone: string = DAILY_RESET_TIME_ZONE): Date {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    })
+      .formatToParts(now)
+      .map((part) => [part.type, part.value])
+  );
+  const hour = parts.hour === "24" ? 0 : Number(parts.hour); // some engines render midnight as "24"
+  const wallAsUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), hour, Number(parts.minute), Number(parts.second));
+  const offsetMs = wallAsUTC - now.getTime(); // how far the tz wall-clock leads UTC at `now`
+  const midnightWallAsUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), 0, 0, 0);
+  return new Date(midnightWallAsUTC - offsetMs);
+}
+
+/**
+ * Scope key for an account. A missing/blank account number maps to an explicit sentinel so
+ * the "unassigned" bucket is consistent between writes and reads, rather than relying on the
+ * `account_number` column's empty-string DEFAULT (which can silently merge contexts). (T14)
+ */
+export function scopeAccount(accountNumber?: string | null): string {
+  return accountNumber && accountNumber.trim() !== "" ? accountNumber : "__unassigned__";
+}
+
+export function dailyExecutionStats(
+  accountNumber: string,
+  now = new Date(),
+  userId: string = "local",
+  timeZone: string = DAILY_RESET_TIME_ZONE
+): { orderCount: number; openingOrderCount: number; notional: number } {
+  const dayStart = startOfDayInTimeZone(now, timeZone);
+  // Phase 2 fix: use persisted estimated_notional so share-qty market orders
+  // (which have no limitPrice) count correctly against the daily cap.
+  const rows = getDb()
+    .prepare(
+      "SELECT proposal, estimated_notional FROM trade_proposals WHERE datetime(coalesce(placed_at, created_at)) >= datetime(?) AND account_number = ? AND user_id = ? AND status IN ('placed', 'filled', 'paper', 'placing')"
+    )
+    .all(dayStart.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
+
+  return rows.reduce(
+    (acc, row) => {
+      const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
+      // NB: "opening" = buy OR short. (Named isBuy historically; it always included short.)
+      const isOpening = proposal.side === "buy" || proposal.side === "short";
+      // Notional caps intentionally count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt (notional = 0).
+      // Prefer the persisted estimated_notional; fall back to proposal fields for old rows.
+      const notional = isOpening
+        ? (row.estimated_notional != null
+            ? row.estimated_notional
+            : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
+        : 0;
+      return {
+        orderCount: acc.orderCount + 1,
+        openingOrderCount: acc.openingOrderCount + (isOpening ? 1 : 0),
+        notional: acc.notional + notional
+      };
+    },
+    { orderCount: 0, openingOrderCount: 0, notional: 0 }
+  );
+}
+
+/**
+ * Order notional executed within a rolling window of `minutes` (R1 hourly cap). Mirrors
+ * dailyExecutionStats but on an arbitrary lookback rather than the calendar day.
+ */
+export function notionalInLastMinutes(accountNumber: string, minutes: number, now = new Date(), userId: string = "local"): { orderCount: number; openingOrderCount: number; notional: number } {
+  const cutoff = new Date(now.getTime() - minutes * 60_000);
+  const rows = getDb()
+    .prepare(
+      "SELECT proposal, estimated_notional FROM trade_proposals WHERE datetime(coalesce(placed_at, created_at)) >= datetime(?) AND account_number = ? AND user_id = ? AND status IN ('placed', 'filled', 'paper', 'placing')"
+    )
+    .all(cutoff.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
+
+  return rows.reduce(
+    (acc, row) => {
+      const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
+      // NB: "opening" = buy OR short. (Named isBuy historically; it always included short.)
+      const isOpening = proposal.side === "buy" || proposal.side === "short";
+      // Notional caps intentionally count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt (notional = 0).
+      const notional = isOpening
+        ? (row.estimated_notional != null ? row.estimated_notional : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
+        : 0;
+      return {
+        orderCount: acc.orderCount + 1,
+        openingOrderCount: acc.openingOrderCount + (isOpening ? 1 : 0),
+        notional: acc.notional + notional
+      };
+    },
+    { orderCount: 0, openingOrderCount: 0, notional: 0 }
+  );
+}
+
+/**
+ * Count day-trades for an account over a rolling N-business-day window ending at `asOf` (PDT gate).
+ *
+ * Regulatory definition (FINRA Rule 4210 pattern-day-trader): a day-trade is a same-symbol
+ * round-trip OPENED and CLOSED on the same calendar day. We detect this from `fill_events`:
+ * group fills by symbol + market-calendar day (the America/New_York day, matching the
+ * daily-notional boundary), and count a day-trade when that symbol+day has BOTH an opening fill
+ * (side buy or short) AND a closing fill (side sell or cover). The PDT rule counts at most one
+ * day-trade per symbol per day for this purpose, so each qualifying symbol+day bucket contributes
+ * exactly one. The window is the last `businessDays` market days (weekdays) ending at `asOf`'s
+ * market day, inclusive; weekend days carry no fills and are skipped.
+ */
+export function countDayTradesInLastBusinessDays(
+  accountNumber: string,
+  businessDays: number,
+  asOf: Date = new Date(),
+  userId: string = "local",
+  timeZone: string = DAILY_RESET_TIME_ZONE
+): number {
+  if (businessDays <= 0) return 0;
+  // Walk back from asOf's market day, collecting business days (Mon–Fri) until we have N of them.
+  const dayMs = 24 * 60 * 60 * 1000;
+  let cursor = startOfDayInTimeZone(asOf, timeZone);
+  let collected = 0;
+  let windowStart = cursor;
+  while (collected < businessDays) {
+    // getUTCDay() on a civil-midnight instant identifies the market day's weekday: 0=Sun, 6=Sat.
+    const weekday = startOfDayInTimeZone(cursor, timeZone).getUTCDay();
+    if (weekday !== 0 && weekday !== 6) {
+      collected += 1;
+      windowStart = cursor;
+    }
+    // Step back ~one day, then re-snap to the market-day boundary to stay DST-safe.
+    cursor = startOfDayInTimeZone(new Date(cursor.getTime() - dayMs), timeZone);
+  }
+
+  const rows = getDb()
+    .prepare(
+      "SELECT symbol, side, filled_at FROM fill_events WHERE filled_at >= ? AND filled_at <= ? AND account_number = ? AND user_id = ?"
+    )
+    .all(windowStart.toISOString(), asOf.toISOString(), scopeAccount(accountNumber), userId) as Array<{
+    symbol: string;
+    side: string;
+    filled_at: string;
+  }>;
+
+  // Bucket by symbol + market-calendar day; track whether each bucket saw an open and a close.
+  const buckets = new Map<string, { opened: boolean; closed: boolean }>();
+  for (const row of rows) {
+    const marketDay = startOfDayInTimeZone(new Date(row.filled_at), timeZone).toISOString();
+    const key = `${row.symbol}__${marketDay}`;
+    const bucket = buckets.get(key) ?? { opened: false, closed: false };
+    if (row.side === "buy" || row.side === "short") bucket.opened = true;
+    if (row.side === "sell" || row.side === "cover") bucket.closed = true;
+    buckets.set(key, bucket);
+  }
+
+  let dayTrades = 0;
+  for (const bucket of buckets.values()) {
+    if (bucket.opened && bucket.closed) dayTrades += 1;
+  }
+  return dayTrades;
+}
+
+// ── Run lock ──────────────────────────────────────────────────────────────────
+// Uses a direct prepared statement (not setSetting) to avoid noisy policy_change
+// audit events.
+
+/** Lock key — per-account when an account id is given, else the legacy user-wide key. */
+function strategyLockKey(userId: string, connectedAccountId?: string): string {
+  return connectedAccountId ? `strategy_run_lock:${userId}:${connectedAccountId}` : `strategy_run_lock:${userId}`;
+}
+
+export function acquireStrategyLock(owner: string, userId: string = "local", connectedAccountId?: string, staleMs = 5 * 60_000, now = new Date()): boolean {
+  const database = getDb();
+  const key = strategyLockKey(userId, connectedAccountId);
+  const acquire = database.transaction(() => {
+    const row = database
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+
+    if (row) {
+      try {
+        const existing = JSON.parse(row.value) as { owner?: string, expiresAt?: string, lockedAt?: string };
+        const expiresAt = existing.expiresAt
+          ? new Date(existing.expiresAt).getTime()
+          : (existing.lockedAt ? new Date(existing.lockedAt).getTime() + staleMs : 0);
+        
+        const canWin = expiresAt <= now.getTime() || existing.owner === owner;
+        if (!canWin) return false;
+      } catch {
+        // malformed lock value — treat as absent and reclaim
+      }
+    }
+
+    const value = JSON.stringify({ owner, acquiredAt: now.toISOString(), expiresAt: new Date(now.getTime() + staleMs).toISOString() });
+    database
+      .prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+      )
+      .run(key, value, now.toISOString());
+    return true;
+  });
+
+  return acquire.immediate() as boolean;
+}
+
+export function renewStrategyLock(owner: string, userId: string = "local", connectedAccountId?: string, staleMs = 5 * 60_000, now = new Date()): boolean {
+  const database = getDb();
+  const key = strategyLockKey(userId, connectedAccountId);
+  const renew = database.transaction(() => {
+    const row = database
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+
+    if (!row) return false;
+
+    try {
+      const existing = JSON.parse(row.value) as { owner?: string };
+      if (existing.owner !== owner) return false;
+    } catch {
+      return false; // malformed lock value, can't renew
+    }
+
+    const value = JSON.stringify({ owner, acquiredAt: now.toISOString(), expiresAt: new Date(now.getTime() + staleMs).toISOString() });
+    database
+      .prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = ?")
+      .run(value, now.toISOString(), key);
+    return true;
+  });
+
+  return renew.immediate() as boolean;
+}
+
+export function releaseStrategyLock(owner: string, userId: string = "local", connectedAccountId?: string): void {
+  const database = getDb();
+  const key = strategyLockKey(userId, connectedAccountId);
+  
+  database.transaction(() => {
+    if (connectedAccountId) {
+      const row = database.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+      if (row) {
+        try {
+          const existing = JSON.parse(row.value) as { owner?: string };
+          if (existing.owner === owner) {
+            database.prepare("DELETE FROM settings WHERE key = ?").run(key);
+          }
+        } catch {
+          database.prepare("DELETE FROM settings WHERE key = ?").run(key);
+        }
+      }
+      return;
+    }
+
+    // No account given: release the user's base lock AND any per-account locks (teardown/back-compat).
+    const rows = database
+      .prepare("SELECT key, value FROM settings WHERE key = ? OR key LIKE ?")
+      .all(`strategy_run_lock:${userId}`, `strategy_run_lock:${userId}:%`) as Array<{ key: string, value: string }>;
+      
+    for (const r of rows) {
+      try {
+        const existing = JSON.parse(r.value) as { owner?: string };
+        if (existing.owner === owner) {
+          database.prepare("DELETE FROM settings WHERE key = ?").run(r.key);
+        }
+      } catch {
+        database.prepare("DELETE FROM settings WHERE key = ?").run(r.key);
+      }
+    }
+  }).immediate();
+}
+
+export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string, accountNumber?: string, policyRevision?: string): void {
+  getDb()
+    .prepare("INSERT INTO strategy_runs (id, user_id, connected_account_id, account_number, policy_revision, started_at, status) VALUES (?, ?, ?, ?, ?, ?, 'running')")
+    .run(id, userId, connectedAccountId ?? null, accountNumber ?? null, policyRevision ?? null, new Date().toISOString());
+}
+
+/** Terminal statuses for strategy_runs.
+ *  - completed: a decision cycle ran (LLM evaluated candidates, even if it proposed nothing)
+ *  - skipped: pre-decision gate (market closed, broker unhealthy, budget) — no LLM reasoning
+ *  - failed: hard error
+ * Skipped must NOT feed trading-liveness "healthy" or auto-tune. */
+export type StrategyRunFinishStatus = "completed" | "failed" | "skipped";
+
+export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, summary: string, userId: string = "local"): void {
+  getDb()
+    .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ? AND user_id = ?")
+    .run(new Date().toISOString(), status, summary, id, userId);
+}
+
+/**
+ * Sweep strategy_runs rows left in status='running' after a process crash / kill / unhandled
+ * rejection (the normal `finishStrategyRun` exit paths never ran). A run that hasn't finished
+ * within STALE_THRESHOLD_MS (default 30 min) is marked failed with a receipted reason — UNLESS it
+ * still has recent audit activity (see the in-loop check below), in which case it's left alone.
+ *
+ * Returns the number of repaired rows for logging/auditing.
+ */
+// 30 min — raised from 10 min after a 2026-07-08 incident: an evening run (id 5d49c9b5) with
+// slow LLM steps (150s+ each observed under load) was still genuinely running past the old 10-min
+// threshold, got marked "crashed" by this sweep at the ~11-minute mark, and then completed 5s later
+// having already placed 4 real trades — a live run was declared dead while it was still trading.
+// 30 min comfortably clears worst-case multi-step LLM runs with margin; a tick-cadence run still
+// normally finishes in ~1-2 min, so this only widens the window for the genuine crash case, it
+// doesn't meaningfully delay detecting an actual stuck/killed process.
+const STALE_RUN_THRESHOLD_MS = 30 * 60_000;
+export function markStaleRunningRuns(now: number = Date.now()): number {
+  const cutoff = new Date(now - STALE_RUN_THRESHOLD_MS).toISOString();
+  const db = getDb();
+  const stale = db
+    .prepare(
+      `SELECT id, user_id, connected_account_id, started_at FROM strategy_runs
+       WHERE status = 'running' AND started_at < ?`
+    )
+    .all(cutoff) as Array<{
+      id: string;
+      user_id: string;
+      connected_account_id: string | null;
+      started_at: string;
+    }>;
+  let count = 0;
+  for (const row of stale) {
+    // Extra grace beyond the raised threshold: audit_events has no run_id COLUMN, but nearly every
+    // strategy-run audit kind carries `runId` in its JSON payload (e.g. strategy_bear_review_unavailable,
+    // order placements) — so a run that's still emitting audit rows more recently than the cutoff is
+    // demonstrably still alive, just slow, not crashed. This json_extract only runs for rows ALREADY
+    // past the time cutoff (typically 0-1 per sweep tick), so it's cheap despite no index on payload.
+    const recentActivity = db
+      .prepare(`SELECT 1 FROM audit_events WHERE json_extract(payload, '$.runId') = ? AND created_at >= ? LIMIT 1`)
+      .get(row.id, cutoff);
+    if (recentActivity) continue;
+
+    const res = db
+      .prepare(
+        `UPDATE strategy_runs SET status = 'failed', finished_at = ?, summary = 'Process restarted mid-run — marked failed by stale-run sweep (started at ' || ? || ')'
+         WHERE id = ? AND status = 'running'`
+      )
+      .run(new Date().toISOString(), row.started_at, row.id);
+    // Only receipt+count rows this sweep actually transitioned. If a concurrent scheduler
+    // instance already repaired the row between our SELECT and UPDATE, `changes === 0` — skip
+    // it so we don't emit a duplicate `strategy_run_crashed` audit or over-report `count`.
+    if (res.changes === 0) continue;
+    // `audit` is imported statically from ./db (top of file). The db → db-execution cycle is safe
+    // under ESM live bindings because audit is only called here at runtime, never at module init.
+    audit(
+      "strategy_run_crashed",
+      { runId: row.id, startedAt: row.started_at, reason: "marked failed by stale-run sweep" },
+      row.user_id,
+      // Scope the receipt to the run's account so per-account ops queries can filter it.
+      row.connected_account_id ?? undefined
+    );
+    count++;
+  }
+  return count;
+}
+
+/**
+ * Most recent strategy-run start time for a user (ISO string), or null if none. The scheduler
+ * rehydrates its in-memory cadence clock from this on boot so a restart/HMR/deploy doesn't fire an
+ * immediate run regardless of the configured cadence (userSchedules starts empty each process).
+ */
+export function getLastStrategyRunStartedAt(userId: string = "local", connectedAccountId?: string): string | null {
+  const row = (connectedAccountId
+    ? getDb()
+        .prepare("SELECT MAX(started_at) AS last FROM strategy_runs WHERE user_id = ? AND connected_account_id = ?")
+        .get(userId, connectedAccountId)
+    : getDb()
+        .prepare("SELECT MAX(started_at) AS last FROM strategy_runs WHERE user_id = ?")
+        .get(userId)) as { last: string | null } | undefined;
+  return row?.last ?? null;
+}
+
+export function listStrategyRuns(limit = 20, userId: string = "local", connectedAccountId?: string): StrategyRunRow[] {
+  type RawRow = {
+    id: string;
+    started_at: string;
+    finished_at: string | null;
+    status: string;
+    summary: string | null;
+    connected_account_id: string | null;
+    placed_count: number;
+    paper_count: number;
+    blocked_count: number;
+    proposed_count: number;
+    total_count: number;
+  };
+
+  const selectSql = `SELECT
+        sr.id,
+        sr.started_at,
+        sr.finished_at,
+        sr.status,
+        sr.summary,
+        sr.connected_account_id,
+        COUNT(CASE WHEN tp.status IN ('placed', 'filled') THEN 1 END) AS placed_count,
+        COUNT(CASE WHEN tp.status = 'paper'    THEN 1 END) AS paper_count,
+        COUNT(CASE WHEN tp.status = 'blocked'  THEN 1 END) AS blocked_count,
+        COUNT(CASE WHEN tp.status = 'proposed' THEN 1 END) AS proposed_count,
+        COUNT(tp.id)                                        AS total_count
+       FROM strategy_runs sr
+       LEFT JOIN trade_proposals tp ON tp.run_id = sr.id
+       WHERE sr.user_id = ?${connectedAccountId ? " AND sr.connected_account_id = ?" : ""}
+       GROUP BY sr.id
+       ORDER BY sr.started_at DESC
+       LIMIT ?`;
+  const rows = getDb()
+    .prepare(selectSql)
+    .all(...(connectedAccountId ? [userId, connectedAccountId, limit] : [userId, limit])) as RawRow[];
+
+  return rows.map((r) => ({
+    id: r.id,
+    startedAt: r.started_at,
+    finishedAt: r.finished_at ?? undefined,
+    status: r.status as StrategyRunRow["status"],
+    summary: r.summary ?? undefined,
+    connectedAccountId: r.connected_account_id ?? undefined,
+    placedCount: r.placed_count,
+    paperCount: r.paper_count,
+    blockedCount: r.blocked_count,
+    proposedCount: r.proposed_count,
+    totalCount: r.total_count
+  }));
+}
+
+export function getStrategyRunById(id: string, userId: string = "local"): StrategyRunRow | undefined {
+  type RawRow = {
+    id: string;
+    started_at: string;
+    finished_at: string | null;
+    status: string;
+    summary: string | null;
+    connected_account_id: string | null;
+    placed_count: number;
+    paper_count: number;
+    blocked_count: number;
+    proposed_count: number;
+    total_count: number;
+  };
+  const row = getDb()
+    .prepare(
+      `SELECT sr.id, sr.started_at, sr.finished_at, sr.status, sr.summary, sr.connected_account_id,
+              COUNT(CASE WHEN tp.status IN ('placed', 'filled') THEN 1 END) AS placed_count,
+              COUNT(CASE WHEN tp.status = 'paper'    THEN 1 END) AS paper_count,
+              COUNT(CASE WHEN tp.status = 'blocked'  THEN 1 END) AS blocked_count,
+              COUNT(CASE WHEN tp.status = 'proposed' THEN 1 END) AS proposed_count,
+              COUNT(tp.id)                                        AS total_count
+         FROM strategy_runs sr
+         LEFT JOIN trade_proposals tp ON tp.run_id = sr.id
+        WHERE sr.id = ? AND sr.user_id = ?
+        GROUP BY sr.id`
+    )
+    .get(id, userId) as RawRow | undefined;
+
+  return row
+    ? {
+        id: row.id,
+        startedAt: row.started_at,
+        finishedAt: row.finished_at ?? undefined,
+        status: row.status as StrategyRunRow["status"],
+        summary: row.summary ?? undefined,
+        connectedAccountId: row.connected_account_id ?? undefined,
+        placedCount: row.placed_count,
+        paperCount: row.paper_count,
+        blockedCount: row.blocked_count,
+        proposedCount: row.proposed_count,
+        totalCount: row.total_count
+      }
+    : undefined;
+}

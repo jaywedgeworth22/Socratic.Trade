@@ -189,3 +189,65 @@ describe("tax", () => {
     expect(downLot?.earlyExitTaxPremium).toBeUndefined();
   });
 });
+
+describe("tax — washSaleMinLossUsd materiality floor", () => {
+  it("skips a below-threshold loss when building the lockout, keeps an above-threshold one", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "WSMIN";
+    // Small loss: -$10 on TINY (buy @100, sell @90).
+    insertFillEvent(fill({ id: "m1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: a, symbol: "TINY", filledAt: daysAgo(40) }));
+    insertFillEvent(fill({ id: "m2", side: "sell", quantity: 1, price: 90, notional: 90, accountNumber: a, symbol: "TINY", filledAt: daysAgo(10) }));
+    // Big loss: -$500 on BIGL (buy @1000, sell @500).
+    insertFillEvent(fill({ id: "m3", side: "buy", quantity: 1, price: 1000, notional: 1000, accountNumber: a, symbol: "BIGL", filledAt: daysAgo(40) }));
+    insertFillEvent(fill({ id: "m4", side: "sell", quantity: 1, price: 500, notional: 500, accountNumber: a, symbol: "BIGL", filledAt: daysAgo(10) }));
+
+    // Threshold $50: the -$10 loss does not lock; the -$500 loss still does.
+    const locked = getWashSaleLockedSymbols(a, "paper", NOW, "local", undefined, 50);
+    expect(locked.has("TINY")).toBe(false);
+    expect(locked.has("BIGL")).toBe(true);
+
+    // Threaded through getTaxSummary via taxSettings.washSaleMinLossUsd.
+    const tax = getTaxSummary(a, "paper", {}, { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15, washSaleMinLossUsd: 50 }, NOW);
+    expect(tax.lockedSymbols).not.toContain("TINY");
+    expect(tax.lockedSymbols).toContain("BIGL");
+  });
+
+  it("locks a loss exactly AT the threshold (floor is inclusive)", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "WSMIN-EDGE";
+    insertFillEvent(fill({ id: "e1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: a, symbol: "EDGE", filledAt: daysAgo(40) }));
+    insertFillEvent(fill({ id: "e2", side: "sell", quantity: 1, price: 50, notional: 50, accountNumber: a, symbol: "EDGE", filledAt: daysAgo(10) }));
+    expect(getWashSaleLockedSymbols(a, "paper", NOW, "local", undefined, 50).has("EDGE")).toBe(true);
+    expect(getWashSaleLockedSymbols(a, "paper", NOW, "local", undefined, 50.01).has("EDGE")).toBe(false);
+  });
+
+  it("default (undefined) keeps current behavior: every loss locks", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "WSMIN-DEFAULT";
+    insertFillEvent(fill({ id: "d1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: a, symbol: "ANY", filledAt: daysAgo(40) }));
+    insertFillEvent(fill({ id: "d2", side: "sell", quantity: 1, price: 99.5, notional: 99.5, accountNumber: a, symbol: "ANY", filledAt: daysAgo(10) }));
+    expect(getWashSaleLockedSymbols(a, "paper", NOW).has("ANY")).toBe(true);
+    const tax = getTaxSummary(a, "paper", {}, undefined, NOW);
+    expect(tax.lockedSymbols).toContain("ANY");
+  });
+
+  it("applies each account's own threshold in the cross-account lockout", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const strict = "XMIN-STRICT"; // no threshold — every loss locks
+    const lax = "XMIN-LAX"; // $100 threshold — small losses ignored
+    insertFillEvent(fill({ id: "xa1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: strict, symbol: "SSSS", filledAt: daysAgo(40) }));
+    insertFillEvent(fill({ id: "xa2", side: "sell", quantity: 1, price: 95, notional: 95, accountNumber: strict, symbol: "SSSS", filledAt: daysAgo(10) }));
+    insertFillEvent(fill({ id: "xb1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: lax, symbol: "LLLL", filledAt: daysAgo(40) }));
+    insertFillEvent(fill({ id: "xb2", side: "sell", quantity: 1, price: 95, notional: 95, accountNumber: lax, symbol: "LLLL", filledAt: daysAgo(10) }));
+
+    const locked = getWashSaleLockedSymbolsForUser(
+      [
+        { accountNumber: strict, source: "paper", taxationType: "taxable" },
+        { accountNumber: lax, source: "paper", taxationType: "taxable", washSaleMinLossUsd: 100 }
+      ],
+      NOW
+    );
+    expect(locked.has("SSSS")).toBe(true); // strict account: -$5 locks
+    expect(locked.has("LLLL")).toBe(false); // lax account: -$5 < $100 floor
+  });
+});
