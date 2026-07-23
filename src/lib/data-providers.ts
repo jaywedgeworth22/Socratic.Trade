@@ -2940,7 +2940,8 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
               );
             }
           } else {
-            writeEnrichmentCache("fmp", symbol, this.scope, this.userId, data, now + ttlMs());
+            // 14-day TTL to preserve hoarded FMP data and avoid 403s on the free tier.
+            writeEnrichmentCache("fmp", symbol, this.scope, this.userId, data, now + 14 * 24 * 60 * 60 * 1000);
           }
           result[symbol] = data;
         })

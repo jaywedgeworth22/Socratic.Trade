@@ -2908,6 +2908,17 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## Current Status
 
+## 2026-07-23 — FMP Downgrade Mitigation & UI Stale Indicators (ANTIGRAVITY, branch `fix-1792`)
+
+Successfully addressed the impending FMP downgrade by hoarding 1300+ days of Massive history and extensive FMP fundamentals for the tracked universe. 
+- Re-ordered the provider cascade in `src/lib/data-providers.ts` to favor free fallbacks (like Yahoo) and avoid exhausting FMP limits.
+- Increased the FMP fundamentals TTL in the cache to 14 days to stretch out the data we hoarded.
+- Added `isStaleField` logic to `app/console/scan/columns.tsx` to identify data older than 24 hours. Rendered stale fundamental data (P/E, EPS growth, Div Yield) with an `italic opacity-70` class and appended `(Stale: ...)` to tooltips.
+- Ported the staleness logic to `app/console/ui/drilldown-data.ts` and `app/console/ui/drilldown-sections.tsx`. Fundamentals in the drawer now fade and italicize if they are stale.
+
+Verified by passing TS compiler, Linter, Vitest test suite, and Next.js production build. Ready to land.
+Rollout: `docs/rollouts/2026-07-23-fmp-downgrade-ui.md`.
+
 ## 2026-07-22 — Admin UI Polish (ANTIGRAVITY, branch `fix/admin-ui-polish`)
 
 Fixed Admin panel UI bugs:
