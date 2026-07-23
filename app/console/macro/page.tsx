@@ -12,8 +12,10 @@ import Link from "next/link";
 import type { MarketSignals } from "@/lib/market-signals";
 import type { MarketNewsItem } from "@/lib/market-signals/massive";
 import { fmtPct, EM_DASH } from "../lib/format";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Card, Chip, Empty } from "../ui/primitives";
+import { SymbolButton } from "../ui/symbol-drilldown";
 import {
   buildSections,
   macroSourcing,
@@ -26,6 +28,7 @@ import {
   type TileTone
 } from "./indicators";
 import { TrendsCard } from "./trends";
+import { destinationLabel } from "../components/nav";
 
 export default function MacroPage() {
   const { snapshot, error } = useConsoleData();
@@ -33,9 +36,9 @@ export default function MacroPage() {
   const board = snapshot.macroBoard;
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-4">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-[length:var(--con-fs-lg)] font-bold">Macro</h1>
+        <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console/macro")}</h1>
         <span
           className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
           title="The macro and market-regime board: rates, inflation, volatility, positioning, breadth — the same inputs the strategist reads on every run."
@@ -136,8 +139,8 @@ function UnsourcedNotice({ vixLive }: { vixLive: boolean }) {
         )}
         Signals from other free sources (Cboe, CFTC, factors, breadth, news) still show real readings. Add a FRED key
         under{" "}
-        <Link href="/console/settings" className="font-semibold text-[color:var(--con-accent)] hover:underline" title="Settings → API keys">
-          Settings
+        <Link href="/console/connections" className="font-semibold text-[color:var(--con-accent)] hover:underline" title="Connections → API keys">
+          Connections
         </Link>{" "}
         to light the rest up.
       </span>
@@ -383,7 +386,7 @@ function MoverList({ title, movers, asOf }: { title: string; movers: Array<{ sym
         {movers.map((m) => (
           <div
             key={m.sym}
-            className="con-row flex items-center justify-between gap-3 rounded-md px-1.5 py-1"
+            className="con-row flex items-center justify-between gap-3 rounded-control px-1.5 py-1"
             title={`${m.sym} closed ${m.pct >= 0 ? "up" : "down"} ${Math.abs(m.pct).toFixed(1)}% versus the prior close.`}
           >
             <span className="text-[length:var(--con-fs-sm)] font-semibold">{m.sym}</span>
@@ -430,9 +433,9 @@ function NewsCard({ news }: { news?: MarketNewsItem[] }) {
                 <span
                   key={t}
                   className="con-chip"
-                  title={`This story mentions ${t}. Symbol details live on the Scan screen.`}
+                  title={`This story mentions ${t}.`}
                 >
-                  {t}
+                  <SymbolButton symbol={t} showLogo={false} className="text-inherit" />
                 </span>
               ))}
             </div>

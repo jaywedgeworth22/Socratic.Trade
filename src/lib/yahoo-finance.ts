@@ -1,4 +1,6 @@
 export interface YahooFinanceQuote {
+  /** Exchange-reported issuer identity from chart metadata (longName/shortName). */
+  companyName?: string;
   price: number;
   bid: number;
   ask: number;
@@ -33,6 +35,9 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinan
     if (!meta) return undefined;
     const price = Number(meta.regularMarketPrice);
     if (!Number.isFinite(price) || price <= 0) return undefined;
+    const companyName = [meta.longName, meta.shortName]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+      ?.trim();
     const prevClose = meta.chartPreviousClose ? Number(meta.chartPreviousClose) : price;
     const quote = payload?.chart?.result?.[0]?.indicators?.quote?.[0];
     const volume = Number(meta.regularMarketVolume ?? quote?.volume?.[0] ?? 0);
@@ -43,6 +48,7 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinan
     // downstream code has a placeholder, and mark it synthetic so it is never mistaken for a real
     // quoted ask (which would wrongly anchor ask-relative limit-price math).
     return {
+      ...(companyName ? { companyName } : {}),
       price,
       bid: price * 0.999,
       ask: price * 1.001,
@@ -117,9 +123,13 @@ export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<M
           prevClose,
           volume,
           asOf,
-          // Side-specific synthetic flags; syntheticSpread stays true only when BOTH sides were derived.
-          ...(syntheticBid ? { syntheticBid: true } : {}),
-          ...(syntheticAsk ? { syntheticAsk: true } : {}),
+          // Side-specific synthetic flags set EXPLICITLY (true AND false) so a consumer that falls back
+          // to the coarse `syntheticSpread` when a side flag is absent (e.g. market.ts) never mislabels
+          // a real side: a one-sided quote's real side now carries an explicit `false`, so the fallback
+          // only fires for producers that genuinely don't set side flags. `syntheticSpread` stays true
+          // only when BOTH sides were derived (back-compat for any coarse-only consumer).
+          syntheticBid,
+          syntheticAsk,
           ...(hasRealSpread ? {} : { syntheticSpread: true })
         });
       }
@@ -131,4 +141,3 @@ export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<M
 
   return result;
 }
-

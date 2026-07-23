@@ -110,4 +110,15 @@ export interface ChatReply {
   promptVersion: string;
   /** Model that produced this reply (so the UI can tag the message without a refetch). */
   model?: string;
+  /**
+   * When coach/chat durable-learning capture fired on this turn (strategy directive or URL lesson),
+   * a short receipt describing what was written or queued. Optional — older clients ignore it.
+   */
+  learningCapture?: {
+    kind: "directive" | "url";
+    tier: "fact" | "risk" | "strategy-directive" | null;
+    pendingId: string | null;
+    writtenId: string | null;
+    receipt: string;
+  } | null;
 }

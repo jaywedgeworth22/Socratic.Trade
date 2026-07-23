@@ -12,19 +12,23 @@
  *  - A failed refresh is a non-blocking notice; the last good scan stays up.
  *  - Missing data renders as "—"; P/E's "n/a" means negative/zero earnings. */
 
-import { useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { RefreshCw } from "lucide-react";
 import type { MarketScan } from "@/lib/types";
+import type { CongressScoreVerdictRead } from "@/lib/congress-score-gate";
 import { formatSourceList } from "@/lib/dashboard-ui";
 import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT } from "@/lib/scan-settings";
 import { activeConnectedAccount } from "../lib/derive";
 import { cx, fmtExact, EM_DASH } from "../lib/format";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
+import { formatScanCandidateBreakdown, scanCandidateBreakdown } from "../lib/scan";
 import { useConsoleData } from "../lib/useConsoleData";
-import { Ago, Btn, Card, Chip, Empty } from "../ui/primitives";
+import { Ago, Btn, Card, Chip, Empty, type ChipTone } from "../ui/primitives";
 import { useToast } from "../ui/toast";
 import { ScanTable } from "./scan-table";
 import { SmartMoneySection } from "./smart-money";
 import { asFullMarketScan, newestScan, useLiveScan } from "./use-live-scan";
+import { destinationLabel } from "../components/nav";
 
 type Tab = "scan" | "smart";
 
@@ -41,6 +45,7 @@ export default function ScanPage() {
     : null;
   const live = useLiveScan(scopeKey);
   const [tab, setTab] = useState<Tab>("scan");
+  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
 
   // Validate the run-captured scan before trusting it — historical/compact
   // strategy_run audits can carry a partial shape the table can't render.
@@ -67,11 +72,33 @@ export default function ScanPage() {
 
   const isFresh = scan !== null && scan === live.scan;
 
+  const tabDefs = [
+    {
+      id: "scan" as Tab,
+      label: scan ? `Market scan (${scan.topCandidates.length})` : "Market scan",
+      title: "Screened and scored candidates from the market scan, with per-field source attribution."
+    },
+    {
+      id: "smart" as Tab,
+      label: smartCount > 0 ? `Smart money (${smartCount})` : "Smart money",
+      title: "Recently disclosed congressional trades and insider (Form 4) activity — everything on file, not just scan overlaps."
+    }
+  ] as const;
+
+  const onTabsKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    const ids = tabDefs.map((t) => t.id);
+    const next = ids[(ids.indexOf(tab) + (e.key === "ArrowRight" ? 1 : -1) + ids.length) % ids.length];
+    setTab(next);
+    tabRefs.current[next]?.focus();
+  };
+
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-4">
+    <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       {/* Header: title · freshness · last-scanned · refresh */}
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-[length:var(--con-fs-lg)] font-bold">Scan</h1>
+        <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console/scan")}</h1>
         {scan && (
           <Chip
             tone={isFresh ? "accent" : "muted"}
@@ -107,28 +134,28 @@ export default function ScanPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 self-start rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1">
-        {(
-          [
-            {
-              id: "scan" as Tab,
-              label: scan ? `Market scan (${scan.topCandidates.length})` : "Market scan",
-              title: "Screened and scored candidates from the market scan, with per-field source attribution."
-            },
-            {
-              id: "smart" as Tab,
-              label: smartCount > 0 ? `Smart money (${smartCount})` : "Smart money",
-              title: "Recently disclosed congressional trades and insider (Form 4) activity — everything on file, not just scan overlaps."
-            }
-          ] as const
-        ).map((t) => (
+      <div
+        role="tablist"
+        aria-label="Scan views"
+        onKeyDown={onTabsKeyDown}
+        className="flex gap-1 self-start rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1"
+      >
+        {tabDefs.map((t) => (
           <button
             key={t.id}
+            ref={(el) => {
+              tabRefs.current[t.id] = el;
+            }}
+            id={`scan-tab-${t.id}`}
+            role="tab"
+            aria-selected={tab === t.id}
+            aria-controls={`scan-tabpanel-${t.id}`}
+            tabIndex={tab === t.id ? 0 : -1}
             type="button"
             onClick={() => setTab(t.id)}
             title={t.title}
             className={cx(
-              "rounded-md px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
+              "rounded-control px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
               tab === t.id
                 ? "bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]"
                 : "text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)]"
@@ -139,17 +166,21 @@ export default function ScanPage() {
         ))}
       </div>
 
-      {tab === "scan" ? (
-        <MarketScanTab
-          scan={scan}
-          refreshing={live.refreshing}
-          error={live.error}
-          onRefresh={() => void onRefresh()}
-          policyLimit={snapshot.policy.marketScanCandidateLimit}
-        />
-      ) : (
-        <SmartMoneySection snapshot={snapshot} />
-      )}
+      <div role="tabpanel" id={`scan-tabpanel-${tab}`} aria-labelledby={`scan-tab-${tab}`}>
+        {tab === "scan" ? (
+          <MarketScanTab
+            scan={scan}
+            refreshing={live.refreshing}
+            error={live.error}
+            onRefresh={() => void onRefresh()}
+            policyLimit={snapshot.policy.marketScanCandidateLimit}
+            congressScoreVerdict={snapshot.smartMoney?.congressScoreVerdict}
+            gatingEnabled={snapshot.policy.tuning?.congressGoNoGoGating ?? false}
+          />
+        ) : (
+          <SmartMoneySection snapshot={snapshot} />
+        )}
+      </div>
     </div>
   );
 }
@@ -159,13 +190,17 @@ function MarketScanTab({
   refreshing,
   error,
   onRefresh,
-  policyLimit
+  policyLimit,
+  congressScoreVerdict,
+  gatingEnabled
 }: {
   scan: MarketScan | null;
   refreshing: boolean;
   error: string | null;
   onRefresh: () => void;
   policyLimit?: number;
+  congressScoreVerdict?: CongressScoreVerdictRead | null;
+  gatingEnabled?: boolean;
 }) {
   // No scan at all: friendly empty state that explains how to get one.
   if (!scan) {
@@ -176,13 +211,13 @@ function MarketScanTab({
         ) : (
           <>
             {error && (
-              <p className="mb-1 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              <p className="mb-1 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
                 {error}
               </p>
             )}
             <Empty>
               No market scan yet. Run one now with the button below, or it appears automatically after the next strategy
-              run. If your universe is empty, add symbols or choose a base index in Settings first.
+              run. If your universe is empty, add symbols or choose a base index in Guardrails first.
             </Empty>
             <div className="flex justify-center pb-2">
               <Btn variant="primary" onClick={onRefresh} title="Run a fresh market scan now. Read-only: it never places trades.">
@@ -196,22 +231,98 @@ function MarketScanTab({
   }
 
   const limit = scan.candidateLimit ?? policyLimit ?? DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT;
-  const outliers = scan.outlierCandidateCount ?? 0;
+  const breakdown = scanCandidateBreakdown({
+    totalCandidates: scan.topCandidates.length,
+    limit,
+    outlierCandidateCount: scan.outlierCandidateCount,
+    heldCandidateCount: scan.heldCandidateCount
+  });
   const sources = formatSourceList(scan.source);
   const warningText =
     scan.warnings.length > 1 ? `${scan.warnings[0]} (+${scan.warnings.length - 1} more — hover for all)` : scan.warnings[0];
 
+  // Effective gating state for the label/tooltip. The policy flag alone does NOT mean the
+  // congress signal is being zeroed: only a FRESH FAIL_SIGNIFICANCE verdict actually zeroes
+  // the congress term (see congressGateMultiplier in src/lib/congress-score-gate.ts). PASS,
+  // INSUFFICIENT, and any stale verdict fail open (multiplier 1 — no change).
+  const activelyGating =
+    !!gatingEnabled &&
+    !!congressScoreVerdict &&
+    !congressScoreVerdict.stale &&
+    congressScoreVerdict.verdict === "FAIL_SIGNIFICANCE";
+  // PASS is a clean signal (pos); FAIL_SIGNIFICANCE is a real, data-backed failure that gates
+  // (warn); INSUFFICIENT is neutral — too little data to judge — and must not read as a failure
+  // (muted). See classifyCongressVerdict in src/lib/congress-score-gate.ts.
+  const verdictTone: ChipTone = !congressScoreVerdict
+    ? "muted"
+    : congressScoreVerdict.verdict === "PASS"
+      ? "pos"
+      : congressScoreVerdict.verdict === "FAIL_SIGNIFICANCE"
+        ? "warn"
+        : "muted";
+  const gatingLabel = !gatingEnabled
+    ? {
+        text: "Off",
+        className: "text-[color:var(--con-faint)]",
+        title: "Go/no-go gating is disabled in policy — the congress signal is applied unconditionally."
+      }
+    : activelyGating
+      ? {
+          text: "Zeroing",
+          className: "font-medium text-[color:var(--con-warn)]",
+          title: "Gating is enabled and this fresh FAIL_SIGNIFICANCE verdict is currently zeroing the congress signal in this scan."
+        }
+      : congressScoreVerdict?.stale
+        ? {
+            text: "Enabled",
+            className: "font-medium text-[color:var(--con-fg)]",
+            title: "Gating is enabled, but the cached verdict is stale — the congress signal is applied (fail-open, no zeroing)."
+          }
+        : {
+            text: "Enabled",
+            className: "font-medium text-[color:var(--con-fg)]",
+            title: "Gating is enabled, but the current verdict does not zero the congress signal (only a fresh FAIL_SIGNIFICANCE gates)."
+          };
+
   return (
     <div className="flex flex-col gap-3">
+      {congressScoreVerdict && (
+        <div className="flex flex-wrap items-center gap-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
+          <span className="font-semibold text-[color:var(--con-fg)]">
+            Congress Signal Validation:
+          </span>
+          <Chip
+            tone={verdictTone}
+            title={congressScoreVerdict.reasons.length > 0 ? congressScoreVerdict.reasons.join("\n") : "Signal passed statistical significance validation."}
+          >
+            {/* Decided vocabulary, not the raw verdict enum (FAIL_SIGNIFICANCE etc.). */}
+            {congressScoreVerdict.verdict === "PASS"
+              ? "Pass"
+              : congressScoreVerdict.verdict === "FAIL_SIGNIFICANCE"
+                ? "Fails significance"
+                : congressScoreVerdict.verdict === "INSUFFICIENT"
+                  ? "Not enough data"
+                  : congressScoreVerdict.verdict}
+          </Chip>
+          <span className="text-[color:var(--con-faint)]">
+            t-stat: {congressScoreVerdict.stats.rankICTStat.toFixed(2)}
+            {congressScoreVerdict.stats.marginalICMeanIC !== undefined ? ` · marginal IC: ${(congressScoreVerdict.stats.marginalICMeanIC * 100).toFixed(2)}%` : ""}
+          </span>
+          <div className="flex-1" />
+          <span className="text-[color:var(--con-faint)]" title={gatingLabel.title}>
+            Gating: <span className={gatingLabel.className}>{gatingLabel.text}</span>
+          </span>
+        </div>
+      )}
       {/* A failed refresh never contradicts a populated table — muted notice only. */}
       {error && (
-        <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           {error} Showing the last good scan from {fmtExact(scan.generatedAt)}.
         </p>
       )}
       {scan.warnings.length > 0 && (
         <p
-          className="cursor-default rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
+          className="cursor-default rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
           title={scan.warnings.join("\n")}
         >
           {warningText}
@@ -238,10 +349,9 @@ function MarketScanTab({
       >
         <p
           className="cursor-default px-4 pb-2 pt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-          title={`Scanned ${typeof scan.scannedSymbols === "number" ? scan.scannedSymbols : "an unrecorded number of"} symbols; ${typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : "an unrecorded number of"} returned quotes${sources ? ` from ${sources}` : ""}; the top ${scan.topCandidates.length} (cap ${limit}) were enriched and scored${outliers > 0 ? `, including ${outliers} below-cutoff outlier${outliers === 1 ? "" : "s"} kept for notability` : ""}.`}
+          title={`Scanned ${typeof scan.scannedSymbols === "number" ? scan.scannedSymbols : "an unrecorded number of"} symbols; ${typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : "an unrecorded number of"} returned quotes${sources ? ` from ${sources}` : ""}; ${scan.topCandidates.length} candidates total (cap ${limit}) decomposed as ${formatScanCandidateBreakdown(breakdown)}${breakdown.hasHeldBreakdown ? " — held positions are never hidden regardless of rank, so the total can exceed the cap" : ""}.`}
         >
-          {typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : EM_DASH} quotes · {scan.topCandidates.length}/{limit} candidates
-          {outliers > 0 ? ` · ${outliers} outlier${outliers === 1 ? "" : "s"}` : ""}
+          {typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : EM_DASH} quotes · {formatScanCandidateBreakdown(breakdown)}
           {typeof scan.breadthPct === "number" && (
             <span title="Market breadth — the share of the full screened universe advancing today. A quick risk-on/risk-off gauge.">
               {" "}
@@ -252,7 +362,7 @@ function MarketScanTab({
         {scan.topCandidates.length === 0 ? (
           <Empty>
             The scan ran but returned no candidates — the universe may be empty or no provider returned quotes. Add
-            symbols or choose a base index in Settings, then refresh.
+            symbols or choose a base index in Guardrails, then refresh.
           </Empty>
         ) : (
           <ScanTable scan={scan} />

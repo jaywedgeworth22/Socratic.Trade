@@ -28,66 +28,91 @@ const isOld = (url: string) => {
 describe("probeMassiveTier", () => {
   it("classifies paid when >2yr history is returned", async () => {
     const fetcher = (async (u: string) => jsonRes({ results: isOld(u) ? [{ c: 1 }, { c: 2 }] : [{ c: 9 }] })) as unknown as typeof fetch;
-    expect((await probeMassiveTier("k", Date.now(), fetcher)).tier).toBe("paid");
+    const r = await probeMassiveTier("k", Date.now(), fetcher);
+    expect(r.tier).toBe("paid");
+    // Item 24: the structured signal names WHAT WAS TESTED (plan history-depth access), decoupled
+    // from availability/freshness — and the prose must say it's a plan-capability check, never a
+    // claim about how fresh today's served data is.
+    expect(r.signal).toBe("history_depth_confirmed");
+    expect(r.reason).toMatch(/plan|capability|access/i);
+    expect(r.reason).toMatch(/not today's data freshness/i);
   });
   it("classifies free when the >2yr window comes back empty (2-year cap)", async () => {
     const fetcher = (async (u: string) => jsonRes({ results: isOld(u) ? [] : [{ c: 9 }] })) as unknown as typeof fetch;
-    expect((await probeMassiveTier("k", Date.now(), fetcher)).tier).toBe("free");
+    const r = await probeMassiveTier("k", Date.now(), fetcher);
+    expect(r.tier).toBe("free");
+    expect(r.signal).toBe("history_cap_empty");
   });
   it("classifies free on a single-call 429 (free 5/min cap)", async () => {
     const fetcher = (async () => jsonRes("rate", 429)) as unknown as typeof fetch;
-    expect((await probeMassiveTier("k", Date.now(), fetcher)).tier).toBe("free");
+    const r = await probeMassiveTier("k", Date.now(), fetcher);
+    expect(r.tier).toBe("free");
+    expect(r.signal).toBe("rate_limited_429");
   });
   it("classifies free when >2yr history is 403-blocked", async () => {
     const fetcher = (async (u: string) => (isOld(u) ? jsonRes("forbidden", 403) : jsonRes({ results: [{ c: 9 }] }))) as unknown as typeof fetch;
-    expect((await probeMassiveTier("k", Date.now(), fetcher)).tier).toBe("free");
+    const r = await probeMassiveTier("k", Date.now(), fetcher);
+    expect(r.tier).toBe("free");
+    expect(r.signal).toBe("history_cap_blocked");
   });
   it("stays unknown on a bad-key 401 (not a tier signal) or network error", async () => {
     const badKey = (async () => jsonRes("nope", 401)) as unknown as typeof fetch;
-    expect((await probeMassiveTier("k", Date.now(), badKey)).tier).toBe("unknown");
+    const r1 = await probeMassiveTier("k", Date.now(), badKey);
+    expect(r1.tier).toBe("unknown");
+    expect(r1.signal).toBe("probe_error");
     const netErr = (async () => { throw new Error("ECONNRESET"); }) as unknown as typeof fetch;
     expect((await probeMassiveTier("k", Date.now(), netErr)).tier).toBe("unknown");
   });
   it("is unknown with no key", async () => {
-    expect((await probeMassiveTier(undefined)).tier).toBe("unknown");
+    const r = await probeMassiveTier(undefined);
+    expect(r.tier).toBe("unknown");
+    expect(r.signal).toBe("no_key");
   });
 });
 
 describe("probeFmpTier", () => {
   it("classifies paid when ratios-ttm returns data", async () => {
     const fetcher = (async () => jsonRes([{ priceToEarningsRatioTTM: 30 }])) as unknown as typeof fetch;
-    expect((await probeFmpTier("k", fetcher)).tier).toBe("paid");
+    const r = await probeFmpTier("k", fetcher);
+    expect(r.tier).toBe("paid");
+    expect(r.signal).toBe("data_returned");
   });
   it("classifies free on a premium/upgrade error envelope", async () => {
     const fetcher = (async () => jsonRes({ "Error Message": "Exclusive Endpoint: upgrade your plan." })) as unknown as typeof fetch;
-    expect((await probeFmpTier("k", fetcher)).tier).toBe("free");
+    const r = await probeFmpTier("k", fetcher);
+    expect(r.tier).toBe("free");
+    expect(r.signal).toBe("premium_gated_error");
   });
   it("classifies free on 429 (daily cap)", async () => {
     const fetcher = (async () => jsonRes("limit", 429)) as unknown as typeof fetch;
-    expect((await probeFmpTier("k", fetcher)).tier).toBe("free");
+    const r = await probeFmpTier("k", fetcher);
+    expect(r.tier).toBe("free");
+    expect(r.signal).toBe("rate_limited_429");
   });
   it("stays unknown on an ambiguous/empty response", async () => {
     const fetcher = (async () => jsonRes([])) as unknown as typeof fetch;
-    expect((await probeFmpTier("k", fetcher)).tier).toBe("unknown");
+    const r = await probeFmpTier("k", fetcher);
+    expect(r.tier).toBe("unknown");
+    expect(r.signal).toBe("ambiguous");
   });
 });
 
 describe("isProviderTierCheckDue", () => {
-  // Note: nothing earlier in this file sets providerTier:lastCheckAt, so the first case sees it absent.
+  // Note: nothing earlier in this file sets providerTier:lastCheckAt:local, so the first case sees it absent.
   it("is due when never run", () => {
-    expect(isProviderTierCheckDue(Date.now())).toBe(true);
+    expect(isProviderTierCheckDue(Date.now(), "local")).toBe(true);
   });
   it("is not due before the interval elapses", async () => {
     const { setInternalSetting } = await import("../src/lib/db");
     const now = Date.now();
-    setInternalSetting("providerTier:lastCheckAt", new Date(now - 3 * 3600_000).toISOString()); // 3h ago
-    expect(isProviderTierCheckDue(now)).toBe(false);
+    setInternalSetting("providerTier:lastCheckAt:local", new Date(now - 3 * 3600_000).toISOString()); // 3h ago
+    expect(isProviderTierCheckDue(now, "local")).toBe(false);
   });
   it("catches up (runs regardless of hour) once 1.5x the interval has elapsed", async () => {
     const { setInternalSetting } = await import("../src/lib/db");
     const now = Date.now();
-    setInternalSetting("providerTier:lastCheckAt", new Date(now - 40 * 3600_000).toISOString()); // 40h ago > 36h
-    expect(isProviderTierCheckDue(now)).toBe(true);
+    setInternalSetting("providerTier:lastCheckAt:local", new Date(now - 40 * 3600_000).toISOString()); // 40h ago > 36h
+    expect(isProviderTierCheckDue(now, "local")).toBe(true);
   });
 });
 
@@ -110,9 +135,13 @@ describe("runProviderTierCheck", () => {
     }) as unknown as typeof fetch;
 
     await runProviderTierCheck({ userId: "local", fetcher });
-    const status = getProviderTierStatus();
+    const status = getProviderTierStatus("local");
     expect(status.massive?.tier).toBe("free");
     expect(status.fmp?.tier).toBe("paid");
+    // Item 24: the structured probe-evidence signal is persisted alongside tier/reason so health
+    // consumers can distinguish capability probes from freshness without parsing prose.
+    expect(status.massive?.signal).toBe("history_cap_empty");
+    expect(status.fmp?.signal).toBe("data_returned");
 
     const events = listNotificationEvents("local", 50).filter((e) => e.type === "provider_degraded");
     expect(events.length).toBeGreaterThanOrEqual(1);
@@ -127,7 +156,7 @@ describe("runProviderTierCheck", () => {
     }) as unknown as typeof fetch;
 
     await runProviderTierCheck({ userId: "local", fetcher });
-    expect(getProviderTierStatus().massive?.tier).toBe("paid");
+    expect(getProviderTierStatus("local").massive?.tier).toBe("paid");
     const restored = listNotificationEvents("local", 50).filter((e) => e.type === "provider_degraded" && e.title.includes("PAID"));
     expect(restored.length).toBeGreaterThanOrEqual(1);
   });
@@ -145,7 +174,7 @@ describe("massive limiter auto-clamp on detected free tier", () => {
   it("clamps to 5/min when the watchdog flagged Massive as free, despite env=100", async () => {
     const { setInternalSetting } = await import("../src/lib/db");
     const massive = await import("../src/lib/market-signals/massive");
-    setInternalSetting("providerTier:status", { massive: { tier: "free", at: new Date().toISOString(), reason: "test" } });
+    setInternalSetting("providerTier:status:local", { massive: { tier: "free", at: new Date().toISOString(), reason: "test" } });
     massive.clearMassiveTierClampCacheForTests();
     massive.clearMassiveRestBudgetForTests();
     const now = Date.now();
@@ -157,7 +186,7 @@ describe("massive limiter auto-clamp on detected free tier", () => {
   it("allows the full env limit when Massive is paid", async () => {
     const { setInternalSetting } = await import("../src/lib/db");
     const massive = await import("../src/lib/market-signals/massive");
-    setInternalSetting("providerTier:status", { massive: { tier: "paid", at: new Date().toISOString(), reason: "test" } });
+    setInternalSetting("providerTier:status:local", { massive: { tier: "paid", at: new Date().toISOString(), reason: "test" } });
     massive.clearMassiveTierClampCacheForTests();
     massive.clearMassiveRestBudgetForTests();
     const now = Date.now();
