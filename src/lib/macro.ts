@@ -27,29 +27,47 @@ export interface MacroData {
   vix: string;
   vix3m: string; // 3-month VIX (for term structure)
   asOf: string;
+  /**
+   * Sourcing flag for the FRED suite (dashboard-only; excluded from the LLM prompt by pruneMacro):
+   * true  = a keyed FRED fetch ran this session and the present fields are real. Any series that
+   *         failed is blanked to "" (never a fabricated value), so a partial fetch never renders
+   *         one — the console shows those specific tiles as "—";
+   * false = no FRED fetch happened — every FRED field is blanked to "". `vix` is a live reading
+   *         iff `asOf` is a real date (the key-free Yahoo ^VIX fallback succeeded);
+   *         `asOf === "unavailable"` means even the VIX is blank.
+   * undefined = payload from an older build; callers should fall back to the asOf heuristic.
+   */
+  fredSourced?: boolean;
 }
 
-const DEFAULT_MACRO: MacroData = {
-  fedFundsRate: "5.25%",
-  dgs3moTreasury: "5.10%",
-  dgs2Treasury: "4.60%",
-  dgs10Treasury: "4.20%",
-  inflationExpectation10y: "2.30%",
-  cpiInflation: "3.10%",
-  corePCE: "2.80%",
-  realGDPGrowth: "2.00%",
-  unemploymentRate: "3.90%",
-  initialClaims: "220K",
-  m2MoneySupply: "20.8T",
-  m2GrowthYoY: "2.50%",
-  hyCreditSpread: "3.20%",
-  usdIndex: "121.00",
-  wtiOil: "$75.00",
-  housingStarts: "1.3M",
-  consumerSentiment: "75.0",
-  vix: "15.00",
-  vix3m: "17.00",
-  asOf: new Date().toISOString().split("T")[0]
+/**
+ * Every data field blanked to "" — the same partial-fetch convention the console renders as an em
+ * dash and pruneMacro now drops from the strategy prompt. This replaced the old DEFAULT_MACRO
+ * placeholder constants: fabricated readings (a hardcoded inverted yield curve, a fake VIX) must
+ * never reach determineMarketRegime, deriveMacroMetrics, or the strategist as if they were data.
+ */
+const BLANK_MACRO: MacroData = {
+  fedFundsRate: "",
+  dgs3moTreasury: "",
+  dgs2Treasury: "",
+  dgs10Treasury: "",
+  inflationExpectation10y: "",
+  cpiInflation: "",
+  corePCE: "",
+  realGDPGrowth: "",
+  unemploymentRate: "",
+  initialClaims: "",
+  m2MoneySupply: "",
+  m2GrowthYoY: "",
+  hyCreditSpread: "",
+  usdIndex: "",
+  wtiOil: "",
+  housingStarts: "",
+  consumerSentiment: "",
+  vix: "",
+  vix3m: "",
+  asOf: "unavailable",
+  fredSourced: false
 };
 
 // ── Cache-provenance scoping (mirrors src/lib/history.ts) ─────────────────────
@@ -85,7 +103,7 @@ function macroCacheScopeForKeySource(source: ApiKeySource): MacroCacheScope {
     // default result is also globally shared (it carries no licensed data).
     return shareUserKeyedMacro() ? "shared" : "private";
   }
-  // source === "none": no key at all — the DEFAULT_MACRO constant with
+  // source === "none": no key at all — the BLANK_MACRO payload with
   // asOf="unavailable" is public and safe to share globally.
   return "shared";
 }
@@ -128,24 +146,8 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
 
   const apiKey = resolveApiKeyWithSource("fred", userId).key;
   if (!apiKey) {
-    // No FRED key for the full FRED suite. Try to at least fetch live ^VIX from Yahoo Finance
-    // (key-free) so the regime classifier gets a real volatility reading instead of staying
-    // "Unknown". Other macro fields stay at DEFAULT_MACRO approximations — VIX is the primary
-    // regime axis anyway (see determineMarketRegime).
-    const liveVix = await fetchVixFromYahoo();
-    if (liveVix !== null) {
-      const lightMacro: MacroData = {
-        ...DEFAULT_MACRO,
-        vix: liveVix.toFixed(2),
-        asOf: new Date().toISOString().split("T")[0]
-      };
-      writeMacroCache("shared", userId, lightMacro, now + CACHE_TTL_MS);
-      return lightMacro;
-    }
-    // VIX fetch also failed — fall back to "unavailable" so regime stays Unknown.
-    const fallback = { ...DEFAULT_MACRO, asOf: "unavailable" };
-    writeMacroCache("shared", userId, fallback, now + CACHE_TTL_MS);
-    return fallback;
+    // No FRED key for the full FRED suite — take the key-free fallback path.
+    return fetchVixOnlyFallback(scope, userId, now);
   }
 
   try {
@@ -177,42 +179,99 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
       fetchFredSeries("VXVCLS", apiKey) // 3-month VIX (term structure)
     ]);
 
+    // Sourcing is derived from the DATA, not from key presence: an invalid /
+    // rate-limited / erroring key makes every fetchFredSeries return undefined,
+    // which would otherwise build an all-placeholder payload that looked
+    // sourced (and the 24h cache would pin that lie). Zero real series =>
+    // exactly the no-key path (try live VIX, else "unavailable"), and the
+    // honest flag is what gets cached.
+    const anyFredValue = [
+      fedFunds, dgs3mo, dgs2, dgs10, breakeven10y, cpi, corePce, realGdp, unemployment,
+      claims, m2, m2Growth, hySpread, usd, oil, houst, umcsent, vix, vix3m
+    ].some((value) => Boolean(value));
+    if (!anyFredValue) {
+      console.error("[macro] FRED key configured but every series fetch failed — treating as unsourced");
+      return fetchVixOnlyFallback(scope, userId, now);
+    }
+
+    // PARTIAL FRED fetch: some series returned, some failed. Each field that has no real value is
+    // blanked to "" — NOT a DEFAULT_MACRO placeholder — so a single failed series can never render as
+    // a fabricated live reading. `fredSourced` stays true (a real keyed fetch DID run and the present
+    // fields are real); the console blanks each empty field per-tile (its mv/mn helpers treat "" as
+    // missing → EM_DASH), so no fredSourced-gated tile shows a placeholder. This closes the "partial
+    // payload flagged fully sourced" gap without discarding the series that did resolve.
     const data: MacroData = {
-      fedFundsRate: fedFunds ? `${Number(fedFunds).toFixed(2)}%` : DEFAULT_MACRO.fedFundsRate,
-      dgs3moTreasury: dgs3mo ? `${Number(dgs3mo).toFixed(2)}%` : DEFAULT_MACRO.dgs3moTreasury,
-      dgs2Treasury: dgs2 ? `${Number(dgs2).toFixed(2)}%` : DEFAULT_MACRO.dgs2Treasury,
-      dgs10Treasury: dgs10 ? `${Number(dgs10).toFixed(2)}%` : DEFAULT_MACRO.dgs10Treasury,
-      inflationExpectation10y: breakeven10y ? `${Number(breakeven10y).toFixed(2)}%` : DEFAULT_MACRO.inflationExpectation10y,
-      cpiInflation: cpi ? `${Number(cpi).toFixed(2)}%` : DEFAULT_MACRO.cpiInflation,
-      corePCE: corePce ? `${Number(corePce).toFixed(2)}%` : DEFAULT_MACRO.corePCE,
-      realGDPGrowth: realGdp ? `${Number(realGdp).toFixed(2)}%` : DEFAULT_MACRO.realGDPGrowth,
-      unemploymentRate: unemployment ? `${Number(unemployment).toFixed(2)}%` : DEFAULT_MACRO.unemploymentRate,
-      initialClaims: claims ? `${Math.round(Number(claims) / 1000)}K` : DEFAULT_MACRO.initialClaims,
-      m2MoneySupply: m2 ? `${(Number(m2) / 1000).toFixed(2)}T` : DEFAULT_MACRO.m2MoneySupply,
-      m2GrowthYoY: m2Growth ? `${Number(m2Growth).toFixed(2)}%` : DEFAULT_MACRO.m2GrowthYoY,
-      hyCreditSpread: hySpread ? `${Number(hySpread).toFixed(2)}%` : DEFAULT_MACRO.hyCreditSpread,
-      usdIndex: usd ? `${Number(usd).toFixed(2)}` : DEFAULT_MACRO.usdIndex,
-      wtiOil: oil ? `$${Number(oil).toFixed(2)}` : DEFAULT_MACRO.wtiOil,
-      housingStarts: houst ? `${(Number(houst) / 1000).toFixed(2)}M` : DEFAULT_MACRO.housingStarts,
-      consumerSentiment: umcsent ? `${Number(umcsent).toFixed(1)}` : DEFAULT_MACRO.consumerSentiment,
-      vix: vix ? `${Number(vix).toFixed(2)}` : DEFAULT_MACRO.vix,
-      vix3m: vix3m ? `${Number(vix3m).toFixed(2)}` : DEFAULT_MACRO.vix3m,
-      asOf: new Date().toISOString().split("T")[0]
+      fedFundsRate: fedFunds ? `${Number(fedFunds).toFixed(2)}%` : "",
+      dgs3moTreasury: dgs3mo ? `${Number(dgs3mo).toFixed(2)}%` : "",
+      dgs2Treasury: dgs2 ? `${Number(dgs2).toFixed(2)}%` : "",
+      dgs10Treasury: dgs10 ? `${Number(dgs10).toFixed(2)}%` : "",
+      inflationExpectation10y: breakeven10y ? `${Number(breakeven10y).toFixed(2)}%` : "",
+      cpiInflation: cpi ? `${Number(cpi).toFixed(2)}%` : "",
+      corePCE: corePce ? `${Number(corePce).toFixed(2)}%` : "",
+      realGDPGrowth: realGdp ? `${Number(realGdp).toFixed(2)}%` : "",
+      unemploymentRate: unemployment ? `${Number(unemployment).toFixed(2)}%` : "",
+      initialClaims: claims ? `${Math.round(Number(claims) / 1000)}K` : "",
+      m2MoneySupply: m2 ? `${(Number(m2) / 1000).toFixed(2)}T` : "",
+      m2GrowthYoY: m2Growth ? `${Number(m2Growth).toFixed(2)}%` : "",
+      hyCreditSpread: hySpread ? `${Number(hySpread).toFixed(2)}%` : "",
+      usdIndex: usd ? `${Number(usd).toFixed(2)}` : "",
+      wtiOil: oil ? `$${Number(oil).toFixed(2)}` : "",
+      housingStarts: houst ? `${(Number(houst) / 1000).toFixed(2)}M` : "",
+      consumerSentiment: umcsent ? `${Number(umcsent).toFixed(1)}` : "",
+      vix: vix ? `${Number(vix).toFixed(2)}` : "",
+      vix3m: vix3m ? `${Number(vix3m).toFixed(2)}` : "",
+      asOf: new Date().toISOString().split("T")[0],
+      fredSourced: true
     };
 
     writeMacroCache(scope, userId, data, now + CACHE_TTL_MS);
     return data;
   } catch (error) {
     console.error("[macro] failed to fetch macroeconomic data:", error);
-    // Fetch failed — same as unsourced: flag it so the regime classifier stays Unknown.
-    return { ...DEFAULT_MACRO, asOf: "unavailable" };
+    // Fetch failed — same as unsourced: every field blank ("" / asOf "unavailable") so the regime
+    // classifier stays Unknown and no placeholder string ever reaches the prompt or a metric.
+    return { ...BLANK_MACRO };
   }
+}
+
+/**
+ * Fallback for "no usable FRED data" (no key, or a configured key whose every series fetch failed).
+ * Tries to at least fetch a live ^VIX from Yahoo Finance (key-free) so the regime classifier gets a
+ * real volatility reading instead of staying "Unknown"; every FRED field is blanked to "" (the
+ * partial-fetch convention — em dash on the console, dropped from the prompt by pruneMacro) and
+ * `fredSourced` is false either way. Blank, not placeholder: the old DEFAULT_MACRO constants
+ * carried a fabricated inverted curve that distorted determineMarketRegime and fed the strategist
+ * placeholder metrics via deriveMacroMetrics.
+ *
+ * Cached under the CALLER's scope (not hardcoded "shared"): a configured per-USER key that failed
+ * must write only that user's PRIVATE entry. Hardcoding "shared" here poisoned the global cache —
+ * another user, or the env/operator-key path, would then read this VIX-only/unavailable payload for
+ * up to 24h before ever attempting its own valid FRED fetch. The no-key path (source "none") and the
+ * env-key path resolve to "shared" via macroCacheScopeForKeySource, so their behavior is unchanged.
+ */
+async function fetchVixOnlyFallback(scope: MacroCacheScope, userId: string | undefined, now: number): Promise<MacroData> {
+  const liveVix = await fetchVixFromYahoo();
+  if (liveVix !== null) {
+    const lightMacro: MacroData = {
+      ...BLANK_MACRO,
+      vix: liveVix.toFixed(2),
+      asOf: new Date().toISOString().split("T")[0],
+      fredSourced: false // only the VIX is live; every FRED field is blank
+    };
+    writeMacroCache(scope, userId, lightMacro, now + CACHE_TTL_MS);
+    return lightMacro;
+  }
+  // VIX fetch also failed — everything blank ("unavailable") so the regime stays Unknown.
+  const fallback = { ...BLANK_MACRO };
+  writeMacroCache(scope, userId, fallback, now + CACHE_TTL_MS);
+  return fallback;
 }
 
 /** Clear both caches (test helper). */
 export function clearMacroCacheForTests(): void {
   sharedMacroCache.entry = null;
   privateMacroCache.clear();
+  liveVixCache.entry = null;
 }
 
 /** Fetch the latest ^VIX close from Yahoo Finance (no API key required). Returns null on any failure. */
@@ -234,6 +293,60 @@ async function fetchVixFromYahoo(): Promise<number | null> {
   }
 }
 
+// ── Live ^VIX overlay (short TTL, independent of the 24h macro cache) ────────────────────────
+// `fetchMacroData` is cached 24h — appropriate for the slow-moving FRED suite (rates, inflation,
+// GDP), but VIX can move double digits intraday, so pinning it to the same day-old snapshot means
+// the volatility panic brake and the regime-flip detector could be up to a day blind on a crash
+// day (composite review D/high/S). This is a SEPARATE cache entry with a short TTL, keyed off the
+// same key-free Yahoo ^VIX chart call `fetchVixFromYahoo` already used by the no-FRED fallback path
+// — so no new upstream dependency, just a much shorter TTL and its own cache slot. Callers that
+// need the freshest possible volatility read (the vol brake, regime-flip detection) should use
+// `fetchLiveVix`/`fetchMacroDataWithLiveVix` instead of trusting the 24h `fetchMacroData` snapshot.
+
+const LIVE_VIX_TTL_MS = 10 * 60_000; // 10 min — short enough to catch an intraday vol spike
+
+interface LiveVixEntry { expiresAt: number; vix: number | null; asOf: string }
+const liveVixCache: { entry: LiveVixEntry | null } = { entry: null };
+
+/**
+ * Live ^VIX reading with a short (10 min) TTL, independent of the 24h macro cache. Global/shared —
+ * the Yahoo ^VIX chart endpoint is key-free and carries no per-user licensing concern (same
+ * provenance reasoning as the no-FRED-key VIX fallback in fetchMacroData). Returns `vix: null` when
+ * the live fetch fails (never fabricates a reading); `asOf` is only a real ISO timestamp when the
+ * fetch actually succeeded this call or a still-fresh cache entry is served.
+ */
+export async function fetchLiveVix(now: number = Date.now()): Promise<{ vix: number | null; asOf: string | null }> {
+  const cached = liveVixCache.entry;
+  if (cached && cached.expiresAt > now) return { vix: cached.vix, asOf: cached.vix !== null ? cached.asOf : null };
+
+  const vix = await fetchVixFromYahoo();
+  const asOf = new Date(now).toISOString();
+  liveVixCache.entry = { expiresAt: now + LIVE_VIX_TTL_MS, vix, asOf };
+  return { vix, asOf: vix !== null ? asOf : null };
+}
+
+/**
+ * Overlay a live (short-TTL) VIX reading onto the (possibly 24h-stale) cached macro snapshot.
+ * Everything else — rates, inflation, credit spreads, etc. — still comes from the slow-moving FRED
+ * suite via `fetchMacroData`; only `vix` and `asOf` are refreshed from the live path, and only when
+ * the live fetch actually succeeds (a transient Yahoo failure falls back to the cached VIX rather
+ * than blanking a previously-good reading). Use this instead of bare `fetchMacroData` wherever a
+ * stale VIX would matter: the volatility panic brake and the regime-flip detector.
+ */
+export async function fetchMacroDataWithLiveVix(userId?: string): Promise<MacroData & { vixAsOf?: string }> {
+  const [macro, live] = await Promise.all([fetchMacroData(userId), fetchLiveVix()]);
+  if (live.vix === null || live.asOf === null) return macro;
+  return {
+    ...macro,
+    vix: live.vix.toFixed(2),
+    // A live VIX overlay always counts as a live snapshot for the regime classifier, even when the
+    // rest of the FRED suite is unavailable — asOf "unavailable" would otherwise force the
+    // classifier's early-return Unknown branch despite a real, fresh VIX reading in hand.
+    asOf: macro.asOf === "unavailable" ? live.asOf : macro.asOf,
+    vixAsOf: live.asOf
+  };
+}
+
 // Regime-critical fields that are always worth the tokens even when unchanged.
 const MACRO_ALWAYS_KEEP = new Set<keyof MacroData>(["vix", "fedFundsRate", "dgs10Treasury", "asOf"]);
 
@@ -246,10 +359,17 @@ export function pruneMacro(
   current: MacroData,
   previous?: MacroData | null
 ): { macro: Record<string, string>; omitted: string[] } {
-  if (!previous) return { macro: { ...current }, omitted: [] };
+  // Only the string data fields go to the LLM. Meta/sourcing flags (fredSourced) are
+  // dashboard-only, and empty-string fields (an unsourced/failed series — the value the console
+  // renders as an em dash) are dropped entirely: the strategist must never see a blank or
+  // placeholder reading presented as data.
+  const entries = (Object.entries(current) as Array<[keyof MacroData, MacroData[keyof MacroData]]>).filter(
+    (entry): entry is [keyof MacroData, string] => typeof entry[1] === "string" && entry[1] !== ""
+  );
+  if (!previous) return { macro: Object.fromEntries(entries), omitted: [] };
   const macro: Record<string, string> = {};
   const omitted: string[] = [];
-  for (const [key, value] of Object.entries(current) as Array<[keyof MacroData, string]>) {
+  for (const [key, value] of entries) {
     if (MACRO_ALWAYS_KEEP.has(key) || previous[key] !== value) {
       macro[key] = value;
     } else {
@@ -259,6 +379,22 @@ export function pruneMacro(
   return { macro, omitted };
 }
 
+// Typed regime enum + numeric severity + the classifier/gate helpers now live in the
+// dependency-free ./market-regime module so client-bundled code (e.g. the console Macro board)
+// can import the enum helpers by value without pulling in server-only modules (this file imports
+// ./db). Re-exported here so existing `import { X } from "./macro"` call sites are unaffected.
+export {
+  classifyMarketRegime,
+  isCrisisOrInvertedMarketRegime,
+  isEscalationMarketRegime,
+  isRiskOffFilterRegime,
+  MARKET_REGIME_LABELS,
+  MARKET_REGIME_SEVERITY,
+  regimeFromLabel,
+  type MarketRegime
+} from "./market-regime";
+import { classifyMarketRegime, MARKET_REGIME_LABELS } from "./market-regime";
+
 /**
  * Deterministic market-regime classifier. Primary axis is VIX (volatility), but the
  * yield curve (10y vs Fed funds) actually participates now: an inverted curve — a
@@ -266,22 +402,14 @@ export function pruneMacro(
  * surfaces a distinct "Cautious (Inverted Curve)" regime in calm-but-inverted markets.
  * Kept to a small, repeatable label set so the thesis×regime learning buckets stay
  * dense enough to learn from. Richer macro detail still reaches the LLM via the prompt.
+ *
+ * Returns the byte-identical label strings this function has always returned — persisted
+ * verbatim as `entryMarketRegime` — by projecting `classifyMarketRegime`'s enum (./market-regime)
+ * through `MARKET_REGIME_LABELS`. New code should prefer `classifyMarketRegime` (enum + severity)
+ * over string-matching this label.
  */
 export function determineMarketRegime(macro: MacroData): string {
-  // Unsourced macro (no FRED key) carries asOf "unavailable". Don't assert a confident regime off
-  // fabricated constants — return an explicit Unknown so downstream conditioning/caps stay neutral.
-  if (macro.asOf === "unavailable") return "Unknown (no macro feed)";
-  const vix = parseFloat(macro.vix);
-  const fedFunds = parseFloat(macro.fedFundsRate);
-  const dgs10 = parseFloat(macro.dgs10Treasury);
-  // Curve inversion: 10y meaningfully below the policy rate.
-  const inverted = Number.isFinite(fedFunds) && Number.isFinite(dgs10) && dgs10 < fedFunds - 0.1;
-  if (Number.isFinite(vix)) {
-    if (vix > 30) return "Crisis (Extreme Volatility)";
-    if (vix > 20 || (inverted && vix > 17)) return "Risk-Off (High Volatility)";
-    if (vix < 13 && !inverted) return "Risk-On (Low Volatility)";
-  }
-  return inverted ? "Cautious (Inverted Curve)" : "Neutral (Normal Volatility)";
+  return MARKET_REGIME_LABELS[classifyMarketRegime(macro).regime];
 }
 
 /** Tail-risk gauges the volatility panic brake reads (beyond VIX, which lives on MacroData). */

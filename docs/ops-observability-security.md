@@ -3,9 +3,11 @@
 This app now has opt-in scaffolding for the seven selected tools:
 
 - **Infisical**: use `npm run dev:secrets`, `npm run build:secrets`, or
-  `npm run start:secrets` to execute the app under `infisical run`. Configure
-  `INFISICAL_PROJECT_ID`, `INFISICAL_ENV`, `INFISICAL_PATH`, and a machine identity
-  token in the host environment. Do not commit `.env.local`.
+  `npm run start:secrets`. The runner normally exports secrets through a minimal CLI
+  environment and starts the app directly; `INFISICAL_WATCH=true` uses `infisical run
+  --watch` plus the final credential-masking wrapper. Configure `INFISICAL_PROJECT_ID`,
+  `INFISICAL_ENV`, `INFISICAL_PATH`, and a machine identity pair/token. Do not commit
+  `.env.local`.
 - **Gitleaks**: `npm run gitleaks` runs a local secret scan. The GitHub Actions
   Security workflow runs the pinned gitleaks action on the self-hosted runner
   and clears stale macOS installer temp files before invoking the action.
@@ -14,11 +16,30 @@ This app now has opt-in scaffolding for the seven selected tools:
   (`sentry.server.config.ts` / `sentry.edge.config.ts`, loaded via the instrumentation
   hook) and `NEXT_PUBLIC_SENTRY_DSN` for the browser (`instrumentation-client.ts`).
   `next.config.mjs` is wrapped with `withSentryConfig` (org `jays-services`, project
-  `agentic-trading`); set the build-time secret `SENTRY_AUTH_TOKEN` to upload source maps
+  `socratic-trade`); set the build-time secret `SENTRY_AUTH_TOKEN` to upload source maps
   for de-minified production stack traces. `app/global-error.tsx` reports root-layout
   render errors. The previous build-wrapper instability did not reproduce on
   `@sentry/nextjs@10` + Next 16. Browser Session Replay is opt-in
   (`NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=true`) and masks all text + blocks all media when on.
+  RAG provider failures, Pinecone index/metric checks, ingest budget trips, Pinecone Write
+  Unit budget trips, malformed embedding rejections, and retrieval degradations are captured
+  as warning/error events tagged `component=rag`, `rag.provider`, `rag.operation`, and
+  `rag.key_source`; they stay no-op unless `SENTRY_DSN` is set.
+- **Sentry Crons scheduler heartbeat**: a dead/hung scheduler still returns 200 from
+  `/api/health`, so the scheduler tick can additionally report an "ok" check-in to the
+  Sentry Crons monitor `scheduler-tick` every 60s tick (`sendSentrySchedulerCheckIn` in
+  `src/lib/scheduler.ts`); Sentry alerts when check-ins stop. Opt-in — requires BOTH
+  `SENTRY_DSN` and `SENTRY_CRONS_ENABLED=1` — placed after the single-leader gate so idle
+  followers can't mask a dead leader, and fully try/catch-wrapped so monitoring can never
+  break trading. The monitor is auto-created via the upsert config on first check-in
+  (interval 1 minute, 5-minute checkin margin). Inertness is asserted by
+  `test/sentry-inert.test.ts`.
+- **Scheduler and strategy ownership leases**: scheduler single-leader coordination is ON by
+  default, including when `SCHEDULER_SINGLE_LEADER` is unset or empty; only an explicit
+  `false`/`off`/`0`/`no` disables it. Each strategy/approval invocation owns its account-scoped
+  lease with a unique token. A 60-second heartbeat renews the five-minute strategy lease; refused
+  or thrown renewals are caught and become sticky ownership loss, and the code synchronously
+  re-proves ownership before it writes a placing intent or calls the broker.
 - **Langfuse**: add `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. LLM calls are
   traced around Bull, Bear, Red Team, post-mortem, and strategy-tuning requests.
   The default `LANGFUSE_CAPTURE_IO=summary` captures model/schema/counts and
@@ -68,6 +89,38 @@ The telemetry path treats this as a financial application:
 
 ## Production Notes
 
+### Expensive admin-operation admission controls
+
+The paid/batch/long-running admin actions are admitted through
+`src/lib/admin-operation-guard.ts` after `requireAdmin` succeeds. Limits are keyed by the stable
+middleware-derived admin user ID (never a query/body `userId`) and return HTTP 429 with
+`Retry-After` when exceeded:
+
+- SEC 8-K and 10-K reindexes: 2/hour each. Manual admin requests share one process-wide
+  `rag-reindex` single-flight group, so those two route invocations cannot overlap.
+- IC backtest: 10/5 minutes, one in flight per admin.
+- Tuning dry run: 6/10 minutes and mutually exclusive with the public strategy-tune route for the
+  same user.
+- Congress score evaluation: 6/10 minutes, one in flight per admin.
+- Congress daily share: 2/hour, one manual admin request in flight process-wide.
+- Forced web-source refresh: 4/10 minutes, one manual admin request in flight process-wide.
+- Robinhood MCP probe: 20/5 minutes, one in flight per admin.
+
+An overlapping run returns HTTP 409 before the expensive callback starts **and before rate quota is
+debited**, so duplicate-button/retry spam cannot exhaust the accepted entrant's budget. Rejections
+use stable bodies: `code=rate_limited` with `retryAfterSeconds` for 429, and
+`code=operation_in_flight` with `activeOperation` for 409. Admission state is process-local, matching
+the current single-Next-process deployment; a multi-instance topology would need a shared
+limiter/lease store before these controls could be treated as cluster-wide.
+
+Explicit validation/config rejection runs before quota admission: empty 10-K symbols, missing Congress
+credentials, unknown refresh IDs, and a disabled Robinhood adapter do not consume budget. Historical
+routes that interpret an absent/malformed body as a real default action still enter admission. The
+process-wide route groups do **not** yet coordinate scheduler/background calls to the
+same underlying share, filing-ingest, or web-refresh functions; moving the lock to those operation
+boundaries is tracked separately. These budgets are anti-repeat controls, not hard cost ceilings for one
+accepted backfill; operator-selected batch/limit inputs remain unchanged.
+
 - **Infisical is the canonical store for production secrets** (see `docs/secrets.md`
   and `docs/deployment.md` → "Configuration & secrets"); deliver them with the
   `*:secrets` runner and enforce it with `REQUIRE_SECRETS_MANAGER=1` so the app
@@ -86,3 +139,5 @@ The telemetry path treats this as a financial application:
   `NEXT_PUBLIC_SENTRY_DSN` (the `NEXT_PUBLIC_*` values are inlined at build time, so set
   them before `next build`/`build:secrets`). Add `SENTRY_AUTH_TOKEN` (store in Infisical) to
   turn on source-map upload. Session Replay stays opt-in via `NEXT_PUBLIC_SENTRY_REPLAY_ENABLED`.
+  Set `SENTRY_CRONS_ENABLED=1` (with `SENTRY_DSN`) to arm the `scheduler-tick` Crons
+  heartbeat and configure a missed-check-in alert on that monitor in Sentry.

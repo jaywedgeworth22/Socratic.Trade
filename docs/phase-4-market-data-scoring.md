@@ -158,3 +158,61 @@ coverage and licensing fit.
 - Shared OHLC cache fills can satisfy pending public misses without pooling private user keys.
 - Source-provided VWAP is attributed when present and omitted when unavailable.
 - The strategy prompt asks for ask-relative limit prices only when ask data exists.
+
+## Interactive scan reliability and FMP routing (2026-07-15)
+
+The interactive `/api/scan` path no longer starts the full multi-provider fundamentals
+cascade. A default 30-candidate configuration widens to 150 preselection symbols; on a
+cold process, Finnhub alone can enqueue 750 calls at 50/min. The old 25-second
+`Promise.race` returned 500 without cancelling that work, and user retries multiplied
+the queue. Interactive scans now return the real Nasdaq/broker scan plus persisted web
+signals, reuse only slow facts from a completed strategy scan no more than 24 hours old,
+replace every price/event-sensitive field, coalesce identical refreshes, and bound Nasdaq
+at eight seconds. A Nasdaq outage shows the last strategy scan with explicit stale
+attribution instead of a blank table. Strategy/scheduler scans keep full enrichment, and
+ticker sheets fetch bounded, per-user/symbol-coalesced data for any valid symbol.
+
+FMP's live lane now uses stable `profile`, `ratios-ttm`, `grades-consensus`, and
+`insider-trading/search` endpoints (plus opt-in price targets), with header auth and
+per-field provenance. `ratios-ttm` maps valuation, leverage, returns, margin, and yield;
+`profile` maps issuer identity/classification, beta, dividend yield, and 52-week range.
+Congressional disclosures stay owned by Congress.Trade rather than duplicated per
+symbol. The cadence/entitlement expansion map is maintained in
+`docs/fmp-capabilities.md`.
+
+## Data-source breadth (2026-07-01, branch `claude/trading-audit-d-e-dpw0h7`)
+
+Audit work-split "Chat D" (`docs/reviews/2026-07-01-audit-work-split.md`) closed additive
+holes in the enrichment cascade. All new fields flow through the standard per-field
+enrichment checklist (`SymbolEnrichment` → `EnrichmentSourcedField` → `takeScalar` →
+`EMPTY_SOURCED` → `MarketQuote` → `applyEnrichment` → prompt compaction) and degrade to
+`undefined`/absent (never fabricated) when a provider doesn't return them.
+
+- **`daysToEarnings`** — whole days to the next *future* earnings date, from the existing
+  authenticated Yahoo `quoteSummary` call (`calendarEvents` module). Zero added cost;
+  surfaced to the Bull prompt as `earnIn`.
+- **`institutionOwnershipPct`** — institutional/13F ownership %, from the same Yahoo call
+  (`institutionOwnership`/`majorHoldersBreakdown` modules). Zero added cost.
+- **Synthetic bid/ask is now provenance-tagged** `yahoo-finance-synthetic`. `hasAskData`
+  (via `hasRealAsk`) and the marketable-limit calculation exclude a synthetic ask and
+  degrade to `refPrice`-based limits — the "ask-relative limits only when ask exists"
+  acceptance above now means a *real* quoted ask, not the price×0.999/1.001 placeholder.
+- **Robinhood options/IV tier** (`RobinhoodOptionsEnrichmentProvider`) — near-the-money IV
+  + put/call ratio, long-TTL, default-off (`ROBINHOOD_OPTIONS_ENRICHMENT_ENABLED`).
+- **Active per-provider circuit breaker** — skips an enrichment lane whose db-health status
+  is `stoppedWorking`, re-probing after a backoff; default-off
+  (`ENRICHMENT_CIRCUIT_BREAKER_ENABLED`). The trip is scoped to the provider's own
+  credential lane: a dead env-key lane no longer blacks out a healthy user-key provider
+  for the same service (keyless providers keep the all-lanes-for-service check).
+- **Short interest** — Yahoo Finance is the single source (`shortPercentOfFloat`). FMP does
+  **not** publish short interest — there is no `/short_interest` (or equivalent) endpoint on
+  FMP's API surface (verified 2026-07 against FMP's docs + official MCP surface). The earlier
+  "FMP second short-interest source" + Yahoo-vs-FMP disagreement bulletin were removed as
+  non-deliverable; a genuine second source would require a real provider (e.g. Massive,
+  Finnhub). See `docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`.
+- **Finnhub REST-volume lever** — `FINNHUB_DROP_RECOMMENDATION` (default-off) drops the
+  per-symbol `stock/recommendation` call (5→4); analyst ratings remain backstopped by the
+  Yahoo/FMP/Alpha-Vantage tiers.
+
+See `docs/rollouts/2026-07-01-data-sources-breadth.md` and
+`docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`.

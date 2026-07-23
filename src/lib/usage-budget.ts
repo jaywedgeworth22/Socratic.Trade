@@ -1,17 +1,24 @@
 // Cost-aware feedback loop: read budget status from the API Usage Monitor and (Phase 1) alert on
 // over-budget providers.
 //
-// PHASE 2 (force cheaper models / skip a cycle when over budget) is IMPLEMENTED here as a tested
-// building block (`evaluateBudgetForRun`, `cheaperModel`) but is NOT yet wired into `runStrategyOnce`
-// — the strategy-loop integration is deferred to a follow-up so it can be done safely (skip only the
-// LLM proposal step, never the risk-reducing exits; never persist a temporary downgrade; thread the
-// override into `debateProposal`). Only Phase 1 (alerts) is active in this build.
+// PHASE 2 (force cheaper models / skip a cycle when over budget) is wired into `runStrategyOnce`
+// (see strategy.ts's "Cost-aware budget feedback loop" + "Per-user/day LLM budget ceiling"
+// comments) as of 2026-07-05:
+//   - ADVISORY (always on when the monitor is configured, independent of the enforce flag): every
+//     run stamps a `usage_budget_status` audit receipt and, when a provider is at warning/exceeded,
+//     injects a `formatBudgetAdvisory` line into the Bull userContent next to `drawdownAdvisory` —
+//     DATA for the agent, never a command.
+//   - ENFORCEMENT (opt-in via USAGE_BUDGET_ENFORCE, default off): `evaluateBudgetForRun`'s decision
+//     is applied at the per-user/day LLM budget choke point, BEFORE any LLM call and AFTER the
+//     risk-reducing breakers — skip ends the run gracefully (audit + notifyBudgetSkip), downgrade
+//     swaps `policy.llmModel`/`policy.redTeamLlmModel` on the in-memory run policy ONLY (never
+//     persisted via setPolicy, so the next run reads the owner's configured model again).
 //
 // SAFETY / SELF-SUFFICIENCY:
 //   - Reads are gated on the same config as the push (USAGE_MONITOR_BASE_URL + USAGE_INGEST_TOKEN);
 //     when unset the monitor isn't consulted at all and App B behaves exactly as before.
 //   - Enforcement (model downgrade / cycle skip) is additionally gated behind USAGE_BUDGET_ENFORCE
-//     (default off) — Phase 1 (alerts only) is the default when the monitor is configured.
+//     (default off) — Phase 1 (alerts + advisory) is the default when the monitor is configured.
 //   - FAIL-OPEN: if the monitor is unreachable or returns an error, budget status is treated as
 //     unknown and NO enforcement happens (App B keeps trading normally). The only visible effect of
 //     an outage is the "usage-monitor" row on the admin connections-health page.
@@ -20,9 +27,11 @@
 import { logApiHealth } from "./db-health";
 import { sendNotification } from "./notifications";
 import { audit } from "./db";
+import { createDurableMap } from "./durable-state";
 import type { TradingPolicy } from "./types";
 import { resolveOpenAiModel } from "./llm-request";
 import { usageMonitorBaseUrl, usageMonitorToken, usageMonitorEnabled } from "./usage-monitor-push";
+import { alertUsageLimitHit } from "./usage-limit-alerts";
 
 // ── Contract (subset of the monitor's GET /api/budget-status response) ──────────
 
@@ -95,9 +104,21 @@ function alertCooldownMs(): number {
 
 interface BudgetCacheHost {
   __usageBudgetCache?: { status: BudgetStatus; fetchedAt: number };
-  __usageBudgetAlertSentAt?: Map<string, number>;
 }
 const cacheHost = globalThis as unknown as BudgetCacheHost;
+
+// Durable (survives a process restart): every OTHER alert-cooldown in this codebase (db-health.ts,
+// usage-limit-alerts.ts, broker-minimum-guard.ts, vector-db.ts) is backed by getInternalSetting/
+// setInternalSetting (durable); this one alone used a bare in-memory Map — an inconsistency, not a
+// deliberate choice. Without persistence, a redeploy resets the cooldown clock and a user/provider
+// already alerted minutes earlier gets re-alerted immediately after — the exact duplicate-alert spam
+// this cooldown exists to prevent.
+// Lazily created (not at module top level) — see provider-rate-limit.ts's quotaStore() for why
+// eagerly calling createDurableMap() at import time risks a circular-import TDZ crash.
+let alertSentAtInstance: ReturnType<typeof createDurableMap<number>> | undefined;
+function alertSentAt(): ReturnType<typeof createDurableMap<number>> {
+  return alertSentAtInstance ?? (alertSentAtInstance = createDurableMap<number>("usage-budget-alert-cooldown"));
+}
 
 function isBudgetLevel(v: unknown): v is BudgetLevel {
   return v === "ok" || v === "warning" || v === "exceeded" || v === "unconfigured";
@@ -196,12 +217,11 @@ export async function getBudgetStatusCached(opts: { force?: boolean; fetchImpl?:
 // ── Phase 1: alerts ──────────────────────────────────────────────────────────────
 
 function shouldAlert(userId: string, provider: string, level: BudgetLevel): boolean {
-  const map = cacheHost.__usageBudgetAlertSentAt ?? (cacheHost.__usageBudgetAlertSentAt = new Map());
   const key = `${userId}|${provider}|${level}`;
   const now = Date.now();
-  const last = map.get(key);
+  const last = alertSentAt().get(key);
   if (last !== undefined && now - last < alertCooldownMs()) return false;
-  map.set(key, now);
+  alertSentAt().set(key, now);
   return true;
 }
 
@@ -222,24 +242,28 @@ export async function checkBudgetAndAlert(
     for (const p of status.providers) {
       if (p.status !== "exceeded" && p.status !== "warning") continue;
       if (!shouldAlert(userId, p.name, p.status)) continue;
-      const title =
-        p.status === "exceeded" ? `Budget exceeded: ${p.name}` : `Budget warning: ${p.name}`;
-      await sendNotification(
-        {
-          type: "budget_alert",
-          title,
-          payload: {
-            provider: p.name,
-            status: p.status,
-            spentUsd: p.spentUsd,
-            monthlyBudgetUsd: p.monthlyBudgetUsd,
-            remainingUsd: p.remainingUsd,
-            percentUsed: p.percentUsed,
-            month: status.month,
-          },
-        },
-        { policy, userId }
-      );
+      await alertUsageLimitHit({
+        userId,
+        provider: p.name,
+        operation: "usage-monitor.budget-status",
+        limitName: "monthly usage budget",
+        status: p.status === "exceeded" ? "exceeded" : "warning",
+        used: p.spentUsd,
+        limit: p.monthlyBudgetUsd,
+        unit: "USD",
+        recommendation:
+          p.status === "exceeded"
+            ? "If usage is intentional and useful, raise the provider budget. If not, inspect repeated calls, retries, model selection, and batching."
+            : "Watch trend and decide whether to raise the budget or reduce usage before the provider blocks useful work.",
+        payload: {
+          spentUsd: p.spentUsd,
+          monthlyBudgetUsd: p.monthlyBudgetUsd,
+          remainingUsd: p.remainingUsd,
+          percentUsed: p.percentUsed,
+          month: status.month,
+          policyConnectedAccountId: policy.connectedAccountId
+        }
+      });
     }
   } catch {
     /* alerts are best-effort — never break the caller */
@@ -255,6 +279,7 @@ function providerForModel(model: string | null | undefined): string {
   if (/^grok/.test(m)) return "xai";
   if (/^gemini/.test(m)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
+  if (/^openrouter\//.test(m)) return "openrouter";
   if (/^deepseek/.test(m)) return "deepseek";
   return "openai";
 }
@@ -262,6 +287,10 @@ function providerForModel(model: string | null | undefined): string {
 // Cost-ordered downgrade within a provider family (keys/values exist in MODEL_PRICE_PER_M).
 const CHEAPER_MODEL: Record<string, string> = {
   // OpenAI
+  "gpt-5.6": "gpt-5.6-terra",
+  "gpt-5.6-sol": "gpt-5.6-terra",
+  "gpt-5.6-terra": "gpt-5.6-luna",
+  "gpt-5.6-luna": "gpt-5.4-mini",
   "gpt-5.5": "gpt-5.4-mini",
   "gpt-5.4": "gpt-5.4-mini",
   "gpt-5.4-mini": "gpt-5.4-nano",
@@ -277,12 +306,13 @@ const CHEAPER_MODEL: Record<string, string> = {
   // xAI
   "grok-4.3": "grok-build-0.1",
   // Gemini
+  "gemini-3.1-pro-preview": "gemini-3.5-flash",
+  "gemini-3.5-flash": "gemini-3.1-flash-lite",
   "gemini-2.5-pro": "gemini-2.5-flash",
-  "gemini-3.5-flash": "gemini-2.5-flash-lite",
   "gemini-2.5-flash": "gemini-2.5-flash-lite",
   // Mistral
   "mistral-large-2512": "mistral-medium-3-5",
-  "mistral-medium-3-5": "mistral-small-2506",
+  "mistral-medium-3-5": "mistral-small-2603",
   "mistral-large": "mistral-medium",
   "mistral-medium": "mistral-small",
   // DeepSeek
@@ -293,18 +323,26 @@ const CHEAPER_MODEL: Record<string, string> = {
 /** A cheaper model in the same family, or undefined if none is known. */
 export function cheaperModel(model: string | null | undefined): string | undefined {
   if (!model) return undefined;
-  const key = model.toLowerCase();
-  if (CHEAPER_MODEL[key]) return CHEAPER_MODEL[key];
-  // Prefix fallback for DATED/versioned suffixes only (e.g. "claude-opus-4-8-20251101" → the
-  // "claude-opus-4-8" tier). Requires the remainder to be a "-<digit>..." date/version — never a
-  // variant suffix like "-mini"/"-nano" (those must be exact keys, else they'd wrongly map to their
-  // own base tier's downgrade, i.e. to themselves).
-  const prefix = Object.keys(CHEAPER_MODEL).find((k) => {
-    if (!key.startsWith(k)) return false;
-    const rest = key.slice(k.length);
-    return rest === "" || /^-\d/.test(rest);
-  });
-  return prefix ? CHEAPER_MODEL[prefix] : undefined;
+  const parts = model.toLowerCase().split("/");
+  const prefix = parts.length > 1 ? parts.slice(0, -1).join("/") + "/" : "";
+  const key = parts[parts.length - 1];
+
+  let cheaper: string | undefined;
+  if (CHEAPER_MODEL[key]) {
+    cheaper = CHEAPER_MODEL[key];
+  } else {
+    // Prefix fallback for DATED/versioned suffixes only (e.g. "claude-opus-4-8-20251101" → the
+    // "claude-opus-4-8" tier). Requires the remainder to be a "-<digit>..." date/version — never a
+    // variant suffix like "-mini"/"-nano" (those must be exact keys, else they'd wrongly map to their
+    // own base tier's downgrade, i.e. to themselves).
+    const matchedKey = Object.keys(CHEAPER_MODEL).find((k) => {
+      if (!key.startsWith(k)) return false;
+      const rest = key.slice(k.length);
+      return rest === "" || /^-\d/.test(rest);
+    });
+    if (matchedKey) cheaper = CHEAPER_MODEL[matchedKey];
+  }
+  return cheaper ? prefix + cheaper : undefined;
 }
 
 export interface BudgetRunDecision {
@@ -322,11 +360,12 @@ const NO_DECISION: BudgetRunDecision = { skip: false, downgraded: false };
  * Only active when USAGE_BUDGET_ENFORCE is on AND the monitor is configured. Returns a no-op
  * decision otherwise (and on any monitor failure — fail-open).
  *
- * NOTE: this building block is fully implemented + tested but NOT yet wired into `runStrategyOnce`
- * (Phase 2 is deferred — see the module header). When wiring it, the caller MUST skip only the LLM
- * proposal step (never the broker reconciliation or risk-reducing exits), apply the model downgrade
- * to a CLONE of the policy (never the object that `setPolicy` may persist), and thread the override
- * into `debateProposal` (which re-loads the persisted policy).
+ * Wired into `runStrategyOnce` at the per-user/day LLM budget choke point (see strategy.ts): the
+ * caller applies this ONLY to the LLM proposal step (never the broker reconciliation or
+ * risk-reducing exits above it), applies any model downgrade to the in-memory run policy only
+ * (never the object `setPolicy` would persist), and — because `debateProposal` re-resolves its own
+ * model from the policy it's handed — the downgraded `redTeamLlmModel` rides along on that same
+ * in-memory policy so the Bear review picks it up too.
  */
 export async function evaluateBudgetForRun(
   userId: string,
@@ -337,50 +376,137 @@ export async function evaluateBudgetForRun(
     if (!usageBudgetEnforceEnabled() || !usageMonitorEnabled()) return NO_DECISION;
     const status = deps.status ?? (await getBudgetStatusCached({ fetchImpl: deps.fetchImpl }));
     if (!status) return NO_DECISION; // unknown → fail-open
-
-    // Resolve the models that will ACTUALLY serve this run, matching resolveLlmEndpoint: the green
-    // model falls back to OPENAI_MODEL/the default when policy.llmModel is unset, and the red model
-    // falls back to the green model. Enforcing on the raw (possibly undefined) policy fields would
-    // silently no-op the common default-model case.
-    const greenModel = resolveOpenAiModel(policy);
-    const redModel = (policy.redTeamLlmModel && policy.redTeamLlmModel.trim()) || greenModel;
-
-    const statusByProvider = new Map(status.providers.map((p) => [p.name.toLowerCase(), p.status]));
-    const primaryProvider = providerForModel(greenModel);
-    const primaryStatus = statusByProvider.get(primaryProvider) ?? "ok";
-
-    if (primaryStatus !== "exceeded" && primaryStatus !== "warning") return NO_DECISION;
-
-    const cheaperGreen = cheaperModel(greenModel);
-    const greenChanged = !!cheaperGreen && cheaperGreen !== greenModel;
-
-    // Skip the cycle only when the GREEN (primary) provider is fully over budget AND its model has no
-    // cheaper tier — the green call is the dominant cost and can't be reduced. Red having a cheaper
-    // tier does NOT rescue an over-budget green (that was the earlier bug: it kept running green).
-    if (primaryStatus === "exceeded" && !greenChanged) {
-      return {
-        skip: true,
-        downgraded: false,
-        reason: `LLM provider "${primaryProvider}" over budget and "${greenModel}" is already the cheapest tier.`,
-      };
-    }
-
-    const cheaperRed = cheaperModel(redModel);
-    const redChanged = !!cheaperRed && cheaperRed !== redModel;
-    if (greenChanged || redChanged) {
-      return {
-        skip: false,
-        downgraded: true,
-        llmModel: greenChanged ? cheaperGreen : undefined,
-        redTeamLlmModel: redChanged ? cheaperRed : undefined,
-        reason: `LLM provider "${primaryProvider}" is ${primaryStatus}; downgraded to a cheaper model tier.`,
-      };
-    }
-
-    return NO_DECISION;
+    return computeBudgetDecision(policy, status);
   } catch {
     return NO_DECISION; // fail-open
   }
+}
+
+/**
+ * Pure decision logic shared by `evaluateBudgetForRun` (gated on USAGE_BUDGET_ENFORCE) and
+ * `previewBudgetDecision` (the advisory's ungated "what WOULD happen" preview — see
+ * strategy.ts's `usage_budget_status` receipt). Never throws; callers wrap in try/catch anyway
+ * for defense in depth. Kept separate from `evaluateBudgetForRun` so the advisory preview can see
+ * what enforcement WOULD do without needing the flag on — the tested public contract of
+ * `evaluateBudgetForRun` (flag-gated, fail-open) is unchanged.
+ */
+function computeBudgetDecision(
+  policy: { llmModel?: string | null; redTeamLlmModel?: string | null },
+  status: BudgetStatus
+): BudgetRunDecision {
+  // Resolve the models that will ACTUALLY serve this run, matching resolveLlmEndpoint. NO MODEL
+  // DEFAULTS (owner directive 2026-07-07): both resolve to the user's explicit choices, or "" when
+  // unchosen — Red NEVER falls back to Green. A run with an unchosen model fails closed before any
+  // spend, so there is nothing here to budget: bail out with NO_DECISION on a blank Green, and treat
+  // a blank Red as "no red call will run" (no downgrade to compute for it).
+  const greenModel = resolveOpenAiModel(policy);
+  if (!greenModel) return NO_DECISION;
+  const redModel = policy.redTeamLlmModel?.trim() || "";
+
+  // Universal OpenRouter (#1703): strategy LLM spend is booked as provider "openrouter", while
+  // model ids remain family-native (gpt-*, claude-*, …). Prefer openrouter status when present;
+  // fall back to model-family name for older multi-provider monitor shapes. Summary.overBudget is
+  // only a fallback when NEITHER openrouter NOR the model family appear in the provider list —
+  // never treat alpaca/etc. exceeded as an LLM skip.
+  const statusByProvider = new Map(status.providers.map((p) => [p.name.toLowerCase(), p.status]));
+  const familyProvider = providerForModel(greenModel);
+  let primaryProvider = familyProvider;
+  let primaryStatus = statusByProvider.get(familyProvider) ?? "ok";
+  if (statusByProvider.has("openrouter")) {
+    primaryProvider = "openrouter";
+    primaryStatus = statusByProvider.get("openrouter") ?? "ok";
+  } else if (!statusByProvider.has(familyProvider)) {
+    if (status.summary.overBudget) {
+      primaryProvider = "openrouter";
+      primaryStatus = "exceeded";
+    } else if (status.summary.warning) {
+      primaryProvider = "openrouter";
+      primaryStatus = "warning";
+    }
+  }
+
+  if (primaryStatus !== "exceeded" && primaryStatus !== "warning") return NO_DECISION;
+
+  const cheaperGreen = cheaperModel(greenModel);
+  const greenChanged = !!cheaperGreen && cheaperGreen !== greenModel;
+
+  // Skip the cycle only when the GREEN (primary) provider is fully over budget AND its model has no
+  // cheaper tier — the green call is the dominant cost and can't be reduced. Red having a cheaper
+  // tier does NOT rescue an over-budget green (that was the earlier bug: it kept running green).
+  if (primaryStatus === "exceeded" && !greenChanged) {
+    return {
+      skip: true,
+      downgraded: false,
+      reason: `LLM provider "${primaryProvider}" over budget and "${greenModel}" is already the cheapest tier.`,
+    };
+  }
+
+  const cheaperRed = redModel ? cheaperModel(redModel) : undefined;
+  const redChanged = !!cheaperRed && cheaperRed !== redModel;
+  if (greenChanged || redChanged) {
+    return {
+      skip: false,
+      downgraded: true,
+      llmModel: greenChanged ? cheaperGreen : undefined,
+      redTeamLlmModel: redChanged ? cheaperRed : undefined,
+      reason: `LLM provider "${primaryProvider}" is ${primaryStatus}; downgraded to a cheaper model tier.`,
+    };
+  }
+
+  return NO_DECISION;
+}
+
+/**
+ * ADVISORY preview of what `evaluateBudgetForRun` WOULD decide, ignoring the USAGE_BUDGET_ENFORCE
+ * gate (only `usageMonitorEnabled()` still applies — no monitor configured means nothing to
+ * preview). Used to populate the `usage_budget_status` audit receipt's `wouldSkip`/`wouldDowngrade`
+ * fields every run, independent of whether enforcement is actually on, so the owner can see what
+ * enforcement would have done before opting in. Fail-open (never throws).
+ */
+export async function previewBudgetDecision(
+  userId: string,
+  policy: { llmModel?: string | null; redTeamLlmModel?: string | null },
+  deps: { status?: BudgetStatus | null; fetchImpl?: typeof fetch } = {}
+): Promise<BudgetRunDecision> {
+  try {
+    if (!usageMonitorEnabled()) return NO_DECISION;
+    const status = deps.status ?? (await getBudgetStatusCached({ fetchImpl: deps.fetchImpl }));
+    if (!status) return NO_DECISION;
+    return computeBudgetDecision(policy, status);
+  } catch {
+    return NO_DECISION;
+  }
+}
+
+// ── Advisory formatting (Phase 2 wiring: strategy loop injects this into the prompt) ────────────
+
+/**
+ * Compact 1-2 line ADVISORY string summarizing operator LLM-provider spend vs budget, meant to be
+ * injected into the Bull (and Bear) userContent next to `drawdownAdvisory` — DATA for the agent,
+ * never a command. Returns undefined when there's nothing worth surfacing (monitor unconfigured,
+ * or every provider is comfortably under budget) so callers can omit the field entirely.
+ *
+ * Only mentions providers at "warning" or "exceeded" — "ok"/"unconfigured" providers are silent
+ * (matches checkBudgetAndAlert's alerting threshold, so the prompt and the notification pipe agree
+ * on what counts as "worth mentioning").
+ */
+export function formatBudgetAdvisory(status: BudgetStatus | null | undefined): string | undefined {
+  if (!status) return undefined;
+  const notable = status.providers.filter((p) => p.status === "exceeded" || p.status === "warning");
+  if (notable.length === 0) return undefined;
+
+  const lines = notable.map((p) => {
+    const pct = typeof p.percentUsed === "number" ? ` (${Math.round(p.percentUsed)}%)` : "";
+    const budgetTxt = typeof p.monthlyBudgetUsd === "number" ? `$${p.monthlyBudgetUsd.toFixed(0)}` : "no set budget";
+    return `${p.name}: $${p.spentUsd.toFixed(2)} spent of ${budgetTxt}${pct} this month, status=${p.status}`;
+  });
+
+  const anyExceeded = notable.some((p) => p.status === "exceeded");
+  const suggestion = anyExceeded
+    ? "At least one provider is over its monthly budget — worth weighing a cheaper model tier or skipping this cycle's LLM call, but it's your call."
+    : "At least one provider is approaching its monthly budget — worth keeping an eye on model choice/frequency, but it's your call.";
+
+  return `Operator LLM spend status: ${lines.join("; ")}. ${suggestion}`;
 }
 
 /** Audit + notify a budget-driven skip (called from the strategy loop). Never throws. */

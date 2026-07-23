@@ -32,6 +32,29 @@ describe("market scan dynamic universes", () => {
     expect(scan.source).toContain("nyseComposite-universe");
   });
 
+  it("strips an unfilled '(Representing - )' ADR placeholder from the raw screener name, keeping a real one", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.nasdaq.com") && url.includes("exchange=nyse")) {
+        return nasdaqRows([
+          { symbol: "SHEL", name: "Shell Plc ADR (Representing - )", lastsale: "$72.10", netchange: "0.5", pctchange: "0.7%", marketCap: "210000000000" },
+          { symbol: "TM", name: "Toyota Motor Corp ADR (Representing 2 Ordinary Shares)", lastsale: "$210.00", netchange: "1.1", pctchange: "0.5%", marketCap: "260000000000" }
+        ]);
+      }
+      if (url.includes("api.nasdaq.com")) return nasdaqRows([]);
+      return new Response("not found", { status: 404 });
+    });
+
+    const { clearMarketCache, scanMarket } = await import("../src/lib/market");
+    clearMarketCache();
+    const scan = await scanMarket([], [], undefined, undefined, ["nyseComposite"]);
+
+    // The unfilled placeholder is a screener data-quality artifact — dropped.
+    expect(scan.quotesBySymbol.SHEL?.companyName).toBe("Shell Plc ADR");
+    // A genuinely populated annotation is real information — left alone.
+    expect(scan.quotesBySymbol.TM?.companyName).toBe("Toyota Motor Corp ADR (Representing 2 Ordinary Shares)");
+  });
+
   it("filters BlackRock holdings through the screener without quote-fetching every missing holding", async () => {
     const fetchedUrls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -54,6 +77,43 @@ describe("market scan dynamic universes", () => {
     expect(scan.quotesBySymbol.AAPL?.price).toBe(297.01);
     expect(scan.source).toContain("blackrock-oef-holdings");
     expect(fetchedUrls.some((url) => url.includes("finance/chart/MISSING"))).toBe(false);
+  });
+
+  it("propagates the interactive deadline signal into BlackRock holdings discovery", async () => {
+    let started!: () => void;
+    const blackRockStarted = new Promise<void>((resolve) => { started = resolve; });
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("api.nasdaq.com")) {
+        return nasdaqRows([
+          { symbol: "AAPL", name: "Apple Inc.", lastsale: "$297.01", netchange: "2.01", pctchange: "0.681%", marketCap: "4400000000000" }
+        ]);
+      }
+      if (url.includes("blackrock.com")) {
+        requestSignal = init?.signal ?? undefined;
+        started();
+        return new Promise<Response>((_resolve, reject) => {
+          requestSignal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true }
+          );
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const { clearMarketCache, scanMarket } = await import("../src/lib/market");
+    clearMarketCache();
+    const controller = new AbortController();
+    const pending = scanMarket([], [], undefined, undefined, ["sp100"], { signal: controller.signal });
+    await blackRockStarted;
+    controller.abort();
+    const scan = await pending;
+
+    expect(requestSignal?.aborted).toBe(true);
+    expect(scan.warnings.join(" ")).toContain("holdings failed");
   });
 });
 

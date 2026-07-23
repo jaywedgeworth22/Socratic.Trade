@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { applyDeterministicSizing } from "../src/lib/strategy";
 import type { EquityPosition, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import { applyDeterministicSizing } from "../src/lib/strategy-risk";
 
 // Conviction-size cap (panel finding): AI confidenceScore is a direct linear multiplier on size and
 // a learned "fact" can inflate it. The 20-lot evidence floor only protects UNPROVEN theses, so a
@@ -56,7 +56,6 @@ function policyFor(account: string, tuning?: TradingPolicy["tuning"]): TradingPo
   return {
     ...DEFAULT_POLICY,
     accountNumber: account,
-    paperMode: true,
     maxOrderNotional: 10_000,
     maxOrderPctOfNav: undefined,
     scoringWeights: { ...DEFAULT_POLICY.scoringWeights },

@@ -22,7 +22,6 @@ function policyFor(account: string, tuning?: TradingPolicy["tuning"]): TradingPo
   return {
     ...DEFAULT_POLICY,
     accountNumber: account,
-    paperMode: true,
     scoringWeights: { ...DEFAULT_POLICY.scoringWeights },
     tuning
   };

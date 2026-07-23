@@ -24,7 +24,6 @@ const AS_OF = new Date("2026-06-19T18:00:00.000Z"); // 2pm EDT Fri
 const policy: TradingPolicy = {
   ...DEFAULT_POLICY,
   systemState: "active",
-  paperMode: false,
   strategyAuthority: "decide",
   accountNumber: "LIVE1",
   includedIndices: [],

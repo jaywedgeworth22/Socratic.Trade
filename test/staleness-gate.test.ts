@@ -9,6 +9,7 @@ beforeAll(() => {
 
 vi.mock("../src/lib/tax", () => ({
   getUserWashSaleLockedSymbols: vi.fn((_userId: string) => new Set<string>()),
+  getUserWashSaleLockProvenance: vi.fn((_userId: string) => new Map()),
 }));
 
 // import AFTER env + mock are set
@@ -32,7 +33,6 @@ const positions: EquityPosition[] = [];
 const basePolicy: TradingPolicy = {
   ...DEFAULT_POLICY,
   systemState: "active",
-  paperMode: false,
   strategyAuthority: "decide",
   accountNumber: "A1",
   includedIndices: [],
