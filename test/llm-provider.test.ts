@@ -53,7 +53,7 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.provider).toBe("xai");
     expect(endpoint.url).toBe("https://api.x.ai/v1/chat/completions");
     expect(endpoint.key).toBe("xai-test-key");
-    expect(endpoint.model).toBe("grok-latest");
+    expect(endpoint.model).toBe("grok-4.5");
     expect(endpoint.transport).toBe("chat-completions");
   });
 

@@ -85,34 +85,39 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
 
   switch (family) {
     case "anthropic":
-      if (/haiku/i.test(lower)) return "claude-3-5-haiku-20241022";
-      if (/opus/i.test(lower)) return "claude-3-opus-20240229";
-      if (/fable/i.test(lower)) return "claude-3-5-sonnet-20241022";
+      if (/haiku/i.test(lower)) return "claude-haiku-4.5";
+      if (/opus/i.test(lower)) return "claude-opus-4.6";
+      if (/fable/i.test(lower)) return "claude-sonnet-4.6";
       return "claude-sonnet-5";
 
     case "xai":
-      if (/build/i.test(lower)) return "grok-beta";
-      return "grok-latest";
+      if (/build/i.test(lower)) return "grok-4.5";
+      return "grok-4.5";
 
     case "gemini":
-      if (/flash.*lite/i.test(lower)) return "gemini-2.0-flash-lite";
-      if (/pro/i.test(lower)) return "gemini-2.5-pro";
-      return "gemini-2.0-flash";
+      if (/flash.*lite/i.test(lower)) return "gemini-3.5-flash-lite";
+      if (/pro/i.test(lower)) return "gemini-3.1-pro";
+      return "gemini-3.6-flash";
 
     case "deepseek":
       if (/r1|reasoner/i.test(lower)) return "deepseek-reasoner";
-      return "deepseek-chat";
+      if (/pro/i.test(lower)) return "deepseek-chat-v3.1";
+      return "deepseek-v3.2";
 
     case "mistral":
-      if (/medium/i.test(lower)) return "mistral-medium-latest";
-      return "mistral-small-latest";
+      if (/medium/i.test(lower)) return "mistral-medium-3.1";
+      return "mistral-small-2603";
 
     case "meta":
       return "llama-3.3-70b-instruct";
 
     case "openai":
     default:
-      if (/mini|nano/i.test(lower)) return "gpt-4o-mini";
+      if (/sol/i.test(lower)) return "gpt-5.6-sol";
+      if (/terra/i.test(lower)) return "gpt-5.6-terra";
+      if (/luna/i.test(lower)) return "gpt-5.6-luna";
+      if (/mini/i.test(lower)) return "gpt-5.4-mini";
+      if (/nano/i.test(lower)) return "gpt-5.4-nano";
       return "gpt-4o";
   }
 }
@@ -140,19 +145,45 @@ export function resolveLlmEndpoint(
       if (/^claude-sonnet-latest$/i.test(model)) {
         model = "anthropic/claude-sonnet-5";
       } else if (/^claude-haiku-latest$/i.test(model)) {
-        model = "anthropic/claude-3.5-haiku";
+        model = "anthropic/claude-haiku-4.5";
       } else if (/^claude-opus-latest$/i.test(model)) {
-        model = "anthropic/claude-3-opus";
+        model = "anthropic/claude-opus-4.6";
       } else if (/^claude-fable-latest$/i.test(model)) {
-        model = "anthropic/claude-3.5-sonnet";
+        model = "anthropic/claude-sonnet-4.6";
       } else if (/^claude/i.test(model)) {
         model = `anthropic/${model}`;
+      } else if (/^grok-latest$/i.test(model) || /^grok-build-latest$/i.test(model)) {
+        model = "x-ai/grok-4.5";
       } else if (/^grok/i.test(model)) {
         model = `x-ai/${model}`;
+      } else if (/^gemini-flash-latest$/i.test(model)) {
+        model = "google/gemini-3.6-flash";
+      } else if (/^gemini-flash-lite-latest$/i.test(model)) {
+        model = "google/gemini-3.5-flash-lite";
+      } else if (/^gemini-pro-latest$/i.test(model)) {
+        model = "google/gemini-3.1-pro-preview";
       } else if (/^gemini/i.test(model)) {
         model = `google/${model}`;
+      } else if (/^gpt-sol-latest$/i.test(model)) {
+        model = "openai/gpt-5.6-sol";
+      } else if (/^gpt-terra-latest$/i.test(model)) {
+        model = "openai/gpt-5.6-terra";
+      } else if (/^gpt-luna-latest$/i.test(model)) {
+        model = "openai/gpt-5.6-luna";
+      } else if (/^gpt-mini-latest$/i.test(model)) {
+        model = "openai/gpt-5.4-mini";
+      } else if (/^gpt-nano-latest$/i.test(model)) {
+        model = "openai/gpt-5.4-nano";
+      } else if (/^gpt-4o-latest$/i.test(model)) {
+        model = "openai/gpt-4o";
       } else if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
         model = `mistralai/${model}`;
+      } else if (/^deepseek-flash-latest$/i.test(model)) {
+        model = "deepseek/deepseek-v3.2";
+      } else if (/^deepseek-pro-latest$/i.test(model)) {
+        model = "deepseek/deepseek-chat-v3.1";
+      } else if (/^deepseek-r1-latest$/i.test(model)) {
+        model = "deepseek/deepseek-r1";
       } else if (/^deepseek/i.test(model)) {
         model = `deepseek/${model}`;
       } else if (/^llama/i.test(model)) {
