@@ -1554,16 +1554,17 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       }
     }
     
-    Promise.resolve().then(() => {
-      try {
-        const mod = require("./db-fundamentals");
-        if (mod && typeof mod.recordHistoricalFundamentals === "function") {
+    // Dynamic import (not require) so eslint no-require-imports stays clean and unit
+    // tests that only partially mock db modules can still no-op when the module is absent.
+    void import("./db-fundamentals")
+      .then((mod) => {
+        if (typeof mod.recordHistoricalFundamentals === "function") {
           mod.recordHistoricalFundamentals(recordsToSave);
         }
-      } catch {
+      })
+      .catch(() => {
         // Silently ignored when db modules are partially mocked in unit tests
-      }
-    });
+      });
 
     return merged;
   }
