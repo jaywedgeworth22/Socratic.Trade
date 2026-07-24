@@ -323,7 +323,9 @@ async function loadRemoteMetrics(
     status: normalizedHetzner.server.status,
     os: readText(coolifyMeta?.os),
     cpus: coreCount,
-    memoryTotalBytes: readPositiveNumber(coolifyMeta?.memory_bytes),
+    memoryTotalBytes: normalizedHetzner.server.memoryGb
+      ? normalizedHetzner.server.memoryGb * 1024 * 1024 * 1024
+      : readPositiveNumber(coolifyMeta?.memory_bytes),
     serverType: normalizedHetzner.server.serverType,
     location: normalizedHetzner.server.location,
     ip: normalizedHetzner.server.ip,
