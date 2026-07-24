@@ -178,7 +178,30 @@ jobs:
             return 0
           }
 
-          LOCAL_SPEC=$(node -e "const p=require('path').resolve(process.env.LOCAL_PACKAGE_JSON_PATH); const pkg=require(p); console.log((pkg.dependencies||{})[process.env.PKG]||'')")
+          # Prefer fs.readFileSync over require(): self-hosted runner workspaces can race with
+          # cleanup jobs, and require() emits MODULE_NOT_FOUND when the file is briefly gone.
+          # Also recover package.json from HEAD if a concurrent cleaner removed it after checkout.
+          if [ ! -f "${LOCAL_PACKAGE_JSON_PATH}" ]; then
+            echo "::warning::${LOCAL_PACKAGE_JSON_PATH} missing after checkout; attempting git restore"
+            ls -la || true
+            git checkout HEAD -- "${LOCAL_PACKAGE_JSON_PATH}" || true
+          fi
+          if [ ! -f "${LOCAL_PACKAGE_JSON_PATH}" ]; then
+            echo "::error::${LOCAL_PACKAGE_JSON_PATH} still missing after restore — runner workspace corrupt"
+            ls -la || true
+            exit 1
+          fi
+          LOCAL_SPEC=$(node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const p = path.resolve(process.env.LOCAL_PACKAGE_JSON_PATH);
+            if (!fs.existsSync(p)) {
+              console.error('missing', p);
+              process.exit(1);
+            }
+            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            console.log((pkg.dependencies || {})[process.env.PKG] || '');
+          ")
           if [ -z "$LOCAL_SPEC" ]; then
             echo "::warning::${PKG} not found in ${LOCAL_PACKAGE_JSON_PATH} dependencies"
             exit 0
