@@ -1,7 +1,11 @@
-## 2026-07-20 — RAG & Database Ingestion Strategy & Document Summarizer Engine (ANTIGRAVITY, branch `agent/antigravity`)
-
-Designed and implemented Layer 3 (Derived Abstracts & Summaries) of the RAG data expansion architecture. Added database migration 55 (`document_abstracts`), created `src/lib/db-document-abstracts.ts` for CRUD operations, implemented `src/lib/rag/document-summarizer.ts` for generating cited abstracts linking back to Layer 1 raw `source_chunk_ids` and embedding them into the vector store, and added full unit test coverage in `test/document-summarizer.test.ts`.
 # Current Status
+
+## 2026-07-24 — Resolve open efforts closeout (CURSOR)
+
+Merged #1842 + #1792. Remaining open product PRs: #1902 (Busy retry) and #1819 (earningscalls burst,
+migrations renumbered v57/v58 after document_abstracts). Docs PR #2022 open. Effort-issues sync
+closed 86 mirrors; open `state:in-progress` issues down to the 3 genuine WIP rows. Ruleset requires
+`verify` + `check-pin`. Rollout: `docs/rollouts/2026-07-24-resolve-open-efforts.md`.
 
 ## 2026-07-24 — Resolve open efforts + stale issue mirrors (CURSOR)
 

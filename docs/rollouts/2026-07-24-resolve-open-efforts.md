@@ -55,3 +55,11 @@ Ops (not in git): GitHub ruleset `main-protection` PUT; Actions run cancellation
   (land, abandon, or re-claim)
 - RAG feature enablement remains Planned (re-embed proof first)
 - Optional: restore `gitleaks` as required (left off; only verify+check-pin now)
+
+## Update — merge receipts (same session)
+
+- #1842 MERGED 2026-07-24T01:35:26Z
+- #1792 MERGED 2026-07-24T01:36:50Z
+- #1902 / #1819 / #2022: re-merged `origin/main` after dirty; #1819 real conflict resolved
+  (`document_abstracts` v56 + earningscalls v57/v58); persistence-hardening 23/23 green
+- Effort sync live: `created=117 updated=321 closed=86`; open `state:in-progress` issues = 3
