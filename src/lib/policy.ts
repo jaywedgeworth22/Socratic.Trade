@@ -478,6 +478,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   // Scope: opening legs only; cash (non-margin) accounts are never gated here.
   if (
     isOpening &&
+    context.isLiveExecution === true &&
     context.accountCapabilities?.marginEnabled === true &&
     context.portfolio.totalMarketValue < MARGIN_MINIMUM_EQUITY
   ) {

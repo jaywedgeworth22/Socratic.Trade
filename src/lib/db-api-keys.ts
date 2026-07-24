@@ -474,6 +474,7 @@ const API_KEY_TIER: Record<string, CredTier> = {
   sec_edgar_user_agent: "shared-operator-infra",
   pinecone: "shared-operator-infra",
   voyage: "shared-operator-infra",
+  siliconflow: "shared-operator-infra",
   apify: "shared-operator-infra",
   fintechstudios: "shared-operator-infra",
   powerintell: "shared-operator-infra",
