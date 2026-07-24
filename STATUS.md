@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-24 — Actions runner unstick (CURSOR)
+
+GitHub-hosted `ubuntu-latest` jobs are failing to start (account billing/spending limit).
+Moved Cleanup Actions Caches onto self-hosted `socratic-ci` with a sudo-free `gh` bootstrap;
+Playwright smoke no longer calls `install --with-deps` (no passwordless sudo on Coolify runners);
+effort-issues sync retries 502/503/504. Branch `cursor/fix-runners-unstick-14e5`. Rollout:
+`docs/rollouts/2026-07-24-fix-runners-unstick.md`.
+
 ## 2026-07-24 — Open efforts sweep closeout (CURSOR)
 
 Product PRs #1901/#1902/#1792/#1819/#1842/#2123 and docs #1980/#2005/#2022 are on `main`.

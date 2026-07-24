@@ -16,6 +16,10 @@
 #      duplicating. This is a backstop, not the primary control (the ci.yml restore/save
 #      split is): safe to run even if item 1 already did its job, since there is nothing left
 #      to prune on well-behaved refs.
+#
+# 2026-07-24: GitHub-hosted ubuntu-latest is blocked for this account (billing/spending
+# limit — jobs never start). Run on self-hosted socratic-ci. Install `gh` without sudo
+# when missing (Coolify runners may lack passwordless sudo).
 name: Cleanup Actions Caches
 
 on:
@@ -36,8 +40,30 @@ concurrency:
 jobs:
   delete-pr-caches:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, socratic-ci]
     steps:
+      - name: Ensure GitHub CLI is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            gh --version
+            exit 0
+          fi
+          # No sudo: download a release binary into the runner workspace.
+          ver="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')"
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64|amd64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) echo "::error::unsupported arch $arch"; exit 1 ;;
+          esac
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz" \
+            | tar -xz -C /tmp
+          install -m 0755 "/tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/gh" --version
       - name: Delete every cache scoped to this PR's ref
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -50,9 +76,30 @@ jobs:
 
   prune-stale-caches:
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, socratic-ci]
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure GitHub CLI is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            gh --version
+            exit 0
+          fi
+          ver="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')"
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64|amd64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) echo "::error::unsupported arch $arch"; exit 1 ;;
+          esac
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz" \
+            | tar -xz -C /tmp
+          install -m 0755 "/tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/gh" --version
       - name: Keep only the newest entry per cache key prefix
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -79,5 +126,3 @@ jobs:
             echo "Deleting cache id $id"
             gh cache delete "$id" --repo "$REPO" || echo "::warning::failed to delete cache $id (already gone?)"
           done < /tmp/prune_ids.txt
-
-

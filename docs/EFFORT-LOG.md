@@ -416,6 +416,7 @@ Jul 8 18:10 CT)._
 - **Prune stale abandoned local-only branches from origin (June 21–29 experiments) (OWNER, M)** — ~40 origin branches are ahead of main with NO PR and last activity June 21–29 (agent/claude-*, safety/*, feat/*, reliability/*, sim/funded-test-account, etc.). They are stale experiments from the pre-worktree era, add noise to every branch scan, and confuse abandoned-work triage. Audit which are fully superseded by merged work and delete them from origin (with owner confirmation before any deletion per the no-destructive-git rule).
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Fix Actions runners + CI unstick (branch `cursor/fix-runners-unstick-14e5`) — IN PROGRESS.** Hosted ubuntu-latest blocked by billing; cleanup-caches → self-hosted + sudo-free gh; Playwright smoke drop `--with-deps`; effort-sync retries 502/503/504. Rollout: `docs/rollouts/2026-07-24-fix-runners-unstick.md`.
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
