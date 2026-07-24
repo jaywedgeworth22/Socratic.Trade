@@ -8,21 +8,9 @@
  *  Provider routing/labels below delegate to that shared module. */
 
 import { providerForModel as consoleProviderForModel, providerLabel, type ConsoleProviderId } from "../lib/models";
-import { CHAT_MODEL_GROUPS } from "../../ui/llm-model-catalog";
+import { CHAT_MODEL_GROUPS, type ModelGroup, type ModelOption } from "../../ui/llm-model-catalog";
 
-export interface ModelOption {
-  value: string;
-  label: string;
-  /** Relative blended cost within the provider ("" for keyless/offline). */
-  tier: "" | "$" | "$$" | "$$$";
-}
-
-export interface ModelGroup {
-  /** Internal provider id, matching GET /api/chat/providers keys ("offline" is local-only). */
-  provider: "offline" | "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter";
-  label: string;
-  options: ModelOption[];
-}
+export type { ModelGroup, ModelOption };
 
 export const CHAT_MODEL_STORAGE_KEY = "console.assistant.model";
 export const CHAT_REASONING_STORAGE_KEY = "console.assistant.reasoning";
