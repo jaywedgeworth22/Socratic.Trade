@@ -36,6 +36,7 @@ describe("buildProductionDeps().searchKnowledge — R13 provenance payload", () 
   });
 
   it("returns doc_type/section as additive keys, and NO isStale key when the flag is off", async () => {
+    process.env.RAG_CITATION_STALENESS = "off";
     mocks.retrieveContextDetailed.mockResolvedValue([
       {
         id: "AAPL-10K#c001",

@@ -4,6 +4,7 @@ import {
   claimSyntheticStop,
   dailyExecutionStats,
   deleteSyntheticStop,
+  filterFullStopPlansByLiveBasis,
   filterStopPlansByLiveBasis,
   getConnectedAccount,
   getStopPlans,
@@ -11,6 +12,7 @@ import {
   listBrokerProtectiveStops,
   listPendingBrokerReconciliationFills,
   listSyntheticStops,
+  persistedOrFallbackStopPct,
   recordSyntheticStopAttempt,
   revertSyntheticStopClaim,
   upsertSyntheticStop,
@@ -26,6 +28,7 @@ import { normalizeSymbol } from "./money";
 import { evaluateTradeProposal } from "./policy";
 import { STOP_PLAN_FALLBACK_STOP_PCT } from "./types";
 import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, StopPlanStyle, TradeProposal, TradingPolicy } from "./types";
+import type { PositionStopPlan } from "./db-api-keys";
 
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
 
@@ -198,8 +201,11 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // monitor either (Codex review, PR #1371: strategy.ts and this monitor load stop plans
   // independently, so the basis check must run on both sides).
   let stopPlanBySymbol: Record<string, StopPlanStyle> = {};
+  let stopPlanFullBySymbol: Record<string, PositionStopPlan> = {};
   try {
-    stopPlanBySymbol = filterStopPlansByLiveBasis(getStopPlans(accountNumber, userId), positions);
+    const raw = getStopPlans(accountNumber, userId);
+    stopPlanFullBySymbol = filterFullStopPlansByLiveBasis(raw, positions);
+    stopPlanBySymbol = filterStopPlansByLiveBasis(raw, positions);
   } catch {
     // best-effort — a lookup failure just means every symbol falls through to "default" (account-wide) behavior
   }
@@ -574,7 +580,9 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // owner had configured 15 — a tighter distance than any layer the owner set, firing a real
       // cover the configuration says should not happen.
       const base = isShort ? (baseShortStopPct > 0 ? baseShortStopPct : baseStopPct) : baseStopPct;
-      const stopPct = base > 0 ? base : STOP_PLAN_FALLBACK_STOP_PCT;
+      const computed = base > 0 ? base : STOP_PLAN_FALLBACK_STOP_PCT;
+      // Phase B1/B2: prefer Exit Contract resolved_stop_pct when present (ATR plans especially).
+      const stopPct = persistedOrFallbackStopPct(stopPlanFullBySymbol[sym], computed);
       // Same same-tick staleness guards the trailing registration pass above uses: a broker-held
       // stop this SAME reconcile just placed/replaced can't appear in the pre-reconcile order list.
       if (justPlacedBrokerStopSymbols.has(sym)) continue;

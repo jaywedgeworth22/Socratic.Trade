@@ -1,5 +1,23 @@
 # Current Status
 
+## 2026-07-24 — Coolify/Hetzner runners only (CURSOR)
+
+Owner correction: fleet CI is **not** GitHub-hosted Actions. Use the two Coolify/Hetzner
+servers — **ci-cpx32** (`77.42.35.209`) for systemd GH runners under `/opt/actions-runners/`,
+and the **prod Coolify host** (`135.181.192.190` / `host.jays.services`) for deploy/reviews.
+`socratic-deploy` does not exist on ci-cpx32 (Sentry CI Report was queuing forever); reporter
+now targets `socratic-ci`. Monitor often: `bash scripts/monitor-coolify-runners.sh --ssh`.
+Branch `cursor/coolify-runners-only-14e5` (supersedes conflicting #2158). Rollout:
+`docs/rollouts/2026-07-24-coolify-runners-only.md`.
+
+## 2026-07-24 — RAG enablement + Exit Contract B1 + branch prune (CURSOR)
+
+Branch: `cursor/rag-enable-exit-prune-1c6c`. Safe RAG Priority A flags default ON; Exit Contract
+columns + fill writes + proactive/synthetic read-with-fallback (B1 / partial B2). Discarded
+w2-coaching/reflection (already on main / closed PRs); pruned 19 stale origin branches. Effort
+board + FEATURE-ENABLEMENT updated for `effort-issues-sync`. Rollout:
+`docs/rollouts/2026-07-24-rag-enable-exit-b1-prune.md`.
+
 ## 2026-07-24 — Per-user reflections & learning system (CURSOR)
 
 Branch: `cursor/per-user-reflections-learning`. Pooled all accounts' closed trades for per-user
@@ -3235,3 +3253,7 @@ Fixed a CI failure in `.github/workflows/cleanup-caches.yml` by retargeting the 
 ## 2026-07-23 — Admin Panel Server RAM Fix & CI ESLint Ignores (ANTIGRAVITY)
 
 The Admin panel's "Server Metrics" tab was modified to extract actual RAM capacity directly from the Hetzner Server API's metadata rather than relying on Coolify metadata to ensure accurate memory percentages. Also, added `**/.worktrees/**` to the ESLint configuration ignores to prevent CI `verify` gates from failing when linting other agents' worktree paths. Verified clean on 5000+ tests and builds.
+
+## 2026-07-24 — Connections UI Redesign & Ghost API Key Tombstoning (ANTIGRAVITY)
+
+Redesigned the Broker Connections cards in `app/console/settings/brokers.tsx` to reduce vertical card height by >25%, added inline tax treatment tags, `Load PAPER` badges for paper accounts, strategy execution status, pending proposal counts, and an on-demand `Capabilities` modal sheet. Also fixed the ghost API key deletion bug by implementing explicit tombstoning (`DELETED_KEY_TOMBSTONE = "__DISABLED__"`) in `src/lib/db-api-keys.ts` so deleted keys never re-migrate from ambient environment variables.
