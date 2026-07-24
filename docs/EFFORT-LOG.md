@@ -411,6 +411,7 @@ Jul 8 18:10 CT)._
 - **Prune stale abandoned local-only branches from origin (June 21–29 experiments) (OWNER, M) — SUPERSEDED by CURSOR 2026-07-24 prune pass (19 branches deleted; remaining tips with unique src kept for review).** Was: ~~~40 origin branches…~~
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Coolify/Hetzner runners only + monitor (branch `cursor/coolify-runners-only-14e5`) — IN PROGRESS 2026-07-24.** Owner: no GitHub-hosted Actions; use ci-cpx32 systemd runners + Coolify prod host. Fix `sentry-ci-report` off missing `socratic-deploy`; sudo-free `gh`; Playwright without `--with-deps`; add `scripts/monitor-coolify-runners.sh`. Supersedes conflicting #2158 billing framing. Rollout: `docs/rollouts/2026-07-24-coolify-runners-only.md`.
 - **[Socratic.Trade][CURSOR] RAG enablement + Exit Contract B1 + branch prune (`cursor/rag-enable-exit-prune-1c6c`) — IN PROGRESS 2026-07-24.** Code-default ON for safe RAG flags; Exit Contract columns + fill writes + proactive/synthetic read-with-fallback; w2 DISCARD + 19 origin branches pruned; board/FEATURE-ENABLEMENT sync for `effort-issues-sync`.
 
 ## Deployed

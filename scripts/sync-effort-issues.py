@@ -309,6 +309,11 @@ class RateLimitBudgetExhausted(Exception):
 
 
 def _rate_limited(status: int, payload: dict | list, headers: dict[str, str]) -> bool:
+    # 502/503/504 are transient gateway/timeouts (seen as GitHub "couldn't respond
+    # in time" 504s during large board syncs). Treat them like rate limits so the
+    # bounded retry budget can absorb a blip instead of failing the whole run.
+    if status in (502, 503, 504):
+        return True
     if status not in (403, 429):
         return False
     message = str(payload.get("message", "")).lower() if isinstance(payload, dict) else ""
@@ -316,6 +321,7 @@ def _rate_limited(status: int, payload: dict | list, headers: dict[str, str]) ->
         "rate limit" in message
         or "abuse" in message
         or "temporarily blocked" in message
+        or "couldn't respond" in message
         or _retry_after_seconds(headers) is not None
     )
 
