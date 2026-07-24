@@ -1,3 +1,4 @@
+import { pinRagQualityFlagsOff } from "./rag-test-env";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -98,6 +99,7 @@ vi.mock("../src/lib/user-write-fence", () => ({
 }));
 
 beforeEach(() => {
+  pinRagQualityFlagsOff();
   vi.resetModules();
   vi.clearAllMocks();
   mocks.settings.clear();

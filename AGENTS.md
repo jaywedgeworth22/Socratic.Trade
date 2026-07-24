@@ -148,7 +148,9 @@ script calling `https://jays.services/api/v1/...` must use
 `https://host.jays.services/api/v1/...` instead.** The box hosts
 `socratic-trade-prod` (= `socratictrade.com`, see the production stanza below) plus the
 `github-runner` service (two GitHub Actions deploy runners).
-**MAC RUNNER RETIRED & DELETED (OWNER DIRECTIVE, 2026-07-21):** The Mac host self-hosted runner `trading-live-mac` is permanently stopped, uninstalled, and deleted from GitHub settings. **DO NOT EVER START, RE-REGISTER, OR REFERENCE `trading-live-mac` OR `trading-live` RUNNER LABELS AGAIN.** All CI/CD jobs must target `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`.
+**MAC RUNNER RETIRED & DELETED (OWNER DIRECTIVE, 2026-07-21):** The Mac host self-hosted runner `trading-live-mac` is permanently stopped, uninstalled, and deleted from GitHub settings. **DO NOT EVER START, RE-REGISTER, OR REFERENCE `trading-live-mac` OR `trading-live` RUNNER LABELS AGAIN.**
+
+**Fleet CI = Coolify/Hetzner self-hosted only (owner 2026-07-24):** Do **not** use GitHub-hosted `ubuntu-latest`. Workflows target Coolify labels such as `[self-hosted, socratic-ci]`. Two Hetzner servers matter: (1) **prod Coolify host** `135.181.192.190` / `host.jays.services` — control plane + `socratic-trade-prod` deploys; (2) **CI build server** `ci-cpx32` (`77.42.35.209`, Coolify uuid `cantpgkbuwe71n1iqzu4qel6`) — systemd GitHub runners under `/opt/actions-runners/` (`socratic-ci`, `socratic-ci-2`, `congress-ci`, `shared-ci`, `usage-ci`). There is currently **no** `socratic-deploy` unit — do not target that label. Monitor often: `bash scripts/monitor-coolify-runners.sh --ssh` (needs `COOLIFY_API_TOKEN`, a GH token, and `CI_SSH_KEY` / `HETZNER_ROOT` as available).
 **Build caveats:** the box's `concurrent_builds` is
 pinned to **1** (two parallel `next build`s OOM-wedged the old 4 GB box on 2026-07-07,
 console reboot required; unproven on the 8 GB box — loosen only deliberately), and Docker
@@ -567,6 +569,17 @@ When investigating **live** strategy runs, multi-account behavior, or production
 ```bash
 bash scripts/fetch-prod-ops-snapshot.sh
 ```
+
+When investigating **CI / Actions runner** health (queued jobs, missing labels, Coolify
+server reachability), **run often**:
+
+```bash
+bash scripts/monitor-coolify-runners.sh --ssh
+```
+
+Needs `COOLIFY_API_TOKEN`, a GH token (`GITHUB_MCP_TOKEN` / `GH_TOKEN`), and SSH access to
+ci-cpx32 (`CI_SSH_KEY`) plus optional `HETZNER_ROOT` for the prod host. See
+`docs/rollouts/2026-07-24-coolify-runners-only.md`.
 
 **One-time owner setup (both sides must use the same token):**
 

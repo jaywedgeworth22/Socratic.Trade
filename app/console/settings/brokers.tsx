@@ -10,12 +10,12 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ConnectedAccount, TaxationType } from "@/lib/types";
 import { activateAccount, ConsoleApiError } from "../lib/api";
-import { realityForAccount } from "../lib/derive";
+import { deriveStateInfo, realityForAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Sheet } from "../ui/sheet";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
-import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle, Pencil, Check, X } from "lucide-react";
+import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle, Pencil, Check, X, Info } from "lucide-react";
 import {
   connectAlpacaAccount,
   connectTradierAccount,
@@ -75,6 +75,7 @@ export function BrokerAccountsCard() {
   const [busy, setBusy] = useState<string | null>(null);
   const [rhHealth, setRhHealth] = useState<RobinhoodMcpHealth | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<ConnectedAccount | null>(null);
+  const [capabilitiesAccount, setCapabilitiesAccount] = useState<ConnectedAccount | null>(null);
   const [alpacaOpen, setAlpacaOpen] = useState(false);
   const [tradierOpen, setTradierOpen] = useState(false);
   // Inline rename of an account's cosmetic display name. `renaming` holds the id being edited
@@ -181,13 +182,27 @@ export function BrokerAccountsCard() {
   // the two sections stay identical in look and behavior.
   const renderAccountRow = (account: ConnectedAccount) => {
     const r = realityForAccount(account);
-    const caps = account.capabilities;
     const needsReconnect = rhNeedsReconnect(account);
+    const isCurrentLoaded = account.isActive;
+    const stateInfo = isCurrentLoaded && snapshot?.policy ? deriveStateInfo(snapshot.policy) : null;
+
+    const pendingCount = isCurrentLoaded
+      ? (snapshot.pendingProposals ?? []).length
+      : (snapshot.pendingProposals ?? []).filter(
+          (p) => (p as { proposal?: { accountId?: string }; accountId?: string }).proposal?.accountId === account.id || (p as { accountId?: string }).accountId === account.id
+        ).length;
+
+    const accountTypeWord = account.taxationType
+      ? (TAXATION_WORD[account.taxationType] ?? account.taxationType)
+      : r.tone === "paper"
+      ? "Paper"
+      : "Taxable";
+
     return (
       <div
         key={account.id}
         tabIndex={0}
-        className="rounded-control border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
+        className="rounded-control border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)] flex flex-col gap-1.5"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
@@ -244,9 +259,6 @@ export function BrokerAccountsCard() {
                 </button>
               </>
             )}
-            <Chip tone={r.tone} title={r.clarification}>
-              {r.word} · {r.phrase}
-            </Chip>
             {needsReconnect && (
               <Chip tone="warn" title="The Robinhood OAuth session is missing or expired, so this app can't reach the broker for this account until you reconnect.">
                 reconnect needed
@@ -254,6 +266,22 @@ export function BrokerAccountsCard() {
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)]">
+              {stateInfo ? (
+                <Chip tone={stateInfo.tone} title={stateInfo.detail}>
+                  {stateInfo.label}
+                </Chip>
+              ) : (
+                <Chip tone="muted">
+                  {account.isActive ? "Loaded" : "Inactive"}
+                </Chip>
+              )}
+              {pendingCount > 0 && (
+                <Chip tone="warn" title={`${pendingCount} pending trade proposal(s) awaiting your review.`}>
+                  {pendingCount} pending proposal{pendingCount === 1 ? "" : "s"}
+                </Chip>
+              )}
+            </div>
             {needsReconnect && (
               <Btn
                 size="sm"
@@ -287,7 +315,11 @@ export function BrokerAccountsCard() {
                   }
                 }}
               >
-                {busy === account.id ? "Loading…" : r.tone === "live" ? (
+                {busy === account.id ? "Loading…" : r.tone === "paper" ? (
+                  <>
+                    Load <Chip tone="paper" className="ml-1 inline-flex items-center px-1.5 py-0 text-[10px] leading-tight uppercase font-semibold">PAPER</Chip>
+                  </>
+                ) : r.tone === "live" ? (
                   <>
                     Load <LiveTag />
                   </>
@@ -296,6 +328,14 @@ export function BrokerAccountsCard() {
                 )}
               </Btn>
             )}
+            <Btn
+              size="sm"
+              variant="outline"
+              onClick={() => setCapabilitiesAccount(account)}
+              title="Inspect trading capabilities and operational features for this connection."
+            >
+              Capabilities
+            </Btn>
             <Btn
               size="sm"
               variant="dangerOutline"
@@ -308,59 +348,13 @@ export function BrokerAccountsCard() {
           </div>
         </div>
         <p
-          className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+          className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
           title="Broker, environment, account tail, and tax treatment."
         >
           {`${brokerName(account.broker)} · ${account.environment}`}
           {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
-          {account.taxationType ? ` · ${TAXATION_WORD[account.taxationType] ?? account.taxationType}` : ""}
+          {` · ${accountTypeWord}`}
         </p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {caps ? (
-            <>
-              <Chip
-                tone="info"
-                title={`Stocks trading: ${caps.equityTrading ? "enabled" : "disabled"}`}
-              >
-                <Briefcase className="inline size-3.5 mr-1.5" />
-                stocks
-              </Chip>
-              <Chip
-                tone="info"
-                title={`Short selling: ${caps.shortSelling ? "enabled" : "disabled"}`}
-              >
-                <ArrowDown className="inline size-3.5 mr-1.5" />
-                shorting
-              </Chip>
-              {caps.optionsTrading && (
-                <Chip
-                  tone="info"
-                  title={`Options trading at level ${caps.optionsLevel ?? "?"}`}
-                >
-                  <Zap className="inline size-3.5 mr-1.5" />
-                  options L{caps.optionsLevel}
-                </Chip>
-              )}
-              {caps.marginEnabled && (
-                <Chip
-                  tone="info"
-                  title="Margin trading enabled"
-                >
-                  <Scale className="inline size-3.5 mr-1.5" />
-                  margin
-                </Chip>
-              )}
-            </>
-          ) : (
-            <Chip
-              tone="warn"
-              title="Broker has not yet confirmed this account's trading capabilities. All capabilities read as off until confirmed."
-            >
-              <AlertTriangle className="inline size-3.5 mr-1.5" />
-              capabilities unconfirmed
-            </Chip>
-          )}
-        </div>
       </div>
     );
   };
@@ -444,10 +438,7 @@ export function BrokerAccountsCard() {
 
       <div className="mt-4 border-t border-[color:var(--con-line)] pt-3">
         <div className="mb-2 flex items-center justify-between gap-3">
-          <h3 className="text-[length:var(--con-fs-sm)] font-semibold">Broker roadmap</h3>
-          <Chip tone="muted" title="Visible planning list only. These buttons stay disabled until real broker gateways exist.">
-            not wired yet
-          </Chip>
+          <h3 className="text-[length:var(--con-fs-sm)] font-semibold">Future Brokers</h3>
         </div>
         <div className="grid gap-2 lg:grid-cols-3">
           {BROKER_ROADMAP.map((broker) => (
@@ -463,19 +454,15 @@ export function BrokerAccountsCard() {
               <p className="mt-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
                 {broker.detail}
               </p>
-              <Btn
-                size="sm"
-                variant="ghost"
-                disabled
-                className="mt-2"
-                title={`Connect ${broker.name} is disabled because no ${broker.name} broker gateway exists in this app yet.`}
-              >
-                Connect unavailable
-              </Btn>
             </div>
           ))}
         </div>
       </div>
+
+      <CapabilitiesSheet
+        account={capabilitiesAccount}
+        onClose={() => setCapabilitiesAccount(null)}
+      />
 
       {/* Disconnect confirm — explicit about what is and is not affected. */}
       <Sheet
@@ -836,3 +823,76 @@ function TradierConnectSheet({
     </Sheet>
   );
 }
+
+// ── Capabilities Modal Sheet ──────────────────────────────────────────────────
+
+function CapabilitiesSheet({
+  account,
+  onClose
+}: {
+  account: ConnectedAccount | null;
+  onClose: () => void;
+}) {
+  if (!account) return null;
+  const caps = account.capabilities;
+  return (
+    <Sheet
+      open={account !== null}
+      onClose={onClose}
+      title={`${brokerName(account.broker)} Capabilities`}
+    >
+      <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Operational capabilities and order execution features for account{" "}
+          <span className="font-semibold text-[color:var(--con-fg)]">
+            {account.label || brokerName(account.broker)}
+          </span>
+          {account.accountNumber ? ` (··${account.accountNumber.slice(-4)})` : ""}.
+        </p>
+
+        <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="font-medium flex items-center gap-1.5"><Briefcase className="size-4 text-[color:var(--con-accent)]" /> Stock Trading</span>
+            <Chip tone={caps?.equityTrading !== false ? "pos" : "muted"}>
+              {caps?.equityTrading !== false ? "Connected" : "Disabled"}
+            </Chip>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+            <span className="font-medium flex items-center gap-1.5"><ArrowDown className="size-4 text-[color:var(--con-accent)]" /> Short Selling</span>
+            <Chip tone={caps?.shortSelling ? "pos" : "muted"}>
+              {caps?.shortSelling ? "Enabled" : "Disabled"}
+            </Chip>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+            <span className="font-medium flex items-center gap-1.5"><Zap className="size-4 text-[color:var(--con-accent)]" /> Options Trading</span>
+            <Chip tone={caps?.optionsTrading ? "pos" : "muted"}>
+              {caps?.optionsTrading ? `Level ${caps.optionsLevel ?? "?"}` : "Disabled"}
+            </Chip>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+            <span className="font-medium flex items-center gap-1.5"><Scale className="size-4 text-[color:var(--con-accent)]" /> Margin Account</span>
+            <Chip tone={caps?.marginEnabled ? "pos" : "muted"}>
+              {caps?.marginEnabled ? "Enabled" : "Cash Only"}
+            </Chip>
+          </div>
+        </div>
+
+        <div className="rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] flex flex-col gap-1.5">
+          <span className="font-semibold text-[color:var(--con-fg)]">Gateway Status</span>
+          <p className="text-[color:var(--con-muted)]">
+            {caps
+              ? "Broker capabilities confirmed via live API probe."
+              : "Gateway connected. Capabilities default to standard equity trading until initial execution probe."}
+          </p>
+        </div>
+
+        <div className="flex justify-end mt-2">
+          <Btn variant="primary" onClick={onClose}>
+            Done
+          </Btn>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+

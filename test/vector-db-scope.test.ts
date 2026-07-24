@@ -1,3 +1,4 @@
+import { pinRagQualityFlagsOff } from "./rag-test-env";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -135,6 +136,7 @@ vi.mock("../src/lib/user-write-fence", () => ({
 }));
 
 beforeEach(() => {
+  pinRagQualityFlagsOff();
   vi.resetModules();
   vi.clearAllMocks();
   process.env.PINECONE_API_KEY = "pinecone-test";
