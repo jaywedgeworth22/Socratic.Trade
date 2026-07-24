@@ -28,6 +28,7 @@ import { admitProviderRequests, resetProviderQuotaState } from "../src/lib/provi
 import { resetApiCircuitBreaker } from "../src/lib/api-circuit-breaker";
 import { getServiceHealthLog } from "../src/lib/db-health";
 import { arbitrateFieldObservation } from "../src/lib/evidence-facts";
+import { deleteUserApiKey, migrateLocalEnvCredentials, upsertUserApiKey, LOCAL_USER } from "../src/lib/db-api-keys";
 
 // Each test file gets its own isolated SQLite db so db module singleton state
 // (user API keys, consent records) does not leak between test files.
@@ -1202,6 +1203,7 @@ describe("Alpha Vantage Warning Detection", () => {
   describe("Fintech Studios / PowerIntell", () => {
     it("adds FintechStudiosEnrichmentProvider to cascade when key is set", async () => {
       process.env.FINTECH_STUDIOS_API_KEY = "test-key-fts";
+      migrateLocalEnvCredentials();
       const provider = getEnrichmentProvider();
       expect(provider.name).toContain("fintechstudios");
     });
