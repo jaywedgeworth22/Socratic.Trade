@@ -196,7 +196,7 @@ export function buildClosedLotExperienceDocument(input: ClosedLotExperienceInput
       ...(input.connectedAccountId ? { connected_account_id: input.connectedAccountId } : {}),
       ...(input.accountEnvironment ? {
         account_environment: input.accountEnvironment,
-        transfer_state: input.accountEnvironment === "paper" ? "candidate" : "not_applicable"
+        transfer_state: "not_applicable"
       } : {}),
       ...factorMetadata
     }

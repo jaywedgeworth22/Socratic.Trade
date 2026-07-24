@@ -783,6 +783,9 @@ interface RawLearnedContextRow {
   account_environment: string | null;
   learning_scope: string;
   transfer_state: string;
+  regime?: string | null;
+  thesis_tag?: string | null;
+  dominant_factor?: string | null;
   asserted_at: string;
   superseded_by: string | null;
   expires_at: string | null;
@@ -804,8 +807,11 @@ export function mapLearnedContext(row: RawLearnedContextRow): LearnedContextRow 
     contributorUserId: row.contributor_user_id,
     connectedAccountId: row.connected_account_id,
     accountEnvironment: row.account_environment as LearnedContextRow["accountEnvironment"],
-    learningScope: row.learning_scope as LearnedContextRow["learningScope"],
+   learningScope: row.learning_scope as LearnedContextRow["learningScope"],
     transferState: row.transfer_state as LearnedContextRow["transferState"],
+    regime: row.regime ?? null,
+    thesisTag: row.thesis_tag ?? null,
+    dominantFactor: row.dominant_factor ?? null,
     assertedAt: row.asserted_at,
     supersededBy: row.superseded_by,
     expiresAt: row.expires_at
@@ -817,8 +823,9 @@ export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow 
     .prepare(
       `INSERT INTO learned_context
         (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id,
-         connected_account_id, account_environment, learning_scope, transfer_state, asserted_at, superseded_by, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         connected_account_id, account_environment, learning_scope, transfer_state, regime, thesis_tag, dominant_factor,
+         asserted_at, superseded_by, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       row.id,
@@ -837,6 +844,9 @@ export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow 
       row.accountEnvironment,
       row.learningScope,
       row.transferState,
+      row.regime ?? null,
+      row.thesisTag ?? null,
+      row.dominantFactor ?? null,
       row.assertedAt,
       row.supersededBy,
       row.expiresAt
@@ -901,7 +911,11 @@ export function listLearnedContextForDecision(
       if (r.userId === userId) {
         if (r.learningScope === "portfolio") return true;
         if (r.learningScope === "research") return r.transferState === "validated";
-        return Boolean(connectedAccountId) && r.connectedAccountId === connectedAccountId;
+        // Per-user pooling (owner directive, 2026-07-23): NULL connectedAccountId = new per-user
+        // pooled lessons. Non-NULL = legacy account-scoped — include them for backward compat
+        // when no specific account filter is requested, or when they match the requested account.
+        return r.connectedAccountId === null ||
+          (connectedAccountId === undefined ? true : r.connectedAccountId === connectedAccountId);
       }
       if (!includeShared || r.scope !== "shared") return false;
       // Shared portfolio facts retain the user's explicit sharing behavior. Account-derived rows

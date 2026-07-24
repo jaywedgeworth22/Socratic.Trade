@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-24 — Per-user reflections & learning system (CURSOR)
+
+Branch: `cursor/per-user-reflections-learning`. Pooled all accounts' closed trades for per-user
+structured lessons (learned_context rows + Pinecone vectors). Removed paper-to-live transfer
+machinery (`learning-transfer.ts` deleted). FINRA margin-minimum now applies uniformly (no more
+live-only gating). Regime-conditioned retrieval with scoring (+2 match/-1 mismatch/+1 thesis)
+wired into strategy loop. Rollout: `docs/rollouts/2026-07-23-per-user-reflections-learning.md`.
 ## 2026-07-24 — Effort-board accuracy audit (CURSOR)
 
 Audited `docs/EFFORT-LOG.md` against GitHub PR state + production `/api/health` release SHA.
@@ -3228,3 +3235,7 @@ Fixed a CI failure in `.github/workflows/cleanup-caches.yml` by retargeting the 
 ## 2026-07-23 — Admin Panel Server RAM Fix & CI ESLint Ignores (ANTIGRAVITY)
 
 The Admin panel's "Server Metrics" tab was modified to extract actual RAM capacity directly from the Hetzner Server API's metadata rather than relying on Coolify metadata to ensure accurate memory percentages. Also, added `**/.worktrees/**` to the ESLint configuration ignores to prevent CI `verify` gates from failing when linting other agents' worktree paths. Verified clean on 5000+ tests and builds.
+
+## 2026-07-24 — Connections UI Redesign & Ghost API Key Tombstoning (ANTIGRAVITY)
+
+Redesigned the Broker Connections cards in `app/console/settings/brokers.tsx` to reduce vertical card height by >25%, added inline tax treatment tags, `Load PAPER` badges for paper accounts, strategy execution status, pending proposal counts, and an on-demand `Capabilities` modal sheet. Also fixed the ghost API key deletion bug by implementing explicit tombstoning (`DELETED_KEY_TOMBSTONE = "__DISABLED__"`) in `src/lib/db-api-keys.ts` so deleted keys never re-migrate from ambient environment variables.

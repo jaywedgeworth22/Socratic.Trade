@@ -182,7 +182,7 @@ describe("strategy.ts held-position retrieval scope", () => {
     // Held symbol is unioned in ADDITIONALLY, not swapped in place of a top-8 name.
     expect(learnedSymbols).toContain(HELD_SYMBOL);
     expect(learnedSymbols.length).toBe(top8.length + 1);
-    expect(learnedCallArgs?.[3]).toEqual({ connectedAccountId: accountId });
+    expect(learnedCallArgs?.[3]).toHaveProperty("thesisTags");
 
     // ── 1. Filings RAG: retrieveContextDetailed was called for the held symbol. ──
     const filingsSymbolsQueried = mocks.retrieveContextDetailed.mock.calls.map((call) => call[1] as string);

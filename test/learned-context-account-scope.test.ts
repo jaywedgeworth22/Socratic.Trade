@@ -1,11 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getDb, insertLearnedContext, listLearnedContext, listPendingLearnedContext } from "../src/lib/db";
-import {
-  LIVE_TRANSFER_MIN_LOTS,
-  PAPER_TRANSFER_MIN_LOTS,
-  evaluatePaperToLiveTransfer
-} from "../src/lib/learning-transfer";
 import { ingestLearned, retrieveLearnedContextDetailed } from "../src/lib/learned-context/store";
 
 beforeAll(() => {
@@ -29,11 +24,15 @@ describe("learned-context connected-account isolation", () => {
       connectedAccountId: "paper-a",
       accountEnvironment: "paper",
       learningScope: "account",
-      transferState: "candidate"
+      transferState: "not_applicable"
     });
     expect(retrieveLearnedContextDetailed(userId, [], undefined, { connectedAccountId: "paper-a" }).rows).toHaveLength(1);
+    // Per-user: when called with a different account filter, still returns NULL-scoped rows.
+    // Non-matching connectedAccountId rows are excluded, but the paper-a row has a specific
+    // connectedAccountId and won't match "live-b".
     expect(retrieveLearnedContextDetailed(userId, [], undefined, { connectedAccountId: "live-b" }).rows).toHaveLength(0);
-    expect(retrieveLearnedContextDetailed(userId, []).rows).toHaveLength(0);
+    // Per-user: when called without a connectedAccountId, all account-scoped rows are included.
+    expect(retrieveLearnedContextDetailed(userId, []).rows).toHaveLength(1);
   });
 
   it("deduplicates the same subject independently per account", async () => {
@@ -112,39 +111,8 @@ describe("learned-context connected-account isolation", () => {
       connectedAccountId: "paper-risk",
       accountEnvironment: "paper",
       learningScope: "account",
-      transferState: "candidate"
+      transferState: "not_applicable"
     });
     expect(listPendingLearnedContext(userId)[0]).toMatchObject({ connectedAccountId: "paper-risk" });
-  });
-});
-
-describe("paper-to-live transfer evaluation", () => {
-  const row = (environment: "paper" | "live", trades: number, edge: number) => ({
-    connectedAccountId: `${environment}-${randomUUID()}`,
-    environment,
-    thesisTag: "quality",
-    trades,
-    shrunkAvgReturnPct: edge
-  });
-
-  it("requires independent paper and live samples", () => {
-    expect(evaluatePaperToLiveTransfer([
-      row("paper", PAPER_TRANSFER_MIN_LOTS, 1),
-      row("live", LIVE_TRANSFER_MIN_LOTS - 1, 1)
-    ]).state).toBe("insufficient");
-  });
-
-  it("rejects a directionally conflicting live result even with large samples", () => {
-    expect(evaluatePaperToLiveTransfer([
-      row("paper", PAPER_TRANSFER_MIN_LOTS * 2, 1.2),
-      row("live", LIVE_TRANSFER_MIN_LOTS * 2, -0.8)
-    ]).state).toBe("discordant");
-  });
-
-  it("validates only a material same-direction result", () => {
-    expect(evaluatePaperToLiveTransfer([
-      row("paper", PAPER_TRANSFER_MIN_LOTS, 1.2),
-      row("live", LIVE_TRANSFER_MIN_LOTS, 0.7)
-    ])).toMatchObject({ state: "validated", direction: "positive" });
   });
 });
