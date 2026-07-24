@@ -24,29 +24,30 @@ Robinhood's OAuth authorization server (`https://robinhood.com/oauth`) enforces 
 
 ---
 
-## 3. Standard Production Reconnect Procedure (SSH Tunnel Method)
+## 3. Zero-SSH / No-Tunnel Connection Options (Solution 3)
 
-Because Robinhood requires a loopback redirect URI (`http://localhost:4000/api/auth/robinhood/callback`) for dynamic clients, use this 3-step procedure to connect production:
+When Robinhood redirects the browser to `http://localhost:4000/api/auth/robinhood/callback?code=...&state=...`, the browser displays **"Safari Can't Connect to the Server 'localhost'"**.
 
-### Step 1: Configure Production Secrets (Infisical)
-In Infisical production secrets for Socratic.Trade (`fedc540e-4641-45a8-8aa2-0e5a5c3dd6c3`):
-- `ROBINHOOD_MCP_REDIRECT_URI=http://localhost:4000/api/auth/robinhood/callback`
-- `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=on`
+You do **NOT** need SSH tunnels or root server access to complete the flow. Use either of these two methods:
 
-### Step 2: Ensure Server Port Forwarder & Local SSH Tunnel
-On your local Mac terminal:
-```bash
-ssh -L 4000:localhost:4000 root@135.181.192.190
-```
-*(On the server host `135.181.192.190`, port 4000 on `127.0.0.1` forwards traffic to the `socratic-trade-prod` container).*
+### Method A: Address Bar Edit (Easiest)
+1. When Safari shows *"Safari Can't Connect to the Server 'localhost'"*, look at the address bar:
+   `http://localhost:4000/api/auth/robinhood/callback?code=AUTH_CODE&state=STATE`
+2. Replace `http://localhost:4000` with `https://socratictrade.com`:
+   `https://socratictrade.com/api/auth/robinhood/callback?code=AUTH_CODE&state=STATE`
+3. Hit **Enter**.
+4. The production app receives `code` & `state`, exchanges them for tokens, stores them in `app.db`, and completes the connection.
 
-### Step 3: Complete Connection
-1. In your browser, navigate to **`https://socratictrade.com/admin/connections`** (or `/api/auth/robinhood/start`).
-2. Click **Reconnect Robinhood**.
-3. Approve the 2FA push notification on your Robinhood phone app.
-4. Robinhood will redirect your browser to `http://localhost:4000/api/auth/robinhood/callback?code=...`.
-5. The SSH tunnel forwards the code to `socratic-trade-prod` on port 4000.
-6. The server exchanges the code for tokens and saves `robinhood_mcp_oauth_token:local` in SQLite `/app/data/app.db`.
+### Method B: Copy/Paste Callback URL in App UI or API
+1. Copy the failed `http://localhost:4000/api/auth/robinhood/callback?code=...&state=...` URL from your address bar.
+2. Submit a `POST /api/auth/robinhood/callback` request with body:
+   ```json
+   {
+     "url": "http://localhost:4000/api/auth/robinhood/callback?code=...&state=..."
+   }
+   ```
+   Or paste it into the **Paste Callback URL** field on the Connections page.
+3. The backend extracts `code` & `state`, validates PKCE state, stores the tokens, and returns `{ "ok": true, "connected": true }`.
 
 ---
 
@@ -59,9 +60,9 @@ Once tokens are stored in SQLite:
 
 ---
 
-## 5. Registering an Official Static Partner Client ID with Robinhood
+## 5. How to Register an Official Static Partner Client ID with Robinhood
 
-To allow end-users to connect directly from `https://socratictrade.com` without needing SSH tunnels or loopback redirects:
+To allow end-users to connect directly from `https://socratictrade.com` in 1 click without loopbacks or manual URL copy/paste:
 
 1. **Submit Developer Application**: Contact Robinhood API Developer Support (`mcp-support@robinhood.com` or `developer.robinhood.com`).
 2. **Provide Application Details**:
