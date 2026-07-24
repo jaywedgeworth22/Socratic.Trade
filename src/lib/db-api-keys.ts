@@ -366,6 +366,9 @@ export function normalizeApiKeyService(service: string): string {
 
 export function apiKeyEnvVarForService(service: string): string | undefined {
   const canonical = normalizeApiKeyService(service);
+  if (canonical === "massive" && !process.env.MASSIVE_API_KEY && process.env.MASSIVE_API_KEY_ALT) {
+    return "MASSIVE_API_KEY_ALT";
+  }
   return API_KEY_ENV_MAP[canonical];
 }
 

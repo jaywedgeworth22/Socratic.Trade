@@ -2,9 +2,7 @@ import fs from "fs";
 import path from "path";
 import { FmpEnrichmentProvider } from "../src/lib/data-providers";
 import { SP500_SYMBOLS } from "../src/lib/sp500";
-import { fetchWithRetry } from "../src/lib/data-providers";
 
-// Load FMP Key directly from global secrets for the standalone script
 function getGlobalFmpKey(): string {
   try {
     const secretsPath = "/Users/jay/.secrets/global-api-keys.env";
@@ -18,66 +16,55 @@ function getGlobalFmpKey(): string {
   throw new Error("FMP_API_KEY not found in global secrets or env");
 }
 
-async function fetchConstituents(apiKey: string, endpoint: string): Promise<string[]> {
-  console.log(`Fetching constituents from ${endpoint}...`);
-  const url = `https://financialmodelingprep.com/api/v3/${endpoint}?apikey=${apiKey}`;
+async function hoardEconomicCalendar(apiKey: string): Promise<void> {
+  console.log("Hoarding FMP Economic Calendar...");
+  const url = `https://financialmodelingprep.com/stable/economic-calendar?apikey=${apiKey}`;
   const res = await fetch(url);
   if (!res.ok) {
-    console.warn(`Failed to fetch ${endpoint}: HTTP ${res.status}`);
-    return [];
-  }
-  const data = await res.json();
-  if (Array.isArray(data)) {
-    return data.map((item: any) => item.symbol).filter(Boolean);
-  }
-  return [];
-}
-
-async function fetchHistoricalData(apiKey: string, symbol: string): Promise<void> {
-  const dir = path.join(process.cwd(), "data", "fmp-history");
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  
-  const file = path.join(dir, `${symbol}.json`);
-  if (fs.existsSync(file)) return; // skip if already downloaded
-  
-  const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${symbol}?apikey=${apiKey}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    console.warn(`Failed historical data for ${symbol}: HTTP ${res.status}`);
+    console.warn(`Failed to fetch economic calendar: HTTP ${res.status}`);
     return;
   }
   const data = await res.json();
+  const file = path.join(process.cwd(), "data", "fmp-economic-calendar.json");
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  console.log(`Saved ${Array.isArray(data) ? data.length : 0} economic calendar events to ${file}`);
+}
+
+async function hoardEarningsCalendar(apiKey: string): Promise<void> {
+  console.log("Hoarding FMP Earnings Calendar...");
+  const url = `https://financialmodelingprep.com/stable/earnings-calendar?apikey=${apiKey}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    console.warn(`Failed to fetch earnings calendar: HTTP ${res.status}`);
+    return;
+  }
+  const data = await res.json();
+  const file = path.join(process.cwd(), "data", "fmp-earnings-calendar.json");
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  console.log(`Saved ${Array.isArray(data) ? data.length : 0} earnings calendar events to ${file}`);
 }
 
 async function hoard() {
   const apiKey = getGlobalFmpKey();
   
-  // 1. Build Master Symbol List
-  const sp500 = await fetchConstituents(apiKey, "sp500_constituent");
-  const nasdaq = await fetchConstituents(apiKey, "nasdaq_constituent");
-  const dow = await fetchConstituents(apiKey, "dowjones_constituent");
-  
-  const allSymbols = new Set([...SP500_SYMBOLS, ...sp500, ...nasdaq, ...dow]);
-  console.log(`Master list contains ${allSymbols.size} unique symbols.`);
-  
-  // 2. Fetch Fundamentals (this uses internal pacing!)
-  console.log("Beginning bulk fundamentals fetch (this will take a while)...");
+  // 1. Hoard Macro & Earnings Calendars
+  await hoardEconomicCalendar(apiKey);
+  await hoardEarningsCalendar(apiKey);
+
+  // 2. Fetch Fundamentals & Enrichment for S&P 500 Universe
+  const allSymbols = Array.from(new Set(SP500_SYMBOLS));
+  console.log(`Beginning bulk fundamentals fetch for ${allSymbols.length} symbols...`);
   const provider = new FmpEnrichmentProvider(apiKey, "env", "local");
-  // enrich processes chunks safely, storing data into SQLite.
-  await provider.enrich(Array.from(allSymbols));
-  console.log("Fundamentals fetching complete!");
   
-  // 3. Fetch Historicals for S&P 500
-  console.log(`Fetching 5-year historical data for ${SP500_SYMBOLS.length} symbols...`);
-  // Simple custom pacing (e.g., 5 requests per second)
-  for (let i = 0; i < SP500_SYMBOLS.length; i++) {
-    const symbol = SP500_SYMBOLS[i];
-    if (i % 50 === 0) console.log(`Historical progress: ${i}/${SP500_SYMBOLS.length}`);
-    await fetchHistoricalData(apiKey, symbol);
-    await new Promise(r => setTimeout(r, 250)); // ~4/sec to stay within 300/min safely
+  // Chunk in batches of 20 to avoid memory or network rate limit issues
+  const chunkSize = 20;
+  for (let i = 0; i < allSymbols.length; i += chunkSize) {
+    const chunk = allSymbols.slice(i, i + chunkSize);
+    console.log(`Enriching chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(allSymbols.length / chunkSize)} (${chunk.length} symbols)...`);
+    await provider.enrich(chunk);
+    await new Promise(r => setTimeout(r, 500));
   }
-  console.log("Historical fetching complete!");
+  console.log("FMP fundamentals hoarding complete!");
 }
 
 hoard().catch(console.error);
