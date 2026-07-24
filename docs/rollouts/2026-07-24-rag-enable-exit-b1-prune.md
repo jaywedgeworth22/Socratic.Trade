@@ -44,10 +44,14 @@ aligned with GitHub Issues (`effort-issues-sync` section headings).
 npx vitest run test/rag-run-budget.test.ts test/vector-db-staleness-and-clean-text.test.ts \
   test/vector-db-asof-server-filter.test.ts test/position-stop-plans-db.test.ts \
   test/rag-env-flag.test.ts
-# then full gate before land:
-npm run lint && npx tsc --noEmit && npm test && npm run build
+# plus previously-failing suites after pin helper + v60 bump: 131/131
+npm run lint   # 0 errors
+npx tsc --noEmit  # clean
+npm test       # 5312/5312
+npm run build  # clean
 ```
 
+Pruned 19 origin branches (batched deletes for GH013 max-5 rule).
 ## Follow-ups
 
 - Mirror ON values into Infisical prod if operators prefer explicit env over code defaults.
