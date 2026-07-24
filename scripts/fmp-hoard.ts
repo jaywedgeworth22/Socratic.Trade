@@ -7,10 +7,10 @@ import { fetchWithRetry } from "../src/lib/data-providers";
 // Load FMP Key directly from global secrets for the standalone script
 function getGlobalFmpKey(): string {
   try {
-    const secretsPath = "/Users/jay/.secrets/global-api-keys";
+    const secretsPath = "/Users/jay/.secrets/global-api-keys.env";
     const content = fs.readFileSync(secretsPath, "utf-8");
-    const match = content.match(/FMP_API_KEY="([^"]+)"/);
-    if (match && match[1]) return match[1];
+    const match = content.match(/FMP_API_KEY=("?[^"\n\r]+)/);
+    if (match && match[1]) return match[1].replace(/"/g, '');
   } catch (err) {
     console.error("Failed to read global secrets", err);
   }

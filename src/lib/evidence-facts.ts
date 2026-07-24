@@ -25,6 +25,7 @@ export interface FieldObservation<T> {
   effectiveAt?: string;
   fetchedAt?: string;
   expiresAt?: string;
+  asOf?: string;
   status: FieldAvailabilityStatus;
   confidence?: number;
   reliability?: number;
@@ -83,7 +84,7 @@ function recency(timestamp: string | undefined): number {
 
 function metric<T>(candidate: FieldObservationCandidate<T>, key: "reliability" | "directness" | "recency" | "confidence"): number {
   if (key === "recency") {
-    return recency(candidate.observation.observedAt ?? candidate.observation.effectiveAt ?? candidate.observation.fetchedAt);
+    return recency(candidate.observation.asOf ?? candidate.observation.observedAt ?? candidate.observation.effectiveAt ?? candidate.observation.fetchedAt);
   }
   return candidate.observation[key] ?? 0;
 }

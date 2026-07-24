@@ -4,7 +4,23 @@ import zlib from "zlib";
 import { businessDaysBetween } from "../src/lib/market-signals/massive-s3";
 import { fetchGroupedBarsRest } from "../src/lib/market-signals/massive";
 
+function loadMassiveKey() {
+  try {
+    const secretsPath = "/Users/jay/.secrets/global-api-keys.env";
+    if (fs.existsSync(secretsPath)) {
+      const content = fs.readFileSync(secretsPath, "utf-8");
+      const match = content.match(/MASSIVE_API_KEY_ALT=("?[^"\n\r]+)/);
+      if (match && match[1]) {
+        process.env.MASSIVE_API_KEY = match[1].replace(/"/g, '');
+      }
+    }
+  } catch (err) {
+    console.error("Failed to load massive key", err);
+  }
+}
+
 async function hoardMassive() {
+  loadMassiveKey();
   // 5 years = ~1250 days
   const to = new Date().toISOString().slice(0, 10);
   const from = new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -39,8 +55,10 @@ async function hoardMassive() {
           downloaded++;
           if (downloaded % 50 === 0) console.log(`Downloaded ${downloaded} files...`);
         } else {
-          // Could be a holiday, or rate limited. 
-          // Note: fetchGroupedBarsRest manages rate limits automatically (returns null if empty).
+          // Null returned due to rate limiting or missing data. Put index back and wait before retry.
+          idx--;
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
         }
       } catch (err) {
         console.error(`Failed on ${date}:`, err);
