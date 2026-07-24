@@ -84,7 +84,8 @@ export const NOTIFICATION_EVENT_TYPES = [
   "evidence_age_anomaly",
   "storage_warning",
   "autonomy_halted_on_boot",
-  "option_alert"
+  "option_alert",
+  "earningscalls_entitlement_blocked"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";

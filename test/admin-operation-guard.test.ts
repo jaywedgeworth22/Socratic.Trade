@@ -54,6 +54,7 @@ describe("admin operation guard", () => {
       "backtest-ic",
       "congress-score-eval",
       "congress-share",
+      "earningscalls",
       "refresh-websource",
       "reindex-10k",
       "reindex-8k",

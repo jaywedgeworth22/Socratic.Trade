@@ -128,6 +128,67 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
  * 2. If no OpenRouter key, checks for a user-provided direct provider key for the model's family and routes natively.
  * 3. If no user key is present, returns an endpoint with undefined key (fails closed).
  */
+
+/**
+ * Normalize a catalog or persisted model name to the OpenRouter wire ID. Keep this beside
+ * resolveLlmEndpoint so availability probes and actual calls cannot disagree about a model's ID.
+ * Includes the latest aliases used in Settings catalogs.
+ */
+export function normalizeOpenRouterModelId(rawModel: string | undefined): string {
+  let model = (rawModel ?? "").trim();
+  if (!model.includes("/")) {
+    if (/^claude-sonnet-latest$/i.test(model)) {
+      model = "~anthropic/claude-sonnet-latest";
+    } else if (/^claude-haiku-latest$/i.test(model)) {
+      model = "~anthropic/claude-haiku-latest";
+    } else if (/^claude-opus-latest$/i.test(model)) {
+      model = "~anthropic/claude-opus-latest";
+    } else if (/^claude-fable-latest$/i.test(model)) {
+      model = "~anthropic/claude-fable-latest";
+    } else if (/^claude/i.test(model)) {
+      model = `anthropic/${model}`;
+    } else if (/^grok-build-latest$/i.test(model)) {
+      model = "x-ai/grok-build-0.1";
+    } else if (/^grok-latest$/i.test(model)) {
+      model = "~x-ai/grok-latest";
+    } else if (/^grok/i.test(model)) {
+      model = `x-ai/${model}`;
+    } else if (/^gemini-flash-latest$/i.test(model)) {
+      model = "~google/gemini-flash-latest";
+    } else if (/^gemini-flash-lite-latest$/i.test(model) || /^gemini-3.5-flash-lite$/i.test(model)) {
+      model = "google/gemini-3.5-flash-lite";
+    } else if (/^gemini-pro-latest$/i.test(model)) {
+      model = "~google/gemini-pro-latest";
+    } else if (/^gemini/i.test(model)) {
+      model = `google/${model}`;
+    } else if (/^gpt-sol-latest$/i.test(model) || /^gpt-terra-latest$/i.test(model) || /^gpt-4o-latest$/i.test(model)) {
+      model = "~openai/gpt-latest";
+    } else if (/^gpt-luna-latest$/i.test(model) || /^gpt-mini-latest$/i.test(model) || /^gpt-nano-latest$/i.test(model)) {
+      model = "~openai/gpt-mini-latest";
+    } else if (/^mistral-medium-latest$/i.test(model)) {
+      model = "mistralai/mistral-medium-3.5";
+    } else if (/^mistral-small-latest$/i.test(model)) {
+      model = "mistralai/mistral-small-2603";
+    } else if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
+      model = `mistralai/${model}`;
+    } else if (/^deepseek-flash-latest$/i.test(model)) {
+      model = "deepseek/deepseek-v4-flash";
+    } else if (/^deepseek-pro-latest$/i.test(model)) {
+      model = "deepseek/deepseek-v4-pro";
+    } else if (/^deepseek-r1-latest$/i.test(model)) {
+      model = "deepseek/deepseek-r1";
+    } else if (/^deepseek/i.test(model)) {
+      model = `deepseek/${model}`;
+    } else if (/^llama/i.test(model)) {
+      model = "meta-llama/llama-3.3-70b-instruct";
+    } else if (/^(gpt|o1|o3)/i.test(model)) {
+      model = `openai/${model}`;
+    }
+  }
+  return model.replace(/^openrouter\//i, "").replace(/^xai\//i, "x-ai/");
+}
+
+
 export function resolveLlmEndpoint(
   policy?: { llmModel?: string | null; redTeamLlmModel?: string | null } | null,
   userId: string = "local",
@@ -140,57 +201,7 @@ export function resolveLlmEndpoint(
   // 1. Primary path: OpenRouter key (user or operator failover when enabled)
   const openRouterCred = resolveLlmCredential("openrouter", userId);
   if (openRouterCred.key) {
-    let model = rawModel;
-    if (!model.includes("/")) {
-      if (/^claude-sonnet-latest$/i.test(model)) {
-        model = "~anthropic/claude-sonnet-latest";
-      } else if (/^claude-haiku-latest$/i.test(model)) {
-        model = "~anthropic/claude-haiku-latest";
-      } else if (/^claude-opus-latest$/i.test(model)) {
-        model = "~anthropic/claude-opus-latest";
-      } else if (/^claude-fable-latest$/i.test(model)) {
-        model = "~anthropic/claude-fable-latest";
-      } else if (/^claude/i.test(model)) {
-        model = `anthropic/${model}`;
-      } else if (/^grok-build-latest$/i.test(model)) {
-        model = "x-ai/grok-build-0.1";
-      } else if (/^grok-latest$/i.test(model)) {
-        model = "~x-ai/grok-latest";
-      } else if (/^grok/i.test(model)) {
-        model = `x-ai/${model}`;
-      } else if (/^gemini-flash-latest$/i.test(model)) {
-        model = "~google/gemini-flash-latest";
-      } else if (/^gemini-flash-lite-latest$/i.test(model) || /^gemini-3.5-flash-lite$/i.test(model)) {
-        model = "google/gemini-3.5-flash-lite";
-      } else if (/^gemini-pro-latest$/i.test(model)) {
-        model = "~google/gemini-pro-latest";
-      } else if (/^gemini/i.test(model)) {
-        model = `google/${model}`;
-      } else if (/^gpt-sol-latest$/i.test(model) || /^gpt-terra-latest$/i.test(model) || /^gpt-4o-latest$/i.test(model)) {
-        model = "~openai/gpt-latest";
-      } else if (/^gpt-luna-latest$/i.test(model) || /^gpt-mini-latest$/i.test(model) || /^gpt-nano-latest$/i.test(model)) {
-        model = "~openai/gpt-mini-latest";
-      } else if (/^mistral-medium-latest$/i.test(model)) {
-        model = "mistralai/mistral-medium-3.5";
-      } else if (/^mistral-small-latest$/i.test(model)) {
-        model = "mistralai/mistral-small-2603";
-      } else if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
-        model = `mistralai/${model}`;
-      } else if (/^deepseek-flash-latest$/i.test(model)) {
-        model = "deepseek/deepseek-v4-flash";
-      } else if (/^deepseek-pro-latest$/i.test(model)) {
-        model = "deepseek/deepseek-v4-pro";
-      } else if (/^deepseek-r1-latest$/i.test(model)) {
-        model = "deepseek/deepseek-r1";
-      } else if (/^deepseek/i.test(model)) {
-        model = `deepseek/${model}`;
-      } else if (/^llama/i.test(model)) {
-        model = "meta-llama/llama-3.3-70b-instruct";
-      } else if (/^(gpt|o1|o3)/i.test(model)) {
-        model = `openai/${model}`;
-      }
-    }
-    model = model.replace(/^openrouter\//i, "").replace(/^xai\//i, "x-ai/");
+    const model = normalizeOpenRouterModelId(rawModel);
     const url = process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
 
     return {

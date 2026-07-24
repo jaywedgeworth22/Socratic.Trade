@@ -6,6 +6,16 @@ Anthropic-only) and a way to evaluate how each performs — including DeepSeek f
 
 ## 2026-07-13 current OpenAI policy
 
+## 2026-07-22 rotation availability behavior
+
+When Green or Red is set to rotation, the server now intersects the credential-resolvable curated
+pool with OpenRouter's account-filtered `GET /api/v1/models/user` response before choosing a slot.
+This prevents a disabled account model such as Claude Fable 5 from being selected by rotation. A
+temporary availability-check failure fails rotation closed with an actionable retry message; it does
+not silently fall back to another provider or to the other team. Explicit model selections preserve
+the existing fail-closed behavior, so an unavailable Red model produces a human-review receipt rather
+than being replaced by Green. The account model list is cached in-process for five minutes.
+
 Today's production-schema benchmark successfully called all three GPT-5.6 API IDs (artifact:
 `docs/benchmarks/2026-07-13-gpt-5-6-benchmark.md`). The official catalog positions Sol for complex
 professional work, Terra for intelligence/cost balance, and Luna for cost-sensitive high volume.

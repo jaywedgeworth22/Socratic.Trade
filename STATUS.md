@@ -94,6 +94,20 @@ then integrate it alongside dense recall in a separately reviewed retrieval PR. 
 `docs/rollouts/2026-07-21-corpus-wide-lexical-candidates.md`.
 # Current Status
 
+## 2026-07-22 — Approval Busy, red-team availability, and UptimeRobot diagnosis (CODEX→GROK, branch `codex/trade-approval-redteam-uptime-20260722`)
+
+Live verification: `/api/health` returns HTTP 200, including with `UptimeRobot/2.0`; the console and
+approvals page load. The approval `Result: Busy` is the intentional per-user/per-account strategy
+lock, with a stale-run sweep recently marking a crashed run failed. Live pending proposals show
+Claude Fable 5 unavailable on the OpenRouter account, GPT-5.6 Sol timed out, and DeepSeek V4 Pro
+returned a malformed/no response. Rotation previously checked only that an OpenRouter credential
+resolved. This branch adds bounded retries for the side-effect-free Busy result and filters rotating
+models through OpenRouter's account-filtered `/api/v1/models/user` list (fail-closed if unavailable),
+without changing explicit model selection or order execution. UptimeRobot already monitors
+`https://socratictrade.com/api/health` (HTTP + Keyword low-credit monitors both UP). `/` redirects
+to login (307) and `/api/ready` is protected (401). Build completed after CODEX handoff
+(`.next/BUILD_ID` present); GROK owns gate re-run + `scripts/land.sh`. Rollout:
+`docs/rollouts/2026-07-22-approval-redteam-uptime.md`.
 ## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
 
 The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider
@@ -127,6 +141,20 @@ from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
 # Current Status
 
+## 2026-07-22 — Approval Busy, red-team availability, and UptimeRobot diagnosis (CODEX→GROK, branch `codex/trade-approval-redteam-uptime-20260722`)
+
+Live verification: `/api/health` returns HTTP 200, including with `UptimeRobot/2.0`; the console and
+approvals page load. The approval `Result: Busy` is the intentional per-user/per-account strategy
+lock, with a stale-run sweep recently marking a crashed run failed. Live pending proposals show
+Claude Fable 5 unavailable on the OpenRouter account, GPT-5.6 Sol timed out, and DeepSeek V4 Pro
+returned a malformed/no response. Rotation previously checked only that an OpenRouter credential
+resolved. This branch adds bounded retries for the side-effect-free Busy result and filters rotating
+models through OpenRouter's account-filtered `/api/v1/models/user` list (fail-closed if unavailable),
+without changing explicit model selection or order execution. UptimeRobot already monitors
+`https://socratictrade.com/api/health` (HTTP + Keyword low-credit monitors both UP). `/` redirects
+to login (307) and `/api/ready` is protected (401). Build completed after CODEX handoff
+(`.next/BUILD_ID` present); GROK owns gate re-run + `scripts/land.sh`. Rollout:
+`docs/rollouts/2026-07-22-approval-redteam-uptime.md`.
 ## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
 
 The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider
@@ -3182,3 +3210,7 @@ execution is deferred. The only server change aligns the Apple identity-token au
 with `trade.socratic.app` and has 3/3 focused tests. Targeted Node tests (7/7), TypeScript, ESLint,
 plist/asset validation, and diff check pass. Rollout:
 `docs/rollouts/2026-07-21-native-ios-mobile-first-phase-1.md`.
+
+## 2026-07-23 — Cleanup Caches Runner Fix (ANTIGRAVITY, branch `fix/cleanup-caches-runner`)
+
+Fixed a CI failure in `.github/workflows/cleanup-caches.yml` by retargeting the jobs from `[self-hosted, socratic-ci]` to `ubuntu-latest`. The self-hosted Coolify runners do not have the GitHub CLI (`gh`) installed globally, which is required by both the `delete-pr-caches` and `prune-stale-caches` jobs. Because `cleanup-caches.yml` operates purely via the GitHub API (via `gh`) and doesn't require any app builds or local runner state, it can safely and freely run on `ubuntu-latest` without consuming our self-hosted runner concurrency.

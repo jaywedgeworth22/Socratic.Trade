@@ -311,7 +311,13 @@ export function resolveBrokerVerificationNotifications(
 /** The same "attention" criteria the Alert Center's default pill uses (kept in sync with
  *  app/console/components/alert-center.tsx's matchesFilter). Bulk-ack currently only supports this
  *  one filter — the caller passes it explicitly so the intent is visible at call sites. */
-const ATTENTION_TYPES: readonly NotificationEventType[] = ["kill_switch", "run_failed", "budget_alert", "provider_degraded"];
+const ATTENTION_TYPES: readonly NotificationEventType[] = [
+  "kill_switch",
+  "run_failed",
+  "budget_alert",
+  "provider_degraded",
+  "earningscalls_entitlement_blocked"
+];
 
 /** Bulk-acknowledge every currently-unacknowledged row matching the given filter, scoped to the
  *  requesting user. When connectedAccountId is provided, also scoped to that account (or
