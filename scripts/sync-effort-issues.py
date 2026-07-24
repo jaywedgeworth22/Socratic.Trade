@@ -72,10 +72,10 @@ Reconciliation
     made beyond the initial list. Existing issues are only updated when
     something actually changed.
   - Never deletes issues. An item that disappears from the board (row
-    removed/merged into another) leaves its mirrored issue in place,
-    untouched, with whatever state it last had — a human can close it
-    manually if desired. This script does not guess intent for vanished
-    rows.
+    removed/reworded) becomes an orphan: if that mirrored issue is still
+    OPEN, close it and set `state:completed` so stale in-progress/planned
+    mirrors cannot accumulate after board hygiene. Already-closed orphans
+    are left untouched.
   - Hand-made issues without the `effort-key` marker are ignored entirely
     (never edited, never closed, never relabeled).
 
@@ -482,10 +482,39 @@ def reconcile(items: list[BoardItem], client: GitHubClient, repo: str, ref: str,
         return stats
 
     orphaned = [k for k in by_key if k not in seen_keys]
+    orphan_closed = 0
+    orphan_left = 0
+    for key in orphaned:
+        issue = by_key[key]
+        number = issue["number"]
+        if issue.get("state") != "open":
+            orphan_left += 1
+            continue
+        # Open orphan = board row removed/reworded while the mirror stayed open.
+        # Close it under state:completed so hygiene actually clears the Issues UI.
+        current_labels = issue_label_names(issue)
+        preserved = {
+            l for l in current_labels if l != MIRROR_LABEL and not l.startswith("state:")
+        }
+        fields = {
+            "state": "closed",
+            "labels": sorted({MIRROR_LABEL, "state:completed"} | preserved),
+        }
+        client.update_issue(number, fields)
+        print(
+            f"closed orphan issue #{number} (board row removed/reworded) "
+            f"as state:completed: {(issue.get('title') or '')[:80]}"
+        )
+        stats["closed"] += 1
+        stats["updated"] += 1
+        orphan_closed += 1
     if orphaned:
-        print(f"note: {len(orphaned)} previously-mirrored issue(s) no longer match a board row "
-              f"(row removed/reworded) — left untouched: "
-              f"{', '.join('#' + str(by_key[k]['number']) for k in orphaned)}")
+        print(
+            f"note: {len(orphaned)} previously-mirrored issue(s) no longer match a board row "
+            f"(row removed/reworded) — closed_open={orphan_closed} "
+            f"already_closed_left={orphan_left}: "
+            f"{', '.join('#' + str(by_key[k]['number']) for k in orphaned)}"
+        )
 
     return stats
 

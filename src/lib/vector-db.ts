@@ -6099,8 +6099,7 @@ export async function retrieveContextDetailed(
       let embedding = getCachedQueryEmbedding(activeModel, q);
       endCacheLookup?.({ cacheHit: embedding != null });
       if (embedding == null) {
-        // Provider-generic health/alert lane (2026-07-19) — see the storeDocument embed-document
-        // call sites above for the same rationale.
+        // Provider-generic health/alert lane (2026-07-19) + stage telemetry from #1892.
         const embedProvider = activeEmbeddingProvider(userId);
         const endEmbed = stageTrace?.start("query_embed_api", {
           provider: embedProvider,

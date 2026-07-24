@@ -42,11 +42,13 @@ describe("Connection Health & Failure Routing", () => {
     delete process.env.LITESTREAM_SOCKET_PATH;
     delete process.env.LITESTREAM_STATE_PATH;
     delete process.env.RAG_EMBED_PROVIDER;
-    // Remove any stored openrouter key seeded by the provider-aware voyage-criticality tests so
-    // activeEmbeddingProvider() resolves back to voyage for the rest of the suite.
+    // Remove provider keys seeded by the provider-aware rag-embed criticality tests so
+    // activeEmbeddingProvider() does not leak across cases.
     try {
       const { db } = await load();
       db.deleteUserApiKey("local", "openrouter");
+      db.deleteUserApiKey("local", "siliconflow");
+      db.deleteUserApiKey("local", "voyage");
     } catch { /* best-effort */ }
     vi.unstubAllGlobals();
   });
@@ -237,9 +239,11 @@ describe("Connection Health & Failure Routing", () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    // Test-only voyage path: only when no openrouter/siliconflow key is present.
     db.upsertUserApiKey("local", "voyage", "voyage-test-key");
 
     for (let i = 0; i < 5; i++) {
+>>>>>>> origin/main
       db.logApiHealth({ service: "rag-embed", ok: false, errorText: "Voyage down", keySource: "env" });
     }
 

@@ -2298,24 +2298,92 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {
+    // NOTE: renumbered to v56 so main's v55 socratic_coach_note_archive stays intact.
     version: 56,
-    name: "historical_fundamentals",
+    name: "document_abstracts",
     up: (database) => {
       database.exec(`
-        CREATE TABLE IF NOT EXISTS historical_fundamentals (
-          symbol TEXT NOT NULL,
-          field TEXT NOT NULL,
-          value REAL NOT NULL,
-          provider TEXT NOT NULL,
-          effective_at TEXT NOT NULL,
-          fetched_at TEXT NOT NULL,
-          PRIMARY KEY (symbol, field, provider, effective_at)
+        CREATE TABLE IF NOT EXISTS document_abstracts (
+          id TEXT PRIMARY KEY,
+          source_type TEXT NOT NULL,
+          ticker TEXT NOT NULL,
+          accession_or_event_id TEXT NOT NULL,
+          headline TEXT NOT NULL,
+          summary_text TEXT NOT NULL,
+          guidance_json TEXT,
+          drivers_json TEXT,
+          risks_json TEXT,
+          source_chunk_ids TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          model_used TEXT NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS idx_document_abstracts_ticker ON document_abstracts (ticker, source_type);
+        CREATE INDEX IF NOT EXISTS idx_document_abstracts_accession ON document_abstracts (accession_or_event_id);
       `);
     }
+  },
+  {
+    // EarningsCalls.dev (symbol, fiscal_year, fiscal_quarter) -> provider earnings-call id map
+    // (burst/smart-daily program, docs/rollouts/2026-07-19-earningscalls-burst-smart-daily.md).
+    // Populated by the id-resolution engine (GET /transcripts/recent listing pages + GET
+    // /companies/ticker/{t} full call history), independent of whether a transcript was ever
+    // FETCHED for that period. This is deliberately a SEPARATE table from
+    // earningscalls_transcripts: a row here means "the provider told us this call's id exists",
+    // not "we have (or tried to fetch) its content" — overloading the transcripts table's
+    // content-NULL negative-cache semantics for this would incorrectly TTL-gate a plain id
+    // lookup (recon memo finding). GLOBAL market data, no user_id column, same class as
+    // earningscalls_transcripts/economic_events.
+    // NOTE (numbering): renumbered to v57 after main's v56 document_abstracts (#1792 merge).
+    version: 57,
+    name: "earningscalls_event_index",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS earningscalls_event_index (
+          symbol TEXT NOT NULL,
+          fiscal_year INTEGER NOT NULL,
+          fiscal_quarter INTEGER NOT NULL,
+          event_id INTEGER NOT NULL,
+          event_date TEXT,
+          source TEXT NOT NULL,
+          discovered_at TEXT NOT NULL,
+          PRIMARY KEY (symbol, fiscal_year, fiscal_quarter)
+        );
+        CREATE INDEX IF NOT EXISTS idx_earningscalls_event_index_symbol
+          ON earningscalls_event_index (symbol, fiscal_year DESC, fiscal_quarter DESC);
+      `);
+    }
+  },
+  {
+    // ONE-SHOT owner-directed burst arm (docs/rollouts/2026-07-19-earningscalls-burst-smart-daily.md):
+    // seed earningscalls_burst_pending=25 so the scheduler's NEXT daily EarningsCalls pass runs the
+    // 25-transcript burst automatically post-deploy (entitlement-probe-gated: a preview-blocked
+    // detection refuses it same as any other pass; idempotent consume — the pass zeroes this
+    // counter before doing any work, so it can never re-arm itself). INSERT OR IGNORE is what makes
+    // this a genuine one-shot: it only takes effect on a database that has NEVER had this settings
+    // row before (a fresh deploy), never overwriting a later admin re-arm or the app's own
+    // post-consume zero on every subsequent migration run/restart.
+    // NOTE (numbering): renumbered to v58 after main's v56 document_abstracts (#1792 merge).
+    version: 58,
+    name: "earningscalls_burst_seed",
+    up: (database) => {
+      // Partial-schema unit tests (and any legacy file that somehow lacks settings)
+      // must still be able to run this one-shot seed without "no such table: settings".
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`
+        )
+        .run("earningscalls_burst_pending", "25", new Date().toISOString());
+    }
+>>>>>>> origin/main
   }
 ];
-
 
 /**
  * ONE-TIME migration (v7): PR #267 moved llmModel/redTeamLlmModel/llmReasoningEffort
@@ -3725,3 +3793,4 @@ export * from "./db-durable-state";
 export * from "./db-economic-events";
 export * from "./db-retrieval-usefulness";
 export * from "./db-earningscalls";
+export * from "./db-document-abstracts";

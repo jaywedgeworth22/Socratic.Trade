@@ -37,7 +37,14 @@ function inScopeNotifications(notifications: NotificationEvent[], activeAccountI
 
 function alertTone(event: NotificationEvent): AlertCenterRow["tone"] {
   if (event.type === "kill_switch" || event.type === "run_failed") return "neg";
-  if (event.status === "failed" || event.type === "budget_alert" || event.type === "provider_degraded") return "warn";
+  if (
+    event.status === "failed" ||
+    event.type === "budget_alert" ||
+    event.type === "provider_degraded" ||
+    event.type === "earningscalls_entitlement_blocked"
+  ) {
+    return "warn";
+  }
   if (event.type === "pending_approval") return "accent";
   return "muted";
 }
@@ -55,6 +62,7 @@ export function matchesFilter(event: NotificationEvent, filter: AlertCenterFilte
           event.type === "run_failed" ||
           event.type === "budget_alert" ||
           event.type === "provider_degraded" ||
+          event.type === "earningscalls_entitlement_blocked" ||
           event.status === "failed")
       );
     case "deliveries":

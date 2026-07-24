@@ -47,6 +47,7 @@ describe("server-metrics provider shape normalization", () => {
         status: "running",
         serverType: "cpx32",
         cpus: 4,
+        memoryGb: 8,
         location: "hel1-dc2",
         ip: "135.181.192.190",
       },

@@ -430,7 +430,7 @@ export async function runStrategyOnce(
     // serving the LLM (after account validation + the usage-budget skip gate). A run that aborts before
     // that point (account unavailable, over budget, no candidate cleared the threshold) leaves the
     // pointer untouched, so it never burns a rotation slot on a run that generated no proposal.
-    const { commit: commitRotation, ...rotationOverride } = resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
+    const { commit: commitRotation, ...rotationOverride } = await resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
 
     // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for
     // over-budget providers whenever the monitor is configured (fire-and-forget, never blocks a run).

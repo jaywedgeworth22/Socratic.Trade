@@ -36,7 +36,7 @@ concurrency:
 jobs:
   delete-pr-caches:
     if: github.event_name == 'pull_request'
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     steps:
       - name: Delete every cache scoped to this PR's ref
         env:
@@ -50,13 +50,9 @@ jobs:
 
   prune-stale-caches:
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            scripts/prune-stale-actions-caches.py
-          sparse-checkout-cone-mode: false
       - name: Keep only the newest entry per cache key prefix
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -84,8 +80,4 @@ jobs:
             gh cache delete "$id" --repo "$REPO" || echo "::warning::failed to delete cache $id (already gone?)"
           done < /tmp/prune_ids.txt
 
-      - name: Disable sparse checkout (prevent poisoning self-hosted runner workspace)
-        if: always()
-        shell: bash
-        run: |
-          git sparse-checkout disable || true
+

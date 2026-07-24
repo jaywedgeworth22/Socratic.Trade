@@ -276,7 +276,6 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   fintechstudios: "FINTECH_STUDIOS_API_KEY",
   powerintell: "FINTECH_STUDIOS_API_KEY",
   tiingo: "TIINGO_API_KEY",
-  intrinio: "INTRINIO_API_KEY",
   twelvedata: "TWELVEDATA_API_KEY",
   logodev: "LOGO_DEV_TOKEN",
   logodev_secret: "LOGO_DEV_SECRET_KEY"
@@ -320,7 +319,6 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   alpaca_paper_secret_key: "alpaca_paper_secret_key",
   apify_api_token: "apify",
   tiingo_api_key: "tiingo",
-  intrinio_api_key: "intrinio",
   twelve_data: "twelvedata",
   twelve_data_api_key: "twelvedata",
   twelvedata_api_key: "twelvedata",
@@ -459,7 +457,6 @@ const API_KEY_TIER: Record<string, CredTier> = {
   siliconflow: "shared-operator-infra", // alternative embeds/reranker provider for the shared corpus
   sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
   tiingo: "shared-operator-infra",
-  intrinio: "shared-operator-infra",
   twelvedata: "shared-operator-infra",
   logodev: "shared-operator-infra",
   logodev_secret: "shared-operator-infra"
@@ -666,7 +663,7 @@ export function resolveAlpacaStreamAccount(
 // with per-user usage tracking (see llm-usage.ts): every call records who spent and on whose key.
 export type LlmKeySource = "user" | "operator" | "none";
 
-/** Whether the operator's env LLM key may serve non-`local` tenants as a failover (default on). */
+/** Whether the operator's env LLM key may serve non-`local` tenants as a failover (disabled outside test). */
 export function llmOperatorFallbackEnabled(): boolean {
   const envVal = process.env.LLM_OPERATOR_FALLBACK;
   if (envVal !== undefined) {
@@ -716,28 +713,12 @@ export function maskApiKeyPreview(key: string | undefined | null): string | unde
  * caller can attribute usage/cost PER ATTACHED key. A non-`local` tenant only reaches the env key
  * when the failover is enabled.
  */
-export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
+export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
   const canonical = normalizeApiKeyService(service);
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
     if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
 
-    if (process.env.NODE_ENV === "test") {
-      if (canonical === "openrouter") {
-        const services: LlmProviderService[] = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek"];
-        for (const svc of services) {
-          const fallbackKey = getUserApiKey(userId, svc);
-          if (fallbackKey?.apiKey) {
-            return { key: fallbackKey.apiKey, source: "user", keyRef: keyFingerprint(fallbackKey.apiKey) };
-          }
-        }
-      } else {
-        const fallbackKey = getUserApiKey(userId, "openrouter");
-        if (fallbackKey?.apiKey) {
-          return { key: fallbackKey.apiKey, source: "user", keyRef: keyFingerprint(fallbackKey.apiKey) };
-        }
-      }
-    }
   }
   // Operator-funded failover for ANY user (flag-gated). `local`'s own env key is migrated into its
   // per-user store at boot, so `local` resolves "user" above; this serves users without their own
@@ -748,7 +729,7 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
 
   if (process.env.NODE_ENV === "test" && !envKey) {
     if (canonical === "openrouter") {
-      const fallbacks = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+      const fallbacks = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "META_API_KEY"];
       for (const f of fallbacks) {
         if (process.env[f]) {
           envKey = process.env[f];
@@ -766,7 +747,7 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
 }
 
 /** Every LLM provider `resolveLlmCredential` understands. The single source of truth for "is an LLM connected". */
-export const LLM_PROVIDER_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "openrouter"] as const;
+export const LLM_PROVIDER_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "meta", "openrouter"] as const;
 export type LlmProviderService = (typeof LLM_PROVIDER_SERVICES)[number];
 
 /**

@@ -106,30 +106,30 @@ export function LearningReviewCard() {
   };
 
   return (
-    <Card title="Daily learning review">
+    <Card title="Learning Review">
       <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
-        Once a day, a frontier-class model re-examines what the system has been learning — recent learned facts and the
+        A frontier-class model re-examines what the system has been learning — recent learned facts and the
         pending approval queue — against the system&apos;s own recent failures and fixes. It catches lessons built on
-        corrupted evidence, like a thesis blamed for losses a stuck exit order actually caused. One review call per day.
+        corrupted evidence, like a thesis blamed for losses a stuck exit order actually caused. The review runs once enough lessons accumulate or time passes.
       </p>
       <div className="flex flex-col gap-3">
         <div
           className="con-row flex items-center justify-between gap-4 rounded-control px-1.5 py-1.5"
-          title="Run the review once per UTC day. Off = nothing runs and nothing is spent."
+          title="Enable the learning review. Off = nothing runs and nothing is spent."
         >
           <div>
-            <div className="text-[length:var(--con-fs-sm)] font-semibold">Run the daily review</div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Enable learning review</div>
             <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
               {enabled
-                ? "On — the review runs once per day and posts its findings to the activity log and notifications."
+                ? "On — the review runs automatically based on the thresholds below and posts its findings to the activity log and notifications."
                 : "Off — no review runs, no model call is made."}
             </p>
           </div>
           <Toggle
             checked={enabled}
             disabled={busy}
-            label="Run the daily review"
-            onChange={(next) => void save({ learningReviewEnabled: next }, next ? "Daily learning review on" : "Daily learning review off")}
+            label="Enable learning review"
+            onChange={(next) => void save({ learningReviewEnabled: next }, next ? "Learning review on" : "Learning review off")}
           />
         </div>
 
@@ -145,7 +145,7 @@ export function LearningReviewCard() {
                 value={String(minNewLessons)}
                 emptyValue={DEFAULT_MIN_NEW_LESSONS}
                 disabled={busy}
-                title="Skips the daily call entirely until at least this many learned facts or pending items have appeared since the last successful review."
+                title="Skips the review entirely until at least this many learned facts or pending items have appeared since the last successful review."
                 onValueChange={(parsed) => setDraft((d) => ({ ...d, learningReviewMinNewLessons: parsed }))}
                 onBlur={() =>
                   commitNumber(
@@ -184,7 +184,7 @@ export function LearningReviewCard() {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
-            label="When it disagrees with a lesson"
+            label="Review Type"
             hint="Annotate only flags; Decide also acts on the verdicts."
             htmlFor="learning-review-mode"
           >
@@ -209,14 +209,14 @@ export function LearningReviewCard() {
           </Field>
           <Field
             label="Learning-review model"
-            hint="One call per day, so a frontier model is the point. Defaults to claude-fable-5."
+            hint="A frontier model is the point. Defaults to claude-fable-5."
             htmlFor="learning-review-model"
           >
             <Select
               id="learning-review-model"
               value={model}
               disabled={busy}
-              title="The model that runs the daily learning review. Needs a resolvable key for its provider (Connections → API keys)."
+              title="The model that runs the learning review. Needs a resolvable key for its provider (Connections → API keys)."
               onChange={(e) => {
                 const nextModel = e.target.value;
                 void save(

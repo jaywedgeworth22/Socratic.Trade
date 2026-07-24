@@ -11,7 +11,7 @@ import {
   parseSteadyApiAssetProfile,
   parseAlphaVantageOverview,
   resolveRapidApiKey,
-  AlphaVantageRapidApiEnrichmentProvider,
+  AlphaVantageRapidApiEnrichmentProvider, FmpRapidApiEnrichmentProvider, InsidersRapidApiEnrichmentProvider, TwelveDataRapidApiEnrichmentProvider,
   type MarketEnrichmentProvider,
   type SymbolEnrichment
 } from "../src/lib/data-providers";
@@ -374,7 +374,7 @@ describe("SteadyApiEnrichmentProvider (via getEnrichmentProvider) — combined c
       // fc.yahoo.com), whose own real-network calls this same global stub also intercepts and
       // must NOT count against the RapidAPI combined budget.
       const isRapidApiHost = /\.p\.rapidapi\.com/.test(u);
-      if (isRapidApiHost) rapidApiCallCount++;
+      if (isRapidApiHost) { console.log("FETCH:", u); rapidApiCallCount++; }
       if (u.includes("OVERVIEW")) return new Response(JSON.stringify({ PERatio: "10" }));
       if (u.includes("modules")) return new Response(JSON.stringify({ sector: "Technology", industry: "Software" }));
       if (isRapidApiHost) {
@@ -389,5 +389,116 @@ describe("SteadyApiEnrichmentProvider (via getEnrichmentProvider) — combined c
     // Each provider's own cap (50) has plenty of headroom — the combined ceiling (3) is what binds,
     // regardless of how many symbols/fields would otherwise be requested.
     expect(rapidApiCallCount).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("FmpRapidApiEnrichmentProvider", () => {
+  it("enriches valid symbols from profile and ratios", async () => {
+    const provider = new FmpRapidApiEnrichmentProvider("key");
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("profile/AAPL")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{
+            companyName: "Apple Inc.",
+            sector: "Technology",
+            industry: "Consumer Electronics",
+            beta: 1.2,
+            lastDiv: 0.92,
+            price: 150,
+            range: "124.17 - 198.23"
+          }]
+        };
+      }
+      if (url.includes("ratios-ttm/AAPL")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{
+            priceToEarningsRatioTTM: 25.4,
+            priceToBookRatioTTM: 40.2,
+            debtEquityRatioTTM: 1.5,
+            returnOnEquityTTM: 0.654,
+            returnOnAssetsTTM: 0.123,
+            grossProfitMarginTTM: 0.432,
+            dividendYieldTTM: 0.005
+          }]
+        };
+      }
+      return { ok: true, status: 200, json: async () => [] };
+    }));
+    const res = await provider.enrich(["AAPL"]);
+    expect(res["AAPL"]).toMatchObject({
+      companyName: "Apple Inc.",
+      sector: "Technology",
+      industry: "Consumer Electronics",
+      beta: 1.2,
+      dividendYield: 0.61,
+      fiftyTwoWeekLow: 124.17,
+      fiftyTwoWeekHigh: 198.23,
+      peRatio: 25.4,
+      pbRatio: 40.2,
+      debtToEquity: 1.5,
+      returnOnEquity: 65.4,
+      returnOnAssets: 12.3,
+      grossProfitMargin: 43.2
+    });
+  });
+});
+
+describe("InsidersRapidApiEnrichmentProvider", () => {
+  it("computes insiderSentiment from transactions", async () => {
+    const provider = new InsidersRapidApiEnrichmentProvider("key");
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("AAPL")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            transactions: [
+              {
+                transactions: [
+                  { transactionAcquiredDisposedCode: "A" },
+                  { transactionAcquiredDisposedCode: "A" },
+                  { transactionAcquiredDisposedCode: "D" }
+                ]
+              }
+            ]
+          })
+        };
+      }
+      return { ok: true, status: 404, json: async () => ({}) };
+    }));
+    const res = await provider.enrich(["AAPL"]);
+    expect(res["AAPL"]).toMatchObject({
+      insiderSentiment: 67
+    });
+  });
+});
+
+describe("TwelveDataRapidApiEnrichmentProvider", () => {
+  it("extracts 52-week high/low", async () => {
+    const provider = new TwelveDataRapidApiEnrichmentProvider("key");
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("AAPL")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            fifty_two_week: {
+              high: "198.23",
+              low: "124.17"
+            }
+          })
+        };
+      }
+      return { ok: true, status: 404, json: async () => ({}) };
+    }));
+    const res = await provider.enrich(["AAPL"]);
+    expect(res["AAPL"]).toMatchObject({
+      fiftyTwoWeekHigh: 198.23,
+      fiftyTwoWeekLow: 124.17
+    });
   });
 });

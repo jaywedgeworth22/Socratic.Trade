@@ -1,3 +1,47 @@
+# Current Status
+
+## 2026-07-24 — Effort-board accuracy audit (CURSOR)
+
+Audited `docs/EFFORT-LOG.md` against GitHub PR state + production `/api/health` release SHA.
+Cleared stale In Progress (Usage-compliance Wave 2 = #1820; Server Stats reliability = #1292+#1751).
+Corrected Planned rows that were already merged, claimed without a live branch, or obsolete under
+auto-deploy / preview retirement. Board section placement drives `effort-issues-sync` state labels.
+Rollout: `docs/rollouts/2026-07-24-effort-board-accuracy-audit.md`.
+
+## 2026-07-24 — Open efforts sweep closeout (CURSOR)
+
+Product PRs #1901/#1902/#1792/#1819/#1842/#2123 and docs #1980/#2005/#2022 are on `main`.
+Open `state:in-progress` GitHub issues are back to board-true WIP (Usage-compliance Wave 2 +
+infra-panel reliability). `scripts/sync-effort-issues.py` now closes open orphan mirrors.
+Board/script repair PR #2143 + follow-up #2155 (admin RAM + cache cleanup) still auto-merge
+armed. Use `GITHUB_MCP_TOKEN` (not the broken `GITHUB_TOKEN`) for Issues/rulesets. Rollout:
+`docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
+## 2026-07-24 — Resolve open efforts closeout (CURSOR)
+
+Merged #1842 + #1792. Remaining open product PRs: #1902 (Busy retry) and #1819 (earningscalls burst,
+migrations renumbered v57/v58 after document_abstracts). Docs PR #2022 open. Effort-issues sync
+closed 86 mirrors; open `state:in-progress` issues down to the 3 genuine WIP rows. Ruleset requires
+`verify` + `check-pin`. Rollout: `docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
+## 2026-07-24 — Resolve open efforts + stale issue mirrors (CURSOR)
+
+`GITHUB_MCP_TOKEN` unlocks Issues/rulesets. Drained ~79 stuck Sentry CI Report runs; four open
+PRs (#1902/#1792/#1819/#1842) still MERGEABLE + auto-merge-armed awaiting `verify`. Restored
+ruleset required checks to `verify` + `check-pin` (`strict` false). Large EFFORT-LOG hygiene:
+moved already-merged In Progress rows to Completed so effort-issues-sync can close stale
+`state:in-progress` mirrors. Genuine WIP left: unstick claim, Usage-compliance Wave 2 (no PR),
+infra-panel reliability (unpushed). Rollout: `docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
+## 2026-07-24 — Unstick open PRs round 2 + board hygiene (CURSOR)
+
+Four open PRs remain with squash auto-merge armed after CI/merge fixes:
+#1902 (Busy retry + OpenRouter `~latest` normalizer), #1792 (advisory cleanup / rag-embed
+null-guard), #1819 (earningscalls burst + typed settings-key scan), #1842 (RapidAPI docs).
+#1901/#1980/#1981 already on `main`. Board corrections for #1847/#1828/#1839/#1981/check-pin/
+which-key/retired-provider cleanup. Hosted `verify` is the merge gate. Rollout:
+`docs/rollouts/2026-07-23-unstick-open-prs.md`.
+
 ## 2026-07-22 — RAG review remediation round 2 (PR #1892, GROK)
 
 Closed the remaining open connector threads on PR #1892 without enabling any RAG flags: invalid
@@ -60,6 +104,27 @@ then integrate it alongside dense recall in a separately reviewed retrieval PR. 
 `docs/rollouts/2026-07-21-corpus-wide-lexical-candidates.md`.
 # Current Status
 
+## 2026-07-22 — Approval Busy, red-team availability, and UptimeRobot diagnosis (CODEX→GROK, branch `codex/trade-approval-redteam-uptime-20260722`)
+
+Live verification: `/api/health` returns HTTP 200, including with `UptimeRobot/2.0`; the console and
+approvals page load. The approval `Result: Busy` is the intentional per-user/per-account strategy
+lock, with a stale-run sweep recently marking a crashed run failed. Live pending proposals show
+Claude Fable 5 unavailable on the OpenRouter account, GPT-5.6 Sol timed out, and DeepSeek V4 Pro
+returned a malformed/no response. Rotation previously checked only that an OpenRouter credential
+resolved. This branch adds bounded retries for the side-effect-free Busy result and filters rotating
+models through OpenRouter's account-filtered `/api/v1/models/user` list (fail-closed if unavailable),
+without changing explicit model selection or order execution. UptimeRobot already monitors
+`https://socratictrade.com/api/health` (HTTP + Keyword low-credit monitors both UP). `/` redirects
+to login (307) and `/api/ready` is protected (401). Build completed after CODEX handoff
+(`.next/BUILD_ID` present); GROK owns gate re-run + `scripts/land.sh`. Rollout:
+`docs/rollouts/2026-07-22-approval-redteam-uptime.md`.
+## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
+
+The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider
+dispatch/cost references. Commit `28a09b84` now keeps the durable `voyage-rerank` service key,
+narrows the active provider for the health lane, and uses `estimateRagDispatchCost`. The branch is
+ready for a fresh hosted gate; auto-merge is armed. No production/provider/corpus writes were made.
+
 ## 2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, `codex/rag-shadow-benchmarks-20260722`)
 
 Added a default-off, read-only capability/context probe. The local Turso/libSQL probe reports installed-client and vector-SQL capability without a network/database write; this checkout has no direct `@libsql/client` dependency, so a real remote Turso benchmark is intentionally not attempted. The Pinecone path requires an explicit live flag, a named pre-existing Assistant, an API key, externally supplied frozen cases, a 100-query cap, and a 30-second aborting timeout. It calls only Assistant context retrieval and emits redacted latency/citation/usage/error receipts—never prompts, snippets, file names, answers, keys, or provider errors. It does not claim relevance/provider-selection evidence without a same-corpus golden citation mapping. No provider, corpus, index, file, broker, or production mutation was made. Rollout: `docs/rollouts/2026-07-22-rag-shadow-benchmarks.md`.
@@ -86,12 +151,42 @@ from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
 # Current Status
 
+## 2026-07-22 — Approval Busy, red-team availability, and UptimeRobot diagnosis (CODEX→GROK, branch `codex/trade-approval-redteam-uptime-20260722`)
+
+Live verification: `/api/health` returns HTTP 200, including with `UptimeRobot/2.0`; the console and
+approvals page load. The approval `Result: Busy` is the intentional per-user/per-account strategy
+lock, with a stale-run sweep recently marking a crashed run failed. Live pending proposals show
+Claude Fable 5 unavailable on the OpenRouter account, GPT-5.6 Sol timed out, and DeepSeek V4 Pro
+returned a malformed/no response. Rotation previously checked only that an OpenRouter credential
+resolved. This branch adds bounded retries for the side-effect-free Busy result and filters rotating
+models through OpenRouter's account-filtered `/api/v1/models/user` list (fail-closed if unavailable),
+without changing explicit model selection or order execution. UptimeRobot already monitors
+`https://socratictrade.com/api/health` (HTTP + Keyword low-credit monitors both UP). `/` redirects
+to login (307) and `/api/ready` is protected (401). Build completed after CODEX handoff
+(`.next/BUILD_ID` present); GROK owns gate re-run + `scripts/land.sh`. Rollout:
+`docs/rollouts/2026-07-22-approval-redteam-uptime.md`.
 ## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
 
 The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider
 dispatch/cost references. Commit `28a09b84` now keeps the durable `voyage-rerank` service key,
 narrows the active provider for the health lane, and uses `estimateRagDispatchCost`. The branch is
 ready for a fresh hosted gate; auto-merge is armed. No production/provider/corpus writes were made.
+## 2026-07-22 — Retired-provider Usage Monitor cleanup (GROK peer co-work, branch `codex/retired-provider-usage-cleanup`)
+
+Removed Usage Monitor emissions from the Alpaca, Tradier, and Robinhood broker adapters while
+preserving their trading, account-read, and API-health behavior. Removed the unused Intrinio
+implementation, API-key configuration, environment example, and current forward-looking docs;
+historical rollout/review/handoff evidence remains intact. A central provider-family policy
+suppresses the retired broker roots and their subproviders (including Alpaca news/snapshot) on both
+live `recordProviderCall` admission and durable provider-dispatch/replay paths
+(`createProviderDispatchUsageMonitorEvent` returns null; replay drops nulls and advances
+watermarks). `pushBrokerBalance` is removed. Paid FMP control traffic remains eligible. Integrated
+on top of #1889 exact merge `bd7068b6` (strict-v2 IDs/ACK/watermark/cutover preserved). Rollout:
+`docs/rollouts/2026-07-22-retired-provider-usage-cleanup.md`.
+## 2026-07-23 — Gemini Reasoning Temperature Fix (ANTIGRAVITY)
+
+Fixed an issue where Gemini 3.1 Pro Preview (and other reasoning-enabled Gemini models) would fail when used for the Red Team due to passing `temperature` to the provider. The LLM request shaper (`withLlmRequestBounds` in `src/lib/llm-request.ts`) now correctly omits `temperature` for Gemini models when `reasoning_effort` is enabled, matching the existing behavior for Anthropic, OpenAI, Mistral, and DeepSeek. `npx tsc --noEmit` verified clean. Rollout: `docs/rollouts/2026-07-23-gemini-temperature-fix.md`.
+
 ## 2026-07-22 — Admin UI Polish (ANTIGRAVITY, branch `fix/admin-ui-polish`)
 
 Fixed Admin panel UI bugs:
@@ -3024,11 +3119,27 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## 2026-07-11 — Truthful notification delivery status (CODEX, current-main replacement branch)
 ## What was just completed
+- 2026-07-23 Gemini Reasoning Temp: Fixed model canonicalization regexes in `src/lib/model-identity.ts` for strictly stripping provider prefixes, and fixed corresponding unit tests in `model-rotation.test.ts` and `console-models.test.ts`. Also updated `usage-compliance-classifier.test.ts` assertions. All changes pushed to PR #1978 and tested against Node 24 natively.
 - Native Apple sign-in, login/logo updates, Model Stats drawer changes, and mobile overlap fixes
   were recorded by the AG lane. Their original PRs #1525 and #1526 are closed without merge, so
   there is no pending branch handoff to land from either PR.
 
 ## Current Status
+- Database Migration 55 implemented in `src/lib/db.ts` creating `document_abstracts` with indexes on ticker, source_type, and accession_or_event_id.
+- `src/lib/db-document-abstracts.ts` added with `insertDocumentAbstract`, `getDocumentAbstractsForTicker`, `getDocumentAbstractByAccession`.
+- `src/lib/rag/document-summarizer.ts` implemented for generating cited abstracts and embedding them into Pinecone/Voyage under `doc_type: "document-summary"` or `"earnings-summary"`.
+- `test/document-summarizer.test.ts` passes 2/2 tests cleanly.
+- `npx tsc --noEmit` verified with 0 errors.
+
+## 2026-07-23 — Gemini Reasoning Temp (ANTIGRAVITY, branch `fix/gemini-reasoning-temp`)
+
+Fixed logic bugs in model ID stripping that broke rotation for model variants:
+1. `src/lib/model-identity.ts` regex was updated to cleanly handle vendor prefixes and `-latest` suffixes properly.
+2. `test/model-rotation.test.ts` updated to match the correct curated rotation pool keys without failures.
+3. Node 24 binaries for `better-sqlite3` were recompiled and tested cleanly via `scripts/land.sh`.
+
+All 5267 tests and the Next.js build passed. Rollout: `docs/rollouts/2026-07-23-gemini-reasoning-temp.md`.
+
 
 ## 2026-07-23 — FMP Downgrade Mitigation & UI Stale Indicators (ANTIGRAVITY, branch `fix-1792`)
 
@@ -3089,6 +3200,7 @@ Completed the SEC/RAG parser and chunker hardening by resolving outstanding stru
   mutation has occurred.
 
 ## Next Action
+- Land branch `agent/antigravity` via `scripts/land.sh`.
 - Run the ordered full gate, push #1586 through `scripts/land.sh`, mark the PR ready, resolve hosted
   checks/review, merge it, require zero open PRs, then verify the exact final `main` SHA through production
   health/readiness and Coolify runtime surfaces.
@@ -3119,3 +3231,11 @@ execution is deferred. The only server change aligns the Apple identity-token au
 with `trade.socratic.app` and has 3/3 focused tests. Targeted Node tests (7/7), TypeScript, ESLint,
 plist/asset validation, and diff check pass. Rollout:
 `docs/rollouts/2026-07-21-native-ios-mobile-first-phase-1.md`.
+
+## 2026-07-23 — Cleanup Caches Runner Fix (ANTIGRAVITY, branch `fix/cleanup-caches-runner`)
+
+Fixed a CI failure in `.github/workflows/cleanup-caches.yml` by retargeting the jobs from `[self-hosted, socratic-ci]` to `ubuntu-latest`. The self-hosted Coolify runners do not have the GitHub CLI (`gh`) installed globally, which is required by both the `delete-pr-caches` and `prune-stale-caches` jobs. Because `cleanup-caches.yml` operates purely via the GitHub API (via `gh`) and doesn't require any app builds or local runner state, it can safely and freely run on `ubuntu-latest` without consuming our self-hosted runner concurrency.
+
+## 2026-07-23 — Admin Panel Server RAM Fix & CI ESLint Ignores (ANTIGRAVITY)
+
+The Admin panel's "Server Metrics" tab was modified to extract actual RAM capacity directly from the Hetzner Server API's metadata rather than relying on Coolify metadata to ensure accurate memory percentages. Also, added `**/.worktrees/**` to the ESLint configuration ignores to prevent CI `verify` gates from failing when linting other agents' worktree paths. Verified clean on 5000+ tests and builds.

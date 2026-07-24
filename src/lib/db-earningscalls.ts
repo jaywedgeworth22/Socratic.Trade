@@ -177,3 +177,108 @@ export function recordEarningsCallsSymbolCheck(check: EarningsCallsSymbolCheck):
     )
     .run(normalizeSymbol(check.symbol), check.checkedAt, check.latestEventId ?? null, check.latestEventDate ?? null);
 }
+
+// ── (symbol, fiscal_year, fiscal_quarter) -> provider earnings-call id map ─────────────────
+// Populated by the id-resolution engine (the /transcripts/recent daily listing pages, and the
+// /companies/ticker/{t} full-history resolver for targeted historical backfill). A row here means
+// "the provider told us this call's id exists" — independent of whether a transcript was ever
+// fetched for it (that's earningscalls_transcripts). See migration 53 (earningscalls_event_index)
+// in db.ts for why this is a separate table from the transcripts cache.
+
+export type EarningsCallsEventIndexSource = "listing" | "company-history" | "probe";
+
+export interface EarningsCallsEventIndexRow {
+  symbol: string;
+  fiscalYear: number;
+  fiscalQuarter: number;
+  eventId: number;
+  eventDate?: string;
+  source: EarningsCallsEventIndexSource;
+  discoveredAt: string;
+}
+
+interface RawEventIndexRow {
+  symbol: string;
+  fiscal_year: number;
+  fiscal_quarter: number;
+  event_id: number;
+  event_date: string | null;
+  source: string;
+  discovered_at: string;
+}
+
+function toEventIndexRow(raw: RawEventIndexRow): EarningsCallsEventIndexRow {
+  return {
+    symbol: raw.symbol,
+    fiscalYear: raw.fiscal_year,
+    fiscalQuarter: raw.fiscal_quarter,
+    eventId: raw.event_id,
+    eventDate: raw.event_date ?? undefined,
+    source: raw.source as EarningsCallsEventIndexSource,
+    discoveredAt: raw.discovered_at
+  };
+}
+
+/** Insert or refresh one (symbol, fy, fq) -> eventId mapping. Idempotent (safe to re-run the
+ *  same listing page or history fetch); a later, more-specific source never downgrades the
+ *  event_date once known. */
+export function upsertEarningsCallsEventIndex(row: Omit<EarningsCallsEventIndexRow, "discoveredAt"> & { discoveredAt?: string }): void {
+  const discoveredAt = row.discoveredAt ?? new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO earningscalls_event_index
+         (symbol, fiscal_year, fiscal_quarter, event_id, event_date, source, discovered_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(symbol, fiscal_year, fiscal_quarter) DO UPDATE SET
+         event_id = excluded.event_id,
+         event_date = COALESCE(excluded.event_date, earningscalls_event_index.event_date),
+         source = excluded.source,
+         discovered_at = excluded.discovered_at`
+    )
+    .run(
+      normalizeSymbol(row.symbol),
+      row.fiscalYear,
+      row.fiscalQuarter,
+      row.eventId,
+      row.eventDate ?? null,
+      row.source,
+      discoveredAt
+    );
+}
+
+export function getEarningsCallsEventIndex(
+  symbol: string,
+  fiscalYear: number,
+  fiscalQuarter: number
+): EarningsCallsEventIndexRow | undefined {
+  const raw = getDb()
+    .prepare(
+      `SELECT symbol, fiscal_year, fiscal_quarter, event_id, event_date, source, discovered_at
+       FROM earningscalls_event_index WHERE symbol = ? AND fiscal_year = ? AND fiscal_quarter = ?`
+    )
+    .get(normalizeSymbol(symbol), fiscalYear, fiscalQuarter) as RawEventIndexRow | undefined;
+  return raw ? toEventIndexRow(raw) : undefined;
+}
+
+/** Most recent known call for a symbol (highest fiscal_year, then fiscal_quarter) — the free
+ *  (no-request) lookup the smart picker tries before falling back to a live per-symbol probe. */
+export function getLatestEarningsCallsEventForSymbol(symbol: string): EarningsCallsEventIndexRow | undefined {
+  const raw = getDb()
+    .prepare(
+      `SELECT symbol, fiscal_year, fiscal_quarter, event_id, event_date, source, discovered_at
+       FROM earningscalls_event_index WHERE symbol = ?
+       ORDER BY fiscal_year DESC, fiscal_quarter DESC LIMIT 1`
+    )
+    .get(normalizeSymbol(symbol)) as RawEventIndexRow | undefined;
+  return raw ? toEventIndexRow(raw) : undefined;
+}
+
+/** True when the event index holds at least one row for the symbol (any period) — the "lacking
+ *  coverage" test the burst's targeted-historical step uses to decide whether a held symbol is
+ *  worth a /companies/ticker/{t} full-history call. */
+export function hasAnyEarningsCallsEventForSymbol(symbol: string): boolean {
+  const row = getDb()
+    .prepare(`SELECT 1 AS present FROM earningscalls_event_index WHERE symbol = ? LIMIT 1`)
+    .get(normalizeSymbol(symbol)) as { present: number } | undefined;
+  return row !== undefined;
+}
