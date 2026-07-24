@@ -41,6 +41,40 @@ rules text. No effort rows were changed.)_
 
 As of 2026-07-08 (assignment-rule update).
 
+## In Progress
+- **[Socratic.Trade][CLAUDE] Three new RapidAPI-backed enrichment providers: Mboum Finance, YH
+  Finance 15, Alpha Vantage RapidAPI transport (worktree
+  `model-availability-session-handoff-362fd3`, branch
+  `claude/model-availability-session-handoff-362fd3`, claimed 2026-07-19) — IN PROGRESS
+  (implementation + tests complete, FULL VERIFY GATE GREEN — tsc/lint/4927 tests/build — not yet landed).** Owner-directed
+  expansion of market enrichment redundancy against one shared RapidAPI subscription. New
+  `src/lib/rapidapi-quota.ts` (persisted daily budget, mirrors alpha-vantage-key-pool.ts's
+  tryReserve/refund pattern) enforces BOTH a per-provider cap (Mboum 16/day, YH Finance 15 3/day,
+  AV-RapidAPI 500/day — env-overridable via `PROVIDER_QUOTA_*_PER_DAY`) AND a combined 900/day
+  safety ceiling (`PROVIDER_QUOTA_RAPIDAPI_COMBINED_PER_DAY`) across all three, since Mboum/YHF's
+  real limits are MONTHLY (500/mo, 100/mo) and a naive per-scan dispatch could exhaust a month's
+  quota in one run. New `SteadyApiEnrichmentProvider` (shared by Mboum + YH Finance 15) +
+  `AlphaVantageRapidApiEnrichmentProvider` in `src/lib/data-providers.ts`, registered in
+  `getEnrichmentProvider` AFTER the free Yahoo scrape (deep failover tier — first-wins per field
+  means they only fill gaps the free scrape left empty), dormant unless `RAPIDAPI_KEY` is set. 33
+  new provider tests + 13 quota tests; full suite 420 files/4927 tests pass, build exit 0. Rollout:
+  `docs/rollouts/2026-07-19-rapidapi-yahoo-av-providers.md`.
+  *Correction (2026-07-19, in place per board rules): this work now lives on branch
+  `claude/rapidapi-yahoo-av-providers` (PR #1796), not
+  `claude/model-availability-session-handoff-362fd3` as the row originally read.*
+  **Update 2026-07-19 — per-symbol coverage-narrowing gate added (the deferred P0 is CLOSED).**
+  `CascadingEnrichmentProvider.enrich` now runs a TWO-WAVE dispatch: wave one is every provider that
+  has not opted in (unchanged — same single concurrent `Promise.all` over the full batch, so zero
+  latency/behavior regression for pre-existing providers), then wave two runs only the providers
+  that declare `quotaScarce` + `suppliesFields`, and only over the symbols where wave one left one
+  of their declared fields empty. A scarce provider with nothing to add is not called at all and so
+  reserves no quota. Declared on all three RapidAPI providers; results reassembled positionally so
+  first-wins merge precedence / attribution are identical; a wave-one provider that throws counts as
+  "did not cover" so it can never suppress the failover tier. Flag
+  `ENRICHMENT_SCARCE_TIER_GATE_ENABLED`, default ON, scoped only to opted-in providers. New
+  `test/enrichment-scarce-tier-gate.test.ts` (13 tests, incl. a real-provider zero-quota check).
+  tsc clean, lint 0 errors, 405 targeted tests green across every cascade-touching file; full
+  `npm test`/`npm run build` deferred to the landing gate.
 ---
 
 ## 2026-07-22 — CODEX evidence-receipt sublane
@@ -4001,6 +4035,9 @@ brackets; effort S/M/L.
 - **2026-07-19 PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`) — Completed.** Fixed 3 Codex findings on the `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note: (1) P1 commit-identity flag re-verified as already correct on the branch (the flagged short hash `bbe7fe3` isn't reachable; both live commits carry the correct noreply identity) — no rebase performed; (2) P2 stale STATUS.md/EFFORT-LOG.md mobile tab-bar status — corrected (see row above); (3) P2 stale open-PR inventory (#1728/#1733/#1735/#1736/#1737/#1738 documented as open) — all 6 re-verified MERGED via `gh pr view --json state,mergedAt`, addendum added to the rollout note with exact timestamps/SHAs. Docs-only. Rollout: addendum on `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 - **2026-07-19 PR #1773 Codex-review fix pass (CLAUDE, branch `monet/session-handoff-2026-07-19`) — Completed (pending merge).** Owner-directed fix of 6 real Codex P2 findings on PR #1773 (docs-only), each independently verified against live repo/git state (not rubber-stamped — see `docs/rollouts/2026-07-19-monet-session-handoff.md` for the reworded guidance and the `STATUS.md`/`PLAN.md` entries this session added). Summary: (1) reworded the rollout note's "recurring Codex false positive" guidance to require per-instance `git cat-file -t <sha>` verification instead of blanket dismissal — the re-cited SHA `a14df5f8...` still doesn't exist in this repo (independently reconfirmed) and this branch's own commits already carry the correct noreply identity, so no amend was needed; (2) added the missing PLAN.md next-action entry (#1771→#1773→#1777 landing order + re-embed); (3) reworded STATUS's re-embed claim from unbacked to live-verified via a Pinecone `describe-index-stats` check performed this session (legacy namespace ~8.7k intact, managed namespace ~1.6k — genuinely incomplete); (4)+(6) qualified `scripts/reindex-all.ts`/`reindex-10k` as SEC-10-K/10-Q-only and added the existing `POST /api/admin/reindex-8k` backfill path to the rollout note; (5) added a reconciliation banner (not a rewrite) to `docs/prod-config-voyage.md` noting prod runs bge-m3 via OpenRouter now, not the Voyage default the doc's body describes. Land via `scripts/land.sh`; shared CI runner reported severely backlogged (30+ jobs queued) — pushed once per instruction, no manual reruns.
 
+- **2026-07-20 Prod deploy-wedge closeout + secrets-file repair + PR-queue unblock (CLAUDE, branches `claude/litestream-leak-mitigation`, `claude/rapidapi-yahoo-av-providers`).** (1) **Secrets file was silently breaking every consumer:** `~/.secrets/global-api-keys` had 16 UNQUOTED values, and the rotated `COOLIFY_API_TOKEN` contains a `|` — sourcing assigned only the fragment before the pipe and tried to EXECUTE the rest (leaking it). That, not a "stale MCP process" (my earlier wrong call), is why Coolify API/MCP 401'd. Quoted all 61 values (backup `.bak-quotefix-*`), verified full-length load + API 200. `RAPIDAPI_KEY` and all 5 `CF_R2_*` were equally vulnerable. **Owner: rotate `COOLIFY_API_TOKEN`.** (2) **GODEBUG test NEGATIVE — H-A eliminated:** `GODEBUG=http2client=0` deployed to prod; leak continued 137→1044 fds in 4min (~13.6k/hr vs ~15k baseline). HTTP/2 GOAWAY retention is NOT the litestream leak cause (0 replication errors on HTTP/1.1, so safe but useless; env removed). Leading hypothesis now H-B (un-drained S3 response bodies), strengthened by upstream #1210 (replica monitor Syncs every second even on an idle DB). No one-line runtime fix — the self-healing watchdog is load-bearing. (3) **PR pileup root-caused to TWO flaky tests** (`chat-draft-policy.test.ts:596`, `llm-provider-cooldown.test.ts:253`) failing on UNRELATED diffs — proven by a dependabot CSS-lib bump failing the same pair as a YAML-only change. **PR #1788 already fixes both**; it was phantom-DIRTY, resolved locally (0 real conflicts) and pushed → now MERGEABLE. (4) **Phantom-conflict sweep:** GitHub's mergeability cache is stale under the current push burst — `update-branch` returns 422 while a local merge is clean. Unstuck the CLAUDE-seat backlog by local-merge+push; other seats' branches left untouched and the recipe posted to #agent-sync. Rollouts: `docs/rollouts/2026-07-19-litestream-socket-leak-mitigation.md`, `docs/rollouts/2026-07-19-deploy-wedge-diagnosis.md`. State: **In Progress (PRs #1788/#1796/#1822 queued on CI, auto-merge armed).**
+| 2026-07-20 | Integrate 5 RapidAPI/FilingAPI/ROIC Providers | Completed | Added FMP, Insiders, TwelveData, FilingAPI, and ROIC.ai into the enrichment cascade with tests and quotas | AG |
+| 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
 | 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
 
 - **2026-07-20 CI deadlock + package-pin update (AG, branch `claude/checkpin-always-on-prs`) — Completed.** Restored the stalled check-pin fixes after a server restart. Diagnosed that the Hetzner runner `socratic-deploy` was disconnecting/failing jobs. Re-routed PR 1771 CI workflows to the online `trading-live-mac` runner, allowing PR 1771 to auto-merge. For PR 1780, `check-pin` failed because `Congress.Trade` was recently bumped to `v1.11.1` while `Socratic.Trade` lagged behind; bumped Socratic.Trade's shared package to `v1.11.1` to resolve the divergence. PR 1780 is now armed for auto-merge on the Mac runner.
