@@ -570,6 +570,17 @@ When investigating **live** strategy runs, multi-account behavior, or production
 bash scripts/fetch-prod-ops-snapshot.sh
 ```
 
+When investigating **CI / Actions runner** health (queued jobs, missing labels, Coolify
+server reachability), **run often**:
+
+```bash
+bash scripts/monitor-coolify-runners.sh --ssh
+```
+
+Needs `COOLIFY_API_TOKEN`, a GH token (`GITHUB_MCP_TOKEN` / `GH_TOKEN`), and SSH access to
+ci-cpx32 (`CI_SSH_KEY`) plus optional `HETZNER_ROOT` for the prod host. See
+`docs/rollouts/2026-07-24-coolify-runners-only.md`.
+
 **One-time owner setup (both sides must use the same token):**
 
 1. Generate: `openssl rand -hex 32`
