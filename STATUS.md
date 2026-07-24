@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-07-24 — Open efforts sweep closeout (CURSOR)
+
+Product PRs #1901/#1902/#1792/#1819/#1842/#2123 and docs #1980/#2005/#2022 are on `main`.
+Open `state:in-progress` GitHub issues are back to board-true WIP (Usage-compliance Wave 2 +
+infra-panel reliability). `scripts/sync-effort-issues.py` now closes open orphan mirrors.
+Board/script repair PR #2143 + follow-up #2155 (admin RAM + cache cleanup) still auto-merge
+armed. Use `GITHUB_MCP_TOKEN` (not the broken `GITHUB_TOKEN`) for Issues/rulesets. Rollout:
+`docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
 ## 2026-07-24 — Resolve open efforts closeout (CURSOR)
 
 Merged #1842 + #1792. Remaining open product PRs: #1902 (Busy retry) and #1819 (earningscalls burst,
