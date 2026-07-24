@@ -609,9 +609,9 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   // sweepAutoAcknowledgeNotifications in db-notifications.ts.
   sweepAutoAcknowledgeNotifications(userId);
   const notifications = listNotificationEvents(userId, 100);
-  const latestRunAudit = policy.connectedAccountId
+  const latestRunAudit = (policy.connectedAccountId
     ? latestAuditByKind("strategy_run", userId, policy.connectedAccountId)
-    : latestAuditByKind("strategy_run", userId);
+    : undefined) ?? latestAuditByKind("strategy_run", userId);
   const latestStrategyRun = latestRunAudit
     ? ({ ...(latestRunAudit.payload as StrategyDecisionLike), createdAt: latestRunAudit.createdAt } satisfies StrategyDecisionLike)
     : undefined;

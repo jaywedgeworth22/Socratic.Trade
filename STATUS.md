@@ -1,6 +1,8 @@
 # Current Status
 
-## 2026-07-24 — Robinhood OAuth production redirect URI fix (ANTIGRAVITY)
+## 2026-07-24 — Cross-account market scan seed enrichment sharing (ANTIGRAVITY)
+
+Fixed interactive market scans (`/api/scan`) and dashboard snapshots (`dashboard.ts`) strictly scoping `seedEnrichment` to the active account's previous `strategy_run` audit. Merged global user strategy run quote summaries with account-specific runs so enriched fundamental data (P/E, EPS Growth, Dividend, Sentiment, Analyst Rating, Sector) is immediately shared across all user accounts. Rollout: `docs/rollouts/2026-07-24-cross-account-market-scan-sharing.md`.
 
 Fixed Robinhood reconnect from `socratictrade.com` redirecting to `http://localhost:4000/api/auth/robinhood/callback`. Updated Infisical `prod` secrets for Socratic.Trade (`39d93bb7-76f9-498c-8b50-a7def52e072f`): set `ROBINHOOD_MCP_REDIRECT_URI=https://socratictrade.com/api/auth/robinhood/callback` and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=off`. Triggered redeploy on Coolify (`m1os7ijf31bg3fanil152e4b`). Rollout: `docs/rollouts/2026-07-24-robinhood-production-redirect-uri-fix.md`.
 
