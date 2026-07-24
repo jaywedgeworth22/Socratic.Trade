@@ -1,4 +1,3 @@
-- **[Socratic.Trade/Congress.Trade][AG] Reconcile and sync 47 total pending PRs to stabilized main (branch `agent/antigravity-ci-fix-revert`) — COMPLETED 2026-07-21.** Synced 40 Socratic.Trade PRs and 6 Congress.Trade PRs with main. Rebased dependabot PRs and merged main cleanly into human/agent branches, resolving safe package-lock.json/EFFORT-LOG.md conflicts and forcing CI checks onto the newly stabilized Linux runners.
 # Trading Effort Log - canonical live cross-agent board
 
 This is the branch-neutral live coordination board for Socratic Trade work across
@@ -32,7 +31,9 @@ State definitions:
   that agent has actually claimed the work and plans to start it imminently. Otherwise
   leave the row unassigned (no agent tag) — first agent to pick it up claims it.
 - In Progress: actively being built; include owner/worktree/branch and one-line status.
-- Completed: merged to `main`; beta/integration only unless separately deployed.
+- Completed: merged to `main`. **As of 2026-07-10, merge to `main` auto-deploys production**
+  (`socratic-trade-prod`); Completed and Deployed usually collapse unless a row documents a
+  deploy verification gap or a non-auto-deployed exception.
 
 _(Correction 2026-07-08, MONET: lines 17/25 above had "In Progress" wrongly replaced by
 "Completed" — apparently a global find-replace slip; restored to match the repo mirror's
@@ -55,14 +56,18 @@ As of 2026-07-08 (assignment-rule update).
   owner per-position stop editor, `stopBasis` clamped numeric elicitation, `invalidation`/`maxHoldingDays`,
   counterfactual exit ledger (fixed/time/no-stop only), held-name event triggers + earnings producer. Detail:
   design doc Phase C + "What NOT to do" list (binding scope cuts from the debate round).
-- **SEC/RAG P0 corpus truth + frozen 1,000-CIK universe (CODEX program; RAG-B14/B16, claimed 2026-07-13) —
-  IN PROGRESS / BASELINE #1495 MERGED; ACCEPTANCE CURRENTLY FAILS.** A new schema-v2 validator requires a dated,
+- **SEC/RAG P0 corpus truth + frozen 1,000-CIK universe (CODEX program; RAG-B14/B16) —
+  SUPERSEDED / FOUNDATION MERGED (CURSOR correction 2026-07-24).** Baseline #1495 MERGED 2026-07-13; later
+  program slices landed via #1543/#1559/#1669/#1892. Residual enablement/re-embed proof stays Planned under
+  the OWNER REMINDER RAG enablement row + `docs/FEATURE-ENABLEMENT-BACKLOG.md` — not an active CODEX claim.
+  Original status text preserved below for history: ~~IN PROGRESS / BASELINE #1495 MERGED; ACCEPTANCE CURRENTLY FAILS.~~ A new schema-v2 validator requires a dated,
   checksummed 1,000-operating-issuer snapshot with explicit exchange/security classification, alias verification,
   liquidity dimensions, source receipts, and quarantine; the legacy bare array fails closed. Remaining: authenticated production corpus census, exact runtime/config reconciliation, stable issuer/share-
   class aliases, selection snapshot/reasons, and coverage by issuer/form/period/artifact/parser/embed revision.
   Dependency and acceptance detail: `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` P0.
-- **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07, claimed 2026-07-13) —
-  MERGED IN PR #1543 / POST-MERGE P2 FOLLOW-UP IN PROGRESS.** Migration v23 plus `db-rag-ingest`
+- **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07) —
+  COMPLETED via #1543 + #1559 (CURSOR correction 2026-07-24).** Foundation + post-merge receipt fixes on `main`
+  (auto-deploy era). Residual worker/PIT wiring is backlog, not an active claim. Was: ~~POST-MERGE P2 FOLLOW-UP IN PROGRESS.~~ Migration v23 plus `db-rag-ingest`
   now provide deterministic replay keys, sealed jobs, ordered stage checkpoints, atomic fenced leases/heartbeats,
   bounded retry/dead-letter/quarantine, cost receipts, and verification-required completion. All three PR review
   findings across three pre-merge review passes are fixed and covered; PR #1543 merged as `cbe3e532` after all
@@ -73,29 +78,38 @@ As of 2026-07-08 (assignment-rule update).
   artifacts/sections/facts, exact accepted timestamps,
   amendments/supersession, worker adapters, and PIT-
   safe replay before any bulk embed.
-- **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (CODEX program; RAG-B04/B05, claimed 2026-07-13)
-  — IN PROGRESS / HOSTILE REVIEW REJECTED; FIXES UNDERWAY.** Review confirmed forgeable tokenizer/provenance gates,
+- **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (CODEX program; RAG-B04/B05) —
+  SUPERSEDED by later SEC/RAG backfill landings (#1669 et al.) (CURSOR correction 2026-07-24).** No active CODEX
+  claim; hostile-review debt if any is tracked via enablement/backlog, not this Planned "IN PROGRESS" row.
+  Was: ~~IN PROGRESS / HOSTILE REVIEW REJECTED; FIXES UNDERWAY.~~ Review confirmed forgeable tokenizer/provenance gates,
   mutable payload-unbound eligibility, timezone-dependent identities, non-interruptible/pre-allocation bounds,
   malformed or missing structured XBRL evidence, stylesheet-hidden poisoning, nested-table loss, and amplification
   paths. No corpus write is authorized before independent acceptance.
-- **SEC/RAG P1 structured facts/events (CODEX program; RAG-B10, claimed 2026-07-13) — CLAIMED.** Persist XBRL,
+- **SEC/RAG P1 structured facts/events (CODEX program; RAG-B10) — PLANNED / UNASSIGNED (CURSOR correction 2026-07-24).**
+  Strip stale CLAIMED tag — no live branch/PR for this claim on origin. Remains desirable backlog. Was: ~~CLAIMED.~~ Persist XBRL,
   Forms 3/4/5/144, 13D/G, 13F-derived deltas, offerings, and other exact facts/events structurally; render cited
   evidence cards instead of embedding raw XML/JSON/rows.
-- **SEC/RAG P1 resumable worker + shadow corpus (CODEX program; RAG-B06/B08/B09/B16/B17, claimed 2026-07-13) —
-  IN PROGRESS / PERSISTENCE CORE BUILT; EXECUTION UNWIRED.** Dedicated database-backed job/task substrate now has
+- **SEC/RAG P1 resumable worker + shadow corpus (CODEX program; RAG-B06/B08/B09/B16/B17) —
+  PARTIAL / UNASSIGNED (CURSOR correction 2026-07-24).** Persistence core landed with ingest-state PRs (#1543 family);
+  execution/worker wiring remains backlog — not an active IN PROGRESS claim (branch gone). Was: ~~IN PROGRESS / PERSISTENCE CORE BUILT; EXECUTION UNWIRED.~~ Dedicated database-backed job/task substrate now has
   leases/retries/DLQ and observed byte/token/chunk/vector/WU/dollar receipts. Remaining: worker process, stage
   adapters, breaker enforcement, token-aware
   Voyage batching, Pinecone import/upsert benchmark, reconciliation, dual-write, cutover pointer, and rollback.
-- **SEC/RAG P1 retrieval/strategy consumption redesign (CODEX program; RAG-B11/B12/B13/B18, claimed 2026-07-13) —
-  IN PROGRESS / LEXICAL SLICE STACKED ON #1543; ADVERSARIAL REVIEW RUNNING.** Occurrence-level FTS5 with verified
+- **SEC/RAG P1 retrieval/strategy consumption redesign (CODEX program; RAG-B11/B12/B13/B18) —
+  COMPLETED via #1892 merge 2026-07-23 (CURSOR correction 2026-07-24).** Lexical+dense fusion, rerank policy,
+  evidence receipts landed default-off; enablement gated separately. Was: ~~IN PROGRESS / LEXICAL SLICE STACKED ON #1543.~~ Occurrence-level FTS5 with verified
   public timestamps, immutable replay, PIT/revision filters, corpus-wide lexical plus dense RRF, and wide rerank
   pass 107 related tests and TypeScript. Remaining: hostile acceptance, integration, intent routing, MMR/diversity,
   embedding-revision isolation, structured issuer dossiers, deep retrieval for finalists/holdings, and verified
   `evidenceRefs`; remove nonexistent transcript coverage claims.
-- **SEC/RAG P1 real-EDGAR evaluation + truthful coverage (CODEX program; RAG-B14/B15, claimed 2026-07-13) — CLAIMED.**
+- **SEC/RAG P1 real-EDGAR evaluation + truthful coverage (CODEX program; RAG-B14/B15) —
+  PARTIAL via #1892 production-path evaluator (CURSOR correction 2026-07-24); remaining golden-set scale PLANNED / UNASSIGNED.**
+  Was: ~~CLAIMED.~~
   Build 250-500 labeled real-corpus questions plus parser/table/fact/grounding/PIT/idempotency metrics; replace
   the 200-accession coverage proxy with manifest-to-index reconciliation and gate every corpus expansion.
-- **SEC/RAG P1 controlled backfill + freshness operations (CODEX program, claimed 2026-07-13) — CLAIMED / GATED.** Run shadow
+- **SEC/RAG P1 controlled backfill + freshness operations (CODEX program) —
+  PLANNED / UNASSIGNED / GATED (CURSOR correction 2026-07-24).** Strip stale CLAIMED — corpus writes remain owner-gated;
+  see FEATURE-ENABLEMENT-BACKLOG. Was: ~~CLAIMED / GATED.~~ Run shadow
   waves 10 -> 25 -> 100 -> 300 -> 1,000 only after upstream gates, with spend/rate/failure breakers, daily
   reconciliation, material-event freshness SLOs, selective top-100/250 depth, and ablation before long-tail
   embedding. No production write is authorized by the planning row.
@@ -111,9 +125,9 @@ As of 2026-07-08 (assignment-rule update).
   KNOWN_GLOBAL footer set; evidence_age_anomaly dedup; policy_change attribution. All S,
   batchable. Spec: docs/reviews/2026-07-09-activity-feed-audit.md §1 P3.
 
-- **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (CLAUDE,
-  branch `claude/per-position-stop-plans`, stacked on PR #1331) — COMPLETED (merged to `main` via
-  PR #1371, 2026-07-11T07:39:12Z; deployed to production via auto-deploy-on-merge).** Landed after
+- **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (CLAUDE) —
+  COMPLETED via #1371 merge 2026-07-11 + auto-deploy (CURSOR note 2026-07-24; kept under Planned only
+  as the design/requirements paper trail — do not re-implement).** Landed after
   7 rounds of Codex review + a merge-conflict reconciliation against a concurrent `strategy.ts`
   split refactor (see `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`).
   Round 8 (2026-07-15, `claude/stop-plans-round8-followups`): 2 more genuine Codex findings against
@@ -161,13 +175,15 @@ As of 2026-07-08 (assignment-rule update).
   (4th lane universal availability). Rollout: `docs/rollouts/2026-07-10-per-position-stop-plans.md`.
 
 - **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (unassigned) —
-  PLANNED 2026-07-10 (owner ask, stop-loss session; requirements sharpened by owner same day).**
-  _(Superseded by the IN PROGRESS entry above — kept for the original design record.)_
+  SUPERSEDED by #1371 (CURSOR correction 2026-07-24; original design record retained).**
+  _(Was: PLANNED 2026-07-10; superseded by the COMPLETED entry above.)_
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched (MONET, worktree `bold-lamport-20a8f9`) — MOVED 2026-07-09.** Reservation/diagnosis row; the effort moved to 🚧 In Progress (same title, this file) when implementation began and is now in PR via land.sh, auto-merge armed — see that row for the full record. (Corrected in place per protocol, not deleted; annotation by CLAUDE while landing MONET's work under the owner-directed usage-cap pickup.)
-- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — IN PROGRESS 2026-07-09 (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`).** Claimed 2026-07-09; fix in flight: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — COMPLETED via #1287 + docs close-out #1301 (CURSOR correction 2026-07-24; #1272 CLOSED superseded).**
+  Branch `monet/bold-lamport-20a8f9` still exists historically but work is on `main`/auto-deployed. Was: ~~IN PROGRESS 2026-07-09.~~ Claimed 2026-07-09; fix in flight: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
 - **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (~54 audit sites) — RESERVED 2026-07-10 for a second owner-directed session (per owner, split out of MONET's P1 batch). MOVED 2026-07-10 to 🚧 In Progress (same title, this file) — see that row for the current record.** _(Corrected in place per protocol, not deleted; annotation by CLAUDE.)_
 - **Activity-audit P2.4: congress_share_daily retry storm (active, unbounded) — PLANNED 2026-07-10, unclaimed.** OPS half (do first): whitelist the new box 135.181.192.190 on the congress.trade CF zone (documented un-done follow-up, hetzner-migration rollout) — every POST is 403ing 32/32 and the marker never advances. CODE half: module-level in-flight promise + persisted last-attempt timestamp with 30-60 min failure backoff (`src/lib/congress-share.ts:588-800`, `scheduler.ts:313`). Report §1.4.
-- **Activity-audit P2.5: notification status recorder lies ("Not sent" on 1035/1035 while 378 delivered) — IN PROGRESS / FINAL LOCAL GATE GREEN 2026-07-11, CODEX replacement branch `codex/notification-status-truth`, worktree `/Users/jay/.codex/worktrees/socratic-notification-truth`; AG PR #1442 remains open and unmerged.** Adversarial review found #1442 still records `price_alert` / `provider_degraded` direct deliveries as skipped, converts bridge exceptions to skipped, loses partial failures and legacy-webhook audit detail, and retains misleading/raw skip reasons. The replacement centralizes truthful results without double-send, preserves enabled-event gating and the operator fallback lane, and keeps partial/legacy-webhook telemetry. Independent review found no blocker. Reconciled through `main@0dda52db`; Node24 final gate: focused 7 files/96 tests, touched lint 0 errors/43 inherited warnings, repository lint 0 errors/404 inherited warnings, TypeScript, full 342 files/3,816 tests, build, and diff-check green. Push/replacement PR, hosted checks, #1442 supersession, merge, and production verification remain.
+- **Activity-audit P2.5: notification status recorder lies ("Not sent" on 1035/1035 while 378 delivered) — COMPLETED via #1451 merge 2026-07-11 (CURSOR correction 2026-07-24).**
+  Replacement branch gone; #1451 is the truthful delivery-status landing. Was: ~~IN PROGRESS … #1442 remains open.~~ Adversarial review found #1442 still records `price_alert` / `provider_degraded` direct deliveries as skipped, converts bridge exceptions to skipped, loses partial failures and legacy-webhook audit detail, and retains misleading/raw skip reasons. The replacement centralizes truthful results without double-send, preserves enabled-event gating and the operator fallback lane, and keeps partial/legacy-webhook telemetry. Independent review found no blocker. Reconciled through `main@0dda52db`; Node24 final gate: focused 7 files/96 tests, touched lint 0 errors/43 inherited warnings, repository lint 0 errors/404 inherited warnings, TypeScript, full 342 files/3,816 tests, build, and diff-check green. Push/replacement PR, hosted checks, #1442 supersession, merge, and production verification remain.
 - **Activity-audit P2.6: `order_placement_uncertain` misclassifies definitive rejections (48/48 all-time) — PLANNED 2026-07-10, unclaimed.** Typed `OrderValidationError` for pre-flight throws → blocked/rejected; broker 4xx → `rejected_by_broker`; reserve "uncertain" for timeouts/5xx/undecodable. Consider Alpaca whole-share-bracket pre-flight sizing. NOTE: touches `strategy.ts` placement catch — coordinate with the item-10 sweep session. Report §1.6.
 - **Activity-audit P2.7: stale-exit "cancel still pending" abort leaves exits canceled-but-never-replaced — PLANNED 2026-07-10, unclaimed.** Persist `replacement_pending_cancel` + complete on later ticks; measure staleness from bracket-leg ACTIVATION not createdAt (`src/lib/order-replacement.ts`). UNH 07-09 instance on paper; same path runs live. Report §1.7.
 - **Activity-audit P2.8: synthetic-stop failure dedup/backoff + persistent "protective exit failing" alert — PLANNED 2026-07-10, unclaimed.** Per-(stopId, fingerprint) emission cooldown + summary row; keep 60s retry; do NOT cap `fire_generation`. Report §1.8.
@@ -176,18 +192,17 @@ As of 2026-07-08 (assignment-rule update).
 - **Activity-audit owner decisions (4) — PLANNED 2026-07-10, needs owner rulings.** (1) test-local's armed autonomy: 16 gpt-5.5/high runs/day contending with LIVE for the shared key + counting against the monthly LLM ceiling — halt, downgrade, or explicit opt-in for scheduling `broker==='test'`? (2) RAG 10-K corpus pacing: set `VECTOR_EMBED_BATCH_DELAY_MS<=5000` + `SEC_FILING_RAG_MAX_PER_RUN=10-20` in Infisical, and/or the one-time supervised 10-K backfill? (3) `llmFallbackModels` seeding: UI-expose vs silent seed (silent changes which model trades live). (4) `learned_context` per-account isolation: recommended leave user-level. Report §3.
 
 
-- **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray .codex/ (unassigned) — PLANNED 2026-07-05, awaiting seat responses.** _(2026-07-08: stripped FLEET tag — no agent is actively working on this.)_ Owner confirmed 2026-07-05: MONET preview = 4104, CURSOR = 4103. The Monet-port line (4103→4104) is committed on `agent/claude` (31d8da7, rides next land). Remaining, each owned by its seat (asked in #agent-sync CLAUDE sync-5): CURSOR documents its 4103 preview row (pm2 process name, hostname, worktree) in AGENTS.md + `scripts/setup-agent-previews.sh` or declares it ad-hoc-only; MONET confirms its lane/tooling expects 4104 (no pm2 `trading-monet` exists yet; nothing listens on 4103/4104); CODEX claims/relocates or approves deletion of untracked `.codex/{setup.sh,maintenance.sh}` left in `~/apps/trading-claude`.
+- **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray .codex/ —
+  SUPERSEDED (CURSOR correction 2026-07-24).** Preview ports/PM2 lanes were retired 2026-07-08 (owner); AGENTS.md
+  already documents Cursor as peer lane + cloud overrides. Was: ~~PLANNED 2026-07-05, awaiting seat responses.~~ Owner confirmed 2026-07-05: MONET preview = 4104, CURSOR = 4103. The Monet-port line (4103→4104) is committed on `agent/claude` (31d8da7, rides next land). Remaining, each owned by its seat (asked in #agent-sync CLAUDE sync-5): CURSOR documents its 4103 preview row (pm2 process name, hostname, worktree) in AGENTS.md + `scripts/setup-agent-previews.sh` or declares it ad-hoc-only; MONET confirms its lane/tooling expects 4104 (no pm2 `trading-monet` exists yet; nothing listens on 4103/4104); CODEX claims/relocates or approves deletion of untracked `.codex/{setup.sh,maintenance.sh}` left in `~/apps/trading-claude`.
 
-- **CI standard rollout (cross-app, unassigned) — RESERVED, RE-SCOPED 2026-07-04.** _(2026-07-08: stripped Claude tag — no agent is actively working on this; deferred pending PR #372.)_
-  Deferred until the hybrid resource-aware routing PR above lands and proves itself. Scope when
-  picked up: convert the verify gate to a reusable `workflow_call` (hub = this repo,
-  **hosted-only by default, zero self-hosted references baked in**; resource-aware routing is a
-  separately-approved explicit opt-in input per repo, never inherited silently), flip hub Actions
-  access to owner-repos, add caller workflows to congress-trading-shared + API-usage-monitor
-  (+ Congress.Trade when bootstrapped), and update canon/global-config bootstrap stanza for
-  future repos.
+- **CI standard rollout (cross-app, unassigned) — SUPERSEDED / PARTIAL (CURSOR correction 2026-07-24).**
+  #372 MERGED 2026-07-06; Socratic.Trade verify now runs on Coolify Linux self-hosted + hosted lanes.
+  Broader reusable `workflow_call` hub across other apps is not an active Socratic.Trade claim.
+  Was: ~~RESERVED … deferred pending PR #372.~~
 
-- **Wave-2 memory/RAG core (Claude/Fable coordinator — OWNER-ASSIGNED swimlane) — IN PROGRESS as of 2026-07-04 (moved from Planned; lanes stacked on their w1 dependency branches rather than waiting for the train).**
+- **Wave-2 memory/RAG core (Claude/Fable coordinator swimlane) — SUPERSEDED by later RAG program / #1892 (CURSOR correction 2026-07-24).**
+  Do not treat as an active claim. Residual dormant-flag enablement is the OWNER REMINDER row above. Was: ~~IN PROGRESS as of 2026-07-04.~~
   _2026-07-05 (CLAUDE next-wave): CORRECTION — `outcome-engine` and `episodic-retrieval` are LANDED
   on `main` (both merged 2026-07-04 per the landing-train row above and this repo's PR history —
   the sub-lane text below still said "Pushed, no PR — lands via the train", which is now stale).
@@ -364,17 +379,13 @@ discrepancies that motivated these rows._
   legacy `regime:current` → per-user `regime:current:${userId}` migration alongside the P0 fix in
   `src/lib/regime-watch.ts`; this is on `main` today, not a follow-up. No further action needed.
   action=mark-blocked (nothing left to migrate)._
-- **Owner ratification: Rule 4 fundamentals-veto overridability — RATIFIED 2026-07-08 by owner. PR #814 shipped, advisory/overridable approach confirmed.** —
-  Decide whether the deliberately model-independent FCF/debt-equity veto should stay
-  agent-overridable or be re-hardened; the code flags this decision in-line. _(why now: #814 merged
-  with an explicit owner-ratification flag on Rule 4; leaving it unratified means a design decision
-  on the money path is implicitly made by default.)_
-- **Production release + post-deploy money-path verification of the 2026-07-05 batch (OWNER, M)** —
-  Run the ~/apps/trading-live release for the ~12 merged PRs, then verify on a real run: override
-  path behavior, new audit kinds emitted, alert center + live-data console slices working. _(why
-  now: Three money-path behavior changes (#799/#814/#816) plus major console work are beta-only;
-  nothing merged 07-05 has been verified in production, and the Deployed board section stops at
-  07-04.)_
+- **Owner ratification: Rule 4 fundamentals-veto overridability — COMPLETED / RATIFIED 2026-07-08; #814 MERGED (CURSOR correction 2026-07-24).**
+  No further owner decision needed; advisory/overridable approach confirmed. Was still listed as an open
+  "Decide whether…" Planned stem.
+- **Production release + post-deploy money-path verification of the 2026-07-05 batch (OWNER, M) —
+  SUPERSEDED (CURSOR correction 2026-07-24).** ANNOUNCE-THEN-DEPLOY retired 2026-07-10; merge to `main`
+  auto-deploys `socratic-trade-prod`. Mac `~/apps/trading-live` release path is not current protocol.
+  Those 07-05 money-path PRs long since shipped via auto-deploy.
 - **Headline first-seen timestamps to close the evidence-age receipt gap (CLAUDE, M)** — Persist
   first-seen times for news headlines so the #816 evidence-age anomaly receipts can cover them
   (currently explicitly deferred because headlines carry no timestamp). _(why now: #816's rollout
@@ -386,7 +397,7 @@ discrepancies that motivated these rows._
   the scanner as a reusable leaf but only wired proposeTrades; the maturation-lesson and
   coach/framework LLM calls (#810 just expanded the latter) still consume unfenced persisted LLM
   output.)_
-- **Open PRs for the stalled w2-coaching-durable and w2-reflection-decompose branches (CLAUDE, S)** —
+- **Open PRs for the stalled w2-coaching-durable and w2-reflection-decompose branches (UNASSIGNED; still valid 2026-07-24 CURSOR audit — branches exist on origin, still no PRs) (CLAUDE historical claim, S)** —
   Merge-forward both pushed branches onto current main, run the gate, open PRs with auto-merge; they
   have sat PR-less since 07-04 while their sibling lanes landed. _(why now: Durable coaching and
   decomposed reflection lessons are finished, verified work rotting on origin; every day unlanded
@@ -400,35 +411,27 @@ discrepancies that motivated these rows._
   2026-07-04 12:38; NO PR in `gh pr list --state all`. Stacked base (`w2-episodic-retrieval`) already
   merged via #437, so it can now be merge-forwarded onto main standalone. Rotting since 07-04.
   action=open-PR._
-- **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S)** — In Progress (branch `cursor/settings-race-audit`, PR #997 auto-merge armed). Audit complete: 26 keys classified. Fixed providerTier (the only classic RMW race — read→2-8s HTTP probe→write on shared key). All other shared keys safe (12 per-user, 1 single-writer, 3 intentionally shared, 1 legacy read-only, 11 benign idempotent caches).
-- **MONET risk-row handback (MONET)** — the five risk rows picked up cross-seat by CLAUDE on
-  2026-07-05 (changepoint throttle, correlation/blackout/stress, fractional Kelly, regime scorer,
-  vol-targeting) return to MONET; the five empty .claude/worktrees/monet-* worktrees are
-  reclaimable.
+- **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S) — COMPLETED via #997 merge 2026-07-08 (CURSOR correction 2026-07-24).** Was: ~~In Progress … PR #997 auto-merge armed.~~
+- **MONET risk-row handback (MONET) — SUPERSEDED / HISTORICAL (CURSOR correction 2026-07-24).**
+  2026-07-05 seat handback; risk lanes already on main. Not an open product effort.
 
 ### 2026-07-05 audit cycle-3
 _Added by CLAUDE audit-c3 pass. Tags: CURSOR / CODEX / AG / MONET / CLAUDE / OWNER. Assignments are
 reservations, not locks — re-negotiate in #agent-sync. NEVER assign to CODEX (quota-capped to
 Jul 8 18:10 CT)._
 
-- **Resolve main-protection ruleset review gate that leaves all-green PRs stuck BLOCKED (OWNER, S)** — Three PRs (#818, #853, #854) have every CI check green yet sit mergeStateStatus=BLOCKED with reviewDecision empty — the main-protection ruleset requires review approval and/or conversation-resolution that no agent can self-satisfy. This is a structural throughput bottleneck: agents open ready PRs that can never auto-land. Decide/document the unblock path (owner approval lane, or a bot-approval exemption for docs-only PRs) so green PRs stop stranding.
-- **Rebase/merge-forward PR #372 onto current main to clear the ci.yml conflict (CLAUDE, M)** — PR #372 (CI hybrid-runner) has been CONFLICTING with auto-merge armed since 07-04; the armed auto-merge can structurally never fire. git merge-tree shows conflicts in ci.yml plus STATUS.md/docs/EFFORT-LOG.md from the ~10 CI-touching PRs merged since. Needs a merge-forward of origin/main + conflict resolution, then it can land. Separately, its runner-availability.sh publisher prerequisite is still owner-pending but does not block the merge.
+- **Resolve main-protection ruleset review gate that leaves all-green PRs stuck BLOCKED (OWNER, S) —
+  SUPERSEDED / HISTORICAL (CURSOR correction 2026-07-24).** Cited PRs are settled (#818 MERGED, #853 CLOSED, #854 MERGED).
+  Later fleet used auto-merge + required `verify`/`gitleaks`; check-pin path-filter deadlock fixed on main.
+  Keep as historical note only — not an open owner action for those three PRs.
+- **Rebase/merge-forward PR #372 onto current main — COMPLETED via #372 merge 2026-07-06 (CURSOR correction 2026-07-24).** Hybrid resource-aware runner routing is on `main`. Was: ~~CONFLICTING with auto-merge armed since 07-04.~~
 - **Prune stale abandoned local-only branches from origin (June 21–29 experiments) (OWNER, M)** — ~40 origin branches are ahead of main with NO PR and last activity June 21–29 (agent/claude-*, safety/*, feat/*, reliability/*, sim/funded-test-account, etc.). They are stale experiments from the pre-worktree era, add noise to every branch scan, and confuse abandoned-work triage. Audit which are fully superseded by merged work and delete them from origin (with owner confirmation before any deletion per the no-destructive-git rule).
 
 ## In Progress
-- **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
-  metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
-  claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
-  `/Users/jay/apps/DESIGN-usage-compliance-classifier.md` §1/§2: (A) close 3 unmetered paid-call gaps
-  (`market-signals/massive.ts` 3x fetch, `rag/query-deconstruct.ts` gpt-4o-mini,
-  `rag/search-fusion.ts` embedding fallback); (B) thread `buildCallClassifier`/
-  `openrouterRequestEnrichment` (flat `trace`, no `metadata` nesting — RESOLVED 2026-07-18 shape) +
-  OpenRouter generation-id capture (`providerRequestId`) across `llm-call.ts`, 11 call sites,
-  `chat/llm.ts`, `vector-db.ts`; bump shared pin to `904ea96a`. Empirical OpenRouter acceptance
-  check (tiny paid probe, ~$0.01) included. Never merges own PR (auto-deploy on merge) — adversarial
-  review lands it.
-- **Socratic server/infrastructure panel reliability (CODEX delegated implementation, owner-directed 2026-07-18) — FINAL HARDENING GREEN / SERIALIZED FULL GATE PENDING; PR PENDING.** Partial provider failures return HTTP 200 degraded receipts with valid data retained; current Hetzner network series and core-normalized CPU are covered; production partial configuration cannot masquerade as local; a 120-second one-entry single-flight cache plus bounded stale fallback prevents per-poll fanout. Provider JSON is capped at 512 KiB, malformed metrics envelopes cannot replace good cached series, and the client rejects malformed success bodies while marking retained data stale. The UI shows `asOf`/cache age/stale, leaves missing values unavailable, and preserves the coordinated `Server Stats` title. Remote targets default to neutral `REMOTE`; only explicit `SERVER_METRICS_TARGET_ENVIRONMENT=production` labels production. Focused tests 18/18, TypeScript, scoped ESLint, and diff check pass; independent re-review found no P0-P2 and its P3 coverage request is addressed. The first Node 24 full rerun was invalidated by concurrent unannounced full gates and unrelated timeout flakes, so the required serialized final-tree gate is pending. Branch `codex/socratic-infra-panel-reliability`, worktree `/Users/jay/apps/socratic-infra-panel-reliability`. No push, PR, merge, deploy, provider, token, Cloudflare Access, infrastructure, or production-data mutation yet.
-  **2026-07-18 current-main update (CODEX):** merged `origin/main` including PR #1740, resolved the sole admin-client conflict while retaining `Server Stats`, fixed the independent P2 warning-expansion finding by limiting Coolify normalization to 500 resources and 20 detailed warnings plus summaries, and passed 19/19 focused tests, scoped ESLint, TypeScript, diff check, and local HTTP 200 SSR smoke. Re-review and hosted/full gates remain before merge/deploy.
+_(None actively in flight as of CURSOR accuracy audit 2026-07-24. Stale Usage-compliance Wave 2 and
+infra-panel reliability rows moved to Completed — see corrections below. Claim here before starting
+new substantial work.)_
+
 ## Deployed
 - **[Socratic.Trade][MONET] OpenRouter credit signal on /api/health (PR #1770, merged as `7be71390`) — DEPLOYED / PRODUCTION VERIFIED 2026-07-18.** `/api/health` exposes OpenRouter prepaid-credit balance (`dependencies.openrouter.ok` + `checks.openrouterCredits`) so Uptime Robot (external) alerts on low balance. Cache-supported free credits query, fail-open, DEGRADE-not-503, threshold $10. Uptime Robot monitors created and alert successfully.
 - **[Socratic.Trade][AG] PR #1735 verify/review cleanup (PR #1735, merged as `9a95b22c`) — DEPLOYED / PRODUCTION VERIFIED 2026-07-18.** Moves SEC RAG table recovery to migration v52. Resolved all Codex review comments: preserved imported company-name casing, restored peer dependencies in package-lock.json, and resolved primary/fallback OpenRouter proposal attribution mismatch in the approval card. Focused tests and full gates green.
@@ -622,10 +625,14 @@ Jul 8 18:10 CT)._
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
-- **[Socratic.Trade][CURSOR] Unstick remaining open PRs — COMPLETED 2026-07-24 (CURSOR).** #1901/#1980/#1981/#2005/#1842/#1792/#1902/#1819/#2123 all MERGED. Board/script residual: #2143 (union-repair + orphan-closeout in `sync-effort-issues.py`). Issues API works via `GITHUB_MCP_TOKEN`. Rollout: `docs/rollouts/2026-07-24-resolve-open-efforts.md` + `docs/rollouts/2026-07-23-unstick-open-prs.md`.**
-- **[Socratic.Trade][GROK4] Multi-wave expert-review implementation (claimed 2026-07-20) — IN PROGRESS.** PR #1847. Waves A/C partial + coach/lesson writers + **Wave D partial** (chat directives/URLs → learned_context). Prod bge-m3 re-embed running (sec-filings in progress after dry-run 2644 candidates). — COMPLETED/SUPERSEDED (CURSOR union-repair 2026-07-24).
-- **[Socratic.Trade][GROK] Unstick red/stuck PRs #1829/#1827/#1792/#1780 (+#1828/#1839/#1841) (claimed 2026-07-20) — IN PROGRESS.** Worktrees `/tmp/grok-st-fix-*` only. Findings: all 7 MERGEABLE, behind=0 main already merged, 0 unresolved threads, auto-merge SQUASH re-armed. Only real code fix: #1829 gitleaks FP on fake OPENROUTER fixture rewrite commit f4e99900 — added `.gitleaksignore` fingerprint, pushed `7febe824`. #1827 js-yaml 5: no prior verify-hosted failure (CI always cancelled/queued); local `toolchain-policy` 5/5 pass with js-yaml@5.2.1 (only consumer uses named `load`). #1792/#1780/#1828/#1839/#1841: no re-push (CI already queued/in flight). Residual: self-hosted runner queue drain for required `verify`+`gitleaks`. — COMPLETED/SUPERSEDED (CURSOR union-repair 2026-07-24).
-- **Correction 2026-07-22 — [Socratic.Trade][CODEX] PR #1792 hosted typecheck remediation — IN PROGRESS.** Commit `28a09b84` repaired stale provider dispatch/cost references in `src/lib/vector-db.ts`; the existing PR ref is auto-merge armed and awaiting hosted verify plus exact post-merge deployment verification. — COMPLETED/SUPERSEDED (CURSOR union-repair 2026-07-24).
+- **[CORRECTION 2026-07-24 CURSOR] Effort-board accuracy audit — COMPLETED (this pass).** Cleared stale In Progress (Usage-compliance Wave 2 → #1820; Server Stats reliability → #1292+#1751). Corrected Planned rows that were already merged/superseded/obsolete (SEC/RAG claimed program slices, enrichment starvation, activity-audit P2.5, per-position stop plans, settings-race #997, CI #372, preview-era AGENTS.md table, announce-then-deploy release chore). Noted merge==auto-deploy since 2026-07-10. Production health SHA checked during audit (`b0c21339` at probe time; `main` had advanced to include #2143 docs). Issues API still 403 for cloud token. Rollout: `docs/rollouts/2026-07-24-effort-board-accuracy-audit.md`.
+- **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier metadata — COMPLETED via #1820 merge 2026-07-22 (CURSOR correction 2026-07-24).** Branch `claude/usage-compliance-st` no longer exists on origin; PR title matches the former In Progress claim. Auto-deployed with merge.
+- **[Socratic.Trade][CODEX/AG] Server/infrastructure panel + reliability — COMPLETED via #1292 (page, 2026-07-11) + #1751 (Server Stats resilient, 2026-07-18) (CURSOR correction 2026-07-24).** Former In Progress row claimed unpublished `codex/socratic-infra-panel-reliability` (branch gone); product landed under AG/CODEX PRs above and is in production under auto-deploy.
+
+- **[Socratic.Trade][CURSOR] Unstick remaining open PRs — COMPLETED 2026-07-24 (CURSOR).** #1901/#1980/#1981/#2005/#1842/#1792/#1902/#1819/#2123/#2143/#2155 all MERGED. Board/script residual: #2143 (union-repair + orphan-closeout in `sync-effort-issues.py`). Issues API works via `GITHUB_MCP_TOKEN`. Rollout: `docs/rollouts/2026-07-24-resolve-open-efforts.md` + `docs/rollouts/2026-07-23-unstick-open-prs.md`.**
+- **[Socratic.Trade][GROK4] Multi-wave expert-review implementation — COMPLETED via #1847 merge 2026-07-21 (CURSOR correction 2026-07-24).** Was: ~~IN PROGRESS.~~ PR #1847. Waves A/C partial + coach/lesson writers + **Wave D partial** (chat directives/URLs → learned_context). Prod bge-m3 re-embed running (sec-filings in progress after dry-run 2644 candidates). — COMPLETED/SUPERSEDED (CURSOR union-repair 2026-07-24).
+- **[Socratic.Trade][GROK] Unstick red/stuck PRs #1829/#1827/#1792/#1780 (+#1828/#1839/#1841) — COMPLETED / SUPERSEDED by later merge sweeps (CURSOR correction 2026-07-24).** All cited PRs MERGED or CLOSED (#1780). Was: ~~IN PROGRESS.~~ Worktrees `/tmp/grok-st-fix-*` only. Findings: all 7 MERGEABLE, behind=0 main already merged, 0 unresolved threads, auto-merge SQUASH re-armed. Only real code fix: #1829 gitleaks FP on fake OPENROUTER fixture rewrite commit f4e99900 — added `.gitleaksignore` fingerprint, pushed `7febe824`. #1827 js-yaml 5: no prior verify-hosted failure (CI always cancelled/queued); local `toolchain-policy` 5/5 pass with js-yaml@5.2.1 (only consumer uses named `load`). #1792/#1780/#1828/#1839/#1841: no re-push (CI already queued/in flight). Residual: self-hosted runner queue drain for required `verify`+`gitleaks`. — COMPLETED/SUPERSEDED (CURSOR union-repair 2026-07-24).
+- **Correction 2026-07-22 — [Socratic.Trade][CODEX] PR #1792 hosted typecheck remediation — COMPLETED via #1792 merge 2026-07-24 (CURSOR correction).** Was: ~~IN PROGRESS.~~ Commit `28a09b84` repaired stale provider dispatch/cost references in `src/lib/vector-db.ts`; the existing PR ref is auto-merge armed and awaiting hosted verify plus exact post-merge deployment verification. — COMPLETED/SUPERSEDED (CURSOR union-repair 2026-07-24).
 - **[Socratic.Trade][CLAUDE] BRANCH PROTECTION TEMPORARILY RELAXED to break a 34-PR merge deadlock — COMPLETED/SUPERSEDED (CURSOR union-repair 2026-07-24).
   (owner-directed 2026-07-20, "don't care about branch protection just make it all work") — ACTIVE,
   MUST BE RESTORED.** Root cause of the deadlock was NOT CI capacity and NOT the GitHub outage:

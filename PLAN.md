@@ -1,5 +1,12 @@
 # Active Implementation Plan
 
+> **2026-07-24 - Effort-board accuracy audit (CURSOR).** Cleared empty In Progress; corrected
+> Planned/Completed status claims against merged PRs. Active product backlog remains: RAG/feature
+> enablement (`docs/FEATURE-ENABLEMENT-BACKLOG.md`), Exit-strategy Phases B/C, and remaining
+> activity-audit P2 items that are still unmerged. Stale w2 coaching/reflection branches still exist
+> on origin without PRs if someone wants to land them.
+
+
 > **2026-07-22 — Approval Busy/red-team/UptimeRobot repair (CODEX, branch
 > `codex/trade-approval-redteam-uptime-20260722`).** Keep the per-account strategy lock as the
 > correctness fence, but retry its side-effect-free Busy response in the approval client so a user

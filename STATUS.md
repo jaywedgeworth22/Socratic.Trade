@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-24 — Effort-board accuracy audit (CURSOR)
+
+Audited `docs/EFFORT-LOG.md` against GitHub PR state + production `/api/health` release SHA.
+Cleared stale In Progress (Usage-compliance Wave 2 = #1820; Server Stats reliability = #1292+#1751).
+Corrected Planned rows that were already merged, claimed without a live branch, or obsolete under
+auto-deploy / preview retirement. Board section placement drives `effort-issues-sync` state labels.
+Rollout: `docs/rollouts/2026-07-24-effort-board-accuracy-audit.md`.
+
 ## 2026-07-24 — Open efforts sweep closeout (CURSOR)
 
 Product PRs #1901/#1902/#1792/#1819/#1842/#2123 and docs #1980/#2005/#2022 are on `main`.
