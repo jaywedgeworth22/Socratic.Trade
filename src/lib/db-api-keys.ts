@@ -403,6 +403,15 @@ export const DELETED_KEY_TOMBSTONE = "__DISABLED__";
 export function deleteUserApiKey(userId: string, service: string): void {
   const canonical = normalizeApiKeyService(service);
   const db = getDb();
+
+  if (credTierForService(canonical) === "shared-operator-infra") {
+    db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, canonical);
+    if (canonical !== service) {
+      db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, service);
+    }
+    return;
+  }
+
   const now = new Date().toISOString();
   const id = `${userId}_${canonical}`;
   const encryptedKey = encryptValue(DELETED_KEY_TOMBSTONE);
