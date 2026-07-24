@@ -7,13 +7,17 @@ import {
 } from "@/lib/db-health";
 import { requireAdmin } from "@/lib/auth/admin";
 import { listUserApiKeys, LOCAL_USER, credTierForService } from "@/lib/db-api-keys";
+import { activeEmbeddingProvider, activeRerankProvider } from "@/lib/vector-db";
 
 export const dynamic = "force-dynamic";
 
+// "rag-embed"/"rag-rerank" (renamed 2026-07-19 from "voyage"/"voyage-rerank" — see withRagApiHealth
+// in vector-db.ts) are the provider-generic RAG health lanes: whichever embed/rerank provider is
+// actually active (Voyage, OpenRouter, SiliconFlow) logs under these names now.
 const EXPECTED_BACKEND_LANES: Array<{ service: string; keySource: string | null }> = [
   { service: "pinecone", keySource: "env" },
-  { service: "voyage", keySource: "env" },
-  { service: "voyage-rerank", keySource: "env" },
+  { service: "rag-embed", keySource: "env" },
+  { service: "rag-rerank", keySource: "env" },
   { service: "openai", keySource: "user" },
   { service: "anthropic", keySource: "user" },
   { service: "gemini", keySource: "user" },
@@ -34,7 +38,27 @@ function toCanonicalService(service: string): string {
   if (service === "alpha-vantage") return "alphavantage";
   if (service === "alpaca-broker") return "alpaca_paper_api_key";
   if (service === "robinhood-broker") return "robinhood";
-  if (service === "voyage-rerank") return "voyage";
+  // "voyage-rerank" is the pre-2026-07-19 lane name (kept for back-compat with historical rows);
+  // "rag-embed"/"rag-rerank" are the current provider-generic lanes. Both map to whichever
+  // credential/provider is ACTUALLY active (voyage/openrouter/siliconflow) so hasUserKey/
+  // credTierForService below check the real credential, not a name that no longer exists in
+  // db-api-keys.ts once a non-Voyage provider is active. Falls back to "voyage" (the historical
+  // default) if the active provider can't be resolved (e.g. a pinned-but-keyless
+  // RAG_EMBED_PROVIDER, which throws by design) — matching /api/health's fail-safe default.
+  if (service === "voyage-rerank" || service === "rag-rerank") {
+    try {
+      return activeRerankProvider(LOCAL_USER);
+    } catch {
+      return "voyage";
+    }
+  }
+  if (service === "rag-embed") {
+    try {
+      return activeEmbeddingProvider(LOCAL_USER);
+    } catch {
+      return "voyage";
+    }
+  }
   return service;
 }
 

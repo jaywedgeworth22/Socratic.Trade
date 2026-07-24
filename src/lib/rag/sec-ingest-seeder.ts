@@ -35,7 +35,7 @@ import {
   buildSecIngestJobKey
 } from "../db-rag-ingest";
 import { fetchRecentFilings } from "../web-sources/sec-filings";
-import { validateSecUniverseManifest, type FrozenSecUniverseManifest } from "./universe-manifest";
+import { blockingUniverseValidationIssues, validateSecUniverseManifest, type FrozenSecUniverseManifest } from "./universe-manifest";
 import { assertOperationLeaseOwnership, type OperationLeaseClaim } from "../operation-lease";
 
 /** Stable, versioned identity for the baseline "latest 10-K + latest 4 10-Qs" backfill scope. Bump
@@ -105,7 +105,9 @@ function loadManifest(opts: SeedSecIngestJobsOptions): FrozenSecUniverseManifest
   const manifestPath = opts.manifestPath ?? path.resolve("data/rag-universe-manifest.json");
   const raw = fs.readFileSync(manifestPath, "utf8");
   const parsed = JSON.parse(raw) as unknown;
-  const issues = validateSecUniverseManifest(parsed);
+  // Only BLOCKING issues refuse the manifest — an advisory "warning" (e.g. a manifest frozen
+  // before dataQuality existed) must not stop discovery from running against otherwise-valid data.
+  const issues = blockingUniverseValidationIssues(validateSecUniverseManifest(parsed));
   if (issues.length > 0) {
     const first = issues[0]!;
     throw new Error(
@@ -160,11 +162,11 @@ export async function seedSecIngestJobsFromManifest(
       continue;
     }
 
-    const [tenKs, tenQs] = await Promise.all([
-      fetchRecentFilings(issuer.cik, ["10-K"], tenKLimit),
-      fetchRecentFilings(issuer.cik, ["10-Q"], tenQLimit)
-    ]);
-    const refs = [...tenKs, ...tenQs];
+    // Single submissions-API call for both docTypes: fetchRecentFilings accepts a per-docType
+    // limit map, so this no longer issues two identical requests to the same CIK's EDGAR
+    // submissions URL (previously one call for 10-K, one for 10-Q — ~1,000 requests saved per
+    // full seed of the 1,000-issuer universe).
+    const refs = await fetchRecentFilings(issuer.cik, ["10-K", "10-Q"], { "10-K": tenKLimit, "10-Q": tenQLimit });
 
     if (refs.length === 0) {
       // Leave intake open: fetchRecentFilings collapses "genuinely no filings" and "transient EDGAR

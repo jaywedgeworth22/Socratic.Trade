@@ -61,7 +61,9 @@ function rows(sql: string): unknown[] {
 
 function durableSnapshot() {
   return {
-    health: rows("SELECT service, ok, error_text FROM api_health_log WHERE service IN ('pinecone', 'voyage') ORDER BY rowid"),
+    // "rag-embed" is the provider-generic health lane withRagApiHealth now uses for embed calls
+    // (renamed 2026-07-19 from the literal "voyage" service name — see vector-db.ts).
+    health: rows("SELECT service, ok, error_text FROM api_health_log WHERE service IN ('pinecone', 'rag-embed') ORDER BY rowid"),
     audits: rows(
       "SELECT kind, payload FROM audit_events WHERE kind LIKE 'vector%' OR kind LIKE 'notify%' OR kind IN ('usage_limit_alert', 'notification.delivery') ORDER BY rowid"
     ),
@@ -106,7 +108,7 @@ beforeEach(() => {
   process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
   delete process.env.SENTRY_DSN;
   delete process.env.RAG_INGEST_MAX_TEXTS_PER_DAY;
-  getDb().prepare("DELETE FROM api_health_log WHERE service IN ('pinecone', 'voyage')").run();
+  getDb().prepare("DELETE FROM api_health_log WHERE service IN ('pinecone', 'rag-embed')").run();
   getDb().prepare(
     "DELETE FROM audit_events WHERE kind LIKE 'vector%' OR kind LIKE 'notify%' OR kind IN ('usage_limit_alert', 'notification.delivery')"
   ).run();
@@ -360,7 +362,7 @@ describe("vector-store durable lease fencing", () => {
         outcome: "succeeded"
       })
     ]));
-    expect(rows("SELECT service FROM api_health_log WHERE service = 'voyage'")).toEqual([]);
+    expect(rows("SELECT service FROM api_health_log WHERE service = 'rag-embed'")).toEqual([]);
     expect(mocks.upsert).not.toHaveBeenCalled();
   });
 });

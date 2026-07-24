@@ -90,10 +90,17 @@ function filingRef(cik: string, docType: "10-K" | "10-Q", serial: number): Filin
 }
 
 function mockFilingsFor(byCik: Record<string, { tenKs: FilingRef[]; tenQs: FilingRef[] }>) {
+  // The seeder now makes ONE fetchRecentFilings call per issuer covering both docTypes (see
+  // sec-ingest-seeder.ts), so this mock combines tenKs/tenQs based on the requested docTypes
+  // rather than branching to a single list per call.
   vi.mocked(fetchRecentFilings).mockImplementation(async (cik, docTypes) => {
     const entry = byCik[cik];
     if (!entry) return [];
-    return docTypes?.includes("10-K") ? entry.tenKs : entry.tenQs;
+    const requested = docTypes ?? ["10-K", "10-Q"];
+    return [
+      ...(requested.includes("10-K") ? entry.tenKs : []),
+      ...(requested.includes("10-Q") ? entry.tenQs : [])
+    ];
   });
 }
 
