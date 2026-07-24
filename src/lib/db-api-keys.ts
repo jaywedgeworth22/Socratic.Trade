@@ -395,7 +395,7 @@ export function upsertUserApiKey(userId: string, service: string, apiKey: string
        ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
     )
     .run(id, userId, canonical, encryptedKey, label ?? null, now, now);
-  if (credTierForService(canonical) === "per-user-only") {
+  if (userId === LOCAL_USER && credTierForService(canonical) === "per-user-only") {
     const envVar = apiKeyEnvVarForService(canonical);
     if (envVar && process.env[envVar] !== undefined) {
       delete process.env[envVar];
@@ -435,9 +435,11 @@ export function deleteUserApiKey(userId: string, service: string): void {
     ).run(aliasId, userId, service, encryptedKey, now, now);
   }
 
-  const envVar = apiKeyEnvVarForService(canonical);
-  if (envVar && process.env[envVar] !== undefined) {
-    delete process.env[envVar];
+  if (userId === LOCAL_USER) {
+    const envVar = apiKeyEnvVarForService(canonical);
+    if (envVar && process.env[envVar] !== undefined) {
+      delete process.env[envVar];
+    }
   }
 }
 
@@ -760,6 +762,12 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
   if (!llmOperatorFallbackEnabled()) return { source: "none" };
   const envVar = apiKeyEnvVarForService(canonical);
   let envKey = envVar ? process.env[envVar] : undefined;
+  if (!envKey) {
+    const localKey = getUserApiKey(LOCAL_USER, canonical)?.apiKey;
+    if (localKey && localKey !== DELETED_KEY_TOMBSTONE) {
+      envKey = localKey;
+    }
+  }
 
   if (process.env.NODE_ENV === "test" && !envKey) {
     if (canonical === "openrouter") {

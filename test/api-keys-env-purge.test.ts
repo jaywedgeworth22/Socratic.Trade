@@ -36,11 +36,11 @@ describe("process.env API key purging", () => {
   it("purges process.env when upsertUserApiKey or deleteUserApiKey is called for a per-user credential", () => {
     process.env.OPENROUTER_API_KEY = "test-or-key";
     try {
-      upsertUserApiKey("user-1", "openrouter", "custom-or-key");
+      upsertUserApiKey(LOCAL_USER, "openrouter", "custom-or-key");
       expect(process.env.OPENROUTER_API_KEY).toBeUndefined();
 
       process.env.OPENROUTER_API_KEY = "ghost-or-key";
-      deleteUserApiKey("user-1", "openrouter");
+      deleteUserApiKey(LOCAL_USER, "openrouter");
       expect(process.env.OPENROUTER_API_KEY).toBeUndefined();
     } finally {
       delete process.env.OPENROUTER_API_KEY;
