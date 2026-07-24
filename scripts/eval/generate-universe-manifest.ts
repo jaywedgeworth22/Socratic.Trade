@@ -8,6 +8,7 @@ import { NASDAQ100_SYMBOLS, DOW30_SYMBOLS } from "../../src/lib/index-universes"
 import { normalizeSymbol } from "../../src/lib/money";
 import {
   SEC_UNIVERSE_SCHEMA_VERSION,
+  blockingUniverseValidationIssues,
   hashSecUniverseIssuers,
   validateSecUniverseManifest,
   type FrozenSecUniverseManifest,
@@ -304,6 +305,10 @@ async function main() {
       industry: null,
       marketCapUsd: market.marketCap,
       dollarVolumeUsd,
+      // This script only reaches here with a real Yahoo Finance quote (marketCap/dollarVolumeUsd
+      // are genuine measurements, not placeholders) — see the quarantine branch above for the
+      // no-usable-quote case, which never becomes an issuer at all.
+      dataQuality: "live",
       inclusionReason: entry.inclusionReason,
       sourceRefs
     });
@@ -332,7 +337,7 @@ async function main() {
     quarantined
   };
 
-  const issues = validateSecUniverseManifest(manifest, { expectedIssuerCount: issuers.length });
+  const issues = blockingUniverseValidationIssues(validateSecUniverseManifest(manifest, { expectedIssuerCount: issuers.length }));
   if (issues.length > 0) {
     console.error(`  ❌ Generated manifest failed its own schema validation (${issues.length} issue(s)):`);
     for (const issue of issues.slice(0, 20)) console.error(`     - ${issue.code} ${issue.path}: ${issue.message}`);

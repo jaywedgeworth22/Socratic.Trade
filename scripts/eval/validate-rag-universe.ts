@@ -1,14 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
-import { validateSecUniverseManifest } from "../../src/lib/rag/universe-manifest";
+import { blockingUniverseValidationIssues, validateSecUniverseManifest } from "../../src/lib/rag/universe-manifest";
 
 const manifestPath = path.resolve(process.argv[2] ?? "data/rag-universe-manifest.json");
 const raw = fs.readFileSync(manifestPath, "utf8");
 const manifest = JSON.parse(raw) as unknown;
-const issues = validateSecUniverseManifest(manifest);
+const allIssues = validateSecUniverseManifest(manifest);
+const warnings = allIssues.filter((issue) => issue.severity === "warning");
+const issues = blockingUniverseValidationIssues(allIssues);
+
+for (const warning of warnings) {
+  console.warn(`⚠ ${warning.code} ${warning.path}: ${warning.message}`);
+}
 
 if (issues.length === 0) {
-  console.log(`SEC/RAG universe acceptance: PASS (${manifestPath})`);
+  console.log(`SEC/RAG universe acceptance: PASS (${manifestPath})${warnings.length > 0 ? ` — ${warnings.length} warning(s)` : ""}`);
 } else {
   console.error(`SEC/RAG universe acceptance: FAIL (${issues.length} issue(s), ${manifestPath})`);
   for (const issue of issues.slice(0, 100)) {

@@ -13,6 +13,14 @@ export const SEC_UNIVERSE_INCLUSION_REASONS = [
 ] as const;
 export type SecUniverseInclusionReason = (typeof SEC_UNIVERSE_INCLUSION_REASONS)[number];
 
+// Machine-checkable marker for whether exchange/marketCapUsd/dollarVolumeUsd are genuine
+// measurements ("live") or converter placeholders/sentinels ("sentinel", e.g. exchange:"UNKNOWN",
+// marketCapUsd:1, dollarVolumeUsd:1 — see convert-universe-manifest-v1-to-v2.ts). Introduced
+// 2026-07-19 so downstream consumers can distinguish the two without re-deriving the
+// exchange==="UNKNOWN"-and-cap===1 heuristic by hand.
+export const SEC_UNIVERSE_DATA_QUALITIES = ["sentinel", "live"] as const;
+export type SecUniverseDataQuality = (typeof SEC_UNIVERSE_DATA_QUALITIES)[number];
+
 export interface SecUniverseSourceReceipt {
   name: string;
   asOf: string;
@@ -32,6 +40,11 @@ export interface SecUniverseIssuer {
   industry: string | null;
   marketCapUsd: number;
   dollarVolumeUsd: number;
+  /** Optional for back-compat with manifests frozen before this field existed. Absent is treated
+   *  as "live" (its historical implicit meaning, since every pre-existing manifest issuer was a
+   *  real measurement) and the validator emits a non-blocking "warning"-severity issue rather than
+   *  failing validation — see UniverseValidationIssue.severity and blockingUniverseValidationIssues. */
+  dataQuality?: SecUniverseDataQuality;
   inclusionReason: SecUniverseInclusionReason;
   sourceRefs: string[];
 }
@@ -52,6 +65,20 @@ export interface UniverseValidationIssue {
   code: string;
   path: string;
   message: string;
+  /** Absent (the default) means "error" — unchanged meaning for every pre-existing issue code.
+   *  "warning" issues are advisory only (e.g. a backward-compatible default was applied) and must
+   *  NOT be treated as blocking — callers that gate on issue count should filter with
+   *  blockingUniverseValidationIssues() first. */
+  severity?: "error" | "warning";
+}
+
+/** Issues that should actually block acceptance of a manifest — every "error"-severity issue
+ *  (severity absent counts as "error", matching every pre-existing issue code). Callers that used
+ *  to gate on `issues.length > 0` should switch to `blockingUniverseValidationIssues(issues).length
+ *  > 0` so an advisory "warning" (e.g. a missing-but-back-compat-tolerated dataQuality) never
+ *  fails a manifest that is otherwise valid. */
+export function blockingUniverseValidationIssues(issues: UniverseValidationIssue[]): UniverseValidationIssue[] {
+  return issues.filter((issue) => issue.severity !== "warning");
 }
 
 const CIK_RE = /^\d{10}$/;
@@ -61,6 +88,7 @@ const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DATE_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|([+-])(\d{2}):(\d{2}))$/i;
 const SECURITY_TYPES = new Set<string>(SEC_UNIVERSE_SECURITY_TYPES);
 const INCLUSION_REASONS = new Set<string>(SEC_UNIVERSE_INCLUSION_REASONS);
+const DATA_QUALITIES = new Set<string>(SEC_UNIVERSE_DATA_QUALITIES);
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -124,7 +152,8 @@ export function validateSecUniverseManifest(
 ): UniverseValidationIssue[] {
   const expectedIssuerCount = options.expectedIssuerCount ?? 1_000;
   const issues: UniverseValidationIssue[] = [];
-  const add = (code: string, path: string, message: string) => issues.push({ code, path, message });
+  const add = (code: string, path: string, message: string, severity?: "warning") =>
+    issues.push(severity ? { code, path, message, severity } : { code, path, message });
 
   if (!isObject(value)) {
     add("manifest_shape", "$", "manifest must be a versioned object, not a bare issuer array");
@@ -215,6 +244,16 @@ export function validateSecUniverseManifest(
     }
     if (typeof issuer.dollarVolumeUsd !== "number" || !Number.isFinite(issuer.dollarVolumeUsd) || issuer.dollarVolumeUsd <= 0) {
       add("dollar_volume", `${path}.dollarVolumeUsd`, "dollarVolumeUsd must be a positive finite number");
+    }
+    if (issuer.dataQuality === undefined) {
+      add(
+        "data_quality_missing",
+        `${path}.dataQuality`,
+        "dataQuality is absent; treated as \"live\" for backward compatibility with manifests frozen before this field existed — new/updated manifests should stamp it explicitly",
+        "warning"
+      );
+    } else if (typeof issuer.dataQuality !== "string" || !DATA_QUALITIES.has(issuer.dataQuality)) {
+      add("data_quality", `${path}.dataQuality`, "dataQuality must be \"sentinel\" or \"live\" when present");
     }
     if (typeof issuer.inclusionReason !== "string" || !INCLUSION_REASONS.has(issuer.inclusionReason)) {
       add("inclusion_reason", `${path}.inclusionReason`, "inclusionReason must use a supported, non-sensitive category");

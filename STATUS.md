@@ -74,6 +74,13 @@ then integrate it alongside dense recall in a separately reviewed retrieval PR. 
 `docs/rollouts/2026-07-21-corpus-wide-lexical-candidates.md`.
 # Current Status
 
+## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
+
+The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider
+dispatch/cost references. Commit `28a09b84` now keeps the durable `voyage-rerank` service key,
+narrows the active provider for the health lane, and uses `estimateRagDispatchCost`. The branch is
+ready for a fresh hosted gate; auto-merge is armed. No production/provider/corpus writes were made.
+
 ## 2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, `codex/rag-shadow-benchmarks-20260722`)
 
 Added a default-off, read-only capability/context probe. The local Turso/libSQL probe reports installed-client and vector-SQL capability without a network/database write; this checkout has no direct `@libsql/client` dependency, so a real remote Turso benchmark is intentionally not attempted. The Pinecone path requires an explicit live flag, a named pre-existing Assistant, an API key, externally supplied frozen cases, a 100-query cap, and a 30-second aborting timeout. It calls only Assistant context retrieval and emits redacted latency/citation/usage/error receipts—never prompts, snippets, file names, answers, keys, or provider errors. It does not claim relevance/provider-selection evidence without a same-corpus golden citation mapping. No provider, corpus, index, file, broker, or production mutation was made. Rollout: `docs/rollouts/2026-07-22-rag-shadow-benchmarks.md`.
@@ -100,6 +107,12 @@ from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
 # Current Status
 
+## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
+
+The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider
+dispatch/cost references. Commit `28a09b84` now keeps the durable `voyage-rerank` service key,
+narrows the active provider for the health lane, and uses `estimateRagDispatchCost`. The branch is
+ready for a fresh hosted gate; auto-merge is armed. No production/provider/corpus writes were made.
 ## 2026-07-22 — Retired-provider Usage Monitor cleanup (GROK peer co-work, branch `codex/retired-provider-usage-cleanup`)
 
 Removed Usage Monitor emissions from the Alpaca, Tradier, and Robinhood broker adapters while
