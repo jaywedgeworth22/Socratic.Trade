@@ -23,6 +23,7 @@ import type { FundamentalRow, AnalystRow } from "@jaywedgeworth22/congress-tradi
 
 export type AppAFundamentalRow = FundamentalRow & { source?: string | null };
 export type AppAAnalystRow = AnalystRow & { source?: string | null };
+import type { EnrichmentSources } from "./types";
 
 import {
   cancelUndispatchedProviderReservation,
@@ -188,13 +189,15 @@ export interface SymbolEnrichment {
   lobbyingQuiver?: number;
   patentsQuiver?: number;
   // Which provider supplied each scalar field (filled by the cascade).
-  sources?: Partial<Record<EnrichmentSourcedField, string>>;
+  sources?: Partial<EnrichmentSources>;
   // Each provider's own analyst read, keyed by provider name (for the Rating tooltip).
   analystBySource?: Record<string, AnalystRatingDetail>;
   /** Per-field evidence receipts; scalar fields above remain the compatibility surface. */
   fieldObservations?: EnrichmentFieldObservations;
   /** Provider failures retained alongside successful fields instead of collapsed to empty output. */
   providerFailures?: Record<string, ProviderFailureReceipt>;
+  // Per-field specific 'asOf' dates (e.g. from FMP fundamentals that carry their own 'date').
+  fieldDates?: Partial<Record<keyof EnrichmentSources, string>>;
 }
 
 export type EnrichmentSourcedField =
@@ -929,6 +932,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const finnhub = resolveApiKeyWithSource("finnhub", userId);
   const alphaVantage = resolveAlphaVantageKeyPool(userId);
   const fmp = resolveApiKeyWithSource("fmp", userId);
+  const roic = resolveApiKeyWithSource("roic", userId);
   const fintech = resolveApiKeyWithSource("fintechstudios", userId);
   const tiingo = resolveApiKeyWithSource("tiingo", userId);
   const twelvedata = resolveApiKeyWithSource("twelvedata", userId);
@@ -985,6 +989,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
     console.log("[data-providers] Alpha Vantage deregistered: Alpaca news already covers NEWS_SENTIMENT");
   }
   if (fmp.key) providers.push(withHealthLane(new FmpEnrichmentProvider(fmp.key, fmp.source, userId), fmp.source));
+  if (roic.key) providers.push(withHealthLane(new RoicAiEnrichmentProvider(roic.key, roic.source, userId), roic.source));
   // Massive REST: REAL second short-interest source (FINRA short interest / free float) for the
   // Yahoo-vs-Massive disagreement cross-check. Supplies ONLY the carrier shortPercentOfFloatSecondary
   // (no price/fundamentals), so ordering doesn't affect first-wins fields. Registered only when a
@@ -1281,7 +1286,8 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
 
     for (const symbol of normalized) {
       const base: SymbolEnrichment = {};
-      const sources: Partial<Record<EnrichmentSourcedField, string>> = {};
+      const sources: Partial<EnrichmentSources> = {};
+      const fieldDates: Partial<Record<keyof EnrichmentSources, string>> = {};
       const fieldObservations: EnrichmentFieldObservations = {};
       const providerFailures: Record<string, ProviderFailureReceipt> = {};
       const scalarCandidates: Partial<Record<EnrichmentSourcedField, FieldObservationCandidate<unknown>[]>> = {};
@@ -1311,6 +1317,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
             upstreamFamily: supplied?.upstreamFamily ?? sourceName,
             observedAt: supplied?.observedAt ?? (field === "asOf" ? undefined : currentRecord?.asOf),
             fetchedAt: supplied?.fetchedAt ?? cascadeFetchedAt,
+            asOf: supplied?.asOf ?? currentRecord?.fieldDates?.[field] ?? undefined,
             status: supplied?.status ?? "ok"
           };
           const candidates: FieldObservationCandidate<unknown>[] = scalarCandidates[field] ?? [];
@@ -1526,6 +1533,39 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       if (Object.keys(providerFailures).length > 0) base.providerFailures = providerFailures;
       merged[symbol] = base;
     }
+
+    const recordsToSave: import("./db-fundamentals").HistoricalFundamentalRecord[] = [];
+    for (const [symbol, enrichment] of Object.entries(merged)) {
+      if (!enrichment.fieldObservations) continue;
+      for (const [field, obs] of Object.entries(enrichment.fieldObservations)) {
+        if (typeof obs.value === "number") {
+          const effectiveTs = obs.asOf ?? obs.observedAt ?? obs.effectiveAt ?? obs.fetchedAt;
+          if (effectiveTs) {
+            recordsToSave.push({
+              symbol,
+              field,
+              value: obs.value,
+              provider: obs.source,
+              effectiveAt: effectiveTs,
+              fetchedAt: obs.fetchedAt ?? new Date().toISOString()
+            });
+          }
+        }
+      }
+    }
+    
+    // Dynamic import (not require) so eslint no-require-imports stays clean and unit
+    // tests that only partially mock db modules can still no-op when the module is absent.
+    void import("./db-fundamentals")
+      .then((mod) => {
+        if (typeof mod.recordHistoricalFundamentals === "function") {
+          mod.recordHistoricalFundamentals(recordsToSave);
+        }
+      })
+      .catch(() => {
+        // Silently ignored when db modules are partially mocked in unit tests
+      });
+
     return merged;
   }
 }
@@ -2760,6 +2800,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           let returnOnAssets: number | undefined;
           let grossProfitMargin: number | undefined;
           let ratiosDividendYield: number | undefined;
+          let peDate: string | undefined;
           if (peRaw.status === "fulfilled" && Array.isArray(peRaw.value)) {
             const row = (peRaw.value as Array<Record<string, unknown>>)[0];
             const finite = (value: unknown) => {
@@ -2779,6 +2820,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             returnOnAssets = percent(row?.returnOnAssetsTTM);
             grossProfitMargin = percent(row?.grossProfitMarginTTM);
             ratiosDividendYield = percent(row?.dividendYieldTTM);
+            if (typeof row?.date === "string") peDate = row.date;
           }
 
           // Stable company profile -> identity + durable operating/market facts. This
@@ -2876,6 +2918,17 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             }
           }
 
+          const fieldDates: Partial<Record<keyof EnrichmentSources, string>> = {};
+          if (peDate) {
+            if (peRatio !== undefined) fieldDates.peRatio = peDate;
+            if (pbRatio !== undefined) fieldDates.pbRatio = peDate;
+            if (debtToEquity !== undefined) fieldDates.debtToEquity = peDate;
+            if (returnOnEquity !== undefined) fieldDates.returnOnEquity = peDate;
+            if (returnOnAssets !== undefined) fieldDates.returnOnAssets = peDate;
+            if (grossProfitMargin !== undefined) fieldDates.grossProfitMargin = peDate;
+            if (ratiosDividendYield !== undefined) fieldDates.dividendYield = peDate;
+          }
+
           const data: SymbolEnrichment = {
             ...(peRatio !== undefined && { peRatio }),
             ...(pbRatio !== undefined && { pbRatio }),
@@ -2895,7 +2948,8 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             ...(targetMean !== undefined && { targetMean }),
             ...(targetHigh !== undefined && { targetHigh }),
             ...(targetLow !== undefined && { targetLow }),
-            ...(targetMedian !== undefined && { targetMedian })
+            ...(targetMedian !== undefined && { targetMedian }),
+            ...(Object.keys(fieldDates).length > 0 && { fieldDates })
           };
 
           // Breaker-skip refund: only the sub-calls we ACTUALLY dispatched count (skipped conditional
@@ -2942,7 +2996,8 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
               );
             }
           } else {
-            writeEnrichmentCache("fmp", symbol, this.scope, this.userId, data, now + ttlMs());
+            // 14-day TTL to preserve hoarded FMP data and avoid 403s on the free tier.
+            writeEnrichmentCache("fmp", symbol, this.scope, this.userId, data, now + 14 * 24 * 60 * 60 * 1000);
           }
           result[symbol] = data;
         })
@@ -3146,6 +3201,103 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
     } finally {
       clearTimeout(timeout);
     }
+  }
+}
+
+// ── ROIC.ai provider ──────────────────────────────────────────────────────────
+
+export class RoicAiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "roic";
+  readonly costTier = "paid" as const;
+  readonly configured = true;
+  private readonly base = "https://api.roic.ai/v2";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("roic", symbol, this.userId, consented, now);
+      if (cached) {
+        result[symbol] = cached.data;
+      } else {
+        misses.push(symbol);
+      }
+    }
+
+    if (misses.length === 0) return result;
+
+    const credKey = `${this.keySource}:${this.userId ?? ""}`;
+    const allowed = admitProviderRequests("roic", credKey, misses.length * 2);
+    if (!allowed) return result;
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const [profileRes, ratiosRes] = await Promise.allSettled([
+              fetchWithRetry(
+                `${this.base}/company/profile/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(this.apiKey)}`,
+                {},
+                { service: "roic", keySource: this.keySource, userId: this.userId }
+              ),
+              fetchWithRetry(
+                `${this.base}/financial-ratios/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(this.apiKey)}`,
+                {},
+                { service: "roic", keySource: this.keySource, userId: this.userId }
+              ),
+            ]);
+
+            const profile = profileRes.status === "fulfilled" && profileRes.value?.ok ? await profileRes.value.json() : undefined;
+            const ratios = ratiosRes.status === "fulfilled" && ratiosRes.value?.ok ? await ratiosRes.value.json() : undefined;
+
+            const item: SymbolEnrichment = {};
+            if (profile) {
+              const p = Array.isArray(profile) ? profile[0] : profile;
+              if (p?.name || p?.companyName) item.companyName = String(p.name || p.companyName);
+              if (p?.sector) item.sector = String(p.sector);
+              if (p?.industry) item.industry = String(p.industry);
+            }
+            if (ratios) {
+              const r = Array.isArray(ratios) ? ratios[0] : ratios;
+              if (r) {
+                if (typeof r.peRatio === "number" || typeof r.pe === "number") item.peRatio = r.peRatio ?? r.pe;
+                if (typeof r.pbRatio === "number" || typeof r.pb === "number") item.pbRatio = r.pbRatio ?? r.pb;
+                if (typeof r.eps === "number") item.eps = r.eps;
+                if (typeof r.roe === "number" || typeof r.returnOnEquity === "number") item.returnOnEquity = r.roe ?? r.returnOnEquity;
+                if (typeof r.debtToEquity === "number") item.debtToEquity = r.debtToEquity;
+              }
+            }
+
+            if (Object.keys(item).length > 0) {
+              result[symbol] = item;
+              writeEnrichmentCache("roic", symbol, this.scope, this.userId, item, now + 30 * 60_000);
+            }
+          } catch (err) {
+            console.warn(`[roic] failed enrichment for ${symbol}:`, err);
+          }
+        })
+      );
+    }
+
+    return result;
   }
 }
 

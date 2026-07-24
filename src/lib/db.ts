@@ -2381,6 +2381,81 @@ const MIGRATIONS: Migration[] = [
         )
         .run("earningscalls_burst_pending", "25", new Date().toISOString());
     }
+  },
+  {
+    // Per-user reflection pooling (owner directive, 2026-07-23): adds regime, thesis_tag, and
+    // dominant_factor columns to learned_context so regime-conditioned retrieval can score rows
+    // against the current market regime. No data migration needed — existing rows stay NULL.
+    version: 59,
+    name: "learned_context_regime_column",
+    up: (database) => {
+      const addColumns = (table: "learned_context" | "learned_context_pending") => {
+        // Guard: when the persistence-hardening tests replay migrations from an early schema
+        // version, learned_context may not exist yet — skip silently so v59 is idempotent.
+        const tableExists = database.prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?"
+        ).get(table);
+        if (!tableExists) return;
+        const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "regime")) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN regime TEXT`);
+        }
+        if (!cols.some((c) => c.name === "thesis_tag")) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN thesis_tag TEXT`);
+        }
+        if (!cols.some((c) => c.name === "dominant_factor")) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN dominant_factor TEXT`);
+        }
+      };
+      addColumns("learned_context");
+      addColumns("learned_context_pending");
+    }
+  },
+  {
+    // Exit-strategy Phase B1 (2026-07-24): persist parameterized Exit Contract columns on
+    // position_stop_plans so every enforcement layer can read one resolved distance/price set
+    // (with account-policy fallback when null). Nullable — legacy rows stay behavior-identical
+    // until the next opening fill writes the contract. See docs/design/exit-strategy-intelligence.md.
+    version: 60,
+    name: "position_stop_plans_exit_contract",
+    up: (database) => {
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'position_stop_plans'")
+        .get();
+      if (!tableExists) return;
+      const cols = database.prepare("PRAGMA table_info(position_stop_plans)").all() as Array<{ name: string }>;
+      const have = new Set(cols.map((c) => c.name));
+      const add = (name: string, ddl: string) => {
+        if (!have.has(name)) database.exec(`ALTER TABLE position_stop_plans ADD COLUMN ${ddl}`);
+      };
+      add("resolved_stop_pct", "resolved_stop_pct REAL");
+      add("stop_price", "stop_price REAL");
+      add("entry_atr_pct", "entry_atr_pct REAL");
+      add("trail_percent", "trail_percent REAL");
+      add("take_profit_price", "take_profit_price REAL");
+      add("max_holding_until", "max_holding_until TEXT");
+      add("invalidation", "invalidation TEXT");
+    }
+  },
+
+  {
+    // Advisory cleanup / fundamentals PIT (fix-1792): time-series fundamentals snapshots
+    // for as-of lookups. Numbered v61 after main v59 regime columns + v60 exit contract.
+    version: 61,
+    name: "historical_fundamentals",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS historical_fundamentals (
+          symbol TEXT NOT NULL,
+          field TEXT NOT NULL,
+          value REAL NOT NULL,
+          provider TEXT NOT NULL,
+          effective_at TEXT NOT NULL,
+          fetched_at TEXT NOT NULL,
+          PRIMARY KEY (symbol, field, provider, effective_at)
+        );
+      `);
+    }
   }
 ];
 
@@ -2724,6 +2799,16 @@ function migrate(database: Database.Database): void {
       error TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS historical_fundamentals (
+      symbol TEXT NOT NULL,
+      field TEXT NOT NULL,
+      value REAL NOT NULL,
+      provider TEXT NOT NULL,
+      effective_at TEXT NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (symbol, field, provider, effective_at)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_account ON portfolio_snapshots (account_number, created_at);
     CREATE INDEX IF NOT EXISTS idx_fill_events_account ON fill_events (account_number, filled_at);
     CREATE INDEX IF NOT EXISTS idx_notification_events_created ON notification_events (created_at);
@@ -2854,6 +2939,13 @@ function migrate(database: Database.Database): void {
       updated_at TEXT NOT NULL,
       side TEXT NOT NULL DEFAULT 'long',
       opening_order_id TEXT,
+      resolved_stop_pct REAL,
+      stop_price REAL,
+      entry_atr_pct REAL,
+      trail_percent REAL,
+      take_profit_price REAL,
+      max_holding_until TEXT,
+      invalidation TEXT,
       PRIMARY KEY (user_id, account_number, symbol)
     );
 
@@ -3768,6 +3860,7 @@ export * from "./db-execution";
 export * from "./db-proposals";
 export * from "./db-fills";
 export * from "./db-notifications";
+export * from "./db-fundamentals";
 export * from "./db-api-keys";
 export * from "./db-health";
 export * from "./db-securities-import";

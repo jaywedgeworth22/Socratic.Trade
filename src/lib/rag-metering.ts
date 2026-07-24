@@ -338,9 +338,9 @@ export function getRagUsageSummary(opts: { sinceIso?: string } = {}): RagUsageRo
 
 import { envFlagOn } from "./rag/env-flag";
 
-/** Returns true when RAG_RETRIEVAL_TELEMETRY is truthy. Default OFF. */
+/** Returns true when RAG_RETRIEVAL_TELEMETRY is truthy. Default ON (owner enablement 2026-07-24). */
 export function retrievalTelemetryEnabled(): boolean {
-  return envFlagOn("RAG_RETRIEVAL_TELEMETRY", false);
+  return envFlagOn("RAG_RETRIEVAL_TELEMETRY", true);
 }
 
 /** Stable, non-reversible hash of a query string — the raw query text must NEVER be persisted

@@ -1,4 +1,4 @@
-import { clearStopPlans, getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listRecentMaturedSkippedCounterfactuals, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
+import { clearStopPlans, deriveExitContractFromOpening, getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listRecentMaturedSkippedCounterfactuals, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import { aggregateSourceValue, type SourceValueObservation } from "./source-value";
@@ -343,6 +343,13 @@ export function recordFillFromProposal(input: {
           (input.proposal.bracketStopLoss != null || input.proposal.bracketTakeProfit != null)
             ? input.execution?.orderId
             : undefined;
+        const contract = deriveExitContractFromOpening({
+          side: input.proposal.side === "short" ? "short" : "buy",
+          avgCost: blendedAvgCost,
+          bracketStopLoss: input.proposal.bracketStopLoss,
+          bracketTakeProfit: input.proposal.bracketTakeProfit,
+          invalidation: input.proposal.autonomyOverride?.invalidation
+        });
         recordStopPlan(
           input.accountNumber,
           symbol,
@@ -352,7 +359,8 @@ export function recordFillFromProposal(input: {
           input.userId,
           undefined,
           input.proposal.side === "short" ? "short" : "long",
-          openingOrderId
+          openingOrderId,
+          contract
         );
       }
     } catch {

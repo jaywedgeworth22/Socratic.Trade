@@ -8,7 +8,7 @@
 
 import crypto from "crypto";
 import { audit, getDb } from "./db";
-import { apiKeyEnvVarForService, getUserApiKey, keyFingerprint, LOCAL_USER, maskApiKeyPreview, type LlmKeySource } from "./db-api-keys";
+import { apiKeyEnvVarForService, DELETED_KEY_TOMBSTONE, getUserApiKey, keyFingerprint, LOCAL_USER, maskApiKeyPreview, type LlmKeySource } from "./db-api-keys";
 import { pushLlmUsage } from "./usage-monitor-push";
 export { keyFingerprint };
 
@@ -462,7 +462,11 @@ export function describeUsageKey(row: { keyRef: string | null; userId: string; p
     const label = row.userId === LOCAL_USER ? `primary user (${row.provider})` : `${row.userId} (${row.provider})`;
     return { fingerprint: displayKeyFingerprint(own), label };
   }
-  // The operator's env key (the failover that served a tenant).
+  // The operator's server failover key (stored for LOCAL_USER or in process.env).
+  const localOpKey = getUserApiKey(LOCAL_USER, row.provider)?.apiKey;
+  if (localOpKey && localOpKey !== DELETED_KEY_TOMBSTONE && keyFingerprint(localOpKey) === row.keyRef) {
+    return { fingerprint: displayKeyFingerprint(localOpKey), label: `server failover (${row.provider})` };
+  }
   const envVar = apiKeyEnvVarForService(row.provider);
   const envKey = envVar ? process.env[envVar]?.trim() : undefined;
   if (envKey && keyFingerprint(envKey) === row.keyRef) {

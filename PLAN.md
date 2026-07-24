@@ -1,5 +1,21 @@
 # Active Implementation Plan
 
+> **2026-07-22 — PR #1792 typecheck repair (CODEX).** The provider-generic health-lane merge
+> resolution is now aligned with the current durable dispatch API in `28a09b84`; run hosted
+> verification, let auto-merge land it, and confirm the exact post-merge deployment receipt.
+> **2026-07-24 - RAG enablement + Exit Contract B1 + prune (CURSOR).** Safe RAG flags default ON
+> (`docs/FEATURE-ENABLEMENT-BACKLOG.md`). Exit Phase B: B1 substrate landed; B3 interim already on
+> main (#1786); B4–B6 + Phase C remain Planned. Wave-2 coaching/reflection DISCARD (branches
+> deleted). Stale no-PR origin tips pruned (19). Next: Infisical mirror if desired; Exit B4 before
+> live shorts; full verify gate on PR.
+
+> **2026-07-24 - Effort-board accuracy audit (CURSOR).** Cleared empty In Progress; corrected
+> Planned/Completed status claims against merged PRs. Active product backlog remains: RAG/feature
+> enablement (`docs/FEATURE-ENABLEMENT-BACKLOG.md`), Exit-strategy Phases B/C, and remaining
+> activity-audit P2 items that are still unmerged. Stale w2 coaching/reflection branches still exist
+> on origin without PRs if someone wants to land them.
+
+
 > **2026-07-22 — Approval Busy/red-team/UptimeRobot repair (CODEX, branch
 > `codex/trade-approval-redteam-uptime-20260722`).** Keep the per-account strategy lock as the
 > correctness fence, but retry its side-effect-free Busy response in the approval client so a user
@@ -163,6 +179,7 @@
 > **2026-07-21 - CI Runner Migration (Antigravity, branch `agent/antigravity-ci-fix`).** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows (`.github/workflows/*.yml`) in Socratic.Trade. The Mac self-hosted runner environment was corrupted after Hetzner failure. Scheduled to land via `scripts/land.sh` to unblock 38 pending PRs.
 > **2026-07-21 - CI queue recovery (GROK + CODEX, branch `monet/ci-runner-and-queue-fixes`).** Remove all workflow targets for absent `trading-live`; keep PR code on the two Coolify `socratic-ci` runners and trusted CI-failure reporting on `socratic-deploy`; remove smoke from PR events; keep an active required verification alive while GitHub collapses superseded pending heads; and repair the six stale current-main test assertions that would otherwise fail the first durable run. Land this dependency first, verify its exact production SHA, then drain PRs serially in review/dependency order without runner-service restarts.
 > **2026-07-21 - CI queue recovery (GROK + CODEX, branch `monet/ci-runner-and-queue-fixes`).** Remove all workflow targets for absent `trading-live`; keep PR code on the two Coolify `socratic-ci` runners and trusted CI-failure reporting on `socratic-deploy`; remove smoke from PR events; keep an active required verification alive while GitHub collapses superseded pending heads; remove synthetic production enrichment fallback data; make bracket permission side-specific; and repair the focused tests exposed by the first durable run. Land this dependency first, verify its exact production SHA, then drain PRs serially in review/dependency order without runner-service restarts.
+> **2026-07-24 - Coolify/Hetzner runners only (CURSOR, branch `cursor/coolify-runners-only-14e5`).** Owner correction: do not use GitHub-hosted Actions. CI runs on ci-cpx32 systemd runners; deploy/reviews on the Coolify prod host. Route `sentry-ci-report` off missing `socratic-deploy` onto `socratic-ci`; sudo-free `gh` + Playwright without `--with-deps`; add `scripts/monitor-coolify-runners.sh` for frequent Coolify/Hetzner health checks.
 > **2026-07-19 - Land the #1771/#1773/#1777 chain, then run the corpus re-embed to completion
 > (owner-directed pickup, multiple lanes).** Next actions, in order: (1) land **#1771**
 > (SiliconFlow bge-m3 embed-price 10x undercount fix — auto-merge armed, no open findings,

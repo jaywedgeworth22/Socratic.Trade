@@ -474,17 +474,15 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   // MARGIN-ACCOUNT MINIMUM. FINRA Notice 26-10 replaces the old PDT count/$25k framework with
   // intraday margin standards effective 2026-06-04, with broker phase-in permitted through
   // 2027-10-20. We do not try to model broker-specific intraday margin; we enforce the static
-  // $2,000 margin minimum on a LIVE/real-capital MARGIN account and defer the rest to the broker.
-  // Scope: LIVE execution only (Test/local sim and broker-Paper are never gated); opening legs only;
-  // cash (non-margin) accounts are never gated here (they aren't subject to the margin minimum).
+  // $2,000 margin minimum on a margin account and defer the rest to the broker.
+  // Scope: opening legs only; cash (non-margin) accounts are never gated here.
   if (
     isOpening &&
-    context.isLiveExecution === true &&
     context.accountCapabilities?.marginEnabled === true &&
     context.portfolio.totalMarketValue < MARGIN_MINIMUM_EQUITY
   ) {
     reasons.push(
-      `margin_minimum: this LIVE margin account's equity $${context.portfolio.totalMarketValue.toFixed(2)} is below the ` +
+      `margin_minimum: this margin account's equity $${context.portfolio.totalMarketValue.toFixed(2)} is below the ` +
         `$${MARGIN_MINIMUM_EQUITY.toLocaleString("en-US")} margin minimum. FINRA Notice 26-10 replaces the old PDT count/$25k framework, but broker phase-in and broker-specific intraday margin restrictions can still apply.`
     );
   }

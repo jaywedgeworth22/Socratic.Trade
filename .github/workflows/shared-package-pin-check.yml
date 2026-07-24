@@ -59,6 +59,9 @@ jobs:
     # This job receives a private-repo token. Reject fork PRs before checkout or
     # runner assignment; push/schedule/manual events remain admitted.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # Self-hosted only: GitHub-hosted ubuntu-latest does not assign jobs for this repo
+    # (runner_id=0 / empty steps, 2026-07-18). Job still avoids disk races by reading
+    # package.json via the GitHub API when possible (see compare step).
     runs-on: [self-hosted, socratic-ci]
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +78,10 @@ jobs:
 
       - name: Compare shared-package version against the peer consumer
         env:
-          GH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+          # Default GH_TOKEN = GITHUB_TOKEN so local contents API works on this repo.
+          # Peer private-repo fetch overrides with GH_PACKAGES_TOKEN when set.
+          GH_TOKEN: ${{ github.token }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -178,20 +184,43 @@ jobs:
             return 0
           }
 
-          LOCAL_SPEC=$(node -e "const p=require('path').resolve(process.env.LOCAL_PACKAGE_JSON_PATH); const pkg=require(p); console.log((pkg.dependencies||{})[process.env.PKG]||'')")
+          # Prefer reading THIS repo's package.json via the GitHub API (same pattern as the
+          # peer fetch). Self-hosted workspaces race with cleanup and can lose the file after
+          # actions/checkout; API avoids that class of MODULE_NOT_FOUND entirely.
+          REF="${GITHUB_SHA}"
+          if [ -z "$REF" ]; then REF="HEAD"; fi
+          LOCAL_JSON=""
+          if LOCAL_JSON=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${LOCAL_PACKAGE_JSON_PATH}?ref=${REF}" -H "Accept: application/vnd.github.raw" 2>/dev/null); then
+            echo "Read ${LOCAL_PACKAGE_JSON_PATH} via API at ref ${REF}"
+          else
+            echo "::warning::API read of ${LOCAL_PACKAGE_JSON_PATH}@${REF} failed; falling back to disk"
+            if [ ! -f "${LOCAL_PACKAGE_JSON_PATH}" ]; then
+              git sparse-checkout disable 2>/dev/null || true
+              git reset --hard HEAD || true
+              git checkout -f HEAD -- "${LOCAL_PACKAGE_JSON_PATH}" 2>/dev/null || true
+            fi
+            if [ ! -f "${LOCAL_PACKAGE_JSON_PATH}" ]; then
+              echo "::error::${LOCAL_PACKAGE_JSON_PATH} unavailable via API and disk"
+              ls -la || true
+              exit 1
+            fi
+            LOCAL_JSON=$(cat "${LOCAL_PACKAGE_JSON_PATH}")
+          fi
+          LOCAL_SPEC=$(printf '%s' "$LOCAL_JSON" | PKG="$PKG" node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log((JSON.parse(s).dependencies||{})[process.env.PKG]||'')}catch{console.log('')}})")
           if [ -z "$LOCAL_SPEC" ]; then
             echo "::warning::${PKG} not found in ${LOCAL_PACKAGE_JSON_PATH} dependencies"
             exit 0
           fi
           echo "Local spec (${LOCAL_PACKAGE_JSON_PATH}): $LOCAL_SPEC"
 
-          if [ -z "${GH_TOKEN}" ]; then
+          if [ -z "${GH_PACKAGES_TOKEN:-}" ]; then
             echo "::notice::GH_PACKAGES_TOKEN is unset - skipping the peer divergence check (it needs read access to ${PEER_REPO})."
             exit 0
           fi
 
           # Fetch the peer repo's package.json raw (Accept: raw returns file content, not base64).
-          if ! PEER_JSON=$(gh api "repos/${PEER_REPO}/contents/${PEER_PACKAGE_JSON_PATH}" -H "Accept: application/vnd.github.raw" 2>/dev/null); then
+          # Use the packages PAT; default GITHUB_TOKEN cannot read other private repos.
+          if ! PEER_JSON=$(GH_TOKEN="$GH_PACKAGES_TOKEN" gh api "repos/${PEER_REPO}/contents/${PEER_PACKAGE_JSON_PATH}" -H "Accept: application/vnd.github.raw" 2>/dev/null); then
             echo "::warning::could not fetch ${PEER_REPO}/${PEER_PACKAGE_JSON_PATH} (auth/scope/transient error) - skipping peer check"
             exit 0
           fi
