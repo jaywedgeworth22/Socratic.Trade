@@ -1,5 +1,11 @@
 # Current Status
 
+## 2026-07-24 — Moonshot AI / Kimi Provider Integration (ANTIGRAVITY)
+
+- Integrated Moonshot AI / Kimi (`moonshot` / `kimi`) as a first-class LLM provider key option across Settings API keys (`API_KEY_CATALOG`), provider endpoint dispatch (`src/lib/llm-provider.ts`), Assistant chat (`src/lib/chat/llm.ts`), model identity (`src/lib/model-identity.ts`), token cost tracking (`src/lib/llm-usage.ts`), and catalog UI dropdowns (`app/ui/llm-model-catalog.ts`).
+- Added native Moonshot API endpoint (`https://api.moonshot.cn/v1/chat/completions`) and OpenRouter wire ID mapping (`moonshotai/kimi-latest`).
+- Rollout: `docs/rollouts/2026-07-24-moonshot-kimi-provider-support.md`.
+
 ## 2026-07-24 — Map OpenAI Model Tiers to Explicit Versioned OpenRouter Slugs (ANTIGRAVITY)
 
 - Mapped all OpenAI model tiers (`gpt-sol-latest`, `gpt-terra-latest`, `gpt-luna-latest`, `gpt-mini-latest`, `gpt-nano-latest`, and `gpt-4o-latest`) to explicit versioned OpenRouter wire IDs (`openai/gpt-5.6-sol`, `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`, `openai/gpt-5.4-mini`, `openai/gpt-5.4-nano`, `openai/gpt-4o-latest`) in `src/lib/llm-provider.ts`.
