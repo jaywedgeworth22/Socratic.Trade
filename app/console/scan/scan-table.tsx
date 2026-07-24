@@ -154,9 +154,9 @@ function ScanCard({
   );
   return (
     <div className="con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3">
-      <div className="flex items-center justify-between gap-2">
-        {symbolColumn?.render(q)}
+      <div className="flex items-center gap-2">
         <WatchButton symbol={q.symbol} watched={watched} pending={pending} onToggle={onToggleWatch} />
+        {symbolColumn?.render(q)}
       </div>
       <div className="grid grid-cols-2 gap-1.5 text-[length:var(--con-fs-sm)]">
         {fields.map((c) => (
@@ -395,36 +395,26 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
         <table className="con-table w-full min-w-max">
         <thead>
           <tr>
-            {visibleColumns.map((c, i) => {
-              const active = activeSort.col === c.id;
-              return (
-                <th
-                  key={c.id}
-                  scope="col"
-                  aria-sort={active ? (activeSort.dir === "asc" ? "ascending" : "descending") : undefined}
-                  className={cx(c.num && "num", i === 0 && STICKY_CELL)}
-                >
-                  <Tooltip
-                    content={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}>
-                    <button
-                      type="button"
-                      onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
-                      className={cx(
-                        "inline-flex cursor-pointer select-none items-center gap-1 font-semibold uppercase tracking-[0.07em] transition-colors",
-                        active ? "text-[color:var(--con-fg)]" : "hover:text-[color:var(--con-fg)]"
-                      )}>
-                      {c.label}
-                      <span aria-hidden className={cx("text-[length:var(--con-fs-2xs)]", !active && "opacity-0")}>
-                        {active && activeSort.dir === "asc" ? "▲" : "▼"}
-                      </span>
-                    </button>
-                  </Tooltip>
-                </th>
-              );
-            })}
-            <th title="Add or remove a symbol from your watchlist. Watching costs nothing and never trades.">
-              <span className="sr-only">Watch</span>
-            </th>
+            {visibleColumns.map((c, i) => (
+              <th
+                key={c.id}
+                className={cx("whitespace-nowrap select-none", c.num && "num text-right", i === 0 && cx(STICKY_CELL, "z-[2]"))}>
+                <Tooltip content={c.headerTitle} align={i === 0 ? "left" : "center"}>
+                  <button
+                    type="button"
+                    onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
+                    className={cx(
+                      "inline-flex cursor-pointer select-none items-center gap-1 font-semibold uppercase tracking-[0.07em] transition-colors",
+                      activeSort.col === c.id ? "text-[color:var(--con-fg)]" : "hover:text-[color:var(--con-fg)]"
+                    )}>
+                    {c.label}
+                    <span aria-hidden className={cx("text-[length:var(--con-fs-2xs)]", activeSort.col !== c.id && "opacity-0")}>
+                      {activeSort.col === c.id && activeSort.dir === "asc" ? "▲" : "▼"}
+                    </span>
+                  </button>
+                </Tooltip>
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -432,22 +422,30 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
             const symbolKey = q.symbol.trim().toUpperCase();
             return (
               <tr key={q.symbol} className="group">
-                {visibleColumns.map((c, i) => (
-                  <td
-                    key={c.id}
-                    title={cellTitleWithReceived(c, q, received)}
-                    className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}>
-                    {c.render(q)}
-                  </td>
-                ))}
-                <td className="cursor-default whitespace-nowrap text-right">
-                  <WatchButton
-                    symbol={q.symbol}
-                    watched={watched.has(symbolKey)}
-                    pending={pendingWatch.has(symbolKey)}
-                    onToggle={() => void toggleWatch(q.symbol)}
-                  />
-                </td>
+                {visibleColumns.map((c, i) => {
+                  const title = cellTitleWithReceived(c, q, received);
+                  const isSymbolCol = c.id === SYMBOL_COLUMN_ID;
+                  return (
+                    <td
+                      key={c.id}
+                      title={title}
+                      className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}>
+                      {isSymbolCol ? (
+                        <div className="flex items-center gap-1.5">
+                          <WatchButton
+                            symbol={q.symbol}
+                            watched={watched.has(symbolKey)}
+                            pending={pendingWatch.has(symbolKey)}
+                            onToggle={() => void toggleWatch(q.symbol)}
+                          />
+                          {c.render(q)}
+                        </div>
+                      ) : (
+                        c.render(q)
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             );
           })}
