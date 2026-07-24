@@ -161,10 +161,18 @@ export function normalizeOpenRouterModelId(rawModel: string | undefined): string
       model = "~google/gemini-pro-latest";
     } else if (/^gemini/i.test(model)) {
       model = `google/${model}`;
-    } else if (/^gpt-sol-latest$/i.test(model) || /^gpt-terra-latest$/i.test(model) || /^gpt-4o-latest$/i.test(model)) {
+    } else if (/^gpt-sol-latest$/i.test(model)) {
+      model = "openai/gpt-5.6-sol";
+    } else if (/^gpt-terra-latest$/i.test(model)) {
+      model = "openai/gpt-5.6-terra";
+    } else if (/^gpt-luna-latest$/i.test(model)) {
+      model = "openai/gpt-5.6-luna";
+    } else if (/^gpt-mini-latest$/i.test(model)) {
+      model = "openai/gpt-5.4-mini";
+    } else if (/^gpt-nano-latest$/i.test(model)) {
+      model = "openai/gpt-5.4-nano";
+    } else if (/^gpt-4o-latest$/i.test(model)) {
       model = "openai/gpt-4o-latest";
-    } else if (/^gpt-luna-latest$/i.test(model) || /^gpt-mini-latest$/i.test(model) || /^gpt-nano-latest$/i.test(model)) {
-      model = "openai/gpt-4o-mini";
     } else if (/^mistral-medium-latest$/i.test(model)) {
       model = "mistralai/mistral-medium-3.5";
     } else if (/^mistral-small-latest$/i.test(model)) {
