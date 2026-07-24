@@ -380,7 +380,7 @@ export function listUserApiKeys(userId: string): UserApiKey[] {
   const rows = getDb()
     .prepare("SELECT id, user_id, service, api_key, label, created_at, updated_at FROM user_api_keys WHERE user_id = ? ORDER BY service")
     .all(userId) as Array<{ id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string }>;
-  return rows.map(keyRowToApiKey);
+  return rows.map(keyRowToApiKey).filter((k) => k.apiKey !== DELETED_KEY_TOMBSTONE);
 }
 
 export function upsertUserApiKey(userId: string, service: string, apiKey: string, label?: string): UserApiKey {
@@ -398,12 +398,26 @@ export function upsertUserApiKey(userId: string, service: string, apiKey: string
   return { id, userId, service: canonical, apiKey, label, createdAt: now, updatedAt: now };
 }
 
+export const DELETED_KEY_TOMBSTONE = "__DISABLED__";
+
 export function deleteUserApiKey(userId: string, service: string): void {
   const canonical = normalizeApiKeyService(service);
   const db = getDb();
-  db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, canonical);
+  const now = new Date().toISOString();
+  const id = `${userId}_${canonical}`;
+  const encryptedKey = encryptValue(DELETED_KEY_TOMBSTONE);
+  db.prepare(
+    `INSERT INTO user_api_keys (id, user_id, service, api_key, label, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'disabled by user', ?, ?)
+     ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
+  ).run(id, userId, canonical, encryptedKey, now, now);
   if (canonical !== service) {
-    db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, service);
+    const aliasId = `${userId}_${service}`;
+    db.prepare(
+      `INSERT INTO user_api_keys (id, user_id, service, api_key, label, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'disabled by user', ?, ?)
+       ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
+    ).run(aliasId, userId, service, encryptedKey, now, now);
   }
 }
 
@@ -438,24 +452,22 @@ export const LOCAL_USER = "local";
 // fail-closed default). Everything below is operator-funded shared infrastructure where env is a
 // justified global fallback for all users.
 const API_KEY_TIER: Record<string, CredTier> = {
-  // Market data — public, operator-funded, shared cache (a user's own key still wins + stays private).
   finnhub: "shared-operator-infra",
   fmp: "shared-operator-infra",
   alphavantage: "shared-operator-infra",
   marketstack: "shared-operator-infra",
+  fred: "shared-operator-infra",
   massive: "shared-operator-infra",
   massive_s3_endpoint: "shared-operator-infra",
   massive_bucket: "shared-operator-infra",
   massive_access_key_id: "shared-operator-infra",
   massive_secret_access_key: "shared-operator-infra",
+  sec_edgar_user_agent: "shared-operator-infra",
+  pinecone: "shared-operator-infra",
+  voyage: "shared-operator-infra",
+  apify: "shared-operator-infra",
   fintechstudios: "shared-operator-infra",
-  // Macro / corpus / scraper / app-level infra.
-  fred: "shared-operator-infra", // free public macro data; one uniform regime signal for all
-  apify: "shared-operator-infra", // ~$0.003/day congressional scraper; House coverage benefits all
-  pinecone: "shared-operator-infra", // shared operator-ingested SEC corpus; isolation is the query namespace
-  voyage: "shared-operator-infra", // embeds the shared corpus; same economic model as pinecone
-  siliconflow: "shared-operator-infra", // alternative embeds/reranker provider for the shared corpus
-  sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
+  powerintell: "shared-operator-infra",
   tiingo: "shared-operator-infra",
   twelvedata: "shared-operator-infra",
   logodev: "shared-operator-infra",
@@ -470,9 +482,10 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
   const canonical = normalizeApiKeyService(service);
   const envVar = apiKeyEnvVarForService(canonical);
 
-  // 1. A per-user stored key always wins.
+  // 1. A per-user stored key always wins. If explicitly tombstoned/disabled by user, fail closed with no env fallback.
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
+    if (userKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none", envVar, service: canonical };
     if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", envVar, service: canonical };
   }
 
@@ -487,7 +500,7 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
     // jobs and global operations run off these keys.
     if (userId !== "local") {
       const localKey = getUserApiKey("local", canonical);
-      if (localKey?.apiKey) return { key: localKey.apiKey, source: "env", envVar, service: canonical };
+      if (localKey?.apiKey && localKey.apiKey !== DELETED_KEY_TOMBSTONE) return { key: localKey.apiKey, source: "env", envVar, service: canonical };
     }
 
     return { source: "none", envVar, service: canonical };
@@ -717,8 +730,8 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
   const canonical = normalizeApiKeyService(service);
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
+    if (userKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none" };
     if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
-
   }
   // Operator-funded failover for ANY user (flag-gated). `local`'s own env key is migrated into its
   // per-user store at boot, so `local` resolves "user" above; this serves users without their own
