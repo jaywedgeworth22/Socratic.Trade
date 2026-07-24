@@ -256,38 +256,44 @@ export const SCAN_COLUMNS: ScanColumn[] = [
     id: "senateTrades",
     label: "Congress",
     headerTitle:
-      "Net recent congressional trading = distinct members buying minus selling over the last ~60 days. Positive = net buying. Hover a cell for the disclosures behind the number.",
+      "Congressional trading composite score and disclosures (Conviction, Consensus, Skill, Flow, Freshness). Hover or tap a cell for full details.",
     num: true,
-    sortValue: (q) => (q.senateTrades ?? 0) !== 0 ? q.senateTrades : q.congressCompositeSignedScore ?? q.congressCompositeScore,
-    render: (q) =>
-      typeof q.senateTrades === "number" ? (
-        <div className="flex flex-col">
-          <SignedText value={q.senateTrades}>{q.senateTrades > 0 ? `+${q.senateTrades}` : String(q.senateTrades)}</SignedText>
-          {q.congressCompositeScore !== undefined && q.congressCompositeScore > 0 && (
-            <span className="text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)] whitespace-nowrap">
-              Score: {q.congressCompositeSignedScore ?? q.congressCompositeScore}
-            </span>
-          )}
-        </div>
-      ) : q.congressCompositeScore !== undefined && q.congressCompositeScore > 0 ? (
-        <span className="text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)] whitespace-nowrap">
-          {q.congressCompositeDirection === "SELL" ? "SELL" : "BUY"} · {q.congressCompositeSignedScore ?? q.congressCompositeScore}
-        </span>
-      ) : (
-        <Dash />
-      ),
+    sortValue: (q) => q.congressCompositeSignedScore ?? q.congressCompositeScore ?? q.senateTrades,
+    render: (q) => {
+      const score = q.congressCompositeSignedScore ?? q.congressCompositeScore;
+      if (typeof score === "number" && score !== 0) {
+        return (
+          <SignedText value={score}>
+            {score > 0 ? `+${score}` : String(score)}
+          </SignedText>
+        );
+      }
+      if (typeof q.senateTrades === "number" && q.senateTrades !== 0) {
+        return (
+          <SignedText value={q.senateTrades}>
+            {q.senateTrades > 0 ? `+${q.senateTrades}` : String(q.senateTrades)}
+          </SignedText>
+        );
+      }
+      return <Dash />;
+    },
     cellTitle: (q) => {
+      const parts: string[] = [];
+      const score = q.congressCompositeSignedScore ?? q.congressCompositeScore;
+      if (typeof score === "number") {
+        const dir = q.congressCompositeDirection ? ` (${q.congressCompositeDirection})` : "";
+        parts.push(`Congress Composite Score: ${score > 0 ? "+" : ""}${score}${dir}`);
+      }
       if (typeof q.senateTrades === "number") {
-        const header = `Net congressional activity ${q.senateTrades > 0 ? "+" : ""}${q.senateTrades} (distinct members buying minus selling, ~60 days).`;
-        const scoreNote = q.congressCompositeScore ? `Composite Score: ${q.congressCompositeSignedScore ?? q.congressCompositeScore} (Conviction, Consensus, Skill, Flow, Freshness)` : undefined;
-        const bulletins = q.evidenceBulletins?.length ? q.evidenceBulletins.join("\n") : undefined;
-        const source = q.sources?.senateTrades ? `Source: ${friendlySource(q.sources.senateTrades)}` : undefined;
-        return [header, scoreNote, bulletins, source].filter(Boolean).join("\n");
+        parts.push(`Net congressional activity: ${q.senateTrades > 0 ? "+" : ""}${q.senateTrades} (distinct members buying minus selling over ~60 days).`);
       }
-      if (q.congressCompositeScore) {
-        return `Congress composite score: ${q.congressCompositeSignedScore ?? q.congressCompositeScore} (${q.congressCompositeDirection === "SELL" ? "SELL signal" : q.congressCompositeDirection === "BUY" ? "BUY signal" : "NEUTRAL"} — Conviction, Consensus, Skill, Flow, Freshness). No individual trade disclosures available.`;
+      if (q.evidenceBulletins?.length) {
+        parts.push(q.evidenceBulletins.join("\n"));
       }
-      return "No recent congressional disclosures for this symbol.";
+      if (q.sources?.senateTrades) {
+        parts.push(`Source: ${friendlySource(q.sources.senateTrades)}`);
+      }
+      return parts.length ? parts.join("\n\n") : "No recent congressional disclosures for this symbol.";
     }
   },
   {
