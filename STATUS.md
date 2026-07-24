@@ -1,5 +1,11 @@
 # Current Status
 
+## 2026-07-24 — Map OpenAI Model Tiers to Explicit Versioned OpenRouter Slugs (ANTIGRAVITY)
+
+- Mapped all OpenAI model tiers (`gpt-sol-latest`, `gpt-terra-latest`, `gpt-luna-latest`, `gpt-mini-latest`, `gpt-nano-latest`, and `gpt-4o-latest`) to explicit versioned OpenRouter wire IDs (`openai/gpt-5.6-sol`, `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`, `openai/gpt-5.4-mini`, `openai/gpt-5.4-nano`, `openai/gpt-4o-latest`) in `src/lib/llm-provider.ts`.
+- Prevents invalid `~openai/gpt-latest` fallback wire IDs when dispatches route through OpenRouter.
+- PR: [#2219](https://github.com/jaywedgeworth22/Socratic.Trade/pull/2219).
+
 ## 2026-07-24 — Remove Redundant Paper Account Chips (ANTIGRAVITY)
 
 - Removed the purple paper account reality chip (`PAPER · broker practice account`) from the console dashboard Strategy bar (`app/console/page.tsx`) and Strategy page header (`app/console/strategy/page.tsx`).
