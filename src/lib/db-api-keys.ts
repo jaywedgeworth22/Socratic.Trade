@@ -513,12 +513,12 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
   const canonical = normalizeApiKeyService(service);
   const envVar = apiKeyEnvVarForService(canonical);
 
-  // 1. A per-user stored key always wins. If explicitly tombstoned/disabled by user, fail closed with no env fallback.
-  // Unspecified userId (e.g. background callers) resolves against `local` (the primary operator).
-  const targetUserId = userId ?? LOCAL_USER;
-  const userKey = getUserApiKey(targetUserId, canonical);
-  if (userKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none", envVar, service: canonical };
-  if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", envVar, service: canonical };
+  // 1. A per-user stored key for a specific user ID always wins.
+  if (userId) {
+    const userKey = getUserApiKey(userId, canonical);
+    if (userKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none", envVar, service: canonical };
+    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", envVar, service: canonical };
+  }
 
   const envKey = envVar ? process.env[envVar] : undefined;
 
@@ -537,10 +537,14 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
     return { source: "none", envVar, service: canonical };
   }
 
-  // 3. per-user-only: NO env fallback for anyone — not even `local`. The operator's own env
-  //    broker/LLM keys are migrated into the `local` per-user store at boot
-  //    (migrateLocalEnvCredentials), so `local` resolves from the store like every other user.
-  //    No stored key → fail closed. (`local` is the primary user, not a privileged operator.)
+  // 3. per-user-only: NO env fallback for anyone — not even `local`. For background callers (userId undefined)
+  // or `local`, resolve against `local`'s stored key. Non-local users with no stored key fail closed.
+  if (!userId || userId === LOCAL_USER) {
+    const localKey = getUserApiKey(LOCAL_USER, canonical);
+    if (localKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none", envVar, service: canonical };
+    if (localKey?.apiKey) return { key: localKey.apiKey, source: "user", envVar, service: canonical };
+  }
+
   return { source: "none", envVar, service: canonical };
 }
 
