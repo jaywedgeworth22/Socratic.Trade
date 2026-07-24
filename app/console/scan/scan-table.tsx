@@ -154,9 +154,9 @@ function ScanCard({
   );
   return (
     <div className="con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3">
-      <div className="flex items-center justify-between gap-2">
-        {symbolColumn?.render(q)}
+      <div className="flex items-center gap-2">
         <WatchButton symbol={q.symbol} watched={watched} pending={pending} onToggle={onToggleWatch} />
+        {symbolColumn?.render(q)}
       </div>
       <div className="grid grid-cols-2 gap-1.5 text-[length:var(--con-fs-sm)]">
         {fields.map((c) => (
@@ -437,6 +437,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
             return (
               <tr key={q.symbol} className="group">
                 {visibleColumns.map((c, i) => {
+<<<<<<< HEAD
                   const alignmentClass =
                     c.align === "left"
                       ? "!text-left text-left"
@@ -476,6 +477,31 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                     />
                   </div>
                 </td>
+=======
+                  const title = cellTitleWithReceived(c, q, received);
+                  const isSymbolCol = c.id === SYMBOL_COLUMN_ID;
+                  return (
+                    <td
+                      key={c.id}
+                      title={title}
+                      className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}>
+                      {isSymbolCol ? (
+                        <div className="flex items-center gap-1.5">
+                          <WatchButton
+                            symbol={q.symbol}
+                            watched={watched.has(symbolKey)}
+                            pending={pendingWatch.has(symbolKey)}
+                            onToggle={() => void toggleWatch(q.symbol)}
+                          />
+                          {c.render(q)}
+                        </div>
+                      ) : (
+                        c.render(q)
+                      )}
+                    </td>
+                  );
+                })}
+>>>>>>> origin/main
               </tr>
             );
           })}
