@@ -59,7 +59,9 @@ jobs:
     # This job receives a private-repo token. Reject fork PRs before checkout or
     # runner assignment; push/schedule/manual events remain admitted.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, socratic-ci]
+    # Hosted runner: avoids self-hosted workspace races that deleted package.json
+    # mid-job (MODULE_NOT_FOUND / pathspec not in git). Job is API-only + tiny checkout.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -178,16 +180,21 @@ jobs:
             return 0
           }
 
-          # Prefer fs.readFileSync over require(): self-hosted runner workspaces can race with
-          # cleanup jobs, and require() emits MODULE_NOT_FOUND when the file is briefly gone.
-          # Also recover package.json from HEAD if a concurrent cleaner removed it after checkout.
+          # Prefer fs.readFileSync over require() (MODULE_NOT_FOUND is unhelpful).
+          # If the manifest is missing, disable sparse-checkout, hard-reset, and re-materialize.
           if [ ! -f "${LOCAL_PACKAGE_JSON_PATH}" ]; then
-            echo "::warning::${LOCAL_PACKAGE_JSON_PATH} missing after checkout; attempting git restore"
+            echo "::warning::${LOCAL_PACKAGE_JSON_PATH} missing after checkout; recovering workspace"
+            pwd
             ls -la || true
-            git checkout HEAD -- "${LOCAL_PACKAGE_JSON_PATH}" || true
+            git sparse-checkout disable 2>/dev/null || true
+            git reset --hard HEAD || true
+            git checkout -f HEAD -- "${LOCAL_PACKAGE_JSON_PATH}" 2>/dev/null || true
+            # Last resort: show tree for diagnosis
+            git rev-parse HEAD || true
+            git ls-tree HEAD "${LOCAL_PACKAGE_JSON_PATH}" || true
           fi
           if [ ! -f "${LOCAL_PACKAGE_JSON_PATH}" ]; then
-            echo "::error::${LOCAL_PACKAGE_JSON_PATH} still missing after restore — runner workspace corrupt"
+            echo "::error::${LOCAL_PACKAGE_JSON_PATH} still missing after restore — checkout corrupt"
             ls -la || true
             exit 1
           fi
