@@ -66,7 +66,8 @@ beforeEach(() => {
   delete process.env.HYBRID_RETRIEVAL;
   delete process.env.VECTOR_MIN_SCORE;
   delete process.env.VECTOR_ASOF_STRICT;
-  delete process.env.VECTOR_ASOF_SERVER_FILTER;
+  // Explicit off so these tests stay independent of the production default ON (2026-07-24).
+  process.env.VECTOR_ASOF_SERVER_FILTER = "off";
 
   mocks.resolveApiKey.mockImplementation((service: string) => {
     if (service === "pinecone") return process.env.PINECONE_API_KEY;
@@ -174,8 +175,8 @@ describe("server-asof-filter: Pinecone query filter shape", () => {
     });
   });
 
-  it("(d2) asOf set but server filter FLAG OFF (default): no epoch clause — byte-identical to today", async () => {
-    delete process.env.VECTOR_ASOF_SERVER_FILTER;
+  it("(d2) asOf set but server filter FLAG OFF: no epoch clause — byte-identical to pre-enablement", async () => {
+    process.env.VECTOR_ASOF_SERVER_FILTER = "off";
     mocks.query.mockResolvedValue({ matches: [] });
 
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");

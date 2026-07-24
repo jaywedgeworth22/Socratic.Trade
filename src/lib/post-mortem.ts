@@ -15,7 +15,6 @@ import { withLlmGeneration } from "./observability";
 import { isOverLlmBudget } from "./llm-budget";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { TradingPolicy } from "./types";
-import { validatePaperToLiveThesisTransfers } from "./learning-transfer";
 
 /**
  * @param policyOverride Optional pre-resolved policy to use INSTEAD OF re-reading `getPolicy(userId)`.
@@ -202,25 +201,17 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
     // erasable FACTS over time. We emit only durable QUALITATIVE track-record facts (directional,
     // no numeric percent/size) for well-sampled theses; the fail-closed classifier drops anything
     // it deems risk-adjacent, and risk/sizing inferences are never written in this slice.
-    if (connectedAccount) {
-      await writeThesisTrackRecordFacts(
-        outcomesByThesis,
-        userId,
-        connectedAccount.id,
-        connectedAccount.environment
-      );
-      // Deterministic thesis x regime "conditioned lesson" vectors — one living, overwrite-in-place
-      // doc per well-sampled bucket. Rides this function's existing signature-dedup gate (stats can't
-      // change without new fills) and inherits the existing budget/no-key early returns above.
-      const comboStats = getThesisRegimeScorecard(accountNumber, source, {}, userId);
-      await writeThesisRegimeLessonVectors(
-        comboStats,
-        userId,
-        connectedAccount.id,
-        connectedAccount.environment
-      );
-      await validatePaperToLiveThesisTransfers(userId);
-    }
+    //
+    // Per-user pooling (owner directive, 2026-07-23): pool ALL of the user's accounts so lessons
+    // learned from paper/broker accounts benefit every account. An account is an account.
+    const allAccounts = listConnectedAccounts(userId);
+    const pooledThesisStats = poolThesisStats(allAccounts, userId);
+    await writeThesisTrackRecordFacts(pooledThesisStats, userId, allAccounts);
+    // Deterministic thesis x regime "conditioned lesson" vectors — one living, overwrite-in-place
+    // doc per well-sampled bucket. Rides this function's existing signature-dedup gate (stats can't
+    // change without new fills) and inherits the existing budget/no-key early returns above.
+    const pooledRegimeStats = poolThesisRegimeStats(allAccounts, userId);
+    await writeThesisRegimeLessonVectors(pooledRegimeStats, userId, allAccounts);
   } catch (error) {
     console.error("Failed to generate reflection summary:", error);
   }
@@ -301,35 +292,172 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+/** Per-user pooled thesis stat with provenance across all of the user's accounts. */
+interface PooledThesisStat extends ThesisStat {
+  source_accounts: string[];
+  environment_breakdown: { paper: number; live: number };
+}
+
+/** Per-user pooled thesis x regime stat with provenance across all of the user's accounts. */
+interface PooledThesisRegimeStat extends ThesisRegimeStat {
+  source_accounts: string[];
+  environment_breakdown: { paper: number; live: number };
+}
+
+/**
+ * Pool ThesisStat across ALL connected accounts. Trade counts sum; rate-based fields
+ * (winRate, avgReturnPct, etc.) are weighted by each account's trade count. Each pooled
+ * row tracks which account numbers contributed and the paper/live breakdown.
+ */
+function poolThesisStats(
+  accounts: { accountNumber?: string; environment: string; broker: string }[],
+  userId: string
+): PooledThesisStat[] {
+  // Collect per-account stats
+  const perAccount: { accountNumber: string; environment: string; stats: ThesisStat[] }[] = [];
+  for (const account of accounts) {
+    if (!account.accountNumber || account.broker === "test") continue;
+    const source = account.environment === "live" ? "live" : "paper";
+    try {
+      perAccount.push({
+        accountNumber: account.accountNumber,
+        environment: account.environment,
+        stats: getThesisScorecard(account.accountNumber, source as "paper" | "live", {}, userId)
+      });
+    } catch { /* skip accounts whose scorecard fails */ }
+  }
+
+  // Merge by thesisTag
+  const byThesis = new Map<string, { trades: number; accounts: Set<string>; paperLots: number; liveLots: number; winRateW: number; avgReturnW: number; totalPnl: number; shrunkWinRateW: number; shrunkAvgReturnW: number }>();
+  for (const { accountNumber, environment, stats } of perAccount) {
+    for (const stat of stats) {
+      if (!stat.thesisTag || stat.thesisTag === "Untagged") continue;
+      const key = stat.thesisTag;
+      let entry = byThesis.get(key);
+      if (!entry) {
+        entry = { trades: 0, accounts: new Set(), paperLots: 0, liveLots: 0, winRateW: 0, avgReturnW: 0, totalPnl: 0, shrunkWinRateW: 0, shrunkAvgReturnW: 0 };
+        byThesis.set(key, entry);
+      }
+      const w = stat.trades;
+      entry.trades += w;
+      entry.accounts.add(accountNumber);
+      if (environment === "paper") entry.paperLots += w;
+      else entry.liveLots += w;
+      entry.winRateW += stat.winRate * w;
+      entry.avgReturnW += stat.avgReturnPct * w;
+      entry.totalPnl += stat.totalPnl;
+      entry.shrunkWinRateW += stat.shrunkWinRate * w;
+      entry.shrunkAvgReturnW += stat.shrunkAvgReturnPct * w;
+    }
+  }
+
+  return [...byThesis.entries()].map(([thesisTag, e]) => ({
+    thesisTag,
+    trades: e.trades,
+    winRate: e.trades > 0 ? round1(e.winRateW / e.trades) : 0,
+    avgReturnPct: e.trades > 0 ? round1(e.avgReturnW / e.trades) : 0,
+    totalPnl: round1(e.totalPnl),
+    shrunkWinRate: e.trades > 0 ? round1(e.shrunkWinRateW / e.trades) : 0,
+    shrunkAvgReturnPct: e.trades > 0 ? round1(e.shrunkAvgReturnW / e.trades) : 0,
+    source_accounts: [...e.accounts],
+    environment_breakdown: { paper: e.paperLots, live: e.liveLots }
+  }));
+}
+
+/**
+ * Pool ThesisRegimeStat across ALL connected accounts. Same weighted-merge logic as
+ * poolThesisStats but grouped by (thesisTag, regime) compound key.
+ */
+function poolThesisRegimeStats(
+  accounts: { accountNumber?: string; environment: string; broker: string }[],
+  userId: string
+): PooledThesisRegimeStat[] {
+  const perAccount: { accountNumber: string; environment: string; stats: ThesisRegimeStat[] }[] = [];
+  for (const account of accounts) {
+    if (!account.accountNumber || account.broker === "test") continue;
+    const source = account.environment === "live" ? "live" : "paper";
+    try {
+      perAccount.push({
+        accountNumber: account.accountNumber,
+        environment: account.environment,
+        stats: getThesisRegimeScorecard(account.accountNumber, source as "paper" | "live", {}, userId)
+      });
+    } catch { /* skip */ }
+  }
+
+  const byCombo = new Map<string, { trades: number; accounts: Set<string>; paperLots: number; liveLots: number; regime: string; winRateW: number; avgReturnW: number; totalPnl: number; shrunkWinRateW: number; shrunkAvgReturnW: number }>();
+  for (const { accountNumber, environment, stats } of perAccount) {
+    for (const stat of stats) {
+      if (!stat.thesisTag || stat.thesisTag === "Untagged") continue;
+      const key = `${stat.thesisTag}:${stat.regime}`;
+      let entry = byCombo.get(key);
+      if (!entry) {
+        entry = { trades: 0, accounts: new Set(), paperLots: 0, liveLots: 0, regime: stat.regime, winRateW: 0, avgReturnW: 0, totalPnl: 0, shrunkWinRateW: 0, shrunkAvgReturnW: 0 };
+        byCombo.set(key, entry);
+      }
+      const w = stat.trades;
+      entry.trades += w;
+      entry.accounts.add(accountNumber);
+      if (environment === "paper") entry.paperLots += w;
+      else entry.liveLots += w;
+      entry.winRateW += stat.winRate * w;
+      entry.avgReturnW += stat.avgReturnPct * w;
+      entry.totalPnl += stat.totalPnl;
+      entry.shrunkWinRateW += stat.shrunkWinRate * w;
+      entry.shrunkAvgReturnW += stat.shrunkAvgReturnPct * w;
+    }
+  }
+
+  return [...byCombo.entries()].map(([key, e]) => {
+    const [thesisTag] = key.split(":");
+    return {
+      thesisTag,
+      regime: e.regime,
+      trades: e.trades,
+      winRate: e.trades > 0 ? round1(e.winRateW / e.trades) : 0,
+      avgReturnPct: e.trades > 0 ? round1(e.avgReturnW / e.trades) : 0,
+      totalPnl: round1(e.totalPnl),
+      shrunkWinRate: e.trades > 0 ? round1(e.shrunkWinRateW / e.trades) : 0,
+      shrunkAvgReturnPct: e.trades > 0 ? round1(e.shrunkAvgReturnW / e.trades) : 0,
+      source_accounts: [...e.accounts],
+      environment_breakdown: { paper: e.paperLots, live: e.liveLots }
+    };
+  });
+}
+
 /**
  * Emit durable, QUALITATIVE track-record facts per well-sampled thesis into learned_context
- * (origin='autonomous'). The phrasing is deliberately directional and carries NO numeric
- * percent/size token, so the fail-closed classifier admits it as a fact rather than dropping it
- * as a risk-adjacent (numeric) candidate. Untagged buckets are skipped. Best-effort: a failure
- * here never affects the reflection write or any trading path.
+ * (origin='autonomous'). Now per-user: pools ALL accounts' trades so lessons benefit every account.
+ * The phrasing is deliberately directional and carries NO numeric percent/size token, so the
+ * fail-closed classifier admits it as a fact rather than dropping it as a risk-adjacent (numeric)
+ * candidate. Untagged buckets are skipped. Best-effort: a failure here never affects the reflection
+ * write or any trading path.
  */
 async function writeThesisTrackRecordFacts(
-  outcomesByThesis: ThesisStat[],
+  outcomesByThesis: PooledThesisStat[],
   userId: string,
-  connectedAccountId: string,
-  accountEnvironment: "paper" | "live"
+  allAccounts: { accountNumber?: string; environment: string }[]
 ): Promise<void> {
   for (const stat of outcomesByThesis) {
     if (!stat.thesisTag || stat.thesisTag === "Untagged") continue;
     if (stat.trades < MIN_LOTS_FOR_TRACK_RECORD_FACT) continue;
     const verdict = realizedTrackRecordVerdict(stat.shrunkAvgReturnPct);
+    const sourceAccts = stat.source_accounts.join(",");
+    const envBreakdown = `paper=${stat.environment_breakdown.paper},live=${stat.environment_breakdown.live}`;
+    // Prefer "live" if any live lots contributed, otherwise "paper"
+    const dominantEnv: "live" | "paper" = stat.environment_breakdown.live > 0 ? "live" : "paper";
     try {
       await ingestLearned(
         userId,
         {
           kind: "pattern",
           subject: `track_record:${stat.thesisTag}`,
-          value: `The "${stat.thesisTag}" thesis ${verdict} across closed trades for this account.`,
+          value: `The "${stat.thesisTag}" thesis ${verdict} across pooled closed trades from all accounts (${stat.trades} lots). source_accounts: ${sourceAccts} environment_breakdown: ${envBreakdown}`,
           source: "inferred",
           confidence: 0.6
         },
         "autonomous",
-        { connectedAccountId, accountEnvironment }
+        { connectedAccountId: undefined, accountEnvironment: dominantEnv }
       );
     } catch (error) {
       console.error("Failed to write thesis track-record fact:", error);
@@ -342,18 +470,18 @@ async function writeThesisTrackRecordFacts(
  * bucket — the "conditioned lessons" heart of the Port-2 design: a thesis's realized edge often
  * differs by regime, and this makes the RELEVANT bucket retrievable via similarity search even when
  * the per-run `comboOutcomes` prompt injection (top-8-by-|PnL|, strategy.ts) doesn't surface it this
- * run. `vector_id` is stable per (connectedAccountId, thesisTag, regime), so a stats refresh between
- * reflection passes is a Pinecone overwrite-in-place, never a new sibling. Numbers embedded in `text`
- * are advisory prompt prose — identical in kind to the already-landed `comboOutcomes` injection —
+ * run. Now per-user: pools ALL accounts so paper lessons benefit live accounts and vice versa.
+ * `vector_id` is stable per (userId, thesisTag, regime), so a stats refresh between reflection
+ * passes is a Pinecone overwrite-in-place, never a new sibling. Numbers embedded in `text` are
+ * advisory prompt prose — identical in kind to the already-landed `comboOutcomes` injection —
  * never parsed back into sizing/policy math. Best-effort, per-bucket isolated: one bucket's
  * `storeContexts` failure never blocks the remaining buckets, the reflection LLM write, or
  * `persistExcursionsBackground`.
  */
 export async function writeThesisRegimeLessonVectors(
-  stats: ThesisRegimeStat[],
+  stats: PooledThesisRegimeStat[],
   userId: string,
-  connectedAccountId: string,
-  accountEnvironment: "paper" | "live"
+  allAccounts: { accountNumber?: string; environment: string }[]
 ): Promise<void> {
   let written = 0;
   let skippedThin = 0;
@@ -366,13 +494,18 @@ export async function writeThesisRegimeLessonVectors(
     const subjectKey = `${stat.thesisTag} @ ${stat.regime}`;
     const verdict = realizedTrackRecordVerdict(stat.shrunkAvgReturnPct);
     const timestamp = new Date().toISOString();
+    const sourceAccts = stat.source_accounts.join(",");
+    const envBreakdown = `paper=${stat.environment_breakdown.paper},live=${stat.environment_breakdown.live}`;
+    const dominantEnv: "live" | "paper" = stat.environment_breakdown.live > 0 ? "live" : "paper";
     const text = [
-      "Reflection lesson (realized thesis x regime track record)",
-      `account_environment: ${accountEnvironment}`,
+      "Reflection lesson (realized thesis x regime track record, per-user pooled)",
+      `account_environment: ${dominantEnv}`,
       `thesis_tag: ${stat.thesisTag}`,
       `entry_market_regime: ${stat.regime}`,
       `sample: ${stat.trades} closed lots`,
       `realized: win_rate ${round1(stat.winRate)}% (shrunk ${round1(stat.shrunkWinRate)}%), avg_return ${round1(stat.avgReturnPct)}% (shrunk ${round1(stat.shrunkAvgReturnPct)}%), total_pnl_usd ${round1(stat.totalPnl)}`,
+      `source_accounts: ${sourceAccts}`,
+      `environment_breakdown: ${envBreakdown}`,
       `guidance: The "${stat.thesisTag}" thesis ${verdict} in ${stat.regime} conditions.`
     ].join("\n");
     const doc: ContextDocument = {
@@ -381,20 +514,19 @@ export async function writeThesisRegimeLessonVectors(
         symbol: "PORTFOLIO",
         source: "reflection-lesson",
         timestamp,
-        accession: `${connectedAccountId}:${stat.thesisTag}:${stat.regime}`,
-        vector_id: `reflection-lesson:${connectedAccountId}:${stat.thesisTag}:${stat.regime}`,
+        accession: `${userId}:${stat.thesisTag}:${stat.regime}`,
+        vector_id: `reflection-lesson:${userId}:${stat.thesisTag}:${stat.regime}`,
         doc_type: "lesson",
-        memory_scope: "account",
+        memory_scope: "user",
         thesis_tag: stat.thesisTag,
         entry_market_regime: stat.regime,
-        connected_account_id: connectedAccountId,
-        account_environment: accountEnvironment
+        account_environment: dominantEnv
       }
     };
     try {
       const result = await storeContexts([doc], userId, { dedupKeyPrefix: "lesson", scope: "private" });
       if (result.skipped || (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0) {
-        console.warn("[post-mortem] thesis x regime lesson vector write skipped:", JSON.stringify({ bucket: subjectKey, connectedAccountId, result }));
+        console.warn("[post-mortem] thesis x regime lesson vector write skipped:", JSON.stringify({ bucket: subjectKey, userId, result }));
       } else {
         written += 1;
       }
@@ -404,10 +536,9 @@ export async function writeThesisRegimeLessonVectors(
       audit(
         "socratic_vector_write_degraded",
         { docType: "lesson", bucket: subjectKey, reason: error instanceof Error ? error.message : String(error) },
-        userId,
-        connectedAccountId
+        userId
       );
     }
   }
-  audit("reflection_lesson_vectors_written", { buckets: written, skippedThin, failed }, userId, connectedAccountId);
+  audit("reflection_lesson_vectors_written", { buckets: written, skippedThin, failed }, userId);
 }

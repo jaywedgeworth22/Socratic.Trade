@@ -1,3 +1,4 @@
+import { pinRagQualityFlagsOff } from "./rag-test-env";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sanitizeUserId, retrieveContext, retryAfterMs } from "../src/lib/vector-db";
 import {
@@ -90,6 +91,7 @@ describe("Milestone 4 Challenger: User ID Sanitization Edge Cases", () => {
 
 describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correctness", () => {
   beforeEach(() => {
+  pinRagQualityFlagsOff();
     vi.clearAllMocks();
     process.env.PINECONE_API_KEY = "pinecone-key";
     process.env.VOYAGE_API_KEY = "voyage-key";

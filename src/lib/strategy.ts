@@ -125,7 +125,7 @@ import type { BrokerGateway } from "./types";
 import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
-import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan, listSyntheticStops } from "./db";
+import { clearStopPlans, clearTakeProfitTrimBands, filterFullStopPlansByLiveBasis, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, persistedOrFallbackStopPct, recordStopPlan, listSyntheticStops } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
@@ -884,6 +884,9 @@ export async function runStrategyOnce(
     // one symbol only — "default" (the common case, no row or an explicit default) falls through to the
     // account-wide fixed/ATR/beta chain unchanged.
     let stopPlanBySymbol: Record<string, StopPlanStyle> = {};
+    // Full live-basis-filtered plans (Exit Contract columns included) — used by proactive risk
+    // for persisted-or-fallback stop distance (Phase B1/B2 substrate).
+    let stopPlanFullBySymbol: Record<string, PositionStopPlan> = {};
     // Rationale-only side map for the SAME live-basis-filtered plans, keyed alongside stopPlanBySymbol
     // — kept separate (rather than widening stopPlanBySymbol's value type everywhere it's threaded)
     // so enrichOpeningProposal can stamp an inherited plan's original rationale onto the returned
@@ -899,6 +902,7 @@ export async function runStrategyOnce(
     if (policy.accountNumber) {
       try {
         rawStopPlans = getStopPlans(policy.accountNumber, userId);
+        stopPlanFullBySymbol = filterFullStopPlansByLiveBasis(rawStopPlans, workingPositions);
         stopPlanBySymbol = filterStopPlansByLiveBasis(rawStopPlans, workingPositions);
         for (const sym of Object.keys(stopPlanBySymbol)) {
           stopPlanRationaleBySymbol[sym] = rawStopPlans[sym]?.rationale;
@@ -958,7 +962,7 @@ export async function runStrategyOnce(
       const ref = protectiveExitQuoteFromScan(q);
       if (ref && (ref.bid !== undefined || ref.ask !== undefined)) exitQuotesBySymbol[normalizeSymbol(sym)] = ref;
     }
-    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol, extendedHoursExitBufferBps(policy), exitQuotesBySymbol, stopPlanBySymbol);
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol, extendedHoursExitBufferBps(policy), exitQuotesBySymbol, stopPlanBySymbol, stopPlanFullBySymbol);
     // Partial take-profit trims (laddered per band so they trim once per band, not every run). The band
     // is committed only when a trim actually FILLS (recordFillFromProposal), so a proposed/blocked/rejected
     // trim is re-offered next run; here we only read prior bands and prune fully-closed positions (hygiene).
@@ -1224,14 +1228,18 @@ export async function runStrategyOnce(
       // learned facts on a held name outside the top-8 still surface, without touching the
       // top-8 BUY-candidate slice itself.
       const learnedSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 8).map((c) => c.symbol), ...heldSymbols]);
-      // Regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice),
-      // but the current connected account is always forwarded so account-scoped retrieval can keep
-      // sibling portfolios' learned facts isolated.
+      // Per-user retrieval (owner directive, 2026-07-23): pool ALL accounts' learned context,
+      // not just this account's. Regime-conditioned re-ranking boosts in-regime facts and
+      // labels off-regime ones. Thesis tags from this account's scorecard get a +1 bonus.
+      const macroForRegime = await fetchMacroData(userId).catch(() => undefined);
+      const currentRegime = macroForRegime ? determineMarketRegime(macroForRegime) : undefined;
+      const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, fillSourceForExecutionMode(executionState), {}, userId) : [];
+      const candidateThesisTags = new Set(thesisScorecard.map((s) => s.thesisTag).filter(Boolean) as string[]);
       const learnedFacts = retrieveLearnedContextDetailed(
         userId,
         learnedSymbols,
-        undefined,
-        { connectedAccountId }
+        currentRegime,
+        { thesisTags: candidateThesisTags }
       );
       if (learnedFacts.lines.length > 0) {
         learnedContext = learnedFacts.lines.join("\n");
@@ -6167,7 +6175,10 @@ export function generateProactiveRiskProposals(
   // to the trailing-stop lane instead (skipped here — see runSyntheticStopMonitor); "none" is a
   // genuine, owner-accepted no-stop choice. Absent/"default" → the account's own precedence,
   // unchanged from before this parameter existed.
-  stopPlanBySymbol: Record<string, StopPlanStyle> = {}
+  stopPlanBySymbol: Record<string, StopPlanStyle> = {},
+  // Full plans (Exit Contract) for the same symbols — when `resolvedStopPct` is set, that distance
+  // wins over the live ATR/beta/flat recompute for fixed/atr plans (Phase B1/B2).
+  stopPlanFullBySymbol: Record<string, PositionStopPlan> = {}
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
@@ -6188,21 +6199,31 @@ export function generateProactiveRiskProposals(
   // Absent a plan (or "default"), the existing precedence applies: ATR-based when enabled and
   // available (it sets the distance of the configured stop), else beta-scaled, else flat. ATR takes
   // precedence over beta-scaling when both are on — it's the more direct, per-name volatility measure.
+  // Phase B1/B2: when the Exit Contract stored a resolved_stop_pct at fill, prefer that over a
+  // live recompute so every enforcement layer agrees on one number (account policy remains fallback).
   const effectiveStopPct = (sym: string, baseStopPct: number, beta: number | undefined): number => {
     const plan = stopPlanBySymbol[sym];
     if (plan === "none" || plan === "trailing") return 0;
-    if (plan === "fixed") return baseStopPct > 0 ? baseStopPct : STOP_PLAN_FALLBACK_STOP_PCT;
-    if (plan === "atr") {
+    let computed = baseStopPct;
+    if (plan === "fixed") {
+      computed = baseStopPct > 0 ? baseStopPct : STOP_PLAN_FALLBACK_STOP_PCT;
+    } else if (plan === "atr") {
       const atrPct = atrStopPctBySymbol[sym];
-      if (typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0) return atrPct;
-      return baseStopPct > 0 ? baseStopPct : STOP_PLAN_FALLBACK_STOP_PCT;
-    }
-    if (baseStopPct <= 0) return baseStopPct;
-    if (atrStops) {
+      if (typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0) computed = atrPct;
+      else computed = baseStopPct > 0 ? baseStopPct : STOP_PLAN_FALLBACK_STOP_PCT;
+    } else if (baseStopPct <= 0) {
+      return baseStopPct;
+    } else if (atrStops) {
       const atrPct = atrStopPctBySymbol[sym];
-      if (typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0) return atrPct;
+      if (typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0) computed = atrPct;
+      else computed = betaScaledStopPct(baseStopPct, beta, betaStops);
+    } else {
+      computed = betaScaledStopPct(baseStopPct, beta, betaStops);
     }
-    return betaScaledStopPct(baseStopPct, beta, betaStops);
+    if (plan === "fixed" || plan === "atr") {
+      return persistedOrFallbackStopPct(stopPlanFullBySymbol[sym], computed);
+    }
+    return computed;
   };
 
   for (const pos of positions) {

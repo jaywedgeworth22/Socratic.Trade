@@ -1,5 +1,6 @@
 // G8(b) — query-embedding LRU cache around the single-query embed call in retrieveContextDetailed.
 // Mirrors the mocking pattern in test/vector-db.test.ts (Pinecone/Voyage/db mocked at module level).
+import { pinRagQualityFlagsOff } from "./rag-test-env";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -64,6 +65,7 @@ vi.mock("../src/lib/rag-metering", () => ({
 }));
 
 beforeEach(() => {
+  pinRagQualityFlagsOff();
   vi.resetModules();
   vi.clearAllMocks();
   process.env.PINECONE_API_KEY = "pinecone-test";

@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "crypto";
 import {
+  DELETED_KEY_TOMBSTONE,
   getInternalSetting,
   getUserApiKey,
   LOCAL_USER,
@@ -347,7 +348,7 @@ function desiredEntries(): DesiredEntry[] {
     // The source account is a compile-time constant. No caller, request, env,
     // or manifest can select another Socratic user.
     const stored = getUserApiKey(LOCAL_USER, contract.service);
-    if (!stored) {
+    if (!stored || stored.apiKey === DELETED_KEY_TOMBSTONE) {
       return {
         id: contract.id,
         providerName: contract.providerName,

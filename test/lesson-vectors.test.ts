@@ -81,8 +81,10 @@ function stat(
   thesisTag: string,
   regime: string,
   trades: number,
-  overrides: Partial<ThesisRegimeStat> = {}
-): ThesisRegimeStat {
+  overrides: Partial<ThesisRegimeStat> = {},
+  sourceAccounts: string[] = ["acct-test"],
+  envBreakdown: { paper: number; live: number } = { paper: trades, live: 0 }
+): ThesisRegimeStat & { source_accounts: string[]; environment_breakdown: { paper: number; live: number } } {
   return {
     thesisTag,
     regime,
@@ -92,7 +94,9 @@ function stat(
     totalPnl: 500,
     shrunkWinRate: 55,
     shrunkAvgReturnPct: 1.8,
-    ...overrides
+    ...overrides,
+    source_accounts: sourceAccounts,
+    environment_breakdown: envBreakdown
   };
 }
 
@@ -168,17 +172,17 @@ describe("thesis x regime bucket lesson vectors (writeThesisRegimeLessonVectors)
     const userId = `u-${randomUUID()}`;
     const connectedAccountId = `acct-${randomUUID()}`;
 
-    const stats: ThesisRegimeStat[] = [
+    const stats = [
       stat("Momentum", "Bull", 5), // exactly at the MIN_LOTS boundary -> written
       stat("Momentum", "Bear", 4), // below boundary -> thin, skipped
       stat("Untagged", "Bull", 10), // Untagged -> skipped regardless of sample size
       stat("MeanReversion", "Unspecified", 6) // legitimate Unspecified-regime bucket -> written
     ];
 
-    await writeThesisRegimeLessonVectors(stats, userId, connectedAccountId, "paper");
+    await writeThesisRegimeLessonVectors(stats, userId, [{accountNumber: connectedAccountId, environment: "paper"}]);
 
     const calls = storeContextsCalls.filter(
-      (c) => c.options?.dedupKeyPrefix === "lesson" && c.documents.some((d) => d.metadata.connected_account_id === connectedAccountId)
+      (c) => c.options?.dedupKeyPrefix === "lesson" && c.documents.some((d) => String(d.metadata.vector_id ?? "").includes(userId))
     );
     expect(calls).toHaveLength(2);
     const buckets = calls.map((c) => `${c.documents[0].metadata.thesis_tag}@${c.documents[0].metadata.entry_market_regime}`);
@@ -189,13 +193,13 @@ describe("thesis x regime bucket lesson vectors (writeThesisRegimeLessonVectors)
     expect(momentumCall.userId).toBe(userId);
     expect(momentumCall.options?.scope).toBe("private");
     expect(doc.metadata.doc_type).toBe("lesson");
-    expect(doc.metadata.memory_scope).toBe("account");
+    expect(doc.metadata.memory_scope).toBe("user");
     expect(doc.metadata.source).toBe("reflection-lesson");
     expect(doc.metadata.symbol).toBe("PORTFOLIO");
     expect(doc.metadata.account_environment).toBe("paper");
-    expect(doc.metadata.connected_account_id).toBe(connectedAccountId);
-    expect(doc.metadata.vector_id).toBe(`reflection-lesson:${connectedAccountId}:Momentum:Bull`);
-    expect(doc.metadata.accession).toBe(`${connectedAccountId}:Momentum:Bull`);
+    expect(doc.metadata.connected_account_id).toBeUndefined();
+    expect(doc.metadata.vector_id).toBe(`reflection-lesson:${userId}:Momentum:Bull`);
+    expect(doc.metadata.accession).toBe(`${userId}:Momentum:Bull`);
     // No per-episode fields: an aggregate must never look like a single labeled episode.
     expect(doc.metadata.decision_id).toBeUndefined();
     expect(doc.metadata.run_id).toBeUndefined();
@@ -224,18 +228,16 @@ describe("thesis x regime bucket lesson vectors (writeThesisRegimeLessonVectors)
     await writeThesisRegimeLessonVectors(
       [stat("Growth", "Bull", 8, { winRate: 60, avgReturnPct: 2, totalPnl: 500, shrunkWinRate: 55, shrunkAvgReturnPct: 1.8 })],
       userId,
-      connectedAccountId,
-      "live"
+      [{accountNumber: connectedAccountId, environment: "live"}]
     );
     await writeThesisRegimeLessonVectors(
       [stat("Growth", "Bull", 12, { winRate: 40, avgReturnPct: -1, totalPnl: -200, shrunkWinRate: 42, shrunkAvgReturnPct: -0.9 })],
       userId,
-      connectedAccountId,
-      "live"
+      [{accountNumber: connectedAccountId, environment: "live"}]
     );
 
     const calls = storeContextsCalls.filter(
-      (c) => c.options?.dedupKeyPrefix === "lesson" && c.documents.some((d) => d.metadata.connected_account_id === connectedAccountId)
+      (c) => c.options?.dedupKeyPrefix === "lesson" && c.documents.some((d) => String(d.metadata.vector_id ?? "").includes(userId))
     );
     expect(calls).toHaveLength(2);
     const vectorIds = calls.map((c) => c.documents[0].metadata.vector_id);
@@ -249,16 +251,16 @@ describe("thesis x regime bucket lesson vectors (writeThesisRegimeLessonVectors)
     const userId = `u-${randomUUID()}`;
     const connectedAccountId = `acct-${randomUUID()}`;
 
-    const stats: ThesisRegimeStat[] = [stat("Momentum", "Bull", 6), stat("Value", "Bear", 7)];
-    failAccession = `${connectedAccountId}:Momentum:Bull`;
+    const stats = [stat("Momentum", "Bull", 6), stat("Value", "Bear", 7)];
+    failAccession = `${userId}:Momentum:Bull`;
     try {
-      await expect(writeThesisRegimeLessonVectors(stats, userId, connectedAccountId, "paper")).resolves.toBeUndefined();
+      await expect(writeThesisRegimeLessonVectors(stats, userId, [{accountNumber: connectedAccountId, environment: "paper"}])).resolves.toBeUndefined();
     } finally {
       failAccession = undefined;
     }
 
     const calls = storeContextsCalls.filter(
-      (c) => c.options?.dedupKeyPrefix === "lesson" && c.documents.some((d) => d.metadata.connected_account_id === connectedAccountId)
+      (c) => c.options?.dedupKeyPrefix === "lesson" && c.documents.some((d) => String(d.metadata.vector_id ?? "").includes(userId))
     );
     expect(calls).toHaveLength(1);
     expect(calls[0].documents[0].metadata.thesis_tag).toBe("Value");
@@ -286,13 +288,13 @@ describe("thesis x regime bucket lesson vectors (writeThesisRegimeLessonVectors)
     const userA = `u1-${randomUUID()}`;
     const accountA = `acct-${randomUUID()}`;
 
-    await writeThesisRegimeLessonVectors([stat("Breakout", "Bull", 6)], userA, accountA, "paper");
+    await writeThesisRegimeLessonVectors([stat("Breakout", "Bull", 6)], userA, [{accountNumber: accountA, environment: "paper"}]);
 
-    const calls = storeContextsCalls.filter((c) => c.documents.some((d) => d.metadata.connected_account_id === accountA));
+    const calls = storeContextsCalls.filter((c) => c.documents.some((d) => String(d.metadata.vector_id ?? "").includes(userA)));
     expect(calls.length).toBeGreaterThanOrEqual(1);
     for (const call of calls) {
       expect(call.userId).toBe(userA);
-      expect(call.documents[0].metadata.connected_account_id).toBe(accountA);
+      expect(call.documents[0].metadata.vector_id).toBe(`reflection-lesson:${userA}:Breakout:Bull`);
     }
   });
 });
@@ -347,7 +349,7 @@ describe("generateReflectionSummary integration", () => {
       new Response(JSON.stringify({ output_text: "lessons applied" }), { status: 200, headers: { "content-type": "application/json" } })
     );
 
-    failAccession = `${accountId}:Momentum-Breakout:Tech-Bull`;
+    failAccession = `${userId}:Momentum-Breakout:Tech-Bull`;
     try {
       await expect(generateReflectionSummary(accountNumber, userId)).resolves.toBeUndefined();
     } finally {
