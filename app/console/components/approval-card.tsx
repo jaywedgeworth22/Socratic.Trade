@@ -249,6 +249,13 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} filled (paper)`, "Recorded on the broker paper account.");
     } else if (result.status === "blocked") {
       toast.push("warn", "Blocked at approval time", (result.reasons ?? []).join(" ") || "The policy gate re-ran and refused it.");
+    } else if (result.status === "busy") {
+      toast.push(
+        "warn",
+        "Approval is still busy",
+        (result.reasons ?? []).join(" ") ||
+          "A strategy run is still in progress after waiting. Wait for the run to finish (or for its lock to expire, up to ~5 minutes), then Approve again."
+      );
     } else {
       toast.push("info", `Result: ${feedStatusLabel(result.status)}`, (result.reasons ?? []).join(" ") || undefined);
     }

@@ -1,5 +1,13 @@
 # Active Implementation Plan
 
+> **2026-07-22 — Approval Busy/red-team/UptimeRobot repair (CODEX, branch
+> `codex/trade-approval-redteam-uptime-20260722`).** Keep the per-account strategy lock as the
+> correctness fence, but retry its side-effect-free Busy response in the approval client so a user
+> does not have to race a long LLM run. Use OpenRouter's account-filtered model list before choosing
+> rotation slots; explicit unavailable model selections remain fail-closed and require owner choice.
+> Keep the external monitor on public `/api/health`; do not expose authenticated `/api/ready` just for
+> monitoring. Verify the dedicated branch with the ordered lint/tsc/test/build gate, then land via
+> `scripts/land.sh` if the owner wants deployment.
 > **2026-07-24 - Resolve open efforts + stale issue mirrors (CURSOR).** Board hygiene moves
 > already-merged In Progress rows to Completed; restores ruleset `check-pin` required alongside
 > `verify`; drains Sentry CI spam blocking runners. Four open PRs still await `verify`. RAG

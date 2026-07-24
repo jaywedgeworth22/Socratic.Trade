@@ -87,6 +87,20 @@ then integrate it alongside dense recall in a separately reviewed retrieval PR. 
 `docs/rollouts/2026-07-21-corpus-wide-lexical-candidates.md`.
 # Current Status
 
+## 2026-07-22 — Approval Busy, red-team availability, and UptimeRobot diagnosis (CODEX→GROK, branch `codex/trade-approval-redteam-uptime-20260722`)
+
+Live verification: `/api/health` returns HTTP 200, including with `UptimeRobot/2.0`; the console and
+approvals page load. The approval `Result: Busy` is the intentional per-user/per-account strategy
+lock, with a stale-run sweep recently marking a crashed run failed. Live pending proposals show
+Claude Fable 5 unavailable on the OpenRouter account, GPT-5.6 Sol timed out, and DeepSeek V4 Pro
+returned a malformed/no response. Rotation previously checked only that an OpenRouter credential
+resolved. This branch adds bounded retries for the side-effect-free Busy result and filters rotating
+models through OpenRouter's account-filtered `/api/v1/models/user` list (fail-closed if unavailable),
+without changing explicit model selection or order execution. UptimeRobot already monitors
+`https://socratictrade.com/api/health` (HTTP + Keyword low-credit monitors both UP). `/` redirects
+to login (307) and `/api/ready` is protected (401). Build completed after CODEX handoff
+(`.next/BUILD_ID` present); GROK owns gate re-run + `scripts/land.sh`. Rollout:
+`docs/rollouts/2026-07-22-approval-redteam-uptime.md`.
 ## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
 
 The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider
@@ -120,6 +134,20 @@ from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
 # Current Status
 
+## 2026-07-22 — Approval Busy, red-team availability, and UptimeRobot diagnosis (CODEX→GROK, branch `codex/trade-approval-redteam-uptime-20260722`)
+
+Live verification: `/api/health` returns HTTP 200, including with `UptimeRobot/2.0`; the console and
+approvals page load. The approval `Result: Busy` is the intentional per-user/per-account strategy
+lock, with a stale-run sweep recently marking a crashed run failed. Live pending proposals show
+Claude Fable 5 unavailable on the OpenRouter account, GPT-5.6 Sol timed out, and DeepSeek V4 Pro
+returned a malformed/no response. Rotation previously checked only that an OpenRouter credential
+resolved. This branch adds bounded retries for the side-effect-free Busy result and filters rotating
+models through OpenRouter's account-filtered `/api/v1/models/user` list (fail-closed if unavailable),
+without changing explicit model selection or order execution. UptimeRobot already monitors
+`https://socratictrade.com/api/health` (HTTP + Keyword low-credit monitors both UP). `/` redirects
+to login (307) and `/api/ready` is protected (401). Build completed after CODEX handoff
+(`.next/BUILD_ID` present); GROK owns gate re-run + `scripts/land.sh`. Rollout:
+`docs/rollouts/2026-07-22-approval-redteam-uptime.md`.
 ## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
 
 The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider

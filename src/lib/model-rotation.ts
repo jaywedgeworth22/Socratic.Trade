@@ -38,6 +38,7 @@ import { audit, getInternalSetting, resolveLlmCredential, setInternalSetting } f
 import { modelCredentialService } from "./llm-provider";
 import { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL } from "./llm-request";
 import { recommendedReasoningEffortForModel } from "./model-reasoning-recommendations";
+import { getOpenRouterUserModelAvailability, isOpenRouterModelAvailable } from "./openrouter-model-availability";
 import type { LlmReasoningEffort } from "./types";
 
 export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
@@ -153,18 +154,46 @@ export function advanceRotationPointers(input: {
  * user (their own key or the operator failover) — rotation must never inject a guaranteed-failure
  * run by picking a model nobody holds a key for.
  */
-export function eligibleRotationPool(userId: string): { pool: string[]; skipped: string[] } {
+export interface EligibleRotationPool {
+  pool: string[];
+  skipped: string[];
+  availability: "checked" | "not_checked" | "unavailable";
+  availabilityError?: string;
+}
+
+export async function eligibleRotationPool(userId: string): Promise<EligibleRotationPool> {
   const pool: string[] = [];
   const skipped: string[] = [];
   const isTest = process.env.NODE_ENV === "test";
+  const credentialPool: string[] = [];
   for (const model of MODEL_ROTATION_POOL) {
     // Gate on the SAME credential resolveLlmEndpoint uses to serve each model — the OpenRouter key
     // in production (an OpenRouter-only account must get the full curated pool, not an empty one),
     // the native family under NODE_ENV=test (keeps native-key fixtures working). #1703 follow-up.
-    if (resolveLlmCredential(modelCredentialService(model), userId).key) pool.push(model);
+    if (resolveLlmCredential(modelCredentialService(model), userId).key) credentialPool.push(model);
     else skipped.push(model);
   }
-  return { pool, skipped };
+  if (credentialPool.length === 0 || isTest) return { pool: credentialPool, skipped, availability: "not_checked" };
+
+  const credential = resolveLlmCredential("openrouter", userId);
+  if (!credential.key) return { pool: [], skipped: MODEL_ROTATION_POOL.slice(), availability: "not_checked" };
+  const availability = await getOpenRouterUserModelAvailability(credential.key, credential.keyRef);
+  if (availability.status === "unavailable") {
+    return {
+      pool: [],
+      skipped: MODEL_ROTATION_POOL.slice(),
+      availability: "unavailable",
+      availabilityError: availability.reason
+    };
+  }
+  if (availability.status === "available") {
+    for (const model of credentialPool) {
+      if (isOpenRouterModelAvailable(model, availability.modelIds)) pool.push(model);
+      else skipped.push(model);
+    }
+    return { pool, skipped, availability: "checked" };
+  }
+  return { pool: credentialPool, skipped, availability: "not_checked" };
 }
 
 function rotationPointerKey(userId: string, accountId: string | undefined, seat: "green" | "red"): string {
@@ -184,12 +213,12 @@ function rotationPointerKey(userId: string, accountId: string | undefined, seat:
  * pool or storage error resolves the rotating seats to "" (the normal unconfigured/fail-closed state
  * under no-defaults) rather than letting the raw sentinel reach a provider.
  */
-export function resolveModelRotationForRun(input: {
+export async function resolveModelRotationForRun(input: {
   userId: string;
   accountId?: string;
   runId: string;
   policy: { llmModel?: string | null; redTeamLlmModel?: string | null };
-}): {
+}): Promise<{
   llmModel?: string;
   redTeamLlmModel?: string;
   /** A rotating GREEN seat also auto-sets the served model's curated recommended reasoning effort
@@ -199,12 +228,12 @@ export function resolveModelRotationForRun(input: {
   /** Same auto-set for a rotating RED seat (the reviewer's own per-team effort field). */
   redTeamReasoningEffort?: LlmReasoningEffort;
   commit: () => void;
-} {
+}> {
   const rotateGreen = isModelRotationSentinel(input.policy.llmModel);
   const rotateRed = isModelRotationSentinel(input.policy.redTeamLlmModel);
   if (!rotateGreen && !rotateRed) return { commit: () => {} };
   try {
-    const { pool, skipped } = eligibleRotationPool(input.userId);
+    const { pool, skipped, availability, availabilityError } = await eligibleRotationPool(input.userId);
     if (pool.length === 0) {
       // No provider credential resolves at all — no eligible model to rotate to. Under no-defaults
       // (owner 2026-07-07: DEFAULT_OPENAI_MODEL removed) there is nothing to substitute, so resolve
@@ -214,7 +243,13 @@ export function resolveModelRotationForRun(input: {
       // provider call with a bogus model id.
       audit(
         "model_rotation_pick",
-        { runId: input.runId, outcome: "empty_pool", fallback: "", skipped },
+        {
+          runId: input.runId,
+          outcome: availability === "unavailable" ? "availability_unavailable" : "empty_pool",
+          fallback: "",
+          skipped,
+          availabilityError
+        },
         input.userId,
         input.accountId
       );
