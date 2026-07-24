@@ -1,5 +1,20 @@
 # Current Status
 
+## 2026-07-24 — Remove Redundant Paper Account Chips (ANTIGRAVITY)
+
+- Removed the purple paper account reality chip (`PAPER · broker practice account`) from the console dashboard Strategy bar (`app/console/page.tsx`) and Strategy page header (`app/console/strategy/page.tsx`).
+- Rollout: `docs/rollouts/2026-07-24-remove-redundant-paper-account-chips.md`.
+
+## 2026-07-24 — Admin Server Stats & Settings Cleanup (ANTIGRAVITY)
+
+- Filtered out noisy backup tasks (e.g., `usage monitor backups`) from Coolify services in Server Stats (`/admin/server`).
+- Included all Hetzner GitHub Action runners (`socratic-ci`, `socratic-ci-2`, `congress-ci`, `shared-ci`, `usage-ci`, `github-runner`) in the Services list.
+- Displayed exact System Memory RAM used, total, free, and utilization percentage (`X.X GB used of Y.Y GB (Z% used — W.W GB free)`).
+- Added a **Disk Storage** card (total, used, available, and % used) to Host Details Grid and a **Disk Utilization** meter to Live Resource Load.
+- Displayed formatted **Host Uptime** (`Xd Xh Xm`).
+- Removed the deprecated `OPERATOR` section and `AdminLinksCard` from Console Settings (`/console/settings`).
+- Rollout: `docs/rollouts/2026-07-24-admin-server-stats-and-settings-cleanup.md`.
+
 ## 2026-07-24 — Previous Trades Reformat (ANTIGRAVITY)
 
 - Reformatted the "Previous Trades" rows on the console dashboard to be on a single line, even on mobile.
