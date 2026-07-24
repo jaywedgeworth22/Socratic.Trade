@@ -1,5 +1,11 @@
 # Active Implementation Plan
 
+> **2026-07-24 - RAG enablement + Exit Contract B1 + prune (CURSOR).** Safe RAG flags default ON
+> (`docs/FEATURE-ENABLEMENT-BACKLOG.md`). Exit Phase B: B1 substrate landed; B3 interim already on
+> main (#1786); B4–B6 + Phase C remain Planned. Wave-2 coaching/reflection DISCARD (branches
+> deleted). Stale no-PR origin tips pruned (19). Next: Infisical mirror if desired; Exit B4 before
+> live shorts; full verify gate on PR.
+
 > **2026-07-24 - Effort-board accuracy audit (CURSOR).** Cleared empty In Progress; corrected
 > Planned/Completed status claims against merged PRs. Active product backlog remains: RAG/feature
 > enablement (`docs/FEATURE-ENABLEMENT-BACKLOG.md`), Exit-strategy Phases B/C, and remaining

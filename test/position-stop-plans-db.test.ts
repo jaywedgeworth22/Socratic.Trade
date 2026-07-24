@@ -303,3 +303,64 @@ describe("bracket sibling-leg teardown queue (position_stop_plan_open_brackets -
     expect(listPendingBracketTeardowns("ACCT-BRACKET-7B")).toEqual([]);
   });
 });
+
+describe("Exit Contract B1 — resolved distance/price persistence", () => {
+  it("recordStopPlan persists Exit Contract columns and getStopPlans round-trips them", async () => {
+    const { getStopPlans, recordStopPlan, persistedOrFallbackStopPct, deriveExitContractFromOpening } = await import("../src/lib/db");
+    const acct = "ACCT-EXIT-B1";
+    const contract = deriveExitContractFromOpening({
+      side: "buy",
+      avgCost: 100,
+      bracketStopLoss: 92,
+      bracketTakeProfit: 120
+    });
+    expect(contract.resolvedStopPct).toBeCloseTo(8, 5);
+    expect(contract.stopPrice).toBe(92);
+    expect(contract.takeProfitPrice).toBe(120);
+
+    recordStopPlan(acct, "NVDA", "fixed", "plan", 100, "local", undefined, "long", "ord-1", contract);
+    const plan = getStopPlans(acct).NVDA;
+    expect(plan).toMatchObject({
+      style: "fixed",
+      avgCost: 100,
+      resolvedStopPct: expect.closeTo(8, 5),
+      stopPrice: 92,
+      takeProfitPrice: 120
+    });
+    expect(persistedOrFallbackStopPct(plan, 15)).toBeCloseTo(8, 5);
+    expect(persistedOrFallbackStopPct(undefined, 15)).toBe(15);
+  });
+
+  it("opening fill with bracketStopLoss writes Exit Contract via recordFillFromProposal", async () => {
+    const { getStopPlans } = await import("../src/lib/db");
+    const { recordFillFromProposal } = await import("../src/lib/performance");
+    const acct = "FILLACCT-EXIT-B1";
+    recordFillFromProposal({
+      accountNumber: acct,
+      source: "live",
+      status: "filled",
+      proposal: {
+        symbol: "AAPL",
+        side: "buy",
+        type: "market",
+        quantity: 2,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: "open",
+        tradeThesisTag: "Breakout",
+        entryMarketRegime: "Bull",
+        stopPlan: { style: "fixed", rationale: "8pct" },
+        bracketStopLoss: 184,
+        bracketTakeProfit: 220
+      },
+      execution: { orderId: "o-exit-1", refId: "r-exit-1", state: "filled", averagePrice: 200, filledQuantity: 2, raw: {} }
+    });
+    const plan = getStopPlans(acct).AAPL;
+    expect(plan).toMatchObject({
+      style: "fixed",
+      stopPrice: 184,
+      takeProfitPrice: 220,
+      resolvedStopPct: expect.closeTo(8, 5)
+    });
+  });
+});

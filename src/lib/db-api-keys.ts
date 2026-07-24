@@ -1758,23 +1758,143 @@ export interface PositionStopPlan {
    * trackOpenBracketOrder/enqueueTeardownForAllOpenBrackets and pending_bracket_teardowns in db.ts).
    */
   openingOrderId?: string;
+  /**
+   * Exit Contract (Phase B1): resolved stop distance (%) written at fill from the same number
+   * enrichOpeningProposal used for the opening bracket. Null/undefined on legacy rows — callers
+   * MUST fall back to account-policy / ATR recompute (see `persistedOrFallbackStopPct`).
+   */
+  resolvedStopPct?: number;
+  /** Absolute stop trigger price at fill (when a bracket stop was attached). */
+  stopPrice?: number;
+  /** ATR-derived % captured at fill for atr-style plans (informational / future revision). */
+  entryAtrPct?: number;
+  /** Trailing distance % when style is trailing. */
+  trailPercent?: number;
+  /** Take-profit price when a bracket TP was attached at fill. */
+  takeProfitPrice?: number;
+  /** ISO timestamp for a time-stop (Phase C); nullable substrate only in B1. */
+  maxHoldingUntil?: string;
+  /** Falsifiable kill-condition prose (Phase C); nullable substrate only in B1. */
+  invalidation?: string;
+}
+
+/** Optional Exit Contract fields accepted by `recordStopPlan` (Phase B1). */
+export interface ExitContractWrite {
+  resolvedStopPct?: number | null;
+  stopPrice?: number | null;
+  entryAtrPct?: number | null;
+  trailPercent?: number | null;
+  takeProfitPrice?: number | null;
+  maxHoldingUntil?: string | null;
+  invalidation?: string | null;
+}
+
+/**
+ * Prefer a persisted Exit Contract stop distance when present and finite; otherwise the
+ * already-computed account/ATR/beta fallback. Never invents a distance — null contract → fallback.
+ */
+export function persistedOrFallbackStopPct(
+  plan: PositionStopPlan | undefined,
+  fallbackPct: number
+): number {
+  const persisted = plan?.resolvedStopPct;
+  if (typeof persisted === "number" && Number.isFinite(persisted) && persisted > 0) return persisted;
+  return fallbackPct;
+}
+
+/**
+ * Derive Exit Contract numerics from an opening proposal + lot basis at fill time.
+ * Uses bracket legs when present; for trailing plans, uses `trailPercent` when set.
+ */
+export function deriveExitContractFromOpening(input: {
+  side: "buy" | "short";
+  avgCost: number;
+  bracketStopLoss?: number;
+  bracketTakeProfit?: number;
+  trailPercent?: number;
+  atrStopPct?: number;
+  invalidation?: string;
+  maxHoldingDays?: number;
+  filledAt?: string;
+}): ExitContractWrite {
+  const out: ExitContractWrite = {};
+  const avg = input.avgCost;
+  const stop = input.bracketStopLoss;
+  if (typeof stop === "number" && Number.isFinite(stop) && stop > 0 && avg > 0) {
+    out.stopPrice = stop;
+    const pct =
+      input.side === "short"
+        ? ((stop - avg) / avg) * 100
+        : ((avg - stop) / avg) * 100;
+    if (Number.isFinite(pct) && pct > 0) out.resolvedStopPct = pct;
+  }
+  if (typeof input.bracketTakeProfit === "number" && Number.isFinite(input.bracketTakeProfit) && input.bracketTakeProfit > 0) {
+    out.takeProfitPrice = input.bracketTakeProfit;
+  }
+  if (typeof input.trailPercent === "number" && Number.isFinite(input.trailPercent) && input.trailPercent > 0) {
+    out.trailPercent = input.trailPercent;
+    // Trailing distance is also the resolved distance for trail-style plans.
+    if (out.resolvedStopPct == null) out.resolvedStopPct = input.trailPercent;
+  }
+  if (typeof input.atrStopPct === "number" && Number.isFinite(input.atrStopPct) && input.atrStopPct > 0) {
+    out.entryAtrPct = input.atrStopPct;
+    if (out.resolvedStopPct == null) out.resolvedStopPct = input.atrStopPct;
+  }
+  if (typeof input.invalidation === "string" && input.invalidation.trim()) {
+    out.invalidation = input.invalidation.trim().slice(0, 1000);
+  }
+  if (typeof input.maxHoldingDays === "number" && Number.isFinite(input.maxHoldingDays) && input.maxHoldingDays > 0) {
+    const base = input.filledAt ? Date.parse(input.filledAt) : Date.now();
+    if (Number.isFinite(base)) {
+      out.maxHoldingUntil = new Date(base + input.maxHoldingDays * 86_400_000).toISOString();
+    }
+  }
+  return out;
 }
 
 /** Map of symbol → its recorded per-position stop plan (empty when none set — every position then
  *  falls back to the account's default stop precedence, unchanged from before this feature). */
 export function getStopPlans(accountNumber: string, userId: string = "local"): Record<string, PositionStopPlan> {
   const rows = getDb()
-    .prepare("SELECT symbol, style, rationale, avg_cost, side, opening_order_id FROM position_stop_plans WHERE user_id = ? AND account_number = ?")
-    .all(userId, accountNumber) as Array<{ symbol: string; style: string; rationale: string | null; avg_cost: number; side: string | null; opening_order_id: string | null }>;
+    .prepare(
+      `SELECT symbol, style, rationale, avg_cost, side, opening_order_id,
+              resolved_stop_pct, stop_price, entry_atr_pct, trail_percent,
+              take_profit_price, max_holding_until, invalidation
+       FROM position_stop_plans WHERE user_id = ? AND account_number = ?`
+    )
+    .all(userId, accountNumber) as Array<{
+      symbol: string;
+      style: string;
+      rationale: string | null;
+      avg_cost: number;
+      side: string | null;
+      opening_order_id: string | null;
+      resolved_stop_pct: number | null;
+      stop_price: number | null;
+      entry_atr_pct: number | null;
+      trail_percent: number | null;
+      take_profit_price: number | null;
+      max_holding_until: string | null;
+      invalidation: string | null;
+    }>;
   const out: Record<string, PositionStopPlan> = {};
   for (const r of rows) {
     const style = (STOP_PLAN_STYLES as readonly string[]).includes(r.style) ? (r.style as StopPlanStyle) : "default";
+    const finite = (n: number | null | undefined): number | undefined =>
+      typeof n === "number" && Number.isFinite(n) ? n : undefined;
     out[r.symbol] = {
       style,
       rationale: r.rationale ?? undefined,
       avgCost: Number(r.avg_cost) || 0,
       side: r.side === "long" || r.side === "short" ? r.side : undefined,
-      openingOrderId: r.opening_order_id ?? undefined
+      openingOrderId: r.opening_order_id ?? undefined,
+      ...(finite(r.resolved_stop_pct) != null ? { resolvedStopPct: finite(r.resolved_stop_pct) } : {}),
+      ...(finite(r.stop_price) != null ? { stopPrice: finite(r.stop_price) } : {}),
+      ...(finite(r.entry_atr_pct) != null ? { entryAtrPct: finite(r.entry_atr_pct) } : {}),
+      ...(finite(r.trail_percent) != null ? { trailPercent: finite(r.trail_percent) } : {}),
+      ...(finite(r.take_profit_price) != null ? { takeProfitPrice: finite(r.take_profit_price) } : {}),
+      ...(r.max_holding_until ? { maxHoldingUntil: r.max_holding_until } : {}),
+      ...(r.invalidation ? { invalidation: r.invalidation } : {})
     };
   }
   return out;
@@ -1919,7 +2039,8 @@ export function recordStopPlan(
   userId: string = "local",
   now: string = new Date().toISOString(),
   side: "long" | "short" = "long",
-  openingOrderId?: string
+  openingOrderId?: string,
+  contract: ExitContractWrite = {}
 ): void {
   const safeStyle = (STOP_PLAN_STYLES as readonly string[]).includes(style) ? style : "default";
   if (safeStyle === "fixed" || safeStyle === "atr") {
@@ -1939,14 +2060,48 @@ export function recordStopPlan(
   } else {
     enqueueTeardownForAllOpenBrackets(accountNumber, symbol, userId);
   }
+  const finiteOrNull = (n: number | null | undefined): number | null =>
+    typeof n === "number" && Number.isFinite(n) ? n : null;
   getDb()
     .prepare(
-      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side, opening_order_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO position_stop_plans (
+         user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side, opening_order_id,
+         resolved_stop_pct, stop_price, entry_atr_pct, trail_percent, take_profit_price, max_holding_until, invalidation
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, account_number, symbol)
-       DO UPDATE SET style = excluded.style, rationale = excluded.rationale, avg_cost = excluded.avg_cost, updated_at = excluded.updated_at, side = excluded.side, opening_order_id = excluded.opening_order_id`
+       DO UPDATE SET
+         style = excluded.style,
+         rationale = excluded.rationale,
+         avg_cost = excluded.avg_cost,
+         updated_at = excluded.updated_at,
+         side = excluded.side,
+         opening_order_id = excluded.opening_order_id,
+         resolved_stop_pct = excluded.resolved_stop_pct,
+         stop_price = excluded.stop_price,
+         entry_atr_pct = excluded.entry_atr_pct,
+         trail_percent = excluded.trail_percent,
+         take_profit_price = excluded.take_profit_price,
+         max_holding_until = excluded.max_holding_until,
+         invalidation = excluded.invalidation`
     )
-    .run(userId, accountNumber, symbol, safeStyle, rationale ?? null, Number.isFinite(avgCost) ? avgCost : 0, now, side, openingOrderId ?? null);
+    .run(
+      userId,
+      accountNumber,
+      symbol,
+      safeStyle,
+      rationale ?? null,
+      Number.isFinite(avgCost) ? avgCost : 0,
+      now,
+      side,
+      openingOrderId ?? null,
+      finiteOrNull(contract.resolvedStopPct ?? null),
+      finiteOrNull(contract.stopPrice ?? null),
+      finiteOrNull(contract.entryAtrPct ?? null),
+      finiteOrNull(contract.trailPercent ?? null),
+      finiteOrNull(contract.takeProfitPrice ?? null),
+      contract.maxHoldingUntil ?? null,
+      contract.invalidation ?? null
+    );
 }
 
 /** Clear stop plans for the given symbols (e.g. positions that have closed). No-op on empty input.

@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-24 — RAG enablement + Exit Contract B1 + branch prune (CURSOR)
+
+Branch: `cursor/rag-enable-exit-prune-1c6c`. Safe RAG Priority A flags default ON; Exit Contract
+columns + fill writes + proactive/synthetic read-with-fallback (B1 / partial B2). Discarded
+w2-coaching/reflection (already on main / closed PRs); pruned 19 stale origin branches. Effort
+board + FEATURE-ENABLEMENT updated for `effort-issues-sync`. Rollout:
+`docs/rollouts/2026-07-24-rag-enable-exit-b1-prune.md`.
+
 ## 2026-07-24 — Per-user reflections & learning system (CURSOR)
 
 Branch: `cursor/per-user-reflections-learning`. Pooled all accounts' closed trades for per-user

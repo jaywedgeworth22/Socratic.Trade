@@ -486,7 +486,7 @@ function contextMaxChars(): number {
 
 /** Default OFF: retain legacy parent-text mapping until the bounded post-rerank path is enabled. */
 function parentContextExpansionEnabled(): boolean {
-  return envFlagOn("RAG_PARENT_CONTEXT_EXPANSION", false);
+  return envFlagOn("RAG_PARENT_CONTEXT_EXPANSION", true);
 }
 
 function parentContextMaxChars(): number {
@@ -713,11 +713,11 @@ function hybridRetrievalEnabled(): boolean {
 
 /** Independent FTS5 recall across the persisted filing corpus. Default off until eval promotion. */
 function corpusWideLexicalRetrievalEnabled(): boolean {
-  return envFlagOn("RAG_CORPUS_WIDE_LEXICAL", false);
+  return envFlagOn("RAG_CORPUS_WIDE_LEXICAL", true);
 }
 
 function retrievalStageTelemetryEnabled(): boolean {
-  return envFlagOn("RAG_RETRIEVAL_STAGE_TELEMETRY", false);
+  return envFlagOn("RAG_RETRIEVAL_STAGE_TELEMETRY", true);
 }
 
 /**
@@ -739,7 +739,8 @@ export function asOfStrictEnabled(): boolean {
  * guard then decimates — leaving a tiny/empty pool in a backtest even though the correct older
  * filings exist in the corpus (ranked below the fetch window).
  *
- * OFF by default — set VECTOR_ASOF_SERVER_FILTER=on to enable. It is safe to turn on at any time on
+ * ON by default (owner enablement 2026-07-24) — set VECTOR_ASOF_SERVER_FILTER=off to disable. It is safe
+ * to leave on at any time on
  * the DEFAULT (fail-open) semantics because the server clause keeps un-epoch'd vectors (see
  * `buildAsOfEpochFilter`), so an un-backfilled corpus is NOT dropped; running the backfill first
  * just makes the topK-fill improvement effective for older vectors too. When OFF, the retrieval
@@ -750,7 +751,7 @@ export function asOfStrictEnabled(): boolean {
  * better candidate pool; the post-fetch guard is what actually enforces no-lookahead.
  */
 export function asOfServerFilterEnabled(): boolean {
-  return envFlagOn("VECTOR_ASOF_SERVER_FILTER", false);
+  return envFlagOn("VECTOR_ASOF_SERVER_FILTER", true);
 }
 
 /**
@@ -3722,9 +3723,9 @@ export function isWithinAsOf(
   return t <= asOfMs;
 }
 
-/** Returns true when RAG_CITATION_STALENESS is truthy. Default OFF. */
+/** Returns true when RAG_CITATION_STALENESS is truthy. Default ON (owner enablement 2026-07-24). */
 export function citationStalenessEnabled(): boolean {
-  return envFlagOn("RAG_CITATION_STALENESS", false);
+  return envFlagOn("RAG_CITATION_STALENESS", true);
 }
 
 /**
@@ -6570,7 +6571,7 @@ export async function retrieveContextDetailed(
     // existing callers (strategy.ts, orchestrator.ts) already pass `minScore` explicitly, so
     // `options?.minScore == null` is false for them — this resolves to their explicit value,
     // unchanged, regardless of `applyDefaultFloors`.
-    const wantDefaultFloors = Boolean(options?.applyDefaultFloors) || envFlagOn("RAG_APPLY_DEFAULT_FLOORS", false);
+    const wantDefaultFloors = Boolean(options?.applyDefaultFloors) || envFlagOn("RAG_APPLY_DEFAULT_FLOORS", true);
     const effectiveMinScore = options?.minScore ?? (wantDefaultFloors ? defaultMinScore() : undefined);
 
     // persist-pool-v2 (2026-07-06): the flag check happens BEFORE any work (no hook is even

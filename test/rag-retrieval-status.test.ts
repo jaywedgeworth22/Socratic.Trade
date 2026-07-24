@@ -13,6 +13,7 @@
  * Network-free: mocks Pinecone/Voyage exactly like test/rag-retrieval-eval.test.ts (hoisted vi.fn
  * clients, no real fetch).
  */
+import { pinRagQualityFlagsOff } from "./rag-test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -112,6 +113,7 @@ const HEALTHY_MATCH = {
 
 describe("typed retrieval-status receipt (RetrievalStatus)", () => {
   beforeEach(() => {
+  pinRagQualityFlagsOff();
     resetEnv();
   });
   afterEach(() => {
