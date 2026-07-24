@@ -5,6 +5,7 @@ interface NormalizedHetznerServer {
   status?: string;
   serverType?: string;
   cpus?: number;
+  memoryGb?: number;
   location?: string;
   ip?: string;
 }
@@ -64,6 +65,10 @@ export function normalizeHetznerServerResponse(payload: unknown): {
   if (serverTypeRecord?.cores !== undefined && !cpus) {
     warnings.push("Hetzner server_type.cores was not a positive number.");
   }
+  const memoryGb = readPositiveNumber(serverTypeRecord?.memory);
+  if (serverTypeRecord?.memory !== undefined && !memoryGb) {
+    warnings.push("Hetzner server_type.memory was not a positive number.");
+  }
 
   const publicNet = asRecord(server.public_net);
   const ipv4Raw = publicNet?.ipv4;
@@ -82,6 +87,7 @@ export function normalizeHetznerServerResponse(payload: unknown): {
       status: readText(server.status),
       serverType,
       cpus,
+      memoryGb,
       location,
       ip,
     },

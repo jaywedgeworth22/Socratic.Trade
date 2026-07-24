@@ -7,6 +7,13 @@ structured lessons (learned_context rows + Pinecone vectors). Removed paper-to-l
 machinery (`learning-transfer.ts` deleted). FINRA margin-minimum now applies uniformly (no more
 live-only gating). Regime-conditioned retrieval with scoring (+2 match/-1 mismatch/+1 thesis)
 wired into strategy loop. Rollout: `docs/rollouts/2026-07-23-per-user-reflections-learning.md`.
+## 2026-07-24 — Effort-board accuracy audit (CURSOR)
+
+Audited `docs/EFFORT-LOG.md` against GitHub PR state + production `/api/health` release SHA.
+Cleared stale In Progress (Usage-compliance Wave 2 = #1820; Server Stats reliability = #1292+#1751).
+Corrected Planned rows that were already merged, claimed without a live branch, or obsolete under
+auto-deploy / preview retirement. Board section placement drives `effort-issues-sync` state labels.
+Rollout: `docs/rollouts/2026-07-24-effort-board-accuracy-audit.md`.
 
 ## 2026-07-24 — Open efforts sweep closeout (CURSOR)
 
@@ -3224,3 +3231,7 @@ plist/asset validation, and diff check pass. Rollout:
 ## 2026-07-23 — Cleanup Caches Runner Fix (ANTIGRAVITY, branch `fix/cleanup-caches-runner`)
 
 Fixed a CI failure in `.github/workflows/cleanup-caches.yml` by retargeting the jobs from `[self-hosted, socratic-ci]` to `ubuntu-latest`. The self-hosted Coolify runners do not have the GitHub CLI (`gh`) installed globally, which is required by both the `delete-pr-caches` and `prune-stale-caches` jobs. Because `cleanup-caches.yml` operates purely via the GitHub API (via `gh`) and doesn't require any app builds or local runner state, it can safely and freely run on `ubuntu-latest` without consuming our self-hosted runner concurrency.
+
+## 2026-07-23 — Admin Panel Server RAM Fix & CI ESLint Ignores (ANTIGRAVITY)
+
+The Admin panel's "Server Metrics" tab was modified to extract actual RAM capacity directly from the Hetzner Server API's metadata rather than relying on Coolify metadata to ensure accurate memory percentages. Also, added `**/.worktrees/**` to the ESLint configuration ignores to prevent CI `verify` gates from failing when linting other agents' worktree paths. Verified clean on 5000+ tests and builds.

@@ -33,6 +33,7 @@ export default [
       ".agents/**",
       ".tools/**",
       "**/worktrees/**",
+      "**/.worktrees/**",
       "scratch/**",
       "ds-bundle/**",
       ".design-sync/**",
