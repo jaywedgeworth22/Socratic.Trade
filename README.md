@@ -221,15 +221,9 @@ or open `/api/auth/robinhood/start` to complete consent. The app stores OAuth
 state, the registered client, and refreshable tokens in the local SQLite
 settings table.
 
-For production behind the Cloudflare tunnel, the default is to leave
-`ROBINHOOD_MCP_REDIRECT_URI` blank; the app will use `x-forwarded-host`,
-`NEXT_PUBLIC_SITE_URL`, or `https://socratictrade.com` for
-`/api/auth/robinhood/callback`. If Robinhood rejects the public callback during
-the logged-in consent step, a same-machine operator can instead set
-`ROBINHOOD_MCP_REDIRECT_URI=http://localhost:4000/api/auth/robinhood/callback`
-and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=on`. Public app login still starts
-the flow; only Robinhood's provider callback returns through localhost, and the
-state-bound callback redirects back to the public site after token storage.
+For production behind the Cloudflare tunnel, see the definitive **[Robinhood Connection Guide](docs/robinhood-connection-guide.md)** for step-by-step instructions on connecting via SSH tunnel, maintaining background tokens, or registering an official static Robinhood Partner Client ID for 1-click web login.
+
+If Robinhood rejects the public callback during the logged-in consent step, a same-machine operator sets `ROBINHOOD_MCP_REDIRECT_URI=http://localhost:4000/api/auth/robinhood/callback` and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=on`. Public app login still starts the flow; only Robinhood's provider callback returns through localhost, and the state-bound callback redirects back to the public site after token storage.
 
 ## Tests
 
