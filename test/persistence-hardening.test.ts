@@ -359,11 +359,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 26");
 
-<<<<<<< HEAD
-    expect(applyVersionedMigrations(db)).toBe(56);
-=======
     expect(applyVersionedMigrations(db)).toBe(58);
->>>>>>> origin/main
 
 
     for (const json of [
@@ -413,11 +409,7 @@ describe("runMigrations — versioned schema migrations", () => {
     `);
     db.pragma("user_version = 27");
 
-<<<<<<< HEAD
-    expect(applyVersionedMigrations(db)).toBe(56);
-=======
     expect(applyVersionedMigrations(db)).toBe(58);
->>>>>>> origin/main
 
     expect(db.prepare(`
       SELECT status, COUNT(*) AS count
@@ -454,11 +446,7 @@ describe("runMigrations — versioned schema migrations", () => {
       .run("unrelated:setting", JSON.stringify(now), now);
     db.pragma("user_version = 39");
 
-<<<<<<< HEAD
-    expect(applyVersionedMigrations(db)).toBe(56);
-=======
     expect(applyVersionedMigrations(db)).toBe(58);
->>>>>>> origin/main
 
     // v40 purges legacy broker-minimum cooldown keys; later migrations (v58) may seed
     // unrelated settings such as earningscalls_burst_pending — assert the purge, not a frozen key set.
@@ -504,11 +492,7 @@ describe("runMigrations — versioned schema migrations", () => {
     ).run(now);
     db.pragma("user_version = 45");
 
-<<<<<<< HEAD
-    expect(applyVersionedMigrations(db)).toBe(56);
-=======
     expect(applyVersionedMigrations(db)).toBe(58);
->>>>>>> origin/main
 
     expect(
       db.prepare(
@@ -534,11 +518,7 @@ describe("runMigrations — versioned schema migrations", () => {
     // Legacy v52 on-disk DB gains the table when versioned migrations re-run.
     const legacy = new RawDatabase(":memory:");
     legacy.pragma("user_version = 52");
-<<<<<<< HEAD
-    expect(applyVersionedMigrations(legacy)).toBe(56);
-=======
     expect(applyVersionedMigrations(legacy)).toBe(58);
->>>>>>> origin/main
     expect(
       legacy.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'socratic_coach_note_archive'").get()
     ).toBeTruthy();

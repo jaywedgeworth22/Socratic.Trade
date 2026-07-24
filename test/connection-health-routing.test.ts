@@ -243,7 +243,6 @@ describe("Connection Health & Failure Routing", () => {
     db.upsertUserApiKey("local", "voyage", "voyage-test-key");
 
     for (let i = 0; i < 5; i++) {
->>>>>>> origin/main
       db.logApiHealth({ service: "rag-embed", ok: false, errorText: "Voyage down", keySource: "env" });
     }
 

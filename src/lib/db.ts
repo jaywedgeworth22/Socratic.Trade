@@ -2381,7 +2381,6 @@ const MIGRATIONS: Migration[] = [
         )
         .run("earningscalls_burst_pending", "25", new Date().toISOString());
     }
->>>>>>> origin/main
   }
 ];
 
