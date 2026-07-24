@@ -24,9 +24,9 @@ import { envFlagOn } from "./env-flag";
 const DEFAULT_CEILING = 5000; // "very high" — many multiples of a normal single-user session's call volume
 const DEFAULT_WINDOW_MS = 60 * 60_000; // 1 hour rolling window
 
-/** Returns true when RAG_RUN_BUDGET_ENABLED is truthy. Default OFF. */
+/** Returns true when RAG_RUN_BUDGET_ENABLED is truthy. Default ON (owner enablement 2026-07-24). */
 export function runBudgetEnabled(): boolean {
-  return envFlagOn("RAG_RUN_BUDGET_ENABLED", false);
+  return envFlagOn("RAG_RUN_BUDGET_ENABLED", true);
 }
 
 function ceiling(): number {

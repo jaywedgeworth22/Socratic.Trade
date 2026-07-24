@@ -2406,6 +2406,32 @@ const MIGRATIONS: Migration[] = [
       addColumns("learned_context");
       addColumns("learned_context_pending");
     }
+  },
+  {
+    // Exit-strategy Phase B1 (2026-07-24): persist parameterized Exit Contract columns on
+    // position_stop_plans so every enforcement layer can read one resolved distance/price set
+    // (with account-policy fallback when null). Nullable — legacy rows stay behavior-identical
+    // until the next opening fill writes the contract. See docs/design/exit-strategy-intelligence.md.
+    version: 60,
+    name: "position_stop_plans_exit_contract",
+    up: (database) => {
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'position_stop_plans'")
+        .get();
+      if (!tableExists) return;
+      const cols = database.prepare("PRAGMA table_info(position_stop_plans)").all() as Array<{ name: string }>;
+      const have = new Set(cols.map((c) => c.name));
+      const add = (name: string, ddl: string) => {
+        if (!have.has(name)) database.exec(`ALTER TABLE position_stop_plans ADD COLUMN ${ddl}`);
+      };
+      add("resolved_stop_pct", "resolved_stop_pct REAL");
+      add("stop_price", "stop_price REAL");
+      add("entry_atr_pct", "entry_atr_pct REAL");
+      add("trail_percent", "trail_percent REAL");
+      add("take_profit_price", "take_profit_price REAL");
+      add("max_holding_until", "max_holding_until TEXT");
+      add("invalidation", "invalidation TEXT");
+    }
   }
 ];
 
@@ -2879,6 +2905,13 @@ function migrate(database: Database.Database): void {
       updated_at TEXT NOT NULL,
       side TEXT NOT NULL DEFAULT 'long',
       opening_order_id TEXT,
+      resolved_stop_pct REAL,
+      stop_price REAL,
+      entry_atr_pct REAL,
+      trail_percent REAL,
+      take_profit_price REAL,
+      max_holding_until TEXT,
+      invalidation TEXT,
       PRIMARY KEY (user_id, account_number, symbol)
     );
 

@@ -5,9 +5,13 @@ merge safety, but **default-off is not “done forever.”** This file is the li
 capabilities that exist in the tree (or land soon via open PRs) but are **not yet product-live**
 until someone deliberately enables them (env / Infisical / policy / subscription / rights gate).
 
+**2026-07-24 owner enablement (CURSOR):** Priority A safe RAG retrieval flags flipped to
+**default ON** in code + `.env.example` (unset == on). Explicit `=off` still disables. High-cost
+and rights-gated items remain OFF. Pair prod Infisical with the same ON values when present so
+operators can still override.
+
 Update this file when you add a new default-off switch. Pair enablement with a rollout note +
-prod exact-SHA verify. Do **not** flip money-path RAG/retrieval flags until corpus re-embed and
-eval receipts are green.
+prod exact-SHA verify. Do **not** purge legacy vectors until unscoped re-embed is verified.
 
 Canonical effort-board rows: `/Users/jay/apps/TRADING-EFFORT-LOG.md` (Planned) +
 `docs/EFFORT-LOG.md`.
@@ -16,41 +20,31 @@ Canonical effort-board rows: `/Users/jay/apps/TRADING-EFFORT-LOG.md` (Planned) +
 
 ## Priority A — RAG / retrieval (PR #1892 program + related)
 
-**#1892 MERGED 2026-07-23.** Flags still remain off. Owner wants an explicit **enable after
-merge + prove** pass, not permanent dormancy.
+**#1892 MERGED 2026-07-23.** Owner-directed enablement 2026-07-24:
 
-| Flag / gate | Default | What it does when on | Enable after / notes |
-|-------------|---------|----------------------|----------------------|
-| `RAG_CORPUS_WIDE_LEXICAL` | **off** | FTS5 corpus-wide lexical recall fused with dense | After #1892 live + FTS mirrors/backfill healthy; start shadow/eval |
-| `HYBRID_RETRIEVAL` | **off** | Older hybrid path (related; confirm interaction with lexical) | Prefer new lexical path; audit before dual-on |
-| `RAG_ADAPTIVE_RERANK` | **off** | Adaptive overfetch depths by intent | After cost/latency receipts OK; needs rerank credentials |
+| Flag / gate | Default | What it does when on | Status |
+|-------------|---------|----------------------|--------|
+| `RAG_CORPUS_WIDE_LEXICAL` | **ON** | FTS5 corpus-wide lexical recall fused with dense | Enabled 2026-07-24 |
+| `HYBRID_RETRIEVAL` | **off** | Older hybrid path | Prefer lexical; keep off |
+| `RAG_ADAPTIVE_RERANK` | **ON** | Adaptive overfetch depths by intent | Enabled; no-ops without rerank credentials |
 | `RAG_RERANK_PROVIDER` | unset | Explicit openrouter/siliconflow rerank route | Set only with key + budget headroom |
-| `RAG_PARENT_CONTEXT_EXPANSION` | **off** | Bounded parent context on final survivors | After lexical+rerank stable; changes prompt content |
-| `RAG_APPLY_DEFAULT_FLOORS` | **off** | Cosine/relevance/dedupe floors like strategy/chat | Eval already injects floors; consider prod on with #1892 |
-| `RAG_MULTIQUERY` | **off** | Facet sub-queries per filings pass | Paid LLM/embed amplification |
-| `RAG_HYDE` | **off** | HyDE hypothetical-doc embed (needs MULTIQUERY) | Highest cost tier; last |
-| `RAG_RUN_BUDGET_ENABLED` | **off** | Per-run paid-stage budget ceiling | Worth enabling as guardrail when turning retrieval quality on |
-| `RAG_RETRIEVAL_TELEMETRY` | **off** | Retrieval quality telemetry | Enable early for visibility (low risk) |
-| `RAG_RETRIEVAL_STAGE_TELEMETRY` | **off** | Per-stage duration/candidate receipts | Enable early with quality program |
-| `RAG_PERSIST_CANDIDATE_POOL` | **off** | Persist candidate pool rows | Diagnostics; privacy/size aware |
-| `RAG_PERSIST_CANDIDATE_POOL_FULL` | **off** | Full pool persistence | Heavier; only if debugging |
-| `RAG_CITATION_STALENESS` | **off** | Citation staleness checks | Enable with PIT hardening |
-| `VECTOR_ASOF_SERVER_FILTER` | **off** | Server-side as-of filter | Enable with strict PIT |
-| `VECTOR_ASOF_STRICT` | **off** | Fail-closed undated/future | Enable after data quality OK |
+| `RAG_PARENT_CONTEXT_EXPANSION` | **ON** | Bounded parent context on final survivors | Enabled 2026-07-24 |
+| `RAG_APPLY_DEFAULT_FLOORS` | **ON** | Cosine/relevance/dedupe floors | Enabled 2026-07-24 |
+| `RAG_MULTIQUERY` | **off** | Facet sub-queries per filings pass | Keep off (cost) |
+| `RAG_HYDE` | **off** | HyDE hypothetical-doc embed | Keep off (cost) |
+| `RAG_RUN_BUDGET_ENABLED` | **ON** | Per-run paid-stage budget ceiling | Enabled as guardrail |
+| `RAG_RETRIEVAL_TELEMETRY` | **ON** | Retrieval quality telemetry | Enabled |
+| `RAG_RETRIEVAL_STAGE_TELEMETRY` | **ON** | Per-stage duration/candidate receipts | Enabled |
+| `RAG_PERSIST_CANDIDATE_POOL` | **off** | Persist candidate pool rows | Diagnostics only |
+| `RAG_PERSIST_CANDIDATE_POOL_FULL` | **off** | Full pool persistence | Keep off |
+| `RAG_CITATION_STALENESS` | **ON** | Citation staleness checks | Enabled (advisory) |
+| `VECTOR_ASOF_SERVER_FILTER` | **ON** | Server-side as-of filter (fail-open) | Enabled |
+| `VECTOR_ASOF_STRICT` | **off** | Fail-closed undated/future | Keep off until data quality OK |
 | `VECTOR_EMBED_CLEAN_TEXT` | **off** | Clean text before embed | Benchmark first |
 | `RAG_EMBED_DISCLOSURES` | **off** | Embed disclosure corpus | Product decision |
 | `WEB_SOURCE_SEC8K_FULL_BODY` | **off** | Full 8-K body ingest → RAG | Enable with FTS mirror + budget |
 | `SEC_INGEST_WORKER_ENABLED` | **off** | Background SEC ingest worker | Ops enable after queue health |
 | **bge-m3 corpus re-embed → purge-legacy** | incomplete | Managed space full; legacy purge | **Do not purge** until unscoped re-embed verified |
-
-Suggested enable order (product):
-
-1. Telemetry flags (`RAG_RETRIEVAL_TELEMETRY`, stage telemetry)  
-2. Production-path eval run (allow-live, credentialed user) against frozen goldens  
-3. `RAG_CORPUS_WIDE_LEXICAL` (+ ensure FTS rows for filings/8-K)  
-4. Explicit rerank route if not already on embed path; then `RAG_ADAPTIVE_RERANK`  
-5. `RAG_PARENT_CONTEXT_EXPANSION`  
-6. Multi-query / HyDE only with budget + value proof  
 
 ---
 
@@ -103,8 +97,8 @@ Suggested enable order (product):
 1. When landing a default-off feature, **add a row here** and a **Planned** effort-log line:  
    `Enable <flag> in production after <precondition>`.
 2. When the owner asks “what are we not using?”, point here first.
-3. Enabling in prod = Infisical/env change + health/receipt check + rollout note — **not** just merging code.
-4. Do not enable by “helpfully” flipping defaults to `true` in code without an explicit owner decision.
+3. Enabling in prod = Infisical/env change **and/or** code-default flip + health/receipt check + rollout note.
+4. Do not enable high-cost or rights-gated flags without an explicit owner decision.
 
 Inventory first cut: GROK 2026-07-22 from `.env.example` + `envFlagOn(..., false)` + known program docs.
-Re-scan after large RAG/provider merges.
+Re-scan after large RAG/provider merges. Owner enablement pass: CURSOR 2026-07-24.
