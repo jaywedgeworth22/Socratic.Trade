@@ -448,9 +448,11 @@ describe("runMigrations — versioned schema migrations", () => {
 
     expect(applyVersionedMigrations(db)).toBe(57);
 
-    expect(db.prepare("SELECT key FROM settings ORDER BY key").all()).toEqual([
-      { key: "unrelated:setting" }
-    ]);
+    // v40 purges legacy broker-minimum cooldown keys; later migrations (v57) may seed
+    // unrelated settings such as earningscalls_burst_pending — assert the purge, not a frozen key set.
+    const keys = db.prepare("SELECT key FROM settings ORDER BY key").all().map((row: { key: string }) => row.key);
+    expect(keys).not.toContain("subMinimumOrderAlertSent:LEGACY-ACCOUNT:AAPL");
+    expect(keys).toContain("unrelated:setting");
     db.close();
   });
 
