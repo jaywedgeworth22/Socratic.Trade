@@ -84,7 +84,8 @@ export const NOTIFICATION_EVENT_TYPES = [
   "evidence_age_anomaly",
   "storage_warning",
   "autonomy_halted_on_boot",
-  "option_alert"
+  "option_alert",
+  "earningscalls_entitlement_blocked"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
@@ -1422,7 +1423,12 @@ export interface SocraticOutcomeHorizonRow {
 
 export interface SocraticRagAttribution {
   symbol: string;
-  query: string;
+  /** Stable ref to the exact retrieved chunk; safe to persist/audit without prompt or query text. */
+  evidenceRef?: string;
+  /** Legacy rows may retain this raw query. New writes use queryHash instead. */
+  query?: string;
+  /** SHA-256 query fingerprint for new attribution rows; raw queries are not persisted. */
+  queryHash?: string;
   chunkId?: string;
   source?: string;
   docType?: string;

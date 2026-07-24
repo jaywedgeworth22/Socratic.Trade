@@ -42,6 +42,7 @@ import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketR
 import { buildCandidateEvidence } from "./evidence";
 import { applyEvidenceBudget } from "./evidence-budget";
 import { createEvidencePack, createEvidenceRef } from "./evidence-pack";
+import { derivePromptRagConsumption, type PromptRagCandidate, type PromptRagConsumptionResult } from "./rag/evidence-consumption";
 import { summarizeSourceCoverage } from "./source-value";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { checkBrokerHealth } from "./broker-health";
@@ -117,6 +118,7 @@ import {
   type FmpTranscriptRightsGenerationClaim
 } from "./web-sources/fmp-transcripts";
 import { earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
+import { strategyInformationRouting } from "./rag/information-routing";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -158,6 +160,7 @@ import {
   buildSocraticDecisionCase,
   frameworkProposalFromDecision,
   ragAttributionsFromChunks,
+  ragEvidenceIdentityFromChunk,
   resolveSocraticOverride,
   socraticStatusFromProposalStatus,
   type SocraticOverrideResolution
@@ -427,7 +430,7 @@ export async function runStrategyOnce(
     // serving the LLM (after account validation + the usage-budget skip gate). A run that aborts before
     // that point (account unavailable, over budget, no candidate cleared the threshold) leaves the
     // pointer untouched, so it never burns a rotation slot on a run that generated no proposal.
-    const { commit: commitRotation, ...rotationOverride } = resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
+    const { commit: commitRotation, ...rotationOverride } = await resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
 
     // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for
     // over-budget providers whenever the monitor is configured (fire-and-forget, never blocks a run).
@@ -986,6 +989,11 @@ export async function runStrategyOnce(
 
     let ragContext = "";
     let socraticRagAttributions: SocraticRagAttribution[] = [];
+    // Retrieval is deliberately distinct from prompt consumption. Candidates stay local until
+    // proposeTrades has applied containment + the final evidence budget and can prove what the
+    // model actually received.
+    let retrievedRagAttributions: SocraticRagAttribution[] = [];
+    const ragPromptCandidates: PromptRagCandidate[] = [];
     const fmpRightsClaim = captureFmpTranscriptRightsGeneration();
     const fmpDerivedProvenance: FmpTranscriptDerivedProvenance[] = [];
     // Advisory prompt-safety receipts (CR-H lane): kind-'safety' evidence items attached to every
@@ -993,25 +1001,15 @@ export async function runStrategyOnce(
     // injection scan inside proposeTrades. Receipts only — never a gate on generation/placement.
     const promptSafetyEvidence: SocraticEvidenceItem[] = [];
     const evidenceAgeInputs: EvidenceAgeInput[] = [];
-    // corpus-coverage-receipt (2026-07-06): the filings doc types requested below, hoisted so the
-    // coverage receipt after this block can report "requested" alongside "retrieved this run" /
-    // "empty" without re-declaring the literal. Advisory only — never affects the retrieval call
-    // itself. NOTE: the coverage receipt only checks ledger-complete types. 10-k/10-q always
-    // participate; earnings-transcript joins only while its default-off producer is explicitly on.
-    // 8-K/fundamentals remain retrieval-only because their ledgers are incomplete. Transcript
-    // retrieval is independently rights-gated: turning off future refresh keeps existing evidence
-    // usable, while withdrawing storage/display confirmation removes it from every RAG consumer.
-    const requestedFilingsDocTypes = [
-      "10-k",
-      "10-q",
-      "8-k",
-      // Transcript retrieval joins when EITHER transcript producer's gate is active: FMP's
-      // durable rights claim, or the EarningsCalls.dev source (key = opt-in, kill-switch off —
-      // see earningscalls-gate.ts). Per-source enforcement stays inside vector-db's
-      // buildExtraFilters/filterMatchesForTranscriptRights; this only controls the REQUEST.
-      ...(fmpRightsClaim || earningsCallsTranscriptsEnabled() ? ["earnings-transcript"] : []),
-      "fundamentals"
-    ];
+    // corpus-coverage-receipt (2026-07-06): an explicit information-needs route owns the
+    // document types requested below. Current quotes, portfolio/orders, SEC company facts, and
+    // Form 4 transactions stay on their deterministic sources; they must never be smuggled into
+    // semantic retrieval via a free-text prompt. The coverage receipt after this block reports the
+    // declared semantic sources alongside retrieval results. 10-k/10-q always participate;
+    // transcript narrative joins only while its producer/rights gate is active. 8-K remains
+    // retrieval-only because its ledger is incomplete.
+    const informationRouting = strategyInformationRouting(Boolean(fmpRightsClaim || earningsCallsTranscriptsEnabled()));
+    const requestedFilingsDocTypes = informationRouting.semantic.documentTypes;
     const coverageCheckedDocTypes = coverageCheckedFilingsDocTypes();
     const retrievedFilingsDocTypes = new Set<string>();
     // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): one row per symbol (filings
@@ -1108,15 +1106,21 @@ export async function runStrategyOnce(
                 }
               });
 
-              // Retrieve structured facts & Form 4 transactions (RAG-B10)
+              // Structured facts and Form 4 transactions use SQLite, not semantic retrieval.
+              // Their inclusion is declared by the routing plan above, so a future caller cannot
+              // accidentally turn a current financial fact into an embedding query.
               const { formatCompanyFactsEvidenceCard, formatInsiderTransactionsEvidenceCard } = await import("./web-sources/sec-facts");
               let factsCard = "";
               let insiderCard = "";
               try {
                 const cik = tickerToCik[sym.toUpperCase()];
                 if (cik) {
-                  factsCard = formatCompanyFactsEvidenceCard(cik);
-                  insiderCard = formatInsiderTransactionsEvidenceCard(cik);
+                  if (informationRouting.structured.needs.includes("financial_facts")) {
+                    factsCard = formatCompanyFactsEvidenceCard(cik);
+                  }
+                  if (informationRouting.structured.needs.includes("insider_transactions")) {
+                    insiderCard = formatInsiderTransactionsEvidenceCard(cik);
+                  }
                 }
               } catch (err) {
                 console.warn(`[Strategy] failed to fetch structured facts for ${sym}:`, err);
@@ -1129,11 +1133,11 @@ export async function runStrategyOnce(
         }
 
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
-        socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
+        retrievedRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
         fmpDerivedProvenance.splice(
           0,
           fmpDerivedProvenance.length,
-          ...fmpTranscriptDerivedProvenance(socraticRagAttributions)
+          ...fmpTranscriptDerivedProvenance(retrievedRagAttributions)
         );
         if (fmpDerivedProvenance.length > 0) {
           if (!fmpRightsClaim) throw new Error("FMP-derived strategy context has no active rights generation.");
@@ -1160,7 +1164,16 @@ export async function runStrategyOnce(
           ragContext = contexts
             .map((context) => {
               const formattedChunks = context.chunks
-                .map((chunk) => formatChunkWithProvenance(chunk, context.sym))
+                .map((chunk) => {
+                  const serializedText = formatChunkWithProvenance(chunk, context.sym);
+                  ragPromptCandidates.push({
+                    ...ragEvidenceIdentityFromChunk(context.sym, chunk),
+                    promptSource: "rag",
+                    text: chunk.text,
+                    serializedText
+                  });
+                  return serializedText;
+                })
                 .join("\n\n");
 
               const parts = [`### RAG Dossier for ${context.sym}`];
@@ -1423,9 +1436,16 @@ export async function runStrategyOnce(
             userId,
             connectedAccountId
           );
-          socraticRagAttributions.push(
-            ...ragAttributionsFromChunks("PORTFOLIO", episodic.query, [...episodic.analogChunks, ...episodic.coachingChunks])
-          );
+          const episodicChunks = [...episodic.analogChunks, ...episodic.coachingChunks];
+          retrievedRagAttributions.push(...ragAttributionsFromChunks("PORTFOLIO", episodic.query, episodicChunks));
+          for (const chunk of episodicChunks) {
+            ragPromptCandidates.push({
+              ...ragEvidenceIdentityFromChunk("PORTFOLIO", chunk),
+              promptSource: "learned",
+              text: chunk.text,
+              serializedText: chunk.text
+            });
+          }
         }
       } catch (e) {
         if (e instanceof StrategyLockOwnershipLostError) throw e;
@@ -1523,6 +1543,9 @@ export async function runStrategyOnce(
         dailyNotionalUsed: daily.notional,
         dailyOrderCount: daily.openingOrderCount,
         ragContext,
+        ragPromptCandidates,
+        ragRetrievalAttempted: !skipLlmDueToBudget,
+        ragRetrievalFailureCount: ragRetrievalStatusRows.filter((row) => row.status === "lookup_failed").length,
         learnedContext,
         ...(experienceAnalogs ? { experienceAnalogs } : {}),
         ...(ownerCoaching ? { ownerCoaching } : {}),
@@ -1537,6 +1560,16 @@ export async function runStrategyOnce(
       llmProposals = proposed.proposals;
       llmSteps = proposed.llmSteps;
       adversaryContext = proposed.adversaryContext;
+      // Only complete prompt evidence earns outcome attribution/usefulness credit. Truncated rows
+      // remain valuable assembly telemetry, but must not be promoted into realized-return learning.
+      const consumedEvidenceRefs = new Set(
+        proposed.ragPromptConsumption?.consumed
+          .filter((receipt) => receipt.state === "consumed")
+          .map((receipt) => receipt.evidenceRef) ?? []
+      );
+      socraticRagAttributions = retrievedRagAttributions.filter((attribution) =>
+        attribution.evidenceRef ? consumedEvidenceRefs.has(attribution.evidenceRef) : false
+      );
       // Advisory injection receipts from the prompt-assembly scan (audited inside proposeTrades):
       // fold into kind-'safety' evidence, one item per flagged field, so every decision case this
       // run records carries the receipt. Never alters proposals or routing.
@@ -3865,6 +3898,8 @@ interface ProposeTradesResult {
   promptSafetyFindings?: InjectionFinding[];
   /** Fields whose untrusted instruction-like spans were quarantined before either model saw them. */
   promptContainmentFields?: string[];
+  /** Receipts from the final, post-containment/post-budget prompt serialization. */
+  ragPromptConsumption?: PromptRagConsumptionResult;
 }
 
 async function proposeTrades(input: {
@@ -3883,6 +3918,12 @@ async function proposeTrades(input: {
   dailyNotionalUsed: number;
   dailyOrderCount: number;
   ragContext?: string;
+  /** Retrieved chunks awaiting an exact prompt-consumption decision. Never contains query text. */
+  ragPromptCandidates?: PromptRagCandidate[];
+  /** Text-free retrieval state for an empty/error/not-attempted consumption receipt. */
+  ragRetrievalAttempted?: boolean;
+  /** Count only; error detail remains in the typed retrieval-status audit. */
+  ragRetrievalFailureCount?: number;
   learnedContext?: string;
   /** Exact licensed provenance plus the durable generation captured before retrieval. */
   fmpRightsClaim?: FmpTranscriptRightsGenerationClaim;
@@ -4339,6 +4380,27 @@ async function proposeTrades(input: {
   const budgetedReflection = budgetedText("reflection");
   const budgetedExperienceAnalogs = budgetedText("analogs");
   const budgetedOwnerCoaching = budgetedText("coaching");
+  // This is the sole point at which "used RAG" is determined. Retrieval can return candidates
+  // that containment or the shared evidence budget subsequently removes; those stay in the
+  // retrieved-but-not-consumed receipt and must never enter decision attribution/usefulness.
+  // Containment runs on the assembled family text below. Apply the same deterministic transform
+  // to each candidate before matching so a quarantined/truncated chunk is compared against the
+  // exact safe representation that can reach the model, never its raw pre-containment text.
+  const containedRagPromptCandidates = (input.ragPromptCandidates ?? []).map((candidate) => ({
+    ...candidate,
+    serializedText: containPromptText({
+      source: candidate.promptSource ?? "rag",
+      text: candidate.serializedText
+    }).sanitizedText
+  }));
+  const ragPromptConsumption = derivePromptRagConsumption(containedRagPromptCandidates, [
+    budgetedRagContext,
+    budgetedExperienceAnalogs,
+    budgetedOwnerCoaching
+  ], {
+    retrievalAttempted: input.ragRetrievalAttempted,
+    retrievalFailureCount: input.ragRetrievalFailureCount
+  });
 
   const structuredEvidence = [
     createEvidenceRef({
@@ -4452,6 +4514,21 @@ async function proposeTrades(input: {
         usedTokenEstimate: evidenceBudget.usedTokenEstimate,
         receipts: evidenceBudget.receipts.filter((receipt) => receipt.originalCharacters > 0)
       }
+    },
+    input.userId,
+    input.policy.connectedAccountId
+  );
+  audit(
+    "strategy_rag_prompt_consumption",
+    {
+      runId: input.runId,
+      outcome: ragPromptConsumption.outcome,
+      retrievedCandidateCount: ragPromptConsumption.retrievedCandidateCount,
+      uniqueCandidateCount: ragPromptConsumption.uniqueCandidateCount,
+      duplicateCandidateCount: ragPromptConsumption.duplicateCandidateCount,
+      retrievalFailureCount: ragPromptConsumption.retrievalFailureCount,
+      consumed: ragPromptConsumption.consumed,
+      retrievedButNotConsumed: ragPromptConsumption.retrievedButNotConsumed
     },
     input.userId,
     input.policy.connectedAccountId
@@ -5297,6 +5374,9 @@ async function proposeTrades(input: {
     proposals: bullProposals,
     llmSteps,
     adversaryContext,
+    ...(ragPromptConsumption.consumed.length > 0 || ragPromptConsumption.retrievedButNotConsumed.length > 0
+      ? { ragPromptConsumption }
+      : {}),
     ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {}),
     ...(promptContainmentReceipts.length > 0
       ? { promptContainmentFields: [...new Set(promptContainmentReceipts.map(({ field }) => field))] }

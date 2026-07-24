@@ -14,7 +14,7 @@
 
 import { canonicalModelId as bareModelId } from "@/lib/model-identity";
 
-export type ConsoleProviderId = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
+export type ConsoleProviderId = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta";
 
 // DEFAULT_GREEN_MODEL_ID was removed 2026-07-07 (owner directive: no model default for anything,
 // ever). There is no server default when policy.llmModel is unset — the run fails closed until a
@@ -29,8 +29,9 @@ export function providerForModel(modelId: string | null | undefined): ConsolePro
   if (/^(claude|anthropic)/.test(m)) return "anthropic";
   if (/^grok/.test(m)) return "xai";
   if (/^gemini/.test(m)) return "gemini";
-  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
+  if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
   if (/^deepseek/.test(m)) return "deepseek";
+  if (/^llama/.test(m)) return "meta";
   return "openai";
 }
 
@@ -49,7 +50,8 @@ const PROVIDER_LABEL: Record<ConsoleProviderId, string> = {
   xai: "xAI (Grok)",
   gemini: "Google (Gemini)",
   mistral: "Mistral",
-  deepseek: "DeepSeek"
+  deepseek: "DeepSeek",
+  meta: "Meta (Llama)"
 };
 
 export function providerLabel(provider: ConsoleProviderId): string {
@@ -63,7 +65,8 @@ export const PROVIDER_META: Record<ConsoleProviderId, { initial: string; color: 
   xai: { initial: "x", color: "#111827" },
   gemini: { initial: "G", color: "#1a73e8" },
   mistral: { initial: "M", color: "#fa520f" },
-  deepseek: { initial: "D", color: "#4d6bfe" }
+  deepseek: { initial: "D", color: "#4d6bfe" },
+  meta: { initial: "L", color: "#0467df" }
 };
 
 /** Curated model ids the picker offers (mirrors CURATED_LLM_MODEL_GROUPS in
@@ -71,6 +74,12 @@ export const PROVIDER_META: Record<ConsoleProviderId, { initial: string; color: 
  *  missing here still renders (as its raw id) via modelDisplayName. */
 const MODEL_DISPLAY_NAME: Record<string, string> = {
   // OpenAI
+  "gpt-nano-latest": "GPT Nano Latest",
+  "gpt-mini-latest": "GPT Mini Latest",
+  "gpt-luna-latest": "GPT Luna Latest",
+  "gpt-terra-latest": "GPT Terra Latest",
+  "gpt-sol-latest": "GPT Sol Latest",
+  "gpt-4o-latest": "GPT-4o Latest",
   "gpt-5.4-nano": "GPT-5.4 nano",
   "gpt-5.4-mini": "GPT-5.4 mini",
   "gpt-5.4": "GPT-5.4",
@@ -79,15 +88,27 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   "gpt-5.6-luna": "GPT-5.6 Luna",
   "gpt-5.6-terra": "GPT-5.6 Terra",
   "gpt-5.6-sol": "GPT-5.6 Sol",
+  "gpt-4o": "GPT-4o",
+  "gpt-4o-mini": "GPT-4o mini",
   // Anthropic
+  "claude-haiku-latest": "Claude Haiku Latest",
+  "claude-sonnet-latest": "Claude Sonnet Latest",
+  "claude-opus-latest": "Claude Opus Latest",
+  "claude-fable-latest": "Claude Fable Latest",
   "claude-haiku-4-5": "Claude Haiku 4.5",
+  "claude-sonnet-5": "Claude Sonnet 5",
   "claude-sonnet-4-6": "Claude Sonnet 4.6",
   "claude-opus-4-8": "Claude Opus 4.8",
   "claude-fable-5": "Claude Fable 5",
   // xAI
+  "grok-build-latest": "Grok Build Latest",
+  "grok-latest": "Grok Latest",
   "grok-build-0.1": "Grok Build 0.1",
   "grok-4.3": "Grok 4.3",
   // Google (Gemini)
+  "gemini-flash-lite-latest": "Gemini Flash-Lite Latest",
+  "gemini-flash-latest": "Gemini Flash Latest",
+  "gemini-pro-latest": "Gemini Pro Latest",
   "gemini-2.5-flash-lite": "Gemini 2.5 Flash-Lite",
   "gemini-2.5-flash": "Gemini 2.5 Flash",
   "gemini-2.5-pro": "Gemini 2.5 Pro",
@@ -95,15 +116,23 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   "gemini-3.5-flash": "Gemini 3.5 Flash",
   "gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
   // Mistral
+  "mistral-small-latest": "Mistral Small Latest",
+  "mistral-medium-latest": "Mistral Medium Latest",
   "mistral-small-2506": "Mistral Small 2506",
   "mistral-small-2603": "Mistral Small 2603",
   "mistral-medium-3-5": "Mistral Medium 3.5",
   "mistral-large-2512": "Mistral Large 2512",
   // DeepSeek
+  "deepseek-flash-latest": "DeepSeek Flash Latest",
+  "deepseek-pro-latest": "DeepSeek Pro Latest",
+  "deepseek-r1-latest": "DeepSeek R1 Latest",
   "deepseek-v4-flash": "DeepSeek V4 Flash",
   "deepseek-v4-pro": "DeepSeek V4 Pro",
+  "deepseek-r1": "DeepSeek R1",
   "deepseek-chat": "DeepSeek Chat",
-  "deepseek-reasoner": "DeepSeek Reasoner"
+  "deepseek-reasoner": "DeepSeek Reasoner",
+  "llama-70b-latest": "Llama 70B Latest",
+  "llama-3.3-70b-instruct": "Llama 3.3 70B"
 };
 
 /** Human display name for a model id; falls back to the bare id (OpenRouter vendor-routing

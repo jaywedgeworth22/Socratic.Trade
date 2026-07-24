@@ -6,6 +6,7 @@ import { eligibleRotationPool, isModelRotationSentinel } from "@/lib/model-rotat
 import {
   LLM_MODEL_REQUIRED_STRATEGY_MESSAGE,
   LLM_REQUIRED_STRATEGY_MESSAGE,
+  LLM_ROTATION_AVAILABILITY_UNAVAILABLE_STRATEGY_MESSAGE,
   LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE
 } from "@/lib/llm-required";
 import { NextResponse } from "next/server";
@@ -75,9 +76,17 @@ export async function POST(request: Request) {
     // anyway (rotation resolves the seat to ""), so 412 now with the actionable rotation message.
     // (A RED "__rotate__" needs no gate here for the same reason a blank red model doesn't — see
     // the blank-red note below.)
-    if (eligibleRotationPool(userId).pool.length === 0) {
+    const eligible = await eligibleRotationPool(userId);
+    if (eligible.pool.length === 0) {
       return NextResponse.json(
-        { status: "failed", summary: LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE, proposals: [] },
+        {
+          status: "failed",
+          summary:
+            eligible.availability === "unavailable"
+              ? LLM_ROTATION_AVAILABILITY_UNAVAILABLE_STRATEGY_MESSAGE
+              : LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE,
+          proposals: []
+        },
         { status: 412 }
       );
     }

@@ -181,3 +181,13 @@ describe("RAG_EMBED_PROVIDER invalid value", () => {
     expect(() => activeEmbeddingProvider()).toThrow(/Invalid RAG_EMBED_PROVIDER/);
   });
 });
+
+describe("managed embedding credential integrity", () => {
+  it("rejects missing and mock placeholders in production while preserving explicit test doubles", async () => {
+    const { embeddingCredentialIsUsable } = await import("../src/lib/vector-db");
+    expect(embeddingCredentialIsUsable(undefined, false)).toBe(false);
+    expect(embeddingCredentialIsUsable(" mock-provider-key ", false)).toBe(false);
+    expect(embeddingCredentialIsUsable("real-provider-key", false)).toBe(true);
+    expect(embeddingCredentialIsUsable("mock-test-key", true)).toBe(true);
+  });
+});

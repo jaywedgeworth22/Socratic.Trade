@@ -30,7 +30,9 @@ const mocks = vi.hoisted(() => {
     get: vi.fn<(...args: unknown[]) => unknown>(() => (
       typeof sql === "string" && sql.includes("fmp_transcript_rights_gate")
         ? { generation: 1, status: "active" }
-        : { ok: 1 }
+        : typeof sql === "string" && sql.includes("SELECT value FROM settings WHERE key")
+          ? { value: JSON.stringify("ledger:v1:test-managed-vector-ledger") }
+          : { ok: 1 }
     )),
     all: vi.fn<(...args: unknown[]) => unknown[]>(() => []),
     run: vi.fn<(...args: unknown[]) => { changes: number }>(() => ({ changes: 1 }))
@@ -83,6 +85,9 @@ const mocks = vi.hoisted(() => {
     markVectorCommitReceiptsPersisted: vi.fn(),
     markVectorCommitCommitted: vi.fn(),
     committedManagedVectorReceipts,
+    reserveProviderDispatch: vi.fn(() => ({ admitted: true, attemptId: "test-dispatch" })),
+    markProviderDispatchStarted: vi.fn(),
+    settleProviderDispatch: vi.fn(),
     getDb: vi.fn(() => ({ transaction, prepare })),
     transaction,
     prepare,
@@ -123,6 +128,9 @@ vi.mock("../src/lib/db", () => ({
   markVectorCommitReceiptsPersisted: mocks.markVectorCommitReceiptsPersisted,
   markVectorCommitCommitted: mocks.markVectorCommitCommitted,
   committedManagedVectorReceipts: mocks.committedManagedVectorReceipts,
+  reserveProviderDispatch: mocks.reserveProviderDispatch,
+  markProviderDispatchStarted: mocks.markProviderDispatchStarted,
+  settleProviderDispatch: mocks.settleProviderDispatch,
   getDb: mocks.getDb
 }));
 
@@ -167,6 +175,63 @@ function buildLargeAtomicTableDoc(): string {
 }
 
 describe("storeDocument: per-chunk char cap aligned with the token chunker (item 5)", () => {
+  it("uses the active OpenRouter embedding authority in production when Voyage is unavailable", async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalEmbeddingProvider = process.env.RAG_EMBED_PROVIDER;
+    const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+    const originalVoyageApiKey = process.env.VOYAGE_API_KEY;
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.RAG_EMBED_PROVIDER = "openrouter";
+    process.env.OPENROUTER_API_KEY = "openrouter-test";
+    delete process.env.VOYAGE_API_KEY;
+    mocks.resolveApiKey.mockImplementation((service: string) => {
+      if (service === "pinecone") return process.env.PINECONE_API_KEY;
+      if (service === "openrouter") return process.env.OPENROUTER_API_KEY;
+      return undefined;
+    });
+    const fetch = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ embedding: Array.from({ length: 1024 }, (_, index) => index / 1024) }]
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+
+    try {
+      const { storeDocument } = await import("../src/lib/vector-db");
+      const stored = await storeDocument({
+        text: "OpenRouter managed-ingestion regression with material filing context.",
+        doc_id: "OPENROUTER-MANAGED-INGESTION-REGRESSION",
+        ticker: "AAPL",
+        title: "AAPL managed filing",
+        doc_type: "10-q",
+        source: "sec-edgar",
+        published_at: "2026-07-21T12:00:00.000Z"
+      });
+
+      expect(stored).toMatchObject({ indexed: 1, documentComplete: true });
+      expect(mocks.embed).not.toHaveBeenCalled();
+      expect(fetch).toHaveBeenCalledWith(
+        "https://openrouter.ai/api/v1/embeddings",
+        expect.objectContaining({ method: "POST" })
+      );
+      // Managed documents write pending records, persist relational receipts, then mark the
+      // provider records committed. Reaching both calls proves this did not return unconfigured.
+      expect(mocks.upsert).toHaveBeenCalledTimes(2);
+      expect(mocks.upsert.mock.calls[0]![0].records[0].metadata.ingest_state).toBe("pending");
+      expect(mocks.upsert.mock.calls[1]![0].records[0].metadata.ingest_state).toBe("committed");
+    } finally {
+      const restoreEnv = (name: string, value: string | undefined) => {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      };
+      restoreEnv("NODE_ENV", originalNodeEnv);
+      restoreEnv("RAG_EMBED_PROVIDER", originalEmbeddingProvider);
+      restoreEnv("OPENROUTER_API_KEY", originalOpenRouterApiKey);
+      restoreEnv("VOYAGE_API_KEY", originalVoyageApiKey);
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
   it("does not truncate a large atomic (table) chunk that fits the chunker's token budget", async () => {
     const tableText = buildLargeAtomicTableDoc();
     expect(tableText.length).toBeGreaterThan(2400); // would have hit the OLD fixed cap

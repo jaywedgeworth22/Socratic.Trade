@@ -188,12 +188,34 @@ interface SubmissionsJson {
   };
 }
 
+/**
+ * Per-docType filing limit: either a single number applied uniformly to every requested
+ * docType (the original behavior), or a partial map giving each docType its own cap — e.g.
+ * `{ "10-K": 1, "10-Q": 4 }` — so callers who need different limits per type (the ingest
+ * seeder's "latest 10-K + latest 4 10-Qs" baseline) can discover both in ONE submissions-API
+ * call instead of one call per docType against the identical CIK URL.
+ */
+export type FilingTypeLimits = number | Partial<Record<"10-K" | "10-Q", number>>;
+
+const DEFAULT_FILING_LIMIT_PER_TYPE = 2;
+
+function resolveFilingLimits(
+  docTypes: Array<"10-K" | "10-Q">,
+  limitPerType: FilingTypeLimits
+): Record<string, number> {
+  const limits: Record<string, number> = {};
+  for (const dt of docTypes) {
+    limits[dt] = typeof limitPerType === "number" ? limitPerType : limitPerType[dt] ?? DEFAULT_FILING_LIMIT_PER_TYPE;
+  }
+  return limits;
+}
+
 /** Helper to parse a flat block of filings (recent or a submissions shard). */
 function parseFilingBlock(
   recent: SubmissionsRecent | undefined,
   cik: string,
   docTypes: Array<"10-K" | "10-Q">,
-  limitPerType: number,
+  limitsByType: Record<string, number>,
   countPerType: Record<string, number>
 ): FilingRef[] {
   if (!recent) return [];
@@ -208,7 +230,7 @@ function parseFilingBlock(
   for (let i = 0; i < accessions.length; i++) {
     const form = forms[i] as "10-K" | "10-Q" | undefined;
     if (!form || !docTypes.includes(form)) continue;
-    if ((countPerType[form] ?? 0) >= limitPerType) continue;
+    if ((countPerType[form] ?? 0) >= (limitsByType[form] ?? 0)) continue;
 
     const acc = normalizeAccession(accessions[i] ?? "");
     if (!acc) continue;
@@ -231,17 +253,19 @@ function parseFilingBlock(
 
 /**
  * Parse a EDGAR submissions JSON blob into FilingRef entries, filtering to the requested
- * docTypes and returning at most `limit` per docType (newest-first).
+ * docTypes and returning at most `limitPerType` per docType (newest-first). `limitPerType`
+ * accepts either a single number (applied to every docType) or a per-docType map.
  */
 export function parseRecentFilings(
   json: SubmissionsJson,
   cik: string,
   docTypes: Array<"10-K" | "10-Q">,
-  limitPerType: number
+  limitPerType: FilingTypeLimits
 ): FilingRef[] {
+  const limitsByType = resolveFilingLimits(docTypes, limitPerType);
   const countPerType: Record<string, number> = {};
   for (const dt of docTypes) countPerType[dt] = 0;
-  return parseFilingBlock(json?.filings?.recent, cik, docTypes, limitPerType, countPerType);
+  return parseFilingBlock(json?.filings?.recent, cik, docTypes, limitsByType, countPerType);
 }
 
 // ── Network helpers ──────────────────────────────────────────────────────────
@@ -249,12 +273,19 @@ export function parseRecentFilings(
 /**
  * Fetch the SEC EDGAR submissions JSON for a single CIK, including historical shards if needed.
  * Returns undefined (does NOT throw) if the network call fails — let callers decide.
+ *
+ * `limitPerType` accepts either a single number applied to every requested docType (original
+ * behavior, still the default) or a per-docType map, e.g. `{ "10-K": 1, "10-Q": 4 }` — this lets
+ * a caller that needs different caps per docType (the ingest seeder's "1 10-K + 4 10-Qs"
+ * baseline) discover both docTypes in ONE call against this CIK's submissions URL instead of one
+ * call per docType.
  */
 export async function fetchRecentFilings(
   cik: string,
   docTypes: Array<"10-K" | "10-Q"> = ["10-K", "10-Q"],
-  limitPerType = 2
+  limitPerType: FilingTypeLimits = DEFAULT_FILING_LIMIT_PER_TYPE
 ): Promise<FilingRef[]> {
+  const limitsByType = resolveFilingLimits(docTypes, limitPerType);
   const padded = padCik(cik);
   const url = `${EDGAR_DATA_BASE}/submissions/CIK${padded}.json`;
   let raw: string;
@@ -272,16 +303,16 @@ export async function fetchRecentFilings(
   const countPerType: Record<string, number> = {};
   for (const dt of docTypes) countPerType[dt] = 0;
 
-  const out = parseFilingBlock(json?.filings?.recent, cik, docTypes, limitPerType, countPerType);
+  const out = parseFilingBlock(json?.filings?.recent, cik, docTypes, limitsByType, countPerType);
 
   // Check if we need more filings and have shards available
-  const needsMore = docTypes.some(dt => (countPerType[dt] ?? 0) < limitPerType);
+  const needsMore = docTypes.some(dt => (countPerType[dt] ?? 0) < (limitsByType[dt] ?? 0));
   const files = json?.filings?.files;
   if (needsMore && Array.isArray(files) && files.length > 0) {
     // Sort shards in reverse chronological order (newest date first)
     const sortedFiles = [...files].sort((a, b) => b.filingEnd.localeCompare(a.filingEnd));
     for (const file of sortedFiles) {
-      const stillNeeds = docTypes.some(dt => (countPerType[dt] ?? 0) < limitPerType);
+      const stillNeeds = docTypes.some(dt => (countPerType[dt] ?? 0) < (limitsByType[dt] ?? 0));
       if (!stillNeeds) break;
 
       try {
@@ -291,7 +322,7 @@ export async function fetchRecentFilings(
           timeoutMs: 15_000
         });
         const shardJson = JSON.parse(shardRaw) as SubmissionsRecent;
-        const shardRefs = parseFilingBlock(shardJson, cik, docTypes, limitPerType, countPerType);
+        const shardRefs = parseFilingBlock(shardJson, cik, docTypes, limitsByType, countPerType);
         out.push(...shardRefs);
       } catch (err) {
         console.warn(`[sec-filings] failed to fetch/parse shard ${file.name}:`, err);
@@ -550,12 +581,15 @@ export async function ingestFiling(
       // Mirror the committed chunks into the local FTS table so hybrid/lexical retrieval covers the
       // PRODUCTION filing-body path. Must run inside the transaction so FTS failures rollback
       // and allow the filing ingestion to be retried on subsequent ticks.
+      // Use the same managed document key storeDocument writes on chunk_occurrences.accession
+      // (doc_id). Bare SEC accessions in FTS cannot join to composite occurrence keys.
+      const managedAccession = document.doc_id;
       for (const chunk of chunkDocument(document, {})) {
         insertDocumentChunkFts(
           chunk.content_hash,
           chunk.ticker[0] ?? ticker,
           "sec-edgar",
-          filingRef.accession,
+          managedAccession,
           chunk.text
         );
       }

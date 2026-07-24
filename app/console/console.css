@@ -132,18 +132,19 @@
   --con-body-font: var(--con-font-mono);
 }
 
-/* ── DARK (explicit choice) — keep IDENTICAL to the media-query block below ── */
+/* ── DARK (explicit choice) — keep IDENTICAL to the media-query block below ──
+   Near-black neutral charcoal (no teal/navy cast). Surfaces step up in grey only. */
 .console-root[data-theme="dark"] {
-  --con-bg: #0b1114;
-  --con-surface: #11191d;
-  --con-surface-2: #162127;
-  --con-surface-3: #1c2b31;
-  --con-line: rgba(148, 163, 184, 0.13);
-  --con-line-strong: rgba(148, 163, 184, 0.26);
+  --con-bg: #0a0a0a;
+  --con-surface: #141414;
+  --con-surface-2: #1a1a1a;
+  --con-surface-3: #242424;
+  --con-line: rgba(255, 255, 255, 0.09);
+  --con-line-strong: rgba(255, 255, 255, 0.16);
 
-  --con-fg: #e8edf4;
-  --con-muted: #a5b2c4;
-  --con-faint: #8492a6;
+  --con-fg: #f0f0f0;
+  --con-muted: #a8a8a8;
+  --con-faint: #8a8a8a;
 
   --con-accent: var(--brand-accent-dark);
   --con-accent-contrast: #071316;
@@ -160,9 +161,9 @@
   --con-paper: #98a3ff;
   --con-live: #ff5d5d;
 
-  --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
-  --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.75);
-  --con-scrim: rgba(4, 6, 10, 0.66);
+  --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
+  --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.8);
+  --con-scrim: rgba(0, 0, 0, 0.72);
 
   color-scheme: dark;
 }
@@ -171,16 +172,16 @@
       the block above ── */
 @media (prefers-color-scheme: dark) {
   .console-root:not([data-theme="light"]) {
-    --con-bg: #0b1114;
-    --con-surface: #11191d;
-    --con-surface-2: #162127;
-    --con-surface-3: #1c2b31;
-    --con-line: rgba(148, 163, 184, 0.13);
-    --con-line-strong: rgba(148, 163, 184, 0.26);
+    --con-bg: #0a0a0a;
+    --con-surface: #141414;
+    --con-surface-2: #1a1a1a;
+    --con-surface-3: #242424;
+    --con-line: rgba(255, 255, 255, 0.09);
+    --con-line-strong: rgba(255, 255, 255, 0.16);
 
-    --con-fg: #e8edf4;
-    --con-muted: #a5b2c4;
-    --con-faint: #8492a6;
+    --con-fg: #f0f0f0;
+    --con-muted: #a8a8a8;
+    --con-faint: #8a8a8a;
 
     --con-accent: var(--brand-accent-dark);
     --con-accent-contrast: #071316;
@@ -197,9 +198,9 @@
     --con-paper: #98a3ff;
     --con-live: #ff5d5d;
 
-    --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
-    --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.75);
-    --con-scrim: rgba(4, 6, 10, 0.66);
+    --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
+    --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.8);
+    --con-scrim: rgba(0, 0, 0, 0.72);
 
     color-scheme: dark;
   }

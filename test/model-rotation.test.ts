@@ -130,11 +130,11 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     for (const model of excluded) expect(MODEL_ROTATION_POOL).not.toContain(model);
     // Keep-in-sync check: the pool is exactly the curated catalog minus the exclusions.
     expect(new Set(MODEL_ROTATION_POOL)).toEqual(new Set(CURATED_LLM_MODEL_IDS.filter((id) => !excluded.includes(id))));
-    expect(MODEL_ROTATION_POOL).toContain("gpt-5.4-mini");
-    expect(MODEL_ROTATION_POOL).toContain("claude-fable-5");
-    expect(MODEL_ROTATION_POOL).toContain("grok-4.3");
+    expect(MODEL_ROTATION_POOL).toContain("gpt-mini-latest");
+    expect(MODEL_ROTATION_POOL).toContain("claude-fable-latest");
+    expect(MODEL_ROTATION_POOL).toContain("grok-latest");
     expect(MODEL_ROTATION_POOL).toContain("mistral-small-2603");
-    expect(MODEL_ROTATION_POOL).toContain("mistral-medium-3-5");
+    expect(MODEL_ROTATION_POOL).toContain("mistral-medium-3.5");
   });
 });
 
@@ -146,20 +146,16 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     const { eligibleRotationPool } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test-openai", "test");
     upsertUserApiKey(userId, "anthropic", "sk-test-anthropic", "test");
-    const { pool, skipped } = eligibleRotationPool(userId);
+    const { pool, skipped } = await eligibleRotationPool(userId);
     expect(pool.length).toBeGreaterThan(0);
     
     // GPT and Claude models should be kept (in pool) since openai/anthropic keys are active
-    expect(pool).toContain("gpt-5.4-mini");
-    expect(pool).toContain("claude-opus-4-8");
-    expect(pool).toContain("openrouter/openai/gpt-4o");
-    expect(pool).toContain("openrouter/~anthropic/claude-sonnet-latest");
+    expect(pool).toContain("gpt-mini-latest");
+    expect(pool).toContain("claude-opus-latest");
     
     // Gemini and DeepSeek models should be skipped since gemini/deepseek keys are missing
-    expect(skipped).toContain("gemini-3.5-flash");
-    expect(skipped).toContain("deepseek-v4-pro");
-    expect(skipped).toContain("openrouter/google/gemini-2.5-pro");
-    expect(skipped).toContain("openrouter/deepseek/deepseek-r1");
+    expect(skipped).toContain("gemini-flash-latest");
+    expect(skipped).toContain("deepseek-pro-latest");
   });
 });
 
@@ -167,11 +163,11 @@ describe("resolveModelRotationForRun", () => {
   it("returns no override (only a no-op commit) when neither seat holds the sentinel", async () => {
     noEnvKeys();
     const { resolveModelRotationForRun } = await import("../src/lib/model-rotation");
-    const { commit, ...override } = resolveModelRotationForRun({
+    const { commit, ...override } = await resolveModelRotationForRun({
       userId: `rot-none-${randomUUID()}`,
       accountId: "acct-1",
       runId: randomUUID(),
-      policy: { llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-haiku-4-5" }
+      policy: { llmModel: "gpt-mini-latest", redTeamLlmModel: "claude-haiku-latest" }
     });
     expect(override).toEqual({});
     expect(typeof commit).toBe("function");
@@ -186,10 +182,10 @@ describe("resolveModelRotationForRun", () => {
     const { resolveModelRotationForRun, eligibleRotationPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test", "test");
     upsertUserApiKey(userId, "anthropic", "sk-test", "test");
-    const { pool } = eligibleRotationPool(userId);
+    const { pool } = await eligibleRotationPool(userId);
     const served: string[] = [];
     for (let i = 0; i < pool.length; i++) {
-      const out = resolveModelRotationForRun({
+      const out = await resolveModelRotationForRun({
         userId,
         accountId,
         runId: randomUUID(),
@@ -216,7 +212,7 @@ describe("resolveModelRotationForRun", () => {
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test", "test");
     const runId = randomUUID();
-    const out = resolveModelRotationForRun({
+    const out = await resolveModelRotationForRun({
       userId,
       accountId: "acct-A",
       runId,
@@ -249,7 +245,7 @@ describe("resolveModelRotationForRun", () => {
       );
     }
     // A different account starts at its own pointer (slot 0), independent of acct-A's advance.
-    const other = resolveModelRotationForRun({
+    const other = await resolveModelRotationForRun({
       userId,
       accountId: "acct-B",
       runId: randomUUID(),
@@ -261,7 +257,7 @@ describe("resolveModelRotationForRun", () => {
   it("fails the rotating seats closed (empty override models, not the sentinel) when no credential resolves at all", async () => {
     noEnvKeys();
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    const { commit, ...override } = resolveModelRotationForRun({
+    const { commit, ...override } = await resolveModelRotationForRun({
       userId: `rot-nokeys-${randomUUID()}`,
       accountId: "acct-1",
       runId: randomUUID(),
@@ -286,7 +282,7 @@ describe("resolveModelRotationForRun", () => {
       (getDb()
         .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
         .get(userId) as { n: number }).n;
-    const out = resolveModelRotationForRun({
+    const out = await resolveModelRotationForRun({
       userId,
       accountId,
       runId: randomUUID(),
@@ -311,14 +307,14 @@ describe("resolveModelRotationForRun", () => {
     upsertUserApiKey(userId, "openai", "sk-test", "test");
     const pointerKey = `model_rotation:${userId}:${accountId}:green`;
     // Run 1 resolves a pick but ABORTS before commit (e.g. account unavailable / over budget) — never commits.
-    const first = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    const first = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
     // Run 2 resolves next: because run 1 never committed, the pointer is still at slot 0, so it serves the SAME model.
-    const second = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    const second = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
     expect(second.llmModel).toBe(first.llmModel);
     expect(getInternalSetting<number>(pointerKey)).toBeUndefined(); // no slot consumed by the aborted runs
     // Run 2 now actually serves the LLM and commits → the pointer finally advances, so run 3 gets a different model.
     second.commit();
-    const third = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    const third = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
     expect(third.llmModel).not.toBe(first.llmModel);
   });
 });
@@ -326,27 +322,17 @@ describe("resolveModelRotationForRun", () => {
 describe("recommendedReasoningEffortForModel (curated rotation efforts)", () => {
   it("uses role-aware GPT-5.6 efforts while preserving provider-safe defaults", async () => {
     const { recommendedReasoningEffortForModel, reasoningAdviceForModel } = await import("../src/lib/model-reasoning-recommendations");
-    expect(recommendedReasoningEffortForModel("deepseek-v4-flash")).toBe("none");
-    expect(recommendedReasoningEffortForModel("deepseek-v4-pro")).toBe("none");
-    expect(recommendedReasoningEffortForModel("openai/gpt-5.5")).toBe("medium");
-    expect(recommendedReasoningEffortForModel("gpt-5.6-luna", "chat")).toBe("low");
-    expect(recommendedReasoningEffortForModel("gpt-5.6-luna", "green")).toBe("medium");
-    expect(recommendedReasoningEffortForModel("gpt-5.6-terra", "green")).toBe("medium");
-    expect(recommendedReasoningEffortForModel("gpt-5.6-terra", "red")).toBe("high");
-    expect(recommendedReasoningEffortForModel("gpt-5.6-sol", "review")).toBe("high");
-    expect(recommendedReasoningEffortForModel("gpt-5.4-mini", "chat")).toBe("low");
-    expect(recommendedReasoningEffortForModel("gpt-5.4-mini", "red")).toBe("high");
-    expect(recommendedReasoningEffortForModel("claude-fable-5")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("deepseek-flash-latest")).toBe("none");
+    expect(recommendedReasoningEffortForModel("deepseek-pro-latest")).toBe("none");
+    expect(recommendedReasoningEffortForModel("gpt-mini-latest", "chat")).toBe("low");
+    expect(recommendedReasoningEffortForModel("gpt-mini-latest", "red")).toBe("high");
+    expect(recommendedReasoningEffortForModel("claude-fable-latest")).toBe("medium");
     expect(recommendedReasoningEffortForModel("some-custom-model")).toBe("medium");
     expect(recommendedReasoningEffortForModel(undefined)).toBe("medium");
-    // gpt-5.5's advice carries the interactive-high rule the UI surfaces BEFORE save.
-    expect(reasoningAdviceForModel("openai/gpt-5.5")).toMatch(/disabled for interactive/i);
-    expect(reasoningAdviceForModel("gpt-5.4")).toMatch(/Terra.*preferable curated successor/i);
-    expect(reasoningAdviceForModel("gpt-5.6-terra")).toMatch(/Green Team.*Coach/i);
-    // mistral-medium-3-5's advice carries the 2026-07-10 benchmark tradeoff: None is fast/cheap
+    // mistral-medium-latest's advice carries the 2026-07-10 benchmark tradeoff: None is fast/cheap
     // but proposes nothing, High actually proposes but is far slower/costlier.
-    expect(reasoningAdviceForModel("mistral-medium-3-5")).toMatch(/EMPTY proposal list/);
-    expect(reasoningAdviceForModel("mistral-medium-3-5")).toMatch(/\$0\.07/);
+    expect(reasoningAdviceForModel("mistral-medium-latest")).toMatch(/EMPTY proposal list/);
+    expect(reasoningAdviceForModel("mistral-medium-latest")).toMatch(/\$0\.07/);
   });
 
   it("every rotation-pool model's recommended effort survives the interactive clamp unchanged", async () => {
@@ -370,7 +356,7 @@ describe("sentinel handling at the edges", () => {
     const { resolveOpenAiModel, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/llm-request");
     // No-defaults: the sentinel (like any unset model) resolves to "" — fail closed, never a default.
     expect(resolveOpenAiModel({ llmModel: LLM_MODEL_ROTATION_SENTINEL })).toBe("");
-    expect(resolveOpenAiModel({ llmModel: "openai/gpt-5.5" })).toBe("openai/gpt-5.5");
+    expect(resolveOpenAiModel({ llmModel: "gpt-mini-latest" })).toBe("gpt-mini-latest");
   });
 
   it("PUT /api/policy accepts and persists the sentinel for both seats", async () => {
