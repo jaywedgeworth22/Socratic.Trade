@@ -25,8 +25,8 @@ import { STOP_PLAN_STYLES } from "./types";
 
 // ── Field-Level Encryption ──────────────────────────────────────────────────
 
-// Load .env.local and global secrets files if process.env keys are missing (e.g. at early boot time before Next.js loads env)
-if (process.env.NODE_ENV !== "test" && !process.env.VITEST) {
+// Load .env.local and local development secrets files for local system development (production uses Infisical)
+if (process.env.NODE_ENV !== "test" && !process.env.VITEST && process.env.NODE_ENV !== "production" && !process.env.COOLIFY_PROD_PHASE2) {
   const envPaths = [
     resolve(process.cwd(), ".env.local"),
     "/Users/jay/.secrets/global-api-keys.env",
