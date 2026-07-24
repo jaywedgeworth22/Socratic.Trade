@@ -94,7 +94,7 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
                         <Dash />
                       ) : (
                         <span style={exposure.tone ? { color: exposure.tone === "neg" ? "var(--con-neg)" : "var(--con-warn)" } : undefined}>
-                          {fmtPct(weightPct, 1, true)}
+                          {fmtPct(weightPct, 1, false)}
                           {exposure.label && (
                             <span className="ml-1 text-[length:var(--con-fs-xs)] font-semibold">({exposure.label})</span>
                           )}
@@ -140,12 +140,12 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
                     <div className="flex items-center gap-1.5">
                       <SymbolButton symbol={p.symbol} />
                       {short && <span className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">SHORT</span>}
+                      {meta?.companyName && (
+                        <span className="truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                          {meta.companyName}
+                        </span>
+                      )}
                     </div>
-                    {meta?.companyName && (
-                      <div className="mt-0.5 max-w-48 truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                        {meta.companyName}
-                      </div>
-                    )}
                   </div>
                   {weightPct !== undefined && (
                     <span
@@ -153,23 +153,17 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
                       style={exposure.tone ? { color: exposure.tone === "neg" ? "var(--con-neg)" : "var(--con-warn)" } : undefined}
                       title={exposure.title}
                     >
-                      {fmtPct(weightPct, 1, true)}
+                      <span className="font-normal text-[color:var(--con-faint)]">Weight:</span>&nbsp;&nbsp;{fmtPct(weightPct, 1, false)}
                       {exposure.label && <span className="block text-[length:var(--con-fs-xs)]">{exposure.label}</span>}
                     </span>
                   )}
                 </div>
-                <div className="con-num grid grid-cols-2 gap-x-3 gap-y-1.5">
+                <div className="con-num grid grid-cols-2 gap-x-3 gap-y-1.5 mt-1">
                   <div>
-                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Qty</div>
-                    <div>{fmtQty(p.quantity)}</div>
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Qty:</span>&nbsp;&nbsp;<span>{fmtQty(p.quantity)}</span>
                   </div>
                   <div className="text-right">
-                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Value</div>
-                    <div>{fmtMoney(p.marketValue)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">P&amp;L</div>
-                    <div>
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">P&amp;L:</span>&nbsp;&nbsp;<span>
                       {unrealized === undefined ? (
                         <Dash />
                       ) : (
@@ -178,22 +172,24 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
                           {unrealizedPct !== undefined ? ` (${fmtPct(unrealizedPct, 1, true)})` : ""}
                         </SignedText>
                       )}
-                    </div>
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Value:</span>&nbsp;&nbsp;<span>{fmtMoney(p.marketValue)}</span>
                   </div>
                   <div className="text-right" title={protection.detail}>
-                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Protection</div>
-                    <div>
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Protection:</span>&nbsp;&nbsp;<span>
                       {protection.label === null ? (
                         <span className="text-[color:var(--con-faint)]">{EM_DASH}</span>
                       ) : (
                         <span
-                          className="text-[length:var(--con-fs-xs)] font-semibold"
+                          className="font-semibold"
                           style={{ color: protection.tone === "warn" ? "var(--con-warn)" : protection.tone === "pos" ? "var(--con-pos)" : "var(--con-muted)" }}
                         >
                           {protection.label}
                         </span>
                       )}
-                    </div>
+                    </span>
                   </div>
                 </div>
               </div>
@@ -277,27 +273,23 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
                     </div>
                   </div>
                 </div>
-                <div className="con-num grid grid-cols-2 gap-x-3 gap-y-1.5">
+                <div className="con-num grid grid-cols-2 gap-x-3 gap-y-1.5 mt-1">
                   <div>
-                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Qty (Contracts)</div>
-                    <div>{fmtQty(qty)}</div>
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Qty:</span>&nbsp;&nbsp;<span>{fmtQty(qty)}</span>
                   </div>
                   <div className="text-right">
-                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Value</div>
-                    <div>{fmtMoney(opt.marketValue)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Avg Cost</div>
-                    <div>{fmtMoney(opt.averageCost)}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">P&amp;L</div>
-                    <div>
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">P&amp;L:</span>&nbsp;&nbsp;<span>
                       <SignedText value={unrealized}>
                         {`${unrealized > 0 ? "+" : ""}${fmtMoney(unrealized)}`}
                         {unrealizedPct !== undefined ? ` (${fmtPct(unrealizedPct, 1, true)})` : ""}
                       </SignedText>
-                    </div>
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Value:</span>&nbsp;&nbsp;<span>{fmtMoney(opt.marketValue)}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Avg Cost:</span>&nbsp;&nbsp;<span>{fmtMoney(opt.averageCost)}</span>
                   </div>
                 </div>
               </div>
