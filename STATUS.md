@@ -1,5 +1,21 @@
 # Current Status
 
+## 2026-07-24 — Coolify/Hetzner runners only (CURSOR) — MERGED #2201
+
+Owner correction: fleet CI is **not** GitHub-hosted Actions. Two Coolify/Hetzner servers —
+**ci-cpx32** (`77.42.35.209`) systemd runners + **prod Coolify host** (`135.181.192.190`).
+`sentry-ci-report` on `socratic-ci` (no `socratic-deploy` unit). Monitor often:
+`bash scripts/monitor-coolify-runners.sh --ssh`. PR #2201 merged (auto-deploy). Rollout:
+`docs/rollouts/2026-07-24-coolify-runners-only.md`.
+
+## 2026-07-24 — RAG enablement + Exit Contract B1 + branch prune (CURSOR)
+
+Branch: `cursor/rag-enable-exit-prune-1c6c`. Safe RAG Priority A flags default ON; Exit Contract
+columns + fill writes + proactive/synthetic read-with-fallback (B1 / partial B2). Discarded
+w2-coaching/reflection (already on main / closed PRs); pruned 19 stale origin branches. Effort
+board + FEATURE-ENABLEMENT updated for `effort-issues-sync`. Rollout:
+`docs/rollouts/2026-07-24-rag-enable-exit-b1-prune.md`.
+
 ## 2026-07-24 — Per-user reflections & learning system (CURSOR)
 
 Branch: `cursor/per-user-reflections-learning`. Pooled all accounts' closed trades for per-user
@@ -3239,3 +3255,6 @@ The Admin panel's "Server Metrics" tab was modified to extract actual RAM capaci
 ## 2026-07-24 — Purge process.env LLM & User Keys (ANTIGRAVITY)
 
 Implemented automatic purging of all LLM API keys and user-providable interface credentials from `process.env` upon boot migration, key creation/update, and key deletion in `src/lib/db-api-keys.ts`. Ensures process.env never retains ambient LLM or user keys in process memory at runtime.
+## 2026-07-24 — Connections UI Redesign & Ghost API Key Tombstoning (ANTIGRAVITY)
+
+Redesigned the Broker Connections cards in `app/console/settings/brokers.tsx` to reduce vertical card height by >25%, added inline tax treatment tags, `Load PAPER` badges for paper accounts, strategy execution status, pending proposal counts, and an on-demand `Capabilities` modal sheet. Also fixed the ghost API key deletion bug by implementing explicit tombstoning (`DELETED_KEY_TOMBSTONE = "__DISABLED__"`) in `src/lib/db-api-keys.ts` so deleted keys never re-migrate from ambient environment variables.

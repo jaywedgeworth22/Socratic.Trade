@@ -3,7 +3,7 @@ import { getBrokerGateway } from "./broker";
 import { evaluateBrokerHeldExitAvailability, brokerHeldExitBlockReason } from "./broker-held-orders";
 import { describeBrokerMinimumOrderBlock, planBrokerMinimumBump, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
 import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isLiveOrderState, isRejectedOrCanceledState } from "./broker-side";
-import { audit, clearStopPlans, getDb, recordStopPlan } from "./db";
+import { audit, clearStopPlans, deriveExitContractFromOpening, getDb, recordStopPlan } from "./db";
 import { getActiveConnectedAccount } from "./db-api-keys";
 import { acquireStrategyLock, dailyExecutionStats, notionalInLastMinutes, countDayTradesInLastBusinessDays, releaseStrategyLock } from "./db-execution";
 import { listPendingBrokerReconciliationFills, netAccountingFillQuantity, updateFillEvent, listFillEventsByProposalId } from "./db-fills";
@@ -196,6 +196,13 @@ async function commitRecoveredOpeningStopPlan(input: {
       // The broker fill price remains a valid fallback for a fresh position.
     }
     const openingOrderId = (proposal.bracketStopLoss != null || proposal.bracketTakeProfit != null) ? input.orderId : undefined;
+    const contract = deriveExitContractFromOpening({
+      side: proposal.side === "short" ? "short" : "buy",
+      avgCost: basis,
+      bracketStopLoss: proposal.bracketStopLoss,
+      bracketTakeProfit: proposal.bracketTakeProfit,
+      invalidation: proposal.autonomyOverride?.invalidation
+    });
     recordStopPlan(
       input.accountNumber,
       proposal.symbol,
@@ -205,7 +212,8 @@ async function commitRecoveredOpeningStopPlan(input: {
       input.userId,
       undefined,
       proposal.side === "short" ? "short" : "long",
-      openingOrderId
+      openingOrderId,
+      contract
     );
   } catch {
     // Stop-plan bookkeeping must never reverse a durable broker-fill receipt.
@@ -1422,6 +1430,13 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
                 (openingProposal.bracketStopLoss != null || openingProposal.bracketTakeProfit != null)
                   ? matched.id
                   : undefined;
+              const contract = deriveExitContractFromOpening({
+                side: openingProposal.side === "short" ? "short" : "buy",
+                avgCost: basis,
+                bracketStopLoss: openingProposal.bracketStopLoss,
+                bracketTakeProfit: openingProposal.bracketTakeProfit,
+                invalidation: openingProposal.autonomyOverride?.invalidation
+              });
               recordStopPlan(
                 accountNumber,
                 fill.symbol,
@@ -1431,7 +1446,8 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
                 userId,
                 undefined,
                 openingProposal.side === "short" ? "short" : "long",
-                openingOrderId
+                openingOrderId,
+                contract
               );
             }
           } catch {

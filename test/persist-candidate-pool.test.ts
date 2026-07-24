@@ -27,6 +27,7 @@
  * Mocking pattern mirrors test/rag-multi-query-retrieval.test.ts / test/rag-retrieval-eval.test.ts
  * (full Pinecone/Voyage mock, no live network, `audit` mocked so we can assert on its call args).
  */
+import { pinRagQualityFlagsOff } from "./rag-test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -77,6 +78,7 @@ function candidatePoolCalls() {
 
 describe("retrieveContextDetailed: RAG_PERSIST_CANDIDATE_POOL wiring", () => {
   beforeEach(() => {
+  pinRagQualityFlagsOff();
     vi.resetModules();
     vi.clearAllMocks();
 

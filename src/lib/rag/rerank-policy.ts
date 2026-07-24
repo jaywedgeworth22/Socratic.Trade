@@ -104,7 +104,7 @@ export function resolveRerankRoute(input: RerankRouteInput): RerankRoute {
 }
 
 export function adaptiveRerankEnabled(env: EnvSource = process.env): boolean {
-  return envFlagOn("RAG_ADAPTIVE_RERANK", false, env);
+  return envFlagOn("RAG_ADAPTIVE_RERANK", true, env);
 }
 
 function positiveWhole(value: string | undefined, fallback: number): number {

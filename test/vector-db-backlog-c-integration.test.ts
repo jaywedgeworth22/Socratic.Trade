@@ -77,11 +77,17 @@ function resetEnv() {
   process.env.PINECONE_INDEX_READY_WAIT_MS = "0";
   process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
   delete process.env.RAG_QUERY_EMBED_CACHE;
-  delete process.env.RAG_RUN_BUDGET_ENABLED;
+  // Pin quality/telemetry flags OFF so each test opts in explicitly (production defaults are ON
+  // as of owner enablement 2026-07-24; tests must not depend on unset==off).
+  process.env.RAG_RUN_BUDGET_ENABLED = "off";
   delete process.env.RAG_RUN_BUDGET_CEILING;
   delete process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED;
   delete process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY;
-  delete process.env.RAG_APPLY_DEFAULT_FLOORS;
+  process.env.RAG_APPLY_DEFAULT_FLOORS = "off";
+  process.env.RAG_RETRIEVAL_TELEMETRY = "off";
+  process.env.RAG_CORPUS_WIDE_LEXICAL = "off";
+  process.env.RAG_PARENT_CONTEXT_EXPANSION = "off";
+  process.env.VECTOR_ASOF_SERVER_FILTER = "off";
   delete process.env.VECTOR_MIN_SCORE;
   delete process.env.VECTOR_ENABLE_RERANK;
   delete process.env.HYBRID_RETRIEVAL;
@@ -409,7 +415,7 @@ describe("R16: per-run RAG budget ceiling with graceful degradation", () => {
 // ── R5: consolidated per-retrieval telemetry ────────────────────────────────
 
 describe("R5: consolidated per-retrieval telemetry (recordRetrievalQuality)", () => {
-  it("default OFF: never calls audit with rag_retrieval_quality", async () => {
+  it("explicitly OFF: never calls audit with rag_retrieval_quality", async () => {
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
     mocks.query.mockResolvedValue({
       matches: [{ id: "a", score: 0.5, metadata: { text: "chunk", userId: "local", scope: "shared" } }]

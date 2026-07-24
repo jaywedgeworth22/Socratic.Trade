@@ -20,14 +20,29 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: [self-hosted, socratic-ci]
     steps:
-      - name: Install GitHub CLI
+      - name: Ensure GitHub CLI is on PATH
+        shell: bash
         run: |
-          if ! command -v gh &> /dev/null; then
-            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-            sudo apt update && sudo apt install gh -y
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            gh --version
+            exit 0
           fi
+          # No sudo: Coolify systemd runners lack passwordless sudo. Download a
+          # release binary into the runner home PATH.
+          ver="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')"
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64|amd64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) echo "::error::unsupported arch $arch"; exit 1 ;;
+          esac
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz" \
+            | tar -xz -C /tmp
+          install -m 0755 "/tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/gh" --version
       - name: Delete every cache scoped to this PR's ref
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,14 +58,29 @@ jobs:
     runs-on: [self-hosted, socratic-ci]
     steps:
       - uses: actions/checkout@v4
-      - name: Install GitHub CLI
+      - name: Ensure GitHub CLI is on PATH
+        shell: bash
         run: |
-          if ! command -v gh &> /dev/null; then
-            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-            sudo apt update && sudo apt install gh -y
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            gh --version
+            exit 0
           fi
+          # No sudo: Coolify systemd runners lack passwordless sudo. Download a
+          # release binary into the runner home PATH.
+          ver="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')"
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64|amd64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) echo "::error::unsupported arch $arch"; exit 1 ;;
+          esac
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz" \
+            | tar -xz -C /tmp
+          install -m 0755 "/tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/gh" --version
       - name: Keep only the newest entry per cache key prefix
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
