@@ -505,11 +505,11 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
   const envVar = apiKeyEnvVarForService(canonical);
 
   // 1. A per-user stored key always wins. If explicitly tombstoned/disabled by user, fail closed with no env fallback.
-  if (userId) {
-    const userKey = getUserApiKey(userId, canonical);
-    if (userKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none", envVar, service: canonical };
-    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", envVar, service: canonical };
-  }
+  // Unspecified userId (e.g. background callers) resolves against `local` (the primary operator).
+  const targetUserId = userId ?? LOCAL_USER;
+  const userKey = getUserApiKey(targetUserId, canonical);
+  if (userKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none", envVar, service: canonical };
+  if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", envVar, service: canonical };
 
   const envKey = envVar ? process.env[envVar] : undefined;
 
@@ -879,7 +879,8 @@ export function migrateLocalEnvCredentials(): { migrated: string[] } {
         break;
       }
     }
-    if (envVal && !getUserApiKey(LOCAL_USER, svc)?.apiKey) {
+    const currentKey = getUserApiKey(LOCAL_USER, svc)?.apiKey;
+    if (envVal && (!currentKey || currentKey === DELETED_KEY_TOMBSTONE)) {
       try {
         upsertUserApiKey(LOCAL_USER, svc, envVal, "migrated from env");
         migrated.push(svc);
