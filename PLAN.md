@@ -8,6 +8,9 @@
 > Keep the external monitor on public `/api/health`; do not expose authenticated `/api/ready` just for
 > monitoring. Verify the dedicated branch with the ordered lint/tsc/test/build gate, then land via
 > `scripts/land.sh` if the owner wants deployment.
+> **2026-07-22 — PR #1792 typecheck repair (CODEX).** The provider-generic health-lane merge
+> resolution is now aligned with the current durable dispatch API in `28a09b84`; run hosted
+> verification, let auto-merge land it, and confirm the exact post-merge deployment receipt.
 > **2026-07-23 - Unstick remaining open PRs (CURSOR).** Five open PRs (#1901/#1902/#1792/#1819/#1842)
 > refreshed onto current `main`, conflict-resolved where real, auto-merge armed. Effort board
 > corrected for already-merged rows (#1892 and related). Next: wait hosted verify → auto-merge;

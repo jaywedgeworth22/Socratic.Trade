@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import {
   SEC_UNIVERSE_SCHEMA_VERSION,
+  blockingUniverseValidationIssues,
   hashSecUniverseIssuers,
   validateSecUniverseManifest,
   type FrozenSecUniverseManifest,
@@ -86,6 +87,10 @@ function main() {
       industry: null,
       marketCapUsd: PLACEHOLDER_MARKET_CAP_USD,
       dollarVolumeUsd: PLACEHOLDER_DOLLAR_VOLUME_USD,
+      // Machine-checkable marker for the sentinel/placeholder fields above (see the module comment)
+      // — lets downstream consumers detect them without re-deriving the exchange==="UNKNOWN"
+      // heuristic by hand.
+      dataQuality: "sentinel",
       inclusionReason: mappedReason,
       sourceRefs: [LEGACY_SOURCE_NAME]
     };
@@ -113,7 +118,7 @@ function main() {
     quarantined: []
   };
 
-  const issues = validateSecUniverseManifest(manifest, { expectedIssuerCount: issuers.length });
+  const issues = blockingUniverseValidationIssues(validateSecUniverseManifest(manifest, { expectedIssuerCount: issuers.length }));
   if (issues.length > 0) {
     console.error(`Converted manifest failed its own schema validation (${issues.length} issue(s)):`);
     for (const issue of issues.slice(0, 20)) console.error(`  - ${issue.code} ${issue.path}: ${issue.message}`);

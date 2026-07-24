@@ -1,3 +1,6 @@
+## 2026-07-20 — RAG & Database Ingestion Strategy & Document Summarizer Engine (ANTIGRAVITY, branch `agent/antigravity`)
+
+Designed and implemented Layer 3 (Derived Abstracts & Summaries) of the RAG data expansion architecture. Added database migration 55 (`document_abstracts`), created `src/lib/db-document-abstracts.ts` for CRUD operations, implemented `src/lib/rag/document-summarizer.ts` for generating cited abstracts linking back to Layer 1 raw `source_chunk_ids` and embedding them into the vector store, and added full unit test coverage in `test/document-summarizer.test.ts`.
 # Current Status
 
 ## 2026-07-24 — Unstick open PRs round 2 + board hygiene (CURSOR)
@@ -85,6 +88,13 @@ without changing explicit model selection or order execution. UptimeRobot alread
 to login (307) and `/api/ready` is protected (401). Build completed after CODEX handoff
 (`.next/BUILD_ID` present); GROK owns gate re-run + `scripts/land.sh`. Rollout:
 `docs/rollouts/2026-07-22-approval-redteam-uptime.md`.
+## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
+
+The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider
+dispatch/cost references. Commit `28a09b84` now keeps the durable `voyage-rerank` service key,
+narrows the active provider for the health lane, and uses `estimateRagDispatchCost`. The branch is
+ready for a fresh hosted gate; auto-merge is armed. No production/provider/corpus writes were made.
+
 ## 2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, `codex/rag-shadow-benchmarks-20260722`)
 
 Added a default-off, read-only capability/context probe. The local Turso/libSQL probe reports installed-client and vector-SQL capability without a network/database write; this checkout has no direct `@libsql/client` dependency, so a real remote Turso benchmark is intentionally not attempted. The Pinecone path requires an explicit live flag, a named pre-existing Assistant, an API key, externally supplied frozen cases, a 100-query cap, and a 30-second aborting timeout. It calls only Assistant context retrieval and emits redacted latency/citation/usage/error receipts—never prompts, snippets, file names, answers, keys, or provider errors. It does not claim relevance/provider-selection evidence without a same-corpus golden citation mapping. No provider, corpus, index, file, broker, or production mutation was made. Rollout: `docs/rollouts/2026-07-22-rag-shadow-benchmarks.md`.
@@ -125,6 +135,12 @@ without changing explicit model selection or order execution. UptimeRobot alread
 to login (307) and `/api/ready` is protected (401). Build completed after CODEX handoff
 (`.next/BUILD_ID` present); GROK owns gate re-run + `scripts/land.sh`. Rollout:
 `docs/rollouts/2026-07-22-approval-redteam-uptime.md`.
+## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
+
+The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider
+dispatch/cost references. Commit `28a09b84` now keeps the durable `voyage-rerank` service key,
+narrows the active provider for the health lane, and uses `estimateRagDispatchCost`. The branch is
+ready for a fresh hosted gate; auto-merge is armed. No production/provider/corpus writes were made.
 ## 2026-07-22 — Retired-provider Usage Monitor cleanup (GROK peer co-work, branch `codex/retired-provider-usage-cleanup`)
 
 Removed Usage Monitor emissions from the Alpaca, Tradier, and Robinhood broker adapters while
@@ -3079,6 +3095,11 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
   there is no pending branch handoff to land from either PR.
 
 ## Current Status
+- Database Migration 55 implemented in `src/lib/db.ts` creating `document_abstracts` with indexes on ticker, source_type, and accession_or_event_id.
+- `src/lib/db-document-abstracts.ts` added with `insertDocumentAbstract`, `getDocumentAbstractsForTicker`, `getDocumentAbstractByAccession`.
+- `src/lib/rag/document-summarizer.ts` implemented for generating cited abstracts and embedding them into Pinecone/Voyage under `doc_type: "document-summary"` or `"earnings-summary"`.
+- `test/document-summarizer.test.ts` passes 2/2 tests cleanly.
+- `npx tsc --noEmit` verified with 0 errors.
 
 ## 2026-07-23 — Gemini Reasoning Temp (ANTIGRAVITY, branch `fix/gemini-reasoning-temp`)
 
@@ -3138,6 +3159,7 @@ Completed the SEC/RAG parser and chunker hardening by resolving outstanding stru
   mutation has occurred.
 
 ## Next Action
+- Land branch `agent/antigravity` via `scripts/land.sh`.
 - Run the ordered full gate, push #1586 through `scripts/land.sh`, mark the PR ready, resolve hosted
   checks/review, merge it, require zero open PRs, then verify the exact final `main` SHA through production
   health/readiness and Coolify runtime surfaces.

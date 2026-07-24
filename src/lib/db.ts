@@ -2296,9 +2296,33 @@ const MIGRATIONS: Migration[] = [
           ON socratic_coach_note_archive (user_id, decision_id, note_seq);
       `);
     }
+  },
+  {
+    // NOTE: renumbered to v56 so main's v55 socratic_coach_note_archive stays intact.
+    version: 56,
+    name: "document_abstracts",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS document_abstracts (
+          id TEXT PRIMARY KEY,
+          source_type TEXT NOT NULL,
+          ticker TEXT NOT NULL,
+          accession_or_event_id TEXT NOT NULL,
+          headline TEXT NOT NULL,
+          summary_text TEXT NOT NULL,
+          guidance_json TEXT,
+          drivers_json TEXT,
+          risks_json TEXT,
+          source_chunk_ids TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          model_used TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_document_abstracts_ticker ON document_abstracts (ticker, source_type);
+        CREATE INDEX IF NOT EXISTS idx_document_abstracts_accession ON document_abstracts (accession_or_event_id);
+      `);
+    }
   }
 ];
-
 
 /**
  * ONE-TIME migration (v7): PR #267 moved llmModel/redTeamLlmModel/llmReasoningEffort
@@ -3697,3 +3721,4 @@ export * from "./db-durable-state";
 export * from "./db-economic-events";
 export * from "./db-retrieval-usefulness";
 export * from "./db-earningscalls";
+export * from "./db-document-abstracts";
