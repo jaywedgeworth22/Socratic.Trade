@@ -1,9 +1,10 @@
 // Outbound usage telemetry → API Usage Monitor (usage.jays.services) — server-only.
 //
-// Wires App B's local usage ledgers (recordLlmUsage / recordRagUsage) and its market-data /
-// broker call paths to the monitor's ingest endpoint (`POST /api/ingest/usage`), so the monitor
-// can see providers it structurally cannot poll (Anthropic, Voyage, Robinhood) plus real
-// call-volume for the shared-quota market-data providers.
+// Wires App B's local usage ledgers (recordLlmUsage / recordRagUsage) and its paid market-data
+// call paths to the monitor's ingest endpoint (`POST /api/ingest/usage`), so the monitor can see
+// providers it structurally cannot poll (Anthropic, Voyage) plus real call-volume for shared-quota
+// market-data providers. Broker families (Alpaca/Tradier/Robinhood) are deliberately suppressed —
+// see `usage-monitor-provider-policy.ts`.
 //
 // DESIGN / SAFETY:
 //   - Default OFF: no-op unless BOTH `USAGE_MONITOR_BASE_URL` and `USAGE_INGEST_TOKEN` are set.
@@ -16,18 +17,19 @@
 //   - Health is reported via `logApiHealth({ service: "usage-monitor" })` so the operator sees the
 //     connection status without the push ever affecting trading.
 //
-// CONTRACT: the event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
-// `UsageTelemetryEventSchema` and the monitor's server-side parser
+// CONTRACT: fresh outbound events use `@jaywedgeworth22/congress-trading-shared`'s strict
+// `UsageTelemetryV2EventSchema`; producer identity lives only on the v2 batch envelope.
 // (`API-usage-monitor/src/lib/usage-telemetry.ts`).
 // MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
 import { getGitSha } from "./git-sha";
+import { suppressUsageMonitorProvider } from "./usage-monitor-provider-policy";
 import {
   createUsageTelemetryClient,
   telemetryEventClassifier,
-  UsageTelemetryEventSchema,
-  type UsageTelemetryEvent,
+  UsageTelemetryV2EventSchema,
+  type UsageTelemetryV2Event,
   type UsageTelemetryMetricType,
   type UsageTelemetryUnit,
   type UsageTelemetryBillingMode,
@@ -39,7 +41,8 @@ export type UsageMetricType = UsageTelemetryMetricType;
 export type UsageUnit = UsageTelemetryUnit;
 export type UsageBillingMode = UsageTelemetryBillingMode;
 export type UsageConfidence = UsageTelemetryConfidence;
-export type UsageMonitorEvent = UsageTelemetryEvent;
+export type UsageMonitorEvent = UsageTelemetryV2Event;
+type UsageMonitorDraft = Omit<UsageMonitorEvent, "eventId"> & { eventId?: string };
 
 // ── Config (env-gated, server-only) ────────────────────────────────────────────
 
@@ -234,8 +237,7 @@ function isStaleBuffered(receivedAt: number, ttlMs: number, now: number): boolea
  * Bound the in-memory failure buffer so a multi-day receiver outage can't grow ST's own memory
  * without limit. This is safe to trim aggressively: llm/rag/provider-dispatch events dropped here
  * are still recoverable — the durable DB-backed ledgers replay them independently via
- * usage-monitor-replay.ts. Only ephemeral broker-balance snapshots have no such backstop, and losing
- * a stale one is harmless (the next portfolio fetch pushes a fresh reading).
+ * usage-monitor-replay.ts. Call-volume aggregates are best-effort only (rebuilt on the next window).
  */
 function trimBufferedEvents(now: number): void {
   const ttlMs = queueTtlMs();
@@ -275,7 +277,7 @@ interface CallVolumeEntry {
 }
 
 interface PendingUsageEvent {
-  event: UsageMonitorEvent;
+  event: UsageMonitorDraft;
   kind: string;
   sourceId: string;
   /** Wall-clock arrival time in this buffer; see isStaleBuffered(). */
@@ -309,11 +311,9 @@ interface PushState {
 }
 
 const host = globalThis as unknown as { __usageMonitorPush?: PushState };
-// v4: `queue` entries changed from raw UsageMonitorEvent to the { event, receivedAt } wrapper and
-// `pendingQueue` entries gained `receivedAt`. Bumping forces the stale-timer cancellation below and
-// pairs with normalizeRetainedQueues() so an HMR reload from a pre-v4 module can't feed old-shape
-// entries into the new flush path.
-const STATE_VERSION = 4;
+// v5: buffered v1 events are normalized once in memory to strict v2 fields before any retry.
+// Bumping forces stale-timer cancellation and prevents an old module from sending v1 wire data.
+const STATE_VERSION = 5;
 const priorState = host.__usageMonitorPush;
 const staleState = priorState !== undefined && priorState.version !== STATE_VERSION;
 if (staleState && priorState.flushTimer) {
@@ -359,21 +359,46 @@ if (
  * would throw or send a shapeless payload on hot-reload. Dev-only concern, but cheap to make safe.
  * A raw event is discriminated by the absence of a nested `.event` object.
  */
+function normalizeRetainedEvent(value: unknown): UsageMonitorDraft {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value as UsageMonitorDraft;
+  const retained = { ...(value as Record<string, unknown>) };
+  if (retained.sourceApp !== undefined && retained.sourceApp !== SOURCE_APP) {
+    return retained as UsageMonitorDraft;
+  }
+  delete retained.sourceApp;
+  if (retained.producerKeyRef === undefined && retained.keyRef !== undefined) {
+    retained.producerKeyRef = retained.keyRef;
+  }
+  delete retained.keyRef;
+  if (retained.eventId === undefined && retained.idempotencyKey !== undefined) {
+    retained.eventId = retained.idempotencyKey;
+  }
+  delete retained.idempotencyKey;
+  return retained as UsageMonitorDraft;
+}
+
 function normalizeRetainedQueues(prior: PushState): void {
   const now = Date.now();
   if (Array.isArray(prior.queue)) {
     prior.queue = prior.queue.map((entry) => {
       const wrapper = entry as Partial<QueuedUsageEvent>;
       if (wrapper && typeof wrapper.event === "object" && wrapper.event !== null) {
-        return { event: wrapper.event, receivedAt: typeof wrapper.receivedAt === "number" ? wrapper.receivedAt : now };
+        return {
+          event: normalizeRetainedEvent(wrapper.event) as UsageMonitorEvent,
+          receivedAt: typeof wrapper.receivedAt === "number" ? wrapper.receivedAt : now,
+        };
       }
       // Old shape: `entry` IS the raw event.
-      return { event: entry as unknown as UsageMonitorEvent, receivedAt: now };
+      return {
+        event: normalizeRetainedEvent(entry) as UsageMonitorEvent,
+        receivedAt: now,
+      };
     });
   }
   if (Array.isArray(prior.pendingQueue)) {
     prior.pendingQueue = prior.pendingQueue.map((entry) => ({
       ...entry,
+      event: normalizeRetainedEvent(entry.event),
       receivedAt: typeof entry.receivedAt === "number" ? entry.receivedAt : now,
     }));
   }
@@ -406,16 +431,15 @@ export interface LlmUsageMonitorEntry {
   providerRequestId?: string;
 }
 
-function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorEvent {
+function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorDraft {
   const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
   return {
-    sourceApp: SOURCE_APP,
     environment: usageMonitorEnv(),
     provider: entry.provider,
     service: "llm",
     project: PROJECT,
     label: entry.context,
-    keyRef: entry.keyRef,
+    producerKeyRef: entry.keyRef,
     billingMode: "estimated",
     metricType: hasCost ? "cost" : "usage",
     quantity: entry.totalTokens,
@@ -452,7 +476,7 @@ export async function createLlmUsageMonitorEvent(
 ): Promise<UsageMonitorEvent> {
   return {
     ...llmUsageEvent(entry),
-    idempotencyKey: await telemetryIdempotencyKey("llm", entry.sourceEventId),
+    eventId: await telemetryIdempotencyKey("llm", entry.sourceEventId),
   };
 }
 
@@ -478,7 +502,7 @@ export interface RagUsageMonitorEntry {
   providerRequestId?: string;
 }
 
-function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorEvent {
+function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorDraft {
   const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
   const isPinecone = entry.provider === "pinecone";
   const quantity = isPinecone
@@ -488,13 +512,12 @@ function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorEvent {
   // Read/Write Units in tokensIn, with records kept separately in metadata.
   const unit: UsageUnit = isPinecone ? "credit" : "token";
   return {
-    sourceApp: SOURCE_APP,
     environment: usageMonitorEnv(),
     provider: entry.provider,
     service: "rag",
     project: PROJECT,
     label: entry.operation,
-    keyRef: undefined, // RAG keys are app-funded; no per-attached-key fingerprint today
+    producerKeyRef: undefined, // RAG keys are app-funded; no per-attached-key fingerprint today
     billingMode: "estimated",
     metricType: hasCost ? "cost" : "usage",
     quantity: quantity > 0 ? quantity : undefined,
@@ -533,7 +556,7 @@ export async function createRagUsageMonitorEvent(
 ): Promise<UsageMonitorEvent> {
   return {
     ...ragUsageEvent(entry),
-    idempotencyKey: await telemetryIdempotencyKey("rag", entry.sourceEventId),
+    eventId: await telemetryIdempotencyKey("rag", entry.sourceEventId),
   };
 }
 
@@ -549,7 +572,10 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
   requests?: number;
   estimatedCostUsd?: number;
   actualCostUsd?: number;
-}): Promise<UsageMonitorEvent> {
+}): Promise<UsageMonitorEvent | null> {
+  // Retired broker families are never admitted to the monitor (live or replay). Callers treat
+  // null as "skip this row" while still advancing durable watermarks past it.
+  if (suppressUsageMonitorProvider(entry.provider)) return null;
   // INVARIANT: the ledger lanes (pushLlmUsage/pushRagUsage, service "llm"/"rag") are the single
   // external cost authority for every provider they cover — dispatch (service "provider-dispatch")
   // is a quota/request-volume signal only, for every provider, always. entry.estimatedCostUsd /
@@ -559,13 +585,12 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
   // The monitor's receiver sums cost by provider name only (it ignores `service`), so a non-zero
   // costUsd here would double-count spend the ledger lane already reported for the same call.
   return {
-    sourceApp: SOURCE_APP,
     environment: usageMonitorEnv(),
     provider: entry.provider,
     service: "provider-dispatch",
     project: PROJECT,
     label: entry.operation,
-    keyRef: entry.credentialRef,
+    producerKeyRef: entry.credentialRef,
     billingMode: "estimated",
     metricType: "usage",
     unit: "request",
@@ -578,110 +603,17 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
       outcome: entry.outcome,
       unknownOutcome: entry.outcome === "unknown",
     }),
-    idempotencyKey: await telemetryIdempotencyKey("provider-dispatch", entry.sourceEventId),
+    eventId: await telemetryIdempotencyKey("provider-dispatch", entry.sourceEventId),
   };
 }
 
-function maskAccountNumber(acc: string): string {
-  const clean = acc.trim();
-  if (clean.length <= 4) return clean;
-  return `...${clean.slice(-4)}`;
-}
+// ── Aggregate: market-data call-volume ─────────────────────────────────────────
 
 /**
- * Record broker account balances and limits.
- */
-export function pushBrokerBalance(entry: {
-  provider: string;
-  userId: string;
-  accountNumber: string;
-  cash?: number;
-  buyingPower?: number;
-  equity?: number;
-}): void {
-  if (!usageMonitorEnabled()) return;
-  try {
-    const occurredAt = new Date().toISOString();
-    const snapshotId = randomDeliveryId();
-    const maskedAcc = maskAccountNumber(entry.accountNumber);
-    // Number.isFinite (not typeof === "number") at admission: NaN and Infinity are both typeof
-    // "number" but the shared UsageTelemetryEvent schema rejects them (.finite()), so a NaN balance
-    // would poison the batch. Reject it here so the bad reading never enters the buffer.
-    if (Number.isFinite(entry.cash)) {
-      enqueuePending({
-        sourceApp: SOURCE_APP,
-        environment: usageMonitorEnv(),
-        provider: entry.provider,
-        service: "broker",
-        project: PROJECT,
-        keyRef: `${maskedAcc}:cash`,
-        billingMode: "actual",
-        metricType: "balance",
-        quantity: entry.cash,
-        unit: "usd",
-        confidence: "actual",
-        occurredAt,
-        metadata: cleanMetadata({
-          userId: entry.userId,
-          accountNumber: maskedAcc,
-          metric: "cash"
-        }),
-      }, "broker-balance", `${snapshotId}:cash`);
-    }
-    if (Number.isFinite(entry.buyingPower)) {
-      enqueuePending({
-        sourceApp: SOURCE_APP,
-        environment: usageMonitorEnv(),
-        provider: entry.provider,
-        service: "broker",
-        project: PROJECT,
-        keyRef: `${maskedAcc}:buyingPower`,
-        billingMode: "actual",
-        metricType: "limit",
-        quantity: entry.buyingPower,
-        unit: "usd",
-        confidence: "actual",
-        occurredAt,
-        metadata: cleanMetadata({
-          userId: entry.userId,
-          accountNumber: maskedAcc,
-          metric: "buyingPower"
-        }),
-      }, "broker-balance", `${snapshotId}:buying-power`);
-    }
-    if (Number.isFinite(entry.equity)) {
-      enqueuePending({
-        sourceApp: SOURCE_APP,
-        environment: usageMonitorEnv(),
-        provider: entry.provider,
-        service: "broker",
-        project: PROJECT,
-        keyRef: `${maskedAcc}:equity`,
-        billingMode: "actual",
-        metricType: "balance",
-        quantity: entry.equity,
-        unit: "usd",
-        confidence: "actual",
-        occurredAt,
-        metadata: cleanMetadata({
-          userId: entry.userId,
-          accountNumber: maskedAcc,
-          metric: "equity"
-        }),
-      }, "broker-balance", `${snapshotId}:equity`);
-    }
-  } catch {
-    /* telemetry must never break the caller */
-  }
-}
-
-// ── Aggregate: market-data / broker call-volume ────────────────────────────────
-
-/**
- * Count one external market-data or broker API call. Called from the central `fetchWithRetry`
- * wrapper (`data-providers.ts`) and the broker choke points (`alpaca.ts`, `robinhood.ts`). This is
- * on a hot path, so it only mutates an in-memory per-provider counter — the counts are flushed as a
- * single aggregated `requests`-count event per provider per window (never one POST per call).
+ * Count one external market-data API call. Called from the central `fetchWithRetry` wrapper
+ * (`data-providers.ts`). This is on a hot path, so it only mutates an in-memory per-provider
+ * counter — the counts are flushed as a single aggregated `requests`-count event per provider per
+ * window (never one POST per call). Retired broker families are suppressed at admission.
  */
 export function recordProviderCall(
   provider: string,
@@ -690,6 +622,9 @@ export function recordProviderCall(
   if (!usageMonitorEnabled()) return;
   // Never re-count the telemetry channel's own health calls (would loop).
   if (provider === HEALTH_SERVICE) return;
+  // Retired broker families (Alpaca/Tradier/Robinhood and their subproviders) stay in trading/health
+  // but never enter the Usage Monitor feed.
+  if (suppressUsageMonitorProvider(provider)) return;
   try {
     // Key by credential lane too, so a user's own market-data key isn't conflated with shared/
     // operator quota in the monitor.
@@ -733,7 +668,7 @@ export function recordProviderCall(
 // ── Queue / flush plumbing ─────────────────────────────────────────────────────
 
 function enqueuePending(
-  event: UsageMonitorEvent,
+  event: UsageMonitorDraft,
   kind: string,
   sourceId?: string
 ): void {
@@ -762,13 +697,14 @@ function drainCallVolume(now: string): PendingUsageEvent[] {
   const events: PendingUsageEvent[] = [];
   for (const entry of state.callVolume.values()) {
     if (entry.requests <= 0) continue;
+    // Defense in depth: never flush a retired family even if a stale HMR map entry slipped in.
+    if (suppressUsageMonitorProvider(entry.provider)) continue;
     events.push({
       kind: "provider-call-volume",
       // HMR can preserve a pre-upgrade global map entry without windowId.
       sourceId: entry.windowId || randomDeliveryId(),
       receivedAt: Date.now(),
       event: {
-        sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: entry.service,
@@ -799,7 +735,7 @@ async function resolvePendingEvents(
     pending.map(async ({ event, kind, sourceId, receivedAt }) => ({
       event: {
         ...event,
-        idempotencyKey: await telemetryIdempotencyKey(kind, sourceId),
+        eventId: await telemetryIdempotencyKey(kind, sourceId),
       },
       receivedAt,
     }))
@@ -925,14 +861,14 @@ function recordUsageMonitorHealth(ok: boolean, startedAt: number, err?: unknown)
 }
 
 /**
- * True when an event passes the shared UsageTelemetryEvent schema — i.e. it is safe to hand to
+ * True when an event passes the strict shared v2 event schema — i.e. it is safe to hand to
  * `client.send`, which parses the batch BEFORE any fetch. An event that fails here (e.g. a NaN /
  * Infinity `quantity` that slipped past an admission guard) would throw a ZodError before the
  * network is ever touched. That is a LOCAL data bug, not a receiver outage, so we must never let it
  * reach the send path where its throw would be misread as a delivery failure and trip the breaker.
  */
 function isDeliverableEvent(event: UsageMonitorEvent): boolean {
-  return UsageTelemetryEventSchema.safeParse(event).success;
+  return UsageTelemetryV2EventSchema.safeParse(event).success;
 }
 
 /** Best-effort visibility for dropped poison events; never throws. */
@@ -945,6 +881,19 @@ function warnPoisonDropped(count: number, lane: string): void {
     );
   } catch {
     /* logging is best-effort */
+  }
+}
+
+/** A schema-valid v2 ACK can still report a partial batch; never treat that as durable success. */
+function requireCompleteAck(
+  ack: { received: number; rejected: number },
+  expectedCount: number
+): void {
+  if (ack.received !== expectedCount || ack.rejected !== 0) {
+    throw new Error(
+      `Usage monitor acknowledged only part of the batch ` +
+        `(sent=${expectedCount}, received=${ack.received}, rejected=${ack.rejected})`
+    );
   }
 }
 
@@ -966,9 +915,11 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
     const client = createUsageTelemetryClient({
       baseUrl,
       token,
+      producerId: SOURCE_APP,
       fetchImpl: (input, init) => fetchImpl(input, { ...init, signal: controller.signal }),
     });
-    await client.send(events);
+    const ack = await client.send(events);
+    requireCompleteAck(ack, events.length);
     recordUsageMonitorHealth(true, start);
     breakerRecordResult(true, Date.now());
     return true;
@@ -1003,9 +954,7 @@ const REPLAY_SEND_TIMEOUT_MS = 30_000;
  * Applies an AbortSignal timeout so that a connection stall cannot permanently block the caller
  * (the replay worker's inFlight guard is never cleared if the POST promise never settles).
  */
-export async function sendUsageMonitorBatch(
-  events: UsageMonitorEvent[]
-): Promise<boolean> {
+async function sendReplayBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   if (events.length === 0) return true;
   if (!usageMonitorEnabled()) return false;
 
@@ -1036,10 +985,12 @@ export async function sendUsageMonitorBatch(
     const client = createUsageTelemetryClient({
       baseUrl,
       token,
+      producerId: SOURCE_APP,
       fetchImpl: (input, init) =>
         fetchImpl(input, { ...init, signal: controller.signal }),
     });
-    await client.send(deliverable);
+    const ack = await client.send(deliverable);
+    requireCompleteAck(ack, deliverable.length);
     // Record health from the replay lane too — if replay is the first/only lane talking to a down
     // monitor, this is what keeps the admin health row truthful instead of stale-healthy while the
     // shared breaker (below) suppresses the live-push lane's own health writes.
@@ -1061,6 +1012,12 @@ export async function sendUsageMonitorBatch(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function sendUsageMonitorBatch(
+  events: UsageMonitorEvent[]
+): Promise<boolean> {
+  return sendReplayBatch(events);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

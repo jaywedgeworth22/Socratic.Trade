@@ -21,7 +21,6 @@ import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import { toBrokerSide, isRejectedOrCanceledState } from "./broker-side";
 import { audit, getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
 import { logApiHealth } from "./db-health";
-import { recordProviderCall, pushBrokerBalance } from "./usage-monitor-push";
 import { fetchDailyOHLC } from "./history";
 
 /**
@@ -238,7 +237,6 @@ class AlpacaBrokerGateway implements BrokerGateway {
     try {
       const result = await fn();
       logApiHealth({ service: "alpaca-broker", ok: true, latencyMs: Date.now() - start, keySource: this.keySource, userId: this.userId });
-      recordProviderCall("alpaca", { service: "broker", ok: true });
       return result;
     } catch (err) {
       logApiHealth({
@@ -249,7 +247,6 @@ class AlpacaBrokerGateway implements BrokerGateway {
         keySource: this.keySource,
         userId: this.userId
       });
-      recordProviderCall("alpaca", { service: "broker", ok: false });
       throw err;
     }
   }
@@ -376,16 +373,6 @@ class AlpacaBrokerGateway implements BrokerGateway {
         };
       } else {
         result = res;
-      }
-      if (result && result.accountNumber) {
-        pushBrokerBalance({
-          provider: "alpaca",
-          userId: this.userId,
-          accountNumber: result.accountNumber,
-          cash: result.cash,
-          buyingPower: result.buyingPower,
-          equity: result.totalMarketValue
-        });
       }
       return result;
     });

@@ -28,7 +28,23 @@ interface CapturedRequest {
   url: string;
   auth: string | null;
   rawBody: string;
-  body: { events: Array<Record<string, unknown>> };
+  body: {
+    schemaVersion: number;
+    producerId: string;
+    events: Array<Record<string, unknown>>;
+  };
+}
+
+function ack(received: number): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    schemaVersion: 2,
+    received,
+    persisted: received,
+    duplicates: 0,
+    pruned: 0,
+    rejected: 0,
+  }), { status: 202 });
 }
 
 function makeFetchStub(captured: CapturedRequest[]) {
@@ -41,7 +57,7 @@ function makeFetchStub(captured: CapturedRequest[]) {
       rawBody,
       body: JSON.parse(rawBody),
     });
-    return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+    return ack(JSON.parse(rawBody).events.length);
   }) as unknown as typeof fetch;
 }
 
@@ -109,17 +125,21 @@ describe("usage-monitor-push", () => {
     const events = captured[0]!.body.events;
     expect(events).toHaveLength(1);
     const e = events[0]!;
-    expect(e.sourceApp).toBe("socratic-trade");
+    expect(captured[0]!.body.schemaVersion).toBe(2);
+    expect(captured[0]!.body.producerId).toBe("socratic-trade");
+    expect(e.sourceApp).toBeUndefined();
     expect(e.project).toBe("socratic-trade");
     expect(e.environment).toBe("test");
     expect(e.provider).toBe("anthropic");
+    expect(e.producerKeyRef).toBe("abcd");
+    expect(e.keyRef).toBeUndefined();
     expect(e.service).toBe("llm");
     expect(e.metricType).toBe("cost");
     expect(e.unit).toBe("token");
     expect(e.quantity).toBe(1000);
     expect(e.costUsd).toBe(0.03);
     expect(e.requests).toBe(1);
-    expect(e.idempotencyKey).toBe(expectedTelemetryKey("llm", "llm-row-123"));
+    expect(e.eventId).toBe(expectedTelemetryKey("llm", "llm-row-123"));
     expect(typeof e.occurredAt).toBe("string");
     expect((e.metadata as Record<string, unknown>).model).toBe("anthropic/claude-opus-4-8");
   });
@@ -140,14 +160,14 @@ describe("usage-monitor-push", () => {
     expect(rag).toBeDefined();
     expect(rag!.provider).toBe("voyage");
     expect(rag!.unit).toBe("token");
-    expect(rag!.idempotencyKey).toBe(expectedTelemetryKey("rag", "rag-row-123"));
+    expect(rag!.eventId).toBe(expectedTelemetryKey("rag", "rag-row-123"));
 
     const vol = events.find((e) => e.provider === "finnhub");
     expect(vol).toBeDefined();
     expect(vol!.metricType).toBe("usage");
     expect(vol!.unit).toBe("request");
     expect(vol!.requests).toBe(3);
-    expect(vol!.idempotencyKey).toMatch(
+    expect(vol!.eventId).toMatch(
       /^socratic-trade:provider-call-volume:/
     );
     expect((vol!.metadata as Record<string, unknown>).successes).toBe(2);
@@ -171,7 +191,7 @@ describe("usage-monitor-push", () => {
     // Two different credential lanes → two separate finnhub events, not one merged count.
     const finnhub = events.filter((e) => e.provider === "finnhub");
     expect(finnhub).toHaveLength(2);
-    const laneKeys = finnhub.map((event) => event.idempotencyKey);
+    const laneKeys = finnhub.map((event) => event.eventId);
     expect(laneKeys.every((key) => typeof key === "string")).toBe(true);
     expect(new Set(laneKeys).size).toBe(2);
     const userLane = finnhub.find((e) => (e.metadata as Record<string, unknown>).keySource === "user");
@@ -193,7 +213,7 @@ describe("usage-monitor-push", () => {
       });
       attempt += 1;
       if (attempt === 1) throw new Error("connection closed after request write");
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+      return ack(JSON.parse(rawBody).events.length);
     }) as unknown as typeof fetch);
     expect(() =>
       recordLlmUsage({ provider: "openai", model: "openai/gpt-4o-mini", context: "chat", userId: "local", keySource: "operator", promptTokens: 10, completionTokens: 5 })
@@ -210,6 +230,30 @@ describe("usage-monitor-push", () => {
 
     const { getLlmUsageSummary } = await import("../src/lib/llm-usage");
     expect(getLlmUsageSummary().length).toBeGreaterThan(0);
+  });
+
+  it("retries the exact live batch when a valid v2 ACK under-reports acceptance", async () => {
+    const attempts: string[] = [];
+    push.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
+      const rawBody = String(init?.body ?? "{}");
+      attempts.push(rawBody);
+      const sent = (JSON.parse(rawBody) as { events: unknown[] }).events.length;
+      return attempts.length === 1 ? ack(sent - 1) : ack(sent);
+    }) as unknown as typeof fetch);
+    push.pushLlmUsage({
+      sourceEventId: "partial-live-ack",
+      provider: "openai",
+      userId: "local",
+      keySource: "operator",
+      totalTokens: 1,
+    });
+
+    await push.flushUsageMonitor();
+    expect(attempts).toHaveLength(1);
+    await push.flushUsageMonitor();
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toBe(attempts[0]);
   });
 
   it("uses one durable LLM ledger identity and timestamp for persistence and delivery", async () => {
@@ -232,7 +276,7 @@ describe("usage-monitor-push", () => {
       )
       .get("telemetry-id-test") as { id: string; created_at: string };
     const event = captured[0]!.body.events[0]!;
-    expect(event.idempotencyKey).toBe(expectedTelemetryKey("llm", row.id));
+    expect(event.eventId).toBe(expectedTelemetryKey("llm", row.id));
     expect(event.occurredAt).toBe(row.created_at);
   });
 
@@ -255,7 +299,7 @@ describe("usage-monitor-push", () => {
       )
       .get("telemetry-rag-user") as { id: string; created_at: string };
     const event = captured[0]!.body.events[0]!;
-    expect(event.idempotencyKey).toBe(expectedTelemetryKey("rag", row.id));
+    expect(event.eventId).toBe(expectedTelemetryKey("rag", row.id));
     expect(event.occurredAt).toBe(row.created_at);
   });
 
@@ -280,7 +324,7 @@ describe("usage-monitor-push", () => {
     const events = captured[0]!.body.events;
     expect(events).toHaveLength(2);
     expect(events[1]).toEqual(events[0]);
-    expect(events[0]!.idempotencyKey).toBe(
+    expect(events[0]!.eventId).toBe(
       expectedTelemetryKey("llm", entry.sourceEventId)
     );
     expect(events[0]!.occurredAt).toBe(entry.occurredAt);
@@ -303,7 +347,7 @@ describe("usage-monitor-push", () => {
     push.pushLlmUsage({ ...base, sourceEventId: "" });
     await push.flushUsageMonitor();
 
-    const keys = captured[0]!.body.events.map((event) => String(event.idempotencyKey));
+    const keys = captured[0]!.body.events.map((event) => String(event.eventId));
     expect(keys[0]).toBe(expectedTelemetryKey("llm", oversized));
     expect(keys.every((key) => key.length <= 200)).toBe(true);
     expect(keys.every((key) => /^socratic-trade:llm:[a-f0-9]{64}$/.test(key))).toBe(true);
@@ -343,7 +387,7 @@ describe("usage-monitor-push", () => {
 
     await reloaded.flushUsageMonitor();
     expect(captured).toHaveLength(1);
-    expect(captured[0]!.body.events[0]!.idempotencyKey).toBe(
+    expect(captured[0]!.body.events[0]!.eventId).toBe(
       expectedTelemetryKey("llm", "hmr-buffered-event")
     );
   });
@@ -358,8 +402,8 @@ describe("usage-monitor-push", () => {
     await push.flushUsageMonitor();
 
     expect(captured).toHaveLength(2);
-    const firstKey = captured[0]!.body.events[0]!.idempotencyKey;
-    const secondKey = captured[1]!.body.events[0]!.idempotencyKey;
+    const firstKey = captured[0]!.body.events[0]!.eventId;
+    const secondKey = captured[1]!.body.events[0]!.eventId;
     expect(firstKey).toMatch(/^socratic-trade:provider-call-volume:/);
     expect(secondKey).toMatch(/^socratic-trade:provider-call-volume:/);
     expect(secondKey).not.toBe(firstKey);
@@ -399,7 +443,7 @@ describe("usage-monitor-push", () => {
       push.__setUsageMonitorFetch((async () => {
         attempts += 1;
         if (attempts === 1) throw new Error("connection refused");
-        return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+        return ack(1);
       }) as unknown as typeof fetch);
 
       push.pushLlmUsage({ sourceEventId: "probe-1", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
@@ -650,29 +694,73 @@ describe("usage-monitor-push", () => {
     });
   });
 
-  describe("poison-event isolation (local validation error is NOT a receiver outage)", () => {
-    it("rejects NaN/Infinity broker balances at admission so they never enter the buffer", () => {
-      push.pushBrokerBalance({
-        provider: "alpaca",
-        userId: "local",
-        accountNumber: "1234567890",
-        cash: Number.NaN,
-        buyingPower: Number.POSITIVE_INFINITY,
-        equity: Number.NEGATIVE_INFINITY,
-      });
-      expect(push.__usageMonitorDebugState().queueDepth).toBe(0);
+  describe("retired provider-family admission", () => {
+    it("suppresses Alpaca/Tradier/Robinhood call-volume while keeping paid FMP control traffic", async () => {
+      const captured: CapturedRequest[] = [];
+      push.__setUsageMonitorFetch(makeFetchStub(captured));
 
-      // A finite reading in the same shape is still admitted; only the non-finite fields are dropped.
-      push.pushBrokerBalance({
-        provider: "alpaca",
-        userId: "local",
-        accountNumber: "1234567890",
-        cash: Number.NaN,
-        equity: 1000,
+      push.recordProviderCall("alpaca", { ok: true });
+      push.recordProviderCall("alpaca-news", { ok: true });
+      push.recordProviderCall("tradier", { ok: true });
+      push.recordProviderCall("robinhood", { ok: false });
+      push.recordProviderCall("fmp", { ok: true, keySource: "operator" });
+      push.recordProviderCall("fmp", { ok: true, keySource: "operator" });
+
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(0);
+      await push.flushUsageMonitor();
+
+      expect(captured).toHaveLength(1);
+      expect(captured[0]!.body.schemaVersion).toBe(2);
+      expect(captured[0]!.body.producerId).toBe("socratic-trade");
+      const providers = captured[0]!.body.events.map((event) => event.provider);
+      expect(providers).toEqual(["fmp"]);
+      expect(captured[0]!.body.events[0]).toMatchObject({
+        provider: "fmp",
+        metricType: "usage",
+        unit: "request",
+        requests: 2,
       });
-      expect(push.__usageMonitorDebugState().queueDepth).toBe(1);
     });
 
+    it("createProviderDispatchUsageMonitorEvent returns null for retired families and a strict-v2 event for paid controls", async () => {
+      const suppressed = await push.createProviderDispatchUsageMonitorEvent({
+        sourceEventId: "dispatch-alpaca-1",
+        occurredAt: "2026-07-22T00:00:00.000Z",
+        provider: "alpaca",
+        operation: "get-portfolio",
+        credentialRef: "alpaca-key",
+        userId: "local",
+        outcome: "succeeded",
+      });
+      expect(suppressed).toBeNull();
+
+      const paid = await push.createProviderDispatchUsageMonitorEvent({
+        sourceEventId: "dispatch-fmp-1",
+        occurredAt: "2026-07-22T00:00:00.000Z",
+        provider: "fmp",
+        operation: "income-statement",
+        credentialRef: "fmp-key",
+        userId: "local",
+        outcome: "succeeded",
+        requests: 1,
+        estimatedCostUsd: 0.12,
+        actualCostUsd: 0.09,
+      });
+      expect(paid).not.toBeNull();
+      expect(paid).toMatchObject({
+        provider: "fmp",
+        service: "provider-dispatch",
+        metricType: "usage",
+        unit: "request",
+        requests: 1,
+        eventId: expectedTelemetryKey("provider-dispatch", "dispatch-fmp-1"),
+      });
+      // Dispatch is quota-only on the wire — local cost fields must never reach the monitor.
+      expect(paid).not.toHaveProperty("costUsd");
+    });
+  });
+
+  describe("poison-event isolation (local validation error is NOT a receiver outage)", () => {
     it("discards a schema-invalid event at flush WITHOUT tripping the breaker; valid events still send", async () => {
       const captured: CapturedRequest[] = [];
       push.__setUsageMonitorFetch(makeFetchStub(captured));

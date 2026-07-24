@@ -41,12 +41,49 @@ rules text. No effort rows were changed.)_
 
 As of 2026-07-08 (assignment-rule update).
 
+---
+
+## 2026-07-22 — CODEX evidence-receipt sublane
+
+- **[Socratic.Trade][CODEX evidence sublane] Exact prompt-consumption evidence receipts (worktree `/Users/jay/.codex/worktrees/rag-evidence-consumption-20260722`, branch `codex/rag-evidence-consumption-20260722`) — LOCALLY READY / umbrella integration pending.** Deterministic used-evidence manifests now reflect only chunks serialized into strategy/chat prompts; retrieved-but-not-consumed diagnostics remain separate, with stable refs and text-free empty/error/skipped/dedupe outcomes. Focused 14/14, scoped ESLint 0 errors (39 existing warnings), TypeScript, and diff check pass. No trading-decision, provider, corpus, broker, or production writes.
+
+## Planned / Reserved Before Implementation
+- **[Socratic.Trade][OWNER REMINDER][GROK 2026-07-22] Enable default-off RAG / retrieval features after #1892 lands — PLANNED / UNASSIGNED.** **#1892 MERGED 2026-07-23** — enablement still gated on re-embed proof. Order: telemetry → eval → `RAG_CORPUS_WIDE_LEXICAL` → adaptive rerank → parent expansion → multi-query/HyDE. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`.
+- **[Fleet][OWNER REMINDER][GROK 2026-07-22] Inventory + enable forgotten dormant features — PLANNED / UNASSIGNED.** Default-off flags, key-gated providers, rights dual-gates, policy toggles, cross-app holds. Living list: `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Agents must append when landing new dormant switches.
+
 ## In Progress
+- **[Socratic.Trade][CURSOR] Unstick remaining open PRs #1901/#1902/#1792/#1819/#1842 (branch `cursor/resolve-open-efforts-1c6c`, claimed 2026-07-23) — IN PROGRESS / HEADS REFRESHED + AUTO-MERGE ARMED.** Merged current `origin/main` into all five; resolved real conflicts on #1902 (`llm-provider` keep native+OpenRouter routing + `normalizeOpenRouterModelId`) and #1792 (`vector-db` rag-embed health lane + stage telemetry; health fixture key-presence fix). #1901/#1819/#1842 were clean merges (GitHub DIRTY was phantom). Focused Vitest green per PR; auto-merge squash armed; hosted verify queued. Issues API 403 for this token — no GitHub Issues closed. Rollout: `docs/rollouts/2026-07-23-unstick-open-prs.md`.
+- **[CORRECTION 2026-07-23 CURSOR] PR #1892 (+ sublanes that landed inside it) — COMPLETED (merged 2026-07-23).** Review-thread closeout, RAG strategic-performance program, lexical foundation, parent expansion, production eval, shadow benchmarks, structured routing, and evidence-consumption receipts shipped via #1892. Activation flags remain off (enablement backlog still Planned).
+- **[Socratic.Trade][GROK] PR #1892 review-thread closeout round 2 — COMPLETED via #1892 merge 2026-07-23 (CURSOR correction).** Was: PUSHED/THREADS RESOLVED 2026-07-22.
+- **[Socratic.Trade][GROK] PR #1892 P2 review threads (rerank no_memory + sec-8k FTS) — COMPLETED via #1892 merge 2026-07-23.**
+- **[Socratic.Trade][CODEX team] RAG strategic-performance implementation program (claimed 2026-07-21) — COMPLETED via #1892 merge 2026-07-23 (CURSOR correction).** Was: IN PROGRESS / REVIEW REMEDIATION. All activation flags remain off.
+- **[Socratic.Trade][CODEX] Managed RAG ingestion provider-authority gate — COMPLETED via #1892 merge 2026-07-23 (CURSOR correction).** Duplicate prior IN PROGRESS rows collapsed.
+- **[Socratic.Trade][CODEX team] RAG corpus-wide lexical foundation — COMPLETED via #1892 merge 2026-07-23 (CURSOR correction).**
+- **[Socratic.Trade][CODEX sublane] Turso/libSQL + Pinecone Assistant shadow benchmarks — COMPLETED via #1892 merge 2026-07-23 (CURSOR correction).**
+- **[Socratic.Trade][GROK] Retired-provider Usage Monitor cleanup post-#1889 — IN PROGRESS 2026-07-22.** Merged exact `origin/main` (`bd7068b6` #1889). Live+replay admission filters via `suppressUsageMonitorProvider`; removed `pushBrokerBalance`; FMP paid-control regression added. Worktree `/Users/jay/.codex/worktrees/socratic-retired-provider-cleanup` branch `codex/retired-provider-usage-cleanup`.
+- **[Socratic.Trade][GROK] PR #1892 review-thread closeout round 2 — PUSHED/THREADS RESOLVED 2026-07-22 (`4e3e4bff`).** Addresses remaining open connector findings on PR #1892: invalid rerank config fails open; eval `runId` threaded into retrieval; content-hash selectors require occurrence coords; 8-K lexical `doc_type`; FTS/occurrence accession join + writer alignment; ordinal zero preserved; consumption matches post-containment text. Focused Node 24: 4 files / 37 tests green. Worktree `/Users/jay/Code/Socratic.Trade/.worktrees/pr-1892-p2`. Next: push, resolve threads, hosted verify, auto-merge.
+- **[Socratic.Trade][GROK] PR #1892 P2 review threads (rerank no_memory + sec-8k FTS) — COMPLETED IN PR HEAD 2026-07-22.** Fixes are present in PR #1892 head `40b354a8`; follow-up review remediation continued by GROK above.
+- **[Socratic.Trade][CODEX team] RAG strategic-performance implementation program (claimed 2026-07-21) — IN PROGRESS / PR #1892 REVIEW REMEDIATION 2026-07-22.** Provider-aware/mock-safe managed ingestion, strict production-path PIT evaluation with runtime route receipts, tenant/current-version-safe FTS5 recall, dense+lexical RRF, independently routed/default-off adaptive reranking, text-free stage telemetry, exact prompt consumption, structured/narrative routing, bounded parent expansion, Pinecone hosted inference, and truthful Turso/Assistant probes are integrated. Latest remediation keeps local lexical recall available during paid-stage budget degradation, classifies source-backed 8-K rows without a `sec_filings` join, carries immutable occurrence coordinates through chat refs, rejects content-hash-only golden selectors, and prevents duplicate-text consumption credit. GROK round-2 closes the remaining open threads. Full hosted gate, merge/auto-deploy, and live exact-SHA verification remain. All activation flags remain off.
+- **[Socratic.Trade][CODEX] Managed RAG ingestion provider-authority gate (branch `codex/rag-ingestion-gate-20260721`, worktree `/Users/jay/.codex/worktrees/rag-ingestion-gate-20260721`, claimed 2026-07-21) — IN PROGRESS.** Local implementation replaces the stale managed-commit `Pinecone + Voyage` prerequisite with Pinecone initialization plus the actual active embedding-provider authority; test-only Voyage support and a production-mode OpenRouter/Pinecone regression are included. Scoped lint and diff-check pass; focused Vitest/TypeScript remain queued behind shared-host saturation. No re-embed, purge, secret, provider, or production mutation.
+- **[Socratic.Trade][CODEX] Managed RAG ingestion provider-authority gate (branch `codex/rag-ingestion-gate-20260721`, worktree `/Users/jay/.codex/worktrees/rag-ingestion-gate-20260721`, claimed 2026-07-21) — IN PROGRESS.** Local implementation replaces the stale managed-commit `Pinecone + Voyage` prerequisite with Pinecone initialization plus the actual active embedding-provider authority; test-only Voyage support and a production-mode OpenRouter/Pinecone regression are included. Diff-check, scoped lint (0 errors; existing warnings), focused mocked OpenRouter Vitest, and `tsc --noEmit` pass. No re-embed, purge, secret, provider, or production mutation.
+- **[Socratic.Trade][CODEX team] RAG strategic-performance implementation program (branch `codex/rag-corpus-lexical-20260721`) — IN PROGRESS, lexical foundation locally verified 2026-07-21.** Added a pure, read-only corpus-wide FTS5 candidate adapter plus adversarial tests for query safety, exact accession retrieval, point-in-time exclusion, deterministic de-duplication, and BM25 ranking. It does not alter `vector-db.ts`, schema, corpus writes, re-embedding, or legacy-vector purge; integration/fusion remains a separate owned lane after current ingestion and re-embed work settles.
+- **[Socratic.Trade][CODEX sublane] Read-only Turso/libSQL and Pinecone Assistant shadow benchmarks (branch `codex/rag-shadow-benchmarks-20260722`, worktree `/Users/jay/.codex/worktrees/rag-shadow-benchmarks-20260722`, claimed 2026-07-22) — LOCALLY READY / UNMERGED.** Default-off comparison harnesses: local capability receipt for installed libSQL/vector functions, plus an explicit-gated pre-existing Pinecone Assistant context probe (≤100 serial queries; 30-second timeout cap) with latency/citation/usage/error-only receipts. No file/upload/delete/index/corpus/provider or production writes. Focused Vitest 4/4, scoped ESLint, TypeScript, and default-safe harness receipt pass; exact commands are in the rollout note.
 
-- **[CODEX] Native iOS mobile-first product replacement — IN PROGRESS 2026-07-22.** Phase 1 (#1859) and the verifier-bound opaque web-auth handoff (#1886) are merged to `main`; a narrow follow-up is in progress because post-merge review found middleware blocked the first unauthenticated code exchange. It will allow only `/api/mobile/auth/exchange`, whose one-time code and device verifier remain the authorization proof until the route sets the HTTP-only Auth.js cookie. Worktree `/Users/jay/apps/socratic-mobile-first-ios`; no production native distribution is claimed until TestFlight/App Store release.
-- **[Socratic.Trade][CODEX] CI pending-run collapse (branch `codex/ci-queue-collapse`, 2026-07-22) — IN PROGRESS.** Removed `github.sha` from the required CI concurrency group while retaining `cancel-in-progress: false`; every SHA had previously created a distinct group and accumulated duplicate queued verifies. Added a workflow regression. Verification and landing are next; active runs are not being cancelled. Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
+- **[Socratic.Trade][GROK] Dark mode near-black retint — COMPLETED via #1956 merge 2026-07-23 (CURSOR correction).** Rollout: `docs/rollouts/2026-07-22-dark-mode-near-black.md`.
 
-- **[CORRECTION 2026-07-22] Native iOS mobile-first product replacement — COMPLETED via PR #1859 and secure OAuth handoff PR #1886.** The prior row incorrectly said #1886 was open; it is merged. The active narrow middleware follow-up is tracked by the current row above as PR #1888. No production native distribution is claimed until TestFlight/App Store release.
+- **[Socratic.Trade][AG] Gemini Reasoning Temperature Fix — COMPLETED via #1978 merge 2026-07-23.** Rollout: `docs/rollouts/2026-07-23-gemini-temperature-fix.md`.
+- **[Socratic.Trade][CURSOR] Salvage #1906 market-data alias via shared pkg — COMPLETED via #1957 merge 2026-07-23.** Rollout: `docs/rollouts/2026-07-22-congress-market-data-alias-split.md`.
+- **[Socratic.Trade][CURSOR] Grok forgotten-PR audit — COMPLETED 2026-07-22.** Remnants #1901/#1902/#1792/#1819/#1842 under CURSOR unstick claim; #1892/#1903 already merged. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
+
+- **[Socratic.Trade][GROK] Robinhood guardrail cap resilience — COMPLETED via #1903 merge 2026-07-23 (CURSOR correction).** Handoff: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
+
+- **[Socratic.Trade][AG] UI Redesign: Proposal Slide-out Drawer — COMPLETED via #1961 merge 2026-07-23 (CURSOR correction).** Rollout: `docs/rollouts/2026-07-22-proposal-row-drawer.md`.
+
+- **[Socratic.Trade][CODEX] Shared-package pin-check / telemetry v2 (#1889) — COMPLETED via #1889 merge 2026-07-22 (CURSOR correction).**
+- **[Socratic.Trade][CODEX] CI pending-run collapse — COMPLETED via #1891 merge 2026-07-22 (CURSOR correction).** Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
+
+- **[CODEX] Native iOS mobile-first product replacement — COMPLETED via #1859 + #1886 + #1888 (CURSOR correction 2026-07-23).** No production native distribution until TestFlight/App Store release.
+- **[Socratic.Trade][CODEX] Usage telemetry v2 producer adoption — COMPLETED via #1889 merge 2026-07-22 (CURSOR correction).** Rollout: `docs/rollouts/2026-07-22-usage-telemetry-v2-producer.md`.
 - **[Socratic.Trade][CLAUDE] check-pin required-status-context merge deadlock fix (branch
   `claude/checkpin-always-on-prs`, worktree `/private/tmp/socratic-checkpin-work/repo`, claimed
   2026-07-19) — IN PROGRESS.** Root cause: main's classic branch protection requires status contexts
@@ -62,20 +99,13 @@ As of 2026-07-08 (assignment-rule update).
   taken here. Holding merge until PR #1771 is MERGED (strict mode would otherwise knock it behind
   again).
 - **[Socratic.Trade][CURSOR] Corpus re-embed scoped-run purge gate fix (branch
-  `cursor/critical-bug-management-0770`, claimed 2026-07-20) — IN PROGRESS.**
-  Critical-bug automation found that a symbol-scoped `POST /api/admin/reembed` could persist a
-  full-docType `completedForEmbedRevision` stamp; the explicit `purge-legacy` action then trusted
-  that stamp and could delete all legacy vectors for the docType even though only the scoped symbols
-  were backfilled. Patch withholds full-corpus completion stamps on scoped runs and adds a focused
-  regression. Local gate passed: lint, TypeScript, 420-file/4,901-test Vitest suite, and build. PR pending.
+  `cursor/critical-bug-management-0770`) — COMPLETED via #1840 merge 2026-07-22 (CURSOR correction).**
 - **[Socratic.Trade][CURSOR] Stop placement intent authoritative-absence fix (branch
-  `cursor/critical-bug-management-8edd`, claimed 2026-07-21) — IN PROGRESS.** Hourly
-  high-severity scan found a money-path duplicate-stop risk: a durable broker stop placement intent
-  was cleared on absent `clientOrderId` after any successful order-list fetch, even for
-  non-authoritative/live-only broker lists. Fix requires `ordersListIncludesTerminal === true` before
-  absence authorizes a fresh placement; non-authoritative lists keep the intent and skip the symbol.
-  Local gates passed; PR publication/hosted checks next. Rollout:
-  `docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`.
+  `cursor/critical-bug-management-8edd`) — COMPLETED via #1844 merge 2026-07-22 (CURSOR correction).**
+  Rollout: `docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`.
+- **[Socratic.Trade][CODEX sublane] Bounded post-rerank parent-context expansion — COMPLETED via #1892 merge 2026-07-23 (CURSOR correction).**
+- **[Socratic.Trade][CODEX] Production-path RAG evaluator — COMPLETED via #1892 merge 2026-07-23 (CURSOR correction).** Prior duplicate IN PROGRESS rows collapsed.
+- **[Socratic.Trade][CODEX sublane] RAG structured-vs-narrative routing boundary — COMPLETED via #1892 merge 2026-07-23 (CURSOR correction).**
 - **[Socratic.Trade][AG] Purge Voyage AI SDK and standardize RAG on OpenRouter BAAI bge-m3 / Cohere reranker (branch `agent/antigravity-docs-update`) — COMPLETED 2026-07-21.** Purged Voyage AI SDK and standardized the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Isolated Voyage client instantiation to test mode via dynamic imports, ensuring complete isolation from production while maintaining compatibility with the unit test suite. Verified green via `tsc`, `lint`, the 4,898 vitest suite, and a production Next.js build.
 - **[Socratic.Trade][GROK4] Multi-wave expert-review implementation (claimed 2026-07-20) — IN PROGRESS.** PR #1847. Waves A/C partial + coach/lesson writers + **Wave D partial** (chat directives/URLs → learned_context). Prod bge-m3 re-embed running (sec-filings in progress after dry-run 2644 candidates).
 - **[Socratic.Trade][GROK4] Full multi-expert app review (claimed 2026-07-20) — DONE (read-only).** 12-specialist panel complete. Deliverable: `docs/reviews/2026-07-20-grok4-multi-expert-full-app-review.md`. Headline P0s: (1) budget skips as status=completed (2) Usage-Monitor enforce mis-keyed vs openrouter (3) incomplete bge-m3 re-embed (4) iOS SIWA/live-confirm/deletion broken (5) shorts no continuous cover stops (6) CF Access header / SSRF class (7) coach-note slice(-20)+missing lesson writers (8) api-circuit-breaker null byte in worktree. No code landed. Read-only panel: UI/UX, iOS, mobile/desktop web, LLM cost/OpenRouter, API budgets, alert storms/cross-app coordination, Hetzner/Coolify, RAG/embeddings, trading/broker/signals, ML learning loops, cascading data APIs. Deliverable: docs/reviews/2026-07-20-grok4-multi-expert-full-app-review.md. No code edits, no prod mutations. Worktree: code-socratictrade/grok.
@@ -611,6 +641,31 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[fleet/Hetzner][GROK] Multi-app fleet-watchdog + litestream 7d + runner EPHEMERAL (2026-07-21) — COMPLETED (ops on host; docs in ST rollout).** Not Mac-local. `fleet-watchdog.service` enabled on boot watches socratictrade.com (container restart only), congress.trade + usage.jays.services (alert only). Host reboot OFF (ALLOW_HOST_REBOOT=0); skips remediations during Coolify builds; old socratic-watchdog stays parked. Usage-Monitor PR #714 merged (snapshot retention 168h). All github-runners EPHEMERAL=true + restart always + daily disk-guard prune. Rollout: `docs/rollouts/2026-07-21-fleet-watchdog-disk-followups.md`.
+
+
+- **[Socratic.Trade][CLAUDE] Durable pre-network stop-placement intent + atomic idempotent
+  recovered fills — Codex findings 5/6 (branch `claude/stop-intent-idempotency`, head `761b524b`
+  = gate-verified merge of `8f6160bd` + main `b4dd8a54`) — LANDING 2026-07-18, lane 6 (final) of
+  a serial landing train.** Item 5: `reconcileBrokerProtectiveStops` writes a durable intent row
+  (new table `broker_stop_placement_intents`, migration **v53**, keyed by the submitted
+  client_order_id) BEFORE `placeEquityOrder`, deletes it on every definite outcome, and on a
+  lost reply adopts the already-accepted live order by clientOrderId instead of placing a
+  duplicate full-size stop (evidence rules: adopt on live match; clear only when a REAL order
+  list shows no match; skip the symbol when the list is unavailable). Item 6: all delete+book
+  recovered-stop-fill pairs (9 sites post-merge, incl. main's #1738 marker-lane pair) go through
+  one `deleteAndBookBrokerStopFill` transaction, plus migration **v54**'s partial UNIQUE index
+  scoped to `raw.brokerHeldProtectiveStop=1` proposal-less fills with idempotent-replay handling
+  in `insertFillEvent`. Adversarially verified with the filled-order fill-loss MUST-FIX applied +
+  regression-tested: a visible-but-TERMINAL intent order WITH executed quantity was previously
+  treated as dead (fill lost + stale-sized re-place/over-sell); now
+  `deleteIntentAndBookStopFill` books it atomically and placement defers to a fresh position
+  read; 8 suites / 250 tests green on the merged tree. Verifier advisories: intent table not yet
+  in account-deletion sweeps (rows self-clean, orphans inert — kept off #1738-touched
+  account-deletion.ts deliberately); `bookBrokerHeldStopFill` is side-agnostic-by-test but the
+  reconciler is long-only today. v53/v54 numbering re-verified at merge. Rollout:
+  `docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
+- **[Socratic.Trade][AG] BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`) — COMPLETED 2026-07-18; deployed to production via auto-deploy-on-merge.** Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `all: true` or `symbols: ["*"]` which resolves all tickers in the database and cleans their local RAG chunk cache rows in batches of 50. Created `scripts/reindex-all.ts` command-line reindexing tool. Fixed pre-existing unit test failures in `securities-import.test.ts` and `token-budget-ceiling.test.ts` (race conditions resolved using fake timers). Installed missing `@opentelemetry` packages to resolve Next.js webpack production build loading issues. Fully verified with typechecks, 100% green tests, and production build.
 - **[Socratic.Trade][CURSOR] LLM cooldown + draining-account purge safety (PR #1845, branch `cursor/critical-bug-management-2b05`) — IN PROGRESS → landing.** Code + rollout present; STATUS/EFFORT-LOG filled for handoff gate. Commit author identity: subsequent commits use noreply; squash-merge lands under PR merge identity.
 
 
@@ -4029,3 +4084,6 @@ brackets; effort S/M/L.
 | 2026-07-20 | Document Summarizer & Abstracts DB Migration | Completed | Added migration 55 for document_abstracts, db-document-abstracts CRUD, document-summarizer engine, and vitest unit tests | AG |
 
 | 2026-07-21 | GROK + CODEX | In Progress | ST multi-day PR stuck: preserve active verify runs; remove absent trading-live targets; keep observer reporting on socratic-deploy; stop smoke-on-PR; remove synthetic enrichment fallback; make bracket permission side-specific; stabilize focused tests | monet/ci-runner-and-queue-fixes |
+| 2026-07-22 | **Retired-provider Usage Monitor cleanup** — stop Socratic.Trade emissions for Tradier/Alpaca/Robinhood, remove dead Intrinio integration/config/current docs, preserve all broker runtime/trading/read/health behavior, and add a central suppression regression | CODEX | **In Progress** — isolated cleanup complete; Node 24 focused gate green (5 files / 209 tests), TypeScript + diff checks green; final central strict-v2 integration and ready PR wait for #1889 to merge | codex/retired-provider-usage-cleanup |
+| 2026-07-22 | ANTIGRAVITY | Completed | Fix Admin panel UI bugs (Go Back button, Server Metrics 0% fallbacks, RAG table DB noise filtering, API Connection mapping) | fix/admin-ui-polish |
+| 2026-07-23 | ANTIGRAVITY | Completed | Fix model canonicalization regexes and rotation/compliance test assertions | fix/gemini-reasoning-temp |

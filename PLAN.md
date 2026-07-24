@@ -1,5 +1,82 @@
 # Active Implementation Plan
 
+> **2026-07-23 - Unstick remaining open PRs (CURSOR).** Five open PRs (#1901/#1902/#1792/#1819/#1842)
+> refreshed onto current `main`, conflict-resolved where real, auto-merge armed. Effort board
+> corrected for already-merged rows (#1892 and related). Next: wait hosted verify → auto-merge;
+> then RAG enablement remains Planned (telemetry/eval before `RAG_CORPUS_WIDE_LEXICAL`).
+
+> **2026-07-22 — Retired-provider Usage Monitor cleanup (CODEX, branch
+> `codex/retired-provider-usage-cleanup`).** Keep Alpaca, Tradier, and Robinhood broker runtime
+> behavior and health logging intact, but remove their Usage Monitor emissions and the unused
+> balance-push helper. Suppress retired provider roots and subproviders centrally so Alpaca
+> news/snapshot cannot be reintroduced. Remove dead Intrinio implementation/config/current docs
+> while retaining historical evidence. After PR #1889 merges, adopt its strict-v2 direct-push
+> implementation, preserve partial-ACK/replay cutover semantics, run the Node 24 gate, and open a
+> ready review PR. Do not merge or deploy without owner instruction.
+> **2026-07-22 - RAG review remediation follow-up (CODEX).** PR #1892's latest review pass found
+> five correctness gaps. Keep local FTS recall active when paid rerank/hybrid budget degradation
+> trips; classify source-backed 8-K rows without a `sec_filings` join; include immutable occurrence
+> coordinates in chat evidence refs; require vector IDs or accession coordinates in golden selectors;
+> and allocate identical serialized evidence to one occurrence. Verify focused tests, TypeScript,
+> lint, then the full required gate before pushing the existing PR ref.
+
+> **2026-07-21 - RAG strategic-performance implementation (CODEX team).** Execute in ordered,
+> isolated PRs: (1) repair the managed-ingestion stale Voyage prerequisite and add a production-mode
+> OpenRouter regression; (2) add a production-path point-in-time financial retrieval evaluator; (3)
+> add a pure corpus-wide FTS5 candidate source; (4) integrate dense+lexical union before exactly one
+> rerank, using the new decoupled/default-off adaptive rerank policy and typed stage telemetry; (5)
+> align evidence manifests with exact prompt consumption and add declared-use evidence receipts;
+> (6) certify counts and evaluation gates before any legacy purge or model/infrastructure change.
+> Rerank policy + telemetry modules are locally green on `codex/rag-strategy-program-20260721`;
+> ingestion, evaluator, and lexical modules are active parallel lanes. Production re-embed remains
+> externally owned; CODEX will not launch competing corpus writes.
+> **2026-07-22 integration update:** Steps 1-6 are implemented on the current-main integration tree:
+> provider-aware managed ingestion, strict production-path/PIT evaluation, committed/current
+> tenant-safe corpus-wide FTS recall, one-pass dense+lexical fusion, independently routed/default-off
+> adaptive reranking, stage telemetry, exact consumption, structured/narrative routing, bounded parent
+> context, Pinecone hosted-inference comparison, and Turso/Assistant capability probes. Independent
+> review findings are remediated, and the final ordered local gate is green: lint (0 errors / 615
+> warnings), TypeScript, 434 files / 5,015 tests, and production build. Current-main Node 24 landing
+> verification passes TypeScript, 439 files / 5,027 tests, and production build; ready PR #1892 is
+> open. Remaining: required hosted checks, merge/auto-deploy receipt, and live exact-SHA verification.
+> Production activation stays off.
+> **2026-07-22 PR review update:** Centralize immutable id-less evidence identity so prompt
+> consumption and Socratic attribution use identical accession/section/ordinal/content/namespace/
+> tenant coordinates. Focused tests, TypeScript, scoped lint, and the final Node 24 ordered gate are
+> green (lint 0 errors / 613 warnings, TypeScript, 439 files / 5,028 tests, production build); push
+> the remediation to PR #1892 and resolve its review thread. Follow-up review now moves lexical
+> metadata predicates ahead of the bounded FTS cap, matches filing text only, and separates the
+> credentialed retrieval user from the generated isolated evaluation run id; rerun focused checks,
+> push, and resolve all three new review threads.
+> **2026-07-21 — Managed RAG ingestion authority repair (CODEX, branch `codex/rag-ingestion-gate-20260721`).**
+> Repair the stale `storeDocument` provider gate left by the Voyage SDK purge: require Pinecone
+> initialization plus the actual active embedding provider credential, while preserving the explicit
+> test-only Voyage path. Add a production-mode OpenRouter/Pinecone regression. This is a code-path
+> prerequisite only; no re-embed, purge, secret, or production operation is included.
+> **2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, branch `codex/rag-shadow-benchmarks-20260722`).** Land the default-off read-only harness only after focused test/lint/TypeScript checks. Do not add a libSQL runtime dependency or route production retrieval to Turso until an explicit shadow comparison has a configured remote target and measured recall/latency/cost receipt. Pinecone Assistant remains a pre-existing-assistant contextual-retrieval baseline; no file/corpus migration or production use follows from this work without evidence/PIT/tenant-erasure acceptance.
+> **Handoff 2026-07-22 — Robinhood cap resilience deployment.** The implementation is committed
+> (`9c208190`) and latest `origin/main` is merged (`e943e9b9`), but landing stopped in the full
+> Vitest gate because `better-sqlite3` was compiled under Node 26 while the required Node 24 runtime
+> loaded it. Rebuild dependencies under Node 24, rerun `scripts/land.sh`, then complete PR checks,
+> protected merge, Coolify SHA verification, and live Robinhood save/proposal verification. Full
+> command sequence: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
+
+> **2026-07-22 — Robinhood guardrail cap resilience (CODEX, branch
+> `codex/robinhood-cap-fix`).** Make policy saves independent of transient broker account-list
+> failures when account readiness is unchanged, while retaining verification for account selection
+> and autonomy activation. Resolve effective opening order/daily caps against current buying power
+> or NAV so oversized absolute settings cannot produce infeasible proposals; make percentage mode
+> the default for blank dual-mode settings while preserving explicit legacy dollar settings. Focused
+> regressions, lint, TypeScript, and production build are green. Full Vitest completion remains
+> pending because the repo config serializes the suite and the shared host was under concurrent load.
+> Next: land through the normal PR gate and verify the exact production SHA plus a Robinhood save.
+
+> **2026-07-22 — Usage telemetry v2 + shared-package pin-check combined landing (PR #1889).** The
+> reviewed #1890 workflow correction is subsumed into #1889 to avoid two serialized full CI cycles.
+> Keep auto-merge off until the combined final head passes hosted `gitleaks`, `check-pin`, required
+> `verify`, and zero-thread review. PRs #1890 and #1780 are closed as superseded; their branches are
+> retained. After #1889 merges, verify the exact Coolify release and one new authenticated strict-v2
+> ACK.
 > **2026-07-22 — Mobile auth exchange CSRF follow-up (CODEX, PR #1888).** Keep
 > `/api/mobile/auth/exchange` unauthenticated for the native client, but do not classify it as a
 > public-prefix early return: it must pass `checkSameOrigin` before the one-time code/verifier
@@ -34,6 +111,13 @@
 > on a machine with an installed
 > iOS runtime, notification/background-refresh work, and any richer Coach conversation
 > contract that requires a new server API.
+> **2026-07-22 - Usage telemetry v2 producer adoption (CODEX, branch
+> `codex/usage-telemetry-v2-20260721`).** Exact-pin shared `v2.0.0`, replace v1 wire fields with the
+> strict v2 batch/event contract, freeze and legacy-drain each existing replay watermark through a
+> high-water mark before strict-v2 cutover, preserve durable replay identity and old in-memory
+> buffer recovery, verify cold HTTPS install plus focused/full Node 24 gates, then land only after
+> the receiver's current Oracle revision has a committed exact-SHA receipt. After merge, require
+> Coolify exact-SHA health and an authenticated receiver ACK before closing.
 
 > **2026-07-20 - Corpus re-embed scoped-purge gate fix (CURSOR, branch
 > `cursor/critical-bug-management-0770`).** Critical-bug sweep found that a symbol-scoped
@@ -51,6 +135,14 @@
 > `clientOrderId`. Only gateways with `ordersListIncludesTerminal === true` may treat absence as
 > confirmed-dead and place fresh; Robinhood-style lists keep the intent and skip the symbol to avoid
 > duplicate sell stops. Focused and full gates passed; PR publication/hosted checks next.
+> **2026-07-22 - RAG parent-context expansion (CODEX, branch `codex/rag-parent-expansion-20260722`).**
+> Keep child chunks as the only dense/lexical/rerank candidates. Default-off
+> `RAG_PARENT_CONTEXT_EXPANSION` maps final survivors back to their bounded parent context only
+> after ranking, deduping sibling parents deterministically and preserving child id, score, metadata,
+> and strict point-in-time semantics. The local helper and retrieval wiring are focused-test/TS/lint
+> verified; tune only after the production-path evaluator shows an evidence gain within the global
+> prompt budget. Do not alter the external corpus/re-embed train for this work.
+> **2026-07-22 — RAG evidence-consumption receipt correction (CODEX evidence sublane).** Complete locally: strategy derives durable use only from the post-containment/post-budget prompt serialization; retrieved-but-not-consumed chunks remain diagnostic-only; stable refs propagate through strategy/chat without new raw query/prompt telemetry. Next: umbrella RAG lane reviews and lands this isolated commit after its current integration sequencing.
 
 > **2026-07-21 - CI Runner Migration (Antigravity, branch `agent/antigravity-ci-fix`).** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows (`.github/workflows/*.yml`) in Socratic.Trade. The Mac self-hosted runner environment was corrupted after Hetzner failure. Scheduled to land via `scripts/land.sh` to unblock 38 pending PRs.
 > **2026-07-21 - CI queue recovery (GROK + CODEX, branch `monet/ci-runner-and-queue-fixes`).** Remove all workflow targets for absent `trading-live`; keep PR code on the two Coolify `socratic-ci` runners and trusted CI-failure reporting on `socratic-deploy`; remove smoke from PR events; keep an active required verification alive while GitHub collapses superseded pending heads; and repair the six stale current-main test assertions that would otherwise fail the first durable run. Land this dependency first, verify its exact production SHA, then drain PRs serially in review/dependency order without runner-service restarts.
@@ -462,6 +554,12 @@ Added OpenRouter models to `app/ui/llm-model-catalog.ts` so they can be selected
 
 **Status: In progress; corpus writes gated**
 
+**2026-07-22 routing boundary:** strategy callers must declare information needs. Current
+prices, portfolio/positions, orders, SEC XBRL facts, and Form 4 transactions stay deterministic;
+only filing/transcript/lesson/research narrative is eligible for semantic retrieval. Unknown needs
+fail closed. Next integration is to make the same contract the shared entry point for chat and the
+evidence-consumption receipt, without changing the trading verdict path.
+
 - **[~] Wave A — prerequisite truth:** the versioned/checksummed universe acceptance contract and durable
   job/task state with leases, strict transitions, retries, dead-letter/quarantine, verification receipts, and
   replay invariants merged in PR #1543 after local/hosted gates. Corrected universe selection, census truth, and
@@ -471,12 +569,21 @@ Added OpenRouter models to `app/ui/llm-model-catalog.ts` so they can be selected
 - **[~] Wave B — source correctness:** discover recent plus historical submission shards and filing exhibits;
   archive immutable raw artifacts; enforce one aggregate SEC limiter; parse DOM/iXBRL sections, tables, units,
   contexts, and footnotes; chunk against provider token budgets.
-- **[ ] Wave C — structured and searchable evidence:** normalize XBRL, insider, ownership, offering, and event
+- **[~] Wave C — structured and searchable evidence:** normalize XBRL, insider, ownership, offering, and event
   facts; add a true corpus-wide lexical index; fuse dense/lexical recall, rerank wide, diversify, and return
-  typed evidence packets with strict point-in-time filtering.
+  typed evidence packets with strict point-in-time filtering. The read-only FTS5 source in
+  `src/lib/rag/corpus-wide-lexical.ts` is now wired default-off beside dense recall before one rerank,
+  with tenant, rights, committed-version, and stale-legacy guards.
 - **[ ] Wave D — evaluation and consumption:** build real-EDGAR parser/fact/retrieval/grounding fixtures and
   metrics; replace the generic three-chunk strategy blob with issuer-scoped scout/deep dossiers and verified
   evidence references.
+  - **[~] Production-path retrieval evaluator (2026-07-21):** `eval:rag-production` calls
+    `retrieveContextDetailedWithStatus` with immutable authoritative-as-of timestamps, real vector-id
+    diagnostics plus stable provenance relevance selectors, machine-readable relevance/PIT/coverage/latency/usage receipts, and explicit comparison labels.
+    Curate version-controlled JSON cases from frozen EDGAR evidence and run controlled shadow comparisons before changing defaults.
+  - **[~] Hosted-inference candidate (2026-07-21):** benchmark Pinecone `/embed` and `/rerank` directly
+    against frozen candidate pools before assuming self-hosted or routed BGE/Cohere is best. This is bounded
+    by absolute CLI caps, read-only, account-availability-gated, and it never touches the production index.
 - **[ ] Wave E — controlled operations:** only after gates, run shadow 10 -> 25 -> 100 -> 300 -> 1,000 breadth-
   first waves with cost/rate/failure breakers, reconciliation, dual-read/write, rollback, and freshness SLOs.
 

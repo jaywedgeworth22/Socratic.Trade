@@ -14,7 +14,7 @@ and prod `api_health_log` evidence the same day.
 **Scope, extended 2026-07-10:** the table directly below covers the seven core
 quote/fundamentals/history vendors. Everything past the "Upgrade cheat-sheet"
 table covers every OTHER external data source the app touches: secondary keyed
-fallbacks with real paid tiers (marketstack, tradier, intrinio, logo.dev, fintech
+fallbacks with real paid tiers (marketstack, tradier, logo.dev, fintech
 studios, FRED), keyless/broker-bundled sources (yahoo, the nasdaq screener,
 webull, SEC, alpaca, robinhood, stooq), the owner's own sibling app
 (congress.trade), usage-billed LLM/RAG spend (pointer to API-Usage-Monitor, not
@@ -113,14 +113,13 @@ credential reserves against one transactional authority.
 has entries for exactly four providers — `finnhub`, `alpha-vantage`,
 `yahoo-finance`, `twelvedata`. FMP is quota'd (not paced): it sits in
 `RATE_QUOTAS` at 290/min (see the FMP row below), not in `HARD_DEFAULTS`.
-**marketstack, tradier, intrinio, fred,
-fintechstudios, and logodev have NO hard-coded pacing/concurrency default.**
-Nothing throttles these six today besides the generic `fetchWithRetry` 429
+**marketstack, tradier, fred, fintechstudios, and logodev have NO hard-coded
+pacing/concurrency default.** Nothing throttles these five today besides the generic `fetchWithRetry` 429
 backoff. `resolveProviderLimiterConfig` still lets an operator set one ad hoc
 via the generic `PROVIDER_RATE_LIMIT_<NAME>_{PER_MIN,MIN_INTERVAL_MS,CONCURRENCY}`
 env vars (it falls through to env even with no hard default) — but that's an
 unused escape hatch, not a documented knob. Don't describe a pacing behavior for
-these six that isn't there; if one starts 429ing in prod, wiring a
+these five that isn't there; if one starts 429ing in prod, wiring a
 `HARD_DEFAULTS` entry (or at minimum setting the env override) is the fix, not
 something already handled.
 
@@ -133,7 +132,7 @@ something already handled.
 | Twelve Data Grow | `PROVIDER_QUOTA_TWELVEDATA_PER_MIN=377`, remove/raise `_PER_DAY` |
 | Massive → free downgrade (don't) | `MASSIVE_REST_MAX_CALLS_PER_MINUTE=5` |
 | Alpaca SIP feed | `ALPACA_DATA_FEED=sip` |
-| marketstack / tradier / intrinio / fred / fintechstudios / logodev upgrade | No knob exists yet — set `PROVIDER_RATE_LIMIT_<NAME>_PER_MIN` by hand if 429s show up (see gap note above) |
+| marketstack / tradier / fred / fintechstudios / logodev upgrade | No knob exists yet — set `PROVIDER_RATE_LIMIT_<NAME>_PER_MIN` by hand if 429s show up (see gap note above) |
 
 ## Secondary / fallback sources — keyed, integrated, lower stakes
 
@@ -147,7 +146,6 @@ of raw HTML, not just AI-summarized) plus this repo's own source.
 |---|---|---|---|---|---|
 | **Marketstack** (`MARKETSTACK_API_KEY`) | 3rd (last) keyed daily-OHLC history fallback, after Massive and Tradier — `src/lib/history.ts:22,64-65,98-99,232-237` | 100 req/mo, EOD only, 1yr history, HTTPS included (see trap #7 below) | **Basic $9.99/mo** | **$8.99/mo billed yearly** (~10% off) | 10,000 req/mo, IEX intraday data, 10yr history. Professional ($49.99/mo, $43.99/mo annual) adds sub-15-min real-time + commodities; Business ($149.99/mo, $127.99/mo annual) adds financial statements/ratios + 15yr+ history |
 | **Tradier** (connected broker account, Settings -> Accounts — NOT a separate API key as of 2026-07-16) | 2nd keyed daily-OHLC history source — code comment at `history.ts` calls it "brokerage-grade, generous rate limits. Best primary source"; credential now resolved from the connected Tradier broker account via `resolveTradierHistoryCredential`/`getActiveConnectedAccountByBroker`, not a stored key | No separate market-data pricing exists — data access is bundled with ANY brokerage account signup, including the **$0/mo Lite** trading plan | n/a — nothing to buy for data alone | n/a | Real-time equities/options/indices/hourly-Greeks — but ONLY on a **production** token from a real (even $0/mo) brokerage account. A **sandbox** token gets 15-min-delayed equities/options, no indices, no Greeks at all |
-| **Intrinio** (`INTRINIO_API_KEY`) | Fundamentals/sector/industry enrichment — `src/lib/data-providers.ts:732,766,2917-3038`, `costTier: "paid"` | **14-day free trial only** — code comment at `data-providers.ts:2920` ("14-day trial covers prices/realtime, companies, and data_point endpoints"), then paid | **Individual $150/mo** (self-serve) | Startup tier is quarterly-phased, not annual: $333/mo → $666/mo → $999/mo over 12 months (self-serve) | EquitiesEdge/OptionsEdge real-time FMV pricing, US Fundamentals (15yr+ SEC-sourced statements, bundled at every tier, not an add-on), tick-level data. Individual has no redistribution/display rights — Startup adds those |
 | **Logo.dev** (`LOGO_DEV_TOKEN`, `LOGO_DEV_SECRET_KEY`) | Ticker/company logo images — `src/lib/ticker-logos.ts:37-70`, `app/api/logos/ticker/route.ts` | **500,000 req/mo free** (Community), commercial use requires a visible link-back; free-tier cap is a **hard stop** — requests fail once exceeded | **Startup $280/yr** (~$23.33/mo effective; no separate monthly price was found on the live page — may be a JS-toggle we didn't render) | Annual-only pricing as fetched | 1,000,000 req/mo, no attribution requirement. Pro ($1,260/yr) adds the Brand API + self-hosting/caching + priority support; unlike free, paid tiers are **soft-enforced** (service keeps running over cap; Logo.dev reaches out about upgrading rather than cutting access) |
 | **Fintech Studios / PowerIntell** (`FINTECH_STUDIOS_API_KEY`, alias `powerintell`) | Enrichment cascade provider — `src/lib/data-providers.ts:768,2810-2828`, `costTier: "paid"`, base `studio.fintechstudios.com/api/v1` | Free plan exists ($0/mo) on the marketing site | **Ambiguous — see trap #10 below.** Self-serve Pro tiers ($20/mo–$120/mo, 2.5K–15K credits, ~20% off annual) are published, but for the consumer **PowerIntell** app, not confirmed as the same product as the `studio.fintechstudios.com/api/v1` endpoint this app actually calls | Pro tier has an annual ~20% discount | Unclear for our integration — the endpoint we call looks institutional; Enterprise (the tier that would plausibly cover bulk API/data-feed access) is contact-sales-only, no published price |
 | **FRED** (`FRED_API_KEY`) | Macro/econ series (rates, CPI, unemployment) driving the Macro tab + market-regime signal — `src/lib/macro.ts`, `src/lib/macro-history.ts` | **Completely free** — sign up at fred.stlouisfed.org for a key, no plan tiers exist at all | n/a — no paid tier exists | n/a | n/a. Fed's own docs state a 429 rate-limit exists but do **not** publish the exact number (see traps #11-12) — the commonly-cited "120 req/min" is third-party, not FRED's own documentation |
@@ -156,8 +154,7 @@ Sources: marketstack.com/pricing + marketstack.com/faq (fetched 2026-07-10, raw
 HTML), tradier.com/individuals/pricing + docs.tradier.com/docs/market-data +
 docs.tradier.com/docs/rate-limiting (fetched 2026-07-10 — rate-limiting page
 gives exact per-minute numbers: standard/market-data endpoints 120/min
-production vs 60/min sandbox, trading endpoints 60/min both), intrinio.com/pricing
-(fetched 2026-07-10), logo.dev/pricing + logo.dev/docs/platform/rate-limits
+production vs 60/min sandbox, trading endpoints 60/min both), logo.dev/pricing + logo.dev/docs/platform/rate-limits
 (fetched 2026-07-10), fintechstudios.com/pricing (fetched 2026-07-10),
 fred.stlouisfed.org/docs/api/api_key.html + /fred/errors.html +
 /terms_of_use.html (fetched 2026-07-10 via curl --http1.1 — WebFetch 403'd this
@@ -181,25 +178,20 @@ also fails here, it's the host, not the tool).
    account's own `environment` (Settings -> Accounts), not a separate stored
    key — if that connected account is `paper` (sandbox), every Tradier-sourced
    history bar in the cascade is 15-min-delayed, not live.
-9. **Intrinio's gate is time-boxed, not tier-boxed.** The 14-day trial
-   (`data-providers.ts:2920`) means a previously-working key can start failing
-   with nothing about the key itself having changed. A sudden Intrinio cascade
-   drop should be checked against the trial start date before assuming an
-   outage.
-10. **Fintech Studios pricing is genuinely ambiguous for our integration** — the
+9. **Fintech Studios pricing is genuinely ambiguous for our integration** — the
     published self-serve numbers ($20–$120/mo) are for the consumer PowerIntell
     app; this app's `FintechStudiosEnrichmentProvider` hits
     `studio.fintechstudios.com/api/v1`, which reads as a separate,
     institutional-looking surface with no published price (Enterprise/contact-sales
     territory). Don't assume the Pro consumer tier buys access to the endpoint
     this app actually calls without confirming with the vendor directly.
-11. **FRED's own docs never publish a numeric rate limit** — only that exceeding
+10. **FRED's own docs never publish a numeric rate limit** — only that exceeding
     it returns `429 Too Many Requests` and that FRED wants distinct API keys per
     application ("Developers should request a distinct API key for each
     application they build"). The "~120 req/min" figure that circulates
     (including in third-party summaries) is not sourced to FRED's own docs;
     treat it as a working assumption, not a documented ceiling.
-12. **`fred.stlouisfed.org` blocks naive fetchers.** Every FRED docs URL
+11. **`fred.stlouisfed.org` blocks naive fetchers.** Every FRED docs URL
     returned HTTP 403 to a standard WebFetch and to plain `curl` — it only
     succeeded once forced to `--http1.1`. If FRED facts ever need re-verifying,
     expect this friction again; it's the host, not a broken link.

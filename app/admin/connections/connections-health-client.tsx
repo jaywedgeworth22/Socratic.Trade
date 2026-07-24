@@ -95,7 +95,7 @@ function ServiceCard({
         <div className="flex min-w-0 items-center gap-2">
           <Dot tone={tone} pulse={summary.stoppedWorking} />
           <span className="truncate text-[length:var(--con-fs-sm)] font-medium">
-            {summary.service}
+            {summary.service === "congress.trade" ? "Congress.Trade (Public API)" : summary.service}
             {summary.keySource && (
               <span className="ml-1 text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-muted)]">({summary.keySource})</span>
             )}
@@ -158,7 +158,7 @@ function ServiceDetail({
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <h3 className="text-[length:var(--con-fs-sm)] font-semibold">
-          {summary.service}
+          {summary.service === "congress.trade" ? "Congress.Trade (Public API)" : summary.service}
           {summary.keySource && (
             <span className="ml-1.5 text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-muted)]">({summary.keySource})</span>
           )}

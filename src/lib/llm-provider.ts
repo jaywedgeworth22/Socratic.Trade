@@ -2,10 +2,10 @@ import { resolveLlmCredential } from "./db";
 import { resolveOpenAiModel, type LlmTransport } from "./llm-request";
 
 export type LlmTeamRole = "green" | "red" | "support";
-export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter";
+export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter";
 
 export interface LlmEndpoint {
-  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter";
+  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter";
   url: string;
   key?: string;
   model: string;
@@ -28,6 +28,7 @@ export function llmModelFamily(model: string | undefined): LlmModelFamily {
   if (/gemini/i.test(normalized)) return "gemini";
   if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(normalized)) return "mistral";
   if (/deepseek/i.test(normalized)) return "deepseek";
+  if (/llama/i.test(normalized)) return "meta";
   return "openai";
 }
 
@@ -72,55 +73,201 @@ function resolveRoleModel(
  * Messages-API body/headers and forced-tool JSON output. The user selects a provider simply by
  * choosing one of its models — for both the Green (proposal) and Red (review) teams.
  */
+/**
+ * Maps a catalog model ID to the native provider's supported model slug for direct API calls.
+ */
+export function nativeModelSlugForProvider(model: string, family: LlmModelFamily): string {
+  let m = model.trim();
+  if (m.includes("/")) {
+    m = m.split("/").pop() || m;
+  }
+  const lower = m.toLowerCase();
+
+  switch (family) {
+    case "anthropic":
+      if (/haiku/i.test(lower)) return "claude-haiku-4.5";
+      if (/opus/i.test(lower)) return "claude-opus-4.8";
+      if (/fable/i.test(lower)) return "claude-fable-5";
+      return "claude-sonnet-5";
+
+    case "xai":
+      if (/build/i.test(lower)) return "grok-build-0.1";
+      return "grok-4.5";
+
+    case "gemini":
+      if (/flash.*lite/i.test(lower)) return "gemini-flash-lite-latest";
+      if (/pro/i.test(lower)) return "gemini-3.1-pro";
+      return "gemini-3.6-flash";
+
+    case "deepseek":
+      if (/r1|reasoner/i.test(lower)) return "deepseek-reasoner";
+      if (/pro/i.test(lower)) return "deepseek-v4-pro";
+      return "deepseek-v4-flash";
+
+    case "mistral":
+      if (/medium/i.test(lower)) return "mistral-medium-3.5";
+      return "mistral-small-2603";
+
+    case "meta":
+      return "llama-3.3-70b-instruct";
+
+    case "openai":
+    default:
+      if (/sol/i.test(lower)) return "gpt-5.6-sol";
+      if (/terra/i.test(lower)) return "gpt-5.6-terra";
+      if (/luna/i.test(lower)) return "gpt-5.6-luna";
+      if (/mini/i.test(lower)) return "gpt-5.4-mini";
+      if (/nano/i.test(lower)) return "gpt-5.4-nano";
+      return "gpt-4o";
+  }
+}
+
+/**
+ * Endpoint resolution:
+ * 1. Checks for a user-provided OpenRouter key. If present, routes via OpenRouter.
+ * 2. If no OpenRouter key, checks for a user-provided direct provider key for the model's family and routes natively.
+ * 3. If no user key is present, returns an endpoint with undefined key (fails closed).
+ */
 export function resolveLlmEndpoint(
   policy?: { llmModel?: string | null; redTeamLlmModel?: string | null } | null,
   userId: string = "local",
-  // Preserved for signature compatibility, though OpenRouter always uses chat-completions.
-  defaultOpenAiUrl: string = "https://api.openai.com/v1/responses",
+  defaultOpenAiUrl: string = "https://api.openai.com/v1/chat/completions",
   role: LlmTeamRole = "green"
 ): LlmEndpoint {
   const rawModel = resolveRoleModel(policy, role);
-  let model = rawModel;
+  const family = llmModelFamily(rawModel);
 
-  // Prefix raw model names with the appropriate OpenRouter provider ID if they don't already have one.
-  if (!model.includes("/")) {
-    if (/^claude/i.test(model)) {
-      model = `anthropic/${model}`;
-    } else if (/^grok/i.test(model)) {
-      // OpenRouter's Grok namespace is `x-ai/`, not `xai/` — the latter is an invalid model id
-      // OpenRouter rejects (Codex finding on PR #1703).
-      model = `x-ai/${model}`;
-    } else if (/^gemini/i.test(model)) {
-      model = `google/${model}`;
-    } else if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
-      model = `mistralai/${model}`;
-    } else if (/^deepseek/i.test(model)) {
-      model = `deepseek/${model}`;
-    } else if (/^(gpt|o1|o3)/i.test(model)) {
-      model = `openai/${model}`;
+  // 1. Primary path: OpenRouter key (user or operator failover when enabled)
+  const openRouterCred = resolveLlmCredential("openrouter", userId);
+  if (openRouterCred.key) {
+    let model = rawModel;
+    if (!model.includes("/")) {
+      if (/^claude-sonnet-latest$/i.test(model)) {
+        model = "~anthropic/claude-sonnet-latest";
+      } else if (/^claude-haiku-latest$/i.test(model)) {
+        model = "~anthropic/claude-haiku-latest";
+      } else if (/^claude-opus-latest$/i.test(model)) {
+        model = "~anthropic/claude-opus-latest";
+      } else if (/^claude-fable-latest$/i.test(model)) {
+        model = "~anthropic/claude-fable-latest";
+      } else if (/^claude/i.test(model)) {
+        model = `anthropic/${model}`;
+      } else if (/^grok-build-latest$/i.test(model)) {
+        model = "x-ai/grok-build-0.1";
+      } else if (/^grok-latest$/i.test(model)) {
+        model = "~x-ai/grok-latest";
+      } else if (/^grok/i.test(model)) {
+        model = `x-ai/${model}`;
+      } else if (/^gemini-flash-latest$/i.test(model)) {
+        model = "~google/gemini-flash-latest";
+      } else if (/^gemini-flash-lite-latest$/i.test(model) || /^gemini-3.5-flash-lite$/i.test(model)) {
+        model = "google/gemini-3.5-flash-lite";
+      } else if (/^gemini-pro-latest$/i.test(model)) {
+        model = "~google/gemini-pro-latest";
+      } else if (/^gemini/i.test(model)) {
+        model = `google/${model}`;
+      } else if (/^gpt-sol-latest$/i.test(model) || /^gpt-terra-latest$/i.test(model) || /^gpt-4o-latest$/i.test(model)) {
+        model = "~openai/gpt-latest";
+      } else if (/^gpt-luna-latest$/i.test(model) || /^gpt-mini-latest$/i.test(model) || /^gpt-nano-latest$/i.test(model)) {
+        model = "~openai/gpt-mini-latest";
+      } else if (/^mistral-medium-latest$/i.test(model)) {
+        model = "mistralai/mistral-medium-3.5";
+      } else if (/^mistral-small-latest$/i.test(model)) {
+        model = "mistralai/mistral-small-2603";
+      } else if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
+        model = `mistralai/${model}`;
+      } else if (/^deepseek-flash-latest$/i.test(model)) {
+        model = "deepseek/deepseek-v4-flash";
+      } else if (/^deepseek-pro-latest$/i.test(model)) {
+        model = "deepseek/deepseek-v4-pro";
+      } else if (/^deepseek-r1-latest$/i.test(model)) {
+        model = "deepseek/deepseek-r1";
+      } else if (/^deepseek/i.test(model)) {
+        model = `deepseek/${model}`;
+      } else if (/^llama/i.test(model)) {
+        model = "meta-llama/llama-3.3-70b-instruct";
+      } else if (/^(gpt|o1|o3)/i.test(model)) {
+        model = `openai/${model}`;
+      }
     }
+    model = model.replace(/^openrouter\//i, "").replace(/^xai\//i, "x-ai/");
+    const url = process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
+
+    return {
+      provider: "openrouter",
+      url,
+      key: openRouterCred.key,
+      model,
+      keySource: openRouterCred.source === "operator" ? "operator" : "user",
+      keyRef: openRouterCred.keyRef,
+      transport: "chat-completions"
+    };
   }
 
-  // Strip a legacy openrouter/ prefix that may have been saved in older policy selections
-  // (e.g. "openrouter/google/gemini-2.5-flash" → "google/gemini-2.5-flash").
-  model = model.replace(/^openrouter\//i, "");
+  // 2. Direct provider path: check user-provided key for model's native family
+  const nativeCred = resolveLlmCredential(family, userId);
+  const nativeModel = nativeModelSlugForProvider(rawModel, family);
 
-  // Normalize the legacy `xai/` Grok slug to OpenRouter's `x-ai/` even when the id was ALREADY
-  // namespaced (e.g. a saved `xai/grok-4.3` policy value, or a test fixture). The bare-`grok`
-  // mapping above only fires for un-namespaced ids, so an already-`xai/`-qualified id would
-  // otherwise reach OpenRouter unchanged and hit an invalid-model failure (Codex finding, PR #1703).
-  model = model.replace(/^xai\//i, "x-ai/");
+  if (family === "anthropic") {
+    return {
+      provider: "anthropic",
+      url: "https://api.anthropic.com/v1/messages",
+      key: nativeCred.key,
+      model: nativeModel,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
+      keyRef: nativeCred.keyRef,
+      transport: "anthropic-messages"
+    };
+  } else if (family === "xai") {
+    return {
+      provider: "xai",
+      url: process.env.XAI_API_URL?.trim() || "https://api.x.ai/v1/chat/completions",
+      key: nativeCred.key,
+      model: nativeModel,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
+      keyRef: nativeCred.keyRef,
+      transport: "chat-completions"
+    };
+  } else if (family === "gemini") {
+    return {
+      provider: "gemini",
+      url: process.env.GEMINI_API_URL?.trim() || "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      key: nativeCred.key,
+      model: nativeModel,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
+      keyRef: nativeCred.keyRef,
+      transport: "chat-completions"
+    };
+  } else if (family === "mistral") {
+    return {
+      provider: "mistral",
+      url: process.env.MISTRAL_API_URL?.trim() || "https://api.mistral.ai/v1/chat/completions",
+      key: nativeCred.key,
+      model: nativeModel,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
+      keyRef: nativeCred.keyRef,
+      transport: "chat-completions"
+    };
+  } else if (family === "deepseek") {
+    return {
+      provider: "deepseek",
+      url: process.env.DEEPSEEK_API_URL?.trim() || "https://api.deepseek.com/v1/chat/completions",
+      key: nativeCred.key,
+      model: nativeModel,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
+      keyRef: nativeCred.keyRef,
+      transport: "chat-completions"
+    };
+  }
 
-  const url = process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
-  const cred = resolveLlmCredential(modelCredentialService(rawModel), userId);
-
+  // OpenAI / fallback
   return {
-    provider: "openrouter",
-    url,
-    key: cred.key,
-    model, // The fully qualified model ID sent to OpenRouter
-    keySource: cred.source === "operator" ? "operator" : "user",
-    keyRef: cred.keyRef,
+    provider: "openai",
+    url: process.env.OPENAI_API_URL?.trim() || defaultOpenAiUrl,
+    key: nativeCred.key,
+    model: nativeModel,
+    keySource: nativeCred.source === "operator" ? "operator" : "user",
+    keyRef: nativeCred.keyRef,
     transport: "chat-completions"
   };
 }
