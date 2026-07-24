@@ -96,11 +96,12 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   // Anthropic
   "claude-haiku-latest": "Claude Haiku Latest",
   "claude-sonnet-latest": "Claude Sonnet Latest",
-  "claude-opus-latest": "Claude Opus Latest",
+  "claude-opus-latest": "Claude Opus Latest (5)",
   "claude-fable-latest": "Claude Fable Latest",
   "claude-haiku-4-5": "Claude Haiku 4.5",
   "claude-sonnet-5": "Claude Sonnet 5",
   "claude-sonnet-4-6": "Claude Sonnet 4.6",
+  "claude-opus-5": "Claude Opus 5",
   "claude-opus-4-8": "Claude Opus 4.8",
   "claude-fable-5": "Claude Fable 5",
   // xAI

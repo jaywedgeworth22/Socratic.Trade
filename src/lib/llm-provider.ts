@@ -78,7 +78,7 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
   switch (family) {
     case "anthropic":
       if (/haiku/i.test(lower)) return "claude-haiku-4.5";
-      if (/opus/i.test(lower)) return "claude-opus-4.8";
+      if (/opus/i.test(lower)) return "claude-opus-5";
       if (/fable/i.test(lower)) return "claude-fable-5";
       return "claude-sonnet-5";
 

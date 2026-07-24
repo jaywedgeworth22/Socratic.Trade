@@ -59,7 +59,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     options: [
       { value: "claude-haiku-latest", label: "claude-haiku-latest - fast low-cost Claude", tier: "$", recommendedGreen: true },
       { value: "claude-sonnet-latest", label: "claude-sonnet-latest - balanced Claude analysis", tier: "$$", recommendedRed: true },
-      { value: "claude-opus-latest", label: "claude-opus-latest - premium Claude reasoning", tier: "$$$" },
+      { value: "claude-opus-latest", label: "claude-opus-latest (5) - premium Claude reasoning", tier: "$$$" },
       { value: "claude-fable-latest", label: "claude-fable-latest - most capable Claude", tier: "$$$" }
     ]
   },
