@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-24 — Cross-account market scan seed enrichment sharing (ANTIGRAVITY)
+
+Fixed interactive market scans (`/api/scan`) and dashboard snapshots (`dashboard.ts`) strictly scoping `seedEnrichment` to the active account's previous `strategy_run` audit. Merged global user strategy run quote summaries with account-specific runs so enriched fundamental data (P/E, EPS Growth, Dividend, Sentiment, Analyst Rating, Sector) is immediately shared across all user accounts. Rollout: `docs/rollouts/2026-07-24-cross-account-market-scan-sharing.md`.
+
 ## 2026-07-24 — Data Sources User Keys Migration & UI Connection Fields (ANTIGRAVITY)
 
 - Configured Tiingo (`tiingo`), Twelve Data (`twelvedata`), Fintech Studios (`fintechstudios`), and Apify (`apify`) as `per-user-only` credentials.

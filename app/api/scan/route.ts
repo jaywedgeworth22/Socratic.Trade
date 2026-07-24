@@ -32,10 +32,15 @@ export async function GET(request: Request) {
     const limited = enforceRateLimit(userId, "scan", RATE_LIMITS.scan);
     if (limited) return limited;
     const policy = getPolicy(userId);
-    const latestRunAudit = policy.connectedAccountId
+    const latestAccountAudit = policy.connectedAccountId
       ? latestAuditByKind("strategy_run", userId, policy.connectedAccountId)
-      : latestAuditByKind("strategy_run", userId);
-    const seedEnrichment = marketScanQuotesFromAudit(latestRunAudit?.payload, latestRunAudit?.createdAt);
+      : undefined;
+    const latestGlobalAudit = latestAuditByKind("strategy_run", userId);
+    const accountSeed = marketScanQuotesFromAudit(latestAccountAudit?.payload, latestAccountAudit?.createdAt);
+    const globalSeed = marketScanQuotesFromAudit(latestGlobalAudit?.payload, latestGlobalAudit?.createdAt);
+    const seedEnrichment = (accountSeed || globalSeed)
+      ? { ...globalSeed, ...accountSeed }
+      : undefined;
     const symbols = allowedSymbolsForPolicy(policy);
     const gateway = getBrokerGateway(policy, userId);
     let positions: EquityPosition[] = [];
@@ -58,7 +63,7 @@ export async function GET(request: Request) {
       candidateLimit: policy.marketScanCandidateLimit,
       outlierReserve: policy.marketScanOutlierReserve,
       dynamicUniverses,
-      latestRunAuditId: latestRunAudit?.id,
+      latestRunAuditId: latestAccountAudit?.id ?? latestGlobalAudit?.id,
       scoringWeights: policy.scoringWeights,
       universeFloor: policy.universeFloor,
       positions
