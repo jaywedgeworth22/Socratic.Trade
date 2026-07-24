@@ -10,7 +10,7 @@
 
 import type { ReactNode } from "react";
 import type { MarketQuote, EnrichmentSources } from "@/lib/types";
-import { friendlySource, ratingTitle, receivedLabel, sentimentTitle } from "@/lib/dashboard-ui";
+import { friendlySource, insiderSentimentTitle, ratingTitle, receivedLabel, sentimentTitle } from "@/lib/dashboard-ui";
 import { fmtMoney, fmtPct } from "../lib/format";
 import { Chip, Dash, SignedText } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
@@ -248,15 +248,21 @@ export const SCAN_COLUMNS: ScanColumn[] = [
   },
   {
     id: "sentiment",
-    label: "Sentiment",
-    headerTitle: "News sentiment 0–100 (50 = neutral), scored from recent headlines. Hover a cell for the headlines behind the number.",
+    label: "News",
+    headerTitle: "News sentiment score 0–100 (50 = neutral), scored from recent headlines. Hover a cell for the headlines behind the number.",
     align: "center",
-    sortValue: (q) => q.sentiment ?? q.insiderSentiment,
-    render: (q) => {
-      const val = q.sentiment ?? q.insiderSentiment;
-      return typeof val === "number" ? <SentimentChip value={val} /> : <Dash />;
-    },
+    sortValue: (q) => q.sentiment,
+    render: (q) => (typeof q.sentiment === "number" ? <SentimentChip value={q.sentiment} /> : <Dash />),
     cellTitle: (q) => sentimentTitle(q)
+  },
+  {
+    id: "insiderSentiment",
+    label: "Insiders",
+    headerTitle: "Insider sentiment score 0–100 (50 = neutral), derived from SEC Form 4 insider transaction disclosures. Hover a cell for details.",
+    align: "center",
+    sortValue: (q) => q.insiderSentiment,
+    render: (q) => (typeof q.insiderSentiment === "number" ? <SentimentChip value={q.insiderSentiment} /> : <Dash />),
+    cellTitle: (q) => insiderSentimentTitle(q)
   },
   {
     id: "analystScore",

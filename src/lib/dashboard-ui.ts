@@ -250,17 +250,21 @@ export function ratingTitle(candidate: MarketQuote): string {
 
 export function sentimentTitle(candidate: MarketQuote): string {
   const src = candidate.sources ?? {};
-  const val = candidate.sentiment ?? candidate.insiderSentiment;
-  if (typeof val === "number") {
-    const isNews = typeof candidate.sentiment === "number";
-    const label = isNews ? "News-tone" : "Insider sentiment";
-    const sourceKey = isNews ? src.sentiment : src.insiderSentiment;
+  if (typeof candidate.sentiment === "number") {
     const headlineText = candidate.headlines?.length
       ? `\n\nRecent Headlines:\n${candidate.headlines.map((headline) => `• ${headline}`).join("\n")}`
       : "";
-    return cellTitle(`${label} ${val}/100${headlineText}`, sourceKey);
+    return cellTitle(`News sentiment score ${candidate.sentiment}/100${headlineText}`, src.sentiment);
   }
-  return "No recent news or sentiment data recorded";
+  return "No recent news sentiment score recorded";
+}
+
+export function insiderSentimentTitle(candidate: MarketQuote): string {
+  const src = candidate.sources ?? {};
+  if (typeof candidate.insiderSentiment === "number") {
+    return cellTitle(`Insider sentiment score ${candidate.insiderSentiment}/100`, src.insiderSentiment ?? "sec-edgar");
+  }
+  return "No recent insider sentiment score recorded";
 }
 
 export function scanQuoteAsOf(candidates: MarketQuote[]): string | undefined {
