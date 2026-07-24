@@ -11,6 +11,7 @@ import type { TickerLogoDisplay } from "@/lib/ticker-logos";
 import { normalizeTickerLogoSymbol } from "@/lib/ticker-logos";
 import { cx } from "../lib/format";
 import { Tooltip } from "./primitives";
+import { useTickerLogoDisplay } from "../lib/useTickerLogoDisplay";
 
 export type { TickerLogoDisplay };
 
@@ -62,7 +63,7 @@ function monogram(symbol: string): string {
 
 export function TickerLogo({
   symbol,
-  display = "tile",
+  display: explicitDisplay,
   size = "sm",
   className,
   title,
@@ -78,6 +79,8 @@ export function TickerLogo({
   title?: string;
   fallback?: ReactNode;
 }) {
+  const { tickerLogoDisplay: storedDisplay } = useTickerLogoDisplay();
+  const display = explicitDisplay ?? storedDisplay;
   const normalized = useMemo(() => normalizeTickerLogoSymbol(symbol), [symbol]);
   const [failed, setFailed] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);

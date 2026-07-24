@@ -165,6 +165,15 @@ const API_KEY_CATALOG = [
     required: false,
     unlocks: "Custom web scrapers, social intelligence, and automated market research actors.",
     docsUrl: "https://console.apify.com/account/integrations"
+  },
+  {
+    service: "logodev",
+    label: "Logo.dev",
+    category: "Logos",
+    required: false,
+    credentialName: "publishable token",
+    unlocks: "High-resolution company and ticker logos across all market assets.",
+    docsUrl: "https://logo.dev"
   }
 ] as const;
 

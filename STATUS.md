@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-24 — Ticker Logo Display Settings & User Avatar Layout Constraints (ANTIGRAVITY)
+
+- Re-added **Ticker Logo Display** preference picker card to **Settings → Appearance** (`THIS BROWSER` local display preferences) with options: `Transparent`, `Tile Badge`, and `Monograms Only`.
+- Created persistent client hook `useTickerLogoDisplay` and updated `TickerLogo` component to fall back to stored user preference when `display` prop is omitted.
+- Constrained `<Avatar>` img tag and `<UserMenu>` trigger button in `chrome.tsx` with strict `max-h`/`max-w` and `aspect-square shrink-0` bounds to prevent high-res profile photos from expanding and distorting the top header.
+- Added `logodev` to `API_KEY_CATALOG` in `app/api/keys/route.ts` for custom Logo.dev token setup in **Connections → API keys**.
+- Rollout: `docs/rollouts/2026-07-24-ticker-logo-settings-and-avatar-layout-fix.md`.
+
 ## 2026-07-24 — Cross-account market scan seed enrichment sharing (ANTIGRAVITY)
 
 Fixed interactive market scans (`/api/scan`) and dashboard snapshots (`dashboard.ts`) strictly scoping `seedEnrichment` to the active account's previous `strategy_run` audit. Merged global user strategy run quote summaries with account-specific runs so enriched fundamental data (P/E, EPS Growth, Dividend, Sentiment, Analyst Rating, Sector) is immediately shared across all user accounts. Rollout: `docs/rollouts/2026-07-24-cross-account-market-scan-sharing.md`.

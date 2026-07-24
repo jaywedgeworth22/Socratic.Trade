@@ -26,6 +26,8 @@ import { useAutoSave } from "../lib/useAutoSave";
 import { useConsoleData } from "../lib/useConsoleData";
 import { CONSOLE_FONT_OPTIONS, useConsoleFont } from "../lib/useConsoleFont";
 import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
+import { useTickerLogoDisplay } from "../lib/useTickerLogoDisplay";
+import type { TickerLogoDisplay } from "@/lib/ticker-logos";
 import { useToast } from "../ui/toast";
 import { Card, Chip, Field, RawNumInput, Toggle } from "../ui/primitives";
 import { SaveStatus } from "../ui/save-status";
@@ -294,14 +296,64 @@ function FontOptionGrid<F extends string>({
   );
 }
 
+const TICKER_LOGO_DISPLAY_OPTIONS: Array<{ value: TickerLogoDisplay; label: string; description: string }> = [
+  {
+    value: "transparent",
+    label: "Transparent",
+    description: "Clean, transparent company logos without a background tile."
+  },
+  {
+    value: "tile",
+    label: "Tile Badge",
+    description: "Company logos seated inside a neutral tile badge for consistent contrast."
+  },
+  {
+    value: "off",
+    label: "Monograms Only",
+    description: "Hide company logos and render clean 2-letter ticker monograms."
+  }
+];
+
 function AppearanceCard() {
   const { textBoxFont, setTextBoxFont } = useConsoleTextBoxFont();
   const { consoleFont, setConsoleFont } = useConsoleFont();
+  const { tickerLogoDisplay, setTickerLogoDisplay } = useTickerLogoDisplay();
+
   return (
     <Card title="Appearance">
-      <Field label="Console Font" hint="The whole console (nav, cards, copy) uses this font in this browser.">
-        <FontOptionGrid options={CONSOLE_FONT_OPTIONS} selected={consoleFont} onSelect={setConsoleFont} />
+      <Field label="Ticker Logo Display" hint="Controls how ticker logos render across tables, cards, and symbols in this browser.">
+        <div className="grid gap-2 sm:grid-cols-3">
+          {TICKER_LOGO_DISPLAY_OPTIONS.map((opt) => {
+            const isSelected = tickerLogoDisplay === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                aria-pressed={isSelected}
+                onClick={() => setTickerLogoDisplay(opt.value)}
+                className={`min-h-[72px] rounded-control border px-3 py-2 text-left transition-colors ${
+                  isSelected
+                    ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)]"
+                    : "border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] hover:border-[color:var(--con-accent-border)]"
+                }`}
+              >
+                <span className="flex items-center justify-between gap-2 text-[length:var(--con-fs-sm)] font-semibold text-[color:var(--con-fg)]">
+                  {opt.label}
+                  {isSelected && <Check size={14} className="text-[color:var(--con-accent)]" aria-hidden />}
+                </span>
+                <span className="mt-1 block text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+                  {opt.description}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </Field>
+      <div className="mt-4">
+        <Field label="Console Font" hint="The whole console (nav, cards, copy) uses this font in this browser.">
+          <FontOptionGrid options={CONSOLE_FONT_OPTIONS} selected={consoleFont} onSelect={setConsoleFont} />
+        </Field>
+      </div>
       <div className="mt-4">
         <Field label="Text Box Font" hint="Editable text boxes use this font in this browser.">
           <FontOptionGrid options={CONSOLE_TEXT_BOX_FONT_OPTIONS} selected={textBoxFont} onSelect={setTextBoxFont} />
