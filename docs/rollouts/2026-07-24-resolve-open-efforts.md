@@ -63,3 +63,36 @@ Ops (not in git): GitHub ruleset `main-protection` PUT; Actions run cancellation
 - #1902 / #1819 / #2022: re-merged `origin/main` after dirty; #1819 real conflict resolved
   (`document_abstracts` v56 + earningscalls v57/v58); persistence-hardening 23/23 green
 - Effort sync live: `created=117 updated=321 closed=86`; open `state:in-progress` issues = 3
+
+## Update — merge=union repair
+
+Squash-merge of #2022 onto `main` combined both In Progress histories because
+`docs/EFFORT-LOG.md` uses `merge=union`. Follow-up PR
+`cursor/effort-board-union-repair-14e5` collapses the board again before the
+next effort-issues-sync run.
+
+## Update — orphan closeout + union-repair PR
+
+- Opened **#2143** (`cursor/effort-board-union-repair-14e5`) to restore a single clean
+  In Progress section after #2022's `merge=union` clobber; auto-merge armed.
+- Pinned the same clean `docs/EFFORT-LOG.md` onto product PR heads **#1902** and
+  **#1819** so their merges cannot re-union stale In Progress rows.
+- Enhanced `scripts/sync-effort-issues.py`: open orphan mirrors (effort-key no longer
+  on the board) are now closed as `state:completed` instead of left forever-open.
+  Dry-run against the repair board: ~118 open orphans would close; ~28 matched rows
+  move to completed; genuine open `state:in-progress` should drop to the 3 board WIP
+  rows once the live sync runs.
+- Cancelled dirty-main `Effort Issues Sync` runs so they cannot reopen stale mirrors
+  before #2143 lands.
+- #2123 (cleanup-caches on ubuntu-latest) still in `verify-hosted` (npm test).
+
+## Update — product PRs landed; issues at board-true WIP
+
+- **MERGED:** #1902 (Busy retry + OpenRouter filter), #1819 (earningscalls), #2123
+  (cleanup-caches on ubuntu-latest).
+- Open `state:in-progress` issues: **3 → 2** after moving the completed unstick row
+  out of In Progress (Usage-compliance Wave 2 + infra-panel reliability).
+- Live sync with orphan-closeout: `created=0 updated=279 unchanged=178 closed=38`
+  (plus earlier partial runs that closed the bulk of the ~149 stale IP mirrors).
+- Still open: #2143 (board + orphan-closeout script), #2155 (admin RAM / cache follow-up;
+  EFFORT-LOG pinned to clean content).
