@@ -1,4 +1,4 @@
-- **[Socratic.Trade][CURSOR] Per-user reflections & learning system (branch `cursor/per-user-reflections-learning`) — In Progress 2026-07-23.** Pool all accounts' closed trades into per-user structured lessons; remove paper-to-live transfer machinery; regime-conditioned retrieval; uniform FINRA margin-minimum. Verifying and landing.
+- **[Socratic.Trade][CURSOR] Per-user reflections & learning system (PR #2182, auto-merge armed) — In Progress → Awaiting CI 2026-07-23.** Pool all accounts' closed trades into per-user structured lessons; remove paper-to-live transfer machinery; regime-conditioned retrieval; uniform FINRA margin-minimum. PR open, auto-merge armed.
 
 - **[Socratic.Trade/Congress.Trade][AG] Reconcile and sync 47 total pending PRs to stabilized main (branch `agent/antigravity-ci-fix-revert`) — COMPLETED 2026-07-21.** Synced 40 Socratic.Trade PRs and 6 Congress.Trade PRs with main. Rebased dependabot PRs and merged main cleanly into human/agent branches, resolving safe package-lock.json/EFFORT-LOG.md conflicts and forcing CI checks onto the newly stabilized Linux runners.
 # Trading Effort Log - canonical live cross-agent board
