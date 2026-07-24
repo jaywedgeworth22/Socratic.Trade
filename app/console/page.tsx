@@ -90,9 +90,6 @@ export default function ConsoleHomePage() {
         <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"} title={state.detail}>
           {state.label}
         </Chip>
-        <Chip tone={reality.tone} title={reality.clarification}>
-          {reality.word} · {reality.phrase}
-        </Chip>
         {primaryProposal?.redTeamVerdict?.available && (
           <Chip tone={primaryProposal.redTeamVerdict.rejected ? "neg" : "pos"}>
             {primaryProposal.redTeamVerdict.rejected ? "Red Team: thesis rejected" : "Red Team: thesis survived"}
