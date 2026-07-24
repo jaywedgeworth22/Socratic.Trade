@@ -61,3 +61,28 @@ Auto-merge: `gh pr merge <n> --squash --auto` armed on all five; checks re-queue
   after migrations through v57, but v57 seeds `earningscalls_burst_pending`. Fixed on the PR
   branch (`30f5c793`) to assert purge of the legacy cooldown key without freezing the key set.
 - `#1842`/`#1901`/`#1902`/`#1792` still waiting on hosted verify queue at time of writing.
+
+## Round 2 (2026-07-24, branch `cursor/resolve-open-efforts-2-1c6c`)
+
+### Summary
+
+- **#1901 MERGED** (retired broker Usage Monitor emissions).
+- **#1980 MERGED** (prior docs/board hygiene).
+- **#1981 MERGED** (model slug / `~latest` OpenRouter mappings) — forced a re-merge of #1902.
+- Re-merged `origin/main` into the four remaining open PR heads after peer force-pushes rewritten tips.
+- **#1902:** conflict in `src/lib/llm-provider.ts` — keep exported `normalizeOpenRouterModelId` but
+  fill it with main's `~latest` alias table; focused Vitest `llm-provider` + `model-rotation` 24/24.
+- **#1792:** remote tip dropped `if (embedding == null)` opener around rag-embed; restored HEAD guard
+  (ESLint 0 errors on `vector-db.ts`).
+- **#1819:** typed `SELECT key FROM settings` scan as `Array<{ key: string }>` for `tsc`; removed
+  accidental `node_modules` symlink from the fix commit.
+- **#1842:** clean main merge re-pushed.
+- Board: corrected completed rows for #1847, #1828, #1839, #1981, check-pin-on-every-PR, which-key
+  visibility, retired-provider cleanup, and collapsed #1892 duplicate detail bullets.
+- Issues API still 403 for this cloud token.
+
+### Verification (round 2)
+
+- #1902 focused: `npx vitest run test/llm-provider.test.ts test/model-rotation.test.ts` → 2/24 green.
+- #1792: `npx eslint src/lib/vector-db.ts` → 0 errors.
+- Auto-merge squash re-armed on #1902/#1792/#1819/#1842; checks re-queued.
