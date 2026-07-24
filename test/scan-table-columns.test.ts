@@ -26,4 +26,30 @@ describe("scan-table column state", () => {
     expect(moveVisibleScanColumn(["symbol", "score", "price"], "symbol", -1)).toEqual(["symbol", "score", "price"]);
     expect(moveVisibleScanColumn(["symbol", "score", "price"], "price", 1)).toEqual(["symbol", "score", "price"]);
   });
+
+  it("assigns expected text alignments to scan columns", () => {
+    const { SCAN_COLUMNS } = require("../app/console/scan/columns");
+    const symbolCol = SCAN_COLUMNS.find((c: any) => c.id === "symbol");
+    const priceCol = SCAN_COLUMNS.find((c: any) => c.id === "price");
+    const scoreCol = SCAN_COLUMNS.find((c: any) => c.id === "score");
+    const sentimentCol = SCAN_COLUMNS.find((c: any) => c.id === "sentiment");
+
+    expect(symbolCol?.align).toBe("left");
+    expect(priceCol?.align).toBe("right");
+    expect(scoreCol?.align).toBe("center");
+    expect(sentimentCol?.align).toBe("center");
+  });
+
+  it("falls back to insiderSentiment when news sentiment is missing", () => {
+    const { SCAN_COLUMNS } = require("../app/console/scan/columns");
+    const sentimentCol = SCAN_COLUMNS.find((c: any) => c.id === "sentiment");
+
+    const quoteWithNews = { symbol: "AAPL", sentiment: 75, insiderSentiment: 60 };
+    const quoteWithInsiderOnly = { symbol: "MSFT", insiderSentiment: 68 };
+    const quoteWithNone = { symbol: "GOOG" };
+
+    expect(sentimentCol?.sortValue(quoteWithNews)).toBe(75);
+    expect(sentimentCol?.sortValue(quoteWithInsiderOnly)).toBe(68);
+    expect(sentimentCol?.sortValue(quoteWithNone)).toBeUndefined();
+  });
 });

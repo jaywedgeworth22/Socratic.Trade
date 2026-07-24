@@ -336,7 +336,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                     Reset
                   </button>
                 </div>
-                <div className="overflow-auto p-1.5">
+                <div className="flex flex-col gap-1 overflow-auto p-1.5">
                   {columnChooserRows.map((column) => {
                     const isVisible = visible.includes(column.id);
                     const index = visible.indexOf(column.id);
@@ -344,7 +344,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                       <Tooltip key={column.id} content={column.headerTitle}>
                         <div
                           className={cx(
-                            "grid grid-cols-[1fr_auto] items-center gap-2 rounded-control px-2 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
+                            "flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
                             !isVisible && "opacity-70"
                           )}>
                           <label className={cx("flex min-w-0 items-center gap-2", column.id === SYMBOL_COLUMN_ID ? "opacity-70" : "cursor-pointer")}>
@@ -392,7 +392,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
         </div>
       </div>
       <div className="hidden overflow-x-auto lg:block">
-        <table className="con-table w-full min-w-max">
+        <table className="con-table min-w-full">
         <thead>
           <tr>
             {visibleColumns.map((c, i) => {
@@ -402,7 +402,11 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                   key={c.id}
                   scope="col"
                   aria-sort={active ? (activeSort.dir === "asc" ? "ascending" : "descending") : undefined}
-                  className={cx(c.num && "num", i === 0 && STICKY_CELL)}
+                  className={cx(
+                    "!text-center text-center",
+                    c.id === "score" && "w-16 px-2",
+                    i === 0 && STICKY_CELL
+                  )}
                 >
                   <Tooltip
                     content={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}>
@@ -410,7 +414,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                       type="button"
                       onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
                       className={cx(
-                        "inline-flex cursor-pointer select-none items-center gap-1 font-semibold uppercase tracking-[0.07em] transition-colors",
+                        "inline-flex cursor-pointer select-none items-center justify-center gap-1 font-semibold uppercase tracking-[0.07em] transition-colors mx-auto",
                         active ? "text-[color:var(--con-fg)]" : "hover:text-[color:var(--con-fg)]"
                       )}>
                       {c.label}
@@ -422,7 +426,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                 </th>
               );
             })}
-            <th title="Add or remove a symbol from your watchlist. Watching costs nothing and never trades.">
+            <th className="!text-center text-center" title="Add or remove a symbol from your watchlist. Watching costs nothing and never trades.">
               <span className="sr-only">Watch</span>
             </th>
           </tr>
@@ -432,21 +436,45 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
             const symbolKey = q.symbol.trim().toUpperCase();
             return (
               <tr key={q.symbol} className="group">
-                {visibleColumns.map((c, i) => (
-                  <td
-                    key={c.id}
-                    title={cellTitleWithReceived(c, q, received)}
-                    className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}>
-                    {c.render(q)}
-                  </td>
-                ))}
-                <td className="cursor-default whitespace-nowrap text-right">
-                  <WatchButton
-                    symbol={q.symbol}
-                    watched={watched.has(symbolKey)}
-                    pending={pendingWatch.has(symbolKey)}
-                    onToggle={() => void toggleWatch(q.symbol)}
-                  />
+                {visibleColumns.map((c, i) => {
+                  const alignmentClass =
+                    c.align === "left"
+                      ? "!text-left text-left"
+                      : c.align === "right"
+                      ? "!text-right text-right"
+                      : "!text-center text-center";
+                  const flexAlignClass =
+                    c.align === "left"
+                      ? "justify-start"
+                      : c.align === "right"
+                      ? "justify-end"
+                      : "justify-center";
+                  return (
+                    <td
+                      key={c.id}
+                      title={cellTitleWithReceived(c, q, received)}
+                      className={cx(
+                        "cursor-default whitespace-nowrap",
+                        alignmentClass,
+                        c.id === "score" && "w-16 px-2",
+                        c.num && "con-num",
+                        i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER)
+                      )}>
+                      <div className={cx("inline-flex items-center w-full", flexAlignClass)}>
+                        {c.render(q)}
+                      </div>
+                    </td>
+                  );
+                })}
+                <td className="cursor-default whitespace-nowrap !text-center text-center">
+                  <div className="inline-flex items-center justify-center w-full">
+                    <WatchButton
+                      symbol={q.symbol}
+                      watched={watched.has(symbolKey)}
+                      pending={pendingWatch.has(symbolKey)}
+                      onToggle={() => void toggleWatch(q.symbol)}
+                    />
+                  </div>
                 </td>
               </tr>
             );

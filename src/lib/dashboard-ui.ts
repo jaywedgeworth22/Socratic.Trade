@@ -250,13 +250,17 @@ export function ratingTitle(candidate: MarketQuote): string {
 
 export function sentimentTitle(candidate: MarketQuote): string {
   const src = candidate.sources ?? {};
-  return typeof candidate.sentiment === "number"
-    ? cellTitle(
-        `News-tone ${candidate.sentiment}/100 (locally computed from recent Finnhub headlines using keyword scoring)` +
-          `\n\nRecent Headlines:\n${candidate.headlines?.map((headline) => `• ${headline}`).join("\n") ?? "None"}`,
-        src.sentiment
-      )
-    : "No recent news";
+  const val = candidate.sentiment ?? candidate.insiderSentiment;
+  if (typeof val === "number") {
+    const isNews = typeof candidate.sentiment === "number";
+    const label = isNews ? "News-tone" : "Insider sentiment";
+    const sourceKey = isNews ? src.sentiment : src.insiderSentiment;
+    const headlineText = candidate.headlines?.length
+      ? `\n\nRecent Headlines:\n${candidate.headlines.map((headline) => `• ${headline}`).join("\n")}`
+      : "";
+    return cellTitle(`${label} ${val}/100${headlineText}`, sourceKey);
+  }
+  return "No recent news or sentiment data recorded";
 }
 
 export function scanQuoteAsOf(candidates: MarketQuote[]): string | undefined {
