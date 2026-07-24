@@ -70,3 +70,18 @@ Squash-merge of #2022 onto `main` combined both In Progress histories because
 `docs/EFFORT-LOG.md` uses `merge=union`. Follow-up PR
 `cursor/effort-board-union-repair-14e5` collapses the board again before the
 next effort-issues-sync run.
+
+## Update — orphan closeout + union-repair PR
+
+- Opened **#2143** (`cursor/effort-board-union-repair-14e5`) to restore a single clean
+  In Progress section after #2022's `merge=union` clobber; auto-merge armed.
+- Pinned the same clean `docs/EFFORT-LOG.md` onto product PR heads **#1902** and
+  **#1819** so their merges cannot re-union stale In Progress rows.
+- Enhanced `scripts/sync-effort-issues.py`: open orphan mirrors (effort-key no longer
+  on the board) are now closed as `state:completed` instead of left forever-open.
+  Dry-run against the repair board: ~118 open orphans would close; ~28 matched rows
+  move to completed; genuine open `state:in-progress` should drop to the 3 board WIP
+  rows once the live sync runs.
+- Cancelled dirty-main `Effort Issues Sync` runs so they cannot reopen stale mirrors
+  before #2143 lands.
+- #2123 (cleanup-caches on ubuntu-latest) still in `verify-hosted` (npm test).
