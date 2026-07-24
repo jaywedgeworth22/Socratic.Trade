@@ -1,7 +1,20 @@
-## 2026-07-20 — RAG & Database Ingestion Strategy & Document Summarizer Engine (ANTIGRAVITY, branch `agent/antigravity`)
-
-Designed and implemented Layer 3 (Derived Abstracts & Summaries) of the RAG data expansion architecture. Added database migration 55 (`document_abstracts`), created `src/lib/db-document-abstracts.ts` for CRUD operations, implemented `src/lib/rag/document-summarizer.ts` for generating cited abstracts linking back to Layer 1 raw `source_chunk_ids` and embedding them into the vector store, and added full unit test coverage in `test/document-summarizer.test.ts`.
 # Current Status
+
+## 2026-07-24 — Resolve open efforts closeout (CURSOR)
+
+Merged #1842 + #1792. Remaining open product PRs: #1902 (Busy retry) and #1819 (earningscalls burst,
+migrations renumbered v57/v58 after document_abstracts). Docs PR #2022 open. Effort-issues sync
+closed 86 mirrors; open `state:in-progress` issues down to the 3 genuine WIP rows. Ruleset requires
+`verify` + `check-pin`. Rollout: `docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
+## 2026-07-24 — Resolve open efforts + stale issue mirrors (CURSOR)
+
+`GITHUB_MCP_TOKEN` unlocks Issues/rulesets. Drained ~79 stuck Sentry CI Report runs; four open
+PRs (#1902/#1792/#1819/#1842) still MERGEABLE + auto-merge-armed awaiting `verify`. Restored
+ruleset required checks to `verify` + `check-pin` (`strict` false). Large EFFORT-LOG hygiene:
+moved already-merged In Progress rows to Completed so effort-issues-sync can close stale
+`state:in-progress` mirrors. Genuine WIP left: unstick claim, Usage-compliance Wave 2 (no PR),
+infra-panel reliability (unpushed). Rollout: `docs/rollouts/2026-07-24-resolve-open-efforts.md`.
 
 ## 2026-07-24 — Unstick open PRs round 2 + board hygiene (CURSOR)
 
@@ -9,8 +22,8 @@ Four open PRs remain with squash auto-merge armed after CI/merge fixes:
 #1902 (Busy retry + OpenRouter `~latest` normalizer), #1792 (advisory cleanup / rag-embed
 null-guard), #1819 (earningscalls burst + typed settings-key scan), #1842 (RapidAPI docs).
 #1901/#1980/#1981 already on `main`. Board corrections for #1847/#1828/#1839/#1981/check-pin/
-which-key/retired-provider cleanup. GitHub Issues API still 403. Hosted `verify` is the merge
-gate. Rollout: `docs/rollouts/2026-07-23-unstick-open-prs.md`.
+which-key/retired-provider cleanup. Hosted `verify` is the merge gate. Rollout:
+`docs/rollouts/2026-07-23-unstick-open-prs.md`.
 
 ## 2026-07-22 — RAG review remediation round 2 (PR #1892, GROK)
 

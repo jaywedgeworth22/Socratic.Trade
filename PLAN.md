@@ -8,6 +8,12 @@
 > Keep the external monitor on public `/api/health`; do not expose authenticated `/api/ready` just for
 > monitoring. Verify the dedicated branch with the ordered lint/tsc/test/build gate, then land via
 > `scripts/land.sh` if the owner wants deployment.
+> **2026-07-24 - Resolve open efforts + stale issue mirrors (CURSOR).** Board hygiene moves
+> already-merged In Progress rows to Completed; restores ruleset `check-pin` required alongside
+> `verify`; drains Sentry CI spam blocking runners. Four open PRs still await `verify`. RAG
+> enablement remains Planned (re-embed proof). Rollout:
+> `docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
 > **2026-07-22 — PR #1792 typecheck repair (CODEX).** The provider-generic health-lane merge
 > resolution is now aligned with the current durable dispatch API in `28a09b84`; run hosted
 > verification, let auto-merge land it, and confirm the exact post-merge deployment receipt.
