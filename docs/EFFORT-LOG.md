@@ -1,3 +1,5 @@
+- **[Socratic.Trade][AG] Robinhood OAuth production redirect URI fix (Infisical prod secrets + Coolify redeploy) — COMPLETED 2026-07-24.** Fixed Robinhood reconnect redirecting to http://localhost:4000/api/auth/robinhood/callback by setting ROBINHOOD_MCP_REDIRECT_URI=https://socratictrade.com/api/auth/robinhood/callback and ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=off in Infisical prod environment for Socratic.Trade and triggering redeployment on Coolify.
+
 - **[Socratic.Trade][CURSOR] Per-user reflections & learning system (PR #2182, auto-merge armed) — In Progress → Awaiting CI 2026-07-23.** Pool all accounts' closed trades into per-user structured lessons; remove paper-to-live transfer machinery; regime-conditioned retrieval; uniform FINRA margin-minimum. PR open, auto-merge armed.
 
 - **[Socratic.Trade/Congress.Trade][AG] Reconcile and sync 47 total pending PRs to stabilized main (branch `agent/antigravity-ci-fix-revert`) — COMPLETED 2026-07-21.** Synced 40 Socratic.Trade PRs and 6 Congress.Trade PRs with main. Rebased dependabot PRs and merged main cleanly into human/agent branches, resolving safe package-lock.json/EFFORT-LOG.md conflicts and forcing CI checks onto the newly stabilized Linux runners.
@@ -46,10 +48,14 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
-- **[Socratic.Trade][OWNER REMINDER][GROK 2026-07-22] Enable default-off RAG / retrieval features after #1892 lands — COMPLETED 2026-07-24 (CURSOR, branch `cursor/rag-enable-exit-prune-1c6c`).** Safe Priority A flags default ON in code + `.env.example`: telemetry, stage telemetry, run budget, default floors, corpus-wide lexical, parent expansion, adaptive rerank, citation staleness, VECTOR_ASOF_SERVER_FILTER. Still OFF: MULTIQUERY/HyDE, candidate-pool-full, VECTOR_ASOF_STRICT, FMP transcript dual-gate, SEC8K full body, HYBRID_RETRIEVAL, legacy purge. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Was: ~~PLANNED / UNASSIGNED.~~
-- **[Fleet][OWNER REMINDER][GROK 2026-07-22] Inventory + enable forgotten dormant features — PARTIAL 2026-07-24 (CURSOR).** RAG Priority A enabled; Priority B/C remain key/rights/policy gated per `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Was: ~~PLANNED / UNASSIGNED.~~
+- **[Socratic.Trade][OWNER REMINDER][GROK 2026-07-22] Enable default-off RAG / retrieval features after #1892 lands — PLANNED / UNASSIGNED.** **#1892 MERGED 2026-07-23** — enablement still gated on re-embed proof. Order: telemetry → eval → `RAG_CORPUS_WIDE_LEXICAL` → adaptive rerank → parent expansion → multi-query/HyDE. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`.
+- **[Fleet][OWNER REMINDER][GROK 2026-07-22] Inventory + enable forgotten dormant features — PLANNED / UNASSIGNED.** Default-off flags, key-gated providers, rights dual-gates, policy toggles, cross-app holds. Living list: `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Agents must append when landing new dormant switches.
 
-- **Exit-strategy intelligence program, Phase B — Exit Contract + lanes (CURSOR B1 substrate 2026-07-24; B2 partial; B4–B6 + corporate-action re-key still PLANNED).** B1: nullable Exit Contract columns on `position_stop_plans` + fill-commit writes + proactive/synthetic read-with-fallback. B3 interim (fixed/ATR synthetic tick lane) already on main via #1786. Still open: full B2 Guardrails retroactive action, B4 short broker buy-stops, B5 `exit_events`, B6 eval harness, corporate-action re-key/alert. Detail: design doc Phase B.
+- **Exit-strategy intelligence program, Phase B — Exit Contract + lanes (UNASSIGNED; blocked on nothing, but
+  money-path: frontier-tier adversarial review required).** Persist parameterized exit contract columns on
+  `position_stop_plans` (resolved distance/prices/time/invalidation) written at fill; all enforcement layers read
+  persisted-with-fallback; static-trigger synthetic rows give fixed/atr plans tick-cadence coverage; short-side
+  broker-held buy-stop lane MUST land before live short flow. Detail: design doc Phase B.
 - **Exit-strategy intelligence program, Phase C — revision verb + measurement (UNASSIGNED; gated on Phase B's
   eval harness).** `exitRevisions[]` sibling array (tighten=auto, widen=propose+heat-recheck, all owner-settable),
   owner per-position stop editor, `stopBasis` clamped numeric elicitation, `invalidation`/`maxHoldingDays`,
@@ -205,9 +211,13 @@ As of 2026-07-08 (assignment-rule update).
   _2026-07-05 (CLAUDE next-wave): CORRECTION — `outcome-engine` and `episodic-retrieval` are LANDED
   on `main` (both merged 2026-07-04 per the landing-train row above and this repo's PR history —
   the sub-lane text below still said "Pushed, no PR — lands via the train", which is now stale).
-  The two historically stalled sub-lanes (`coaching-durable` / `reflection-decompose`) were
-  **DISCARD 2026-07-24 (CURSOR)** — closed PRs #1911/#1909; origin branches deleted; regime ranking
-  already on main via per-user reflections. No remaining salvage. Lanes:
+  The two still-pending sub-lanes, `coaching-durable` (branch `claude/w2-coaching-durable`) and
+  `reflection-decompose` (branch `claude/w2-reflection-decompose`, stacked on
+  `claude/w2-episodic-retrieval`), have sat pushed with **no PR opened** since 07-04 while the
+  landing train moved on to the 07-05 lanes (#814/#816/#819/#820/#822). Explicit landing action
+  needed: merge-forward each branch onto current `origin/main`, run the full gate, open a PR with
+  auto-merge for each — see the new "Open PRs for the stalled w2-coaching-durable and
+  w2-reflection-decompose branches" Planned row below._ Lanes:
   - `outcome-engine` — outcome writer (matured outcomes onto decision cases), multi-horizon
     `outcomes[]` (15m/1h/1d/1w, SPY-relative, vs-alternatives), durable due-jobs substrate,
     survivorship kill (terminal `unresolvable` + coverage disclosure).
@@ -392,8 +402,20 @@ discrepancies that motivated these rows._
   the scanner as a reusable leaf but only wired proposeTrades; the maturation-lesson and
   coach/framework LLM calls (#810 just expanded the latter) still consume unfenced persisted LLM
   output.)_
-- **Open PRs for the stalled w2-coaching-durable and w2-reflection-decompose branches — DISCARD 2026-07-24 (CURSOR).** Closed PRs #1911/#1909; branches deleted from origin. Regime/thesis ranking already on main (per-user reflections 2026-07-23). Coaching durability superseded by main coach-archive writers. No remaining salvage. Was: ~~UNASSIGNED; still valid…~~
-- **Prune stale abandoned origin branches (no PR / no unique value, >1d) — COMPLETED 2026-07-24 (CURSOR).** Deleted 19 origin tips (ancestors-of-main, docs-only stubs, discarded w2). Repo rule: max 5 branch deletes per push — batched. Remaining ahead-of-main tips with unique src/ kept. Was: ~~OWNER Planned prune…~~
+- **Open PRs for the stalled w2-coaching-durable and w2-reflection-decompose branches (UNASSIGNED; still valid 2026-07-24 CURSOR audit — branches exist on origin, still no PRs) (CLAUDE historical claim, S)** —
+  Merge-forward both pushed branches onto current main, run the gate, open PRs with auto-merge; they
+  have sat PR-less since 07-04 while their sibling lanes landed. _(why now: Durable coaching and
+  decomposed reflection lessons are finished, verified work rotting on origin; every day unlanded
+  increases merge-conflict cost against the fast-moving strategy.ts/learning files.)_
+  _2026-07-05 (CLAUDE audit-c3): re-verified both, still true and still unlanded — reassigned
+  CLAUDE->CLAUDE (no change of lane, reclaiming as still-open work):
+  `claude/w2-coaching-durable`: `git ls-remote` shows the branch exists on origin, 2 commits ahead
+  of main, last commit 2026-07-04 12:21; `gh pr list --state all` shows NO PR ever opened for this
+  headRef. Finished/verified per rollout doc but not landed. action=open-PR.
+  `claude/w2-reflection-decompose`: branch on origin, 3 commits ahead of main, last commit
+  2026-07-04 12:38; NO PR in `gh pr list --state all`. Stacked base (`w2-episodic-retrieval`) already
+  merged via #437, so it can now be merge-forwarded onto main standalone. Rotting since 07-04.
+  action=open-PR._
 - **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S) — COMPLETED via #997 merge 2026-07-08 (CURSOR correction 2026-07-24).** Was: ~~In Progress … PR #997 auto-merge armed.~~
 - **MONET risk-row handback (MONET) — SUPERSEDED / HISTORICAL (CURSOR correction 2026-07-24).**
   2026-07-05 seat handback; risk lanes already on main. Not an open product effort.
@@ -408,10 +430,12 @@ Jul 8 18:10 CT)._
   Later fleet used auto-merge + required `verify`/`gitleaks`; check-pin path-filter deadlock fixed on main.
   Keep as historical note only — not an open owner action for those three PRs.
 - **Rebase/merge-forward PR #372 onto current main — COMPLETED via #372 merge 2026-07-06 (CURSOR correction 2026-07-24).** Hybrid resource-aware runner routing is on `main`. Was: ~~CONFLICTING with auto-merge armed since 07-04.~~
-- **Prune stale abandoned local-only branches from origin (June 21–29 experiments) (OWNER, M) — SUPERSEDED by CURSOR 2026-07-24 prune pass (19 branches deleted; remaining tips with unique src kept for review).** Was: ~~~40 origin branches…~~
+- **Prune stale abandoned local-only branches from origin (June 21–29 experiments) (OWNER, M)** — ~40 origin branches are ahead of main with NO PR and last activity June 21–29 (agent/claude-*, safety/*, feat/*, reliability/*, sim/funded-test-account, etc.). They are stale experiments from the pre-worktree era, add noise to every branch scan, and confuse abandoned-work triage. Audit which are fully superseded by merged work and delete them from origin (with owner confirmation before any deletion per the no-destructive-git rule).
 
 ## In Progress
-- **[Socratic.Trade][CURSOR] RAG enablement + Exit Contract B1 + branch prune (`cursor/rag-enable-exit-prune-1c6c`) — IN PROGRESS 2026-07-24.** Code-default ON for safe RAG flags; Exit Contract columns + fill writes + proactive/synthetic read-with-fallback; w2 DISCARD + 19 origin branches pruned; board/FEATURE-ENABLEMENT sync for `effort-issues-sync`.
+_(None actively in flight as of CURSOR accuracy audit 2026-07-24. Stale Usage-compliance Wave 2 and
+infra-panel reliability rows moved to Completed — see corrections below. Claim here before starting
+new substantial work.)_
 
 ## Deployed
 - **[Socratic.Trade][AG] Dashboard UI Redesign: Proposal Drawer Cleanup — COMPLETED (merged to `main` / DEPLOYED) 2026-07-22.** Removed the old "Market Thesis" hero layout, restricted top-level Evidence/Dissent to the slide-out drawer, moved historical trades to the bottom, and updated data derivation logic to support drawer state. PR #1960.
@@ -607,7 +631,6 @@ Jul 8 18:10 CT)._
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
-- **[Socratic.Trade][CURSOR] Coolify/Hetzner runners only + monitor (PR #2201, branch `cursor/coolify-runners-only-14e5`) — Completed (merged / auto-deployed) 2026-07-24.** Owner: no GitHub-hosted Actions; ci-cpx32 systemd runners + Coolify prod host. Routed `sentry-ci-report` off missing `socratic-deploy`; sudo-free `gh`; Playwright without `--with-deps`; added `scripts/monitor-coolify-runners.sh`. Superseded #2158. Rollout: `docs/rollouts/2026-07-24-coolify-runners-only.md`.
 - **[CORRECTION 2026-07-24 CURSOR] Effort-board accuracy audit — COMPLETED (this pass).** Cleared stale In Progress (Usage-compliance Wave 2 → #1820; Server Stats reliability → #1292+#1751). Corrected Planned rows that were already merged/superseded/obsolete (SEC/RAG claimed program slices, enrichment starvation, activity-audit P2.5, per-position stop plans, settings-race #997, CI #372, preview-era AGENTS.md table, announce-then-deploy release chore). Noted merge==auto-deploy since 2026-07-10. Production health SHA checked during audit (`b0c21339` at probe time; `main` had advanced to include #2143 docs). Issues API still 403 for cloud token. Rollout: `docs/rollouts/2026-07-24-effort-board-accuracy-audit.md`.
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier metadata — COMPLETED via #1820 merge 2026-07-22 (CURSOR correction 2026-07-24).** Branch `claude/usage-compliance-st` no longer exists on origin; PR title matches the former In Progress claim. Auto-deployed with merge.
 - **[Socratic.Trade][CODEX/AG] Server/infrastructure panel + reliability — COMPLETED via #1292 (page, 2026-07-11) + #1751 (Server Stats resilient, 2026-07-18) (CURSOR correction 2026-07-24).** Former In Progress row claimed unpublished `codex/socratic-infra-panel-reliability` (branch gone); product landed under AG/CODEX PRs above and is in production under auto-deploy.
@@ -3863,4 +3886,3 @@ brackets; effort S/M/L.
 | 2026-07-22 | **Retired-provider Usage Monitor cleanup** — stop Socratic.Trade emissions for Tradier/Alpaca/Robinhood, remove dead Intrinio integration/config/current docs, preserve all broker runtime/trading/read/health behavior, and add a central suppression regression | CODEX | **In Progress** — isolated cleanup complete; Node 24 focused gate green (5 files / 209 tests), TypeScript + diff checks green; final central strict-v2 integration and ready PR wait for #1889 to merge | codex/retired-provider-usage-cleanup |
 | 2026-07-22 | ANTIGRAVITY | Completed | Fix Admin panel UI bugs (Go Back button, Server Metrics 0% fallbacks, RAG table DB noise filtering, API Connection mapping) | fix/admin-ui-polish |
 | 2026-07-23 | ANTIGRAVITY | Completed | Fix model canonicalization regexes and rotation/compliance test assertions | fix/gemini-reasoning-temp |
-| 2026-07-24 | **Connections UI Redesign & Ghost API Key Tombstoning** — Redesigned connections cards (>25% shorter, inline tax type, Load PAPER badge, strategy execution status, pending proposals count, Capabilities modal, cleaned Future Brokers roadmap) and fixed ghost API key revival via DELETED_KEY_TOMBSTONE. | ANTIGRAVITY | **Completed** — Verified via lint, tsc, and vitest. | agent/connections-ui-and-ghost-keys |
