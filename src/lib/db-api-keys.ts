@@ -25,24 +25,33 @@ import { STOP_PLAN_STYLES } from "./types";
 
 // ── Field-Level Encryption ──────────────────────────────────────────────────
 
-// Load .env.local if not already loaded (e.g. at early boot time before Next.js loads env)
-if (!process.env.ENCRYPTION_KEY && process.env.NODE_ENV !== "test" && !process.env.VITEST) {
-  try {
-    const envPath = resolve(process.cwd(), ".env.local");
-    if (existsSync(envPath)) {
-      const content = readFileSync(envPath, "utf8");
-      for (const line of content.split("\n")) {
-        const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-        if (match) {
-          let value = match[2] || "";
-          if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-          if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
-          process.env[match[1]] = value;
+// Load .env.local and global secrets files if process.env keys are missing (e.g. at early boot time before Next.js loads env)
+if (process.env.NODE_ENV !== "test" && !process.env.VITEST) {
+  const envPaths = [
+    resolve(process.cwd(), ".env.local"),
+    "/Users/jay/.secrets/global-api-keys.env",
+    "/Users/jay/.secrets/global-api-keys"
+  ];
+  for (const envPath of envPaths) {
+    try {
+      if (existsSync(envPath)) {
+        const content = readFileSync(envPath, "utf8");
+        for (const line of content.split("\n")) {
+          const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+          if (match && match[1]) {
+            const key = match[1];
+            if (!process.env[key]) {
+              let value = match[2] || "";
+              if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
+              if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
+              process.env[key] = value;
+            }
+          }
         }
       }
+    } catch {
+      // Ignore error
     }
-  } catch (e) {
-    // Ignore error
   }
 }
 
