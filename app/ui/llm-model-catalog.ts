@@ -9,6 +9,7 @@ export type PickerProviderId =
   | "mistral"
   | "deepseek"
   | "meta"
+  | "moonshot"
   | "openrouter"
   | "offline";
 
@@ -85,6 +86,13 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     options: [
       { value: "mistral-small-2603", label: "mistral-small-2603 - low-cost Mistral Small", tier: "$" },
       { value: "mistral-medium-3.5", label: "mistral-medium-3.5 - frontier Mistral Medium", tier: "$$" }
+    ]
+  },
+  {
+    provider: "moonshot",
+    label: "Moonshot AI (Kimi)",
+    options: [
+      { value: "kimi-latest", label: "kimi-latest (k3) - Kimi frontier model", tier: "$$" }
     ]
   },
   {
