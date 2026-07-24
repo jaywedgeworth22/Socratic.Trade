@@ -416,7 +416,7 @@ Jul 8 18:10 CT)._
 - **Prune stale abandoned local-only branches from origin (June 21–29 experiments) (OWNER, M)** — ~40 origin branches are ahead of main with NO PR and last activity June 21–29 (agent/claude-*, safety/*, feat/*, reliability/*, sim/funded-test-account, etc.). They are stale experiments from the pre-worktree era, add noise to every branch scan, and confuse abandoned-work triage. Audit which are fully superseded by merged work and delete them from origin (with owner confirmation before any deletion per the no-destructive-git rule).
 
 ## In Progress
-- **[Socratic.Trade][CURSOR] Unstick remaining open PRs #1902/#1819 (branch `cursor/effort-board-union-repair-14e5`) — IN PROGRESS / #1842+#1792+#2022 MERGED; board union-repair after merge=union clobber; #1902+#1819 auto-merge armed. Rollout: `docs/rollouts/2026-07-24-resolve-open-efforts.md`.**
+- **[Socratic.Trade][CURSOR] Unstick remaining open PRs — COMPLETED 2026-07-24 (CURSOR).** #1901/#1980/#1981/#2005/#1842/#1792/#1902/#1819 all MERGED. Residual: this board union-repair PR (#2143) to undo merge=union clobber of `docs/EFFORT-LOG.md`. Issues API still 403 for cloud token. Rollout: `docs/rollouts/2026-07-24-resolve-open-efforts.md` + `docs/rollouts/2026-07-23-unstick-open-prs.md`.**
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per

@@ -1,5 +1,11 @@
 # Current Status
 
+## 2026-07-24 — Open-PR unstick complete (CURSOR)
+
+Product PRs #1901/#1902/#1792/#1819/#1842 and docs #1980/#2005 are on `main`. Remaining
+open work for this effort is board hygiene PR #2143 (repair `docs/EFFORT-LOG.md` after
+`merge=union` clobber). GitHub Issues API still 403 for the cloud token.
+
 ## 2026-07-24 — EFFORT-LOG merge=union repair (CURSOR)
 
 #2022 squash-merge reintroduced stale In Progress rows via `merge=union` on `docs/EFFORT-LOG.md`.
