@@ -25,24 +25,33 @@ import { STOP_PLAN_STYLES } from "./types";
 
 // ── Field-Level Encryption ──────────────────────────────────────────────────
 
-// Load .env.local if not already loaded (e.g. at early boot time before Next.js loads env)
-if (!process.env.ENCRYPTION_KEY && process.env.NODE_ENV !== "test" && !process.env.VITEST) {
-  try {
-    const envPath = resolve(process.cwd(), ".env.local");
-    if (existsSync(envPath)) {
-      const content = readFileSync(envPath, "utf8");
-      for (const line of content.split("\n")) {
-        const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-        if (match) {
-          let value = match[2] || "";
-          if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-          if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
-          process.env[match[1]] = value;
+// Load .env.local and local development secrets files for local system development (production uses Infisical)
+if (process.env.NODE_ENV !== "test" && !process.env.VITEST && process.env.NODE_ENV !== "production" && !process.env.COOLIFY_PROD_PHASE2) {
+  const envPaths = [
+    resolve(process.cwd(), ".env.local"),
+    "/Users/jay/.secrets/global-api-keys.env",
+    "/Users/jay/.secrets/global-api-keys"
+  ];
+  for (const envPath of envPaths) {
+    try {
+      if (existsSync(envPath)) {
+        const content = readFileSync(envPath, "utf8");
+        for (const line of content.split("\n")) {
+          const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+          if (match && match[1]) {
+            const key = match[1];
+            if (!process.env[key]) {
+              let value = match[2] || "";
+              if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
+              if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
+              process.env[key] = value;
+            }
+          }
         }
       }
+    } catch {
+      // Ignore error
     }
-  } catch (e) {
-    // Ignore error
   }
 }
 
@@ -395,6 +404,14 @@ export function upsertUserApiKey(userId: string, service: string, apiKey: string
        ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
     )
     .run(id, userId, canonical, encryptedKey, label ?? null, now, now);
+  if (userId === LOCAL_USER && credTierForService(canonical) === "per-user-only") {
+    const vars = ALL_SERVICE_ENV_VARS[canonical] ?? (API_KEY_ENV_MAP[canonical] ? [API_KEY_ENV_MAP[canonical]] : []);
+    for (const envVar of vars) {
+      if (process.env[envVar] !== undefined) {
+        delete process.env[envVar];
+      }
+    }
+  }
   return { id, userId, service: canonical, apiKey, label, createdAt: now, updatedAt: now };
 }
 
@@ -427,6 +444,15 @@ export function deleteUserApiKey(userId: string, service: string): void {
        VALUES (?, ?, ?, ?, 'disabled by user', ?, ?)
        ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
     ).run(aliasId, userId, service, encryptedKey, now, now);
+  }
+
+  if (userId === LOCAL_USER) {
+    const vars = ALL_SERVICE_ENV_VARS[canonical] ?? (API_KEY_ENV_MAP[canonical] ? [API_KEY_ENV_MAP[canonical]] : []);
+    for (const envVar of vars) {
+      if (process.env[envVar] !== undefined) {
+        delete process.env[envVar];
+      }
+    }
   }
 }
 
@@ -475,11 +501,6 @@ const API_KEY_TIER: Record<string, CredTier> = {
   pinecone: "shared-operator-infra",
   voyage: "shared-operator-infra",
   siliconflow: "shared-operator-infra",
-  apify: "shared-operator-infra",
-  fintechstudios: "shared-operator-infra",
-  powerintell: "shared-operator-infra",
-  tiingo: "shared-operator-infra",
-  twelvedata: "shared-operator-infra",
   logodev: "shared-operator-infra",
   logodev_secret: "shared-operator-infra"
 };
@@ -492,7 +513,7 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
   const canonical = normalizeApiKeyService(service);
   const envVar = apiKeyEnvVarForService(canonical);
 
-  // 1. A per-user stored key always wins. If explicitly tombstoned/disabled by user, fail closed with no env fallback.
+  // 1. A per-user stored key for a specific user ID always wins.
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
     if (userKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none", envVar, service: canonical };
@@ -516,10 +537,14 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
     return { source: "none", envVar, service: canonical };
   }
 
-  // 3. per-user-only: NO env fallback for anyone — not even `local`. The operator's own env
-  //    broker/LLM keys are migrated into the `local` per-user store at boot
-  //    (migrateLocalEnvCredentials), so `local` resolves from the store like every other user.
-  //    No stored key → fail closed. (`local` is the primary user, not a privileged operator.)
+  // 3. per-user-only: NO env fallback for anyone — not even `local`. For background callers (userId undefined)
+  // or `local`, resolve against `local`'s stored key. Non-local users with no stored key fail closed.
+  if (!userId || userId === LOCAL_USER) {
+    const localKey = getUserApiKey(LOCAL_USER, canonical);
+    if (localKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none", envVar, service: canonical };
+    if (localKey?.apiKey) return { key: localKey.apiKey, source: "user", envVar, service: canonical };
+  }
+
   return { source: "none", envVar, service: canonical };
 }
 
@@ -749,6 +774,12 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
   if (!llmOperatorFallbackEnabled()) return { source: "none" };
   const envVar = apiKeyEnvVarForService(canonical);
   let envKey = envVar ? process.env[envVar] : undefined;
+  if (!envKey) {
+    const localKey = getUserApiKey(LOCAL_USER, canonical)?.apiKey;
+    if (localKey && localKey !== DELETED_KEY_TOMBSTONE) {
+      envKey = localKey;
+    }
+  }
 
   if (process.env.NODE_ENV === "test" && !envKey) {
     if (canonical === "openrouter") {
@@ -786,7 +817,61 @@ export function userHasAnyLlmCredential(userId?: string): boolean {
 // Per-user-only credentials whose env values belong to the primary (`local`) operator. At boot we
 // migrate them into `local`'s per-user key store so there is NO special `local` env branch in the
 // resolvers above — every user, `local` included, resolves broker/LLM keys from the per-user store.
-const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "openrouter", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
+const LOCAL_ENV_MIGRATION_SERVICES = [
+  "openai",
+  "anthropic",
+  "xai",
+  "gemini",
+  "mistral",
+  "deepseek",
+  "openrouter",
+  "alpaca_paper_api_key",
+  "alpaca_paper_secret_key",
+  "pinecone",
+  "voyage",
+  "siliconflow",
+  "apify",
+  "fintechstudios",
+  "powerintell",
+  "tiingo",
+  "twelvedata",
+  "logodev",
+  "logodev_secret"
+] as const;
+
+const ALL_SERVICE_ENV_VARS: Record<string, string[]> = {
+  openai: ["OPENAI_API_KEY"],
+  anthropic: ["ANTHROPIC_API_KEY"],
+  xai: ["XAI_API_KEY"],
+  gemini: ["GEMINI_API_KEY"],
+  mistral: ["MISTRAL_API_KEY"],
+  deepseek: ["DEEPSEEK_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"],
+  alpaca_paper_api_key: ["ALPACA_PAPER_API_KEY"],
+  alpaca_paper_secret_key: ["ALPACA_PAPER_SECRET_KEY"],
+  pinecone: ["PINECONE_API_KEY"],
+  voyage: ["VOYAGE_API_KEY"],
+  siliconflow: ["SILICONFLOW_API_KEY"],
+  apify: ["APIFY_API_TOKEN", "APIFY_API_KEY"],
+  fintechstudios: ["FINTECH_STUDIOS_API_KEY", "POWERINTELL_API_KEY", "POWER_INTELL_API_KEY"],
+  powerintell: ["FINTECH_STUDIOS_API_KEY", "POWERINTELL_API_KEY", "POWER_INTELL_API_KEY"],
+  tiingo: ["TIINGO_API_KEY"],
+  twelvedata: ["TWELVEDATA_API_KEY", "TWELVE_DATA_API_KEY"],
+  logodev: ["LOGO_DEV_TOKEN", "LOGO_DEV_API_KEY"],
+  logodev_secret: ["LOGO_DEV_SECRET_KEY", "LOGO_DEV_SECRET"]
+};
+
+/** Purge all LLM and user-providable interface keys from process.env so process.env stays clean. */
+export function purgeProcessEnvUserKeys(): void {
+  for (const svc of LOCAL_ENV_MIGRATION_SERVICES) {
+    const vars = ALL_SERVICE_ENV_VARS[svc] ?? (API_KEY_ENV_MAP[svc] ? [API_KEY_ENV_MAP[svc]] : []);
+    for (const envVar of vars) {
+      if (process.env[envVar] !== undefined) {
+        delete process.env[envVar];
+      }
+    }
+  }
+}
 
 /**
  * One-time, idempotent migration of the operator's env broker/LLM keys into the `local` user's
@@ -798,9 +883,17 @@ const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "xai", "gemini", "m
 export function migrateLocalEnvCredentials(): { migrated: string[] } {
   const migrated: string[] = [];
   for (const svc of LOCAL_ENV_MIGRATION_SERVICES) {
-    const envVar = API_KEY_ENV_MAP[svc];
-    const envVal = envVar ? process.env[envVar]?.trim() : undefined;
-    if (envVal && !getUserApiKey(LOCAL_USER, svc)?.apiKey) {
+    const vars = ALL_SERVICE_ENV_VARS[svc] ?? (API_KEY_ENV_MAP[svc] ? [API_KEY_ENV_MAP[svc]] : []);
+    let envVal: string | undefined;
+    for (const v of vars) {
+      const val = process.env[v]?.trim();
+      if (val) {
+        envVal = val;
+        break;
+      }
+    }
+    const currentKey = getUserApiKey(LOCAL_USER, svc)?.apiKey;
+    if (envVal && (!currentKey || currentKey === DELETED_KEY_TOMBSTONE)) {
       try {
         upsertUserApiKey(LOCAL_USER, svc, envVal, "migrated from env");
         migrated.push(svc);
@@ -809,6 +902,8 @@ export function migrateLocalEnvCredentials(): { migrated: string[] } {
       }
     }
   }
+  // Purge process.env of all user-providable and LLM keys post-migration
+  purgeProcessEnvUserKeys();
   return { migrated };
 }
 

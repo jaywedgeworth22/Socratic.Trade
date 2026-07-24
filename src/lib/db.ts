@@ -2436,6 +2436,26 @@ const MIGRATIONS: Migration[] = [
       add("max_holding_until", "max_holding_until TEXT");
       add("invalidation", "invalidation TEXT");
     }
+  },
+
+  {
+    // Advisory cleanup / fundamentals PIT (fix-1792): time-series fundamentals snapshots
+    // for as-of lookups. Numbered v61 after main v59 regime columns + v60 exit contract.
+    version: 61,
+    name: "historical_fundamentals",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS historical_fundamentals (
+          symbol TEXT NOT NULL,
+          field TEXT NOT NULL,
+          value REAL NOT NULL,
+          provider TEXT NOT NULL,
+          effective_at TEXT NOT NULL,
+          fetched_at TEXT NOT NULL,
+          PRIMARY KEY (symbol, field, provider, effective_at)
+        );
+      `);
+    }
   }
 ];
 
@@ -2777,6 +2797,16 @@ function migrate(database: Database.Database): void {
       webhook_url TEXT,
       payload TEXT NOT NULL,
       error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS historical_fundamentals (
+      symbol TEXT NOT NULL,
+      field TEXT NOT NULL,
+      value REAL NOT NULL,
+      provider TEXT NOT NULL,
+      effective_at TEXT NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (symbol, field, provider, effective_at)
     );
 
     CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_account ON portfolio_snapshots (account_number, created_at);
@@ -3830,6 +3860,7 @@ export * from "./db-execution";
 export * from "./db-proposals";
 export * from "./db-fills";
 export * from "./db-notifications";
+export * from "./db-fundamentals";
 export * from "./db-api-keys";
 export * from "./db-health";
 export * from "./db-securities-import";

@@ -43,7 +43,6 @@ jobs:
           install -m 0755 "/tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/gh" --version
-
       - name: Delete every cache scoped to this PR's ref
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -82,7 +81,6 @@ jobs:
           install -m 0755 "/tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/gh" --version
-
       - name: Keep only the newest entry per cache key prefix
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

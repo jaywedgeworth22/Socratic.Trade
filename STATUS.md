@@ -4,6 +4,23 @@
 
 Fixed interactive market scans (`/api/scan`) and dashboard snapshots (`dashboard.ts`) strictly scoping `seedEnrichment` to the active account's previous `strategy_run` audit. Merged global user strategy run quote summaries with account-specific runs so enriched fundamental data (P/E, EPS Growth, Dividend, Sentiment, Analyst Rating, Sector) is immediately shared across all user accounts. Rollout: `docs/rollouts/2026-07-24-cross-account-market-scan-sharing.md`.
 
+## 2026-07-24 — Data Sources User Keys Migration & UI Connection Fields (ANTIGRAVITY)
+
+- Configured Tiingo (`tiingo`), Twelve Data (`twelvedata`), Fintech Studios (`fintechstudios`), and Apify (`apify`) as `per-user-only` credentials.
+- Added catalog entries for all 4 services to `API_KEY_CATALOG` in `app/api/keys/route.ts` so users can add and manage their own keys in the Settings UI.
+- Updated `migrateLocalEnvCredentials()` and `purgeProcessEnvUserKeys()` to check all alternate env var names (`TWELVE_DATA_API_KEY`, `APIFY_API_KEY`, etc.), copy them into `LOCAL_USER`'s encrypted SQLite store on boot, and delete them from `process.env`.
+- Rollout: `docs/rollouts/2026-07-24-data-sources-user-keys-migration.md`.
+
+## 2026-07-24 — ROIC.ai Provider Integration & Historical Fundamentals Storage (ANTIGRAVITY)
+
+- Integrated `RoicAiEnrichmentProvider` in `src/lib/data-providers.ts` for financial ratios (P/E, P/B, EPS, ROE, Debt/Equity) and financial statements.
+- Added database schema v59 `historical_fundamentals` to log time-series metrics with ISO timestamp (`asOf`) precision.
+- Fixed rate-limit pacing logic in `scripts/massive-hoard.ts` and restarted background download for 5 years (~1,305 days) of market breadth and daily OHLCV files.
+- Rollout: `docs/rollouts/2026-07-23-roic-integration-and-historical-fundamentals.md`.
+## 2026-07-24 — Coolify/Hetzner runners only (CURSOR)
+## 2026-07-24 — Coolify/Hetzner runners only (CURSOR) — MERGED #2201
+## 2026-07-24 — Robinhood OAuth production redirect URI fix (ANTIGRAVITY)
+
 Fixed Robinhood reconnect from `socratictrade.com` redirecting to `http://localhost:4000/api/auth/robinhood/callback`. Updated Infisical `prod` secrets for Socratic.Trade (`39d93bb7-76f9-498c-8b50-a7def52e072f`): set `ROBINHOOD_MCP_REDIRECT_URI=https://socratictrade.com/api/auth/robinhood/callback` and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=off`. Triggered redeploy on Coolify (`m1os7ijf31bg3fanil152e4b`). Rollout: `docs/rollouts/2026-07-24-robinhood-production-redirect-uri-fix.md`.
 
 ## 2026-07-24 — Per-user reflections & learning system (CURSOR)
@@ -3154,6 +3171,17 @@ Fixed logic bugs in model ID stripping that broke rotation for model variants:
 All 5267 tests and the Next.js build passed. Rollout: `docs/rollouts/2026-07-23-gemini-reasoning-temp.md`.
 
 
+## 2026-07-23 — FMP Downgrade Mitigation & UI Stale Indicators (ANTIGRAVITY, branch `fix-1792`)
+
+Successfully addressed the impending FMP downgrade by hoarding 1300+ days of Massive history and extensive FMP fundamentals for the tracked universe. 
+- Re-ordered the provider cascade in `src/lib/data-providers.ts` to favor free fallbacks (like Yahoo) and avoid exhausting FMP limits.
+- Increased the FMP fundamentals TTL in the cache to 14 days to stretch out the data we hoarded.
+- Added `isStaleField` logic to `app/console/scan/columns.tsx` to identify data older than 24 hours. Rendered stale fundamental data (P/E, EPS growth, Div Yield) with an `italic opacity-70` class and appended `(Stale: ...)` to tooltips.
+- Ported the staleness logic to `app/console/ui/drilldown-data.ts` and `app/console/ui/drilldown-sections.tsx`. Fundamentals in the drawer now fade and italicize if they are stale.
+
+Verified by passing TS compiler, Linter, Vitest test suite, and Next.js production build. Ready to land.
+Rollout: `docs/rollouts/2026-07-23-fmp-downgrade-ui.md`.
+
 ## 2026-07-22 — Admin UI Polish (ANTIGRAVITY, branch `fix/admin-ui-polish`)
 
 Fixed Admin panel UI bugs:
@@ -3241,3 +3269,10 @@ Fixed a CI failure in `.github/workflows/cleanup-caches.yml` by retargeting the 
 ## 2026-07-23 — Admin Panel Server RAM Fix & CI ESLint Ignores (ANTIGRAVITY)
 
 The Admin panel's "Server Metrics" tab was modified to extract actual RAM capacity directly from the Hetzner Server API's metadata rather than relying on Coolify metadata to ensure accurate memory percentages. Also, added `**/.worktrees/**` to the ESLint configuration ignores to prevent CI `verify` gates from failing when linting other agents' worktree paths. Verified clean on 5000+ tests and builds.
+
+## 2026-07-24 — Purge process.env LLM & User Keys (ANTIGRAVITY)
+
+Implemented automatic purging of all LLM API keys and user-providable interface credentials from `process.env` upon boot migration, key creation/update, and key deletion in `src/lib/db-api-keys.ts`. Ensures process.env never retains ambient LLM or user keys in process memory at runtime.
+## 2026-07-24 — Connections UI Redesign & Ghost API Key Tombstoning (ANTIGRAVITY)
+
+Redesigned the Broker Connections cards in `app/console/settings/brokers.tsx` to reduce vertical card height by >25%, added inline tax treatment tags, `Load PAPER` badges for paper accounts, strategy execution status, pending proposal counts, and an on-demand `Capabilities` modal sheet. Also fixed the ghost API key deletion bug by implementing explicit tombstoning (`DELETED_KEY_TOMBSTONE = "__DISABLED__"`) in `src/lib/db-api-keys.ts` so deleted keys never re-migrate from ambient environment variables.

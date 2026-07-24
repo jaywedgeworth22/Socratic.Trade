@@ -26,6 +26,7 @@ import {
   ratingTooltip,
   targetUpsidePct,
   withProvenance,
+  isStaleViewField,
   type DerivedResult,
   type QuoteView
 } from "./drilldown-data";
@@ -432,6 +433,8 @@ interface FundRow {
   title: string;
   /** True when the value is a computed "n/a" (real state), not missing data. */
   na?: boolean;
+  /** True when the underlying observation is older than 24 hours. */
+  stale?: boolean;
 }
 
 export function FundamentalsSection({ view }: { view: QuoteView }) {
@@ -443,6 +446,7 @@ export function FundamentalsSection({ view }: { view: QuoteView }) {
       label: "P/E ratio",
       value: pe ? pe.text : null,
       na: pe?.na,
+      stale: isStaleViewField(view, "peRatio"),
       title: withProvenance(
         pe?.na
           ? "Price ÷ trailing earnings per share. n/a because trailing earnings are negative or zero — the ratio genuinely doesn't exist, which is different from missing data."
@@ -455,36 +459,42 @@ export function FundamentalsSection({ view }: { view: QuoteView }) {
       key: "eps",
       label: "EPS (ttm)",
       value: typeof view.eps === "number" ? fmtMoney(view.eps) : null,
+      stale: isStaleViewField(view, "eps"),
       title: withProvenance("Trailing-twelve-month earnings per share. Negative = the company lost money over the last year.", view, "eps")
     },
     {
       key: "epsGrowth",
       label: "EPS growth (YoY)",
       value: typeof view.epsGrowth === "number" ? fmtPct(view.epsGrowth * 100, 0, true) : null,
+      stale: isStaleViewField(view, "epsGrowth"),
       title: withProvenance("Year-over-year earnings-per-share growth. Positive and rising is the healthy pattern.", view, "epsGrowth")
     },
     {
       key: "pbRatio",
       label: "P/B ratio",
       value: typeof view.pbRatio === "number" ? view.pbRatio.toFixed(2) : null,
+      stale: isStaleViewField(view, "pbRatio"),
       title: "Price ÷ book value per share. Under 1 = trading below accounting net worth; capital-light businesses normally trade far above 1."
     },
     {
       key: "dividendYield",
       label: "Dividend yield",
       value: typeof view.dividendYield === "number" ? fmtPct(view.dividendYield, 2) : null,
+      stale: isStaleViewField(view, "dividendYield"),
       title: withProvenance("Annual dividends ÷ price. 0 or missing simply means the company doesn't pay one.", view, "dividendYield")
     },
     {
       key: "fcfYield",
       label: "FCF yield",
       value: typeof view.fcfYield === "number" ? fmtPct(view.fcfYield, 1) : null,
+      stale: isStaleViewField(view, "fcfYield"),
       title: withProvenance("Free cash flow ÷ market cap — cash actually generated per dollar of company value. 6%+ is strong; negative means the business burns cash.", view, "fcfYield")
     },
     {
       key: "debtToEquity",
       label: "Debt / equity",
       value: typeof de === "number" ? de.toFixed(2) : null,
+      stale: isStaleViewField(view, "debtToEquity"),
       title: withProvenance("Total debt ÷ shareholder equity, normalized to a ratio. Under 0.5 = conservatively financed; over 3 = heavily leveraged.", view, "debtToEquity")
     },
     {
@@ -565,7 +575,7 @@ export function FundamentalsSection({ view }: { view: QuoteView }) {
             title={r.title}
           >
             <span className="text-[color:var(--con-faint)]">{r.label}</span>
-            <span className={cx("con-num text-right", r.na && "text-[color:var(--con-muted)]")}>{r.value ?? <Dash />}</span>
+            <span className={cx("con-num text-right", r.na && "text-[color:var(--con-muted)]", r.stale && "italic opacity-70")}>{r.value ?? <Dash />}</span>
           </div>
         ))}
       </div>

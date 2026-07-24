@@ -187,6 +187,7 @@ describe("LLM usage ledger", () => {
       label: "primary user (openai)"
     });
     // A tenant served by server failover gets the env key's fingerprint.
+    vi.stubEnv("OPENAI_API_KEY", "env-operator-key-ABCD");
     expect(describeUsageKey({ keyRef: keyFingerprint("env-operator-key-ABCD")!, userId: "u_other", provider: "openai" })).toEqual({
       fingerprint: displayKeyFingerprint("env-operator-key-ABCD"),
       label: "server failover (openai)"
