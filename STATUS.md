@@ -1,3 +1,17 @@
+# Current Status
+
+## 2026-07-23 — Unstick open PRs + effort-board hygiene (CURSOR)
+
+Refreshed the five remaining open PRs against current `main` and armed squash auto-merge:
+#1901 (retired broker usage-monitor emissions), #1902 (approval Busy retry + OpenRouter
+account-model rotation), #1792 (advisory cleanup / rag-embed health lanes), #1819
+(earningscalls burst + budget ledger isolation), #1842 (document abstracts + RapidAPI docs).
+Real conflicts resolved on #1902 and #1792; the others were phantom DIRTY. Board rows for
+already-merged work (#1892 RAG program, #1956 dark mode, #1903 RH caps, #1961 proposal
+drawer, #1978 Gemini temp, #1889 telemetry v2, #1891 CI collapse, iOS #1859/#1886/#1888,
+Cursor #1957/#1844/#1840) corrected in place. GitHub Issues API returns 403 for this token.
+Hosted `verify` remains the merge gate. Rollout: `docs/rollouts/2026-07-23-unstick-open-prs.md`.
+
 ## 2026-07-22 — RAG review remediation round 2 (PR #1892, GROK)
 
 Closed the remaining open connector threads on PR #1892 without enabling any RAG flags: invalid
@@ -92,6 +106,18 @@ The prior head failed `verify-hosted` because a merge resolution left stale vect
 dispatch/cost references. Commit `28a09b84` now keeps the durable `voyage-rerank` service key,
 narrows the active provider for the health lane, and uses `estimateRagDispatchCost`. The branch is
 ready for a fresh hosted gate; auto-merge is armed. No production/provider/corpus writes were made.
+## 2026-07-22 — Retired-provider Usage Monitor cleanup (GROK peer co-work, branch `codex/retired-provider-usage-cleanup`)
+
+Removed Usage Monitor emissions from the Alpaca, Tradier, and Robinhood broker adapters while
+preserving their trading, account-read, and API-health behavior. Removed the unused Intrinio
+implementation, API-key configuration, environment example, and current forward-looking docs;
+historical rollout/review/handoff evidence remains intact. A central provider-family policy
+suppresses the retired broker roots and their subproviders (including Alpaca news/snapshot) on both
+live `recordProviderCall` admission and durable provider-dispatch/replay paths
+(`createProviderDispatchUsageMonitorEvent` returns null; replay drops nulls and advances
+watermarks). `pushBrokerBalance` is removed. Paid FMP control traffic remains eligible. Integrated
+on top of #1889 exact merge `bd7068b6` (strict-v2 IDs/ACK/watermark/cutover preserved). Rollout:
+`docs/rollouts/2026-07-22-retired-provider-usage-cleanup.md`.
 ## 2026-07-23 — Gemini Reasoning Temperature Fix (ANTIGRAVITY)
 
 Fixed an issue where Gemini 3.1 Pro Preview (and other reasoning-enabled Gemini models) would fail when used for the Red Team due to passing `temperature` to the provider. The LLM request shaper (`withLlmRequestBounds` in `src/lib/llm-request.ts`) now correctly omits `temperature` for Gemini models when `reasoning_effort` is enabled, matching the existing behavior for Anthropic, OpenAI, Mistral, and DeepSeek. `npx tsc --noEmit` verified clean. Rollout: `docs/rollouts/2026-07-23-gemini-temperature-fix.md`.

@@ -16,7 +16,7 @@ Canonical effort-board rows: `/Users/jay/apps/TRADING-EFFORT-LOG.md` (Planned) +
 
 ## Priority A — RAG / retrieval (PR #1892 program + related)
 
-These are the flags agents keep saying “remain off.” Owner wants an explicit **enable after
+**#1892 MERGED 2026-07-23.** Flags still remain off. Owner wants an explicit **enable after
 merge + prove** pass, not permanent dormancy.
 
 | Flag / gate | Default | What it does when on | Enable after / notes |

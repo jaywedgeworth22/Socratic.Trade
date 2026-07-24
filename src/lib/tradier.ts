@@ -18,7 +18,6 @@ import { normalizeSymbol } from "./money";
 import { isRejectedOrCanceledState } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { logApiHealth } from "./db-health";
-import { recordProviderCall, pushBrokerBalance } from "./usage-monitor-push";
 import { fetchDailyOHLC } from "./history";
 // Reuse Alpaca's keyless-Yahoo quote floor and the shared pre-trade notional semantics verbatim —
 // they are broker-agnostic helpers exported from ./alpaca (no Alpaca SDK behavior involved).
@@ -352,15 +351,14 @@ class TradierBrokerGateway implements BrokerGateway {
     return parsed as T;
   }
 
-  // Wrap a call for the admin connections-health page ("tradier-broker") + provider-usage telemetry,
-  // mirroring Alpaca's trackHealth. logApiHealth swallows its own errors; the broker call is never
-  // affected by a logging failure.
+  // Wrap a call for the admin connections-health page ("tradier-broker"), mirroring Alpaca's
+  // trackHealth. logApiHealth swallows its own errors; the broker call is never affected by a
+  // logging failure.
   private async trackHealth<T>(fn: () => Promise<T>): Promise<T> {
     const start = Date.now();
     try {
       const result = await fn();
       logApiHealth({ service: "tradier-broker", ok: true, latencyMs: Date.now() - start, keySource: this.keySource, userId: this.userId });
-      recordProviderCall("tradier", { service: "broker", ok: true });
       return result;
     } catch (err) {
       logApiHealth({
@@ -371,7 +369,6 @@ class TradierBrokerGateway implements BrokerGateway {
         keySource: this.keySource,
         userId: this.userId
       });
-      recordProviderCall("tradier", { service: "broker", ok: false });
       throw err;
     }
   }
@@ -471,7 +468,7 @@ class TradierBrokerGateway implements BrokerGateway {
         rawStockLong != null && rawStockShort != null
           ? rawStockLong - rawStockShort
           : number(b.market_value) - optionMarketValue;
-      const result: Portfolio = {
+      return {
         accountNumber,
         totalMarketValue,
         buyingPower,
@@ -479,15 +476,6 @@ class TradierBrokerGateway implements BrokerGateway {
         optionMarketValue,
         cash: totalCash
       };
-      pushBrokerBalance({
-        provider: "tradier",
-        userId: this.userId,
-        accountNumber,
-        cash: result.cash,
-        buyingPower: result.buyingPower,
-        equity: result.totalMarketValue
-      });
-      return result;
     });
   }
 
