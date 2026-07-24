@@ -63,3 +63,10 @@ Ops (not in git): GitHub ruleset `main-protection` PUT; Actions run cancellation
 - #1902 / #1819 / #2022: re-merged `origin/main` after dirty; #1819 real conflict resolved
   (`document_abstracts` v56 + earningscalls v57/v58); persistence-hardening 23/23 green
 - Effort sync live: `created=117 updated=321 closed=86`; open `state:in-progress` issues = 3
+
+## Update — merge=union repair
+
+Squash-merge of #2022 onto `main` combined both In Progress histories because
+`docs/EFFORT-LOG.md` uses `merge=union`. Follow-up PR
+`cursor/effort-board-union-repair-14e5` collapses the board again before the
+next effort-issues-sync run.

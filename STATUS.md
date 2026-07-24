@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-24 — EFFORT-LOG merge=union repair (CURSOR)
+
+#2022 squash-merge reintroduced stale In Progress rows via `merge=union` on `docs/EFFORT-LOG.md`.
+Follow-up branch `cursor/effort-board-union-repair-14e5` re-applies hygiene so effort-issues-sync
+can close mirrors. Remaining product PRs: #1902/#1819. Rollout:
+`docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
 ## 2026-07-24 — Resolve open efforts closeout (CURSOR)
 
 Merged #1842 + #1792. Remaining open product PRs: #1902 (Busy retry) and #1819 (earningscalls burst,
