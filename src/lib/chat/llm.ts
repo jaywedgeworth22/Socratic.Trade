@@ -25,7 +25,7 @@ export interface LlmUsageOpts {
 }
 
 /** The chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
-export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter";
+export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "openrouter";
 
 /** Sum usage across the (possibly multi-step) tool loop and record one ledger row.
  *  `providerRequestId` is only meaningful when the loop made exactly ONE provider request
@@ -619,6 +619,7 @@ export function chatProviderForModel(model: string): ChatProvider {
   if (/^gemini/i.test(name)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(name)) return "mistral";
   if (/^deepseek/i.test(name)) return "deepseek";
+  if (/(kimi|moonshot)/i.test(name)) return "moonshot";
   return "openai";
 }
 
@@ -632,6 +633,7 @@ function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {  if (prov
   if (provider === "mistral") return process.env.MISTRAL_API_URL?.trim() || "https://api.mistral.ai/v1/chat/completions";
   if (provider === "openrouter") return process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
   if (provider === "deepseek") return process.env.DEEPSEEK_API_URL?.trim() || "https://api.deepseek.com/v1/chat/completions";
+  if (provider === "moonshot") return process.env.MOONSHOT_API_URL?.trim() || "https://api.moonshot.cn/v1/chat/completions";
   return process.env.OPENAI_CHAT_URL?.trim() || "https://api.openai.com/v1/chat/completions";
 }
 

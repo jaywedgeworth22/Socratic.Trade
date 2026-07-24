@@ -3,7 +3,7 @@
 // provider error (status code + response body) into a short, user-actionable sentence, and falls back
 // to the trimmed raw text when it does not recognize the shape, so nothing is ever hidden.
 
-export type LlmProviderName = "OpenAI" | "Anthropic (Claude)" | "xAI (Grok)" | "Google (Gemini)" | "Mistral" | "DeepSeek" | "OpenRouter" | "the LLM";
+export type LlmProviderName = "OpenAI" | "Anthropic (Claude)" | "xAI (Grok)" | "Google (Gemini)" | "Mistral" | "DeepSeek" | "Moonshot AI (Kimi)" | "OpenRouter" | "the LLM";
 
 /** Map an internal provider id (openai/xai/gemini/mistral/deepseek/anthropic) to a display name. */
 export function providerLabel(provider?: string | null): LlmProviderName {
@@ -16,6 +16,9 @@ export function providerLabel(provider?: string | null): LlmProviderName {
       return "Mistral";
     case "deepseek":
       return "DeepSeek";
+    case "moonshot":
+    case "kimi":
+      return "Moonshot AI (Kimi)";
     case "openrouter":
       return "OpenRouter";
     case "anthropic":
@@ -34,6 +37,7 @@ export function providerFromText(raw: string): LlmProviderName {
   if (/anthropic|claude/.test(s)) return "Anthropic (Claude)";
   if (/generativelanguage|gemini/.test(s)) return "Google (Gemini)";
   if (/mistral|mixtral|codestral|ministral/.test(s)) return "Mistral";
+  if (/moonshot|kimi/.test(s)) return "Moonshot AI (Kimi)";
   if (/openrouter/.test(s)) return "OpenRouter";
   if (/deepseek/.test(s)) return "DeepSeek";
   if (/openai|platform\.openai|^sk-/.test(s)) return "OpenAI";

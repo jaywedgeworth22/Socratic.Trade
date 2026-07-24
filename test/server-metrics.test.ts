@@ -75,7 +75,7 @@ describe("server-metrics provider shape normalization", () => {
     expect(displayProviderText(malformedIpv4, "127.0.0.1", "server IP")).toBe("Invalid server IP");
   });
 
-  it("omits malformed Coolify resources and backup tasks, returning string-only display fields", () => {
+  it("omits malformed Coolify resources while retaining valid services and backup tasks", () => {
     const normalized = normalizeCoolifyResources([
       { uuid: "app-1", name: "socratic-trade-prod", type: "application", status: "running:healthy" },
       { uuid: "app-2", name: { rendered: "bad" }, type: "application", status: { state: "running" } },
@@ -84,6 +84,7 @@ describe("server-metrics provider shape normalization", () => {
 
     expect(normalized.resources).toEqual([
       { uuid: "app-1", name: "socratic-trade-prod", type: "application", status: "running:healthy" },
+      { uuid: "app-3", name: "usage monitor backups", type: "backup", status: "running:healthy" },
     ]);
     expect(normalized.warnings).toEqual([
       "Coolify resource at index 1 had malformed display fields and was omitted.",

@@ -13,7 +13,7 @@
 
 ## 2026-07-24 — Admin Server Stats & Settings Cleanup (ANTIGRAVITY)
 
-- Filtered out noisy backup tasks (e.g., `usage monitor backups`) from Coolify services in Server Stats (`/admin/server`).
+- Retained all Coolify services and backup tasks (e.g., `usage monitor backups`) alongside Hetzner Action Runners in Server Stats (`/admin/server`).
 - Included all Hetzner GitHub Action runners (`socratic-ci`, `socratic-ci-2`, `congress-ci`, `shared-ci`, `usage-ci`, `github-runner`) in the Services list.
 - Displayed exact System Memory RAM used, total, free, and utilization percentage (`X.X GB used of Y.Y GB (Z% used — W.W GB free)`).
 - Added a **Disk Storage** card (total, used, available, and % used) to Host Details Grid and a **Disk Utilization** meter to Live Resource Load.
