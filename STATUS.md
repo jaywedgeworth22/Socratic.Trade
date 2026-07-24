@@ -1,6 +1,11 @@
 # Current Status
 
-## 2026-07-24 — Effort-board accuracy audit (CURSOR)
+## 2026-07-24 — ROIC.ai Provider Integration & Historical Fundamentals Storage (ANTIGRAVITY)
+
+- Integrated `RoicAiEnrichmentProvider` in `src/lib/data-providers.ts` for financial ratios (P/E, P/B, EPS, ROE, Debt/Equity) and financial statements.
+- Added database schema v59 `historical_fundamentals` to log time-series metrics with ISO timestamp (`asOf`) precision.
+- Fixed rate-limit pacing logic in `scripts/massive-hoard.ts` and restarted background download for 5 years (~1,305 days) of market breadth and daily OHLCV files.
+- Rollout: `docs/rollouts/2026-07-23-roic-integration-and-historical-fundamentals.md`.
 
 Audited `docs/EFFORT-LOG.md` against GitHub PR state + production `/api/health` release SHA.
 Cleared stale In Progress (Usage-compliance Wave 2 = #1820; Server Stats reliability = #1292+#1751).

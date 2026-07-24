@@ -2381,6 +2381,23 @@ const MIGRATIONS: Migration[] = [
         )
         .run("earningscalls_burst_pending", "25", new Date().toISOString());
     }
+  },
+  {
+    version: 59,
+    name: "historical_fundamentals",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS historical_fundamentals (
+          symbol TEXT NOT NULL,
+          field TEXT NOT NULL,
+          value REAL NOT NULL,
+          provider TEXT NOT NULL,
+          effective_at TEXT NOT NULL,
+          fetched_at TEXT NOT NULL,
+          PRIMARY KEY (symbol, field, provider, effective_at)
+        );
+      `);
+    }
   }
 ];
 

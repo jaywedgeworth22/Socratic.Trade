@@ -1556,7 +1556,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
     
     Promise.resolve().then(() => {
       try {
-        const { recordHistoricalFundamentals } = require("./db-fundamentals");
+        const { recordHistoricalFundamentals } = require("./db");
         recordHistoricalFundamentals(recordsToSave);
       } catch (err) {
         console.error("[CascadingEnrichmentProvider] failed to record historical fundamentals", err);
