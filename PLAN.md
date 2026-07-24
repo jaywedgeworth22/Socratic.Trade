@@ -3,6 +3,11 @@
 > **2026-07-22 — PR #1792 typecheck repair (CODEX).** The provider-generic health-lane merge
 > resolution is now aligned with the current durable dispatch API in `28a09b84`; run hosted
 > verification, let auto-merge land it, and confirm the exact post-merge deployment receipt.
+> **2026-07-23 - Unstick remaining open PRs (CURSOR).** Five open PRs (#1901/#1902/#1792/#1819/#1842)
+> refreshed onto current `main`, conflict-resolved where real, auto-merge armed. Effort board
+> corrected for already-merged rows (#1892 and related). Next: wait hosted verify → auto-merge;
+> then RAG enablement remains Planned (telemetry/eval before `RAG_CORPUS_WIDE_LEXICAL`).
+
 > **2026-07-22 — Retired-provider Usage Monitor cleanup (CODEX, branch
 > `codex/retired-provider-usage-cleanup`).** Keep Alpaca, Tradier, and Robinhood broker runtime
 > behavior and health logging intact, but remove their Usage Monitor emissions and the unused

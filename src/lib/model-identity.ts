@@ -42,11 +42,11 @@ export function canonicalModelId(model: string | null | undefined): string {
   if (/claude.*fable/i.test(lower)) return "claude-fable-latest";
 
   // xAI family
-  if (/grok.*build/i.test(lower)) return "grok-build-latest";
+  if (/grok.*build/i.test(lower)) return "grok-build-0.1";
   if (/grok/i.test(lower)) return "grok-latest";
 
   // Google Gemini family
-  if (/gemini.*flash.*lite/i.test(lower)) return "gemini-flash-lite-latest";
+  if (/gemini.*flash.*lite/i.test(lower)) return "gemini-3.5-flash-lite";
   if (/gemini.*flash/i.test(lower)) return "gemini-flash-latest";
   if (/gemini.*pro/i.test(lower)) return "gemini-pro-latest";
 
@@ -56,12 +56,12 @@ export function canonicalModelId(model: string | null | undefined): string {
   if (/deepseek.*pro/i.test(lower)) return "deepseek-pro-latest";
 
   // Mistral family
-  if (/mistral.*small/i.test(lower)) return "mistral-small-latest";
-  if (/mistral.*medium/i.test(lower)) return "mistral-medium-latest";
+  if (/mistral.*small/i.test(lower)) return "mistral-small-2603";
+  if (/mistral.*medium/i.test(lower)) return "mistral-medium-3.5";
   if (/mistral.*large/i.test(lower)) return "mistral-large-latest";
 
   // Meta family
-  if (/llama/i.test(lower)) return "llama-70b-latest";
+  if (/llama/i.test(lower)) return "llama-3.3-70b-instruct";
 
   // OpenAI family
   if (/gpt.*sol/i.test(lower)) return "gpt-sol-latest";

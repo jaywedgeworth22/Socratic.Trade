@@ -381,6 +381,6 @@ describe("normalizeBenchmarkSummaries", () => {
       { model: "mistral-medium-3-5", role: "green" }, // stale: 2026-07-08, 0/3 http errors
       { model: "mistral-medium-3-5", role: "green", p50LatencyMs: 1261, avgEstCostUsd: 0.0117 } // real: 2026-07-10
     ]);
-    expect(rows).toEqual([{ model: "mistral-medium-latest", role: "green", benchmarkCostUsd: 0.0117, benchmarkColdP50Ms: 1261 }]);
+    expect(rows).toEqual([{ model: "mistral-medium-3.5", role: "green", benchmarkCostUsd: 0.0117, benchmarkColdP50Ms: 1261 }]);
   });
 });
