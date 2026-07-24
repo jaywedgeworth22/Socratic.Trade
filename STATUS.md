@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-07-24 — Open efforts sweep closeout (CURSOR)
+
+Product PRs #1901/#1902/#1792/#1819/#1842/#2123 and docs #1980/#2005/#2022 are on `main`.
+Open `state:in-progress` GitHub issues are back to board-true WIP (Usage-compliance Wave 2 +
+infra-panel reliability). `scripts/sync-effort-issues.py` now closes open orphan mirrors.
+Board/script repair PR #2143 + follow-up #2155 (admin RAM + cache cleanup) still auto-merge
+armed. Use `GITHUB_MCP_TOKEN` (not the broken `GITHUB_TOKEN`) for Issues/rulesets. Rollout:
+`docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
 ## 2026-07-24 — Resolve open efforts closeout (CURSOR)
 
 Merged #1842 + #1792. Remaining open product PRs: #1902 (Busy retry) and #1819 (earningscalls burst,
@@ -3207,3 +3216,7 @@ plist/asset validation, and diff check pass. Rollout:
 ## 2026-07-23 — Cleanup Caches Runner Fix (ANTIGRAVITY, branch `fix/cleanup-caches-runner`)
 
 Fixed a CI failure in `.github/workflows/cleanup-caches.yml` by retargeting the jobs from `[self-hosted, socratic-ci]` to `ubuntu-latest`. The self-hosted Coolify runners do not have the GitHub CLI (`gh`) installed globally, which is required by both the `delete-pr-caches` and `prune-stale-caches` jobs. Because `cleanup-caches.yml` operates purely via the GitHub API (via `gh`) and doesn't require any app builds or local runner state, it can safely and freely run on `ubuntu-latest` without consuming our self-hosted runner concurrency.
+
+## 2026-07-23 — Admin Panel Server RAM Fix & CI ESLint Ignores (ANTIGRAVITY)
+
+The Admin panel's "Server Metrics" tab was modified to extract actual RAM capacity directly from the Hetzner Server API's metadata rather than relying on Coolify metadata to ensure accurate memory percentages. Also, added `**/.worktrees/**` to the ESLint configuration ignores to prevent CI `verify` gates from failing when linting other agents' worktree paths. Verified clean on 5000+ tests and builds.
