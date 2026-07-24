@@ -54,15 +54,20 @@ Before every commit/push to the GitHub repo, you MUST update the following:
 
 `AGENTS.md` is for durable repo rules and cross-file traps only. Do not put turn-specific status or a running changelog here — that is what `STATUS.md` (snapshot), `docs/EFFORT-LOG.md` (effort board), and `docs/rollouts/` (chronological) are for.
 
-## Rollout note minimums
+## Standardized Rollout & Handoff Notes
 
-- Summary: what changed.
-- Why: why it changed or what decision was made.
-- Files: exact touched paths.
-- Verification: exact commands actually run, plus notable failures if any.
-- Follow-ups: remaining work, risks, or deferred items.
-- If no code changed but an important decision or blocker was discovered, write
-  the note anyway and say that explicitly.
+To ensure the next agent (or the human owner) can pick up exactly where you left off without wasting tokens re-deriving context, every `docs/rollouts/` handoff note MUST follow this standardized template:
+
+1. **Context & Objective**: 1-2 sentences explaining *why* this work was done and what overarching goal it serves.
+2. **Changes Made**: 
+   - A high-level summary of the architectural or logical changes.
+   - A bulleted list of the exact file paths that were touched.
+3. **Decisions & Trade-offs**: Explicitly call out any design decisions, new dependencies added, or edge cases deliberately ignored. If you diverged from a design doc, explain why.
+4. **Verification State**: 
+   - Paste the exact commands run (e.g. `npm test`, `npx tsc --noEmit`).
+   - State the current build status (e.g., "Build passes, 2 tests skipped").
+5. **Next Steps & Blockers**: What exactly should the next agent do? List actionable tasks or specific blockers.
+6. **Zero-Code Findings**: If no code was changed but you did research/investigation, state the outcome of that investigation clearly.
 
 ## Verify before claiming done
 

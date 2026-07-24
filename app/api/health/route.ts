@@ -153,10 +153,18 @@ export async function GET() {
   try {
     const summaries = getServiceHealthSummaries();
     const dependencies: Record<string, { ok: boolean; degraded?: boolean }> = {};
+    // "rag-embed"/"rag-rerank" (renamed 2026-07-19 from the historical "voyage"/"voyage-rerank"
+    // service names — see withRagApiHealth in vector-db.ts) are now provider-generic: they ALWAYS
+    // reflect whichever embed/rerank provider (Voyage, OpenRouter, SiliconFlow) is actually active,
+    // so they can be unconditionally critical rather than only "critical while Voyage happens to be
+    // the pin" (the old logic's gap — a dead OpenRouter/bge-m3 lane never failed liveness at all).
+    // Still excluded when RAG_EMBED_PROVIDER is pinned-but-keyless (`ragEmbedProviderError` set):
+    // that misconfiguration is already surfaced there, and 503ing the container on stale rag-embed/
+    // rag-rerank rows from BEFORE the mis-pin would just restart-loop without fixing anything.
     const criticalServices = new Set(["pinecone", "alpaca-broker"]);
-    if (ragEmbedProvider && !checks.ragEmbedProviderError) {
-      criticalServices.add(ragEmbedProvider);
-      criticalServices.add(`${ragEmbedProvider}-rerank`);
+    if (!checks.ragEmbedProviderError) {
+      criticalServices.add("rag-embed");
+      criticalServices.add("rag-rerank");
     }
     // Collapse (service, keySource) lanes to one entry per service. Prefer a CONFIGURED lane
     // (env/user) over a stale keySource:"none" lane so a service that later got a working key isn't
@@ -194,10 +202,14 @@ export async function GET() {
       // market-data lanes (fmp/massive) degrade to Yahoo/others (the provider-tier section already
       // reports data-provider degradation), so they mark degraded but never fail liveness.
       //
-      // Provider-aware RAG criticality (bge-m3-metering-gate, 2026-07-18): the active embed /
-      // rerank lanes gate liveness ONLY while they are the ACTIVE embed/rerank provider.
-      // The lanes are still REPORTED in `dependencies` either way — this only stops them from
-      // failing liveness while inactive.
+      // rag-embed/rag-rerank criticality (bge-m3-metering-gate 2026-07-18, lane rename 2026-07-19):
+      // these two lanes now gate liveness UNCONDITIONALLY (see the criticalServices comment above)
+      // because the lane itself is provider-generic — a hard-stopped rag-embed lane means whichever
+      // provider is actually active is down, which is always liveness-critical, not just when
+      // Voyage happens to be the pin. Historical "voyage"/"voyage-rerank" rows (pre-rename, or from
+      // recordMissingRagKey's still-literal-"voyage" missing-key path) are simply not in
+      // criticalServices and degrade this route rather than 503 it — consistent with treating them
+      // as legacy/informational once the real per-operation lane has taken over.
       const isCritical = criticalServices.has(summary.service);
       if (isCritical && hardStopped) {
         ok = false;
