@@ -395,6 +395,12 @@ export function upsertUserApiKey(userId: string, service: string, apiKey: string
        ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
     )
     .run(id, userId, canonical, encryptedKey, label ?? null, now, now);
+  if (userId === LOCAL_USER && credTierForService(canonical) === "per-user-only") {
+    const envVar = apiKeyEnvVarForService(canonical);
+    if (envVar && process.env[envVar] !== undefined) {
+      delete process.env[envVar];
+    }
+  }
   return { id, userId, service: canonical, apiKey, label, createdAt: now, updatedAt: now };
 }
 
@@ -427,6 +433,13 @@ export function deleteUserApiKey(userId: string, service: string): void {
        VALUES (?, ?, ?, ?, 'disabled by user', ?, ?)
        ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
     ).run(aliasId, userId, service, encryptedKey, now, now);
+  }
+
+  if (userId === LOCAL_USER) {
+    const envVar = apiKeyEnvVarForService(canonical);
+    if (envVar && process.env[envVar] !== undefined) {
+      delete process.env[envVar];
+    }
   }
 }
 
@@ -749,6 +762,12 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
   if (!llmOperatorFallbackEnabled()) return { source: "none" };
   const envVar = apiKeyEnvVarForService(canonical);
   let envKey = envVar ? process.env[envVar] : undefined;
+  if (!envKey) {
+    const localKey = getUserApiKey(LOCAL_USER, canonical)?.apiKey;
+    if (localKey && localKey !== DELETED_KEY_TOMBSTONE) {
+      envKey = localKey;
+    }
+  }
 
   if (process.env.NODE_ENV === "test" && !envKey) {
     if (canonical === "openrouter") {
@@ -786,7 +805,37 @@ export function userHasAnyLlmCredential(userId?: string): boolean {
 // Per-user-only credentials whose env values belong to the primary (`local`) operator. At boot we
 // migrate them into `local`'s per-user key store so there is NO special `local` env branch in the
 // resolvers above — every user, `local` included, resolves broker/LLM keys from the per-user store.
-const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "openrouter", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
+const LOCAL_ENV_MIGRATION_SERVICES = [
+  "openai",
+  "anthropic",
+  "xai",
+  "gemini",
+  "mistral",
+  "deepseek",
+  "openrouter",
+  "alpaca_paper_api_key",
+  "alpaca_paper_secret_key",
+  "pinecone",
+  "voyage",
+  "siliconflow",
+  "apify",
+  "fintechstudios",
+  "powerintell",
+  "tiingo",
+  "twelvedata",
+  "logodev",
+  "logodev_secret"
+] as const;
+
+/** Purge all LLM and user-providable interface keys from process.env so process.env stays clean. */
+export function purgeProcessEnvUserKeys(): void {
+  for (const svc of LOCAL_ENV_MIGRATION_SERVICES) {
+    const envVar = API_KEY_ENV_MAP[svc];
+    if (envVar && process.env[envVar] !== undefined) {
+      delete process.env[envVar];
+    }
+  }
+}
 
 /**
  * One-time, idempotent migration of the operator's env broker/LLM keys into the `local` user's
@@ -809,6 +858,8 @@ export function migrateLocalEnvCredentials(): { migrated: string[] } {
       }
     }
   }
+  // Purge process.env of all user-providable and LLM keys post-migration
+  purgeProcessEnvUserKeys();
   return { migrated };
 }
 
