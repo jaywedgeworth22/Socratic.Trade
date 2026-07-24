@@ -426,9 +426,6 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                 </th>
               );
             })}
-            <th className="!text-center text-center" title="Add or remove a symbol from your watchlist. Watching costs nothing and never trades.">
-              <span className="sr-only">Watch</span>
-            </th>
           </tr>
         </thead>
         <tbody>
@@ -437,7 +434,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
             return (
               <tr key={q.symbol} className="group">
                 {visibleColumns.map((c, i) => {
-<<<<<<< HEAD
+                  const isSymbolCol = c.id === SYMBOL_COLUMN_ID;
                   const alignmentClass =
                     c.align === "left"
                       ? "!text-left text-left"
@@ -461,32 +458,8 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                         c.num && "con-num",
                         i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER)
                       )}>
-                      <div className={cx("inline-flex items-center w-full", flexAlignClass)}>
-                        {c.render(q)}
-                      </div>
-                    </td>
-                  );
-                })}
-                <td className="cursor-default whitespace-nowrap !text-center text-center">
-                  <div className="inline-flex items-center justify-center w-full">
-                    <WatchButton
-                      symbol={q.symbol}
-                      watched={watched.has(symbolKey)}
-                      pending={pendingWatch.has(symbolKey)}
-                      onToggle={() => void toggleWatch(q.symbol)}
-                    />
-                  </div>
-                </td>
-=======
-                  const title = cellTitleWithReceived(c, q, received);
-                  const isSymbolCol = c.id === SYMBOL_COLUMN_ID;
-                  return (
-                    <td
-                      key={c.id}
-                      title={title}
-                      className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}>
                       {isSymbolCol ? (
-                        <div className="flex items-center gap-1.5">
+                        <div className="inline-flex items-center gap-1.5 justify-start w-full">
                           <WatchButton
                             symbol={q.symbol}
                             watched={watched.has(symbolKey)}
@@ -496,12 +469,13 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                           {c.render(q)}
                         </div>
                       ) : (
-                        c.render(q)
+                        <div className={cx("inline-flex items-center w-full", flexAlignClass)}>
+                          {c.render(q)}
+                        </div>
                       )}
                     </td>
                   );
                 })}
->>>>>>> origin/main
               </tr>
             );
           })}
