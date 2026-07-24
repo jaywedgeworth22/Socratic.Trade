@@ -155,11 +155,10 @@ jobs:
         if: needs.classify.outputs.docs-only != 'true'
         shell: bash
         run: |
-          if [ "${RUNNER_OS:-}" = "Linux" ]; then
-            npx playwright install --with-deps chromium
-          else
-            npx playwright install chromium
-          fi
+          # Self-hosted Coolify runners have no passwordless sudo, so
+          # `playwright install --with-deps` fails. Browser OS deps are
+          # preinstalled on the socratic-ci image; only fetch Chromium here.
+          npx playwright install chromium
       # Restore Next.js's incremental build cache so the playwright webServer's
       # `npm run build` reuses prior compilation output instead of a cold build.
       - name: Restore Next.js build cache
