@@ -70,6 +70,14 @@ const API_KEY_CATALOG = [
     docsUrl: "https://platform.deepseek.com/api_keys"
   },
   {
+    service: "moonshot",
+    label: "Moonshot AI (Kimi)",
+    category: "LLM",
+    required: false,
+    unlocks: "Moonshot AI / Kimi models (kimi-latest) for the Assistant and strategy.",
+    docsUrl: "https://platform.moonshot.cn/console/api-keys"
+  },
+  {
     service: "openrouter",
     label: "OpenRouter",
     category: "LLM",
