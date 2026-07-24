@@ -162,9 +162,9 @@ export function normalizeOpenRouterModelId(rawModel: string | undefined): string
     } else if (/^gemini/i.test(model)) {
       model = `google/${model}`;
     } else if (/^gpt-sol-latest$/i.test(model) || /^gpt-terra-latest$/i.test(model) || /^gpt-4o-latest$/i.test(model)) {
-      model = "~openai/gpt-latest";
+      model = "openai/gpt-4o-latest";
     } else if (/^gpt-luna-latest$/i.test(model) || /^gpt-mini-latest$/i.test(model) || /^gpt-nano-latest$/i.test(model)) {
-      model = "~openai/gpt-mini-latest";
+      model = "openai/gpt-4o-mini";
     } else if (/^mistral-medium-latest$/i.test(model)) {
       model = "mistralai/mistral-medium-3.5";
     } else if (/^mistral-small-latest$/i.test(model)) {
