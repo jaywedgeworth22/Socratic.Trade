@@ -74,6 +74,20 @@ then integrate it alongside dense recall in a separately reviewed retrieval PR. 
 `docs/rollouts/2026-07-21-corpus-wide-lexical-candidates.md`.
 # Current Status
 
+## 2026-07-22 — Approval Busy, red-team availability, and UptimeRobot diagnosis (CODEX→GROK, branch `codex/trade-approval-redteam-uptime-20260722`)
+
+Live verification: `/api/health` returns HTTP 200, including with `UptimeRobot/2.0`; the console and
+approvals page load. The approval `Result: Busy` is the intentional per-user/per-account strategy
+lock, with a stale-run sweep recently marking a crashed run failed. Live pending proposals show
+Claude Fable 5 unavailable on the OpenRouter account, GPT-5.6 Sol timed out, and DeepSeek V4 Pro
+returned a malformed/no response. Rotation previously checked only that an OpenRouter credential
+resolved. This branch adds bounded retries for the side-effect-free Busy result and filters rotating
+models through OpenRouter's account-filtered `/api/v1/models/user` list (fail-closed if unavailable),
+without changing explicit model selection or order execution. UptimeRobot already monitors
+`https://socratictrade.com/api/health` (HTTP + Keyword low-credit monitors both UP). `/` redirects
+to login (307) and `/api/ready` is protected (401). Build completed after CODEX handoff
+(`.next/BUILD_ID` present); GROK owns gate re-run + `scripts/land.sh`. Rollout:
+`docs/rollouts/2026-07-22-approval-redteam-uptime.md`.
 ## 2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, `codex/rag-shadow-benchmarks-20260722`)
 
 Added a default-off, read-only capability/context probe. The local Turso/libSQL probe reports installed-client and vector-SQL capability without a network/database write; this checkout has no direct `@libsql/client` dependency, so a real remote Turso benchmark is intentionally not attempted. The Pinecone path requires an explicit live flag, a named pre-existing Assistant, an API key, externally supplied frozen cases, a 100-query cap, and a 30-second aborting timeout. It calls only Assistant context retrieval and emits redacted latency/citation/usage/error receipts—never prompts, snippets, file names, answers, keys, or provider errors. It does not claim relevance/provider-selection evidence without a same-corpus golden citation mapping. No provider, corpus, index, file, broker, or production mutation was made. Rollout: `docs/rollouts/2026-07-22-rag-shadow-benchmarks.md`.
