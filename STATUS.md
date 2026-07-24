@@ -1,13 +1,22 @@
 # Current Status
 
+## 2026-07-24 — Resolve open efforts + stale issue mirrors (CURSOR)
+
+`GITHUB_MCP_TOKEN` unlocks Issues/rulesets. Drained ~79 stuck Sentry CI Report runs; four open
+PRs (#1902/#1792/#1819/#1842) still MERGEABLE + auto-merge-armed awaiting `verify`. Restored
+ruleset required checks to `verify` + `check-pin` (`strict` false). Large EFFORT-LOG hygiene:
+moved already-merged In Progress rows to Completed so effort-issues-sync can close stale
+`state:in-progress` mirrors. Genuine WIP left: unstick claim, Usage-compliance Wave 2 (no PR),
+infra-panel reliability (unpushed). Rollout: `docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
 ## 2026-07-24 — Unstick open PRs round 2 + board hygiene (CURSOR)
 
 Four open PRs remain with squash auto-merge armed after CI/merge fixes:
 #1902 (Busy retry + OpenRouter `~latest` normalizer), #1792 (advisory cleanup / rag-embed
 null-guard), #1819 (earningscalls burst + typed settings-key scan), #1842 (RapidAPI docs).
 #1901/#1980/#1981 already on `main`. Board corrections for #1847/#1828/#1839/#1981/check-pin/
-which-key/retired-provider cleanup. GitHub Issues API still 403. Hosted `verify` is the merge
-gate. Rollout: `docs/rollouts/2026-07-23-unstick-open-prs.md`.
+which-key/retired-provider cleanup. Hosted `verify` is the merge gate. Rollout:
+`docs/rollouts/2026-07-23-unstick-open-prs.md`.
 
 ## 2026-07-22 — RAG review remediation round 2 (PR #1892, GROK)
 

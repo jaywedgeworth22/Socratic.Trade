@@ -1,5 +1,11 @@
 # Active Implementation Plan
 
+> **2026-07-24 - Resolve open efforts + stale issue mirrors (CURSOR).** Board hygiene moves
+> already-merged In Progress rows to Completed; restores ruleset `check-pin` required alongside
+> `verify`; drains Sentry CI spam blocking runners. Four open PRs still await `verify`. RAG
+> enablement remains Planned (re-embed proof). Rollout:
+> `docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
 > **2026-07-24 - Unstick remaining open PRs round 2 (CURSOR).** Four open PRs
 > (#1902/#1792/#1819/#1842) rebased onto current `main` after peer force-pushes; CI/merge fixes
 > pushed; auto-merge armed. #1901/#1980/#1981 already on `main`. Effort-board stale In Progress
