@@ -85,3 +85,14 @@ next effort-issues-sync run.
 - Cancelled dirty-main `Effort Issues Sync` runs so they cannot reopen stale mirrors
   before #2143 lands.
 - #2123 (cleanup-caches on ubuntu-latest) still in `verify-hosted` (npm test).
+
+## Update — product PRs landed; issues at board-true WIP
+
+- **MERGED:** #1902 (Busy retry + OpenRouter filter), #1819 (earningscalls), #2123
+  (cleanup-caches on ubuntu-latest).
+- Open `state:in-progress` issues: **3 → 2** after moving the completed unstick row
+  out of In Progress (Usage-compliance Wave 2 + infra-panel reliability).
+- Live sync with orphan-closeout: `created=0 updated=279 unchanged=178 closed=38`
+  (plus earlier partial runs that closed the bulk of the ~149 stale IP mirrors).
+- Still open: #2143 (board + orphan-closeout script), #2155 (admin RAM / cache follow-up;
+  EFFORT-LOG pinned to clean content).
