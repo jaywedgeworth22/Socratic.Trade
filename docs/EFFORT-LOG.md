@@ -41,16 +41,6 @@ rules text. No effort rows were changed.)_
 
 As of 2026-07-08 (assignment-rule update).
 
----
-
-## 2026-07-22 — CODEX evidence-receipt sublane
-
-- **[Socratic.Trade][CODEX evidence sublane] Exact prompt-consumption evidence receipts (worktree `/Users/jay/.codex/worktrees/rag-evidence-consumption-20260722`, branch `codex/rag-evidence-consumption-20260722`) — LOCALLY READY / umbrella integration pending.** Deterministic used-evidence manifests now reflect only chunks serialized into strategy/chat prompts; retrieved-but-not-consumed diagnostics remain separate, with stable refs and text-free empty/error/skipped/dedupe outcomes. Focused 14/14, scoped ESLint 0 errors (39 existing warnings), TypeScript, and diff check pass. No trading-decision, provider, corpus, broker, or production writes.
-
-## Planned / Reserved Before Implementation
-- **[Socratic.Trade][OWNER REMINDER][GROK 2026-07-22] Enable default-off RAG / retrieval features after #1892 lands — PLANNED / UNASSIGNED.** **#1892 MERGED 2026-07-23** — enablement still gated on re-embed proof. Order: telemetry → eval → `RAG_CORPUS_WIDE_LEXICAL` → adaptive rerank → parent expansion → multi-query/HyDE. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`.
-- **[Fleet][OWNER REMINDER][GROK 2026-07-22] Inventory + enable forgotten dormant features — PLANNED / UNASSIGNED.** Default-off flags, key-gated providers, rights dual-gates, policy toggles, cross-app holds. Living list: `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Agents must append when landing new dormant switches.
-
 ## In Progress
 - **[Socratic.Trade][CLAUDE] Three new RapidAPI-backed enrichment providers: Mboum Finance, YH
   Finance 15, Alpha Vantage RapidAPI transport (worktree
@@ -85,6 +75,17 @@ As of 2026-07-08 (assignment-rule update).
   `test/enrichment-scarce-tier-gate.test.ts` (13 tests, incl. a real-provider zero-quota check).
   tsc clean, lint 0 errors, 405 targeted tests green across every cascade-touching file; full
   `npm test`/`npm run build` deferred to the landing gate.
+---
+
+## 2026-07-22 — CODEX evidence-receipt sublane
+
+- **[Socratic.Trade][CODEX evidence sublane] Exact prompt-consumption evidence receipts (worktree `/Users/jay/.codex/worktrees/rag-evidence-consumption-20260722`, branch `codex/rag-evidence-consumption-20260722`) — LOCALLY READY / umbrella integration pending.** Deterministic used-evidence manifests now reflect only chunks serialized into strategy/chat prompts; retrieved-but-not-consumed diagnostics remain separate, with stable refs and text-free empty/error/skipped/dedupe outcomes. Focused 14/14, scoped ESLint 0 errors (39 existing warnings), TypeScript, and diff check pass. No trading-decision, provider, corpus, broker, or production writes.
+
+## Planned / Reserved Before Implementation
+- **[Socratic.Trade][OWNER REMINDER][GROK 2026-07-22] Enable default-off RAG / retrieval features after #1892 lands — PLANNED / UNASSIGNED.** **#1892 MERGED 2026-07-23** — enablement still gated on re-embed proof. Order: telemetry → eval → `RAG_CORPUS_WIDE_LEXICAL` → adaptive rerank → parent expansion → multi-query/HyDE. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`.
+- **[Fleet][OWNER REMINDER][GROK 2026-07-22] Inventory + enable forgotten dormant features — PLANNED / UNASSIGNED.** Default-off flags, key-gated providers, rights dual-gates, policy toggles, cross-app holds. Living list: `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Agents must append when landing new dormant switches.
+
+## In Progress
 - **[Socratic.Trade][CURSOR] Unstick remaining open PRs #1901/#1902/#1792/#1819/#1842 (branch `cursor/resolve-open-efforts-1c6c`, claimed 2026-07-23) — IN PROGRESS / HEADS REFRESHED + AUTO-MERGE ARMED.** Merged current `origin/main` into all five; resolved real conflicts on #1902 (`llm-provider` keep native+OpenRouter routing + `normalizeOpenRouterModelId`) and #1792 (`vector-db` rag-embed health lane + stage telemetry; health fixture key-presence fix). #1901/#1819/#1842 were clean merges (GitHub DIRTY was phantom). Focused Vitest green per PR; auto-merge squash armed; hosted verify queued. Issues API 403 for this token — no GitHub Issues closed. Rollout: `docs/rollouts/2026-07-23-unstick-open-prs.md`.
 - **[CORRECTION 2026-07-23 CURSOR] PR #1892 (+ sublanes that landed inside it) — COMPLETED (merged 2026-07-23).** Review-thread closeout, RAG strategic-performance program, lexical foundation, parent expansion, production eval, shadow benchmarks, structured routing, and evidence-consumption receipts shipped via #1892. Activation flags remain off (enablement backlog still Planned).
 - **[Socratic.Trade][GROK] PR #1892 review-thread closeout round 2 — COMPLETED via #1892 merge 2026-07-23 (CURSOR correction).** Was: PUSHED/THREADS RESOLVED 2026-07-22.
