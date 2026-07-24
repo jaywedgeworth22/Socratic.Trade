@@ -5,8 +5,8 @@
 - Changed Column Settings popover (`scan-table.tsx`) to a clean single vertical list (`flex flex-col gap-1` with full-width items).
 - Set default sorting to Score descending (large to small).
 - Reduced Score column width (`w-16 px-2` / `w-20 px-2`) to keep it narrow.
-- Centered all column header titles (`th`), left-aligned logo/ticker (`Symbol`), right-aligned `Price`, and centered all other column data points (`Score`, `Chg`, `Vol`, `P/E`, `EPS gr`, `Div`, `Sentiment`, `Rating`, `Congress`, `Sector`).
-- Added fallback to `q.insiderSentiment` when `q.sentiment` is missing so sentiment displays a chip instead of `-` when insider sentiment is available.
+- Centered all column header titles (`th`), left-aligned logo/ticker (`Symbol`), right-aligned `Price`, and centered all other column data points (`Score`, `Chg`, `Vol`, `P/E`, `EPS gr`, `Div`, `News`, `Insiders`, `Rating`, `Congress`, `Sector`).
+- Split sentiment into two distinct columns: **News** (`q.sentiment`, titled "News sentiment score") and **Insiders** (`q.insiderSentiment`, titled "Insider sentiment score").
 - Replaced `w-full min-w-max` with `min-w-full` on `table` to fix horizontal scroll overflow going way too far.
 - Rollout: `docs/rollouts/2026-07-24-scan-table-column-settings-and-alignment.md`.
 
