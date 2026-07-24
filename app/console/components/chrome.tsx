@@ -781,7 +781,13 @@ function Avatar({ imageUrl, size, iconSize }: { imageUrl?: string; size: string;
   // no-referrer: googleusercontent 403s avatar requests with a referrer.
   return imageUrl ? (
     // eslint-disable-next-line @next/next/no-img-element -- external avatar host; next/image needs remotePatterns per provider
-    <img src={imageUrl} alt="" referrerPolicy="no-referrer" className={cx(size, "max-h-full max-w-full rounded-[inherit] object-cover aspect-square shrink-0 block")} />
+    <img
+      src={imageUrl}
+      alt=""
+      referrerPolicy="no-referrer"
+      style={{ width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%", objectFit: "cover" }}
+      className={cx(size, "shrink-0 block rounded-[inherit]")}
+    />
   ) : (
     <UserRound size={iconSize} />
   );
@@ -839,7 +845,8 @@ export function UserMenu({
         aria-label={`Signed in as ${user.email ?? who} — account menu`}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="flex h-11 w-11 max-h-11 max-w-11 shrink-0 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] sm:h-8 sm:w-8 sm:max-h-8 sm:max-w-8"
+        style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, maxWidth: 32, maxHeight: 32 }}
+        className="flex shrink-0 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
       >
         <Avatar imageUrl={user.imageUrl} size="h-full w-full" iconSize={15} />
       </button>
