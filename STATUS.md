@@ -1,13 +1,11 @@
 # Current Status
 
-## 2026-07-24 — Coolify/Hetzner runners only (CURSOR)
+## 2026-07-24 — Coolify/Hetzner runners only (CURSOR) — MERGED #2201
 
-Owner correction: fleet CI is **not** GitHub-hosted Actions. Use the two Coolify/Hetzner
-servers — **ci-cpx32** (`77.42.35.209`) for systemd GH runners under `/opt/actions-runners/`,
-and the **prod Coolify host** (`135.181.192.190` / `host.jays.services`) for deploy/reviews.
-`socratic-deploy` does not exist on ci-cpx32 (Sentry CI Report was queuing forever); reporter
-now targets `socratic-ci`. Monitor often: `bash scripts/monitor-coolify-runners.sh --ssh`.
-Branch `cursor/coolify-runners-only-14e5` (supersedes conflicting #2158). Rollout:
+Owner correction: fleet CI is **not** GitHub-hosted Actions. Two Coolify/Hetzner servers —
+**ci-cpx32** (`77.42.35.209`) systemd runners + **prod Coolify host** (`135.181.192.190`).
+`sentry-ci-report` on `socratic-ci` (no `socratic-deploy` unit). Monitor often:
+`bash scripts/monitor-coolify-runners.sh --ssh`. PR #2201 merged (auto-deploy). Rollout:
 `docs/rollouts/2026-07-24-coolify-runners-only.md`.
 
 ## 2026-07-24 — RAG enablement + Exit Contract B1 + branch prune (CURSOR)
