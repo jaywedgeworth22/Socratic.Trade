@@ -1,3 +1,5 @@
+- **[Socratic.Trade][AG] Reformat Previous Trades rows — COMPLETED 2026-07-24.** Reformatted the "Previous Trades" rows on the console dashboard to be on a single line, combining the verb and decision status into a single chip.
+
 - **[Socratic.Trade][AG] Scan table column settings vertical layout & data alignments — In Progress 2026-07-24.** Refactored scan table column settings popover into a single vertical list, set default sort to Score desc, narrowed Score column width, centered column headings, aligned data cells (Symbol left, Price right, others centered), added fallback to insider sentiment, and fixed horizontal scroll overflow.
 
 - **[Socratic.Trade][AG] Ticker logo display settings & user avatar layout constraints — In Progress 2026-07-24.** Re-added Ticker Logo Display preference card to Settings → Appearance (Transparent, Tile Badge, Monograms Only) and constrained UserMenu avatar image elements in chrome.tsx to prevent high-res profile photos from expanding the header.

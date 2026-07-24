@@ -1,5 +1,11 @@
 # Current Status
 
+## 2026-07-24 — Previous Trades Reformat (ANTIGRAVITY)
+
+- Reformatted the "Previous Trades" rows on the console dashboard to be on a single line, even on mobile.
+- Combined the verb and decision status into a single chip (e.g., "Sale Pending", "Buy Blocked").
+- Rollout: `docs/rollouts/2026-07-24-previous-trades-reformat.md`.
+
 ## 2026-07-24 — Scan Table Column Settings, Alignments, and Scroll Layout (ANTIGRAVITY)
 
 - Changed Column Settings popover (`scan-table.tsx`) to a clean single vertical list (`flex flex-col gap-1` with full-width items).
