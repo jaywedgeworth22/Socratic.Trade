@@ -273,13 +273,14 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
       hint: "Alerts are emailed to this address."
     }),
     async send(to, msg, { cfg, fetchImpl, timeoutMs, signal }) {
+      const subject = msg.title.startsWith("[Socratic.Trade]") ? msg.title : `[Socratic.Trade] ${msg.title}`;
       await postOrThrow(
         fetchImpl,
         "https://api.resend.com/emails",
         {
           method: "POST",
           headers: { authorization: `Bearer ${cfg.email.resendKey}`, "content-type": "application/json" },
-          body: JSON.stringify({ from: cfg.email.from, to: [to], subject: msg.title, text: msg.body })
+          body: JSON.stringify({ from: cfg.email.from, to: [to], subject, text: `${msg.title}\n\n${msg.body}` })
         },
         timeoutMs,
         signal
