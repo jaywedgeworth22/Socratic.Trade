@@ -109,34 +109,39 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
 
   switch (family) {
     case "anthropic":
-      if (/haiku/i.test(lower)) return "claude-3-5-haiku-20241022";
-      if (/opus/i.test(lower)) return "claude-3-opus-20240229";
-      if (/fable/i.test(lower)) return "claude-3-5-sonnet-20241022";
+      if (/haiku/i.test(lower)) return "claude-haiku-4.5";
+      if (/opus/i.test(lower)) return "claude-opus-4.8";
+      if (/fable/i.test(lower)) return "claude-fable-5";
       return "claude-sonnet-5";
 
     case "xai":
-      if (/build/i.test(lower)) return "grok-beta";
-      return "grok-latest";
+      if (/build/i.test(lower)) return "grok-build-0.1";
+      return "grok-4.5";
 
     case "gemini":
-      if (/flash.*lite/i.test(lower)) return "gemini-2.0-flash-lite";
-      if (/pro/i.test(lower)) return "gemini-2.5-pro";
-      return "gemini-2.0-flash";
+      if (/flash.*lite/i.test(lower)) return "gemini-flash-lite-latest";
+      if (/pro/i.test(lower)) return "gemini-3.1-pro";
+      return "gemini-3.6-flash";
 
     case "deepseek":
       if (/r1|reasoner/i.test(lower)) return "deepseek-reasoner";
-      return "deepseek-chat";
+      if (/pro/i.test(lower)) return "deepseek-v4-pro";
+      return "deepseek-v4-flash";
 
     case "mistral":
-      if (/medium/i.test(lower)) return "mistral-medium-latest";
-      return "mistral-small-latest";
+      if (/medium/i.test(lower)) return "mistral-medium-3.5";
+      return "mistral-small-2603";
 
     case "meta":
       return "llama-3.3-70b-instruct";
 
     case "openai":
     default:
-      if (/mini|nano/i.test(lower)) return "gpt-4o-mini";
+      if (/sol/i.test(lower)) return "gpt-5.6-sol";
+      if (/terra/i.test(lower)) return "gpt-5.6-terra";
+      if (/luna/i.test(lower)) return "gpt-5.6-luna";
+      if (/mini/i.test(lower)) return "gpt-5.4-mini";
+      if (/nano/i.test(lower)) return "gpt-5.4-nano";
       return "gpt-4o";
   }
 }
