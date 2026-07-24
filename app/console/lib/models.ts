@@ -14,7 +14,7 @@
 
 import { canonicalModelId as bareModelId } from "@/lib/model-identity";
 
-export type ConsoleProviderId = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta";
+export type ConsoleProviderId = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot";
 
 // DEFAULT_GREEN_MODEL_ID was removed 2026-07-07 (owner directive: no model default for anything,
 // ever). There is no server default when policy.llmModel is unset — the run fails closed until a
@@ -32,6 +32,7 @@ export function providerForModel(modelId: string | null | undefined): ConsolePro
   if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
   if (/^deepseek/.test(m)) return "deepseek";
   if (/^llama/.test(m)) return "meta";
+  if (/(kimi|moonshot)/.test(m)) return "moonshot";
   return "openai";
 }
 
@@ -51,7 +52,8 @@ const PROVIDER_LABEL: Record<ConsoleProviderId, string> = {
   gemini: "Google (Gemini)",
   mistral: "Mistral",
   deepseek: "DeepSeek",
-  meta: "Meta (Llama)"
+  meta: "Meta (Llama)",
+  moonshot: "Moonshot AI (Kimi)"
 };
 
 export function providerLabel(provider: ConsoleProviderId): string {
@@ -66,7 +68,8 @@ export const PROVIDER_META: Record<ConsoleProviderId, { initial: string; color: 
   gemini: { initial: "G", color: "#1a73e8" },
   mistral: { initial: "M", color: "#fa520f" },
   deepseek: { initial: "D", color: "#4d6bfe" },
-  meta: { initial: "L", color: "#0467df" }
+  meta: { initial: "L", color: "#0467df" },
+  moonshot: { initial: "K", color: "#6b21a8" }
 };
 
 /** Curated model ids the picker offers (mirrors CURATED_LLM_MODEL_GROUPS in
@@ -131,6 +134,9 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   "deepseek-r1": "DeepSeek R1",
   "deepseek-chat": "DeepSeek Chat",
   "deepseek-reasoner": "DeepSeek Reasoner",
+  // Moonshot AI
+  "kimi-latest": "Kimi Latest (k3)",
+  "kimi-k3": "Kimi k3",
   "llama-70b-latest": "Llama 70B Latest",
   "llama-3.3-70b-instruct": "Llama 3.3 70B"
 };
