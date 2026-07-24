@@ -128,6 +128,11 @@ export function normalizeCoolifyResources(payload: unknown): {
       }
       continue;
     }
+    const lowerName = normalized.name.toLowerCase();
+    const lowerType = normalized.type.toLowerCase();
+    if (lowerName.includes("backup") || lowerType.includes("backup")) {
+      continue;
+    }
     resources.push(normalized as NormalizedCoolifyResource);
   }
 
