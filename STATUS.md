@@ -1,16 +1,13 @@
 # Current Status
 
-## 2026-07-23 — Unstick open PRs + effort-board hygiene (CURSOR)
+## 2026-07-24 — Unstick open PRs round 2 + board hygiene (CURSOR)
 
-Refreshed the five remaining open PRs against current `main` and armed squash auto-merge:
-#1901 (retired broker usage-monitor emissions), #1902 (approval Busy retry + OpenRouter
-account-model rotation), #1792 (advisory cleanup / rag-embed health lanes), #1819
-(earningscalls burst + budget ledger isolation), #1842 (document abstracts + RapidAPI docs).
-Real conflicts resolved on #1902 and #1792; the others were phantom DIRTY. Board rows for
-already-merged work (#1892 RAG program, #1956 dark mode, #1903 RH caps, #1961 proposal
-drawer, #1978 Gemini temp, #1889 telemetry v2, #1891 CI collapse, iOS #1859/#1886/#1888,
-Cursor #1957/#1844/#1840) corrected in place. GitHub Issues API returns 403 for this token.
-Hosted `verify` remains the merge gate. Rollout: `docs/rollouts/2026-07-23-unstick-open-prs.md`.
+Four open PRs remain with squash auto-merge armed after CI/merge fixes:
+#1902 (Busy retry + OpenRouter `~latest` normalizer), #1792 (advisory cleanup / rag-embed
+null-guard), #1819 (earningscalls burst + typed settings-key scan), #1842 (RapidAPI docs).
+#1901/#1980/#1981 already on `main`. Board corrections for #1847/#1828/#1839/#1981/check-pin/
+which-key/retired-provider cleanup. GitHub Issues API still 403. Hosted `verify` is the merge
+gate. Rollout: `docs/rollouts/2026-07-23-unstick-open-prs.md`.
 
 ## 2026-07-22 — RAG review remediation round 2 (PR #1892, GROK)
 
