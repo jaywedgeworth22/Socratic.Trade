@@ -343,7 +343,8 @@ describe("dashboard feed helpers", () => {
       })
     );
 
-    expect(title).toContain("locally computed from recent Finnhub headlines using keyword scoring");
+    expect(title).toContain("News sentiment score 68/100");
+    expect(title).toContain("Recent Headlines:\n• Meta beats expectations on ad revenue");
   });
 
   it("formats share quantities according to precision and symbol-specific rules", () => {
