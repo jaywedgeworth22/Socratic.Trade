@@ -122,7 +122,7 @@ function allowConfiguredLoopbackRedirect(): boolean {
 export async function buildMcpAuthorizationUrl(userId: string, options: BuildMcpAuthorizationUrlOptions = {}): Promise<string> {
   return withUserWriteOperation(userId, "mcp-oauth-start", async (claim) => {
     const config = await requireOAuthConfig(options);
-    const client = await getOrRegisterClient(config);
+    const client = await getOrRegisterClient(config, { forceRegister: true });
     const randomPart = randomBase64Url(STATE_RANDOM_BYTES);
     const codeVerifier = randomBase64Url(64);
     const codeChallenge = await sha256Base64Url(codeVerifier);
@@ -387,10 +387,10 @@ async function refreshMcpAccessToken(userId: string, existing: McpOAuthTokens): 
   });
 }
 
-async function getOrRegisterClient(config: McpOAuthConfig): Promise<McpOAuthClient> {
+async function getOrRegisterClient(config: McpOAuthConfig, options: { forceRegister?: boolean } = {}): Promise<McpOAuthClient> {
   const existing = getInternalSetting<McpOAuthClient>(CLIENT_SETTING);
   if (config.registrationUrl) {
-    if (existing && existing.redirectUri === config.redirectUri) return existing;
+    if (!options.forceRegister && existing && existing.redirectUri === config.redirectUri) return existing;
   } else {
     if (existing) return existing;
     const configuredClientId = process.env.ROBINHOOD_MCP_CLIENT_ID;
