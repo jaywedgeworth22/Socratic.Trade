@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  blockingUniverseValidationIssues,
   hashSecUniverseIssuers,
   validateSecUniverseManifest,
   type FrozenSecUniverseManifest,
@@ -20,6 +21,7 @@ function issuer(rank: number, cik: string, ticker: string, aliases: string[] = [
     industry: "Software",
     marketCapUsd: 1_000_000_000,
     dollarVolumeUsd: 10_000_000,
+    dataQuality: "live",
     inclusionReason: "market-cap-liquidity",
     sourceRefs: ["sec-tickers", "nasdaq-screener"]
   };
@@ -131,5 +133,44 @@ describe("SEC/RAG frozen universe acceptance", () => {
 
     const codes = validateSecUniverseManifest(value, { expectedIssuerCount: 1 }).map((issue) => issue.code);
     expect(codes).toEqual(expect.arrayContaining(["quarantine_ticker", "quarantine_cik"]));
+  });
+
+  // dataQuality (added 2026-07-19): machine-checkable marker distinguishing converter sentinel
+  // placeholders (exchange:"UNKNOWN", marketCapUsd:1, dollarVolumeUsd:1) from genuine measurements.
+  describe("dataQuality", () => {
+    it("accepts an explicit \"sentinel\" or \"live\" value with zero issues", () => {
+      const sentinelIssuer: SecUniverseIssuer = { ...issuer(1, "0000000001", "AAA"), dataQuality: "sentinel" };
+      const value = manifest([sentinelIssuer]);
+      value.issuerSha256 = hashSecUniverseIssuers(value.issuers);
+
+      expect(validateSecUniverseManifest(value, { expectedIssuerCount: 1 })).toEqual([]);
+    });
+
+    it("back-compat: a manifest frozen before this field existed gets a non-blocking warning, not a validation failure", () => {
+      const legacyIssuer = { ...issuer(1, "0000000001", "AAA") } as Record<string, unknown>;
+      delete legacyIssuer.dataQuality;
+      const value = manifest([legacyIssuer as unknown as SecUniverseIssuer]);
+      value.issuerSha256 = hashSecUniverseIssuers(value.issuers);
+
+      const issues = validateSecUniverseManifest(value, { expectedIssuerCount: 1 });
+      expect(issues).toEqual([
+        expect.objectContaining({ code: "data_quality_missing", path: "$.issuers[0].dataQuality", severity: "warning" })
+      ]);
+      // The whole point of severity:"warning" — callers gating on blocking issues must treat this
+      // manifest as valid.
+      expect(blockingUniverseValidationIssues(issues)).toEqual([]);
+    });
+
+    it("rejects an invalid dataQuality value as a blocking error", () => {
+      const badIssuer = { ...issuer(1, "0000000001", "AAA"), dataQuality: "mock" } as unknown as SecUniverseIssuer;
+      const value = manifest([badIssuer]);
+      value.issuerSha256 = hashSecUniverseIssuers(value.issuers);
+
+      const issues = validateSecUniverseManifest(value, { expectedIssuerCount: 1 });
+      expect(issues).toEqual([
+        expect.objectContaining({ code: "data_quality", path: "$.issuers[0].dataQuality" })
+      ]);
+      expect(blockingUniverseValidationIssues(issues)).toHaveLength(1);
+    });
   });
 });
