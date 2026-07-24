@@ -396,9 +396,11 @@ export function upsertUserApiKey(userId: string, service: string, apiKey: string
     )
     .run(id, userId, canonical, encryptedKey, label ?? null, now, now);
   if (userId === LOCAL_USER && credTierForService(canonical) === "per-user-only") {
-    const envVar = apiKeyEnvVarForService(canonical);
-    if (envVar && process.env[envVar] !== undefined) {
-      delete process.env[envVar];
+    const vars = ALL_SERVICE_ENV_VARS[canonical] ?? (API_KEY_ENV_MAP[canonical] ? [API_KEY_ENV_MAP[canonical]] : []);
+    for (const envVar of vars) {
+      if (process.env[envVar] !== undefined) {
+        delete process.env[envVar];
+      }
     }
   }
   return { id, userId, service: canonical, apiKey, label, createdAt: now, updatedAt: now };
@@ -436,9 +438,11 @@ export function deleteUserApiKey(userId: string, service: string): void {
   }
 
   if (userId === LOCAL_USER) {
-    const envVar = apiKeyEnvVarForService(canonical);
-    if (envVar && process.env[envVar] !== undefined) {
-      delete process.env[envVar];
+    const vars = ALL_SERVICE_ENV_VARS[canonical] ?? (API_KEY_ENV_MAP[canonical] ? [API_KEY_ENV_MAP[canonical]] : []);
+    for (const envVar of vars) {
+      if (process.env[envVar] !== undefined) {
+        delete process.env[envVar];
+      }
     }
   }
 }
@@ -488,11 +492,6 @@ const API_KEY_TIER: Record<string, CredTier> = {
   pinecone: "shared-operator-infra",
   voyage: "shared-operator-infra",
   siliconflow: "shared-operator-infra",
-  apify: "shared-operator-infra",
-  fintechstudios: "shared-operator-infra",
-  powerintell: "shared-operator-infra",
-  tiingo: "shared-operator-infra",
-  twelvedata: "shared-operator-infra",
   logodev: "shared-operator-infra",
   logodev_secret: "shared-operator-infra"
 };
@@ -827,12 +826,36 @@ const LOCAL_ENV_MIGRATION_SERVICES = [
   "logodev_secret"
 ] as const;
 
+const ALL_SERVICE_ENV_VARS: Record<string, string[]> = {
+  openai: ["OPENAI_API_KEY"],
+  anthropic: ["ANTHROPIC_API_KEY"],
+  xai: ["XAI_API_KEY"],
+  gemini: ["GEMINI_API_KEY"],
+  mistral: ["MISTRAL_API_KEY"],
+  deepseek: ["DEEPSEEK_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"],
+  alpaca_paper_api_key: ["ALPACA_PAPER_API_KEY"],
+  alpaca_paper_secret_key: ["ALPACA_PAPER_SECRET_KEY"],
+  pinecone: ["PINECONE_API_KEY"],
+  voyage: ["VOYAGE_API_KEY"],
+  siliconflow: ["SILICONFLOW_API_KEY"],
+  apify: ["APIFY_API_TOKEN", "APIFY_API_KEY"],
+  fintechstudios: ["FINTECH_STUDIOS_API_KEY", "POWERINTELL_API_KEY", "POWER_INTELL_API_KEY"],
+  powerintell: ["FINTECH_STUDIOS_API_KEY", "POWERINTELL_API_KEY", "POWER_INTELL_API_KEY"],
+  tiingo: ["TIINGO_API_KEY"],
+  twelvedata: ["TWELVEDATA_API_KEY", "TWELVE_DATA_API_KEY"],
+  logodev: ["LOGO_DEV_TOKEN", "LOGO_DEV_API_KEY"],
+  logodev_secret: ["LOGO_DEV_SECRET_KEY", "LOGO_DEV_SECRET"]
+};
+
 /** Purge all LLM and user-providable interface keys from process.env so process.env stays clean. */
 export function purgeProcessEnvUserKeys(): void {
   for (const svc of LOCAL_ENV_MIGRATION_SERVICES) {
-    const envVar = API_KEY_ENV_MAP[svc];
-    if (envVar && process.env[envVar] !== undefined) {
-      delete process.env[envVar];
+    const vars = ALL_SERVICE_ENV_VARS[svc] ?? (API_KEY_ENV_MAP[svc] ? [API_KEY_ENV_MAP[svc]] : []);
+    for (const envVar of vars) {
+      if (process.env[envVar] !== undefined) {
+        delete process.env[envVar];
+      }
     }
   }
 }
@@ -847,8 +870,15 @@ export function purgeProcessEnvUserKeys(): void {
 export function migrateLocalEnvCredentials(): { migrated: string[] } {
   const migrated: string[] = [];
   for (const svc of LOCAL_ENV_MIGRATION_SERVICES) {
-    const envVar = API_KEY_ENV_MAP[svc];
-    const envVal = envVar ? process.env[envVar]?.trim() : undefined;
+    const vars = ALL_SERVICE_ENV_VARS[svc] ?? (API_KEY_ENV_MAP[svc] ? [API_KEY_ENV_MAP[svc]] : []);
+    let envVal: string | undefined;
+    for (const v of vars) {
+      const val = process.env[v]?.trim();
+      if (val) {
+        envVal = val;
+        break;
+      }
+    }
     if (envVal && !getUserApiKey(LOCAL_USER, svc)?.apiKey) {
       try {
         upsertUserApiKey(LOCAL_USER, svc, envVal, "migrated from env");

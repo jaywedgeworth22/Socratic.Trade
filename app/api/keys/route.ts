@@ -133,6 +133,38 @@ const API_KEY_CATALOG = [
     required: false,
     unlocks: "Full-market breadth, broad liquid movers, news, and keyed price-history primary data.",
     docsUrl: "https://massive.com"
+  },
+  {
+    service: "tiingo",
+    label: "Tiingo",
+    category: "Market data",
+    required: false,
+    unlocks: "Cross-asset price history, fundamentals, IEX top-of-book quotes, and news sentiment.",
+    docsUrl: "https://api.tiingo.com/"
+  },
+  {
+    service: "twelvedata",
+    label: "Twelve Data",
+    category: "Market data",
+    required: false,
+    unlocks: "Real-time and intraday price feeds, forex, crypto, and technical indicators.",
+    docsUrl: "https://twelvedata.com/account/api-keys"
+  },
+  {
+    service: "fintechstudios",
+    label: "Fintech Studios",
+    category: "Market sentiment",
+    required: false,
+    unlocks: "AI financial news analysis, institutional intelligence, and real-time market sentiment.",
+    docsUrl: "https://www.fintechstudios.com/"
+  },
+  {
+    service: "apify",
+    label: "Apify",
+    category: "Scrapers",
+    required: false,
+    unlocks: "Custom web scrapers, social intelligence, and automated market research actors.",
+    docsUrl: "https://console.apify.com/account/integrations"
   }
 ] as const;
 

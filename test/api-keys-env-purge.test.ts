@@ -62,4 +62,33 @@ describe("process.env API key purging", () => {
       delete process.env.XAI_API_KEY;
     }
   });
+
+  it("migrates and purges tiingo, twelvedata, fintechstudios, and apify keys into per-user storage", () => {
+    process.env.TIINGO_API_KEY = "test-tiingo-env";
+    process.env.TWELVE_DATA_API_KEY = "test-twelvedata-env";
+    process.env.FINTECH_STUDIOS_API_KEY = "test-fintech-env";
+    process.env.APIFY_API_KEY = "test-apify-env";
+
+    try {
+      migrateLocalEnvCredentials();
+      expect(process.env.TIINGO_API_KEY).toBeUndefined();
+      expect(process.env.TWELVE_DATA_API_KEY).toBeUndefined();
+      expect(process.env.FINTECH_STUDIOS_API_KEY).toBeUndefined();
+      expect(process.env.APIFY_API_KEY).toBeUndefined();
+
+      expect(resolveApiKeyWithSource("tiingo", LOCAL_USER)).toMatchObject({ key: "test-tiingo-env", source: "user" });
+      expect(resolveApiKeyWithSource("twelvedata", LOCAL_USER)).toMatchObject({ key: "test-twelvedata-env", source: "user" });
+      expect(resolveApiKeyWithSource("fintechstudios", LOCAL_USER)).toMatchObject({ key: "test-fintech-env", source: "user" });
+      expect(resolveApiKeyWithSource("apify", LOCAL_USER)).toMatchObject({ key: "test-apify-env", source: "user" });
+
+      // Per-user-only isolation: tenants without stored keys fail closed (source "none")
+      expect(resolveApiKeyWithSource("tiingo", "u_tenant")).toMatchObject({ source: "none" });
+      expect(resolveApiKeyWithSource("twelvedata", "u_tenant")).toMatchObject({ source: "none" });
+    } finally {
+      delete process.env.TIINGO_API_KEY;
+      delete process.env.TWELVE_DATA_API_KEY;
+      delete process.env.FINTECH_STUDIOS_API_KEY;
+      delete process.env.APIFY_API_KEY;
+    }
+  });
 });

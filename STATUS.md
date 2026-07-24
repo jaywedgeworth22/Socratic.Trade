@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-24 — Data Sources User Keys Migration & UI Connection Fields (ANTIGRAVITY)
+
+- Configured Tiingo (`tiingo`), Twelve Data (`twelvedata`), Fintech Studios (`fintechstudios`), and Apify (`apify`) as `per-user-only` credentials.
+- Added catalog entries for all 4 services to `API_KEY_CATALOG` in `app/api/keys/route.ts` so users can add and manage their own keys in the Settings UI.
+- Updated `migrateLocalEnvCredentials()` and `purgeProcessEnvUserKeys()` to check all alternate env var names (`TWELVE_DATA_API_KEY`, `APIFY_API_KEY`, etc.), copy them into `LOCAL_USER`'s encrypted SQLite store on boot, and delete them from `process.env`.
+- Rollout: `docs/rollouts/2026-07-24-data-sources-user-keys-migration.md`.
+
 ## 2026-07-24 — ROIC.ai Provider Integration & Historical Fundamentals Storage (ANTIGRAVITY)
 
 - Integrated `RoicAiEnrichmentProvider` in `src/lib/data-providers.ts` for financial ratios (P/E, P/B, EPS, ROE, Debt/Equity) and financial statements.
