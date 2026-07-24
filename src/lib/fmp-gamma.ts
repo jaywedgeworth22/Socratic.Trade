@@ -94,11 +94,10 @@ export async function getEconomicCalendar(from?: string, to?: string): Promise<E
 }
 
 export async function getEarningsCallTranscript(symbol: string, year?: number, quarter?: number): Promise<EarningCallTranscript[]> {
-  const params: Record<string, string | number> = { symbol };
-  if (year !== undefined) params.year = year;
-  if (quarter !== undefined) params.quarter = quarter;
-  const data = await requestFmp<EarningCallTranscript[]>("/earning-call-transcript", params);
-  return data || [];
+  // FMP Earnings Call Transcripts require the "Ultimate" plan. 
+  // We do not have this plan. Short-circuit to avoid burning 403s against our rate limit.
+  console.warn(`[FMP] Skipping earning-call-transcript for ${symbol} (requires Ultimate plan).`);
+  return [];
 }
 
 export async function getMarketNews(tickers?: string, limit = 50, page = 0): Promise<FmpMarketNews[]> {

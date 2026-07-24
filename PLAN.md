@@ -1,5 +1,8 @@
 # Active Implementation Plan
 
+> **2026-07-22 — PR #1792 typecheck repair (CODEX).** The provider-generic health-lane merge
+> resolution is now aligned with the current durable dispatch API in `28a09b84`; run hosted
+> verification, let auto-merge land it, and confirm the exact post-merge deployment receipt.
 > **2026-07-24 - RAG enablement + Exit Contract B1 + prune (CURSOR).** Safe RAG flags default ON
 > (`docs/FEATURE-ENABLEMENT-BACKLOG.md`). Exit Phase B: B1 substrate landed; B3 interim already on
 > main (#1786); B4–B6 + Phase C remain Planned. Wave-2 coaching/reflection DISCARD (branches

@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-24 — ROIC.ai Provider Integration & Historical Fundamentals Storage (ANTIGRAVITY)
+
+- Integrated `RoicAiEnrichmentProvider` in `src/lib/data-providers.ts` for financial ratios (P/E, P/B, EPS, ROE, Debt/Equity) and financial statements.
+- Added database schema v59 `historical_fundamentals` to log time-series metrics with ISO timestamp (`asOf`) precision.
+- Fixed rate-limit pacing logic in `scripts/massive-hoard.ts` and restarted background download for 5 years (~1,305 days) of market breadth and daily OHLCV files.
+- Rollout: `docs/rollouts/2026-07-23-roic-integration-and-historical-fundamentals.md`.
+## 2026-07-24 — Coolify/Hetzner runners only (CURSOR)
+## 2026-07-24 — Coolify/Hetzner runners only (CURSOR) — MERGED #2201
 ## 2026-07-24 — Robinhood OAuth production redirect URI fix (ANTIGRAVITY)
 
 Fixed Robinhood reconnect from `socratictrade.com` redirecting to `http://localhost:4000/api/auth/robinhood/callback`. Updated Infisical `prod` secrets for Socratic.Trade (`39d93bb7-76f9-498c-8b50-a7def52e072f`): set `ROBINHOOD_MCP_REDIRECT_URI=https://socratictrade.com/api/auth/robinhood/callback` and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=off`. Triggered redeploy on Coolify (`m1os7ijf31bg3fanil152e4b`). Rollout: `docs/rollouts/2026-07-24-robinhood-production-redirect-uri-fix.md`.
@@ -3151,6 +3159,17 @@ Fixed logic bugs in model ID stripping that broke rotation for model variants:
 
 All 5267 tests and the Next.js build passed. Rollout: `docs/rollouts/2026-07-23-gemini-reasoning-temp.md`.
 
+
+## 2026-07-23 — FMP Downgrade Mitigation & UI Stale Indicators (ANTIGRAVITY, branch `fix-1792`)
+
+Successfully addressed the impending FMP downgrade by hoarding 1300+ days of Massive history and extensive FMP fundamentals for the tracked universe. 
+- Re-ordered the provider cascade in `src/lib/data-providers.ts` to favor free fallbacks (like Yahoo) and avoid exhausting FMP limits.
+- Increased the FMP fundamentals TTL in the cache to 14 days to stretch out the data we hoarded.
+- Added `isStaleField` logic to `app/console/scan/columns.tsx` to identify data older than 24 hours. Rendered stale fundamental data (P/E, EPS growth, Div Yield) with an `italic opacity-70` class and appended `(Stale: ...)` to tooltips.
+- Ported the staleness logic to `app/console/ui/drilldown-data.ts` and `app/console/ui/drilldown-sections.tsx`. Fundamentals in the drawer now fade and italicize if they are stale.
+
+Verified by passing TS compiler, Linter, Vitest test suite, and Next.js production build. Ready to land.
+Rollout: `docs/rollouts/2026-07-23-fmp-downgrade-ui.md`.
 
 ## 2026-07-22 — Admin UI Polish (ANTIGRAVITY, branch `fix/admin-ui-polish`)
 

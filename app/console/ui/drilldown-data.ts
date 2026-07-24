@@ -12,6 +12,7 @@ import { deriveMetrics, type DerivedMetrics } from "@/lib/derived-metrics";
 import { friendlySource, receivedLabel } from "@/lib/dashboard-ui";
 import type {
   AnalystRatingDetail,
+  EnrichmentFieldObservations,
   EnrichmentSources,
   EquityPosition,
   MarketFactorBreakdown,
@@ -75,6 +76,7 @@ export interface QuoteView {
   sectorRelStrength?: number;
   evidenceBulletins?: string[];
   sources?: EnrichmentSources;
+  fieldObservations?: EnrichmentFieldObservations;
 }
 
 const num = (v: unknown): number | undefined =>
@@ -150,6 +152,7 @@ export function toQuoteView(full: MarketQuote | undefined, summary: MarketQuoteS
     targetMedian: posNum(q.targetMedian),
     evidenceBulletins: q.evidenceBulletins,
     sources: q.sources,
+    fieldObservations: q.fieldObservations,
     // Both tiers carry these now (summary quotes gained them in market.ts
     // quotesBySymbol); `q = full ?? summary` already prefers the full tier.
     volume: posNum(q.volume),
@@ -643,13 +646,25 @@ export function targetUpsidePct(view: QuoteView): number | undefined {
  *  which provider supplied the field. When no provider supplied it, append
  *  neither — stamping "Received <time>" on a field no provider returned claims
  *  freshness for data we never got. */
+export function isStaleViewField(view: QuoteView, fieldKey?: keyof EnrichmentSources): boolean {
+  const specificTime = fieldKey && view.fieldObservations?.[fieldKey]?.fetchedAt;
+  const time = specificTime || view.asOf;
+  if (!time) return false;
+  return Date.now() - new Date(time).getTime() > 24 * 60 * 60 * 1000;
+}
+
 export function withProvenance(base: string, view: QuoteView, field: keyof EnrichmentSources): string {
   const parts = [base];
   const source = view.sources?.[field];
   if (source) {
     parts.push(`Source: ${friendlySource(source)}.`);
-    const received = receivedLabel(view.asOf);
-    if (received) parts.push(`${received}.`);
+    const specificTime = view.fieldObservations?.[field]?.fetchedAt;
+    const timeToUse = specificTime || view.asOf;
+    const received = receivedLabel(timeToUse);
+    const isStale = isStaleViewField(view, field);
+    if (received) {
+      parts.push(isStale ? `(Stale: ${received.replace('Received ', '')}).` : `${received}.`);
+    }
   }
   return parts.join(" ");
 }
