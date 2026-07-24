@@ -1,20 +1,8 @@
 # Current Status
 
-## 2026-07-24 — Coolify/Hetzner runners only (CURSOR) — MERGED #2201
+## 2026-07-24 — Robinhood OAuth production redirect URI fix (ANTIGRAVITY)
 
-Owner correction: fleet CI is **not** GitHub-hosted Actions. Two Coolify/Hetzner servers —
-**ci-cpx32** (`77.42.35.209`) systemd runners + **prod Coolify host** (`135.181.192.190`).
-`sentry-ci-report` on `socratic-ci` (no `socratic-deploy` unit). Monitor often:
-`bash scripts/monitor-coolify-runners.sh --ssh`. PR #2201 merged (auto-deploy). Rollout:
-`docs/rollouts/2026-07-24-coolify-runners-only.md`.
-
-## 2026-07-24 — RAG enablement + Exit Contract B1 + branch prune (CURSOR)
-
-Branch: `cursor/rag-enable-exit-prune-1c6c`. Safe RAG Priority A flags default ON; Exit Contract
-columns + fill writes + proactive/synthetic read-with-fallback (B1 / partial B2). Discarded
-w2-coaching/reflection (already on main / closed PRs); pruned 19 stale origin branches. Effort
-board + FEATURE-ENABLEMENT updated for `effort-issues-sync`. Rollout:
-`docs/rollouts/2026-07-24-rag-enable-exit-b1-prune.md`.
+Fixed Robinhood reconnect from `socratictrade.com` redirecting to `http://localhost:4000/api/auth/robinhood/callback`. Updated Infisical `prod` secrets for Socratic.Trade (`39d93bb7-76f9-498c-8b50-a7def52e072f`): set `ROBINHOOD_MCP_REDIRECT_URI=https://socratictrade.com/api/auth/robinhood/callback` and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=off`. Triggered redeploy on Coolify (`m1os7ijf31bg3fanil152e4b`). Rollout: `docs/rollouts/2026-07-24-robinhood-production-redirect-uri-fix.md`.
 
 ## 2026-07-24 — Per-user reflections & learning system (CURSOR)
 
