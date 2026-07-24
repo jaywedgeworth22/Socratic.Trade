@@ -2390,7 +2390,11 @@ const MIGRATIONS: Migration[] = [
     name: "learned_context_regime_column",
     up: (database) => {
       const addColumns = (table: "learned_context" | "learned_context_pending") => {
-        const tableExists = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+        // Guard: when the persistence-hardening tests replay migrations from an early schema
+        // version, learned_context may not exist yet — skip silently so v59 is idempotent.
+        const tableExists = database.prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?"
+        ).get(table);
         if (!tableExists) return;
         const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
         if (!cols.some((c) => c.name === "regime")) {

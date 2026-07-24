@@ -8,20 +8,9 @@
 - Rollout: `docs/rollouts/2026-07-23-roic-integration-and-historical-fundamentals.md`.
 ## 2026-07-24 — Coolify/Hetzner runners only (CURSOR)
 ## 2026-07-24 — Coolify/Hetzner runners only (CURSOR) — MERGED #2201
+## 2026-07-24 — Robinhood OAuth production redirect URI fix (ANTIGRAVITY)
 
-Owner correction: fleet CI is **not** GitHub-hosted Actions. Two Coolify/Hetzner servers —
-**ci-cpx32** (`77.42.35.209`) systemd runners + **prod Coolify host** (`135.181.192.190`).
-`sentry-ci-report` on `socratic-ci` (no `socratic-deploy` unit). Monitor often:
-`bash scripts/monitor-coolify-runners.sh --ssh`. PR #2201 merged (auto-deploy). Rollout:
-`docs/rollouts/2026-07-24-coolify-runners-only.md`.
-
-## 2026-07-24 — RAG enablement + Exit Contract B1 + branch prune (CURSOR)
-
-Branch: `cursor/rag-enable-exit-prune-1c6c`. Safe RAG Priority A flags default ON; Exit Contract
-columns + fill writes + proactive/synthetic read-with-fallback (B1 / partial B2). Discarded
-w2-coaching/reflection (already on main / closed PRs); pruned 19 stale origin branches. Effort
-board + FEATURE-ENABLEMENT updated for `effort-issues-sync`. Rollout:
-`docs/rollouts/2026-07-24-rag-enable-exit-b1-prune.md`.
+Fixed Robinhood reconnect from `socratictrade.com` redirecting to `http://localhost:4000/api/auth/robinhood/callback`. Updated Infisical `prod` secrets for Socratic.Trade (`39d93bb7-76f9-498c-8b50-a7def52e072f`): set `ROBINHOOD_MCP_REDIRECT_URI=https://socratictrade.com/api/auth/robinhood/callback` and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=off`. Triggered redeploy on Coolify (`m1os7ijf31bg3fanil152e4b`). Rollout: `docs/rollouts/2026-07-24-robinhood-production-redirect-uri-fix.md`.
 
 ## 2026-07-24 — Per-user reflections & learning system (CURSOR)
 
@@ -3269,7 +3258,3 @@ Fixed a CI failure in `.github/workflows/cleanup-caches.yml` by retargeting the 
 ## 2026-07-23 — Admin Panel Server RAM Fix & CI ESLint Ignores (ANTIGRAVITY)
 
 The Admin panel's "Server Metrics" tab was modified to extract actual RAM capacity directly from the Hetzner Server API's metadata rather than relying on Coolify metadata to ensure accurate memory percentages. Also, added `**/.worktrees/**` to the ESLint configuration ignores to prevent CI `verify` gates from failing when linting other agents' worktree paths. Verified clean on 5000+ tests and builds.
-
-## 2026-07-24 — Connections UI Redesign & Ghost API Key Tombstoning (ANTIGRAVITY)
-
-Redesigned the Broker Connections cards in `app/console/settings/brokers.tsx` to reduce vertical card height by >25%, added inline tax treatment tags, `Load PAPER` badges for paper accounts, strategy execution status, pending proposal counts, and an on-demand `Capabilities` modal sheet. Also fixed the ghost API key deletion bug by implementing explicit tombstoning (`DELETED_KEY_TOMBSTONE = "__DISABLED__"`) in `src/lib/db-api-keys.ts` so deleted keys never re-migrate from ambient environment variables.

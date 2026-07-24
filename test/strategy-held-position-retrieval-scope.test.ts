@@ -173,7 +173,7 @@ describe("strategy.ts held-position retrieval scope", () => {
     // ── Regression: BUY-candidate top-N scan set is unchanged (score-sorted, held symbol NOT
     // reordered into it — it stays outside because it genuinely scores lowest). ──
     const learnedCallArgs = mocks.retrieveLearnedContextDetailed.mock.calls[0] as
-      | [string, string[], undefined, { connectedAccountId?: string }]
+      | [string, string[], string | undefined, { thesisTags?: Set<string> }]
       | undefined;
     expect(learnedCallArgs).toBeDefined();
     const [, learnedSymbols] = learnedCallArgs!;

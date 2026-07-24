@@ -54,7 +54,7 @@ describe("usage limit alerts", () => {
     expect(calls[0]?.body).toMatchObject({
       from: "alerts@example.test",
       to: ["owner@example.test"],
-      subject: "Usage limit hit: Pinecone Write Unit daily fuse"
+      subject: "[Socratic.Trade] Usage limit hit: Pinecone Write Unit daily fuse"
     });
     expect(String((calls[0]?.body as { text?: string }).text)).toContain("Inspect chunking and deduping");
 
