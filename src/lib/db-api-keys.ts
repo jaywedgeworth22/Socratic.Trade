@@ -395,15 +395,47 @@ export function upsertUserApiKey(userId: string, service: string, apiKey: string
        ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
     )
     .run(id, userId, canonical, encryptedKey, label ?? null, now, now);
+  if (credTierForService(canonical) === "per-user-only") {
+    const envVar = apiKeyEnvVarForService(canonical);
+    if (envVar && process.env[envVar] !== undefined) {
+      delete process.env[envVar];
+    }
+  }
   return { id, userId, service: canonical, apiKey, label, createdAt: now, updatedAt: now };
 }
 
 export function deleteUserApiKey(userId: string, service: string): void {
   const canonical = normalizeApiKeyService(service);
   const db = getDb();
-  db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, canonical);
+
+  if (credTierForService(canonical) === "shared-operator-infra") {
+    db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, canonical);
+    if (canonical !== service) {
+      db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, service);
+    }
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const id = `${userId}_${canonical}`;
+  const encryptedKey = encryptValue(DELETED_KEY_TOMBSTONE);
+  db.prepare(
+    `INSERT INTO user_api_keys (id, user_id, service, api_key, label, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'disabled by user', ?, ?)
+     ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
+  ).run(id, userId, canonical, encryptedKey, now, now);
   if (canonical !== service) {
-    db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, service);
+    const aliasId = `${userId}_${service}`;
+    db.prepare(
+      `INSERT INTO user_api_keys (id, user_id, service, api_key, label, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'disabled by user', ?, ?)
+       ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
+    ).run(aliasId, userId, service, encryptedKey, now, now);
+  }
+
+  const envVar = apiKeyEnvVarForService(canonical);
+  if (envVar && process.env[envVar] !== undefined) {
+    delete process.env[envVar];
   }
 }
 
@@ -432,6 +464,7 @@ export function deleteUserApiKey(userId: string, service: string): void {
 export type CredTier = "per-user-only" | "shared-operator-infra";
 
 export const LOCAL_USER = "local";
+export const DELETED_KEY_TOMBSTONE = "__DISABLED__";
 
 // Per-user-only (env = `local` operator only): the LLM keys (openai, anthropic, xai, gemini,
 // mistral), alpaca_paper_api_key, alpaca_paper_secret_key — and any UNLISTED service (the
@@ -763,7 +796,37 @@ export function userHasAnyLlmCredential(userId?: string): boolean {
 // Per-user-only credentials whose env values belong to the primary (`local`) operator. At boot we
 // migrate them into `local`'s per-user key store so there is NO special `local` env branch in the
 // resolvers above — every user, `local` included, resolves broker/LLM keys from the per-user store.
-const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "openrouter", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
+const LOCAL_ENV_MIGRATION_SERVICES = [
+  "openai",
+  "anthropic",
+  "xai",
+  "gemini",
+  "mistral",
+  "deepseek",
+  "openrouter",
+  "alpaca_paper_api_key",
+  "alpaca_paper_secret_key",
+  "pinecone",
+  "voyage",
+  "siliconflow",
+  "apify",
+  "fintechstudios",
+  "powerintell",
+  "tiingo",
+  "twelvedata",
+  "logodev",
+  "logodev_secret"
+] as const;
+
+/** Purge all LLM and user-providable interface keys from process.env so process.env stays clean. */
+export function purgeProcessEnvUserKeys(): void {
+  for (const svc of LOCAL_ENV_MIGRATION_SERVICES) {
+    const envVar = API_KEY_ENV_MAP[svc];
+    if (envVar && process.env[envVar] !== undefined) {
+      delete process.env[envVar];
+    }
+  }
+}
 
 /**
  * One-time, idempotent migration of the operator's env broker/LLM keys into the `local` user's
@@ -786,6 +849,8 @@ export function migrateLocalEnvCredentials(): { migrated: string[] } {
       }
     }
   }
+  // Purge process.env of all user-providable and LLM keys post-migration
+  purgeProcessEnvUserKeys();
   return { migrated };
 }
 

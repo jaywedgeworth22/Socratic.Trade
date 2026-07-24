@@ -3235,3 +3235,7 @@ Fixed a CI failure in `.github/workflows/cleanup-caches.yml` by retargeting the 
 ## 2026-07-23 — Admin Panel Server RAM Fix & CI ESLint Ignores (ANTIGRAVITY)
 
 The Admin panel's "Server Metrics" tab was modified to extract actual RAM capacity directly from the Hetzner Server API's metadata rather than relying on Coolify metadata to ensure accurate memory percentages. Also, added `**/.worktrees/**` to the ESLint configuration ignores to prevent CI `verify` gates from failing when linting other agents' worktree paths. Verified clean on 5000+ tests and builds.
+
+## 2026-07-24 — Purge process.env LLM & User Keys (ANTIGRAVITY)
+
+Implemented automatic purging of all LLM API keys and user-providable interface credentials from `process.env` upon boot migration, key creation/update, and key deletion in `src/lib/db-api-keys.ts`. Ensures process.env never retains ambient LLM or user keys in process memory at runtime.
