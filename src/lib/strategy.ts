@@ -1224,14 +1224,18 @@ export async function runStrategyOnce(
       // learned facts on a held name outside the top-8 still surface, without touching the
       // top-8 BUY-candidate slice itself.
       const learnedSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 8).map((c) => c.symbol), ...heldSymbols]);
-      // Regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice),
-      // but the current connected account is always forwarded so account-scoped retrieval can keep
-      // sibling portfolios' learned facts isolated.
+      // Per-user retrieval (owner directive, 2026-07-23): pool ALL accounts' learned context,
+      // not just this account's. Regime-conditioned re-ranking boosts in-regime facts and
+      // labels off-regime ones. Thesis tags from this account's scorecard get a +1 bonus.
+      const macroForRegime = await fetchMacroData(userId).catch(() => undefined);
+      const currentRegime = macroForRegime ? determineMarketRegime(macroForRegime) : undefined;
+      const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, fillSourceForExecutionMode(executionState), {}, userId) : [];
+      const candidateThesisTags = new Set(thesisScorecard.map((s) => s.thesisTag).filter(Boolean) as string[]);
       const learnedFacts = retrieveLearnedContextDetailed(
         userId,
         learnedSymbols,
-        undefined,
-        { connectedAccountId }
+        currentRegime,
+        { thesisTags: candidateThesisTags }
       );
       if (learnedFacts.lines.length > 0) {
         learnedContext = learnedFacts.lines.join("\n");

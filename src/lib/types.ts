@@ -2519,6 +2519,9 @@ export interface LearnedContextRow {
   assertedAt: string;
   supersededBy: string | null;
   expiresAt: string | null;
+  regime?: string | null;
+  thesisTag?: string | null;
+  dominantFactor?: string | null;
 }
 
 /** A pre-persistence learned-context candidate (origin/scope are assigned at ingest time). */

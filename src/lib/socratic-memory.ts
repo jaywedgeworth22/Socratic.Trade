@@ -120,7 +120,7 @@ export function buildSocraticMemoryDocument(
       ...(decision.connectedAccountId ? { connected_account_id: decision.connectedAccountId } : {}),
       ...(accountEnvironment ? {
         account_environment: accountEnvironment,
-        transfer_state: accountEnvironment === "paper" ? "candidate" : "not_applicable"
+        transfer_state: "not_applicable"
       } : {})
     }
   };

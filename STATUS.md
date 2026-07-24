@@ -1,5 +1,22 @@
 # Current Status
 
+## 2026-07-24 — Per-user reflections & learning system (CURSOR)
+
+Branch: `cursor/per-user-reflections-learning`. Pooled all accounts' closed trades for per-user
+structured lessons (learned_context rows + Pinecone vectors). Removed paper-to-live transfer
+machinery (`learning-transfer.ts` deleted). FINRA margin-minimum now applies uniformly (no more
+live-only gating). Regime-conditioned retrieval with scoring (+2 match/-1 mismatch/+1 thesis)
+wired into strategy loop. Rollout: `docs/rollouts/2026-07-23-per-user-reflections-learning.md`.
+
+## 2026-07-24 — Open efforts sweep closeout (CURSOR)
+
+Product PRs #1901/#1902/#1792/#1819/#1842/#2123 and docs #1980/#2005/#2022 are on `main`.
+Open `state:in-progress` GitHub issues are back to board-true WIP (Usage-compliance Wave 2 +
+infra-panel reliability). `scripts/sync-effort-issues.py` now closes open orphan mirrors.
+Board/script repair PR #2143 + follow-up #2155 (admin RAM + cache cleanup) still auto-merge
+armed. Use `GITHUB_MCP_TOKEN` (not the broken `GITHUB_TOKEN`) for Issues/rulesets. Rollout:
+`docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
 ## 2026-07-24 — Resolve open efforts closeout (CURSOR)
 
 Merged #1842 + #1792. Remaining open product PRs: #1902 (Busy retry) and #1819 (earningscalls burst,

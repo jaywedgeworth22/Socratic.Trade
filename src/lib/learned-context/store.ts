@@ -112,8 +112,7 @@ export async function ingestLearned(
   if (learningScope !== "account" && connectedAccountId) {
     throw new Error(`${learningScope}-scoped learned context cannot carry connectedAccountId`);
   }
-  const transferState: LearnedContextTransferState = requestedTransferState ??
-    (learningScope === "account" && accountEnvironment === "paper" ? "candidate" : "not_applicable");
+  const transferState: LearnedContextTransferState = requestedTransferState ?? "not_applicable";
   if (learningScope === "research" && transferState !== "validated" && transferState !== "rejected") {
     throw new Error("Research learned context must have an explicit validated or rejected transfer state");
   }
@@ -245,16 +244,17 @@ export async function ingestLearned(
  * this user — the listLearnedContextForDecision query only widens to scope='shared' rows, never
  * to another user's private rows.
  *
- * The `regime` argument is accepted for forward-compatibility (regime-conditioned facts) but is
- * not yet used as a filter in this slice.
+ * Regime-conditioned re-ranking (owner directive, 2026-07-23): when `regime` is supplied, rows
+ * matching the current market regime get a +2 scoring boost and off-regime rows get a -1 penalty,
+ * with regime labels appended for the model. Thesis tags in `thesisTags` get a +1 bonus.
  */
 export function retrieveLearnedContext(
   userId: string,
   symbols: string[],
-  _regime?: string,
-  options: { includeShared?: boolean; limit?: number; perContributorCap?: number; connectedAccountId?: string } = {}
+  regime?: string,
+  options: { includeShared?: boolean; limit?: number; perContributorCap?: number; connectedAccountId?: string; thesisTags?: Set<string> } = {}
 ): string[] {
-  return retrieveLearnedContextDetailed(userId, symbols, _regime, options).lines;
+  return retrieveLearnedContextDetailed(userId, symbols, regime, options).lines;
 }
 
 /** The formatted advisory lines plus the underlying selected rows (for age receipts etc.). */
@@ -267,12 +267,16 @@ export interface RetrievedLearnedContext {
  * Same selection as retrieveLearnedContext (identical per-contributor cap + shared/private
  * isolation — retrieveLearnedContext delegates here), but also returns the selected ROWS so
  * callers can read real provenance (assertedAt for evidence-age receipts) without re-querying.
+ *
+ * Regime-conditioned re-ranking: rows matching the current market regime get a +2 scoring boost;
+ * off-regime rows get -1. Thesis tags in `thesisTags` get a +1 bonus. Off-regime rows are
+ * labeled so the model can discount them. Sorting is score desc, then recency as tiebreaker.
  */
 export function retrieveLearnedContextDetailed(
   userId: string,
   symbols: string[],
-  _regime?: string,
-  options: { includeShared?: boolean; limit?: number; perContributorCap?: number; connectedAccountId?: string } = {}
+  regime?: string,
+  options: { includeShared?: boolean; limit?: number; perContributorCap?: number; connectedAccountId?: string; thesisTags?: Set<string> } = {}
 ): RetrievedLearnedContext {
   const limit = options.limit ?? 12;
   const perContributorCap = options.perContributorCap ?? 6;
@@ -283,11 +287,31 @@ export function retrieveLearnedContextDetailed(
     : getLearnedContextSharing(userId).includeShared;
   const rows = listLearnedContextForDecision(userId, symbols, includeShared, options.connectedAccountId);
 
+  // Regime-conditioned scoring
+  const conditioningScore = (row: LearnedContextRow, currentRegime?: string, thesisTags?: Set<string>): number => {
+    let score = 0;
+    if (currentRegime && row.regime) {
+      score += row.regime === currentRegime ? 2 : -1;
+    }
+    if (row.thesisTag && thesisTags?.has(row.thesisTag)) {
+      score += 1;
+    }
+    return score;
+  };
+
+  // Sort by score descending, recency as tiebreaker within same score
+  const sorted = [...rows].sort((a, b) => {
+    const scoreA = conditioningScore(a, regime, options.thesisTags);
+    const scoreB = conditioningScore(b, regime, options.thesisTags);
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    return b.assertedAt.localeCompare(a.assertedAt);
+  });
+
   // Per-contributor cap so one prolific source can't crowd out the rest (matters once shared rows
   // are enabled; harmless for the private-only slice).
   const perContributor = new Map<string, number>();
   const selected: LearnedContextRow[] = [];
-  for (const row of rows.sort((a, b) => b.assertedAt.localeCompare(a.assertedAt))) {
+  for (const row of sorted) {
     const key = row.contributorUserId ?? row.userId;
     const used = perContributor.get(key) ?? 0;
     if (used >= perContributorCap) continue;
@@ -296,7 +320,7 @@ export function retrieveLearnedContextDetailed(
     if (selected.length >= limit) break;
   }
 
-  return { lines: selected.map(formatLearnedContextLine), rows: selected };
+  return { lines: selected.map((row) => formatLearnedContextLine(row, regime)), rows: selected };
 }
 
 /**
@@ -305,8 +329,11 @@ export function retrieveLearnedContextDetailed(
  * The model can weigh a fresh, low-confidence chat-origin assertion differently from an old,
  * high-confidence ingested fact — previously all four fields were dropped here. Only fields that
  * actually exist are emitted; lines stay single-line and compact.
+ *
+ * Off-regime labeling (2026-07-23): when the row's regime differs from the current regime,
+ * appends ` [learned in ${row.regime} regime]` so the model can discount it.
  */
-function formatLearnedContextLine(row: LearnedContextRow): string {
+function formatLearnedContextLine(row: LearnedContextRow, currentRegime?: string): string {
   const sym = row.symbol ? `[${row.symbol}] ` : "";
   const prov: string[] = [];
   if (row.origin) prov.push(`origin=${row.origin}`);
@@ -319,7 +346,12 @@ function formatLearnedContextLine(row: LearnedContextRow): string {
   prov.push(`scope=${row.learningScope}`);
   if (row.accountEnvironment) prov.push(`environment=${row.accountEnvironment}`);
   if (row.transferState !== "not_applicable") prov.push(`transfer=${row.transferState}`);
-  return `- ${sym}${row.subject}: ${row.value}${prov.length > 0 ? ` [${prov.join(" ")}]` : ""}`;
+  if (row.regime) prov.push(`regime=${row.regime}`);
+  let line = `- ${sym}${row.subject}: ${row.value}${prov.length > 0 ? ` [${prov.join(" ")}]` : ""}`;
+  if (currentRegime && row.regime && row.regime !== currentRegime) {
+    line += ` [learned in ${row.regime} regime]`;
+  }
+  return line;
 }
 
 // ── Pending-queue APPROVAL (safety-critical) ────────────────────────────────────

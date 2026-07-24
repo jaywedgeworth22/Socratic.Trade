@@ -2381,6 +2381,29 @@ const MIGRATIONS: Migration[] = [
         )
         .run("earningscalls_burst_pending", "25", new Date().toISOString());
     }
+  },
+  {
+    // Per-user reflection pooling (owner directive, 2026-07-23): adds regime, thesis_tag, and
+    // dominant_factor columns to learned_context so regime-conditioned retrieval can score rows
+    // against the current market regime. No data migration needed — existing rows stay NULL.
+    version: 59,
+    name: "learned_context_regime_column",
+    up: (database) => {
+      const addColumns = (table: "learned_context" | "learned_context_pending") => {
+        const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "regime")) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN regime TEXT`);
+        }
+        if (!cols.some((c) => c.name === "thesis_tag")) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN thesis_tag TEXT`);
+        }
+        if (!cols.some((c) => c.name === "dominant_factor")) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN dominant_factor TEXT`);
+        }
+      };
+      addColumns("learned_context");
+      addColumns("learned_context_pending");
+    }
   }
 ];
 
