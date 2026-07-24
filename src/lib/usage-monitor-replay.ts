@@ -435,7 +435,9 @@ function readProviderRows(
 }
 
 async function providerEvents(rows: ProviderUsageOutboxRow[]): Promise<UsageMonitorEvent[]> {
-  return Promise.all(rows.map((row) => createProviderDispatchUsageMonitorEvent({
+  // Retired provider families return null from createProviderDispatchUsageMonitorEvent. Drop them
+  // here so replay still advances its watermark past those rows (empty batches ACK as true).
+  const built = await Promise.all(rows.map((row) => createProviderDispatchUsageMonitorEvent({
     sourceEventId: row.id,
     occurredAt: row.occurred_at,
     provider: row.provider,
@@ -447,6 +449,7 @@ async function providerEvents(rows: ProviderUsageOutboxRow[]): Promise<UsageMoni
     estimatedCostUsd: row.estimated_cost_usd,
     ...(row.actual_cost_usd == null ? {} : { actualCostUsd: row.actual_cost_usd }),
   })));
+  return built.filter((event): event is UsageMonitorEvent => event !== null);
 }
 
 async function replayLedger<Row extends { id: string; created_at: string }>(input: {

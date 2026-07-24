@@ -10,7 +10,7 @@
    - Added **Meta (`llama-70b-latest`)** under a new Meta provider section up top.
    - Added **DeepSeek R1 (`deepseek-r1-latest`)** under the DeepSeek section up top.
    - Added **GPT-4o (`gpt-4o-latest`)** under the OpenAI section up top.
-4. **Canonical Model Class Aggregation**: Enhanced `canonicalModelId` in `src/lib/model-identity.ts` so all historical model names, vendor prefixes, and specific version strings map to their canonical model class ID. This guarantees that historical stats, costs, latency, win rates, and reviewer efficacy metrics combine across direct and OpenRouter sources without resetting or losing data.
+4. **Canonical Model Class Aggregation**: Enhanced `canonicalModelId` in `src/lib/model-identity.ts` so all historical model names, vendor prefixes, and specific version strings map to their canonical model class ID. This guarantees that historical stats, costs, latency, win rates, and reviewer efficacy metrics combine across direct and OpenRouter sources without resetting or losing data.14. **Live OpenRouter API Verification & Model Slug Resolution**: Audited OpenRouter's live `/api/v1/models` feed to ensure every catalog option resolves to its exact, active model ID on both OpenRouter and Direct Provider API endpoints (e.g. `anthropic/claude-sonnet-5`, `google/gemini-3.6-flash`, `x-ai/grok-4.5`, `openai/gpt-5.6-sol`, `deepseek/deepseek-v4-flash`, `mistralai/mistral-small-2603`).
 
 ## Touch Files
 - `src/lib/model-identity.ts`
@@ -26,8 +26,11 @@
 - `src/lib/chat/llm.ts`
 - `test/openai-model-catalog.test.ts`
 - `test/usage-model-merge.test.ts`
+- `test/console-models.test.ts`
+- `test/llm-provider.test.ts`
 
 ## Verification
 - `npx tsc --noEmit` — PASSED (0 errors)
-- `npm test` — PASSED
+- `npm test` — PASSED (453/453 test files, 5,267/5,267 tests)
 - `npm run lint` — PASSED
+- `npm run build` — PASSED (clean Next.js production build)

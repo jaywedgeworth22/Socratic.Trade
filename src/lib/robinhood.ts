@@ -18,7 +18,6 @@ import type {
 import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { logApiHealth } from "./db-health";
-import { recordProviderCall, pushBrokerBalance } from "./usage-monitor-push";
 import { normalizeSymbol } from "./money";
 import { isShortIntent } from "./broker-side";
 import { getOpenLots, getPerformanceSummary } from "./performance";
@@ -240,16 +239,7 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
 
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
     const raw = await this.callTool("get_portfolio", { account_number: accountNumber }) as Record<string, unknown>;
-    const portfolio = portfolioFromRobinhoodRaw(accountNumber, raw);
-    pushBrokerBalance({
-      provider: "robinhood",
-      userId: this.userId,
-      accountNumber: portfolio.accountNumber,
-      cash: portfolio.cash,
-      buyingPower: portfolio.buyingPower,
-      equity: portfolio.totalMarketValue
-    });
-    return portfolio;
+    return portfolioFromRobinhoodRaw(accountNumber, raw);
   }
 
   async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {
@@ -560,7 +550,6 @@ export async function callRobinhoodMcpTool(userId: string, name: string, args: R
   try {
     const result = await callRobinhoodMcpMethod(userId, "tools/call", { name, arguments: args });
     logApiHealth({ service: "robinhood-broker", ok: true, latencyMs: Date.now() - start, keySource: "user", userId });
-    recordProviderCall("robinhood", { service: "broker", ok: true });
     return unpackMcpToolResult(result);
   } catch (err) {
     logApiHealth({
@@ -571,7 +560,6 @@ export async function callRobinhoodMcpTool(userId: string, name: string, args: R
       keySource: "user",
       userId
     });
-    recordProviderCall("robinhood", { service: "broker", ok: false });
     throw err;
   }
 }

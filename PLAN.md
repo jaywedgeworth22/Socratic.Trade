@@ -8,6 +8,19 @@
 > Keep the external monitor on public `/api/health`; do not expose authenticated `/api/ready` just for
 > monitoring. Verify the dedicated branch with the ordered lint/tsc/test/build gate, then land via
 > `scripts/land.sh` if the owner wants deployment.
+> **2026-07-23 - Unstick remaining open PRs (CURSOR).** Five open PRs (#1901/#1902/#1792/#1819/#1842)
+> refreshed onto current `main`, conflict-resolved where real, auto-merge armed. Effort board
+> corrected for already-merged rows (#1892 and related). Next: wait hosted verify → auto-merge;
+> then RAG enablement remains Planned (telemetry/eval before `RAG_CORPUS_WIDE_LEXICAL`).
+
+> **2026-07-22 — Retired-provider Usage Monitor cleanup (CODEX, branch
+> `codex/retired-provider-usage-cleanup`).** Keep Alpaca, Tradier, and Robinhood broker runtime
+> behavior and health logging intact, but remove their Usage Monitor emissions and the unused
+> balance-push helper. Suppress retired provider roots and subproviders centrally so Alpaca
+> news/snapshot cannot be reintroduced. Remove dead Intrinio implementation/config/current docs
+> while retaining historical evidence. After PR #1889 merges, adopt its strict-v2 direct-push
+> implementation, preserve partial-ACK/replay cutover semantics, run the Node 24 gate, and open a
+> ready review PR. Do not merge or deploy without owner instruction.
 > **2026-07-22 - RAG review remediation follow-up (CODEX).** PR #1892's latest review pass found
 > five correctness gaps. Keep local FTS recall active when paid rerank/hybrid budget degradation
 > trips; classify source-backed 8-K rows without a `sec_filings` join; include immutable occurrence
