@@ -47,8 +47,8 @@ describe("scan-table column state", () => {
     const newsCol = SCAN_COLUMNS.find((c) => c.id === "sentiment");
     const insiderCol = SCAN_COLUMNS.find((c) => c.id === "insiderSentiment");
 
-    const quote = { symbol: "AAPL", sentiment: 75, insiderSentiment: 60 };
-    const quoteInsiderOnly = { symbol: "MSFT", insiderSentiment: 68 };
+    const quote = { symbol: "AAPL", sentiment: 75, insiderSentiment: 60 } as any;
+    const quoteInsiderOnly = { symbol: "MSFT", insiderSentiment: 68 } as any;
 
     expect(newsCol?.sortValue(quote)).toBe(75);
     expect(newsCol?.sortValue(quoteInsiderOnly)).toBeUndefined();
