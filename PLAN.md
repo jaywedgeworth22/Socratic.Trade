@@ -12,15 +12,14 @@
 > refreshed onto current `main`, conflict-resolved where real, auto-merge armed. Effort board
 > corrected for already-merged rows (#1892 and related). Next: wait hosted verify → auto-merge;
 > then RAG enablement remains Planned (telemetry/eval before `RAG_CORPUS_WIDE_LEXICAL`).
+> **2026-07-24 - Unstick remaining open PRs round 2 (CURSOR).** Four open PRs
+> (#1902/#1792/#1819/#1842) rebased onto current `main` after peer force-pushes; CI/merge fixes
+> pushed; auto-merge armed. #1901/#1980/#1981 already on `main`. Effort-board stale In Progress
+> rows corrected (#1847/#1828/#1839/#1981/check-pin/which-key/retired-provider). Next: hosted
+> `verify` green → auto-merge; RAG enablement remains Planned.
 
-> **2026-07-22 — Retired-provider Usage Monitor cleanup (CODEX, branch
-> `codex/retired-provider-usage-cleanup`).** Keep Alpaca, Tradier, and Robinhood broker runtime
-> behavior and health logging intact, but remove their Usage Monitor emissions and the unused
-> balance-push helper. Suppress retired provider roots and subproviders centrally so Alpaca
-> news/snapshot cannot be reintroduced. Remove dead Intrinio implementation/config/current docs
-> while retaining historical evidence. After PR #1889 merges, adopt its strict-v2 direct-push
-> implementation, preserve partial-ACK/replay cutover semantics, run the Node 24 gate, and open a
-> ready review PR. Do not merge or deploy without owner instruction.
+> **2026-07-22 — Retired-provider Usage Monitor cleanup — COMPLETED via #1901 (CURSOR note).**
+> Broker runtime retained; Usage Monitor emissions for retired broker families removed.
 > **2026-07-22 - RAG review remediation follow-up (CODEX).** PR #1892's latest review pass found
 > five correctness gaps. Keep local FTS recall active when paid rerank/hybrid budget degradation
 > trips; classify source-backed 8-K rows without a `sec_filings` join; include immutable occurrence
