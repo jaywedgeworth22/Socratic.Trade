@@ -42,12 +42,12 @@ const DAY_MS = 86_400_000;
 export const CONGRESS_SCORE_VERSION = "congress-score-v1-research";
 
 export const CONGRESS_SCORE_WEIGHTS: CongressScoreComponents = {
-  conviction: 0.25,
-  consensus: 0.2,
-  memberSkill: 0.2,
+  conviction: 0.4,
+  consensus: 0.3,
+  memberSkill: 0, // Member skill is evaluated strictly on individual trade events, not stock composites
   flow: 0.15,
   freshness: 0.1,
-  confidence: 0.1,
+  confidence: 0.05,
   // Context only until separately validated; do not let committee-sector overlap lift alpha score.
   conflictContext: 0
 };
