@@ -711,5 +711,14 @@ export function getLLM(userId?: string, opts: { transport?: Transport; openAITra
       return new OpenAILLM(key, chatModel, opts.openAITransport ?? defaultOpenAITransport, usage, "openai", opts.reasoningEffort);
     }
   }
+  if (chatLlm === "openrouter" && chatModel) {
+    const { key, source, keyRef } = resolveLlmCredential("openrouter", userId);
+    if (key) {
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+      const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl("openrouter"), "openrouter");
+      const modelForApi = chatModel.replace(/^openrouter\//i, "");
+      return new OpenAILLM(key, modelForApi, transport, usage, "openrouter", opts.reasoningEffort);
+    }
+  }
   return new MockLLM();
 }
