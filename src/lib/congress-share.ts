@@ -36,6 +36,7 @@ import {
   ShortVolumeRowSchema,
   FundamentalRowSchema,
   AnalystRowSchema,
+  TradeEventRowSchema,
 } from "@jaywedgeworth22/congress-trading-shared";
 import {
   assertOperationLeaseOwnership,
@@ -449,6 +450,7 @@ export function dropInvalidShareRows(
       shortVolume: filterRows(payload.shortVolume, ShortVolumeRowSchema, "shortVolume"),
       fundamentals: filterRows(payload.fundamentals, FundamentalRowSchema, "fundamentals"),
       analyst: filterRows(payload.analyst, AnalystRowSchema, "analyst"),
+      trades: filterRows(payload.trades, TradeEventRowSchema, "trades"),
     },
     dropped,
   };
@@ -473,7 +475,8 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     insider: clean.insider?.length ?? 0,
     shortVolume: clean.shortVolume?.length ?? 0,
     fundamentals: clean.fundamentals?.length ?? 0,
-    analyst: clean.analyst?.length ?? 0
+    analyst: clean.analyst?.length ?? 0,
+    trades: clean.trades?.length ?? 0
   };
   const token = congressTradeToken();
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
