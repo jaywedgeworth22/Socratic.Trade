@@ -252,18 +252,28 @@ private struct PerformanceOverviewCard: View {
 
                 if let benchmark = performance.benchmark {
                     AppCard {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("vs. \(benchmark.benchmarkSymbol)")
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("vs. \(benchmark.benchmarkSymbol)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(AppFormat.percent(benchmark.excessReturnPct, signed: true))
+                                        .font(.headline)
+                                        .foregroundStyle(pnlColor(benchmark.excessReturnPct))
+                                }
+                                Spacer()
+                                Text("\(benchmark.points) observations")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                Text(AppFormat.percent(benchmark.excessReturnPct, signed: true))
-                                    .font(.headline)
-                                    .foregroundStyle(pnlColor(benchmark.excessReturnPct))
                             }
-                            Spacer()
-                            Text("\(benchmark.points) observations")
-                                .font(.caption)
+                            Text(
+                                "You \(AppFormat.percent(benchmark.accountReturnPct, signed: true)) · \(benchmark.benchmarkSymbol) \(AppFormat.percent(benchmark.benchmarkReturnPct, signed: true))"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            Text("Account return minus \(benchmark.benchmarkSymbol) over the same window (cash flows neutralized).")
+                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                     }

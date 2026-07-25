@@ -6,12 +6,16 @@
 // from the same key-free history cascade every chart uses (fetchDailyOHLC). Never fabricates: if
 // there isn't enough history or SPY can't be fetched, returns null and the UI degrades to "—".
 //
+// Reading the scoreboard: excessReturnPct = accountReturnPct − benchmarkReturnPct. So if vs SPY
+// is +5% and SPY rose +8% over the window, the account's time-weighted return was +13%.
+//
 // Deposits/withdrawals: no broker transfer ledger exists in this app, so external cash flows are
-// INFERRED per snapshot gap as (cash delta) − (recorded trade cash delta), thresholded so
-// dividends/fees/rounding don't register as transfers. When a material flow is detected, the
-// account line is a chained time-weighted return (TWR) that neutralizes the flow, and the result
-// is flagged `cashFlowAdjusted` so the UI can say so honestly. Without cash data (synthetic
-// curves) behavior is unchanged: raw equity growth, `cashFlowAdjusted` false.
+// INFERRED per snapshot gap. All-cash gaps treat equity deltas as transfers (paper resets /
+// deposits must not read as alpha). When cash + fills are available, flow = cash delta − trade
+// cash, with guards so a cash→positions conversion without a recorded fill is not mistaken for a
+// withdrawal. The account line is a chained time-weighted return (TWR) that neutralizes those
+// flows — equivalent to asking "what if the same dollars had tracked SPY as they were added or
+// removed." Flagged `cashFlowAdjusted` so the UI can say so honestly.
 
 import { fetchDailyOHLC } from "./history";
 import type { BenchmarkComparison, BenchmarkSeriesPoint, EquityCurvePoint, FillEvent } from "./types";
@@ -39,16 +43,38 @@ function isoDate(ts: string | number | undefined): string | null {
 export const FLOW_MATERIALITY_PCT_OF_EQUITY = 0.5; // % of prior equity
 export const FLOW_MATERIALITY_MIN_USD = 25;
 
+type CurvePoint = {
+  equity: number;
+  cash?: number;
+  positionsValue?: number;
+  timestampMs: number;
+};
+
+function materialityThreshold(priorEquity: number): number {
+  return Math.max((FLOW_MATERIALITY_PCT_OF_EQUITY / 100) * priorEquity, FLOW_MATERIALITY_MIN_USD);
+}
+
+/** True when the snapshot is essentially all cash (no meaningful open positions). */
+function isAllCash(p: CurvePoint): boolean {
+  const threshold = materialityThreshold(p.equity);
+  if (typeof p.positionsValue === "number" && Number.isFinite(p.positionsValue)) {
+    return Math.abs(p.positionsValue) < threshold;
+  }
+  if (typeof p.cash === "number" && Number.isFinite(p.cash)) {
+    return Math.abs(p.cash - p.equity) <= Math.max(FLOW_MATERIALITY_MIN_USD, 0.01 * p.equity);
+  }
+  return false;
+}
+
 /**
- * Infer external deposits/withdrawals per calendar date from the equity curve's cash balances
- * and the account's recorded fills. For each consecutive pair of (per-date last) snapshots:
+ * Infer external deposits/withdrawals per calendar date from the equity curve and recorded fills.
  *
- *   externalFlow = (cash_i − cash_{i−1}) − (trade cash between the snapshots)
+ * Priority:
+ *  1. All-cash → all-cash gaps: equity delta IS the external transfer (paper resets, ACH, etc.).
+ *  2. Otherwise, when cash is present: (cash delta) − (trade cash from fills), with guards so a
+ *     cash→positions conversion without a recorded fill is not counted as a withdrawal.
  *
- * where trade cash = +notional for sell/cover fills and −notional for buy/short fills. A flow
- * below the materiality floors is dropped (dividends, fees, rounding). Returns a map keyed by
- * the PERIOD-END snapshot date (the date whose period the flow landed in). Pure — exported for
- * direct unit testing. Returns an empty map when the curve carries no cash data.
+ * Returns a map keyed by the PERIOD-END snapshot date. Pure — exported for direct unit testing.
  */
 export function inferExternalCashFlows(
   equityCurve: EquityCurvePoint[],
@@ -56,14 +82,18 @@ export function inferExternalCashFlows(
 ): Map<string, number> {
   const flows = new Map<string, number>();
   // Collapse to one (last) point per calendar date, mirroring normalizeAgainstBenchmark.
-  const byDate = new Map<string, { equity: number; cash: number; timestampMs: number }>();
+  const byDate = new Map<string, CurvePoint>();
   for (const p of equityCurve) {
     const d = isoDate(p.timestamp);
     const t = new Date(p.timestamp).getTime();
     if (!d || !Number.isFinite(t)) continue;
     if (!Number.isFinite(p.equity) || p.equity <= 0) continue;
-    if (typeof p.cash !== "number" || !Number.isFinite(p.cash)) continue;
-    byDate.set(d, { equity: p.equity, cash: p.cash, timestampMs: t });
+    const point: CurvePoint = { equity: p.equity, timestampMs: t };
+    if (typeof p.cash === "number" && Number.isFinite(p.cash)) point.cash = p.cash;
+    if (typeof p.positionsValue === "number" && Number.isFinite(p.positionsValue)) {
+      point.positionsValue = p.positionsValue;
+    }
+    byDate.set(d, point);
   }
   const dates = [...byDate.keys()].sort();
   if (dates.length < 2) return flows;
@@ -76,15 +106,50 @@ export function inferExternalCashFlows(
   for (let i = 1; i < dates.length; i++) {
     const prev = byDate.get(dates[i - 1])!;
     const cur = byDate.get(dates[i])!;
-    // Trade-driven cash movement between the two snapshots (exclusive, inclusive].
+    const threshold = materialityThreshold(prev.equity);
+    const deltaEquity = cur.equity - prev.equity;
+
+    // All-cash books have no market P&L between snapshots — any equity move is a transfer.
+    // This is the paper-reset / deposit case that previously read as +30% "alpha".
+    if (isAllCash(prev) && isAllCash(cur)) {
+      if (Math.abs(deltaEquity) >= threshold) flows.set(dates[i], round2(deltaEquity));
+      continue;
+    }
+
+    if (typeof prev.cash !== "number" || typeof cur.cash !== "number") continue;
+
     let tradeCash = 0;
     for (const f of sortedFills) {
       if (f.t <= prev.timestampMs) continue;
       if (f.t > cur.timestampMs) break;
       tradeCash += f.side === "sell" || f.side === "cover" ? f.notional : -f.notional;
     }
-    const flow = cur.cash - prev.cash - tradeCash;
-    const threshold = Math.max((FLOW_MATERIALITY_PCT_OF_EQUITY / 100) * prev.equity, FLOW_MATERIALITY_MIN_USD);
+
+    const deltaCash = cur.cash - prev.cash;
+    let flow = deltaCash - tradeCash;
+
+    // Missing-fill guards: without trade receipts, a cash→stock conversion looks like a withdrawal.
+    if (Math.abs(tradeCash) < 1e-9) {
+      const deltaPos =
+        typeof prev.positionsValue === "number" && typeof cur.positionsValue === "number"
+          ? cur.positionsValue - prev.positionsValue
+          : null;
+
+      if (Math.abs(deltaCash) >= threshold && Math.abs(deltaEquity) < threshold) {
+        // Cash moved, equity didn't — bought/sold positions, not a transfer.
+        flow = 0;
+      } else if (
+        deltaPos != null &&
+        ((deltaCash < -threshold && deltaPos > threshold) || (deltaCash > threshold && deltaPos < -threshold))
+      ) {
+        // Cash and positions moved in opposite directions — trade, not ACH.
+        flow = 0;
+      } else if (Math.abs(deltaCash - deltaEquity) < threshold) {
+        // Cash and equity moved together — classic deposit/withdrawal.
+        flow = deltaEquity;
+      }
+    }
+
     if (Math.abs(flow) >= threshold) flows.set(dates[i], round2(flow));
   }
   return flows;
@@ -101,6 +166,10 @@ export function inferExternalCashFlows(
  * time-weighted return: each period's growth is equity_i / (equity_{i−1} + flow_i), so a
  * withdrawal no longer reads as a loss and a deposit no longer reads as a gain. Without flows the
  * math is byte-identical to plain equity growth.
+ *
+ * excessReturnPct = accountReturnPct − benchmarkReturnPct (percentage points of out/under-performance
+ * vs buying and holding SPY over the same calendar window with the same external capital timing
+ * neutralized on the account side).
  */
 export function normalizeAgainstBenchmark(
   equityCurve: EquityCurvePoint[],
@@ -149,7 +218,6 @@ export function normalizeAgainstBenchmark(
     }
   }
   if (!baseDate) return null;
-  const baseEquity = equityByDate.get(baseDate)!;
   const baseBench = closeOnOrBefore(baseDate)!;
 
   const equityIndex: BenchmarkSeriesPoint[] = [];
@@ -169,6 +237,12 @@ export function normalizeAgainstBenchmark(
       const denominator = prevEquity + flow;
       if (flow !== 0 && denominator > 0) {
         chainedIndex *= eq / denominator;
+        flowsApplied += 1;
+        netExternalFlows += flow;
+      } else if (flow !== 0 && denominator <= 0) {
+        // Flow wiped (or more than wiped) prior equity — rebase with 0% for this period rather
+        // than dividing by a non-positive base (which previously fell through to raw equity ratio
+        // and re-introduced the withdrawal-as-loss distortion).
         flowsApplied += 1;
         netExternalFlows += flow;
       } else {
@@ -202,6 +276,9 @@ export function normalizeAgainstBenchmark(
  * cache (consent-pooled). Optional `fills` (the same source's recorded fills) enable external
  * cash-flow inference so the account line is deposit/withdrawal-aware (TWR). Returns null on any
  * failure or insufficient data so callers degrade gracefully — never throws into the dashboard path.
+ *
+ * Synthetic fill-only curves (no real portfolio snapshots) are refused — those start at a fake
+ * $100 equity base and are not comparable to SPY for an account holding real capital.
  */
 export async function computeSpyBenchmark(
   equityCurve: EquityCurvePoint[],
@@ -210,6 +287,11 @@ export async function computeSpyBenchmark(
   fills?: FillEvent[]
 ): Promise<BenchmarkComparison | null> {
   if (!equityCurve || equityCurve.length < 2) return null;
+  // Refuse the synthetic paper curve (100 + realized) — it has no cash/positionsValue and a fake base.
+  const hasRealSnapshot = equityCurve.some(
+    (p) => typeof p.cash === "number" || typeof p.positionsValue === "number"
+  );
+  if (!hasRealSnapshot) return null;
   let bars;
   try {
     bars = await fetchDailyOHLC("SPY", now, userId);

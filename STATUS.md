@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-07-25 — Fix vs-SPY benchmark accuracy (CURSOR)
+
+Home vs-SPY was counting all-cash deposits/paper resets as alpha (+31% case) and could mis-read
+cash→stock conversions without fills as withdrawals. Flow inference now treats all-cash equity
+deltas as transfers, guards missing-fill buys via positionsValue, rebases wiped TWR periods,
+reads newest portfolio snapshots, tips the curve with the live portfolio, and refuses synthetic
+$100 paper curves. Home/Results show You / SPY decomposition. Branch
+`cursor/fix-vs-spy-benchmark-9833`. Rollout: `docs/rollouts/2026-07-25-fix-vs-spy-benchmark.md`.
+
 ## 2026-07-24 — Cross-account market scan seed enrichment sharing (ANTIGRAVITY)
 
 Fixed interactive market scans (`/api/scan`) and dashboard snapshots (`dashboard.ts`) strictly scoping `seedEnrichment` to the active account's previous `strategy_run` audit. Merged global user strategy run quote summaries with account-specific runs so enriched fundamental data (P/E, EPS Growth, Dividend, Sentiment, Analyst Rating, Sector) is immediately shared across all user accounts. Rollout: `docs/rollouts/2026-07-24-cross-account-market-scan-sharing.md`.
