@@ -14,6 +14,9 @@ owner-visible coverage reporting:
   SEC XBRL **default ON**, RapidAPI lanes for yh-finance / real-time-finance-data /
   seeking-alpha (9 RapidAPI enrichment keys in quota module). RT finance confirmed 200;
   yh-finance + SA need Active Subscribe on pricing pages (see rollout).
+- Owner signup check (cloud `RAPIDAPI_KEY` `dbb6a14c…ff66`): **#2 real-time-finance-data = 200**;
+  **#1 yh-finance + #3 seeking-alpha still 403** not-subscribed on that key; #4 stock-market-data
+  optional/unsubscribed. Use `/pricing` links in the rollout (not API overview pages).
 Branch `cursor/free-cascade-coverage-0aef`. Rollout:
 `docs/rollouts/2026-07-26-free-cascade-coverage.md`.
 

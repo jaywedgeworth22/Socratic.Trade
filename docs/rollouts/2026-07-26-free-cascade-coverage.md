@@ -95,12 +95,23 @@ npx vitest run test/enrichment-coverage.test.ts test/enrichment-scarce-tier-gate
   Live probe: real-time-finance-data = 200; yh-finance + seeking-alpha still 403
   not-subscribed on current `RAPIDAPI_KEY` until Pricing → Subscribe shows Active.
 
-### Owner — Pricing / Subscribe links (use these, not hostnames)
-1. Yahoo Finance (API Dojo): https://rapidapi.com/apidojo/api/yh-finance/pricing
-2. Real-Time Finance Data: https://rapidapi.com/letscrape-6bRBa3Qgu/api/real-time-finance-data/pricing
-   (alt: https://rapidapi.com/s.mahmoud97/api/real-time-finance-data/pricing)
-3. Seeking Alpha (API Dojo): https://rapidapi.com/apidojo/api/seeking-alpha/pricing
-4. Stock Market Data (optional / hard to find): https://rapidapi.com/fyhao/api/stock-market-data/pricing
+### Owner — Pricing / Subscribe links (use these — NOT the API overview tabs)
+Open each URL, pick the **Basic/Free** plan, click **Subscribe**, confirm the RapidAPI
+**Apps** dropdown is the same app that owns production `RAPIDAPI_KEY` (Connections shows
+masked preview). Overview/Endpoints tabs do not subscribe you.
+
+1. Yahoo Finance (API Dojo) — **Subscribe here**:
+   https://rapidapi.com/apidojo/api/yh-finance/pricing
+2. Real-Time Finance Data — **Subscribe here** (this one already returns 200 on cloud key):
+   https://rapidapi.com/letscrape-6bRBa3Qgu/api/real-time-finance-data/pricing
+   (alt listing: https://rapidapi.com/s.mahmoud97/api/real-time-finance-data/pricing)
+3. Seeking Alpha (API Dojo) — **Subscribe here**:
+   https://rapidapi.com/apidojo/api/seeking-alpha/pricing
+4. Stock Market Data (optional; skip if you cannot find it — not required):
+   https://rapidapi.com/fyhao/api/stock-market-data/pricing
+   Search on RapidAPI for publisher **fyhao** / API name **Stock Market Data** if that URL 404s.
+
+Re-probe after owner signup (2026-07-26, cloud key `dbb6a14c…ff66`): #2 OK; #1/#3/#4 still 403.
 
 ### Additional files
 - `src/lib/db-api-keys.ts`, `src/lib/rapidapi-quota.ts`, `src/lib/provider-rate-limit.ts`
