@@ -1,10 +1,10 @@
 # Active Implementation Plan
 
 > **2026-07-26 — Free-first enrichment cascade + coverage report (CURSOR).** Prefer
-> free/keyless + RapidAPI failover before paid native keys; retry transient free failures;
-> surface field fill / winning source / missing fields via Admin + ops snapshot. Follow-up:
-> AV RapidAPI NEWS, ROIC env wiring, keyless Nasdaq quote; owner RapidAPI subscribe list for
-> 8+ hosts. Branch `cursor/free-cascade-coverage-0aef`. Rollout:
+> free/keyless + RapidAPI failover before paid native keys; coverage Admin/ops. Follow-up:
+> FilingAPI.dev, SEC XBRL default ON, RapidAPI yh-finance / real-time-finance-data /
+> seeking-alpha (pricing-page Subscribe links in rollout). Branch
+> `cursor/free-cascade-coverage-0aef`. Rollout:
 > `docs/rollouts/2026-07-26-free-cascade-coverage.md`.
 > **2026-07-25 — Fix vs-SPY benchmark (CURSOR).** Correct cash-flow-aware TWR vs SPY so all-cash
 > deposits/resets are not alpha and Home shows You / SPY decomposition. Branch

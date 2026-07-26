@@ -10,9 +10,10 @@ owner-visible coverage reporting:
 - Admin `/admin/enrichment-coverage` + `/api/admin/enrichment-coverage` + ops snapshot
   `enrichmentCoverage` show per-field fill, winning/most-frequent source, and missing fields.
 - `applyEnrichment` preserves `fieldObservations` / `providerFailures` on quotes.
-- Follow-up: AV RapidAPI NEWS_SENTIMENT, ROIC_API_KEY wiring + profile parse, keyless
-  `nasdaq-quote` enrichment. Still at 6 RapidAPI hosts wired — owner subscribe list in
-  rollout note to push toward 8+.
+- Follow-up: AV RapidAPI NEWS, ROIC wire, keyless nasdaq-quote, FilingAPI.dev (`FILINGAPI`),
+  SEC XBRL **default ON**, RapidAPI lanes for yh-finance / real-time-finance-data /
+  seeking-alpha (9 RapidAPI enrichment keys in quota module). RT finance confirmed 200;
+  yh-finance + SA need Active Subscribe on pricing pages (see rollout).
 Branch `cursor/free-cascade-coverage-0aef`. Rollout:
 `docs/rollouts/2026-07-26-free-cascade-coverage.md`.
 

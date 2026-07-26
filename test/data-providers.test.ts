@@ -59,6 +59,10 @@ describe("market enrichment provider", () => {
   const originalTiingoKey = process.env.TIINGO_API_KEY;
   const originalTwelveKey = process.env.TWELVEDATA_API_KEY;
 
+  const originalSecXbrl = process.env.SEC_XBRL_ENRICHMENT_ENABLED;
+  const originalFilingApi = process.env.FILINGAPI;
+  const originalFilingApiKey = process.env.FILINGAPI_KEY;
+
   beforeEach(() => {
     delete process.env.FINNHUB_API_KEY;
     delete process.env.FMP_API_KEY;
@@ -72,6 +76,10 @@ describe("market enrichment provider", () => {
     delete process.env.RAPIDAPI_KEY;
     delete process.env.TIINGO_API_KEY;
     delete process.env.TWELVEDATA_API_KEY;
+    delete process.env.FILINGAPI;
+    delete process.env.FILINGAPI_KEY;
+    // Isolate keyless-floor registration tests from default-ON SEC XBRL.
+    process.env.SEC_XBRL_ENRICHMENT_ENABLED = "0";
   });
 
   afterEach(() => {
@@ -99,11 +107,17 @@ describe("market enrichment provider", () => {
     else delete process.env.TIINGO_API_KEY;
     if (originalTwelveKey) process.env.TWELVEDATA_API_KEY = originalTwelveKey;
     else delete process.env.TWELVEDATA_API_KEY;
+    if (originalSecXbrl === undefined) delete process.env.SEC_XBRL_ENRICHMENT_ENABLED;
+    else process.env.SEC_XBRL_ENRICHMENT_ENABLED = originalSecXbrl;
+    if (originalFilingApi === undefined) delete process.env.FILINGAPI;
+    else process.env.FILINGAPI = originalFilingApi;
+    if (originalFilingApiKey === undefined) delete process.env.FILINGAPI_KEY;
+    else process.env.FILINGAPI_KEY = originalFilingApiKey;
   });
 
   it("uses Yahoo Finance provider when no API key is configured", async () => {
     const provider = getEnrichmentProvider();
-    // Keyless free-wave floor: nasdaq-quote + Yahoo Finance (no paid keys).
+    // Keyless free-wave floor: nasdaq-quote + Yahoo Finance (no paid keys; SEC XBRL off in this suite).
     expect(provider.configured).toBe(true);
     expect(provider.name).toBe("nasdaq-quote+yahoo-finance");
   });
@@ -1313,12 +1327,17 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
     "MASSIVE_API_KEY_ALT",
     "TIINGO_API_KEY",
     "TWELVEDATA_API_KEY",
+    "FILINGAPI",
+    "FILINGAPI_KEY",
+    "SEC_XBRL_ENRICHMENT_ENABLED",
   ] as const;
   const originals: Partial<Record<(typeof KEYS)[number], string | undefined>> = {};
   for (const k of KEYS) originals[k] = process.env[k];
 
   beforeEach(() => {
     for (const k of KEYS) delete process.env[k];
+    // Keep Yahoo crumb tests free of SEC/FilingAPI network side-channels.
+    process.env.SEC_XBRL_ENRICHMENT_ENABLED = "0";
   });
 
   afterEach(() => {

@@ -85,19 +85,30 @@ npx vitest run test/enrichment-coverage.test.ts test/enrichment-scarce-tier-gate
 - `test/rapidapi-providers.test.ts`
 - `.env.example`
 
+## Follow-up 2 — FilingAPI.dev + SEC XBRL default ON + more RapidAPI lanes
+
+### Changes Made
+- **SEC XBRL default ON** (unset → enabled; set `0`/`off` to disable).
+- **FilingAPI.dev** via `FILINGAPI` / `FILINGAPI_KEY`: `/v1/company`, earnings calendar,
+  insider summary (scarce wave-C; ~50/day free tier).
+- **RapidAPI lanes:** `yh-finance-apidojo`, `real-time-finance-data`, `seeking-alpha-rapidapi`.
+  Live probe: real-time-finance-data = 200; yh-finance + seeking-alpha still 403
+  not-subscribed on current `RAPIDAPI_KEY` until Pricing → Subscribe shows Active.
+
+### Owner — Pricing / Subscribe links (use these, not hostnames)
+1. Yahoo Finance (API Dojo): https://rapidapi.com/apidojo/api/yh-finance/pricing
+2. Real-Time Finance Data: https://rapidapi.com/letscrape-6bRBa3Qgu/api/real-time-finance-data/pricing
+   (alt: https://rapidapi.com/s.mahmoud97/api/real-time-finance-data/pricing)
+3. Seeking Alpha (API Dojo): https://rapidapi.com/apidojo/api/seeking-alpha/pricing
+4. Stock Market Data (optional / hard to find): https://rapidapi.com/fyhao/api/stock-market-data/pricing
+
+### Additional files
+- `src/lib/db-api-keys.ts`, `src/lib/rapidapi-quota.ts`, `src/lib/provider-rate-limit.ts`
+- `test/filingapi-and-new-rapidapi.test.ts`, `test/sec-xbrl.test.ts`, `test/data-providers.test.ts`
+
 ## Next Steps & Blockers
 
-- After a production scan, open Admin → Enrichment Coverage (or ops snapshot
-  `enrichmentCoverage`) to inspect live fill/source/missing.
-- **Owner action — RapidAPI free subscriptions to reach 8+ wired hosts** (agent cannot
-  create keys; use existing `RAPIDAPI_KEY` after Subscribe):
-  1. **Yahoo Finance** by API Dojo — `yh-finance.p.rapidapi.com` (or `apidojo-yahoo-finance-v1`)
-  2. **Real-Time Finance Data** — `real-time-finance-data.p.rapidapi.com`
-  3. **Seeking Alpha** — `seeking-alpha.p.rapidapi.com` (if free tier still exists)
-  4. **Stock Market Data** — `stock-market-data.p.rapidapi.com`
-  5. Clarify/fix **FilingAPI / FundamentalsAPI**: cloud secret `FILINGAPI` does not auth
-     `fundamentalsapi.com`; RapidAPI host `filing-api.p.rapidapi.com` looks subscribed but
-     returns gateway 404/429 — need the correct product URL + working free plan.
-  6. Optional: re-check **yahoo-finance-api.p.rapidapi.com** (subscribed but gateway 500s).
-- Optional: enable `SEC_XBRL_ENRICHMENT_ENABLED=1` in prod for authoritative debt/equity;
-  expand XBRL beyond D/E; persist coverage history across restarts.
+- Confirm RapidAPI dashboard shows **Active** for yh-finance + seeking-alpha on the same
+  app key as prod `RAPIDAPI_KEY` (RT finance already works).
+- After a production scan, check Admin → Enrichment Coverage / ops `enrichmentCoverage`.
+- Optional: expand SEC XBRL beyond D/E; persist coverage history.
