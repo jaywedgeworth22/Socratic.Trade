@@ -1031,6 +1031,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // it's never registered, i.e. fully dormant. See src/lib/quiver-provider.ts.
   const quiverKey = resolveQuiverApiKey();
   if (quiverKey) providers.push(withHealthLane(new QuiverEnrichmentProvider(quiverKey), "env"));
+  // Keyless Nasdaq quote/summary/holdings — free-wave redundancy beside Yahoo (no crumb handshake).
+  // Seated just before Yahoo so both participate in wave A; first-wins still prefers earlier paid
+  // tiers when they filled a field.
+  providers.push(new NasdaqQuoteEnrichmentProvider());
   providers.push(new YahooFinanceEnrichmentProvider());
   // Tier LAST — RapidAPI-hosted FAILOVER redundancy for the free scrape above (see the big doc
   // comment on the provider classes + rapidapi-quota.ts). Dormant unless RAPIDAPI_KEY is set.
@@ -2316,6 +2320,159 @@ export function parseAlpacaSnapshot(snap: AlpacaSnapshot | undefined | null): Sy
   };
 }
 
+// ── Nasdaq.com public quote/summary (no API key) ─────────────────────────────
+// Keyless JSON endpoints used by nasdaq.com (same family as the delayed screener in
+// market.ts). Complements Yahoo when the crumb handshake fails or Yahoo rate-limits.
+const NASDAQ_QUOTE_UA =
+  "Mozilla/5.0 (compatible; SocraticTrade/1.0; +https://socratictrade.com; research@socratictrade.com)";
+
+/** Parse `/api/quote/{sym}/info` + `/api/quote/{sym}/summary` (+ optional holdings). */
+export function parseNasdaqQuoteInfo(payload: unknown): SymbolEnrichment {
+  const data = (payload as { data?: Record<string, unknown> } | undefined)?.data;
+  if (!data) return {};
+  const companyName = typeof data.companyName === "string" && data.companyName.trim()
+    ? data.companyName.replace(/\s+Common Stock\s*$/i, "").trim()
+    : undefined;
+  const pd = (data.primaryData ?? {}) as Record<string, unknown>;
+  const price = parseRapidApiNumberString(pd.lastSalePrice);
+  const intradayChangePct = parseRapidApiNumberString(pd.percentageChange);
+  const volume = parseRapidApiNumberString(pd.volume);
+  let fiftyTwoWeekHigh: number | undefined;
+  let fiftyTwoWeekLow: number | undefined;
+  const range = ((data.keyStats as Record<string, unknown> | undefined)?.fiftyTwoWeekHighLow as
+    | { value?: string }
+    | undefined)?.value;
+  if (typeof range === "string" && range.includes("-")) {
+    const parts = range.split(/\s*-\s*/).map((part) => parseRapidApiNumberString(part.trim()));
+    if (typeof parts[0] === "number") fiftyTwoWeekLow = parts[0];
+    if (typeof parts[1] === "number") fiftyTwoWeekHigh = parts[1];
+  }
+  return {
+    ...(companyName !== undefined && companyName && { companyName }),
+    ...(price !== undefined && price > 0 && { price }),
+    ...(intradayChangePct !== undefined && { intradayChangePct }),
+    ...(volume !== undefined && volume >= 0 && { volume }),
+    ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+    ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
+  };
+}
+
+export function parseNasdaqQuoteSummary(payload: unknown): SymbolEnrichment {
+  const summaryData = (payload as { data?: { summaryData?: Record<string, { value?: string }> } } | undefined)
+    ?.data?.summaryData;
+  if (!summaryData) return {};
+  const sector = summaryData.Sector?.value?.trim() || undefined;
+  const industry = summaryData.Industry?.value?.trim() || undefined;
+  const yieldRaw = parseRapidApiNumberString(summaryData.Yield?.value);
+  const targetMean = parseRapidApiNumberString(summaryData.OneYrTarget?.value);
+  let fiftyTwoWeekHigh: number | undefined;
+  let fiftyTwoWeekLow: number | undefined;
+  const range = summaryData.FiftTwoWeekHighLow?.value; // Nasdaq's typo in the wire key
+  if (typeof range === "string" && range.includes("/")) {
+    const parts = range.split("/").map((part) => parseRapidApiNumberString(part.replace(/[$,]/g, "").trim()));
+    // Wire format is High/Low
+    if (typeof parts[0] === "number") fiftyTwoWeekHigh = parts[0];
+    if (typeof parts[1] === "number") fiftyTwoWeekLow = parts[1];
+  }
+  return {
+    ...(sector !== undefined && { sector }),
+    ...(industry !== undefined && { industry }),
+    ...(yieldRaw !== undefined && yieldRaw >= 0 && { dividendYield: yieldRaw }),
+    ...(targetMean !== undefined && targetMean > 0 && { targetMean }),
+    ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+    ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
+  };
+}
+
+export function parseNasdaqInstitutionalHoldings(payload: unknown): SymbolEnrichment {
+  const ownership = (payload as {
+    data?: { ownershipSummary?: { SharesOutstandingPCT?: { value?: string } } };
+  } | undefined)?.data?.ownershipSummary;
+  const pct = parseRapidApiNumberString(ownership?.SharesOutstandingPCT?.value);
+  return pct !== undefined && pct >= 0 ? { institutionOwnershipPct: pct } : {};
+}
+
+export class NasdaqQuoteEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "nasdaq-quote";
+  readonly costTier = "free" as const;
+  readonly configured = true;
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = cache.get(`nasdaq-quote:${symbol}`);
+      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const data = await this.fetchSymbol(symbol);
+            if (Object.keys(data).length > 0) {
+              cache.set(`nasdaq-quote:${symbol}`, { expiresAt: now + ttlMs(), data });
+            }
+            result[symbol] = data;
+          } catch {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(path: string): Promise<unknown> {
+    return withProviderLimit(this.name, async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        const res = await fetchWithRetry(
+          `https://api.nasdaq.com${path}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+            headers: {
+              Accept: "application/json,text/plain,*/*",
+              "User-Agent": NASDAQ_QUOTE_UA,
+              Origin: "https://www.nasdaq.com",
+              Referer: "https://www.nasdaq.com/"
+            }
+          },
+          { service: this.name, retries: 1 }
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+  }
+
+  private async fetchSymbol(symbol: string): Promise<SymbolEnrichment> {
+    // BRK.B works on Nasdaq's API; BRK-B does not — keep dots.
+    const enc = encodeURIComponent(symbol);
+    const [infoRes, summaryRes, holdingsRes] = await Promise.allSettled([
+      this.getJson(`/api/quote/${enc}/info?assetclass=stocks`),
+      this.getJson(`/api/quote/${enc}/summary?assetclass=stocks`),
+      this.getJson(`/api/company/${enc}/institutional-holdings`)
+    ]);
+    const merged: SymbolEnrichment = {};
+    if (infoRes.status === "fulfilled") Object.assign(merged, parseNasdaqQuoteInfo(infoRes.value));
+    if (summaryRes.status === "fulfilled") Object.assign(merged, parseNasdaqQuoteSummary(summaryRes.value));
+    if (holdingsRes.status === "fulfilled") Object.assign(merged, parseNasdaqInstitutionalHoldings(holdingsRes.value));
+    return merged;
+  }
+}
+
 // ── Yahoo Finance provider (no API key required) ─────────────────────────────
 // Uses Yahoo Finance session-crumb auth to call v10/finance/quoteSummary.
 // Provides: sector, industry, P/E, EPS, dividend yield, and analyst rating.
@@ -3328,6 +3485,68 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
 
 // ── ROIC.ai provider ──────────────────────────────────────────────────────────
 
+/** Maps a ROIC.ai `/v2/company/profile/{sym}` row (snake_case) into SymbolEnrichment.
+ *  Ratios endpoint paths historically 404'd on free keys — profile alone still fills
+ *  company/sector/industry/dividend/short-interest/price when present. */
+export function parseRoicProfile(profile: unknown, now: number = Date.now()): SymbolEnrichment {
+  const p = (Array.isArray(profile) ? profile[0] : profile) as Record<string, unknown> | undefined;
+  if (!p || typeof p !== "object") return {};
+
+  const companyName = firstString(p, ["company_name", "companyName", "name"]);
+  const sector = firstString(p, ["sector"]);
+  const industry = firstString(p, ["industry"]);
+  const price = firstNumber(p, ["price"]);
+  const dividendYield = firstNumber(p, ["dividend_yield", "dividendYield"]);
+  const shortPercentOfFloat = firstNumber(p, [
+    "short_shares_outstanding_percentage",
+    "shortPercentOfFloat",
+    "short_percent_of_float"
+  ]);
+  const institutionOwnershipPct = firstNumber(p, [
+    "percentage_held_by_institutions",
+    "institutionOwnershipPct"
+  ]);
+
+  let daysToEarnings: number | undefined;
+  const earningsRaw = firstString(p, ["earnings_date", "earningsDate"]);
+  if (earningsRaw) {
+    const ts = Date.parse(earningsRaw);
+    if (Number.isFinite(ts) && ts > now) {
+      daysToEarnings = Math.max(0, Math.ceil((ts - now) / 86_400_000));
+    }
+  }
+
+  return {
+    ...(companyName !== undefined && { companyName }),
+    ...(sector !== undefined && { sector }),
+    ...(industry !== undefined && { industry }),
+    ...(price !== undefined && price > 0 && { price }),
+    ...(dividendYield !== undefined && dividendYield >= 0 && { dividendYield: normalizePercent(dividendYield) }),
+    ...(shortPercentOfFloat !== undefined && shortPercentOfFloat >= 0 && { shortPercentOfFloat: normalizePercent(shortPercentOfFloat) }),
+    ...(institutionOwnershipPct !== undefined && institutionOwnershipPct >= 0 && {
+      institutionOwnershipPct: normalizePercent(institutionOwnershipPct)
+    }),
+    ...(daysToEarnings !== undefined && { daysToEarnings })
+  };
+}
+
+export function parseRoicRatios(ratios: unknown): SymbolEnrichment {
+  const r = (Array.isArray(ratios) ? ratios[0] : ratios) as Record<string, unknown> | undefined;
+  if (!r || typeof r !== "object") return {};
+  const peRatio = firstNumber(r, ["peRatio", "pe", "pe_ratio"]);
+  const pbRatio = firstNumber(r, ["pbRatio", "pb", "pb_ratio", "priceToBook"]);
+  const eps = firstNumber(r, ["eps"]);
+  const returnOnEquity = firstNumber(r, ["roe", "returnOnEquity", "return_on_equity"]);
+  const debtToEquity = firstNumber(r, ["debtToEquity", "debt_to_equity"]);
+  return {
+    ...(peRatio !== undefined && peRatio > 0 && { peRatio }),
+    ...(pbRatio !== undefined && pbRatio > 0 && { pbRatio }),
+    ...(eps !== undefined && { eps }),
+    ...(returnOnEquity !== undefined && { returnOnEquity: normalizePercent(returnOnEquity) }),
+    ...(debtToEquity !== undefined && debtToEquity >= 0 && { debtToEquity })
+  };
+}
+
 export class RoicAiEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "roic";
   readonly costTier = "paid" as const;
@@ -3366,7 +3585,9 @@ export class RoicAiEnrichmentProvider implements MarketEnrichmentProvider {
     if (misses.length === 0) return result;
 
     const credKey = `${this.keySource}:${this.userId ?? ""}`;
-    const allowed = admitProviderRequests("roic", credKey, misses.length * 2);
+    // Profile is the reliable free-tier endpoint; ratios paths currently 404 — reserve 1/symbol
+    // for the profile call (ratios are best-effort and do not block admission).
+    const allowed = admitProviderRequests("roic", credKey, misses.length);
     if (!allowed) return result;
 
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
@@ -3374,39 +3595,53 @@ export class RoicAiEnrichmentProvider implements MarketEnrichmentProvider {
       await Promise.all(
         chunk.map(async (symbol) => {
           try {
+            const covered = context?.coveredFields?.[symbol];
+            const needProfile =
+              !covered ||
+              !covered.has("companyName") ||
+              !covered.has("sector") ||
+              !covered.has("industry") ||
+              !covered.has("dividendYield") ||
+              !covered.has("shortPercentOfFloat") ||
+              !covered.has("price");
+            const needRatios =
+              !covered ||
+              !covered.has("peRatio") ||
+              !covered.has("pbRatio") ||
+              !covered.has("eps") ||
+              !covered.has("returnOnEquity") ||
+              !covered.has("debtToEquity");
+
             const [profileRes, ratiosRes] = await Promise.allSettled([
-              fetchWithRetry(
-                `${this.base}/company/profile/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(this.apiKey)}`,
-                {},
-                { service: "roic", keySource: this.keySource, userId: this.userId }
-              ),
-              fetchWithRetry(
-                `${this.base}/financial-ratios/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(this.apiKey)}`,
-                {},
-                { service: "roic", keySource: this.keySource, userId: this.userId }
-              ),
+              needProfile
+                ? fetchWithRetry(
+                    `${this.base}/company/profile/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(this.apiKey)}`,
+                    {},
+                    { service: "roic", keySource: this.keySource, userId: this.userId }
+                  )
+                : Promise.resolve(undefined),
+              needRatios
+                ? fetchWithRetry(
+                    `${this.base}/financial-ratios/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(this.apiKey)}`,
+                    {},
+                    { service: "roic", keySource: this.keySource, userId: this.userId, retries: 0 }
+                  )
+                : Promise.resolve(undefined),
             ]);
 
-            const profile = profileRes.status === "fulfilled" && profileRes.value?.ok ? await profileRes.value.json() : undefined;
-            const ratios = ratiosRes.status === "fulfilled" && ratiosRes.value?.ok ? await ratiosRes.value.json() : undefined;
+            const profile =
+              profileRes.status === "fulfilled" && profileRes.value?.ok
+                ? await profileRes.value.json()
+                : undefined;
+            const ratios =
+              ratiosRes.status === "fulfilled" && ratiosRes.value?.ok
+                ? await ratiosRes.value.json()
+                : undefined;
 
-            const item: SymbolEnrichment = {};
-            if (profile) {
-              const p = Array.isArray(profile) ? profile[0] : profile;
-              if (p?.name || p?.companyName) item.companyName = String(p.name || p.companyName);
-              if (p?.sector) item.sector = String(p.sector);
-              if (p?.industry) item.industry = String(p.industry);
-            }
-            if (ratios) {
-              const r = Array.isArray(ratios) ? ratios[0] : ratios;
-              if (r) {
-                if (typeof r.peRatio === "number" || typeof r.pe === "number") item.peRatio = r.peRatio ?? r.pe;
-                if (typeof r.pbRatio === "number" || typeof r.pb === "number") item.pbRatio = r.pbRatio ?? r.pb;
-                if (typeof r.eps === "number") item.eps = r.eps;
-                if (typeof r.roe === "number" || typeof r.returnOnEquity === "number") item.returnOnEquity = r.roe ?? r.returnOnEquity;
-                if (typeof r.debtToEquity === "number") item.debtToEquity = r.debtToEquity;
-              }
-            }
+            const item: SymbolEnrichment = {
+              ...parseRoicProfile(profile, now),
+              ...parseRoicRatios(ratios)
+            };
 
             if (Object.keys(item).length > 0) {
               result[symbol] = item;
@@ -4143,15 +4378,59 @@ export function parseAlphaVantageOverview(payload: Record<string, unknown>): Sym
 }
 
 /**
+ * Parse Alpha Vantage NEWS_SENTIMENT feed (native or RapidAPI — byte-identical shape) into
+ * sentiment 0–100 + up to 5 headlines. Shared by the RapidAPI failover lane.
+ */
+export function parseAlphaVantageNewsSentiment(
+  payload: Record<string, unknown>,
+  symbol: string
+): Pick<SymbolEnrichment, "sentiment" | "headlines"> {
+  if (!payload || !Array.isArray(payload.feed)) return {};
+  const feed = payload.feed as Array<Record<string, unknown>>;
+  const headlines = feed
+    .slice(0, 5)
+    .map((item) => (typeof item.title === "string" ? item.title.trim() : ""))
+    .filter(Boolean);
+
+  let scoreSum = 0;
+  let scoreCount = 0;
+  for (const item of feed.slice(0, 20)) {
+    const tickerArr = Array.isArray(item.ticker_sentiment) ? item.ticker_sentiment : [];
+    const targetTicker = tickerArr.find((t: { ticker?: string }) => t.ticker === symbol);
+    if (targetTicker && typeof targetTicker.ticker_sentiment_score === "string") {
+      const score = Number(targetTicker.ticker_sentiment_score);
+      if (Number.isFinite(score)) {
+        scoreSum += score;
+        scoreCount++;
+      }
+    } else if (typeof item.overall_sentiment_score === "number" && Number.isFinite(item.overall_sentiment_score)) {
+      // Fallback when ticker_sentiment is absent (some RapidAPI responses only carry overall).
+      scoreSum += item.overall_sentiment_score;
+      scoreCount++;
+    }
+  }
+
+  const sentiment =
+    scoreCount > 0
+      ? Math.max(0, Math.min(100, Math.round(50 + (scoreSum / scoreCount) * 100)))
+      : undefined;
+
+  return {
+    ...(sentiment !== undefined && { sentiment }),
+    ...(headlines.length > 0 && { headlines })
+  };
+}
+
+/**
  * Alpha Vantage via RapidAPI (host alpha-vantage.p.rapidapi.com) — a DIFFERENT credential/transport
  * from the native AlphaVantageEnrichmentProvider above (query-param `apikey=`, own key pool, 25/day
  * native per-source-IP cap). This lane authenticates via the x-rapidapi-host/x-rapidapi-key headers
  * instead, and its real quota shape is a flat 500/day (RapidAPI dashboard, owner-confirmed) + 5
  * req/min — nothing like the native key-pool's daily cap, so it gets its OWN persisted budget
  * (rapidapi-quota.ts) rather than sharing tryReserveAlphaVantageCalls. Confirmed byte-identical JSON
- * shape to native (2026-07-19 ground truth), but this provider only wires up OVERVIEW
- * (fundamentals) — NOT NEWS_SENTIMENT, which the native lane above already covers when configured,
- * and which isn't worth spending this separate quota on redundantly.
+ * shape to native (2026-07-19 ground truth). Wires OVERVIEW (fundamentals) plus NEWS_SENTIMENT
+ * (headlines/sentiment) when the coveredFields hint still shows those gaps — so Alpaca/Yahoo news
+ * winners do not burn this quota.
  */
 export class AlphaVantageRapidApiEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "alpha-vantage-rapidapi";
@@ -4160,7 +4439,7 @@ export class AlphaVantageRapidApiEnrichmentProvider implements MarketEnrichmentP
   // Quota-scarce (500/day shared against the 900/day combined ceiling) — gated into the cascade's
   // second wave so it is never spent on a symbol every field it supplies is already filled for.
   readonly quotaScarce = true;
-  // Exactly the keys parseAlphaVantageOverview can produce — keep in sync with that parser.
+  // Keep in sync with parseAlphaVantageOverview + parseAlphaVantageNewsSentiment.
   readonly suppliesFields = [
     "peRatio",
     "dividendYield",
@@ -4172,7 +4451,9 @@ export class AlphaVantageRapidApiEnrichmentProvider implements MarketEnrichmentP
     "fiftyTwoWeekHigh",
     "fiftyTwoWeekLow",
     "epsGrowth",
-    "analystBySource"
+    "analystBySource",
+    "sentiment",
+    "headlines"
   ] as const;
   private readonly host = "alpha-vantage.p.rapidapi.com";
   private readonly scope: CacheScope;
@@ -4183,7 +4464,7 @@ export class AlphaVantageRapidApiEnrichmentProvider implements MarketEnrichmentP
     this.keySource = keySource;
   }
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
@@ -4198,39 +4479,82 @@ export class AlphaVantageRapidApiEnrichmentProvider implements MarketEnrichmentP
     }
     if (misses.length === 0) return result;
 
+    const overviewFields = [
+      "peRatio", "dividendYield", "eps", "sector", "industry", "pbRatio", "beta",
+      "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "epsGrowth", "analystBySource"
+    ] as const;
+
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
-          const admitted = tryReserveRapidApiCalls("alpha-vantage-rapidapi", 1, now) > 0;
-          if (!admitted) { result[symbol] = {}; return; }
-          const tracker = { dispatched: false };
-          try {
-            const payload = await rapidApiGetJson(
-              this.host,
-              `/query?function=OVERVIEW&symbol=${encodeURIComponent(symbol)}`,
-              this.apiKey,
-              { service: this.name, keySource: this.keySource, userId: this.userId },
-              tracker
-            );
-            const errorMessage = alphaVantageOverviewErrorMessage(payload);
-            if (errorMessage) {
-              logApiHealth({
-                service: this.name,
-                ok: false,
-                errorText: scrubProviderErrorText(`Alpha Vantage (RapidAPI) API warning/error: ${errorMessage}`, this.apiKey),
-                keySource: this.keySource,
-                userId: this.userId
-              });
-              throw new Error("Alpha Vantage (RapidAPI) API warning/error");
-            }
-            const data = parseAlphaVantageOverview(payload as Record<string, unknown>);
-            writeEnrichmentCache(this.name, symbol, this.scope, this.userId, data, now + ttlMs());
-            result[symbol] = data;
-          } catch {
-            if (!tracker.dispatched) refundRapidApiCalls("alpha-vantage-rapidapi", 1, now);
+          const covered = context?.coveredFields?.[symbol];
+          const needOverview = !covered || overviewFields.some((f) => !covered.has(f));
+          const needNews = !covered || !covered.has("sentiment") || !covered.has("headlines");
+          if (!needOverview && !needNews) {
             result[symbol] = {};
+            return;
           }
+
+          const merged: SymbolEnrichment = {};
+
+          if (needOverview) {
+            const admitted = tryReserveRapidApiCalls("alpha-vantage-rapidapi", 1, now) > 0;
+            if (admitted) {
+              const tracker = { dispatched: false };
+              try {
+                const payload = await rapidApiGetJson(
+                  this.host,
+                  `/query?function=OVERVIEW&symbol=${encodeURIComponent(symbol)}`,
+                  this.apiKey,
+                  { service: this.name, keySource: this.keySource, userId: this.userId },
+                  tracker
+                );
+                const errorMessage = alphaVantageOverviewErrorMessage(payload);
+                if (errorMessage) {
+                  logApiHealth({
+                    service: this.name,
+                    ok: false,
+                    errorText: scrubProviderErrorText(`Alpha Vantage (RapidAPI) API warning/error: ${errorMessage}`, this.apiKey),
+                    keySource: this.keySource,
+                    userId: this.userId
+                  });
+                  throw new Error("Alpha Vantage (RapidAPI) API warning/error");
+                }
+                Object.assign(merged, parseAlphaVantageOverview(payload as Record<string, unknown>));
+              } catch {
+                if (!tracker.dispatched) refundRapidApiCalls("alpha-vantage-rapidapi", 1, now);
+              }
+            }
+          }
+
+          if (needNews) {
+            const admitted = tryReserveRapidApiCalls("alpha-vantage-rapidapi", 1, now) > 0;
+            if (admitted) {
+              const tracker = { dispatched: false };
+              try {
+                const payload = await rapidApiGetJson(
+                  this.host,
+                  `/query?function=NEWS_SENTIMENT&tickers=${encodeURIComponent(symbol)}&limit=50`,
+                  this.apiKey,
+                  { service: this.name, keySource: this.keySource, userId: this.userId },
+                  tracker
+                );
+                if (payload && typeof payload === "object") {
+                  const errMsg = alphaVantageOverviewErrorMessage(payload);
+                  if (errMsg) throw new Error(errMsg);
+                  Object.assign(merged, parseAlphaVantageNewsSentiment(payload as Record<string, unknown>, symbol));
+                }
+              } catch {
+                if (!tracker.dispatched) refundRapidApiCalls("alpha-vantage-rapidapi", 1, now);
+              }
+            }
+          }
+
+          if (Object.keys(merged).length > 0) {
+            writeEnrichmentCache(this.name, symbol, this.scope, this.userId, merged, now + ttlMs());
+          }
+          result[symbol] = merged;
         })
       );
     }

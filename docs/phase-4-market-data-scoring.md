@@ -217,7 +217,9 @@ enrichment checklist (`SymbolEnrichment` → `EnrichmentSourcedField` → `takeS
   snapshot/news, SEC XBRL when enabled, FMP-RapidAPI, etc.) with one retry on throw; Wave B
   runs paid non-scarce providers only for symbols still missing core gap fields; Wave C is
   the existing scarce RapidAPI gate (`quotaScarce` + `suppliesFields`). Insiders/TwelveData
-  RapidAPI now declare `suppliesFields` so they participate in Wave C.
+  RapidAPI now declare `suppliesFields` so they participate in Wave C. Alpha Vantage RapidAPI
+  also supplies NEWS_SENTIMENT when sentiment/headlines remain gaps. Keyless `nasdaq-quote`
+  joins the free wave beside Yahoo. ROIC resolves from `ROIC_API_KEY` (profile-first).
 - **Enrichment coverage report** — after each cascade run, Admin → Enrichment Coverage
   (`/admin/enrichment-coverage`), `/api/admin/enrichment-coverage`, and ops snapshot
   `enrichmentCoverage` show per-field fill rate, winning/most-frequent source, missing

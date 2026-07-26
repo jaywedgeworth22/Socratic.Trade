@@ -144,10 +144,14 @@ export interface EnrichmentCoverageRecord {
   sources?: Partial<Record<string, string>>;
   headlines?: string[];
   providerFailures?: Record<string, { errorKind?: string }>;
-  [key: string]: unknown;
 }
 
 const MISSING_SYMBOL_CAP = 40;
+
+function recordField(record: EnrichmentCoverageRecord | undefined, field: string): unknown {
+  if (!record) return undefined;
+  return (record as Record<string, unknown>)[field];
+}
 
 let lastCoverageReport: EnrichmentCoverageReport | null = null;
 
@@ -188,6 +192,7 @@ function mostFrequent(counts: Record<string, number>): string | null {
  * `contributingSources` should already be registration-order filtered (cascade.activeSources).
  */
 export function buildEnrichmentCoverageReport(
+  // Accept any enrichment-shaped record (e.g. SymbolEnrichment) without forcing an index signature.
   merged: Record<string, EnrichmentCoverageRecord>,
   contributingSources: string[] = []
 ): EnrichmentCoverageReport {
@@ -215,7 +220,7 @@ export function buildEnrichmentCoverageReport(
     let filledCount = 0;
     for (const symbol of symbols) {
       const record = merged[symbol];
-      const value = record?.[field];
+      const value = recordField(record, field);
       if (isFilledEnrichmentValue(value)) {
         filledCount += 1;
         const source = record?.sources?.[field] ?? "unknown";
@@ -307,7 +312,7 @@ export function collectFilledFields(
   for (const providerIndex of indexes) {
     const record = results[providerIndex]?.data[symbol];
     if (!record) continue;
-    for (const [key, value] of Object.entries(record)) {
+    for (const [key, value] of Object.entries(record as Record<string, unknown>)) {
       if (key === "sources" || key === "fieldObservations" || key === "providerFailures" || key === "fieldDates") {
         continue;
       }

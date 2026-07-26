@@ -42,6 +42,8 @@ const HARD_DEFAULTS: Record<string, { perMin?: number; minIntervalMs?: number; c
   // No published limit, but the prod egress IP gets HTTP 429 on a cold burst while paced,
   // low-concurrency requests succeed — gentle pacing, not parallel bursts.
   "yahoo-finance": { minIntervalMs: 400, concurrency: 2 },
+  // Public Nasdaq.com JSON endpoints (no key) — gentle pacing to avoid 429 bursts.
+  "nasdaq-quote": { minIntervalMs: 250, concurrency: 2 },
   // Free "Basic" tier is 8 API credits/min and each symbol in a batch /quote costs ONE credit
   // (see docs/data-provider-mcp-evaluation.md). The REAL budget control now lives in the provider
   // (data-providers.ts): it caps a call to `twelveDataCreditsPerMin()` symbols AND gates to one

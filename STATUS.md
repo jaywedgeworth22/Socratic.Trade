@@ -10,6 +10,9 @@ owner-visible coverage reporting:
 - Admin `/admin/enrichment-coverage` + `/api/admin/enrichment-coverage` + ops snapshot
   `enrichmentCoverage` show per-field fill, winning/most-frequent source, and missing fields.
 - `applyEnrichment` preserves `fieldObservations` / `providerFailures` on quotes.
+- Follow-up: AV RapidAPI NEWS_SENTIMENT, ROIC_API_KEY wiring + profile parse, keyless
+  `nasdaq-quote` enrichment. Still at 6 RapidAPI hosts wired — owner subscribe list in
+  rollout note to push toward 8+.
 Branch `cursor/free-cascade-coverage-0aef`. Rollout:
 `docs/rollouts/2026-07-26-free-cascade-coverage.md`.
 
