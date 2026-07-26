@@ -1,5 +1,18 @@
 # Socratic Trade Status
 
+## 2026-07-26 — Free-first enrichment cascade + coverage report (CURSOR)
+
+Optimized the market-data cascade for free/keyless + RapidAPI sources and added
+owner-visible coverage reporting:
+- Free-first planner (default ON): free wave → paid gap-fill → scarce RapidAPI failover;
+  one retry on free-provider throw.
+- Fixed Insiders/TwelveData RapidAPI `suppliesFields` so scarce gating actually applies.
+- Admin `/admin/enrichment-coverage` + `/api/admin/enrichment-coverage` + ops snapshot
+  `enrichmentCoverage` show per-field fill, winning/most-frequent source, and missing fields.
+- `applyEnrichment` preserves `fieldObservations` / `providerFailures` on quotes.
+Branch `cursor/free-cascade-coverage-0aef`. Rollout:
+`docs/rollouts/2026-07-26-free-cascade-coverage.md`.
+
 ## 2026-07-26 — PR merge drain + Actions runner fixes (GROK)
 
 Open-PR board drain and self-hosted CI hygiene:

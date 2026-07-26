@@ -212,6 +212,18 @@ enrichment checklist (`SymbolEnrichment` → `EnrichmentSourcedField` → `takeS
 - **Finnhub REST-volume lever** — `FINNHUB_DROP_RECOMMENDATION` (default-off) drops the
   per-symbol `stock/recommendation` call (5→4); analyst ratings remain backstopped by the
   Yahoo/FMP/Alpha-Vantage tiers.
+- **Free-first field-demand planner (2026-07-26, default ON)** —
+  `ENRICHMENT_FREE_FIRST_ENABLED`. Wave A runs free/keyless providers (Yahoo, Alpaca
+  snapshot/news, SEC XBRL when enabled, FMP-RapidAPI, etc.) with one retry on throw; Wave B
+  runs paid non-scarce providers only for symbols still missing core gap fields; Wave C is
+  the existing scarce RapidAPI gate (`quotaScarce` + `suppliesFields`). Insiders/TwelveData
+  RapidAPI now declare `suppliesFields` so they participate in Wave C.
+- **Enrichment coverage report** — after each cascade run, Admin → Enrichment Coverage
+  (`/admin/enrichment-coverage`), `/api/admin/enrichment-coverage`, and ops snapshot
+  `enrichmentCoverage` show per-field fill rate, winning/most-frequent source, missing
+  fields, and provider failures. `applyEnrichment` preserves `fieldObservations` /
+  `providerFailures` on `MarketQuote`.
 
-See `docs/rollouts/2026-07-01-data-sources-breadth.md` and
-`docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`.
+See `docs/rollouts/2026-07-01-data-sources-breadth.md`,
+`docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`, and
+`docs/rollouts/2026-07-26-free-cascade-coverage.md`.

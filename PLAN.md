@@ -1,5 +1,9 @@
 # Active Implementation Plan
 
+> **2026-07-26 — Free-first enrichment cascade + coverage report (CURSOR).** Prefer
+> free/keyless + RapidAPI failover before paid native keys; retry transient free failures;
+> surface field fill / winning source / missing fields via Admin + ops snapshot. Branch
+> `cursor/free-cascade-coverage-0aef`. Rollout: `docs/rollouts/2026-07-26-free-cascade-coverage.md`.
 > **2026-07-25 — Fix vs-SPY benchmark (CURSOR).** Correct cash-flow-aware TWR vs SPY so all-cash
 > deposits/resets are not alpha and Home shows You / SPY decomposition. Branch
 > `cursor/fix-vs-spy-benchmark-9833`. Rollout: `docs/rollouts/2026-07-25-fix-vs-spy-benchmark.md`.

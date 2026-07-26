@@ -315,15 +315,35 @@ function enrichmentShortCircuitEnabled(): boolean {
 /**
  * Per-symbol coverage gate for `quotaScarce` providers — DEFAULT ON, and scoped strictly to
  * providers that opt in via `quotaScarce` + `suppliesFields`. Today that is only the RapidAPI
- * failover tier (Mboum / YH Finance 15 / Alpha Vantage-RapidAPI), which is new and currently
- * spends a MONTHLY-backed quota on whichever symbols happen to be cache-misses first with no
- * regard for whether the free keyless Yahoo scrape already supplied that exact data. Every
- * pre-existing provider is unaffected (they never set the flag), so defaulting this ON has no
- * regression surface for them. Set `ENRICHMENT_SCARCE_TIER_GATE_ENABLED=0` to restore the old
- * all-providers-in-one-concurrent-wave behavior for the scarce tier too.
+ * failover tier (Mboum / YH Finance 15 / Alpha Vantage-RapidAPI / Insiders / TwelveData-RapidAPI),
+ * which is new and currently spends a MONTHLY-backed quota on whichever symbols happen to be
+ * cache-misses first with no regard for whether the free keyless Yahoo scrape already supplied
+ * that exact data. Every pre-existing provider is unaffected (they never set the flag), so
+ * defaulting this ON has no regression surface for them. Set
+ * `ENRICHMENT_SCARCE_TIER_GATE_ENABLED=0` to restore the old all-providers-in-one-concurrent-wave
+ * behavior for the scarce tier too.
  */
 export function scarceEnrichmentGateEnabled(): boolean {
   const raw = process.env.ENRICHMENT_SCARCE_TIER_GATE_ENABLED;
+  if (raw === undefined || raw.trim() === "") return true;
+  return flagEnabled(raw);
+}
+
+/**
+ * Free-first field-demand planner — DEFAULT ON.
+ *
+ * Wave A: free/keyless/broker-bundled providers (`costTier !== "paid"`) over the full batch.
+ * Wave B: paid non-scarce providers only for symbols that still have a coverage gap, with a
+ *         `coveredFields` hint so they can skip redundant sub-calls.
+ * Wave C: scarce RapidAPI failover (existing `quotaScarce` gate) for remaining field gaps.
+ *
+ * When a free-wave provider throws, it is retried once before the paid wave so a transient
+ * timeout/429 does not permanently suppress the keyless floor for that scan.
+ *
+ * Set `ENRICHMENT_FREE_FIRST_ENABLED=0` to restore the prior single concurrent non-scarce wave.
+ */
+export function freeFirstEnrichmentEnabled(): boolean {
+  const raw = process.env.ENRICHMENT_FREE_FIRST_ENABLED;
   if (raw === undefined || raw.trim() === "") return true;
   return flagEnabled(raw);
 }
@@ -1013,13 +1033,11 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (quiverKey) providers.push(withHealthLane(new QuiverEnrichmentProvider(quiverKey), "env"));
   providers.push(new YahooFinanceEnrichmentProvider());
   // Tier LAST — RapidAPI-hosted FAILOVER redundancy for the free scrape above (see the big doc
-  // comment on the provider classes for why this ordering, and rapidapi-quota.ts for the quota
-  // math). All three are dormant unless RAPIDAPI_KEY is set; each self-limits to a tiny persisted
-  // daily budget far below its real plan cap, so registering them here is safe even though the
-  // cascade calls every provider's enrich() with the FULL per-run symbol batch regardless of
-  // whether an earlier tier already filled a symbol's fields (no such per-provider narrowing
-  // mechanism exists in CascadingEnrichmentProvider outside the opt-in congress.trade coverage
-  // hint above) — the budget gate, not field-coverage narrowing, is what keeps this safe.
+  // comment on the provider classes + rapidapi-quota.ts). Dormant unless RAPIDAPI_KEY is set.
+  // Scarce providers (Mboum / YH15 / AV-RapidAPI / Insiders / TwelveData-RapidAPI) declare
+  // `quotaScarce` + `suppliesFields` so the free-first planner's wave C only spends them on
+  // symbols still missing those fields. FMP-RapidAPI is costTier "free" / not scarce so it
+  // participates in the free wave (extra fundamentals without a native FMP key).
   if (rapidApiKey) {
     // Mboum first (owner: prioritize by lowest disclosed RapidAPI-listing latency, 1663ms vs YH
     // Finance 15's 1757ms) — near-identical, so this is a tie-break, not a meaningful difference.
@@ -1144,6 +1162,8 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
   // a keyless/default-OFF provider that returns nothing for a scan (budget timeout, no CIK, no aligned
   // fact) must not appear in the source string just because it was registered.
   private contributingNames = new Set<string>();
+  /** Most recent coverage report from enrich(); also mirrored via enrichment-coverage module. */
+  private lastCoverageReport: import("./enrichment-coverage").EnrichmentCoverageReport | null = null;
 
   constructor(private readonly providers: MarketEnrichmentProvider[]) {
     this.name = providers.map((p) => p.name).join("+");
@@ -1154,8 +1174,14 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
     return this.providers.map((p) => p.name).filter((n) => this.contributingNames.has(n));
   }
 
+  /** Coverage summary from the most recent enrich() call on this instance. */
+  get coverageReport(): import("./enrichment-coverage").EnrichmentCoverageReport | null {
+    return this.lastCoverageReport;
+  }
+
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     this.contributingNames = new Set();
+    this.lastCoverageReport = null;
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean);
     // Each provider's result set, paired with its name, kept in REGISTRATION order
     // so the first-wins merge below is unchanged regardless of how we fetched.
@@ -1177,37 +1203,138 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         }));
 
     // ── Wave split ────────────────────────────────────────────────────────────
-    // WAVE ONE = every provider that has NOT declared itself quota-scarce. It is dispatched
-    // exactly as before (one concurrent Promise.all over the full symbol batch, or the App A
-    // short-circuit variant below) — no latency regression for the many providers where
-    // concurrency is correct and free.
-    // WAVE TWO = providers that declared `quotaScarce` + a non-empty `suppliesFields`. They run
-    // only AFTER wave one settles, and only over the symbols where wave one left at least one of
-    // their declared fields empty. A scarce provider with nothing to add is not called at all, so
-    // it reserves no quota (its reservation happens inside its own enrich()).
+    // FREE-FIRST (default ON):
+    //   Wave A = free/keyless (`costTier !== "paid"`) over the full batch (+ one retry on throw).
+    //   Wave B = paid non-scarce providers only for symbols still missing coverage-gap fields.
+    //   Wave C = scarce RapidAPI failover for remaining suppliesFields gaps.
+    // LEGACY (ENRICHMENT_FREE_FIRST_ENABLED=0):
+    //   Wave one = every non-scarce provider concurrently; wave two = scarce gate only.
     const gateOn = scarceEnrichmentGateEnabled();
+    const freeFirstOn = freeFirstEnrichmentEnabled();
     const isGatedScarce = (p: MarketEnrichmentProvider): boolean =>
       gateOn && p.quotaScarce === true && (p.suppliesFields?.length ?? 0) > 0;
-    const waveOneIndexes: number[] = [];
+    const isFreeTier = (p: MarketEnrichmentProvider): boolean => p.costTier !== "paid";
+
+    const freeIndexes: number[] = [];
+    const paidIndexes: number[] = [];
     const scarceIndexes: number[] = [];
+    const legacyWaveOneIndexes: number[] = [];
     this.providers.forEach((p, i) => {
-      (isGatedScarce(p) ? scarceIndexes : waveOneIndexes).push(i);
+      if (isGatedScarce(p)) {
+        scarceIndexes.push(i);
+        return;
+      }
+      legacyWaveOneIndexes.push(i);
+      if (isFreeTier(p)) freeIndexes.push(i);
+      else paidIndexes.push(i);
     });
-    const waveOneProviders = waveOneIndexes.map((i) => this.providers[i]);
+
     // Positional, so the first-wins merge precedence below is registration order regardless of
     // which wave a provider ran in (and regardless of duplicate provider names).
     const results: ProviderRun[] = this.providers.map((p) => ({ name: p.name, data: {} }));
 
-    let waveOneRuns: ProviderRun[];
-    if (enrichmentShortCircuitEnabled()) {
-      // Short-circuit: ONLY the Congress.Trade tier feeds the coverage hint, so await
-      // just it first, then run EVERY other provider (free AND paid) in parallel. Paid
-      // providers use the per-symbol hint to skip only the redundant SUB-calls (e.g.
-      // FMP's ratios-ttm + grades-consensus when App A already has P/E + analyst) while
-      // STILL fetching the fields they uniquely supply — insider/senate, news/sentiment,
-      // quotes. No whole provider is skipped, so no field is lost; only duplicate upstream
-      // calls are eliminated. Crucially, paid providers are NOT serialized behind
-      // unrelated free tiers (Yahoo/Alpaca/SEC) — only behind the single App A read.
+    const {
+      collectFilledFields,
+      symbolHasCoverageGap,
+      buildEnrichmentCoverageReport
+    } = await import("./enrichment-coverage");
+
+    const buildFilledBySymbol = (providerIndexes: number[]): Map<string, Set<string>> => {
+      const filledBySymbol = new Map<string, Set<string>>();
+      for (const symbol of normalized) {
+        filledBySymbol.set(symbol, collectFilledFields(results, symbol, providerIndexes));
+      }
+      return filledBySymbol;
+    };
+
+    const coveredFieldsFrom = (filledBySymbol: Map<string, Set<string>>): Record<string, ReadonlySet<string>> => {
+      const coveredFields: Record<string, ReadonlySet<string>> = {};
+      for (const [symbol, filled] of filledBySymbol) coveredFields[symbol] = filled;
+      return coveredFields;
+    };
+
+    if (freeFirstOn) {
+      // ── Wave A: free / keyless / RapidAPI-free-tier ─────────────────────────
+      const freeProviders = freeIndexes.map((i) => this.providers[i]);
+      let freeRuns: ProviderRun[];
+      if (enrichmentShortCircuitEnabled()) {
+        // App A still leads the free wave when short-circuit is on (coverage hint for paid).
+        const congressProvider = freeProviders.find((p) => p.name === "congress.trade");
+        const appAResult = congressProvider
+          ? await run(congressProvider, normalized)
+          : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> } satisfies ProviderRun;
+        const otherFree = freeProviders.filter((p) => p.name !== "congress.trade");
+        const otherResults = await Promise.all(otherFree.map((p) => run(p, normalized)));
+        const byName = new Map<string, ProviderRun>();
+        for (const r of [appAResult, ...otherResults]) byName.set(r.name, r);
+        freeRuns = freeProviders.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
+      } else {
+        freeRuns = await Promise.all(freeProviders.map((p) => run(p, normalized)));
+      }
+      freeIndexes.forEach((providerIndex, k) => {
+        results[providerIndex] = freeRuns[k];
+      });
+
+      // One retry for free providers that threw — transient 429/timeout must not permanently
+      // suppress the keyless floor before paid/scarce failover runs.
+      const retryIndexes = freeIndexes.filter((providerIndex) => results[providerIndex].failure);
+      if (retryIndexes.length > 0) {
+        const retries = await Promise.all(
+          retryIndexes.map(async (providerIndex) => ({
+            providerIndex,
+            run: await run(this.providers[providerIndex], normalized)
+          }))
+        );
+        for (const { providerIndex, run: providerRun } of retries) {
+          // Keep the retry only when it recovered; otherwise preserve the original failure receipt.
+          if (!providerRun.failure) results[providerIndex] = providerRun;
+        }
+      }
+
+      // ── Wave B: paid non-scarce, gap-only ───────────────────────────────────
+      if (paidIndexes.length > 0) {
+        const filledAfterFree = buildFilledBySymbol(freeIndexes);
+        const gapSymbols = normalized.filter((symbol) =>
+          symbolHasCoverageGap(filledAfterFree.get(symbol) ?? new Set())
+        );
+        if (gapSymbols.length > 0) {
+          const coveredFields = coveredFieldsFrom(filledAfterFree);
+          // Analyst-source hint from App A when present (same semantics as short-circuit).
+          const analystSource: Record<string, string> = {};
+          const congressIdx = freeIndexes.find((i) => this.providers[i].name === "congress.trade");
+          if (congressIdx !== undefined) {
+            for (const s of gapSymbols) {
+              const e = results[congressIdx].data[s];
+              const srcKey = e?.analystBySource ? Object.keys(e.analystBySource)[0] : undefined;
+              if (srcKey) analystSource[s] = srcKey;
+            }
+          }
+          const paidContext: EnrichmentContext = { coveredFields, analystSource };
+          const paidRuns = await Promise.all(
+            paidIndexes.map((providerIndex) => {
+              const provider = this.providers[providerIndex];
+              const fields = provider.suppliesFields;
+              const targets =
+                fields && fields.length > 0
+                  ? gapSymbols.filter((symbol) => {
+                      const filled = filledAfterFree.get(symbol);
+                      return fields.some((field) => !filled?.has(field as string));
+                    })
+                  : gapSymbols;
+              if (targets.length === 0) {
+                return Promise.resolve({ name: provider.name, data: {} } as ProviderRun);
+              }
+              return run(provider, targets, paidContext);
+            })
+          );
+          paidIndexes.forEach((providerIndex, k) => {
+            results[providerIndex] = paidRuns[k];
+          });
+        }
+      }
+    } else if (enrichmentShortCircuitEnabled()) {
+      // Legacy short-circuit: App A first, then every other non-scarce provider in parallel.
+      const waveOneProviders = legacyWaveOneIndexes.map((i) => this.providers[i]);
       const congressProvider = waveOneProviders.find((p) => p.name === "congress.trade");
       const appAResult = congressProvider
         ? await run(congressProvider, normalized)
@@ -1219,9 +1346,6 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         const e = appA[s];
         if (e) {
           coveredFields[s] = new Set(Object.keys(e));
-          // App A keys its analyst entry under the upstream provider it came from, so the
-          // single key here IS that source. A paid provider uses it to skip its own
-          // consensus sub-call only when App A's analyst is genuinely its data.
           const srcKey = e.analystBySource ? Object.keys(e.analystBySource)[0] : undefined;
           if (srcKey) analystSource[s] = srcKey;
         }
@@ -1231,40 +1355,30 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       const otherResults = await Promise.all(
         otherProviders.map((p) => run(p, normalized, p.costTier === "paid" ? context : undefined))
       );
-      // Reassemble in wave-one registration order so the merge precedence is identical.
       const byName = new Map<string, ProviderRun>();
       for (const r of [appAResult, ...otherResults]) byName.set(r.name, r);
-      waveOneRuns = waveOneProviders.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
+      const waveOneRuns = waveOneProviders.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
+      legacyWaveOneIndexes.forEach((providerIndex, k) => {
+        results[providerIndex] = waveOneRuns[k];
+      });
     } else {
-      // Default: run every wave-one provider over every symbol in parallel.
-      waveOneRuns = await Promise.all(waveOneProviders.map((p) => run(p, normalized)));
+      // Legacy default: every non-scarce provider over every symbol in parallel.
+      const waveOneRuns = await Promise.all(
+        legacyWaveOneIndexes.map((i) => run(this.providers[i], normalized))
+      );
+      legacyWaveOneIndexes.forEach((providerIndex, k) => {
+        results[providerIndex] = waveOneRuns[k];
+      });
     }
-    waveOneIndexes.forEach((providerIndex, k) => {
-      results[providerIndex] = waveOneRuns[k];
-    });
 
     if (scarceIndexes.length > 0) {
-      // What wave one ACTUALLY filled, per symbol. A wave-one provider that threw or timed out
-      // contributed `{}` (see `run`'s catch), so its fields correctly read as NOT covered and the
-      // scarce tier can still step in — a failure upstream must never suppress the failover tier.
-      const filledBySymbol = new Map<string, Set<string>>();
-      for (const symbol of normalized) {
-        const filled = new Set<string>();
-        for (const providerIndex of waveOneIndexes) {
-          const record = results[providerIndex].data[symbol];
-          if (!record) continue;
-          for (const [key, value] of Object.entries(record)) {
-            // `undefined` and an EMPTY array (e.g. `headlines: []`) are not coverage — a provider
-            // that returned the key with no usable value left the gap open.
-            if (value === undefined) continue;
-            if (Array.isArray(value) && value.length === 0) continue;
-            filled.add(key);
-          }
-        }
-        filledBySymbol.set(symbol, filled);
-      }
-      const coveredFields: Record<string, ReadonlySet<string>> = {};
-      for (const [symbol, filled] of filledBySymbol) coveredFields[symbol] = filled;
+      // Prior waves' actual fills. A provider that threw contributed `{}`, so its fields read as
+      // NOT covered and the scarce tier can still step in — failure must never suppress failover.
+      const priorIndexes = freeFirstOn
+        ? [...freeIndexes, ...paidIndexes]
+        : legacyWaveOneIndexes;
+      const filledBySymbol = buildFilledBySymbol(priorIndexes);
+      const coveredFields = coveredFieldsFrom(filledBySymbol);
       const scarceContext: EnrichmentContext = { coveredFields };
       const scarceRuns = await Promise.all(
         scarceIndexes.map(async (providerIndex) => {
@@ -1274,8 +1388,6 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
             const filled = filledBySymbol.get(symbol);
             return fields.some((field) => !filled?.has(field as string));
           });
-          // Nothing this provider supplies is missing anywhere → do not call it at all. No
-          // request, and therefore no quota reservation (reservations live inside enrich()).
           if (gaps.length === 0) return { providerIndex, run: { name: provider.name, data: {} } as ProviderRun };
           return { providerIndex, run: await run(provider, gaps, scarceContext) };
         })
@@ -1565,6 +1677,14 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       .catch(() => {
         // Silently ignored when db modules are partially mocked in unit tests
       });
+
+    // Persist a field-by-field coverage report for admin/ops (filled / winning source /
+    // missing). buildEnrichmentCoverageReport also mirrors into the module-level last-report slot.
+    try {
+      this.lastCoverageReport = buildEnrichmentCoverageReport(merged, this.activeSources);
+    } catch {
+      this.lastCoverageReport = null;
+    }
 
     return merged;
   }
@@ -2210,6 +2330,8 @@ const YF_CREDS_RETRY_BACKOFF_MS = 500;
 
 class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "yahoo-finance";
+  /** Keyless floor — always free-wave under the free-first planner. */
+  readonly costTier = "free" as const;
   readonly configured = true;
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -4869,6 +4991,7 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
 
 export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "sec-xbrl";
+  readonly costTier = "free" as const;
   readonly configured = true;
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -5137,7 +5260,8 @@ export class InsidersRapidApiEnrichmentProvider implements MarketEnrichmentProvi
   readonly name = "insiders-rapidapi";
   readonly costTier = "free" as const;
   readonly configured = true;
-  readonly quotaScarce = true; // Use sparingly
+  readonly quotaScarce = true; // Use sparingly — wave-two only when insiderSentiment is still empty.
+  readonly suppliesFields = ["insiderSentiment"] as const;
   private readonly base = "https://insiders.p.rapidapi.com";
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;
@@ -5244,7 +5368,8 @@ export class TwelveDataRapidApiEnrichmentProvider implements MarketEnrichmentPro
   readonly name = "twelvedata-rapidapi";
   readonly costTier = "free" as const;
   readonly configured = true;
-  readonly quotaScarce = true; // Use sparingly
+  readonly quotaScarce = true; // Use sparingly — wave-two only when 52w range is still empty.
+  readonly suppliesFields = ["fiftyTwoWeekHigh", "fiftyTwoWeekLow"] as const;
   private readonly base = "https://twelve-data1.p.rapidapi.com";
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;
