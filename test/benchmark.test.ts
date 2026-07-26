@@ -201,4 +201,79 @@ describe("normalizeAgainstBenchmark", () => {
     );
     expect(flows.size).toBe(0);
   });
+
+  it("all-cash paper resets/deposits are neutralized (owner +31% vs SPY bug)", () => {
+    // All-cash account: equity drifts 76k → 99.9k from deposits/resets with no trading.
+    // Raw growth reads ~+31%; TWR with all-cash flow inference reads ~0%, so vs SPY ≈ −SPY.
+    const equity = cashCurve([
+      ["2026-01-02T16:00:00Z", 76_000, 76_000],
+      ["2026-02-02T16:00:00Z", 80_000, 80_000],
+      ["2026-03-02T16:00:00Z", 90_000, 90_000],
+      ["2026-04-02T16:00:00Z", 99_900, 99_900]
+    ]).map((p) => ({ ...p, positionsValue: 0 }));
+    const spy = [
+      { date: "2026-01-02", close: 500 },
+      { date: "2026-02-02", close: 510 },
+      { date: "2026-03-02", close: 520 },
+      { date: "2026-04-02", close: 530 }
+    ];
+    const flows = inferExternalCashFlows(equity, []);
+    expect(flows.size).toBeGreaterThan(0);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.cashFlowAdjusted).toBe(true);
+    expect(r.accountReturnPct).toBeCloseTo(0, 1);
+    expect(r.benchmarkReturnPct).toBeCloseTo(6, 1);
+    // vs SPY = account − SPY ≈ −6% (holding cash underperformed a rising market)
+    expect(r.excessReturnPct).toBeCloseTo(-6, 1);
+    const raw = normalizeAgainstBenchmark(equity, spy)!;
+    expect(raw.accountReturnPct).toBeGreaterThan(30);
+  });
+
+  it("does not treat a cash→positions conversion without fills as a withdrawal", () => {
+    // Bought $210 of stock (cash 210→0, positions 0→180 after a mark-to-market loss).
+    // Missing fill must NOT invent a −$210 withdrawal.
+    const equity = [
+      { timestamp: "2026-01-02T16:00:00Z", equity: 210, cash: 210, positionsValue: 0, source: "live" as const },
+      { timestamp: "2026-02-02T16:00:00Z", equity: 180, cash: 0, positionsValue: 180, source: "live" as const }
+    ];
+    const flows = inferExternalCashFlows(equity, []);
+    expect(flows.size).toBe(0);
+  });
+
+  it("keeps real mark-to-market losses visible after a buy (owner −77.7% path)", () => {
+    // After buying, equity falls 210 → 46.84 from trading — that IS underperformance vs flat SPY.
+    const equity = [
+      { timestamp: "2026-01-02T16:00:00Z", equity: 210, cash: 210, positionsValue: 0, source: "live" as const },
+      { timestamp: "2026-02-02T16:00:00Z", equity: 180, cash: 0, positionsValue: 180, source: "live" as const },
+      { timestamp: "2026-03-02T16:00:00Z", equity: 100, cash: 0, positionsValue: 100, source: "live" as const },
+      { timestamp: "2026-04-02T16:00:00Z", equity: 46.84, cash: 0, positionsValue: 46.84, source: "live" as const }
+    ];
+    const spy = [
+      { date: "2026-01-02", close: 500 },
+      { date: "2026-02-02", close: 500 },
+      { date: "2026-03-02", close: 500 },
+      { date: "2026-04-02", close: 500 }
+    ];
+    const flows = inferExternalCashFlows(equity, []);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows.size > 0 ? flows : undefined)!;
+    expect(r.accountReturnPct).toBeCloseTo(-77.7, 1);
+    expect(r.benchmarkReturnPct).toBeCloseTo(0, 1);
+    expect(r.excessReturnPct).toBeCloseTo(-77.7, 1);
+  });
+
+  it("rebases instead of distorting when a flow wipes prior equity (denom <= 0)", () => {
+    const equity = cashCurve([
+      ["2026-05-01T16:00:00Z", 100_000, 100_000],
+      ["2026-05-02T16:00:00Z", 5_000, 5_000] // withdrew essentially everything
+    ]);
+    const spy = [
+      { date: "2026-05-01", close: 500 },
+      { date: "2026-05-02", close: 500 }
+    ];
+    const flows = new Map([["2026-05-02", -100_000]]);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.cashFlowAdjusted).toBe(true);
+    // Rebase with 0% for the wiped period — leftover $5k is new principal, not a −95% loss.
+    expect(r.accountReturnPct).toBeCloseTo(0, 1);
+  });
 });

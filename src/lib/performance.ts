@@ -441,14 +441,22 @@ export function getPerformanceSummary(
     liveEquityCurve: liveSnapshots.map((snapshot) => ({
       timestamp: snapshot.createdAt,
       equity: snapshot.equity,
-      source: "live",
-      // Cash rides along so the SPY benchmark can infer external deposits/withdrawals
-      // (time-weighted return) instead of counting a transfer as a gain/loss.
-      cash: snapshot.cash
+      source: "live" as const,
+      // Cash + positionsValue ride along so the SPY benchmark can infer external
+      // deposits/withdrawals (time-weighted return) instead of counting a transfer as P&L,
+      // and so a cash→stock conversion without a fill receipt is not mistaken for a withdrawal.
+      cash: snapshot.cash,
+      positionsValue: snapshot.positionsValue
     })),
     paperEquityCurve:
       paperSnapshots.length > 0
-        ? paperSnapshots.map((snapshot) => ({ timestamp: snapshot.createdAt, equity: snapshot.equity, source: "paper", cash: snapshot.cash }))
+        ? paperSnapshots.map((snapshot) => ({
+            timestamp: snapshot.createdAt,
+            equity: snapshot.equity,
+            source: "paper" as const,
+            cash: snapshot.cash,
+            positionsValue: snapshot.positionsValue
+          }))
         : syntheticPaperCurve(paperFills),
     liveRealizedPnl: livePnl.realized,
     paperRealizedPnl: paperPnl.realized,

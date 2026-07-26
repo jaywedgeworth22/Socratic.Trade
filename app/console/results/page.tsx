@@ -235,18 +235,23 @@ export default function ResultsPage() {
                 sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`}
                 title="Time-weighted account return over this window when cash flows can be detected; otherwise raw account equity growth. This is the account return before subtracting SPY."
               />
-              <Stat label={perf.benchmark.benchmarkSymbol} value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)} sub="same window, buy and hold" title="Benchmark buy-and-hold return over the same window." />
+              <Stat
+                label={perf.benchmark.benchmarkSymbol}
+                value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)}
+                sub="same window, buy and hold"
+                title="What the same dollars would have done tracking SPY over this window (buy and hold). Excess = your account return minus this."
+              />
               <div>
-                <div className="con-card-title">Excess return</div>
+                <div className="con-card-title">vs {perf.benchmark.benchmarkSymbol}</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold">
                   <SignedText value={perf.benchmark.excessReturnPct}>
-                    <span title="Benchmark-relative return: your account return minus SPY over the same window. This is the alpha-style comparison; other Results percentages are raw account/proposal outcomes unless they explicitly say benchmark or excess.">
+                    <span title="Your account return minus SPY over the same window. If this is +5% and SPY is +8%, the account returned +13%. Deposits/withdrawals are neutralized so transfers are not counted as alpha.">
                       {fmtPct(perf.benchmark.excessReturnPct, 2, true)}
                     </span>
                   </SignedText>
                 </div>
                 <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                  positive = beating the market
+                  account − SPY (positive = beating the market)
                 </div>
               </div>
             </div>
@@ -254,7 +259,7 @@ export default function ResultsPage() {
               {perf.benchmark.cashFlowAdjusted
                 ? `Time-weighted return — adjusted for ${fmtMoney(Math.abs(perf.benchmark.netExternalFlows ?? 0))} of detected ${
                     (perf.benchmark.netExternalFlows ?? 0) < 0 ? "withdrawals" : "deposits"
-                  } so transfers don't read as gains or losses. Flows are inferred from account snapshots, not a broker transfer ledger.`
+                  } so the comparison is “same dollars tracking SPY.” Flows are inferred from account snapshots, not a broker transfer ledger.`
                 : "Raw equity growth over the window — no deposits or withdrawals were detected. If money moved in or out without being captured in snapshots, this includes those transfers and is not a pure return figure."}
             </p>
           </>

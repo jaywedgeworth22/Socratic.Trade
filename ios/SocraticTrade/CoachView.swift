@@ -62,7 +62,7 @@ struct CoachView: View {
             insights.append(.init(
                 id: "benchmark",
                 title: ahead ? "Ahead of \(benchmark.benchmarkSymbol)" : "Behind \(benchmark.benchmarkSymbol)",
-                detail: "Excess return is \(AppFormat.percent(benchmark.excessReturnPct, signed: true)) across \(benchmark.points) observations.",
+                detail: "You \(AppFormat.percent(benchmark.accountReturnPct, signed: true)) vs \(benchmark.benchmarkSymbol) \(AppFormat.percent(benchmark.benchmarkReturnPct, signed: true)) → excess \(AppFormat.percent(benchmark.excessReturnPct, signed: true)) across \(benchmark.points) observations.",
                 systemImage: ahead ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis",
                 tone: ahead ? .positive : .attention
             ))
