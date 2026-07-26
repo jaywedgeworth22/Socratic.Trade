@@ -1063,10 +1063,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
     providers.push(withHealthLane(new FmpRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
     providers.push(withHealthLane(new InsidersRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
     providers.push(withHealthLane(new TwelveDataRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
-    // Additional RapidAPI free-tier failover lanes (owner-subscribed). Pricing pages:
-    //   yh-finance: https://rapidapi.com/apidojo/api/yh-finance/pricing
-    //   real-time-finance-data: https://rapidapi.com/letscrape-6bRBa3Qgu/api/real-time-finance-data/pricing
-    //   seeking-alpha: https://rapidapi.com/apidojo/api/seeking-alpha/pricing
+    // Additional RapidAPI free-tier failover lanes. Working Pricing page (verified):
+    //   real-time-finance-data: https://rapidapi.com/letscrape-6bRBa3QguO5/api/real-time-finance-data/pricing
+    // yh-finance / seeking-alpha hub listings currently return API not found (delisted);
+    // providers stay as scarce failover if a key gains access.
     providers.push(withHealthLane(new YhFinanceApiDojoEnrichmentProvider(rapidApiKey, "env", userId), "env"));
     providers.push(withHealthLane(new RealTimeFinanceDataEnrichmentProvider(rapidApiKey, "env", userId), "env"));
     providers.push(withHealthLane(new SeekingAlphaRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
@@ -5961,7 +5961,7 @@ export class FilingApiEnrichmentProvider implements MarketEnrichmentProvider {
 }
 
 // ── RapidAPI: Yahoo Finance (API Dojo) ───────────────────────────────────────
-// Pricing: https://rapidapi.com/apidojo/api/yh-finance/pricing
+// Hub listing currently API-not-found (delisted); host still answers 403 if unsubscribed.
 // Host: yh-finance.p.rapidapi.com
 
 function yahooChartRaw(value: unknown): number | undefined {
@@ -6099,7 +6099,7 @@ export class YhFinanceApiDojoEnrichmentProvider implements MarketEnrichmentProvi
 }
 
 // ── RapidAPI: Real-Time Finance Data ─────────────────────────────────────────
-// Pricing: https://rapidapi.com/letscrape-6bRBa3Qgu/api/real-time-finance-data/pricing
+// Pricing: https://rapidapi.com/letscrape-6bRBa3QguO5/api/real-time-finance-data/pricing
 // Host: real-time-finance-data.p.rapidapi.com (confirmed 200 with stock-quote + stock-news)
 
 export function parseRealTimeFinanceQuote(payload: unknown): SymbolEnrichment {
@@ -6219,7 +6219,7 @@ export class RealTimeFinanceDataEnrichmentProvider implements MarketEnrichmentPr
 }
 
 // ── RapidAPI: Seeking Alpha (API Dojo) ───────────────────────────────────────
-// Pricing: https://rapidapi.com/apidojo/api/seeking-alpha/pricing
+// Hub listing currently API-not-found (delisted); host still answers 403 if unsubscribed.
 // Host: seeking-alpha.p.rapidapi.com
 
 export function parseSeekingAlphaKeyStats(payload: unknown): SymbolEnrichment {

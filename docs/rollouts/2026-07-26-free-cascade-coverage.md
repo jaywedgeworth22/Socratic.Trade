@@ -95,23 +95,35 @@ npx vitest run test/enrichment-coverage.test.ts test/enrichment-scarce-tier-gate
   Live probe: real-time-finance-data = 200; yh-finance + seeking-alpha still 403
   not-subscribed on current `RAPIDAPI_KEY` until Pricing → Subscribe shows Active.
 
-### Owner — Pricing / Subscribe links (use these — NOT the API overview tabs)
-Open each URL, pick the **Basic/Free** plan, click **Subscribe**, confirm the RapidAPI
-**Apps** dropdown is the same app that owns production `RAPIDAPI_KEY` (Connections shows
-masked preview). Overview/Endpoints tabs do not subscribe you.
+### Owner — working Subscribe links (verified 2026-07-26)
 
-1. Yahoo Finance (API Dojo) — **Subscribe here**:
-   https://rapidapi.com/apidojo/api/yh-finance/pricing
-2. Real-Time Finance Data — **Subscribe here** (this one already returns 200 on cloud key):
-   https://rapidapi.com/letscrape-6bRBa3Qgu/api/real-time-finance-data/pricing
-   (alt listing: https://rapidapi.com/s.mahmoud97/api/real-time-finance-data/pricing)
-3. Seeking Alpha (API Dojo) — **Subscribe here**:
-   https://rapidapi.com/apidojo/api/seeking-alpha/pricing
-4. Stock Market Data (optional; skip if you cannot find it — not required):
-   https://rapidapi.com/fyhao/api/stock-market-data/pricing
-   Search on RapidAPI for publisher **fyhao** / API name **Stock Market Data** if that URL 404s.
+Earlier `/pricing` URLs were wrong: truncated publisher slug (`letscrape-6bRBa3Qgu`
+missing trailing `O5`), and Api Dojo `yh-finance` / `seeking-alpha` hub pages now
+return **API not found** (delisted) even though the gateway hosts still answer 403.
 
-Re-probe after owner signup (2026-07-26, cloud key `dbb6a14c…ff66`): #2 OK; #1/#3/#4 still 403.
+**Only this Pricing page was verified to load plan buttons:**
+
+1. Real-Time Finance Data (letscrape) — click **Start Free Plan** / Choose plan:
+   https://rapidapi.com/letscrape-6bRBa3QguO5/api/real-time-finance-data/pricing
+   Hub overview (same API): https://rapidapi.com/letscrape-6bRBa3QguO5/api/real-time-finance-data
+   Already returns **200** on cloud `RAPIDAPI_KEY` (`dbb6a14c…ff66`).
+
+**Do not chase these — hub pages 404 / API not found today:**
+
+- `https://rapidapi.com/apidojo/api/yh-finance` (+ `/pricing`) — dead listing
+- `https://rapidapi.com/apidojo/api/seeking-alpha` (+ `/pricing`) — dead listing
+- `https://rapidapi.com/fyhao/api/stock-market-data` — dead listing
+- Truncated `letscrape-6bRBa3Qgu` (no `O5`) — User not found
+
+**Already working on the same RapidAPI key (no new Subscribe needed):**
+`yahoo-finance15` (sparior), `mboum-finance`, `real-time-finance-data`.
+
+Optional still-listed Yahoo-like page (different host than `yh-finance`):
+https://rapidapi.com/apidojo/api/yahoo-finance1 — only if you want that older Api Dojo
+listing; code already uses yahoo-finance15/mboum for Yahoo-shaped modules.
+
+Code for `yh-finance-apidojo` / `seeking-alpha-rapidapi` stays as scarce failover if
+RapidAPI re-lists them or a key somehow gains access; no owner action required.
 
 ### Additional files
 - `src/lib/db-api-keys.ts`, `src/lib/rapidapi-quota.ts`, `src/lib/provider-rate-limit.ts`
@@ -119,7 +131,6 @@ Re-probe after owner signup (2026-07-26, cloud key `dbb6a14c…ff66`): #2 OK; #1
 
 ## Next Steps & Blockers
 
-- Confirm RapidAPI dashboard shows **Active** for yh-finance + seeking-alpha on the same
-  app key as prod `RAPIDAPI_KEY` (RT finance already works).
+- No further RapidAPI Subscribe needed for the delisted yh-finance / seeking-alpha listings.
 - After a production scan, check Admin → Enrichment Coverage / ops `enrichmentCoverage`.
 - Optional: expand SEC XBRL beyond D/E; persist coverage history.
