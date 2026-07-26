@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-26 — PR merge drain + Actions runner fixes (GROK)
+
+Open-PR board drain and self-hosted CI hygiene:
+- Landed #2218 (watchlist star) and #2220 (vs-SPY benchmark cash-flow fix).
+- Closed #2217 as fully superseded by #2219 (zero unique commits).
+- #2219 (LLM tier slug mapping + console work) rebased onto main; auto-merge armed, verify-hosted in progress.
+- #2215 blocked on missing `TradeEventRowSchema` under shared pin v2.0.0 — this branch bumps `@jaywedgeworth22/congress-trading-shared` to **v2.3.0** and wires optional `trades` through `dropInvalidShareRows` / share send counts (supersedes #2215).
+- Playwright Smoke schedule failed with `ENOENT package.json` on socratic-ci (workspace race with concurrent clean). e2e.yml now re-checkouts before `npm install`, matching ci.yml verify-hosted.
+- Runners online: `fleet-ci-socratic-ci`, `fleet-ci-socratic-ci-2` (both idle/healthy).
+
+Rollout: `docs/rollouts/2026-07-26-pr-merge-and-runner-unblock.md`.
+
 ## 2026-07-25 — Fix vs-SPY benchmark accuracy (CURSOR)
 
 Home vs-SPY was counting all-cash deposits/paper resets as alpha (+31% case) and could mis-read
@@ -141,7 +153,6 @@ provenance-rich lexical candidates, and defaults to strict exclusion of undated 
 writes, re-embedding, or purge operations. Next: land after current ingestion/re-embed work,
 then integrate it alongside dense recall in a separately reviewed retrieval PR. Rollout:
 `docs/rollouts/2026-07-21-corpus-wide-lexical-candidates.md`.
-# Current Status
 
 ## 2026-07-22 — Approval Busy, red-team availability, and UptimeRobot diagnosis (CODEX→GROK, branch `codex/trade-approval-redteam-uptime-20260722`)
 
@@ -188,7 +199,6 @@ reopens** that were already on main or fought newer main. **Kept open:** fragmen
 #1902 / #1903 (fix then solo-land) and independent #1792 / #1819 / #1842. No product merge/deploy
 from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
-# Current Status
 
 ## 2026-07-22 — Approval Busy, red-team availability, and UptimeRobot diagnosis (CODEX→GROK, branch `codex/trade-approval-redteam-uptime-20260722`)
 
@@ -373,7 +383,6 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 
 ## 2026-07-21 — Mass PR CI Runner Synchronization (Antigravity)
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
-# Current Status
 
 ## 2026-07-21 — Managed OpenRouter RAG ingestion authority gate (CODEX, local branch `codex/rag-ingestion-gate-20260721`)
 
@@ -3163,8 +3172,7 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
   were recorded by the AG lane. Their original PRs #1525 and #1526 are closed without merge, so
   there is no pending branch handoff to land from either PR.
 
-## Current Status
-- Database Migration 55 implemented in `src/lib/db.ts` creating `document_abstracts` with indexes on ticker, source_type, and accession_or_event_id.
+#- Database Migration 55 implemented in `src/lib/db.ts` creating `document_abstracts` with indexes on ticker, source_type, and accession_or_event_id.
 - `src/lib/db-document-abstracts.ts` added with `insertDocumentAbstract`, `getDocumentAbstractsForTicker`, `getDocumentAbstractByAccession`.
 - `src/lib/rag/document-summarizer.ts` implemented for generating cited abstracts and embedding them into Pinecone/Voyage under `doc_type: "document-summary"` or `"earnings-summary"`.
 - `test/document-summarizer.test.ts` passes 2/2 tests cleanly.
