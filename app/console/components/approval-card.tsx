@@ -383,9 +383,11 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             <Chip tone="muted" title={modelProvenance(p, policy)}>
               {p.proposedByModel ? "served model" : "model legacy"}
             </Chip>
-            <Chip tone="muted" title={fallbackProvenance(p, policy)}>
-              failover
-            </Chip>
+            {p.proposedByModel && policy?.llmModel && !isModelRotationSentinel(policy?.llmModel) && normalizeModelId(p.proposedByModel) !== normalizeModelId(policy?.llmModel) && (
+              <Chip tone="muted" title={fallbackProvenance(p, policy)}>
+                failover
+              </Chip>
+            )}
           </div>
           <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{proposalGreenRationale(p)}</p>
         </div>
@@ -486,28 +488,28 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
               <Ruler size={12} /> Sizing provenance
             </div>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[length:var(--con-fs-xs)]">
-              <dt className="text-[color:var(--con-faint)]">Advised size</dt>
+              <dt className="text-[color:var(--con-faint)]">advised size</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{sizeText}</dd>
-              <dt className="text-[color:var(--con-faint)]">Broker review notional</dt>
+              <dt className="text-[color:var(--con-faint)]">broker review notional</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtMoney(pending.review?.estimatedNotional ?? notional)}</dd>
-              <dt className="text-[color:var(--con-faint)]">Per-order cap</dt>
+              <dt className="text-[color:var(--con-faint)]">per-order cap</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtMoney(policy?.maxOrderNotional)}</dd>
-              <dt className="text-[color:var(--con-faint)]">Daily cap remaining</dt>
+              <dt className="text-[color:var(--con-faint)]">daily cap remaining</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">
                 {fmtMoney(dailyRemaining)}
                 {dailyCap?.mode === "pct_nav" ? ` (${fmtPct(dailyCap.configuredValue, 1)} NAV cap)` : ""}
               </dd>
-              <dt className="text-[color:var(--con-faint)]">Projected symbol exposure</dt>
+              <dt className="text-[color:var(--con-faint)]">projected symbol exposure</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtPct(pending.decision.projectedSymbolExposurePct, 1)}</dd>
               <dt className="text-[color:var(--con-faint)]">ADV cap</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtPct(policy?.maxOrderPctOfAdv, 1)}</dd>
-              <dt className="text-[color:var(--con-faint)]">Sizer band</dt>
+              <dt className="text-[color:var(--con-faint)]">sizer band</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">
                 {finite(policy?.tuning?.sizingFloorPct) || finite(policy?.tuning?.sizingCeilingPct)
                   ? `${fmtPct(policy?.tuning?.sizingFloorPct, 0)}-${fmtPct(policy?.tuning?.sizingCeilingPct, 0)}`
                   : EM_DASH}
               </dd>
-              <dt className="text-[color:var(--con-faint)]">Entry drift</dt>
+              <dt className="text-[color:var(--con-faint)]">entry drift</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">
                 {finite(currentDrift) ? `${fmtPct(currentDrift, 2, true)} / max ${fmtPct(policy?.maxEntryDriftPct, 1)}` : EM_DASH}
               </dd>

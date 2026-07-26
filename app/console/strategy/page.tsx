@@ -630,9 +630,6 @@ function AccountScopedStrategyPage() {
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Strategy</h1>
-        <Chip tone={reality.tone}>
-          {reality.word} · {reality.phrase}
-        </Chip>
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           for {reality.account?.label ?? "no connected account"} — each account has its own strategy
         </span>

@@ -219,11 +219,18 @@ function AdminProfileMenu({ theme, setTheme }: { theme: ConsoleTheme; setTheme: 
         aria-label="Profile and account settings"
         aria-expanded={open}
         aria-haspopup="menu"
-        className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] sm:h-8 sm:w-8"
+        style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, maxWidth: 32, maxHeight: 32 }}
+        className="flex shrink-0 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
       >
         {imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- external avatar host
-          <img src={imageUrl} alt="" referrerPolicy="no-referrer" className="h-full w-full rounded-[inherit] object-cover" />
+          <img
+            src={imageUrl}
+            alt=""
+            referrerPolicy="no-referrer"
+            style={{ width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%", objectFit: "cover" }}
+            className="shrink-0 block rounded-[inherit]"
+          />
         ) : (
           <UserRound size={15} />
         )}
