@@ -336,7 +336,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                     Reset
                   </button>
                 </div>
-                <div className="overflow-auto p-1.5">
+                <div className="flex flex-col gap-1 overflow-auto p-1.5">
                   {columnChooserRows.map((column) => {
                     const isVisible = visible.includes(column.id);
                     const index = visible.indexOf(column.id);
@@ -344,7 +344,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                       <Tooltip key={column.id} content={column.headerTitle}>
                         <div
                           className={cx(
-                            "grid grid-cols-[1fr_auto] items-center gap-2 rounded-control px-2 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
+                            "flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
                             !isVisible && "opacity-70"
                           )}>
                           <label className={cx("flex min-w-0 items-center gap-2", column.id === SYMBOL_COLUMN_ID ? "opacity-70" : "cursor-pointer")}>
@@ -392,29 +392,40 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
         </div>
       </div>
       <div className="hidden overflow-x-auto lg:block">
-        <table className="con-table w-full min-w-max">
+        <table className="con-table min-w-full">
         <thead>
           <tr>
-            {visibleColumns.map((c, i) => (
-              <th
-                key={c.id}
-                className={cx("whitespace-nowrap select-none", c.num && "num text-right", i === 0 && cx(STICKY_CELL, "z-[2]"))}>
-                <Tooltip content={c.headerTitle} align={i === 0 ? "left" : "center"}>
-                  <button
-                    type="button"
-                    onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
-                    className={cx(
-                      "inline-flex cursor-pointer select-none items-center gap-1 font-semibold uppercase tracking-[0.07em] transition-colors",
-                      activeSort.col === c.id ? "text-[color:var(--con-fg)]" : "hover:text-[color:var(--con-fg)]"
-                    )}>
-                    {c.label}
-                    <span aria-hidden className={cx("text-[length:var(--con-fs-2xs)]", activeSort.col !== c.id && "opacity-0")}>
-                      {activeSort.col === c.id && activeSort.dir === "asc" ? "▲" : "▼"}
-                    </span>
-                  </button>
-                </Tooltip>
-              </th>
-            ))}
+            {visibleColumns.map((c, i) => {
+              const active = activeSort.col === c.id;
+              return (
+                <th
+                  key={c.id}
+                  scope="col"
+                  aria-sort={active ? (activeSort.dir === "asc" ? "ascending" : "descending") : undefined}
+                  className={cx(
+                    "!text-center text-center",
+                    c.id === "score" && "w-16 px-2",
+                    i === 0 && STICKY_CELL
+                  )}
+                >
+                  <Tooltip
+                    content={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}>
+                    <button
+                      type="button"
+                      onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
+                      className={cx(
+                        "inline-flex cursor-pointer select-none items-center justify-center gap-1 font-semibold uppercase tracking-[0.07em] transition-colors mx-auto",
+                        active ? "text-[color:var(--con-fg)]" : "hover:text-[color:var(--con-fg)]"
+                      )}>
+                      {c.label}
+                      <span aria-hidden className={cx("text-[length:var(--con-fs-2xs)]", !active && "opacity-0")}>
+                        {active && activeSort.dir === "asc" ? "▲" : "▼"}
+                      </span>
+                    </button>
+                  </Tooltip>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
@@ -423,15 +434,32 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
             return (
               <tr key={q.symbol} className="group">
                 {visibleColumns.map((c, i) => {
-                  const title = cellTitleWithReceived(c, q, received);
                   const isSymbolCol = c.id === SYMBOL_COLUMN_ID;
+                  const alignmentClass =
+                    c.align === "left"
+                      ? "!text-left text-left"
+                      : c.align === "right"
+                      ? "!text-right text-right"
+                      : "!text-center text-center";
+                  const flexAlignClass =
+                    c.align === "left"
+                      ? "justify-start"
+                      : c.align === "right"
+                      ? "justify-end"
+                      : "justify-center";
                   return (
                     <td
                       key={c.id}
-                      title={title}
-                      className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}>
+                      title={cellTitleWithReceived(c, q, received)}
+                      className={cx(
+                        "cursor-default whitespace-nowrap",
+                        alignmentClass,
+                        c.id === "score" && "w-16 px-2",
+                        c.num && "con-num",
+                        i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER)
+                      )}>
                       {isSymbolCol ? (
-                        <div className="flex items-center gap-1.5">
+                        <div className="inline-flex items-center gap-1.5 justify-start w-full">
                           <WatchButton
                             symbol={q.symbol}
                             watched={watched.has(symbolKey)}
@@ -441,7 +469,9 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                           {c.render(q)}
                         </div>
                       ) : (
-                        c.render(q)
+                        <div className={cx("inline-flex items-center w-full", flexAlignClass)}>
+                          {c.render(q)}
+                        </div>
                       )}
                     </td>
                   );

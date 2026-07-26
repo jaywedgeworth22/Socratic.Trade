@@ -77,6 +77,7 @@ export const MODEL_ROTATION_POOL: readonly string[] = [
   "gpt-sol-latest",
   "gpt-nano-latest",
   "claude-fable-latest",
+  "kimi-latest",
   "gpt-4o-latest",
   "llama-3.3-70b-instruct",
   "deepseek-r1-latest"

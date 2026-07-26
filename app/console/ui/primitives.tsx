@@ -32,13 +32,14 @@ export function Card({
   if (collapsible && title) {
     return (
       <details className={cx("con-card con-disclosure", className)} open={defaultOpen}>
-        <summary className="px-4 py-3">
+        <summary className="flex items-center gap-3 px-4 pt-3.5 pb-1">
           <span className="con-card-title">{title}</span>
           {action && (
             <span className="ml-auto" onClick={(e) => e.preventDefault()}>{action}</span>
           )}
+          <span className={cx("con-disclosure-label", !action && "ml-auto")} />
         </summary>
-        <div className={padded ? "px-4 pb-4 pt-1" : undefined}>{children}</div>
+        <div className={padded ? "px-4 pb-4 pt-2" : undefined}>{children}</div>
       </details>
     );
   }

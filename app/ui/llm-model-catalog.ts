@@ -9,6 +9,7 @@ export type PickerProviderId =
   | "mistral"
   | "deepseek"
   | "meta"
+  | "moonshot"
   | "openrouter"
   | "offline";
 
@@ -58,7 +59,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     options: [
       { value: "claude-haiku-latest", label: "claude-haiku-latest - fast low-cost Claude", tier: "$", recommendedGreen: true },
       { value: "claude-sonnet-latest", label: "claude-sonnet-latest - balanced Claude analysis", tier: "$$", recommendedRed: true },
-      { value: "claude-opus-latest", label: "claude-opus-latest - premium Claude reasoning", tier: "$$$" },
+      { value: "claude-opus-latest", label: "claude-opus-latest (5) - premium Claude reasoning", tier: "$$$" },
       { value: "claude-fable-latest", label: "claude-fable-latest - most capable Claude", tier: "$$$" }
     ]
   },
@@ -85,6 +86,13 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     options: [
       { value: "mistral-small-2603", label: "mistral-small-2603 - low-cost Mistral Small", tier: "$" },
       { value: "mistral-medium-3.5", label: "mistral-medium-3.5 - frontier Mistral Medium", tier: "$$" }
+    ]
+  },
+  {
+    provider: "moonshot",
+    label: "Moonshot AI (Kimi)",
+    options: [
+      { value: "kimi-latest", label: "kimi-latest (k3) - Kimi frontier model", tier: "$$" }
     ]
   },
   {

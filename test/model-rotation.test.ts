@@ -135,6 +135,7 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     expect(MODEL_ROTATION_POOL).toContain("grok-latest");
     expect(MODEL_ROTATION_POOL).toContain("mistral-small-2603");
     expect(MODEL_ROTATION_POOL).toContain("mistral-medium-3.5");
+    expect(MODEL_ROTATION_POOL).toContain("kimi-latest");
   });
 });
 

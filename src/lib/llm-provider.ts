@@ -2,10 +2,10 @@ import { resolveLlmCredential } from "./db";
 import { resolveOpenAiModel, type LlmTransport } from "./llm-request";
 
 export type LlmTeamRole = "green" | "red" | "support";
-export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter";
+export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "openrouter";
 
 export interface LlmEndpoint {
-  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter";
+  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "openrouter";
   url: string;
   key?: string;
   model: string;
@@ -29,6 +29,7 @@ export function llmModelFamily(model: string | undefined): LlmModelFamily {
   if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(normalized)) return "mistral";
   if (/deepseek/i.test(normalized)) return "deepseek";
   if (/llama/i.test(normalized)) return "meta";
+  if (/(kimi|moonshot)/i.test(normalized)) return "moonshot";
   return "openai";
 }
 
@@ -65,15 +66,6 @@ function resolveRoleModel(
 }
 
 /**
- * Provider is derived from the model name (no separate provider flag): claude-* → Anthropic
- * (Messages API), grok-* → xAI (Grok), gemini-* → Google (Gemini), mistral/ministral/codestral/… → Mistral,
- * else OpenAI. xAI/Gemini/Mistral/DeepSeek are all OpenAI-compatible (chat/completions), so those
- * call sites treat them like OpenAI but with a per-provider base URL + key. Anthropic returns its
- * own `anthropic-messages` transport so the shared request builder (`llm-call.ts`) shapes the
- * Messages-API body/headers and forced-tool JSON output. The user selects a provider simply by
- * choosing one of its models — for both the Green (proposal) and Red (review) teams.
- */
-/**
  * Maps a catalog model ID to the native provider's supported model slug for direct API calls.
  */
 export function nativeModelSlugForProvider(model: string, family: LlmModelFamily): string {
@@ -86,7 +78,7 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
   switch (family) {
     case "anthropic":
       if (/haiku/i.test(lower)) return "claude-haiku-4.5";
-      if (/opus/i.test(lower)) return "claude-opus-4.8";
+      if (/opus/i.test(lower)) return "claude-opus-5";
       if (/fable/i.test(lower)) return "claude-fable-5";
       return "claude-sonnet-5";
 
@@ -96,8 +88,8 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
 
     case "gemini":
       if (/flash.*lite/i.test(lower)) return "gemini-flash-lite-latest";
-      if (/pro/i.test(lower)) return "gemini-3.1-pro";
-      return "gemini-3.6-flash";
+      if (/pro/i.test(lower)) return "gemini-pro-latest";
+      return "gemini-flash-latest";
 
     case "deepseek":
       if (/r1|reasoner/i.test(lower)) return "deepseek-reasoner";
@@ -105,8 +97,12 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
       return "deepseek-v4-flash";
 
     case "mistral":
-      if (/medium/i.test(lower)) return "mistral-medium-3.5";
-      return "mistral-small-2603";
+      if (/large/i.test(lower)) return "mistral-large-latest";
+      if (/medium/i.test(lower)) return "mistral-medium-latest";
+      return "mistral-small-latest";
+
+    case "moonshot":
+      return "kimi-latest";
 
     case "meta":
       return "llama-3.3-70b-instruct";
@@ -118,16 +114,10 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
       if (/luna/i.test(lower)) return "gpt-5.6-luna";
       if (/mini/i.test(lower)) return "gpt-5.4-mini";
       if (/nano/i.test(lower)) return "gpt-5.4-nano";
+      if (/gpt-4o-mini/i.test(lower)) return "gpt-4o-mini";
       return "gpt-4o";
   }
 }
-
-/**
- * Endpoint resolution:
- * 1. Checks for a user-provided OpenRouter key. If present, routes via OpenRouter.
- * 2. If no OpenRouter key, checks for a user-provided direct provider key for the model's family and routes natively.
- * 3. If no user key is present, returns an endpoint with undefined key (fails closed).
- */
 
 /**
  * Normalize a catalog or persisted model name to the OpenRouter wire ID. Keep this beside
@@ -137,45 +127,57 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
 export function normalizeOpenRouterModelId(rawModel: string | undefined): string {
   let model = (rawModel ?? "").trim();
   if (!model.includes("/")) {
-    if (/^claude-sonnet-latest$/i.test(model)) {
-      model = "~anthropic/claude-sonnet-latest";
-    } else if (/^claude-haiku-latest$/i.test(model)) {
-      model = "~anthropic/claude-haiku-latest";
-    } else if (/^claude-opus-latest$/i.test(model)) {
-      model = "~anthropic/claude-opus-latest";
-    } else if (/^claude-fable-latest$/i.test(model)) {
-      model = "~anthropic/claude-fable-latest";
+    if (/^claude-sonnet/i.test(model)) {
+      model = "anthropic/claude-sonnet-latest";
+    } else if (/^claude-haiku/i.test(model)) {
+      model = "anthropic/claude-haiku-latest";
+    } else if (/^claude-opus/i.test(model)) {
+      model = "anthropic/claude-opus-latest";
+    } else if (/^claude-fable/i.test(model)) {
+      model = "anthropic/claude-fable-latest";
     } else if (/^claude/i.test(model)) {
       model = `anthropic/${model}`;
-    } else if (/^grok-build-latest$/i.test(model)) {
+    } else if (/^grok-build/i.test(model)) {
       model = "x-ai/grok-build-0.1";
-    } else if (/^grok-latest$/i.test(model)) {
-      model = "~x-ai/grok-latest";
     } else if (/^grok/i.test(model)) {
-      model = `x-ai/${model}`;
-    } else if (/^gemini-flash-latest$/i.test(model)) {
-      model = "~google/gemini-flash-latest";
-    } else if (/^gemini-flash-lite-latest$/i.test(model) || /^gemini-3.5-flash-lite$/i.test(model)) {
+      model = "x-ai/grok-latest";
+    } else if (/^gemini-flash-lite/i.test(model) || /^gemini-3.5-flash-lite$/i.test(model)) {
       model = "google/gemini-3.5-flash-lite";
-    } else if (/^gemini-pro-latest$/i.test(model)) {
-      model = "~google/gemini-pro-latest";
+    } else if (/^gemini-flash/i.test(model)) {
+      model = "google/gemini-flash-latest";
+    } else if (/^gemini-pro/i.test(model)) {
+      model = "google/gemini-pro-latest";
     } else if (/^gemini/i.test(model)) {
       model = `google/${model}`;
-    } else if (/^gpt-sol-latest$/i.test(model) || /^gpt-terra-latest$/i.test(model) || /^gpt-4o-latest$/i.test(model)) {
-      model = "~openai/gpt-latest";
-    } else if (/^gpt-luna-latest$/i.test(model) || /^gpt-mini-latest$/i.test(model) || /^gpt-nano-latest$/i.test(model)) {
-      model = "~openai/gpt-mini-latest";
-    } else if (/^mistral-medium-latest$/i.test(model)) {
+    } else if (/^gpt-sol/i.test(model) || /^gpt-5.6-sol$/i.test(model)) {
+      model = "openai/gpt-5.6-sol";
+    } else if (/^gpt-terra/i.test(model) || /^gpt-5.6-terra$/i.test(model)) {
+      model = "openai/gpt-5.6-terra";
+    } else if (/^gpt-luna/i.test(model) || /^gpt-5.6-luna$/i.test(model)) {
+      model = "openai/gpt-5.6-luna";
+    } else if (/^gpt-mini-latest/i.test(model) || /^gpt-5.4-mini$/i.test(model)) {
+      model = "openai/gpt-mini-latest";
+    } else if (/^gpt-nano/i.test(model) || /^gpt-5.4-nano$/i.test(model)) {
+      model = "openai/gpt-5.4-nano";
+    } else if (/^gpt-4o-mini$/i.test(model)) {
+      model = "openai/gpt-4o-mini";
+    } else if (/^gpt-4o/i.test(model)) {
+      model = "openai/gpt-4o";
+    } else if (/^mistral-large/i.test(model)) {
+      model = "mistralai/mistral-large";
+    } else if (/^mistral-medium/i.test(model)) {
       model = "mistralai/mistral-medium-3.5";
-    } else if (/^mistral-small-latest$/i.test(model)) {
+    } else if (/^mistral-small/i.test(model)) {
       model = "mistralai/mistral-small-2603";
     } else if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
       model = `mistralai/${model}`;
-    } else if (/^deepseek-flash-latest$/i.test(model)) {
+    } else if (/(kimi|moonshot)/i.test(model)) {
+      model = "moonshotai/kimi-latest";
+    } else if (/^deepseek-flash/i.test(model)) {
       model = "deepseek/deepseek-v4-flash";
-    } else if (/^deepseek-pro-latest$/i.test(model)) {
+    } else if (/^deepseek-pro/i.test(model)) {
       model = "deepseek/deepseek-v4-pro";
-    } else if (/^deepseek-r1-latest$/i.test(model)) {
+    } else if (/^deepseek-r1/i.test(model)) {
       model = "deepseek/deepseek-r1";
     } else if (/^deepseek/i.test(model)) {
       model = `deepseek/${model}`;
@@ -185,7 +187,7 @@ export function normalizeOpenRouterModelId(rawModel: string | undefined): string
       model = `openai/${model}`;
     }
   }
-  return model.replace(/^openrouter\//i, "").replace(/^xai\//i, "x-ai/");
+  return model.replace(/^openrouter\//i, "").replace(/^xai\//i, "x-ai/").replace(/^moonshot\//i, "moonshotai/");
 }
 
 
@@ -263,6 +265,16 @@ export function resolveLlmEndpoint(
     return {
       provider: "deepseek",
       url: process.env.DEEPSEEK_API_URL?.trim() || "https://api.deepseek.com/v1/chat/completions",
+      key: nativeCred.key,
+      model: nativeModel,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
+      keyRef: nativeCred.keyRef,
+      transport: "chat-completions"
+    };
+  } else if (family === "moonshot") {
+    return {
+      provider: "moonshot",
+      url: process.env.MOONSHOT_API_URL?.trim() || "https://api.moonshot.cn/v1/chat/completions",
       key: nativeCred.key,
       model: nativeModel,
       keySource: nativeCred.source === "operator" ? "operator" : "user",

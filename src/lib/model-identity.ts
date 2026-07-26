@@ -31,7 +31,7 @@ export function canonicalModelId(model: string | null | undefined): string {
   if (name.includes("/")) {
     name = name.split("/").pop() || name;
   }
-  name = name.replace(/^~anthropic\//i, "").replace(/^xai\//i, "").replace(/^meta-llama\//i, "");
+  name = name.replace(/^~anthropic\//i, "").replace(/^xai\//i, "").replace(/^meta-llama\//i, "").replace(/^moonshotai\//i, "");
 
   const lower = name.toLowerCase();
 
@@ -59,6 +59,9 @@ export function canonicalModelId(model: string | null | undefined): string {
   if (/mistral.*small/i.test(lower)) return "mistral-small-2603";
   if (/mistral.*medium/i.test(lower)) return "mistral-medium-3.5";
   if (/mistral.*large/i.test(lower)) return "mistral-large-latest";
+
+  // Moonshot AI family
+  if (/(kimi|moonshot)/i.test(lower)) return "kimi-latest";
 
   // Meta family
   if (/llama/i.test(lower)) return "llama-3.3-70b-instruct";

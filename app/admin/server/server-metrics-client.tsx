@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Btn, Card, Chip, Dot, Meter, Toggle } from "../../console/ui/primitives";
-import { Server, Cpu, Database, Activity, RefreshCw, Layers, ArrowDown, ArrowUp, Globe, Shield } from "lucide-react";
+import { Server, Cpu, Database, Activity, RefreshCw, Layers, ArrowDown, ArrowUp, Globe, Shield, HardDrive } from "lucide-react";
 import { asRecord, normalizeCoolifyResources, readText } from "@/lib/server-metrics-shapes";
 
 interface MetricPoint {
@@ -19,6 +19,10 @@ interface HostInfo {
   cpus?: unknown;
   memoryTotalBytes?: unknown;
   memoryFreeBytes?: unknown;
+  diskTotalBytes?: unknown;
+  diskFreeBytes?: unknown;
+  diskUsedBytes?: unknown;
+  diskUsedPct?: unknown;
   uptimeSeconds?: unknown;
   loadAvg?: unknown;
   serverType?: unknown;
@@ -231,6 +235,12 @@ export function ServerMetricsClient() {
   const memPct = memoryTotalBytes && memoryFreeBytes !== undefined
     ? Math.max(0, Math.min(100, Math.round(((memoryTotalBytes - memoryFreeBytes) / memoryTotalBytes) * 100)))
     : undefined;
+  const diskTotalBytes = readNonNegativeNumber(host?.diskTotalBytes);
+  const diskFreeBytes = readNonNegativeNumber(host?.diskFreeBytes);
+  const diskUsedBytes = readNonNegativeNumber(host?.diskUsedBytes);
+  const diskUsedPct = typeof host?.diskUsedPct === "number" && Number.isFinite(host.diskUsedPct)
+    ? Math.max(0, Math.min(100, Math.round(host.diskUsedPct)))
+    : undefined;
   const uptimeSeconds = readNonNegativeNumber(host?.uptimeSeconds);
   const loadAverage = Array.isArray(host?.loadAvg)
     ? readNonNegativeNumber(host.loadAvg[0])
@@ -275,7 +285,7 @@ export function ServerMetricsClient() {
             {data?.stale && <Chip tone="warn">STALE SNAPSHOT</Chip>}
           </div>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-            Host node metrics and Coolify application resource statuses.
+            Host node metrics and application resource statuses.
           </p>
           <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
             As of {formattedAsOf}
@@ -318,7 +328,7 @@ export function ServerMetricsClient() {
       )}
 
       {/* Host Details Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Card>
           <div className="flex items-center gap-3">
             <div className="rounded-[var(--con-radius-sm)] bg-[color:var(--con-accent-soft)] p-2 text-[color:var(--con-accent)]">
@@ -362,7 +372,26 @@ export function ServerMetricsClient() {
               <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
                 {memPct === undefined || memoryFreeBytes === undefined
                   ? "Utilization unavailable"
-                  : `${memPct}% used - ${formatBytes(memoryFreeBytes)} free`}
+                  : `${memPct}% used (${formatBytes(memoryTotalBytes! - memoryFreeBytes)} used, ${formatBytes(memoryFreeBytes)} free)`}
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <div className="flex items-center gap-3">
+            <div className="rounded-[var(--con-radius-sm)] bg-[color:var(--con-accent-soft)] p-2 text-[color:var(--con-accent)]">
+              <HardDrive size={20} />
+            </div>
+            <div>
+              <div className="con-card-title">Disk Storage</div>
+              <div className="font-bold">
+                {diskTotalBytes === undefined ? "Unavailable" : formatBytes(diskTotalBytes)}
+              </div>
+              <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                {diskUsedPct === undefined || diskFreeBytes === undefined
+                  ? "Storage unavailable"
+                  : `${diskUsedPct}% used (${formatBytes(diskUsedBytes!)} used, ${formatBytes(diskFreeBytes)} avail)`}
               </div>
             </div>
           </div>
@@ -398,7 +427,7 @@ export function ServerMetricsClient() {
               </span>
             }
           >
-            <div className="grid gap-6 sm:grid-cols-2">
+            <div className="grid gap-6 sm:grid-cols-3">
               {/* CPU Bar */}
               <div>
                 <div className="mb-1 flex justify-between text-[length:var(--con-fs-xs)] font-semibold">
@@ -415,6 +444,15 @@ export function ServerMetricsClient() {
                   <span className="con-num">{memPct === undefined ? "Unavailable" : `${memPct}%`}</span>
                 </div>
                 {memPct !== undefined ? <Meter value={memPct} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
+              </div>
+
+              {/* Disk Bar */}
+              <div>
+                <div className="mb-1 flex justify-between text-[length:var(--con-fs-xs)] font-semibold">
+                  <span className="text-[color:var(--con-muted)]">Disk Utilization</span>
+                  <span className="con-num">{diskUsedPct === undefined ? "Unavailable" : `${diskUsedPct}%`}</span>
+                </div>
+                {diskUsedPct !== undefined ? <Meter value={diskUsedPct} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
               </div>
             </div>
 
@@ -480,12 +518,12 @@ export function ServerMetricsClient() {
           </Card>
         </div>
 
-        {/* Right 1 Column: Coolify Application Container Health */}
+        {/* Right 1 Column: Services & Action Runners Container Health */}
         <div className="space-y-6">
           <Card
             title={
               <span className="flex items-center gap-1.5">
-                <Layers className="h-4 w-4" /> Coolify Services
+                <Layers className="h-4 w-4" /> Services & Action Runners
               </span>
             }
           >

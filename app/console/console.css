@@ -1018,18 +1018,28 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: var(--con-fs-sm);
-  font-weight: 600;
-  color: var(--con-muted);
-  padding: 10px 0;
   user-select: none;
 }
 .con-disclosure > summary::-webkit-details-marker { display: none; }
+
+.con-disclosure-label {
+  font-size: var(--con-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--con-faint);
+}
+.con-disclosure-label::after {
+  content: "EXPAND";
+}
+.con-disclosure[open] .con-disclosure-label::after {
+  content: "COLLAPSE";
+}
+
 .con-disclosure > summary::after {
   content: "";
   width: 6px;
   height: 6px;
-  margin-left: auto;
+  margin-left: 2px;
   border-right: 1.5px solid var(--con-faint);
   border-bottom: 1.5px solid var(--con-faint);
   transform: rotate(-45deg);

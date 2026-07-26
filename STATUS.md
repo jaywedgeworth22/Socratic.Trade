@@ -1,4 +1,4 @@
-# Current Status
+# Socratic Trade Status
 
 ## 2026-07-26 — PR merge drain + Actions runner fixes (GROK)
 
@@ -12,6 +12,11 @@ Open-PR board drain and self-hosted CI hygiene:
 
 Rollout: `docs/rollouts/2026-07-26-pr-merge-and-runner-unblock.md`.
 
+## Current State
+- `app/console/page.tsx` was updated with a single-line flexbox layout for Previous Trades (implemented by earlier agent).
+- `app/console/scan/scan-table.tsx` was verified to already implement the requested column settings popover layout, default score sorting, column narrowing, and text alignments.
+- OpenRouter telemetry reporting `0 events` was root-caused to the web UI `getLLM()` method falling back to `MockLLM` for OpenRouter due to lack of routing. `src/lib/chat/llm.ts` has been updated to route `CHAT_LLM="openrouter"` properly.
+- A bug was fixed in `src/lib/usage-monitor-push.ts` where `userId` was mapped incorrectly in `classifierTelemetryMetadata`.
 ## 2026-07-25 — Fix vs-SPY benchmark accuracy (CURSOR)
 
 Home vs-SPY was counting all-cash deposits/paper resets as alpha (+31% case) and could mis-read
@@ -3245,51 +3250,8 @@ Completed the SEC/RAG parser and chunker hardening by resolving outstanding stru
   `test/fmp-rights-derived-artifacts.test.ts` pass 31/31. Clean ordered full rerun, push, hosted checks/review,
   merge, and production verification remain; #1586 stays draft and no FMP flag/provider/corpus/Infisical
   mutation has occurred.
+## Blockers
+- None.
 
 ## Next Action
-- Land branch `agent/antigravity` via `scripts/land.sh`.
-- Run the ordered full gate, push #1586 through `scripts/land.sh`, mark the PR ready, resolve hosted
-  checks/review, merge it, require zero open PRs, then verify the exact final `main` SHA through production
-  health/readiness and Coolify runtime surfaces.
-
-## 2026-07-21 — Switch RAG Default Embedding Provider from Voyage to OpenRouter (BAAI bge-m3)
-Switched the default fallback RAG embedding and rerank provider in `src/lib/vector-db.ts` to OpenRouter using BAAI's `baai/bge-m3` embedding model and Cohere reranker. Updated tests in `test/rag-embed-provider-gate.test.ts` and `test/connection-health-routing.test.ts`.
-## 2026-07-21 — Native iOS mobile-first Phase 1 PR #1859 (CODEX, merged; secure web-auth follow-up #1886)
-
-The isolated iOS lane now has a buildable XcodeGen app/test project and a stable five-tab native
-shell (Home, Proposals, Markets, Activity, Coach). It selectively composes PR #1790's typed HTTP
-errors, frame-correct SSE/reload coalescing, and live-order confirmation while taking only the
-canonical `trade.socratic.app` identity, Sign in with Apple entitlement, and URL scheme from
-#1851; its JWT-in-query authentication and unrelated web/CI churn were rejected. The app decodes
-and presents positions, orders, alerts, daily stats, performance/benchmark/fills, connected
-accounts, market session, and scheduler state with explicit initial-loading, retryable-error,
-empty, refreshing, and stale states. Commands have per-operation busy state, so Stop remains
-available while unrelated work runs. Parent review added stale/readiness command gating, ordered
-snapshot refreshes, durable retry idempotency, a corrected deletion response contract, explicit
-live-account switching confirmation, Red Team/model provenance, and accessibility sizing/layout
-fixes. Review remediation adds read-only deletion preview with final admission fencing, terminal
-command reconciliation, immediate protective-state commands with a final broker-placement state
-re-read, explicit unknown execution-mode rendering, an app icon, and a verifier-bound opaque
-web-auth handoff so Google/GitHub callback URLs do not contain Auth.js session credentials. Release signing remains enabled and automatic for team
-`CC8UTF7ATG`. `ios/project.yml` is canonical; its generated checked-in `.xcodeproj` is kept
-in sync for direct Xcode builds. XcodeGen generation, direct-project, generic and Release simulator builds, and test-target
-`build-for-testing` are green under Xcode 27 beta; no simulator runtimes are installed, so XCTest
-execution is deferred. The only server change aligns the Apple identity-token audience fallback
-with `trade.socratic.app` and has 3/3 focused tests. Targeted Node tests (7/7), TypeScript, ESLint,
-plist/asset validation, and diff check pass. Rollout:
-`docs/rollouts/2026-07-21-native-ios-mobile-first-phase-1.md`.
-
-## 2026-07-23 — Cleanup Caches Runner Fix (ANTIGRAVITY, branch `fix/cleanup-caches-runner`)
-
-Fixed a CI failure in `.github/workflows/cleanup-caches.yml` by retargeting the jobs from `[self-hosted, socratic-ci]` to `ubuntu-latest`. The self-hosted Coolify runners do not have the GitHub CLI (`gh`) installed globally, which is required by both the `delete-pr-caches` and `prune-stale-caches` jobs. Because `cleanup-caches.yml` operates purely via the GitHub API (via `gh`) and doesn't require any app builds or local runner state, it can safely and freely run on `ubuntu-latest` without consuming our self-hosted runner concurrency.
-
-## 2026-07-23 — Admin Panel Server RAM Fix & CI ESLint Ignores (ANTIGRAVITY)
-
-The Admin panel's "Server Metrics" tab was modified to extract actual RAM capacity directly from the Hetzner Server API's metadata rather than relying on Coolify metadata to ensure accurate memory percentages. Also, added `**/.worktrees/**` to the ESLint configuration ignores to prevent CI `verify` gates from failing when linting other agents' worktree paths. Verified clean on 5000+ tests and builds.
-
-## 2026-07-24 — Purge process.env LLM & User Keys (ANTIGRAVITY)
-
-Implemented automatic purging of all LLM API keys and user-providable interface credentials from `process.env` upon boot migration, key creation/update, and key deletion in `src/lib/db-api-keys.ts`. Ensures process.env never retains ambient LLM or user keys in process memory at runtime.
-## 2026-07-24 — Connections UI Redesign & Ghost API Key Tombstoning (ANTIGRAVITY)
-
-Redesigned the Broker Connections cards in `app/console/settings/brokers.tsx` to reduce vertical card height by >25%, added inline tax treatment tags, `Load PAPER` badges for paper accounts, strategy execution status, pending proposal counts, and an on-demand `Capabilities` modal sheet. Also fixed the ghost API key deletion bug by implementing explicit tombstoning (`DELETED_KEY_TOMBSTONE = "__DISABLED__"`) in `src/lib/db-api-keys.ts` so deleted keys never re-migrate from ambient environment variables.
+- Run `bash scripts/land.sh` to land the OpenRouter fix branch.
