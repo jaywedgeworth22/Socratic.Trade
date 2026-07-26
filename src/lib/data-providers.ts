@@ -5153,11 +5153,11 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
   }
 }
 
-// ── SEC EDGAR XBRL company-facts provider (keyless, default-OFF) ─────────────
+// ── SEC EDGAR XBRL company-facts provider (keyless, DEFAULT ON) ──────────────
 // Fills debtToEquity from authoritative SEC 10-K filings via the public
 // companyfacts API (https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json).
 // Polite 300 ms inter-symbol delay per SEC fair-access guidance.
-// Enable with: SEC_XBRL_ENRICHMENT_ENABLED=on
+// Disable with: SEC_XBRL_ENRICHMENT_ENABLED=0
 
 const SEC_XBRL_TTL_MS = 24 * 60 * 60_000; // 24h — filings move slowly
 const SEC_XBRL_DELAY_MS = 300; // polite inter-request delay
