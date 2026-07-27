@@ -1,5 +1,15 @@
 # Socratic Trade Status
 
+## 2026-07-27 — Console Layout Fixes & PWA Update (ANTIGRAVITY)
+
+- Replaced `.con-disclosure > summary` default styling with a wrapping `<div>` element to avoid Safari bugs on native `<summary>` tags padding, achieving pixel-perfect alignment between 'ESSENTIALS' and 'Autonomy' component details.
+- Updated the EXPAND/COLLAPSE label text content in `console.css` to use brackets directly (`>`) and (`˅`) instead of an absolutely positioned `::after` rotated caret.
+- Updated `app/manifest.ts` so `start_url` points to `/console` instead of `/mobile`, aligning the PWA view with the main web view.
+- Removed `TradeEventRowSchema` and `trades` fields in `src/lib/congress-share.ts` to accommodate version bump of the `@jaywedgeworth22/congress-trading-shared` package which removed them.
+- Corrected internal code documentation regarding `congress.trade` architecture (hosted on Deno Deploy/Turso, not Cloudflare).
+
+Rollout: `docs/rollouts/2026-07-27-console-layout-fixes.md`, `docs/rollouts/2026-07-27-docs-update-deno-turso.md`.
+
 ## 2026-07-26 — PR merge drain + Actions runner fixes (GROK)
 
 Open-PR board drain and self-hosted CI hygiene:
