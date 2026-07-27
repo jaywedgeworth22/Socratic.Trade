@@ -253,6 +253,14 @@ PR_URL="$(gh pr create \
 
 echo ""
 ok "PR ready: ${PR_URL}"
+
+info "Enabling auto-merge..."
+if gh pr merge "${PR_URL}" --auto --squash >/dev/null 2>&1; then
+  ok "Auto-merge enabled for ${PR_URL}"
+else
+  warn "Failed to enable auto-merge. You may need to merge manually."
+fi
+
 echo ""
 echo -e "${BOLD}Next steps for reviewer:${RESET}"
 echo "  1. Review the PR at the URL above"
