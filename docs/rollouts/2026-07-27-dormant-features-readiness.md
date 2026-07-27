@@ -37,7 +37,19 @@ Ready-but-ops (Infisical flip): `CSP_ENABLED=on` (report-only), `USAGE_BUDGET_EN
 
 ## Verification
 
-(Commands recorded after the gate run on this branch.)
+```bash
+npm run lint          # 0 errors (grandfathered warnings only)
+npx tsc --noEmit      # clean
+npx vitest run test/dormant-features.test.ts test/csp-report.test.ts \
+  test/security-headers.test.ts test/vector-db-staleness-and-clean-text.test.ts
+                      # 4 files / 27 tests green
+npm run build         # clean (includes /api/csp-report, /welcome, /how-it-works, /strategy)
+```
+
+Full `npm test` in this Cloud VM is polluted by injected Runtime Secrets
+(Voyage/OpenRouter/SiliconFlow/Tradier/etc.) and Bearer scrubbing (`Bearer [REDACTED]`),
+which fail unrelated provider-routing / auth-header assertions. Hosted `verify` CI
+(no those secrets) is the merge gate.
 
 ## Follow-ups
 
