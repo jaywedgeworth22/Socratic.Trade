@@ -1,6 +1,14 @@
 # Socratic Trade Status
 
-## 2026-07-26 — Free-first enrichment cascade + coverage report (CURSOR)
+## 2026-07-27 — Land enrichment PR + open-PR drain (CURSOR)
+
+Open PRs: #2224 (free-cascade enrichment) + #2229 (dependabot eslint-config-next).
+Both auto-merge armed. Fixed CI blocker on #2224:
+`test/alternative-data.test.ts` expected cascade name `yahoo-finance` but free floor is
+now `nasdaq-quote+yahoo-finance` (SEC XBRL default ON isolated off in the test).
+Synced #2224 onto latest `main`. Merge == Coolify auto-deploy.
+
+## 2026-07-26 — Free-first enrichment cascade + field coverage report (CURSOR)
 
 Optimized the market-data cascade for free/keyless + RapidAPI sources and added
 owner-visible coverage reporting:

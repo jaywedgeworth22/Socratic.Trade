@@ -131,6 +131,11 @@ RapidAPI re-lists them or a key somehow gains access; no owner action required.
 
 ## Next Steps & Blockers
 
-- No further RapidAPI Subscribe needed for the delisted yh-finance / seeking-alpha listings.
+- Land #2224 + #2229 via auto-merge once `verify` green (CI queue on socratic-ci).
 - After a production scan, check Admin → Enrichment Coverage / ops `enrichmentCoverage`.
 - Optional: expand SEC XBRL beyond D/E; persist coverage history.
+
+### 2026-07-27 land fix
+- `test/alternative-data.test.ts` — isolate paid keys + SEC XBRL off; expect
+  `nasdaq-quote+yahoo-finance` (fixes verify-hosted failure).
+- Merged `origin/main` into `cursor/free-cascade-coverage-0aef`; auto-merge re-armed.
