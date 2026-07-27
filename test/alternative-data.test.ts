@@ -121,12 +121,24 @@ describe("Finnhub News Enrichment", () => {
     delete process.env.FINNHUB_API_KEY;
     delete process.env.FMP_API_KEY;
     delete process.env.ALPHAVANTAGE_API_KEY;
+    delete process.env.RAPIDAPI_KEY;
+    delete process.env.ROIC_API_KEY;
+    delete process.env.MASSIVE_API_KEY;
+    delete process.env.MASSIVE_API_KEY_ALT;
+    delete process.env.TIINGO_API_KEY;
+    delete process.env.TWELVEDATA_API_KEY;
+    delete process.env.FILINGAPI;
+    delete process.env.FILINGAPI_KEY;
+    delete process.env.FINTECH_STUDIOS_API_KEY;
+    // Isolate from default-ON SEC XBRL so this assertion stays about the keyless floor.
+    process.env.SEC_XBRL_ENRICHMENT_ENABLED = "0";
     const { getEnrichmentProvider } = await import("../src/lib/data-providers");
 
     const provider = getEnrichmentProvider();
-    // Yahoo Finance is the final real tier — always configured, no API key required.
+    // Keyless free-wave floor: nasdaq-quote + Yahoo Finance (always configured, no API key).
     expect(provider.configured).toBe(true);
-    expect(provider.name).toBe("yahoo-finance");
+    expect(provider.name).toBe("nasdaq-quote+yahoo-finance");
+    expect(provider.name).toContain("yahoo-finance");
   });
 
   it("fetches and scores company news from Finnhub when key is configured", async () => {
