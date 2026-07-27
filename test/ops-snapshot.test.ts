@@ -155,4 +155,20 @@ describe("ops diagnostic snapshot", () => {
     expect(rejection!.detail).toContain("insufficient buying power");
     expect(rejection!.detail).toContain("symbol=AAPL");
   });
+
+  it("summarizeBrokerOrderList separates live working from historical done_for_day", async () => {
+    const { summarizeBrokerOrderList } = await import("../src/lib/ops-snapshot");
+    const summary = summarizeBrokerOrderList([
+      { id: "1", symbol: "AAPL", side: "buy", type: "limit", state: "new", createdAt: "2026-07-27T12:00:00.000Z" },
+      { id: "2", symbol: "T", side: "sell", type: "limit", state: "held", createdAt: "2026-07-27T12:00:00.000Z" },
+      { id: "3", symbol: "OLD", side: "buy", type: "limit", state: "done_for_day", createdAt: "2026-05-01T12:00:00.000Z" },
+      { id: "4", symbol: "OLD2", side: "buy", type: "market", state: "done_for_day", createdAt: "2026-04-01T12:00:00.000Z" },
+      { id: "5", symbol: "X", side: "buy", type: "market", state: "filled", createdAt: "2026-07-20T12:00:00.000Z" }
+    ]);
+    expect(summary.listedCount).toBe(5);
+    expect(summary.liveCount).toBe(2);
+    expect(summary.workingCount).toBe(2);
+    expect(summary.doneForDayCount).toBe(2);
+    expect(summary.topStates.find((s) => s.state === "done_for_day")?.count).toBe(2);
+  });
 });

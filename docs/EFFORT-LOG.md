@@ -450,6 +450,8 @@ Jul 8 18:10 CT)._
 - **Prune stale abandoned local-only branches from origin (June 21–29 experiments) (OWNER, M)** — ~40 origin branches are ahead of main with NO PR and last activity June 21–29 (agent/claude-*, safety/*, feat/*, reliability/*, sim/funded-test-account, etc.). They are stale experiments from the pre-worktree era, add noise to every branch scan, and confuse abandoned-work triage. Audit which are fully superseded by merged work and delete them from origin (with owner confirmation before any deletion per the no-destructive-git rule).
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Alpaca/orders "300+ pending" inflation (`done_for_day` counted as working) — In Progress 2026-07-27.** Branch `cursor/pending-orders-open-count-0aef`. Shared `isWorkingOrderState` excludes terminal `done_for_day`; ops `?orders=1` order-list summary; RH OXY placing storm + Alpaca T bracket-422 noted as follow-ups. Rollout: `docs/rollouts/2026-07-27-pending-orders-done-for-day.md`.
+
 - **[Socratic.Trade][CURSOR] Dormant features readiness (`cursor/dormant-features-impl-1c6c`) — IN PROGRESS 2026-07-27.** Landing-page gate contract (unset=ON), CSP report collector + report-uri, `currentEmbedRev` for clean-text, `dormantFeatures` on admin RAG coverage, FEATURE-ENABLEMENT Ready/Keep-off rewrite. Not flipping rights/cost gates.
 
 - **[Socratic.Trade][GROK] PR merge drain + Actions runner unblock (land #2218/#2220, close #2217, arm #2219, fix #2215 via shared v2.3.0 + trades filter, e2e smoke package.json race re-checkout) — In Progress 2026-07-26.** Self-hosted runners online; residual open: #2219 (CI), this fix PR, #2215 to close when superseded.

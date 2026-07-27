@@ -4,6 +4,9 @@ import { userHasAnyLlmCredential } from "./db-api-keys";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { computeAccountTradingLiveness } from "./trading-liveness";
 import { getLastEnrichmentCoverageReport } from "./enrichment-coverage";
+import { isWorkingOrderState } from "./broker-held-orders";
+import { isLiveOrderState } from "./broker-side";
+import type { EquityOrder } from "./types";
 import { statSync, statfsSync, readdirSync } from "fs";
 import { dirname, join } from "path";
 
@@ -70,6 +73,17 @@ export interface OpsAccountSnapshot {
   lastCompletedRunAgeSeconds: number | null;
   consecutiveFailedRuns: number | null;
   tradingLivenessDegraded: boolean | null;
+  /** Present when `?orders=1` — broker order-list breakdown for open-vs-history diagnosis. */
+  orders?: OpsOrderListSummary | null;
+}
+
+export interface OpsOrderListSummary {
+  listedCount: number;
+  liveCount: number;
+  workingCount: number;
+  doneForDayCount: number;
+  topStates: Array<{ state: string; count: number }>;
+  error?: string;
 }
 
 export interface OpsStrategyRunRow {
@@ -128,6 +142,36 @@ function accountLabelById(userId: string): Map<string, string> {
     map.set(account.id, account.label || account.broker);
   }
   return map;
+}
+
+/** Pure breakdown of a broker order list — used by ops `?orders=1` and unit tests.
+ *  `listedCount` is whatever getEquityOrders returned (Alpaca pages status:"all").
+ *  `liveCount` uses isLiveOrderState; `workingCount` uses isWorkingOrderState (excludes
+ *  terminal done_for_day). A large gap between listedCount and liveCount with high
+ *  doneForDayCount is the historical "300+ pending" inflation pattern. */
+export function summarizeBrokerOrderList(orders: EquityOrder[]): OpsOrderListSummary {
+  const byState = new Map<string, number>();
+  let liveCount = 0;
+  let workingCount = 0;
+  let doneForDayCount = 0;
+  for (const order of orders) {
+    const state = String(order.state ?? "").trim().toLowerCase() || "(empty)";
+    byState.set(state, (byState.get(state) ?? 0) + 1);
+    if (isLiveOrderState(state)) liveCount += 1;
+    if (isWorkingOrderState(state)) workingCount += 1;
+    if (state === "done_for_day") doneForDayCount += 1;
+  }
+  const topStates = [...byState.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 12)
+    .map(([state, count]) => ({ state, count }));
+  return {
+    listedCount: orders.length,
+    liveCount,
+    workingCount,
+    doneForDayCount,
+    topStates
+  };
 }
 
 function sanitizeAuditDetail(kind: string, payload: unknown): string {
@@ -412,4 +456,51 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     enrichmentCoverage,
     users
   };
+}
+
+const DEFAULT_ORDERS_TIMEOUT_MS = 8_000;
+
+/** Best-effort: attach per-account broker order-list summaries (for open-vs-history diagnosis).
+ *  Never throws — failures land in `orders.error`. Opt-in from `/api/ops/snapshot?orders=1`. */
+export async function attachOpsOrderSummaries(
+  snapshot: OpsSnapshot,
+  input: { timeoutMs?: number } = {}
+): Promise<OpsSnapshot> {
+  const timeoutMs = input.timeoutMs ?? DEFAULT_ORDERS_TIMEOUT_MS;
+  const { getBrokerGateway } = await import("./broker");
+
+  for (const user of snapshot.users) {
+    for (const account of user.accounts) {
+      if (!account.accountNumber || account.policyReadError) {
+        account.orders = null;
+        continue;
+      }
+      try {
+        const policy = peekPolicy(user.userId, account.connectedAccountId);
+        if (!policy.accountNumber) {
+          account.orders = null;
+          continue;
+        }
+        const gateway = getBrokerGateway(policy, user.userId);
+        const orders = await Promise.race([
+          gateway.getEquityOrders(policy.accountNumber),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error(`getEquityOrders timed out after ${timeoutMs}ms`)), timeoutMs);
+          })
+        ]);
+        account.orders = summarizeBrokerOrderList(orders);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        account.orders = {
+          listedCount: 0,
+          liveCount: 0,
+          workingCount: 0,
+          doneForDayCount: 0,
+          topStates: [],
+          error: message.slice(0, 400)
+        };
+      }
+    }
+  }
+  return snapshot;
 }

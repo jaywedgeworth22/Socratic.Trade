@@ -1,5 +1,20 @@
 # Socratic Trade Status
 
+## 2026-07-27 — Alpaca 300+ "pending" orders (CURSOR)
+
+**Cause:** Alpaca `getEquityOrders` returns `status:"all"` (full history). Orders UI /
+stale-limit / feed treated terminal `done_for_day` as still *working*, so historical day
+orders inflated the open/pending list into the hundreds. Fix: shared
+`isWorkingOrderState` excludes `done_for_day`. Ops `?orders=1` reports
+listed/live/working/doneForDay counts for verification.
+
+**Also seen (not this count bug):** Robinhood Agentic stuck OXY `placing` →
+`order_placement_uncertain` storm + health-gate skips; Alpaca Paper 422
+`bracket orders must be entry orders` on T sells.
+
+Branch `cursor/pending-orders-open-count-0aef`. Rollout:
+`docs/rollouts/2026-07-27-pending-orders-done-for-day.md`.
+
 ## 2026-07-27 — PR drain to production (CURSOR) — DONE
 
 Merged + auto-deployed: #2229, #2231, #2232, **#2230** (free-first enrichment cascade), #2234.

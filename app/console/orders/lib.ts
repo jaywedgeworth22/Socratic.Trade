@@ -7,7 +7,7 @@
  *  src/lib is read-only for this screen; the mirrored constants are annotated
  *  with their source of truth. */
 
-import { isActiveBrokerOrderState } from "@/lib/broker-held-orders";
+import { isWorkingOrderState as sharedIsWorkingOrderState } from "@/lib/broker-held-orders";
 import { normalizeSymbol } from "@/lib/money";
 import type { EquityOrder, EquityPosition, MarketQuoteSummary, TradingPolicy } from "@/lib/types";
 import { estimatedClosingPnl, isClosingOrder, positionMarkPrice, type EstimatedClosingPnl } from "../lib/derive";
@@ -15,17 +15,13 @@ import { estimatedClosingPnl, isClosingOrder, positionMarkPrice, type EstimatedC
 /** Mirrors DEFAULT_POLICY.staleLimitOrderMinutes (src/lib/defaults.ts). */
 export const DEFAULT_STALE_LIMIT_MINUTES = 15;
 
-/** Mirrors EXTRA_WORKING_STATES in src/lib/stale-limit-orders.ts — broker
- *  pseudo-active states that still count as "working" for staleness. */
-const EXTRA_WORKING_STATES = new Set(["done_for_day", "stopped", "calculated"]);
-
 /** Mirrors MARKET_REPLACE_TYPES in src/lib/order-replacement.ts — the only
  *  order types the replace endpoint accepts. */
 const REPLACEABLE_TYPES = new Set(["limit", "stop_limit"]);
 
+/** Re-export shared broker working-state check (excludes terminal `done_for_day`). */
 export function isWorkingOrderState(state: string | undefined): boolean {
-  const normalized = String(state ?? "").trim().toLowerCase();
-  return isActiveBrokerOrderState(normalized) || EXTRA_WORKING_STATES.has(normalized);
+  return sharedIsWorkingOrderState(state);
 }
 
 export function isReplaceableType(type: string | undefined): boolean {
