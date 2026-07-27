@@ -49,7 +49,15 @@ function Section({ title, titleHint, children }: { title: string; titleHint: str
 function Disclosure({ title, titleHint, children, defaultOpen }: { title: string; titleHint: string; children: ReactNode; defaultOpen?: boolean }) {
   return (
     <details className="con-disclosure rounded-control border border-[color:var(--con-line)] px-3" open={defaultOpen}>
-      <summary><Tooltip content={titleHint}>{title}</Tooltip></summary>
+      <summary className="block cursor-pointer outline-none">
+        <div className="flex items-center gap-2 py-2">
+          <Tooltip content={titleHint} className="con-card-title">{title}</Tooltip>
+          <span className="con-disclosure-label flex items-center gap-1.5 ml-auto">
+            <span className="con-disclosure-text" />
+            <span className="con-disclosure-icon" />
+          </span>
+        </div>
+      </summary>
       <div className="pb-3">{children}</div>
     </details>
   );

@@ -136,48 +136,25 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
             {rows.map(({ p, short, unrealized, unrealizedPct, weightPct, protection, meta, exposure }) => (
               <div key={p.symbol} className="flex flex-col gap-2 px-4 py-3 text-[length:var(--con-fs-sm)]">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <SymbolButton symbol={p.symbol} />
-                      {short && <span className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">SHORT</span>}
-                      {meta?.companyName && (
-                        <span className="truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                          {meta.companyName}
-                        </span>
-                      )}
-                    </div>
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-2">
+                    <SymbolButton symbol={p.symbol} />
+                    {short && <span className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">SHORT</span>}
+                    {meta?.companyName && (
+                      <span className="truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                        {meta.companyName}
+                      </span>
+                    )}
                   </div>
-                  {weightPct !== undefined && (
-                    <span
-                      className="con-num shrink-0 text-right font-semibold"
-                      style={exposure.tone ? { color: exposure.tone === "neg" ? "var(--con-neg)" : "var(--con-warn)" } : undefined}
-                      title={exposure.title}
-                    >
-                      <span className="font-normal text-[color:var(--con-faint)]">Weight:</span>&nbsp;&nbsp;{fmtPct(weightPct, 1, false)}
-                      {exposure.label && <span className="block text-[length:var(--con-fs-xs)]">{exposure.label}</span>}
-                    </span>
-                  )}
+                  <div className="shrink-0 whitespace-nowrap">
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Qty:</span>&nbsp;&nbsp;<span className="con-num">{fmtQty(p.quantity)}</span>
+                  </div>
                 </div>
-                <div className="con-num grid grid-cols-2 gap-x-3 gap-y-1.5 mt-1">
-                  <div>
-                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Qty:</span>&nbsp;&nbsp;<span>{fmtQty(p.quantity)}</span>
+                
+                <div className="flex items-center justify-between gap-3 mt-0.5">
+                  <div className="shrink-0 whitespace-nowrap">
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Value:</span>&nbsp;&nbsp;<span className="con-num">{fmtMoney(p.marketValue)}</span>
                   </div>
-                  <div className="text-right">
-                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">P&amp;L:</span>&nbsp;&nbsp;<span>
-                      {unrealized === undefined ? (
-                        <Dash />
-                      ) : (
-                        <SignedText value={unrealized}>
-                          {`${unrealized > 0 ? "+" : ""}${fmtMoney(unrealized)}`}
-                          {unrealizedPct !== undefined ? ` (${fmtPct(unrealizedPct, 1, true)})` : ""}
-                        </SignedText>
-                      )}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Value:</span>&nbsp;&nbsp;<span>{fmtMoney(p.marketValue)}</span>
-                  </div>
-                  <div className="text-right" title={protection.detail}>
+                  <div className="shrink-0 whitespace-nowrap min-w-0 text-right" title={protection.detail}>
                     <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Protection:</span>&nbsp;&nbsp;<span>
                       {protection.label === null ? (
                         <span className="text-[color:var(--con-faint)]">{EM_DASH}</span>
@@ -191,6 +168,31 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
                       )}
                     </span>
                   </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 mt-0.5">
+                  <div className="shrink-0 whitespace-nowrap">
+                    <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">P&amp;L:</span>&nbsp;&nbsp;<span className="con-num">
+                      {unrealized === undefined ? (
+                        <Dash />
+                      ) : (
+                        <SignedText value={unrealized}>
+                          {`${unrealized > 0 ? "+" : ""}${fmtMoney(unrealized)}`}
+                          {unrealizedPct !== undefined ? ` (${fmtPct(unrealizedPct, 1, true)})` : ""}
+                        </SignedText>
+                      )}
+                    </span>
+                  </div>
+                  {weightPct !== undefined && (
+                    <div
+                      className="shrink-0 whitespace-nowrap con-num text-right"
+                      style={exposure.tone ? { color: exposure.tone === "neg" ? "var(--con-neg)" : "var(--con-warn)" } : undefined}
+                      title={exposure.title}
+                    >
+                      <span className="font-normal text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Weight:</span>&nbsp;&nbsp;<span className={exposure.tone ? "font-semibold" : ""}>{fmtPct(weightPct, 1, false)}</span>
+                      {exposure.label && <span className="ml-1 font-semibold text-[length:var(--con-fs-xs)]">({exposure.label})</span>}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

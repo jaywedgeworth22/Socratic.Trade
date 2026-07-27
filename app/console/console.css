@@ -1015,38 +1015,45 @@
 .con-disclosure > summary {
   cursor: pointer;
   list-style: none;
+  user-select: none;
+  display: block;
+}
+.con-disclosure > summary::-webkit-details-marker { display: none; }
+
+.con-disclosure-inner {
   display: flex;
   align-items: center;
   gap: 8px;
-  user-select: none;
 }
-.con-disclosure > summary::-webkit-details-marker { display: none; }
 
 .con-disclosure-label {
   font-size: var(--con-fs-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--con-faint);
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
-.con-disclosure-label::after {
+.con-disclosure-text::after {
   content: "EXPAND";
 }
-.con-disclosure[open] .con-disclosure-label::after {
+.con-disclosure[open] .con-disclosure-text::after {
   content: "COLLAPSE";
 }
 
-.con-disclosure > summary::after {
-  content: "";
+.con-disclosure-icon {
+  display: inline-block;
   width: 6px;
   height: 6px;
-  margin-left: 2px;
-  border-right: 1.5px solid var(--con-faint);
-  border-bottom: 1.5px solid var(--con-faint);
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
   transform: rotate(-45deg);
   transition: transform 140ms ease;
-  flex: none;
 }
-.con-disclosure[open] > summary::after { transform: rotate(45deg); }
+.con-disclosure[open] .con-disclosure-icon {
+  transform: rotate(45deg);
+}
 
 .con-hr {
   border: none;

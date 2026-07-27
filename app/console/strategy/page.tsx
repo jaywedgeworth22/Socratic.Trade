@@ -1411,7 +1411,14 @@ function AiReviewPanel({
           {review.rationale && <p className="leading-relaxed text-[color:var(--con-muted)]">{review.rationale}</p>}
           {(review.marketContext || review.performanceReadout) && (
             <details className="con-disclosure">
-              <summary>Evidence the reviewer saw</summary>
+              <summary className="block cursor-pointer outline-none">
+                <div className="flex items-center gap-2 py-1">
+                  <span>Evidence the reviewer saw</span>
+                  <span className="con-disclosure-label flex items-center gap-1.5 ml-auto">
+                    <span className="con-disclosure-icon" />
+                  </span>
+                </div>
+              </summary>
               <div className="flex flex-col gap-2 pb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
                 {review.performanceReadout && <p>{review.performanceReadout}</p>}
                 {review.marketContext && <p>{review.marketContext}</p>}
@@ -1435,7 +1442,14 @@ function AiReviewPanel({
               <div className="flex flex-col divide-y divide-[color:var(--con-line)]">
                 {promptChanged && (
                   <details className="con-disclosure">
-                    <summary>Prompt rewrite proposed</summary>
+                    <summary className="block cursor-pointer outline-none">
+                      <div className="flex items-center gap-2 py-1">
+                        <span>Prompt rewrite proposed</span>
+                        <span className="con-disclosure-label flex items-center gap-1.5 ml-auto">
+                          <span className="con-disclosure-icon" />
+                        </span>
+                      </div>
+                    </summary>
                     <div className="grid gap-2 pb-2 sm:grid-cols-2">
                       <div>
                         <div className="con-card-title mb-1">Current</div>

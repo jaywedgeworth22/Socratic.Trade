@@ -151,7 +151,14 @@ function RawToggle({ text }: { text: string | undefined }) {
   if (!text || !text.trim().startsWith("{")) return null;
   return (
     <details className="mt-1">
-      <summary className="cursor-pointer text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">raw data</summary>
+      <summary className="block cursor-pointer outline-none">
+        <div className="flex items-center gap-2 py-1">
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">raw data</span>
+          <span className="con-disclosure-label flex items-center gap-1.5 ml-auto">
+            <span className="con-disclosure-icon" />
+          </span>
+        </div>
+      </summary>
       <pre className="con-mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-control bg-[color:var(--con-surface-2)] p-2 text-[length:var(--con-fs-2xs)] leading-relaxed text-[color:var(--con-muted)]">
         {text}
       </pre>
@@ -204,17 +211,22 @@ function FeedGroupCard({ g, multiAccount }: { g: UnifiedActivityGroup; multiAcco
   const bodyText = g.fullText && g.fullText !== g.detail && !g.fullText.trim().startsWith("{") ? g.fullText : null;
   return (
     <details className="con-card con-disclosure px-4">
-      <summary>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-semibold text-[color:var(--con-fg)]">{g.title}</span>
-          <span className="block truncate text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
-            {g.detail}
+      <summary className="block cursor-pointer outline-none">
+        <div className="flex items-center gap-3 py-3">
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-semibold text-[color:var(--con-fg)]">{g.title}</span>
+            <span className="block truncate text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+              {g.detail}
+            </span>
           </span>
-        </span>
-        {g.status && <Chip tone={statusTone(g.status)}>{feedStatusLabel(g.status)}</Chip>}
-        <span className="text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
-          <Ago iso={g.updatedAt} />
-        </span>
+          {g.status && <Chip tone={statusTone(g.status)}>{feedStatusLabel(g.status)}</Chip>}
+          <span className="text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+            <Ago iso={g.updatedAt} />
+          </span>
+          <span className="con-disclosure-label flex items-center gap-1.5">
+            <span className="con-disclosure-icon" />
+          </span>
+        </div>
       </summary>
       <div className="border-t border-[color:var(--con-line)] py-2">
         {bodyText && <p className="mb-2 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">{bodyText}</p>}
@@ -257,14 +269,19 @@ function FeedGroupCard({ g, multiAccount }: { g: UnifiedActivityGroup; multiAcco
 function SystemBucket({ groups }: { groups: UnifiedActivityGroup[] }) {
   return (
     <details className="con-card con-disclosure px-4">
-      <summary>
-        <span className="min-w-0 flex-1">
-          <span className="block font-semibold text-[color:var(--con-fg)]">System</span>
-          <span className="block truncate text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
-            {groups.length} background event{groups.length === 1 ? "" : "s"} — data refreshes and housekeeping, no
-            account decisions
+      <summary className="block cursor-pointer outline-none">
+        <div className="flex items-center gap-3 py-3">
+          <span className="min-w-0 flex-1">
+            <span className="block font-semibold text-[color:var(--con-fg)]">System</span>
+            <span className="block truncate text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+              {groups.length} background event{groups.length === 1 ? "" : "s"} — data refreshes and housekeeping, no
+              account decisions
+            </span>
           </span>
-        </span>
+          <span className="con-disclosure-label flex items-center gap-1.5 ml-auto">
+            <span className="con-disclosure-icon" />
+          </span>
+        </div>
       </summary>
       <ul className="flex flex-col gap-1.5 border-t border-[color:var(--con-line)] py-2">
         {groups.map((g) => (
@@ -316,28 +333,33 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
         const proposals = byRun.get(run.id) ?? [];
         return (
           <details key={run.id} className="con-card con-disclosure px-4">
-            <summary>
-              <span className="min-w-0 flex-1">
-                <span className="block font-semibold text-[color:var(--con-fg)]">
-                  Run · <Ago iso={run.startedAt} /> · {runDuration(run)}
+            <summary className="block cursor-pointer outline-none">
+              <div className="flex items-center gap-3 py-3">
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold text-[color:var(--con-fg)]">
+                    Run · <Ago iso={run.startedAt} /> · {runDuration(run)}
+                  </span>
+                  <span className="con-num block text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+                    {run.proposedCount} proposed · {run.placedCount} placed · {run.paperCount > 0 ? `${run.paperCount} paper · ` : ""}{run.blockedCount} blocked
+                  </span>
                 </span>
-                <span className="con-num block text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
-                  {run.proposedCount} proposed · {run.placedCount} placed · {run.paperCount > 0 ? `${run.paperCount} paper · ` : ""}{run.blockedCount} blocked
+                <Chip
+                  tone={
+                    run.status === "failed"
+                      ? "neg"
+                      : run.status === "running"
+                        ? "accent"
+                        : run.status === "skipped"
+                          ? "warn"
+                          : "pos"
+                  }
+                >
+                  {feedStatusLabel(run.status)}
+                </Chip>
+                <span className="con-disclosure-label flex items-center gap-1.5">
+                  <span className="con-disclosure-icon" />
                 </span>
-              </span>
-              <Chip
-                tone={
-                  run.status === "failed"
-                    ? "neg"
-                    : run.status === "running"
-                      ? "accent"
-                      : run.status === "skipped"
-                        ? "warn"
-                        : "pos"
-                }
-              >
-                {feedStatusLabel(run.status)}
-              </Chip>
+              </div>
             </summary>
             <div className="border-t border-[color:var(--con-line)] py-2">
               {run.summary && <p className="mb-2 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">{run.summary}</p>}

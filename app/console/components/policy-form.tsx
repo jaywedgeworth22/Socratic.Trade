@@ -419,7 +419,14 @@ export function PolicySaveBar({
 export function AdvancedGroup({ title, children, defaultOpen }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
   return (
     <details className="con-disclosure border-t border-[color:var(--con-line)]" open={defaultOpen}>
-      <summary>{title}</summary>
+      <summary className="block cursor-pointer outline-none">
+        <div className="flex items-center gap-3 py-3">
+          <span className="font-semibold text-[color:var(--con-fg)]">{title}</span>
+          <span className="con-disclosure-label flex items-center gap-1.5 ml-auto">
+            <span className="con-disclosure-icon" />
+          </span>
+        </div>
+      </summary>
       <div className="pb-3">{children}</div>
     </details>
   );
