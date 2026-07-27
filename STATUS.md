@@ -1,5 +1,13 @@
 # Socratic Trade Status
 
+## 2026-07-27 — Open-PR drain to production (CURSOR)
+
+Merged to `main` (auto-deploy): #2229 (eslint-config-next), #2231 (hoard), #2232 (dormant-features).
+Enrichment cascade is on **#2230** (supersedes closed #2224) with auto-merge armed; verify-hosted
+in progress on socratic-ci queue. #2234 (CONGRESS_TRADE_TOKEN SSE) also open + auto-merge.
+Duplicate closed PRs #2233/#2235 cancelled from CI queue.
+
+
 ## 2026-07-26 — Free-first enrichment cascade + coverage report (CURSOR)
 
 Optimized the market-data cascade for free/keyless + RapidAPI sources and added
