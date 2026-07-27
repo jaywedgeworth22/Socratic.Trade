@@ -108,6 +108,9 @@ function makeFetchStub() {
         { status: 200, headers: { "content-type": "application/json" } }
       );
     }
+    if (href.includes("sec.gov/files/company_tickers.json")) {
+      return new Response(JSON.stringify({ "0": { "ticker": "AAPL", "title": "Apple Inc.", "cik_str": 320193 }, "1": { "ticker": "MSFT", "title": "Microsoft Corp", "cik_str": 789019 } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     return new Response("not found", { status: 404 });
   };
 }
