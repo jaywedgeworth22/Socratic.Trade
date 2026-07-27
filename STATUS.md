@@ -18,6 +18,17 @@ owner-visible coverage reporting:
   (delisted) — stop asking owner to open them. yahoo-finance15 + mboum already work.
 Branch `cursor/free-cascade-coverage-0aef`. Rollout:
 `docs/rollouts/2026-07-26-free-cascade-coverage.md`.
+## 2026-07-27 — Dormant features readiness (CURSOR)
+
+Prepare remaining default-off capabilities for safe enablement (not blind flag flips):
+- `src/lib/dormant-features.ts` + admin RAG coverage `dormantFeatures` ready/blocked checklist.
+- Restore accurate `LANDING_PAGE_ENABLED` contract (unset/empty = ON; explicit off → 404 marketing pages).
+- CSP report-only path: default policy includes `report-uri /api/csp-report`; public collector route.
+- `VECTOR_EMBED_CLEAN_TEXT` stamps `embed_rev=2` when on (vs 1) so mixed embedding populations stay detectable.
+- Rewrote `docs/FEATURE-ENABLEMENT-BACKLOG.md` into Ready / Keep-off / Live tables.
+
+Branch: `cursor/dormant-features-impl-1c6c`.
+Rollout: `docs/rollouts/2026-07-27-dormant-features-readiness.md`.
 
 ## 2026-07-26 — PR merge drain + Actions runner fixes (GROK)
 
