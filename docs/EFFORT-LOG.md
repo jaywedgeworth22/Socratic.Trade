@@ -61,7 +61,7 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
-- **[Socratic.Trade][CURSOR] Free-first enrichment cascade + coverage report — In Progress 2026-07-26.** Optimize keyless/RapidAPI cascade; coverage admin/ops; AV RapidAPI NEWS; ROIC; nasdaq-quote; FilingAPI.dev; SEC XBRL default ON; RapidAPI yh-finance + real-time-finance-data + seeking-alpha wired (confirm SA/yh Subscribe Active). Branch `cursor/free-cascade-coverage-0aef`.
+- **[Socratic.Trade][CURSOR] Free-first enrichment cascade + coverage report — Completed 2026-07-27.** Merged #2230 (`c93f1988`) to main; auto-deployed (prod health sha matches). FilingAPI/SEC XBRL default ON/free-first/coverage admin. Superseded closed #2224.
 
 - **[Socratic.Trade][OWNER REMINDER][GROK 2026-07-22] Enable default-off RAG / retrieval features after #1892 lands — PLANNED / UNASSIGNED.** **#1892 MERGED 2026-07-23** — enablement still gated on re-embed proof. Order: telemetry → eval → `RAG_CORPUS_WIDE_LEXICAL` → adaptive rerank → parent expansion → multi-query/HyDE. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`.
 - **[Fleet][OWNER REMINDER][GROK 2026-07-22] Inventory + enable forgotten dormant features — PLANNED / UNASSIGNED.** Default-off flags, key-gated providers, rights dual-gates, policy toggles, cross-app holds. Living list: `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Agents must append when landing new dormant switches.

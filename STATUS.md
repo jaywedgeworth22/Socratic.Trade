@@ -1,5 +1,11 @@
 # Socratic Trade Status
 
+## 2026-07-27 — PR drain to production (CURSOR) — DONE
+
+Merged + auto-deployed: #2229, #2231, #2232, **#2230** (free-first enrichment cascade), #2234.
+Prod `/api/health` release sha includes enrichment (`c93f1988`). #2224 was closed and superseded by #2230.
+
+
 ## 2026-07-27 — Open-PR drain to production (CURSOR)
 
 Merged to `main` (auto-deploy): #2229 (eslint-config-next), #2231 (hoard), #2232 (dormant-features).
