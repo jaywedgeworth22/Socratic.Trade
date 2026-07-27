@@ -1,5 +1,11 @@
 # Active Implementation Plan
 
+> **2026-07-26 — Free-first enrichment cascade + coverage report (CURSOR).** Prefer
+> free/keyless + RapidAPI failover before paid native keys; coverage Admin/ops. Follow-up:
+> FilingAPI.dev, SEC XBRL default ON, RapidAPI yh-finance / real-time-finance-data /
+> seeking-alpha (pricing-page Subscribe links in rollout). Branch
+> `cursor/free-cascade-coverage-0aef`. Rollout:
+> `docs/rollouts/2026-07-26-free-cascade-coverage.md`.
 > **2026-07-27 — Dormant features readiness (CURSOR).** Substrate so remaining default-off
 > capabilities can be enabled safely: `dormantFeatures` checklist on `/api/admin/rag-coverage`,
 > `LANDING_PAGE_ENABLED` unset=ON with explicit off-switch, CSP report-uri collector, and

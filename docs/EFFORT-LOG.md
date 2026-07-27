@@ -61,6 +61,10 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
+- **[Socratic.Trade][CURSOR] Free-first enrichment cascade + coverage report — In Progress 2026-07-26.** Optimize keyless/RapidAPI cascade; coverage admin/ops; AV RapidAPI NEWS; ROIC; nasdaq-quote; FilingAPI.dev; SEC XBRL default ON; RapidAPI yh-finance + real-time-finance-data + seeking-alpha wired (confirm SA/yh Subscribe Active). Branch `cursor/free-cascade-coverage-0aef`.
+
+- **[Socratic.Trade][OWNER REMINDER][GROK 2026-07-22] Enable default-off RAG / retrieval features after #1892 lands — PLANNED / UNASSIGNED.** **#1892 MERGED 2026-07-23** — enablement still gated on re-embed proof. Order: telemetry → eval → `RAG_CORPUS_WIDE_LEXICAL` → adaptive rerank → parent expansion → multi-query/HyDE. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`.
+- **[Fleet][OWNER REMINDER][GROK 2026-07-22] Inventory + enable forgotten dormant features — PLANNED / UNASSIGNED.** Default-off flags, key-gated providers, rights dual-gates, policy toggles, cross-app holds. Living list: `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Agents must append when landing new dormant switches.
 - **[Socratic.Trade][OWNER REMINDER][GROK 2026-07-22] Enable default-off RAG / retrieval features after #1892 lands — PLANNED / UNASSIGNED.** **#1892 MERGED 2026-07-23**; Priority A safe flags code-default ON 2026-07-24. Residual: MULTIQUERY/HyDE cost canaries, `VECTOR_ASOF_STRICT` coverage proof, clean-text reindex, legacy purge hold. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`.
 - **[Fleet][OWNER REMINDER][GROK 2026-07-22] Inventory + enable forgotten dormant features — residual PLANNED / UNASSIGNED.** Living list + ready-vs-blocked: `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Runtime checklist: `GET /api/admin/rag-coverage` → `dormantFeatures`. Rights/cost gates stay owner-gated; ready items (CSP report-only, USAGE_BUDGET_ENFORCE, clean-text rev-safe, disclosure embed, candidate-pool canary) await Infisical flip.
 
