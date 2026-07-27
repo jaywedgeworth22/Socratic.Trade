@@ -523,7 +523,7 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     console.error(
       `[congress-share] import error: ${error} ` +
         `(refs=${sent.refs} spx=${sent.spx} prices=${sent.prices} closes=${sent.closes} ` +
-        `insider=${sent.insider} shortVolume=${sent.shortVolume} fundamentals=${sent.fundamentals} analyst=${sent.analyst} trades=${sent.trades})`
+        `insider=${sent.insider} shortVolume=${sent.shortVolume} fundamentals=${sent.fundamentals} analyst=${sent.analyst})`
     );
     return { ok: false, error, sent };
   } finally {
