@@ -583,11 +583,26 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   // failure or sparse history simply leaves performance.benchmark undefined (UI shows "—").
   if (performance) {
     const curve = scorecardSource === "live" ? performance.liveEquityCurve : performance.paperEquityCurve;
+    // Tip the curve with the live portfolio so "all time" includes now (snapshots only land on
+    // strategy runs; without this tip a quiet cash account can look like stale mid-history alpha).
+    const tippedCurve =
+      displayPortfolio && Number.isFinite(displayPortfolio.totalMarketValue) && displayPortfolio.totalMarketValue > 0
+        ? [
+            ...curve,
+            {
+              timestamp: new Date().toISOString(),
+              equity: displayPortfolio.totalMarketValue,
+              source: scorecardSource,
+              cash: displayPortfolio.cash,
+              positionsValue: displayPortfolio.equityMarketValue
+            }
+          ]
+        : curve;
     // Same-source fills let the benchmark infer deposits/withdrawals (cash delta minus trade
     // cash) so the account return line is time-weighted instead of counting transfers as P&L.
     const benchmarkFills = scorecardSource === "live" ? liveFills : paperFills;
     const benchmark = await withDeadline(
-      computeSpyBenchmark(curve, userId, Date.now(), benchmarkFills).catch(() => null),
+      computeSpyBenchmark(tippedCurve, userId, Date.now(), benchmarkFills).catch(() => null),
       4000,
       () => null,
       "computeSpyBenchmark",

@@ -198,6 +198,7 @@ export interface CongressShareResult {
     shortVolume: number;
     fundamentals: number;
     analyst: number;
+    trades: number;
   };
 }
 
@@ -480,7 +481,15 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
   };
   const token = congressTradeToken();
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
-  const total = sent.refs + sent.spx + sent.prices + sent.insider + sent.shortVolume + sent.fundamentals + sent.analyst;
+  const total =
+    sent.refs +
+    sent.spx +
+    sent.prices +
+    sent.insider +
+    sent.shortVolume +
+    sent.fundamentals +
+    sent.analyst +
+    sent.trades;
   if (total === 0) {
     // Distinguish a genuinely-empty input (nothing to send → legitimate skip) from a payload whose
     // rows were ALL rejected by the shared schema. The latter is a real failure: counting it as a
@@ -519,7 +528,7 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     console.error(
       `[congress-share] import error: ${error} ` +
         `(refs=${sent.refs} spx=${sent.spx} prices=${sent.prices} closes=${sent.closes} ` +
-        `insider=${sent.insider} shortVolume=${sent.shortVolume} fundamentals=${sent.fundamentals} analyst=${sent.analyst})`
+        `insider=${sent.insider} shortVolume=${sent.shortVolume} fundamentals=${sent.fundamentals} analyst=${sent.analyst} trades=${sent.trades})`
     );
     return { ok: false, error, sent };
   } finally {

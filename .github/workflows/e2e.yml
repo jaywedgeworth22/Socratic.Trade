@@ -137,6 +137,25 @@ jobs:
         if: needs.classify.outputs.docs-only != 'true'
         with:
           node-version: 24
+      # Long-lived socratic-ci workspaces have lost the tree between checkout and
+      # npm install when a concurrent job's clean step overlapped (ENOENT package.json
+      # on the 2026-07-26 scheduled smoke). Same re-checkout boundary as ci.yml
+      # verify-hosted: scrub, re-checkout, then install.
+      - name: Disable lingering sparse-checkout
+        if: needs.classify.outputs.docs-only != 'true'
+        run: rm -rf ./* ./.git || true
+      - name: Refresh checkout before package operations
+        if: needs.classify.outputs.docs-only != 'true'
+        uses: actions/checkout@v4
+      - name: Assert package.json present
+        if: needs.classify.outputs.docs-only != 'true'
+        run: |
+          set -euo pipefail
+          if [ ! -f package.json ]; then
+            echo "::error::package.json missing after refresh checkout — refusing to run npm install on an empty workspace."
+            ls -la
+            exit 1
+          fi
       - name: Install dependencies
         if: needs.classify.outputs.docs-only != 'true'
         run: npm install --no-audit --no-fund

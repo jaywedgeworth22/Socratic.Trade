@@ -118,7 +118,9 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "deepseek-r1-latest": [0.55, 2.19],
   "llama-70b-latest": [0.72, 0.72],
   "deepseek-chat": [0.14, 0.28],
-  "deepseek-reasoner": [0.14, 0.28]
+  "deepseek-reasoner": [0.14, 0.28],
+  "kimi-latest": [0.3, 1.2],
+  "kimi-k3": [0.3, 1.2]
 };
 
 /** Conservative default: $15/1M tokens total ($7.50 input, $7.50 output). Env-configurable. */

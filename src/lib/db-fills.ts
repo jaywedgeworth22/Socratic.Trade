@@ -219,12 +219,26 @@ export function listRecentlyHeldSymbolValuesAllUsers(maxAgeDays = 7, now: number
 }
 
 export function listPortfolioSnapshots(accountNumber: string, source?: FillSource, limit = 100, userId: string = "local"): PortfolioSnapshot[] {
+  // Newest `limit` rows, returned in chronological order. ASC+LIMIT previously kept the OLDEST
+  // slice and dropped recent equity once an account exceeded the cap — poisoning vs-SPY.
   const rows = source
     ? (getDb()
-        .prepare("SELECT * FROM portfolio_snapshots WHERE account_number = ? AND source = ? AND user_id = ? ORDER BY created_at ASC LIMIT ?")
+        .prepare(
+          `SELECT * FROM (
+             SELECT * FROM portfolio_snapshots
+             WHERE account_number = ? AND source = ? AND user_id = ?
+             ORDER BY created_at DESC LIMIT ?
+           ) newest ORDER BY created_at ASC`
+        )
         .all(accountNumber, source, userId, limit) as RawPortfolioSnapshot[])
     : (getDb()
-        .prepare("SELECT * FROM portfolio_snapshots WHERE account_number = ? AND user_id = ? ORDER BY created_at ASC LIMIT ?")
+        .prepare(
+          `SELECT * FROM (
+             SELECT * FROM portfolio_snapshots
+             WHERE account_number = ? AND user_id = ?
+             ORDER BY created_at DESC LIMIT ?
+           ) newest ORDER BY created_at ASC`
+        )
         .all(accountNumber, userId, limit) as RawPortfolioSnapshot[]);
   return rows.map(toPortfolioSnapshot);
 }

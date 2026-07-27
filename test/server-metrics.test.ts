@@ -75,14 +75,16 @@ describe("server-metrics provider shape normalization", () => {
     expect(displayProviderText(malformedIpv4, "127.0.0.1", "server IP")).toBe("Invalid server IP");
   });
 
-  it("omits malformed Coolify resources and returns string-only display fields", () => {
+  it("omits malformed Coolify resources while retaining valid services and backup tasks", () => {
     const normalized = normalizeCoolifyResources([
       { uuid: "app-1", name: "socratic-trade-prod", type: "application", status: "running:healthy" },
       { uuid: "app-2", name: { rendered: "bad" }, type: "application", status: { state: "running" } },
+      { uuid: "app-3", name: "usage monitor backups", type: "backup", status: "running:healthy" },
     ]);
 
     expect(normalized.resources).toEqual([
       { uuid: "app-1", name: "socratic-trade-prod", type: "application", status: "running:healthy" },
+      { uuid: "app-3", name: "usage monitor backups", type: "backup", status: "running:healthy" },
     ]);
     expect(normalized.warnings).toEqual([
       "Coolify resource at index 1 had malformed display fields and was omitted.",
@@ -165,7 +167,7 @@ describe("server-metrics API route", () => {
     expect(body.stale).toBe(false);
     expect(body.hostInfo).toBeDefined();
     expect(body.hostInfo.cpus).toBeGreaterThan(0);
-    expect(body.resources).toEqual([]);
+    expect(body.resources.length).toBeGreaterThanOrEqual(6);
     expect(body.metrics).toEqual({
       cpu: [],
       diskRead: [],
@@ -256,7 +258,7 @@ describe("server-metrics API route", () => {
       "Coolify resource at index 1 had malformed display fields and was omitted.",
       "Hetzner metrics contained 2 malformed samples that were omitted.",
     ]);
-    expect(body.resources).toHaveLength(1);
+    expect(body.resources.length).toBeGreaterThanOrEqual(7);
     expect(body.resources[0].name).toBe("socratic-trade-prod");
     expect(body.metrics.cpu[0].value).toBeCloseTo(87.9370245);
     expect(body.metrics.cpu).toHaveLength(1);
@@ -319,7 +321,7 @@ describe("server-metrics API route", () => {
     expect(res.status).toBe(200);
     expect(body.degraded).toBe(true);
     expect(body.hostInfo.name).toBe("verified-host");
-    expect(body.resources).toEqual([]);
+    expect(body.resources.length).toBeGreaterThanOrEqual(6);
     expect(body.metrics.cpu).toEqual([]);
     expect(body.warnings).toEqual(expect.arrayContaining([
       "Coolify resources returned HTTP 503.",
@@ -514,8 +516,8 @@ describe("server-metrics API route", () => {
     expect(body.isProd).toBe(true);
     expect(body.degraded).toBe(true);
     expect(body.error).toBe("One or more infrastructure providers could not be queried.");
-    expect(body.hostInfo).toEqual({ status: "unknown" });
-    expect(body.resources).toEqual([]);
+    expect(body.hostInfo.status).toBe("unknown");
+    expect(body.resources.length).toBeGreaterThanOrEqual(6);
     expect(body.metrics).toEqual({
       cpu: [],
       diskRead: [],

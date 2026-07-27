@@ -2302,6 +2302,10 @@ export interface EquityCurvePoint {
    *  Used to infer external deposits/withdrawals for time-weighted return math; absent on
    *  synthetic curves so consumers must degrade honestly rather than assume zero flows. */
   cash?: number;
+  /** Mark-to-market value of open positions at the snapshot. Used with `cash` to tell a
+   *  cash→stock conversion (not a withdrawal) apart from an external transfer when fills are
+   *  missing from the ledger. */
+  positionsValue?: number;
 }
 
 export interface RunAttribution {
@@ -2324,17 +2328,19 @@ export interface BenchmarkSeriesPoint {
 /**
  * SPY-benchmark equity-curve comparison: the account's equity curve and a SPY buy-and-hold curve,
  * both normalized to 100 at the first common date, plus the window's total returns. The honest
- * "are we beating the market" readout. Computed on the fly from portfolio snapshots + SPY daily
- * closes; null/absent when there isn't enough history or SPY data is unavailable (degrade to "—").
+ * "are we beating the market" readout. Read as: if excess is +5% and SPY is +8%, the account
+ * returned +13%. Computed on the fly from portfolio snapshots + SPY daily closes; null/absent when
+ * there isn't enough history or SPY data is unavailable (degrade to "—").
  */
 export interface BenchmarkComparison {
   equityIndex: BenchmarkSeriesPoint[];
   benchmarkIndex: BenchmarkSeriesPoint[];
-  /** Account total return over the window (%, base→last). */
+  /** Account total return over the window (%, base→last). Time-weighted when cash flows detected. */
   accountReturnPct: number;
   /** Benchmark (SPY) total return over the same window (%). */
   benchmarkReturnPct: number;
-  /** accountReturnPct − benchmarkReturnPct, in percentage points (positive = outperformance). */
+  /** accountReturnPct − benchmarkReturnPct, in percentage points (positive = outperformance).
+   *  Same-dollars-vs-SPY alpha: deposits/withdrawals are neutralized on the account side. */
   excessReturnPct: number;
   startDate: string;
   endDate: string;

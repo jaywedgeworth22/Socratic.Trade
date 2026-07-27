@@ -1,5 +1,8 @@
 # Active Implementation Plan
 
+> **2026-07-25 — Fix vs-SPY benchmark (CURSOR).** Correct cash-flow-aware TWR vs SPY so all-cash
+> deposits/resets are not alpha and Home shows You / SPY decomposition. Branch
+> `cursor/fix-vs-spy-benchmark-9833`. Rollout: `docs/rollouts/2026-07-25-fix-vs-spy-benchmark.md`.
 > **2026-07-22 — PR #1792 typecheck repair (CODEX).** The provider-generic health-lane merge
 > resolution is now aligned with the current durable dispatch API in `28a09b84`; run hosted
 > verification, let auto-merge land it, and confirm the exact post-merge deployment receipt.

@@ -39,7 +39,7 @@ import { useConsoleData } from "./lib/useConsoleData";
 import { RunOnceButton } from "./components/chrome";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
 import { SymbolButton } from "./ui/symbol-drilldown";
-import { isNotPlacedStatus, sideVerb } from "./lib/action-verbs";
+import { isExecutedStatus, isNotPlacedStatus, sideVerb } from "./lib/action-verbs";
 import { approveProposal, LiveConfirmationRequiredError } from "./lib/api";
 import { Sheet } from "./ui/sheet";
 import { useToast } from "./ui/toast";
@@ -89,9 +89,6 @@ export default function ConsoleHomePage() {
         </span>
         <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"} title={state.detail}>
           {state.label}
-        </Chip>
-        <Chip tone={reality.tone} title={reality.clarification}>
-          {reality.word} · {reality.phrase}
         </Chip>
         {primaryProposal?.redTeamVerdict?.available && (
           <Chip tone={primaryProposal.redTeamVerdict.rejected ? "neg" : "pos"}>
@@ -867,21 +864,32 @@ function ProposalRow({
   const isPendingOrFailed = row.status === "pending" || row.status === "failed" || row.status === "blocked";
   const evidenceRows = deriveEvidenceRows(snapshot, latest, decision);
 
+  let combinedStatus = "";
+  if (isExecutedStatus(row.status)) {
+    combinedStatus = row.verb;
+  } else {
+    let statusText = decisionStatusLabel(row.status);
+    if (statusText === "Placement pending" || statusText === "Proposed" || statusText === "Planned") {
+      statusText = "Pending";
+    }
+    const sideNoun = row.verb === "Sell" ? "Sale" : row.verb;
+    combinedStatus = `${sideNoun} ${statusText}`;
+  }
+  const chipTone = row.status === "blocked" || row.status === "failed" || row.status === "not_placed" ? "warn" : row.status === "pending" ? "accent" : "pos";
+
   return (
     <>
       <div 
-        className="con-decision-row cursor-pointer hover:bg-[color:var(--con-hover)] transition-colors rounded-md p-2 -mx-2 flex flex-wrap items-center gap-2"
+        className="cursor-pointer hover:bg-[color:var(--con-surface-3)] transition-colors rounded-md p-2.5 flex items-center justify-between gap-2 border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)]"
         onClick={() => setOpen(true)}
       >
-        {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} />}
-        <span>{row.verb}</span>
-        <Chip tone={row.status === "blocked" || row.status === "failed" || row.status === "not_placed" ? "warn" : row.status === "pending" ? "accent" : "pos"}>
-          {decisionStatusLabel(row.status)}
-        </Chip>
-        {isNotPlacedStatus(row.status) && (
-          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">· not placed</span>
-        )}
-        <div className="ml-auto text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] flex items-center gap-1">
+        <div className="flex items-center gap-3">
+          {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} />}
+          <Chip tone={chipTone}>
+            {combinedStatus}
+          </Chip>
+        </div>
+        <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] flex items-center gap-1 whitespace-nowrap">
           View details <ArrowRight size={12} />
         </div>
       </div>

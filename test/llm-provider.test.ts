@@ -33,7 +33,7 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.provider).toBe("openrouter");
     expect(endpoint.url).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(endpoint.key).toBe("sk-or-test-key");
-    expect(endpoint.model).toBe("~anthropic/claude-sonnet-latest");
+    expect(endpoint.model).toBe("anthropic/claude-sonnet-latest");
     expect(endpoint.transport).toBe("chat-completions");
   });
 
@@ -54,6 +54,16 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.url).toBe("https://api.x.ai/v1/chat/completions");
     expect(endpoint.key).toBe("xai-test-key");
     expect(endpoint.model).toBe("grok-4.5");
+    expect(endpoint.transport).toBe("chat-completions");
+  });
+
+  it("falls back to native Moonshot endpoint when user has a Moonshot key but no OpenRouter key", () => {
+    setApiKey("test-user-moonshot", "moonshot", "sk-moonshot-test-key");
+    const endpoint = resolveLlmEndpoint({ llmModel: "kimi-latest" }, "test-user-moonshot");
+    expect(endpoint.provider).toBe("moonshot");
+    expect(endpoint.url).toBe("https://api.moonshot.cn/v1/chat/completions");
+    expect(endpoint.key).toBe("sk-moonshot-test-key");
+    expect(endpoint.model).toBe("kimi-latest");
     expect(endpoint.transport).toBe("chat-completions");
   });
 

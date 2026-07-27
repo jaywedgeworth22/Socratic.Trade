@@ -28,23 +28,17 @@ import { useToast } from "../ui/toast";
 import { destinationLabel } from "../components/nav";
 
 const SIDE_OPTIONS: Array<{ value: ApprovalSideFilter; label: string }> = [
-  { value: "all", label: "All ideas" },
-  { value: "openings", label: "Openings" },
-  { value: "exits", label: "Exits" }
-];
-
-const REALITY_OPTIONS: Array<{ value: ApprovalRealityFilter; label: string }> = [
-  { value: "all", label: "Paper + live" },
-  { value: "paper", label: "Paper only" },
-  { value: "live", label: "Live only" }
+  { value: "all", label: "all ideas" },
+  { value: "openings", label: "openings" },
+  { value: "exits", label: "exits" }
 ];
 
 const SORT_OPTIONS: Array<{ value: ApprovalSort; label: string }> = [
-  { value: "newest", label: "Newest first" },
-  { value: "confidence", label: "Highest confidence" },
-  { value: "notional", label: "Largest notional" },
-  { value: "drift", label: "Largest drift" },
-  { value: "oldest", label: "Oldest first" }
+  { value: "newest", label: "newest first" },
+  { value: "confidence", label: "highest confidence" },
+  { value: "notional", label: "largest notional" },
+  { value: "drift", label: "largest drift" },
+  { value: "oldest", label: "oldest first" }
 ];
 
 /** How long a "Reject N?" arm stays live before it silently disarms — a
@@ -344,7 +338,7 @@ export default function ApprovalsPage() {
           }
         >
           <div className="flex flex-col gap-3">
-            <div className="grid gap-2 sm:grid-cols-4">
+            <div className="grid gap-2 grid-cols-2">
               <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
                 <div className="con-card-title">Visible</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-lg)] font-semibold">{summary.count}</div>
@@ -363,34 +357,29 @@ export default function ApprovalsPage() {
               </div>
             </div>
 
-            <div className="grid gap-2 md:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,0.9fr))]">
+            <div className="flex flex-col gap-2 md:grid md:grid-cols-[2fr_1fr_1fr]">
               <TextInput
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search symbol, thesis, regime, rationale, or red-team note"
                 aria-label="Search pending approvals"
               />
-              <Select value={side} onChange={(event) => setSide(event.target.value as ApprovalSideFilter)} aria-label="Filter by side">
-                {SIDE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-              <Select value={reality} onChange={(event) => setReality(event.target.value as ApprovalRealityFilter)} aria-label="Filter by reality">
-                {REALITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-              <Select value={sort} onChange={(event) => setSort(event.target.value as ApprovalSort)} aria-label="Sort pending approvals">
-                {SORT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
+              <div className="grid grid-cols-2 gap-2 md:col-span-2 md:grid-cols-2">
+                <Select value={side} onChange={(event) => setSide(event.target.value as ApprovalSideFilter)} aria-label="Filter by side">
+                  {SIDE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+                <Select value={sort} onChange={(event) => setSort(event.target.value as ApprovalSort)} aria-label="Sort pending approvals">
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -401,7 +390,7 @@ export default function ApprovalsPage() {
                   onChange={toggleVisible}
                   className="h-4 w-4 rounded border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]"
                 />
-                Select visible
+                select visible
               </label>
               <Chip tone="muted">{selection.selectedCount} selected</Chip>
               {selection.liveCount > 0 && (
@@ -426,7 +415,7 @@ export default function ApprovalsPage() {
                         : "Approves selected proposals one by one through the existing server path."
                   }
                 >
-                  {bulkBusy === "approve" ? "Approving..." : `Approve selected (${selection.approveCount})`}
+                  {bulkBusy === "approve" ? "approving..." : `approve selected (${selection.approveCount})`}
                 </Btn>
                 <Btn
                   variant="dangerOutline"
@@ -441,7 +430,7 @@ export default function ApprovalsPage() {
                         : "Rejects each selected proposal through the existing server path. Click once to arm, then again to confirm."
                   }
                 >
-                  {bulkBusy === "reject" ? "Rejecting..." : rejectArmedEffective ? `Reject ${selection.rejectCount}? Confirm` : `Reject selected (${selection.rejectCount})`}
+                  {bulkBusy === "reject" ? "rejecting..." : rejectArmedEffective ? `reject ${selection.rejectCount}? confirm` : `reject selected (${selection.rejectCount})`}
                 </Btn>
               </div>
             </div>
