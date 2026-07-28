@@ -1,5 +1,12 @@
 # Socratic Trade Status
 
+## 2026-07-28 — Data Cascade Diagnostic & Provider Health Suppression (AG) — DONE
+
+Investigated provider failures and data points in data cascade across July 27–28:
+- Diagnosed FMP 403 root cause: `FMP_API_KEY` in environment returned `403 Account suspended`. All scalar data points successfully fell back to Yahoo Finance / keyless providers.
+- Updated `RoicAiEnrichmentProvider` and `TiingoEnrichmentProvider` in `src/lib/data-providers.ts` with `suppressHealthStatuses: [404, 429]` so expected non-fatal symbol misses or rate-limits don't dirty system health logs.
+- Documented findings in `docs/rollouts/2026-07-28-data-cascade-resilience-fix.md`.
+
 ## 2026-07-27 — PR drain to production (CURSOR) — DONE
 
 Merged + auto-deployed: #2229, #2231, #2232, **#2230** (free-first enrichment cascade), #2234.
