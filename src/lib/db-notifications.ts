@@ -316,7 +316,8 @@ const ATTENTION_TYPES: readonly NotificationEventType[] = [
   "run_failed",
   "budget_alert",
   "provider_degraded",
-  "earningscalls_entitlement_blocked"
+  "earningscalls_entitlement_blocked",
+  "risk_advisory"
 ];
 
 /** Bulk-acknowledge every currently-unacknowledged row matching the given filter, scoped to the

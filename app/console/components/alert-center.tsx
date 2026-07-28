@@ -41,7 +41,8 @@ function alertTone(event: NotificationEvent): AlertCenterRow["tone"] {
     event.status === "failed" ||
     event.type === "budget_alert" ||
     event.type === "provider_degraded" ||
-    event.type === "earningscalls_entitlement_blocked"
+    event.type === "earningscalls_entitlement_blocked" ||
+    event.type === "risk_advisory"
   ) {
     return "warn";
   }
@@ -63,6 +64,7 @@ export function matchesFilter(event: NotificationEvent, filter: AlertCenterFilte
           event.type === "budget_alert" ||
           event.type === "provider_degraded" ||
           event.type === "earningscalls_entitlement_blocked" ||
+          event.type === "risk_advisory" ||
           event.status === "failed")
       );
     case "deliveries":

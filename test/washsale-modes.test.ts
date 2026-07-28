@@ -84,6 +84,9 @@ function policyWith(overrides: Partial<TradingPolicy> = {}): TradingPolicy {
     maxDailyNotional: 50_000,
     maxDailyPctOfNav: undefined,
     taxSettings: taxSettings(),
+    // Staleness gate pinned off (defaults to 120s since 2026-07-28): these wash-sale tests exercise
+    // the tax gates without fresh quote timestamps; tests about the gate itself override below.
+    maxQuoteAgeSec: 0,
     ...overrides
   };
 }

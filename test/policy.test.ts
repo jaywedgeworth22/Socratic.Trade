@@ -39,7 +39,11 @@ const enabledPolicy: TradingPolicy = {
   strategyAuthority: "decide",
   accountNumber: "A1",
   includedIndices: [],
-  additionalSymbols: ["AAPL", "TSLA"]
+  additionalSymbols: ["AAPL", "TSLA"],
+  // maxQuoteAgeSec defaulted to 120 on 2026-07-28 (guard enablement); these tests exercise OTHER
+  // gates without a marketScan in context, so pin the staleness gate off — a missing timestamp is
+  // treated as stale while the gate is on.
+  maxQuoteAgeSec: 0
 };
 
 const proposal: TradeProposal = {

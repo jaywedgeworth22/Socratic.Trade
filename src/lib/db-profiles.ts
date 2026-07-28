@@ -253,6 +253,10 @@ export function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
     scoringWeights: normalizeScoringWeights(policy.scoringWeights ?? DEFAULT_POLICY.scoringWeights),
     sectorCaps: policy.sectorCaps ?? DEFAULT_POLICY.sectorCaps,
     riskRules: { ...DEFAULT_POLICY.riskRules, ...(policy.riskRules ?? {}) },
+    // Deep-merge tuning like riskRules: a stored policy inherits NEW default tuning keys (e.g. the
+    // 2026-07-28 guard enablement) while any key it explicitly set still wins. Keep identical to
+    // the migrate-time copy in db.ts.
+    tuning: { ...DEFAULT_POLICY.tuning, ...(policy.tuning ?? {}) },
     notificationSettings: {
       ...DEFAULT_POLICY.notificationSettings,
       ...(policy.notificationSettings ?? {}),

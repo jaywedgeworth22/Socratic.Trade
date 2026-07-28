@@ -41,7 +41,11 @@ const portfolio: Portfolio = {
 function policy(extra: Partial<TradingPolicy> = {}): TradingPolicy {
   return {
     ...DEFAULT_POLICY, systemState: "active", accountNumber: "A1",
-    includedIndices: [], additionalSymbols: ["AAPL", "TSLA", "NVDA"], ...extra
+    includedIndices: [], additionalSymbols: ["AAPL", "TSLA", "NVDA"],
+    // Staleness gate pinned off (defaults to 120s since 2026-07-28): this file's scan() fixtures
+    // carry no asOf timestamps, and a missing timestamp blocks openings while the gate is on.
+    maxQuoteAgeSec: 0,
+    ...extra
   };
 }
 
