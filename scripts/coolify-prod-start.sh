@@ -74,20 +74,31 @@ install_from_tarball() {
 
 if [ -z "${COOLIFY_PROD_PHASE2:-}" ]; then
   mkdir -p "$BIN_DIR"
+  ARCH="$(uname -m)"
+  case "$ARCH" in
+    aarch64|arm64)
+      LITESTREAM_ARCH="arm64"
+      INFISICAL_ARCH="arm64"
+      ;;
+    *)
+      LITESTREAM_ARCH="x86_64"
+      INFISICAL_ARCH="amd64"
+      ;;
+  esac
   # Version-aware install: BIN_DIR lives on the persistent volume, so a plain
   # existence check would keep serving a stale cached binary forever after a
   # version change ("litestream version" prints the bare number, e.g. 0.5.12).
   installed_litestream="$("$BIN_DIR/litestream" version 2>/dev/null || true)"
   if [ "$installed_litestream" != "$LITESTREAM_VERSION" ]; then
-    log "installing litestream $LITESTREAM_VERSION (cached: ${installed_litestream:-none})"
+    log "installing litestream $LITESTREAM_VERSION ($LITESTREAM_ARCH) (cached: ${installed_litestream:-none})"
     install_from_tarball \
-      "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-${LITESTREAM_VERSION}-linux-x86_64.tar.gz" \
+      "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-${LITESTREAM_VERSION}-linux-${LITESTREAM_ARCH}.tar.gz" \
       litestream
   fi
   if [ ! -x "$BIN_DIR/infisical" ]; then
-    log "installing infisical CLI $INFISICAL_CLI_VERSION"
+    log "installing infisical CLI $INFISICAL_CLI_VERSION ($INFISICAL_ARCH)"
     install_from_tarball \
-      "https://github.com/Infisical/cli/releases/download/v${INFISICAL_CLI_VERSION}/cli_${INFISICAL_CLI_VERSION}_linux_amd64.tar.gz" \
+      "https://github.com/Infisical/cli/releases/download/v${INFISICAL_CLI_VERSION}/cli_${INFISICAL_CLI_VERSION}_linux_${INFISICAL_ARCH}.tar.gz" \
       infisical
   fi
   export PATH="$BIN_DIR:$PATH"
