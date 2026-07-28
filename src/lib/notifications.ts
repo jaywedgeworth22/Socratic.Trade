@@ -416,6 +416,15 @@ function directNotificationBody(input: { type: NotificationEventType; title: str
       const usage = used || limit ? `\nUsage: ${used ?? "unknown"}${unit}${limit ? ` of ${limit}${unit}` : ""}` : "";
       return `${provider} hit ${limitName} during ${operation}.${usage}${recommendation}`;
     }
+    case "risk_advisory": {
+      // Advisory guardrail breach (e.g. drawdown breaker in advisory mode): render the breach
+      // detail, not just the title. Nothing halted — the copy must keep that unambiguous.
+      const reason = payload.reason ? String(payload.reason) : input.title;
+      const dd = Number.isFinite(Number(payload.drawdownPct)) ? `\nDrawdown: ${Number(payload.drawdownPct).toFixed(2)}% from the equity high-water mark` : "";
+      const eq = Number.isFinite(Number(payload.equity)) ? `\nEquity: $${Number(payload.equity).toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "";
+      const hwm = Number.isFinite(Number(payload.highWaterMark)) ? `\nHigh-water mark: $${Number(payload.highWaterMark).toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "";
+      return `${reason}${dd}${eq}${hwm}\nAdvisory only — no state change; the agent is still in control.`;
+    }
     default:
       return input.title;
   }
@@ -621,6 +630,23 @@ function formatDiscordPayload(input: {
       }
       if (payload?.skipped !== undefined) {
         fields.push({ name: "Skipped", value: String(payload.skipped), inline: true });
+      }
+      break;
+    }
+    case "risk_advisory": {
+      color = 15105570; // Orange — advisory breach, NOT a halt (kill_switch stays red)
+      description = payload?.reason ?? "A risk guardrail threshold was breached (advisory — the agent is still in control).";
+      if (payload?.drawdownPct !== undefined) {
+        fields.push({ name: "Drawdown", value: `${Number(payload.drawdownPct).toFixed(2)}% from HWM`, inline: true });
+      }
+      if (payload?.equity !== undefined) {
+        fields.push({ name: "Equity", value: `$${Number(payload.equity).toLocaleString("en-US", { maximumFractionDigits: 2 })}`, inline: true });
+      }
+      if (payload?.highWaterMark !== undefined) {
+        fields.push({ name: "High-water mark", value: `$${Number(payload.highWaterMark).toLocaleString("en-US", { maximumFractionDigits: 2 })}`, inline: true });
+      }
+      if (payload?.runId) {
+        fields.push({ name: "Run ID", value: String(payload.runId), inline: false });
       }
       break;
     }

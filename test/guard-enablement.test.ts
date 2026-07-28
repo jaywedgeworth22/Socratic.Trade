@@ -155,4 +155,52 @@ describe("advisory drawdown-breaker notification (dedup per user/account/source/
     const drawdownAudits = listAudit(500).filter((e) => e.kind === "policy_violation_drawdown");
     expect(drawdownAudits.length).toBeGreaterThanOrEqual(2); // one receipt per breaching run
   }, 150_000);
+
+  it("delivers even when the stored enabledEvents list predates risk_advisory (force-inject regression)", async () => {
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
+    vi.stubGlobal("fetch", zeroProposalFetchStub());
+
+    const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey, listNotificationEvents } = await import("../src/lib/db");
+    const { recordAndEvaluateDrawdownBreaker } = await import("../src/lib/risk-breaker");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
+    const accountId = randomUUID();
+    upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Test Account", isActive: true });
+    setActiveConnectedAccount(accountId);
+
+    recordAndEvaluateDrawdownBreaker({
+      accountNumber: "TEST",
+      source: "paper",
+      equity: 250_000,
+      riskRules: { maxDrawdownPct: 20 },
+      userId: "local"
+    });
+
+    setPolicy({
+      ...DEFAULT_POLICY,
+      systemState: "active",
+      llmModel: "openai/gpt-4.1-mini",
+      includedIndices: [],
+      additionalSymbols: ["AAPL"],
+      strategyAuthority: "decide",
+      riskRules: { ...DEFAULT_POLICY.riskRules, maxDrawdownPct: 20 },
+      // Simulate an account whose stored notification preferences were saved BEFORE the
+      // risk_advisory event type existed: mergePolicy lets this explicit list win wholesale, so
+      // without the send-site force-inject the advisory is recorded as skipped ("Notification
+      // type is disabled.") and never reaches a push channel.
+      notificationSettings: { webhookUrl: "", enabledEvents: ["fill", "block"] }
+    });
+
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const result = await runStrategyOnce();
+    expect(result.status).toBe("completed");
+
+    const advisories = listNotificationEvents("local", 100).filter((e) => e.type === "risk_advisory");
+    expect(advisories).toHaveLength(1);
+    // The send was ATTEMPTED, not dropped by the enabledEvents filter. (Status may still be
+    // "skipped" in this channel-less test env with the no-channels-configured reason — that is a
+    // delivery outcome, not a filter drop.)
+    expect(advisories[0].error).not.toBe("Notification type is disabled.");
+  }, 150_000);
 });

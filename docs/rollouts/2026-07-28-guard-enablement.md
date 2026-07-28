@@ -128,6 +128,52 @@ Note: `npm test` runs serially (`maxWorkers: 1` in vitest.config.ts) and exceeds
 are the sum (877+963+940+991+634+953). The pre-existing
 `test/alternative-data.test.ts` `mockFetcher` type note did not appear (tsc clean).
 
+### Adversarial-verifier findings + fixes (second commit)
+
+- **F1 (HIGH) — `risk_advisory` would never deliver on push channels for existing accounts.**
+  Chain: `notifications.ts:146` drops types not in the stored `enabledEvents`; `mergePolicy` lets
+  the stored list win wholesale; so every account that ever saved settings had a frozen list
+  without `risk_advisory`, and no migration unions new types. Fixed at the send site in
+  `strategy.ts` using the repo's established precedent (`provider_degraded` in db-health.ts,
+  `budget_alert` in usage-limit-alerts.ts, `autonomy_halted_on_boot` in scheduler.ts): the send
+  builds a run-scoped `forcedAdvisoryPolicy` with `risk_advisory` unioned into the EFFECTIVE
+  `enabledEvents` for that send only — the user's stored list is never mutated or persisted.
+- **F3 (LOW) — marker-before-send.** The dedup marker was written BEFORE `sendNotification`;
+  a skipped/failed send would have burned the day's one notification. The marker is now written
+  AFTER the send resolves (channel errors are caught inside `sendNotification`, so resolution =
+  accepted-for-delivery).
+- **F4 (LOW) — alert-center tone.** `risk_advisory` now renders `warn` like its Attention-pill
+  peers (was `muted`).
+- **F5 (LOW) — body formatters.** Added a dedicated `risk_advisory` case to BOTH
+  `directNotificationBody` (SMS/push body: reason + drawdownPct + equity + HWM + explicit
+  "advisory only" line) and the Discord embed switch (orange — kill_switch stays red — with
+  drawdown/equity/HWM/runId fields).
+- **Regression test** (`test/guard-enablement.test.ts`): stored policy with an explicit
+  `enabledEvents: ["fill", "block"]` (predating `risk_advisory`) breaches the breaker → the
+  notification is recorded and ATTEMPTED (error is NOT "Notification type is disabled."), proving
+  the force-inject works. The existing once-per-day dedup test still passes.
+
+Re-verification after the fixes: `npx tsc --noEmit` PASS; `npm run lint` PASS (0 errors, same 652
+warnings); `test/guard-enablement.test.ts` (6 tests incl. the new regression) + 12 targeted
+notification/strategy files (247 tests) + an 877-test broad sanity chunk — all PASS. Full-suite
+re-run skipped per judgment allowance (fixes confined to strategy.ts send site, alert-center tone,
+notifications formatting).
+
+### Deploy-day watch items (owner)
+
+1. **Immediate breaches**: any account already >15% below its persisted equity high-water mark
+   breaches the moment this deploys — expect an advisory receipt + prompt injection EVERY run plus
+   exactly 1 `risk_advisory` notification per account/day. That's the design working, not a bug;
+   re-mark the HWM (or relax the threshold) if it's stale from an old equity peak.
+2. **Smaller openings in volatile names**: the vol-target (25%) and heat (10%) tapers now scale
+   down opening sizes in wild names / hot books. Watch rationales for the `[Risk]`/vol/heat notes
+   to confirm tapers bind where expected.
+3. **Possible `quote_staleness` escalation burst**: the 120s gate measures scan→evaluation latency
+   against the merged quote timestamp. If real scan→LLM→evaluation latency plus provider delay
+   exceeds 120s for routine names, openings will route to human review in bursts. Fail-safe and
+   self-healing (approval re-runs against a fresh scan) but noisy — observe real latency before
+   loosening the threshold.
+
 ## Next Steps & Blockers
 
 - Parent agent lands via `scripts/land.sh` (commit is local-only per instructions; no push/PR
