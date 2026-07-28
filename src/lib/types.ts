@@ -85,7 +85,12 @@ export const NOTIFICATION_EVENT_TYPES = [
   "storage_warning",
   "autonomy_halted_on_boot",
   "option_alert",
-  "earningscalls_entitlement_blocked"
+  "earningscalls_entitlement_blocked",
+  // Advisory guardrail breach (e.g. the drawdown breaker in advisory mode): a configured risk
+  // threshold was crossed but NOTHING halted or was blocked — the agent is still in control.
+  // Deliberately NOT "kill_switch" (nothing flipped state) so owners don't learn to ignore
+  // kill-switch alerts.
+  "risk_advisory"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";

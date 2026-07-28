@@ -27,7 +27,10 @@ const policy: TradingPolicy = {
   strategyAuthority: "decide",
   accountNumber: "LIVE1",
   includedIndices: [],
-  additionalSymbols: ["AAPL", "MSFT", "NVDA", "TSLA"]
+  additionalSymbols: ["AAPL", "MSFT", "NVDA", "TSLA"],
+  // Staleness gate pinned off (defaults to 120s since 2026-07-28): these margin-minimum tests pass
+  // no marketScan, and a missing quote timestamp blocks openings while the gate is on.
+  maxQuoteAgeSec: 0
 };
 
 function portfolioWithEquity(equity: number, accountNumber = "LIVE1"): Portfolio {

@@ -41,7 +41,13 @@ export const DEFAULT_RISK_RULES: RiskRules = {
   trailingStopPct: 0,
   // Mandatory for any short (see policy.ts's short-selling gate) — mirrors the long stopLossPct
   // default so a short-enabled policy isn't rejected out of the box for lacking a stop.
-  shortStopLossPct: 8
+  shortStopLossPct: 8,
+  // Account-level drawdown breaker (owner-approved guard enablement 2026-07-28,
+  // docs/guard-enablement-proposal-2026-07-28.md row 8): a 15% trailing drawdown from the equity
+  // high-water mark breaches the breaker. ADVISORY only — `drawdownBreakerAction` stays unset
+  // (advisory), so a breach writes a receipt, notifies once per day, and injects the drawdown
+  // into the strategist's prompt as decision context; the agent decides whether to de-risk.
+  maxDrawdownPct: 15
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
@@ -116,6 +122,22 @@ export const DEFAULT_POLICY: TradingPolicy = {
   betaScaledStops: true,
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
+  // Quote staleness gate (owner-approved guard enablement 2026-07-28,
+  // docs/guard-enablement-proposal-2026-07-28.md row 1): block OPENING orders whose backing quote is
+  // older than 120s (policy.ts's staleness gate). Exits are never gated, and a blocked opening is
+  // escalatable — a human approval re-runs the gate against a fresh scan, so it self-heals.
+  maxQuoteAgeSec: 120,
+  // Owner-approved guard enablement 2026-07-28 (proposal rows 2-4): risk receipts (inform-only
+  // correlation + stress notes on every opening), vol-target sizing taper at a generous 25%
+  // portfolio-vol target, and a 10%-of-equity portfolio heat budget taper. All are tapers/receipts —
+  // none can block an opening or touch an exit. mergePolicy deep-merges these so stored policies
+  // inherit them while any explicit per-account tuning key still wins.
+  tuning: {
+    riskReceipts: true,
+    volTargeting: true,
+    targetPortfolioVolPct: 25,
+    portfolioHeatBudgetPct: 10
+  },
   marketScanCandidateLimit: DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,
   marketScanOutlierReserve: DEFAULT_MARKET_SCAN_OUTLIER_RESERVE,
   proposalExpiryMinutes: 2880,

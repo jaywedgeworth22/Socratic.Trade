@@ -63,6 +63,7 @@ export function matchesFilter(event: NotificationEvent, filter: AlertCenterFilte
           event.type === "budget_alert" ||
           event.type === "provider_degraded" ||
           event.type === "earningscalls_entitlement_blocked" ||
+          event.type === "risk_advisory" ||
           event.status === "failed")
       );
     case "deliveries":

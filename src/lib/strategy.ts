@@ -673,6 +673,24 @@ export async function runStrategyOnce(
           // only absolute; the agent decides whether to de-risk, and the deviation is logged/coachable.
           drawdownAdvisory = { reason: breaker.reason ?? "drawdown/daily-loss threshold breached", equity, highWaterMark: breaker.highWaterMark, drawdownPct };
           audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", action: "advisory" }, userId, connectedAccountId);
+          // Advisory must still REACH the owner, not just the logs (guard enablement 2026-07-28,
+          // proposal row 8) — but without spamming: notify at most once per
+          // (user, account, source, day), deduped via the same internal-settings KV pattern as the
+          // breaker's hwm/sod markers. `risk_advisory`, NOT kill_switch: nothing halted and the agent
+          // is still in control. sendNotification itself applies the user's enabledEvents gating.
+          const advisoryDay = new Date().toISOString().slice(0, 10);
+          const advisoryNotifiedKey = `risk:dd-advisory-notified:${userId}:${policy.accountNumber}:${learningSource}:${advisoryDay}`;
+          if (!getInternalSetting<string>(advisoryNotifiedKey)) {
+            setInternalSetting(advisoryNotifiedKey, runId);
+            await sendNotification(
+              {
+                type: "risk_advisory",
+                title: `Drawdown advisory: ${breaker.reason ?? "drawdown/daily-loss threshold breached"} (agent still in control)`,
+                payload: { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, drawdownPct, action: "advisory" }
+              },
+              { policy, userId, connectedAccountId }
+            );
+          }
         } else {
           // Owner opted into hard enforcement: flip systemState. Persist to the SAME account the run
           // targeted (read via getPolicy(userId, connectedAccountId)); omitting it would resolve the ACTIVE

@@ -1,5 +1,15 @@
 # Socratic Trade Status
 
+## 2026-07-28 — Guard enablement (KIMI) — DONE (local commit; landing via parent)
+
+Owner-approved guards from `docs/guard-enablement-proposal-2026-07-28.md` now DEFAULT ON:
+quote staleness gate 120s (openings only, self-healing), risk receipts, vol-target taper @25% +
+portfolio-heat taper @10% (tuning deep-merged in both `mergePolicy` copies so stored policies
+inherit), 15% advisory drawdown breaker with a new once-per-day `risk_advisory` breach
+notification. Event-driven trigger-engine transition plan written
+(`docs/event-driven-transition-plan.md`). Branch `agent/kimi/guard-enablement`. Rollout:
+`docs/rollouts/2026-07-28-guard-enablement.md`.
+
 ## 2026-07-27 — Alpaca 300+ "pending" orders (CURSOR)
 
 **Cause:** Alpaca `getEquityOrders` returns `status:"all"` (full history). Orders UI /

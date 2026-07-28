@@ -176,7 +176,10 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide",
-      riskRules: {} // no drawdown/daily-loss limits
+      // maxDrawdownPct pinned to 0: DEFAULT_RISK_RULES gained a 15% advisory default on 2026-07-28
+      // (guard enablement), and mergePolicy would inject it back into a bare {} — 0 explicitly
+      // disables the breaker so this test keeps covering the no-limit path.
+      riskRules: { maxDrawdownPct: 0 } // no drawdown/daily-loss limits
     });
 
     const { runStrategyOnce } = await import("../src/lib/strategy");
