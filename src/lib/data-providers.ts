@@ -3634,14 +3634,14 @@ export class RoicAiEnrichmentProvider implements MarketEnrichmentProvider {
                 ? fetchWithRetry(
                     `${this.base}/company/profile/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(this.apiKey)}`,
                     {},
-                    { service: "roic", keySource: this.keySource, userId: this.userId }
+                    { service: "roic", keySource: this.keySource, userId: this.userId, suppressHealthStatuses: [404, 429] }
                   )
                 : Promise.resolve(undefined),
               needRatios
                 ? fetchWithRetry(
                     `${this.base}/financial-ratios/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(this.apiKey)}`,
                     {},
-                    { service: "roic", keySource: this.keySource, userId: this.userId, retries: 0 }
+                    { service: "roic", keySource: this.keySource, userId: this.userId, retries: 0, suppressHealthStatuses: [404, 429] }
                   )
                 : Promise.resolve(undefined),
             ]);
@@ -4918,7 +4918,7 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     try {
       // retries: 0 — the quota reserves exactly one request per endpoint, so a built-in 429 retry
       // would emit a second uncounted call and re-break the 50/hour cap this gate enforces.
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers }, { service: this.name, keySource: this.keySource, userId: this.userId, retries: 0 });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers }, { service: this.name, keySource: this.keySource, userId: this.userId, retries: 0, suppressHealthStatuses: [404] });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
