@@ -7,6 +7,11 @@ the hard way.
 
 ## Before you start
 
+> [!CAUTION]
+> **CRITICAL RULE: DO NOT WORK IN `/Users/jay/Code/Socratic.Trade` (OR WHATEVER THE MAIN WORKTREE IS).**
+> That is the human owner's integration tree and the fleet's review base. If you check out your branch in the main folder, you will corrupt the review base for other agents (causing it to be drastically out-of-sync with production).
+> **You MUST `cd` into your designated agent lane (e.g., `~/apps/trading-antigravity`) BEFORE doing any work.** A `pre-commit` hook is installed to block agent commits in the main folder.
+
 - `git status` and `git log -3` first. Another tool may have left uncommitted
   work in the tree — read it before editing on top of it, don't assume a clean
   base.
