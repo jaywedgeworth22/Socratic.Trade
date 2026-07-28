@@ -1,5 +1,9 @@
 # Active Implementation Plan
 
+> **2026-07-27 — Pending-order count inflation (CURSOR).** Stop treating Alpaca
+> `done_for_day` history as open/working; ops `?orders=1` for live vs listed
+> diagnosis. Branch `cursor/pending-orders-open-count-0aef`. Rollout:
+> `docs/rollouts/2026-07-27-pending-orders-done-for-day.md`.
 > **2026-07-26 — Free-first enrichment cascade + coverage report (CURSOR).** Prefer
 > free/keyless + RapidAPI failover before paid native keys; coverage Admin/ops. Follow-up:
 > FilingAPI.dev, SEC XBRL default ON, RapidAPI yh-finance / real-time-finance-data /

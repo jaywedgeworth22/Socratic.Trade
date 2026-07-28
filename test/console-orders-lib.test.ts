@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { closingOrderPnl, effectiveOrderPrice, matchPosition } from "../app/console/orders/lib";
-import type { EquityOrder, EquityPosition } from "../src/lib/types";
+import { closingOrderPnl, deriveOpenOrders, effectiveOrderPrice, matchPosition } from "../app/console/orders/lib";
+import type { EquityOrder, EquityPosition, TradingPolicy } from "../src/lib/types";
 
 function order(overrides: Partial<EquityOrder> = {}): EquityOrder {
   return {
@@ -145,5 +145,24 @@ describe("closingOrderPnl — estimated P/L for open orders that would close/red
       currentPrice: 130,
       shares: 5
     });
+  });
+});
+
+describe("deriveOpenOrders — does not inflate with historical done_for_day", () => {
+  const policy = { staleLimitOrderMinutes: 15 } as Pick<TradingPolicy, "staleLimitOrderMinutes">;
+
+  it("includes live new/held orders and excludes done_for_day history", () => {
+    const rows = deriveOpenOrders(
+      [
+        order({ id: "live", state: "new", createdAt: "2026-07-27T14:00:00.000Z" }),
+        order({ id: "held-leg", state: "held", createdAt: "2026-07-27T14:00:00.000Z" }),
+        order({ id: "hist-1", state: "done_for_day", createdAt: "2026-06-01T14:00:00.000Z" }),
+        order({ id: "hist-2", state: "done_for_day", createdAt: "2026-05-01T14:00:00.000Z" }),
+        order({ id: "filled", state: "filled", createdAt: "2026-07-20T14:00:00.000Z" })
+      ],
+      policy,
+      new Date("2026-07-27T15:00:00.000Z")
+    );
+    expect(rows.map((r) => r.order.id).sort()).toEqual(["held-leg", "live"]);
   });
 });

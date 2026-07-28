@@ -1,6 +1,6 @@
 import type { EquityOrder, EquityPosition, FillEvent, NotificationEvent, PendingProposal, TradeProposal } from "./types";
 import { formatQuantity } from "./money";
-import { isActiveBrokerOrderState } from "./broker-held-orders";
+import { isWorkingOrderState } from "./broker-held-orders";
 import { shortOrderLabel } from "./order-labels";
 
 export interface SymbolMeta {
@@ -763,8 +763,8 @@ function isTerminalBrokerState(state?: string): boolean {
 }
 
 function isPendingBrokerState(state?: string): boolean {
-  const normalized = String(state ?? "").trim().toLowerCase();
-  return isActiveBrokerOrderState(normalized) || ["done_for_day", "stopped", "calculated"].includes(normalized);
+  // Shared working-state set (excludes terminal done_for_day — see broker-held-orders.ts).
+  return isWorkingOrderState(state);
 }
 
 function brokerOrderDetail(order: EquityOrder | undefined, fillStatus?: string): string {

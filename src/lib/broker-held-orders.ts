@@ -38,6 +38,27 @@ export function isActiveBrokerOrderState(state: string | undefined): boolean {
   return ACTIVE_BROKER_ORDER_STATES.has(String(state ?? "").trim().toLowerCase());
 }
 
+/**
+ * Broker states that are not in ACTIVE_BROKER_ORDER_STATES but still mean the order can fill
+ * or needs operator attention (stale-limit / Orders "open" list).
+ *
+ * Deliberately excludes `done_for_day`: that is a terminal day-order outcome that persists
+ * forever in Alpaca `getEquityOrders` (`status:"all"`) history. Counting it as working made
+ * the Orders screen and stale-limit path treat hundreds of historical day orders as "pending
+ * open" — matching owner reports of 300+ pending on Alpaca (and similarly inflated lists on
+ * other brokers that return full history).
+ *
+ * `stopped` — stop triggered, fill still pending. `calculated` — Alpaca pre-accept.
+ * Both remain actionable; `done_for_day` does not.
+ */
+export const EXTRA_WORKING_ORDER_STATES = new Set(["stopped", "calculated"]);
+
+/** True when an order should appear on the open/working Orders list (and stale-limit scan). */
+export function isWorkingOrderState(state: string | undefined): boolean {
+  const normalized = String(state ?? "").trim().toLowerCase();
+  return isActiveBrokerOrderState(normalized) || EXTRA_WORKING_ORDER_STATES.has(normalized);
+}
+
 export const REJECTED_OR_CANCELED_STATES = new Set([
   "canceled",
   "cancelled",

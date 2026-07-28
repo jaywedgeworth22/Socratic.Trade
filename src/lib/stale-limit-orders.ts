@@ -1,13 +1,12 @@
 import { audit, getInternalSetting, setInternalSetting } from "./db";
 import { DEFAULT_POLICY } from "./defaults";
-import { isActiveBrokerOrderState } from "./broker-held-orders";
+import { isWorkingOrderState } from "./broker-held-orders";
 import { normalizeSymbol } from "./money";
 import { shortOrderLabel } from "./order-labels";
 import { sendNotification } from "./notifications";
 import type { EquityOrder, TradingPolicy } from "./types";
 
 const LIMIT_ORDER_TYPES = new Set(["limit", "stop_limit"]);
-const EXTRA_WORKING_STATES = new Set(["done_for_day", "stopped", "calculated"]);
 
 export interface StaleLimitOrder {
   order: EquityOrder;
@@ -117,11 +116,6 @@ export async function notifyStaleLimitOrders(input: {
   }
 
   return { alerted, stale };
-}
-
-function isWorkingOrderState(state: string | undefined): boolean {
-  const normalized = String(state ?? "").trim().toLowerCase();
-  return isActiveBrokerOrderState(normalized) || EXTRA_WORKING_STATES.has(normalized);
 }
 
 /**
