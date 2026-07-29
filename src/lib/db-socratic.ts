@@ -374,6 +374,37 @@ export function getSocraticDecisionCase(id: string, userId: string = "local"): S
   return row ? rowToDecision(row) : undefined;
 }
 
+/** Accuracy-breaker feed (src/lib/accuracy-breaker.ts, docs/oss-lessons.md §8): the account's most
+ *  recent matured DECISIVE outcomes (won/lost/flat) on REAL decisions only — placed/filled rows.
+ *  Counterfactual outcomes of blocked/rejected proposals are excluded by decision status: avoiding
+ *  a bad trade is a good call, not a miss, so counting those as losses would corrupt the streak.
+ *  "unknown"/"unresolvable" terminals are excluded too (not decisive evidence either way). Newest
+ *  first, by outcome.measuredAt (falling back to updated_at). */
+export function listRecentDecisiveOutcomeStatuses(
+  userId: string = "local",
+  connectedAccountId?: string,
+  limit: number = 50
+): Array<{ status: "won" | "lost" | "flat"; measuredAt?: string }> {
+  const capped = Math.max(1, Math.min(200, Math.floor(limit)));
+  const clauses = ["user_id = ?", "status IN ('placed', 'filled')", "json_extract(outcome, '$.status') IN ('won', 'lost', 'flat')"];
+  const args: unknown[] = [userId];
+  if (connectedAccountId) {
+    clauses.push("connected_account_id = ?");
+    args.push(connectedAccountId);
+  }
+  args.push(capped);
+  const rows = getDb()
+    .prepare(
+      `SELECT json_extract(outcome, '$.status') AS status, json_extract(outcome, '$.measuredAt') AS measured_at
+       FROM socratic_decisions
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY COALESCE(json_extract(outcome, '$.measuredAt'), updated_at) DESC, rowid DESC
+       LIMIT ?`
+    )
+    .all(...args) as Array<{ status: "won" | "lost" | "flat"; measured_at: string | null }>;
+  return rows.map((row) => ({ status: row.status, measuredAt: row.measured_at ?? undefined }));
+}
+
 export function appendSocraticDecisionCoachNote(id: string, note: string, userId: string = "local"): SocraticDecisionCase | undefined {
   const existing = getSocraticDecisionCase(id, userId);
   if (!existing) return undefined;

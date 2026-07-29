@@ -21,6 +21,7 @@ import {
   listStalePlacingProposals,
   listFillEvents,
   listFillEventsByProposalId,
+  listRecentDecisiveOutcomeStatuses,
   resolveBrokerVerificationNotifications,
   notionalInLastMinutes,
   releaseStrategyLock,
@@ -34,6 +35,7 @@ import {
   updateFillEvent
 } from "./db";
 import { accountEquity, recordAndEvaluateDrawdownBreaker } from "./risk-breaker";
+import { clearAccuracyDegradedMarker, evaluateAccuracyBreaker, getAccuracyDegradedMarker, setAccuracyDegradedMarker } from "./accuracy-breaker";
 import { mergeQuoteData, pricePosition52w, scanMarket } from "./market";
 import { deriveMetrics } from "./derived-metrics";
 import { deriveMacroMetrics } from "./macro-metrics";
@@ -763,6 +765,129 @@ export async function runStrategyOnce(
               payload: { runId, reason: breaker.reason, equity, revertedTo }
             },
             { policy, userId }
+          );
+        }
+      }
+    }
+
+    // Accuracy breaker (nofx-style consecutive-miss safety mode, docs/oss-lessons.md §8). The
+    // drawdown breaker bounds the account's BLEED; this one notices the account being WRONG — a
+    // consecutive-loss streak or a sub-floor rolling hit rate over matured REAL (placed/filled)
+    // outcomes, which can degrade long before a 15% drawdown shows it. Same philosophy: advisory
+    // by default (receipt + one risk_advisory notification per degradation, NO state change),
+    // opt-in close_only hard enforcement (kill_switch notification; the owner re-arms, and that
+    // re-arm clears the marker). Evaluated in ANY system state (not just "active") so a degraded
+    // marker can observe recovery — and an owner re-arm — during close-only runs; it only FIRES
+    // from "active". Counterfactual outcomes of blocked/rejected proposals never feed it.
+    const accuracyStreakLimit = policy.riskRules.accuracyBreakerConsecutiveLosses ?? 0;
+    const accuracyWindow = policy.riskRules.accuracyBreakerWindow ?? 0;
+    const accuracyFloor = policy.riskRules.accuracyBreakerMinHitRatePct ?? 0;
+    const accuracyBreakerConfigured = accuracyStreakLimit > 0 || (accuracyWindow > 0 && accuracyFloor > 0);
+    if (!manualRun && accuracyBreakerConfigured) {
+      const accountScope = connectedAccountId ?? `${policy.accountNumber}:${learningSource}`;
+      const degradedMarker = getAccuracyDegradedMarker(userId, accountScope);
+      const recentOutcomes = listRecentDecisiveOutcomeStatuses(
+        userId,
+        connectedAccountId,
+        Math.max(accuracyStreakLimit + 5, accuracyWindow, policy.riskRules.accuracyBreakerRecoveryWins ?? 2, 10)
+      ).map((row) => row.status);
+      const accuracyEval = evaluateAccuracyBreaker({
+        outcomes: recentOutcomes,
+        consecutiveLosses: policy.riskRules.accuracyBreakerConsecutiveLosses,
+        windowSize: policy.riskRules.accuracyBreakerWindow,
+        minHitRatePct: policy.riskRules.accuracyBreakerMinHitRatePct,
+        recoveryClean: policy.riskRules.accuracyBreakerRecoveryWins,
+        degraded: degradedMarker !== undefined
+      });
+      if (degradedMarker && degradedMarker.action === "close_only" && policy.systemState === "active") {
+        // Owner re-arm after the hard flip IS the recovery path for hard mode — clear the marker
+        // so the breaker is armed again (a fresh adverse tape re-fires it normally).
+        clearAccuracyDegradedMarker(userId, accountScope);
+        audit("accuracy_breaker_rearmed", { runId, trigger: degradedMarker.trigger, since: degradedMarker.since }, userId, connectedAccountId);
+      } else if (degradedMarker && accuracyEval.recovered) {
+        clearAccuracyDegradedMarker(userId, accountScope);
+        audit(
+          "accuracy_breaker_recovered",
+          { runId, trigger: degradedMarker.trigger, since: degradedMarker.since, consecutiveLossStreak: accuracyEval.consecutiveLossStreak, hitRatePct: accuracyEval.hitRatePct },
+          userId,
+          connectedAccountId
+        );
+        // Recovery NEVER flips systemState back on its own — after a hard flip the owner re-arms
+        // (handled above). risk_advisory with the same force-include precedent as the drawdown
+        // advisory (stored enabledEvents lists predate this event type).
+        const forcedRecoveryPolicy: TradingPolicy = {
+          ...policy,
+          notificationSettings: {
+            ...policy.notificationSettings,
+            enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "risk_advisory" as const]))
+          }
+        };
+        await sendNotification(
+          {
+            type: "risk_advisory",
+            title: "Accuracy breaker recovered — recent outcomes show no losses",
+            payload: {
+              runId,
+              trigger: degradedMarker.trigger,
+              since: degradedMarker.since,
+              hitRatePct: accuracyEval.hitRatePct,
+              rearmRequired: policy.systemState !== "active"
+            }
+          },
+          { policy: forcedRecoveryPolicy, userId, connectedAccountId }
+        );
+      } else if (!degradedMarker && accuracyEval.firing && policy.systemState === "active") {
+        const accuracyAction = policy.riskRules.accuracyBreakerAction ?? "advisory";
+        setAccuracyDegradedMarker(userId, accountScope, {
+          since: new Date().toISOString(),
+          reason: accuracyEval.reason ?? "accuracy breaker fired",
+          trigger: accuracyEval.trigger ?? "streak",
+          action: accuracyAction
+        });
+        if (accuracyAction === "close_only") {
+          // Owner opted into hard enforcement: flip systemState, persisting to the SAME account the
+          // run targeted (same scoping reason as the drawdown breaker above).
+          policy.systemState = "close_only";
+          setPolicy(policy, userId, connectedAccountId);
+          audit(
+            "policy_violation_accuracy",
+            { runId, reason: accuracyEval.reason, trigger: accuracyEval.trigger, consecutiveLossStreak: accuracyEval.consecutiveLossStreak, hitRatePct: accuracyEval.hitRatePct, from: "active", revertedTo: "close_only", action: accuracyAction },
+            userId,
+            connectedAccountId
+          );
+          await sendNotification(
+            {
+              type: "kill_switch",
+              title: "Accuracy breaker halted new entries (close-only)",
+              payload: { runId, reason: accuracyEval.reason, trigger: accuracyEval.trigger, revertedTo: "close_only" }
+            },
+            { policy, userId }
+          );
+        } else {
+          // Advisory (default): marker + receipt + one notification per degradation, NO state
+          // change. The account boundary is the only absolute; the agent decides whether to
+          // de-risk. No daily dedupe key needed — the persisted marker suppresses repeats until
+          // recovery. Same risk_advisory force-include precedent as the drawdown advisory.
+          audit(
+            "policy_violation_accuracy",
+            { runId, reason: accuracyEval.reason, trigger: accuracyEval.trigger, consecutiveLossStreak: accuracyEval.consecutiveLossStreak, hitRatePct: accuracyEval.hitRatePct, from: "active", action: "advisory" },
+            userId,
+            connectedAccountId
+          );
+          const forcedAccuracyPolicy: TradingPolicy = {
+            ...policy,
+            notificationSettings: {
+              ...policy.notificationSettings,
+              enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "risk_advisory" as const]))
+            }
+          };
+          await sendNotification(
+            {
+              type: "risk_advisory",
+              title: `Accuracy advisory: ${accuracyEval.reason ?? "recent matured outcomes are decisively adverse"} (agent still in control)`,
+              payload: { runId, reason: accuracyEval.reason, trigger: accuracyEval.trigger, consecutiveLossStreak: accuracyEval.consecutiveLossStreak, hitRatePct: accuracyEval.hitRatePct, action: "advisory" }
+            },
+            { policy: forcedAccuracyPolicy, userId, connectedAccountId }
           );
         }
       }
