@@ -34,11 +34,11 @@ type LangfuseTracing = {
 };
 
 declare global {
-  // eslint-disable-next-line no-var
+   
   var __tradingObservabilityStarted: boolean | undefined;
-  // eslint-disable-next-line no-var
+   
   var __tradingObservabilitySdk: unknown | undefined;
-  // eslint-disable-next-line no-var
+   
   var __tradingObservabilityWarned: boolean | undefined;
 }
 
