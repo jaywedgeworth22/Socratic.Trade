@@ -1,6 +1,9 @@
 ## 2026-07-29 — Task Brain / Cron Journal + OSS Lessons Doc (KIMI) — IN PROGRESS (branch `agent/kimi-lane`)
 
 Owner-directed OSS-lessons program. Implemented the OpenClaw Task Brain / Hivekeep cron-journal pattern: new `task_journal` table (migration v62) + `db-task-journal.ts` (never-throw CRUD, split retention: skipped 24h / ok-error 30d) + `journalLane` wrapper (outcome-envelope guard so lanes returning `{status:"success"}` aren't misread) wired through every scheduler tick lane incl. per-account lanes and broker-health-gate suppressions; per-lane 24h aggregates exposed on `/api/ops/snapshot` as `taskJournal`. Companion `docs/oss-lessons.md` maps the full OSS survey (freqtrade/Lean/Alpaca-OMS/OpenBB/TradingAgents/ai-hedge-fund/nofx/Jesse/TraderHarness/qlib/OpenClaw/Hivekeep) to concrete repo changes; follow-on efforts registered on the effort board (preview renderers claimed KIMI; backtest-integrity, brokerage-model hardening, nofx safety mode unassigned). Model tiering reviewed — no change (heartbeats already LLM-free; role-tiered seats exceed the pattern). Gates so far: tsc clean, eslint 0 errors, 9/9 new tests, 28/28 scheduler regression tests, suite shard 1/3 (156 files/1841 tests) pass; shards 2-3 + build pending (host load 40-55 from foreign processes). Rollout: `docs/rollouts/2026-07-29-task-brain-cron-journal.md`.
+## 2026-07-29 — GitHub-hosted CI only; Oracle Actions runners retired (GROK)
+
+All Socratic.Trade workflows now `runs-on: ubuntu-latest`. Self-hosted `socratic-ci` / Oracle Actions fleet shut down. Route always hosted. Playwright smoke uses `--with-deps`. actionlint self-hosted labels cleared.
 
 ## 2026-07-29 — Macro Feed Resilience + Unknown-Side Regime-Flip Suppression (KIMI) — DONE (local commit; landing via parent)
 
