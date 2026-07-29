@@ -16,7 +16,6 @@ import { AUTHENTICATED_EMAIL_HEADER } from "../request-user";
 import { isPrimaryEmail } from "./identity";
 import {
   AUTHENTICATED_IDENTITY_SOURCE_HEADER,
-  AUTHENTICATED_IDENTITY_SOURCES,
   isVerifiedIdentitySource
 } from "./strip-identity";
 
@@ -96,7 +95,7 @@ export function checkAdmin(request: Request, options: RequireAdminOptions = {}):
 
   const email = request.headers.get(AUTHENTICATED_EMAIL_HEADER);
   const identitySource = request.headers.get(AUTHENTICATED_IDENTITY_SOURCE_HEADER);
-  if ((isVerifiedIdentitySource(identitySource) || identitySource === AUTHENTICATED_IDENTITY_SOURCES.localFallback) && isAdminEmail(email)) {
+  if (isVerifiedIdentitySource(identitySource) && isAdminEmail(email)) {
     return { ok: true, reason: "admin-email", email: (email || "").trim().toLowerCase() };
   }
 

@@ -45,7 +45,7 @@ export async function GET(request: Request) {
     configuration.coolifyServerUuid,
   ].some(Boolean);
 
-  if (!hasAnyProviderConfiguration) {
+  if (!isRuntimeProduction && !hasAnyProviderConfiguration) {
     return jsonResponse(localPayload(configuration.states));
   }
 
