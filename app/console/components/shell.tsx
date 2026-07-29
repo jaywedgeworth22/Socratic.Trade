@@ -113,7 +113,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
           {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile.
               MobileFreshnessBar lives here (not bottom-anchored) because the fixed bottom tab
               bar (nav.tsx) overlays anything at document end on phones. */}
-          <div className="sticky top-0 z-50 bg-[color:var(--con-bg)]">
+          <div className="con-topbar sticky top-0 z-50 bg-[color:var(--con-bg)]">
             <RealityBanner snapshot={snapshot} />
             <ChromeBar snapshot={snapshot} theme={theme} setTheme={setTheme} />
             <MobileFreshnessBar snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />

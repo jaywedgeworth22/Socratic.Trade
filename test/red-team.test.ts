@@ -253,7 +253,7 @@ describe("debateProposal — three-way verdict + shape-violation fail-closed (§
     expect(result.reason).toMatch(/ambiguous|multiple/i);
   });
 
-  it("classifies a persistent 429 as rate_limited (after the bounded retry)", async () => {
+  it("classifies a 429 as rate_limited (without bounded retry)", async () => {
     const { debateProposal } = await import("../src/lib/red-team");
     await setupOpenAi("RT_429");
     let calls = 0;
@@ -266,26 +266,7 @@ describe("debateProposal — three-way verdict + shape-violation fail-closed (§
     expect(result.available).toBe(false);
     expect(result.rejected).toBe(false);
     expect(result.failureKind).toBe("rate_limited");
-    expect(calls).toBe(2); // §4.3: exactly one bounded retry, then declare unavailable
-  });
-
-  it("recovers when a transient 429 is followed by a valid verdict (fetchLlmWithRetry)", async () => {
-    const { debateProposal } = await import("../src/lib/red-team");
-    await setupOpenAi("RT_RETRY_OK");
-    let calls = 0;
-    vi.stubGlobal("fetch", async () => {
-      calls += 1;
-      if (calls === 1) return new Response("Too Many Requests", { status: 429 });
-      return new Response(
-        JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdict: "approve", reason: "Solid." }) } }] }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      );
-    });
-
-    const result = await debateProposal(buyProposal(), undefined);
-    expect(calls).toBe(2);
-    expect(result.available).toBe(true);
-    expect(result.verdict).toBe("approve");
+    expect(calls).toBe(1); // §4.3: exactly one attempt, no bounded retry, then declare unavailable
   });
 
   it("classifies a 500 response as provider_error", async () => {
