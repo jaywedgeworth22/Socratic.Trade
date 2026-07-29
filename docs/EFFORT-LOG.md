@@ -71,6 +71,11 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
+- **[Socratic.Trade][KIMI] OSS-lessons program: docs/oss-lessons.md + task brain / cron journal — In Progress 2026-07-29.** Owner-directed. Unified `task_journal` SQLite ledger journaling every scheduler lane (OpenClaw Task Brain / Hivekeep cron-journal pattern) + research doc mapping OSS lessons (freqtrade, Lean, OpenBB, Jesse, qlib, TraderHarness, nofx, OpenClaw, Hivekeep) to concrete repo changes. Branch `agent/kimi-lane`.
+- **[Socratic.Trade][KIMI] Generalized preview renderers for mutating operations — PLANNED (claimed KIMI).** Hivekeep pattern: human-readable preview/diff card for every mutating action, generalizing the trade-proposal approval card. Design in docs/oss-lessons.md §5.
+- **[Socratic.Trade] Backtest-integrity suite for the learning loop — PLANNED / UNASSIGNED.** Jesse rule-significance testing + TraderHarness point-in-time masking/entity anonymization + qlib walk-forward before any LLM proposal is evaluated against history. Design in docs/oss-lessons.md §6.
+- **[Socratic.Trade] Brokerage-model order-state hardening — PLANNED / UNASSIGNED.** freqtrade protections/order-state machine + Lean per-broker order-type models + Alpaca OMS sequential-per-account/WAL lessons; targets order_placement_uncertain storms and stale-order classes of bug. Design in docs/oss-lessons.md §7.
+- **[Socratic.Trade] nofx-style consecutive-miss safety mode — PLANNED / UNASSIGNED.** Rolling prediction-accuracy tracker that degrades an account to observation-only after N consecutive wrong calls; complements the 15% drawdown breaker. Design in docs/oss-lessons.md §8.
 - **[Socratic.Trade][CURSOR] Free-first enrichment cascade + coverage report — Completed 2026-07-27.** Merged #2230 (`c93f1988`) to main; auto-deployed (prod health sha matches). FilingAPI/SEC XBRL default ON/free-first/coverage admin. Superseded closed #2224.
 
 - **[Socratic.Trade][OWNER REMINDER][GROK 2026-07-22] Enable default-off RAG / retrieval features after #1892 lands — PLANNED / UNASSIGNED.** **#1892 MERGED 2026-07-23** — enablement still gated on re-embed proof. Order: telemetry → eval → `RAG_CORPUS_WIDE_LEXICAL` → adaptive rerank → parent expansion → multi-query/HyDE. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`.
