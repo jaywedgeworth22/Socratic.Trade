@@ -26,6 +26,8 @@
 #   - The `verify` gate job annotates which environment produced every result (audit receipt).
 #   - Until the owner starts the Mac-side publisher, VERIFY_RUNNER_STATE is absent/stale and
 #     EVERYTHING routes hosted - merging this file changes nothing until explicitly activated.
+# Runner policy (2026-07-29): GitHub-hosted `ubuntu-latest` only.
+# Self-hosted Mac / Coolify / Oracle Actions runners are retired.
 name: CI
 
 on:
@@ -76,7 +78,7 @@ jobs:
     # Reject fork PRs at admission so fork-controlled repository content never reaches
     # the persistent self-hosted workspace, including through actions/checkout.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
@@ -150,34 +152,10 @@ jobs:
           STATE: ${{ vars.VERIFY_RUNNER_STATE }}
         run: |
           set -euo pipefail
+          # 2026-07-29: all self-hosted / Oracle Actions runners retired.
+          # Always use GitHub-hosted ubuntu-latest (verify-hosted lane).
           route=hosted
-          reason="default"
-          ev="${{ github.event_name }}"
-          if [ "$ev" != "pull_request" ] && [ "$ev" != "push" ]; then
-            reason="event '$ev' always runs hosted (merge_group/schedule/dispatch stay on Linux)"
-          elif [ "$ev" = "pull_request" ] && [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-            reason="fork PRs never route to the self-hosted runner"
-          elif [ -z "${STATE:-}" ]; then
-            reason="VERIFY_RUNNER_STATE variable absent — Mac publisher not running"
-          else
-            mode="$(printf '%s' "$STATE" | jq -r '.mode // "hosted"' 2>/dev/null || echo hosted)"
-            # numbers filter + regex belt: a present-but-non-numeric ts (e.g. an operator
-            # typo like {"ts":"oops"}) must default to 0 -> stale -> hosted, NOT crash the
-            # arithmetic below under `set -euo pipefail` and hard-fail this required check
-            # for every PR. `.ts // 0` alone does NOT coerce a non-null string.
-            ts="$(printf '%s' "$STATE" | jq -r '(.ts | numbers) // 0' 2>/dev/null || echo 0)"
-            [ "$ts" -eq "$ts" ] 2>/dev/null || ts=0
-            now="$(date +%s)"
-            age=$(( now - ts ))
-            if [ "$mode" != "self" ]; then
-              reason="Mac publisher reports mode=$mode"
-            elif [ "$age" -gt 180 ] || [ "$age" -lt 0 ]; then
-              reason="state stale (age ${age}s > 180s) — treating the Mac as unavailable"
-            else
-              route=self
-              reason="Mac publisher reports mode=self and state is fresh (age ${age}s)"
-            fi
-          fi
+          reason="self-hosted fleet retired — GitHub-hosted only"
           echo "route=$route" >> "$GITHUB_OUTPUT"
           echo "Runner route: $route ($reason)"
 
@@ -186,7 +164,7 @@ jobs:
   verify-self:
     needs: classify
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && needs.classify.outputs.route == 'self' }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     permissions:
@@ -293,7 +271,7 @@ jobs:
   verify-hosted:
     needs: [classify, verify-self]
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && (needs.classify.outputs.route != 'self' || needs.verify-self.result != 'success') }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -379,7 +357,7 @@ jobs:
     # while classify/lane failures cannot silently skip a required check (skipped required
     # checks can fail open — Codex review, PR #370).
     if: ${{ !cancelled() }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -397,7 +375,7 @@ jobs:
           note "### verify gate"
           note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a}, route: ${ROUTE:-n/a})"
           note "- verify-self (macOS, production Mac): ${SELF_RESULT}"
-          note "- verify-hosted (Coolify socratic-ci): ${HOSTED_RESULT}"
+          note "- verify-hosted (GitHub-hosted ubuntu-latest): ${HOSTED_RESULT}"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
             note "- RESULT: FAIL — classify did not succeed; the gate never fails open."
@@ -409,14 +387,14 @@ jobs:
           fi
           if [ "$HOSTED_RESULT" = "success" ]; then
             if [ "$SELF_RESULT" = "failure" ]; then
-              note "- RESULT: PASS — produced by Coolify socratic-ci (ARBITER: alternate self-hosted lane failed, Linux lane passed)."
+              note "- RESULT: PASS — produced by GitHub-hosted ubuntu-latest (ARBITER: alternate self lane failed, hosted lane passed)."
             else
-              note "- RESULT: PASS — produced by Coolify socratic-ci."
+              note "- RESULT: PASS — produced by GitHub-hosted ubuntu-latest."
             fi
             exit 0
           fi
           if [ "$HOSTED_RESULT" = "skipped" ] && [ "$SELF_RESULT" = "success" ]; then
-            note "- RESULT: PASS — produced by self-hosted macOS (resource-aware route; suite is environment-agnostic and Linux baseline is re-validated nightly by the hosted canary)."
+            note "- RESULT: PASS — produced by verify-self lane (legacy path; normally skipped)."
             exit 0
           fi
           note "- RESULT: FAIL — no successful lane (hosted: ${HOSTED_RESULT}, self: ${SELF_RESULT})."

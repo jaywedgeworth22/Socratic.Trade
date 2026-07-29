@@ -1,18 +1,5 @@
+# GitHub-hosted runners only (owner 2026-07-29). Self-hosted / Oracle fleet retired.
 self-hosted-runner:
-  # Labels of self-hosted runners on Coolify ci-cpx32 (systemd under
-  # /opt/actions-runners). Do not list GitHub-hosted or retired Mac labels.
-  labels:
-    - self-hosted
-    - Linux
-    - X64
-    - socratic-ci
-    # socratic-ci-2 shares the socratic-ci label; no separate label required.
+  labels: []
 
-# Configuration variables in array of strings defined in your repository or
-# organization. `null` means disabling configuration variables check.
-# Empty array means no configuration variable is allowed.
 config-variables: null
-
-paths:
-#  .github/workflows/**/*.yml:
-#    ignore: []
