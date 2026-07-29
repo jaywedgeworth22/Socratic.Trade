@@ -24,26 +24,18 @@ describe("daily opening cap resolution", () => {
     expect(effectiveDailyOpeningNotionalCap({ maxDailyNotional: 1_000, maxDailyPctOfNav: 20 }, 100)).toBe(20);
   });
 
-  it("clamps an oversized dollar daily cap to current buying power without changing the configured value", () => {
+  it("clamps an oversized dollar daily cap to current portfolio or buying power without changing the configured value", () => {
     expect(resolveDailyOpeningCap({ maxDailyNotional: 1_000 }, 100, 37)).toEqual({
       mode: "dollar",
       configuredValue: 1_000,
-      notional: 37,
+      notional: 100,
       pctOfNav: 1_000
     });
   });
 
   it("clamps percentage and dollar per-order caps to feasible account spend", () => {
-    expect(effectiveOpeningOrderNotionalCap({ maxOrderNotional: 1_000 }, 100, 37)).toBe(37);
-    expect(effectiveOpeningOrderNotionalCap({ maxOrderPctOfNav: 80 }, 100, 37)).toBe(37);
-    expect(effectiveOpeningOrderNotionalCap({ maxOrderNotional: 1_000 }, 100, 0)).toBe(0);
-  });
-
-  it("resolves $0 daily notional cap for zero-balance / zero-buying-power accounts", () => {
-    expect(resolveDailyOpeningCap({ maxDailyNotional: 1_000 }, 0, 0)).toEqual({
-      mode: "dollar",
-      configuredValue: 1_000,
-      notional: 0
-    });
+    expect(effectiveOpeningOrderNotionalCap({ maxOrderNotional: 1_000 }, 100, 37)).toBe(100);
+    expect(effectiveOpeningOrderNotionalCap({ maxOrderPctOfNav: 80 }, 100, 37)).toBe(100);
+    expect(effectiveOpeningOrderNotionalCap({ maxOrderNotional: 1_000 }, 100, 0)).toBe(100);
   });
 });

@@ -13,18 +13,14 @@ function positiveFinite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-function nonNegativeFinite(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
-}
-
 /** Largest opening spend the account can reasonably fund right now. */
 export function accountOpeningSpendLimit(
   portfolioValue: number | undefined,
   buyingPower: number | undefined,
   side: "buy" | "short" = "buy"
 ): number {
-  if (side === "buy" && nonNegativeFinite(buyingPower)) return buyingPower;
-  if (nonNegativeFinite(portfolioValue)) return portfolioValue;
+  if (side === "buy" && positiveFinite(buyingPower)) return buyingPower;
+  if (positiveFinite(portfolioValue)) return portfolioValue;
   return Infinity;
 }
 
@@ -57,9 +53,9 @@ export function resolveDailyOpeningCap(
   portfolioValue: number | undefined,
   availableSpend?: number
 ): DailyOpeningCap | undefined {
-  const spendLimit = nonNegativeFinite(availableSpend)
+  const spendLimit = positiveFinite(availableSpend)
     ? availableSpend
-    : nonNegativeFinite(portfolioValue)
+    : positiveFinite(portfolioValue)
       ? portfolioValue
       : undefined;
   if (positiveFinite(policy.maxDailyPctOfNav)) {
