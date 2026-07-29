@@ -18,7 +18,7 @@ concurrency:
 jobs:
   delete-pr-caches:
     if: github.event_name == 'pull_request'
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     steps:
       - name: Ensure GitHub CLI is on PATH
         shell: bash
@@ -55,7 +55,7 @@ jobs:
 
   prune-stale-caches:
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Ensure GitHub CLI is on PATH
