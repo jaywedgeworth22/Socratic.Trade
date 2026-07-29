@@ -1,3 +1,7 @@
+## 2026-07-28 — CI PR Merge Blocker Root-Cause Diagnosis & Fix (AG) — DONE
+
+Diagnosed exact root causes blocking GitHub PR merges: (1) `security.yml` `gitleaks` job failed on self-hosted Linux CI runners with `Destination file path /tmp/gitleaks.tmp already exists` — fixed by adding a pre-step cleaning `/tmp/gitleaks*`; (2) `verify-hosted` (`npm test`) mock hydration error in `test/milestone-4-challenger.test.ts` — fixed by adding `getDb: vi.fn()` to `vi.mock("../src/lib/db")`. Rollout: `docs/rollouts/2026-07-28-ci-pr-merge-blocker-gitleaks-and-mock-hydration-fix.md`.
+
 ## 2026-07-28 — Admin Header UI & Oracle Cloud Metrics Resilience (AG) — DONE
 
 Cleaned up top navigation bar on `/admin`: removed `← Go Back` link and `ADMIN Overview` subtitle. Resolved 403 / "Server error" statuses on `/admin` dashboard cards for Oracle Cloud and standalone host deployments by authorizing `local-fallback` identity source for admin email check in `checkAdmin()` and gracefully returning local `os` system stats when remote Hetzner/Coolify infrastructure API tokens are not configured. Rollout: `docs/rollouts/2026-07-28-admin-header-and-oracle-metrics-fix.md`.
