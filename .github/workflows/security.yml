@@ -53,6 +53,8 @@ jobs:
           # Gitleaks must see full history: a secret added and removed in an
           # earlier PR commit must remain scannable, as must scheduled history.
           fetch-depth: 0
+      - name: Clean stale temp gitleaks files
+        run: rm -rf /tmp/gitleaks.tmp /tmp/gitleaks* /tmp/gitleaks-*
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
