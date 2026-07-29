@@ -24,6 +24,9 @@ Advanced "Event triggers" section with a three-state Use-global/On/Off select; p
 validation + 18 new tests (fallback interval, per-account suppression, close_only purity, route
 validation + round-trips). Branch `agent/kimi-lane`. Rollout:
 `docs/rollouts/2026-07-28-per-account-trigger-guard-settings.md`.
+## 2026-07-28 — Admin Header UI & Oracle Cloud Metrics Resilience (AG) — DONE
+
+Cleaned up top navigation bar on `/admin`: removed `← Go Back` link and `ADMIN Overview` subtitle. Resolved 403 / "Server error" statuses on `/admin` dashboard cards for Oracle Cloud and standalone host deployments by authorizing `local-fallback` identity source for admin email check in `checkAdmin()` and gracefully returning local `os` system stats when remote Hetzner/Coolify infrastructure API tokens are not configured. Rollout: `docs/rollouts/2026-07-28-admin-header-and-oracle-metrics-fix.md`.
 
 ## 2026-07-28 — Guard enablement (KIMI) — DONE (local commit; landing via parent)
 
