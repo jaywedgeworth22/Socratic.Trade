@@ -13,6 +13,11 @@ function positiveFinite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+/** Finite number including zero (zero-balance accounts must clamp, not treat as "unknown"). */
+function nonNegativeFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 /** Largest opening spend the account can reasonably fund right now. */
 export function accountOpeningSpendLimit(
   portfolioValue: number | undefined,

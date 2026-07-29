@@ -1,3 +1,7 @@
+## 2026-07-29 — PR #2256 typecheck unblock (GROK) — DONE
+
+Restored missing `nonNegativeFinite` helper in `src/lib/policy-caps.ts` (dropped in a main merge while call sites remained). Fixed percentage per-order cap test expectation (80% of NAV → 80, not 100). Restored zero-balance daily notional assertion. Worktree `~/apps/trading-grok`.
+
 ## 2026-07-28 — CI PR Merge Blocker Root-Cause Diagnosis & Fix (AG) — DONE
 
 Diagnosed exact root causes blocking GitHub PR merges: (1) `security.yml` `gitleaks` job failed on self-hosted Linux CI runners with `Destination file path /tmp/gitleaks.tmp already exists` — fixed by adding a pre-step cleaning `/tmp/gitleaks*`; (2) `verify-hosted` (`npm test`) mock hydration error in `test/milestone-4-challenger.test.ts` — fixed by adding `getDb: vi.fn()` to `vi.mock("../src/lib/db")`. Rollout: `docs/rollouts/2026-07-28-ci-pr-merge-blocker-gitleaks-and-mock-hydration-fix.md`.
