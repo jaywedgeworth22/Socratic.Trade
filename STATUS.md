@@ -1,3 +1,7 @@
+## 2026-07-29 — Mobile PWA Account Switcher Touch & Layout Fix (AG) — DONE
+
+Fixed account switching failure on mobile PWA: updated `ScopeSelector` in `app/console/components/chrome.tsx` with responsive width bounds (`w-[min(calc(100vw-48px),360px)]`) to eliminate horizontal offscreen clipping on phone viewports (≤414px), replaced backdrop click `<div>` with a full-screen `<button>` for iOS Safari / PWA touch gesture compatibility, and added immediate menu dismissal in `switchTo()`. Rollout: `docs/rollouts/2026-07-29-mobile-pwa-account-switcher-fix.md`.
+
 ## 2026-07-28 — Latest Strategy Run Card Component Styling Fix (AG) — DONE
 
 Fixed visual inconsistency on the main console dashboard where populated `Latest Strategy Run` items were rendered outside a `<Card>` container. Wrapped populated proposal rows inside the standard `<Card>` component with title `<Zap size={13} /> LATEST STRATEGY RUN` matching `OUTCOME LEARNING LOOP`, `MARK TO MARKET`, and `RISK UTILIZATION` card containers. Rollout: `docs/rollouts/2026-07-28-latest-strategy-run-card-styling-fix.md`.
