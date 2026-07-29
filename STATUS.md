@@ -1,6 +1,13 @@
 ## 2026-07-28 — CI PR Merge Blocker Root-Cause Diagnosis & Fix (AG) — DONE
 
 Diagnosed exact root causes blocking GitHub PR merges: (1) `security.yml` `gitleaks` job failed on self-hosted Linux CI runners with `Destination file path /tmp/gitleaks.tmp already exists` — fixed by adding a pre-step cleaning `/tmp/gitleaks*`; (2) `verify-hosted` (`npm test`) mock hydration error in `test/milestone-4-challenger.test.ts` — fixed by adding `getDb: vi.fn()` to `vi.mock("../src/lib/db")`. Rollout: `docs/rollouts/2026-07-28-ci-pr-merge-blocker-gitleaks-and-mock-hydration-fix.md`.
+## 2026-07-28 — Latest Strategy Run Card Component Styling Fix (AG) — DONE
+
+Fixed visual inconsistency on the main console dashboard where populated `Latest Strategy Run` items were rendered outside a `<Card>` container. Wrapped populated proposal rows inside the standard `<Card>` component with title `<Zap size={13} /> LATEST STRATEGY RUN` matching `OUTCOME LEARNING LOOP`, `MARK TO MARKET`, and `RISK UTILIZATION` card containers. Rollout: `docs/rollouts/2026-07-28-latest-strategy-run-card-styling-fix.md`.
+
+## 2026-07-28 — Account Switcher Stopped Chip & Clean Status Labels (AG) — DONE
+
+Updated the account switcher dropdown menu: added explicit `Stopped` status chips for halted accounts (e.g. Alpaca Standard) and stripped redundant `· market closed` text from chips inside the dropdown list items so they display clean status labels (`Paused`, `Stopped`, `Exit-only`). Rollout: `docs/rollouts/2026-07-28-account-switcher-stopped-chip-fix.md`.
 
 ## 2026-07-28 — Admin Header UI & Oracle Cloud Metrics Resilience (AG) — DONE
 
