@@ -1,9 +1,8 @@
 "use client";
 
 /** Destinations: left rail on desktop (≥1024px), bottom tab bar on mobile.
- *  Approvals carries the console's only red badge — its count is everything
- *  waiting for a decision there: pending trade proposals PLUS pending
- *  learned-context confirmations (one badge, one number, never two). */
+ *  Approvals carries a red badge for pending trade proposals.
+ *  Lessons handles pending/past learning (without a badge). */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
