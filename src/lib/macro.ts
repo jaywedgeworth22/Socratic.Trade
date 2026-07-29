@@ -1,5 +1,7 @@
 import { resolveApiKeyWithSource, type ApiKeySource } from "./db";
-import { BROWSER_UA, politeFetchJson } from "./web-sources/http";
+import { apiCircuitBreakerShouldSkip } from "./api-circuit-breaker";
+import { logApiHealth } from "./db-health";
+import { BROWSER_UA } from "./web-sources/http";
 
 // Minimal Yahoo Finance chart shape — only the fields we read.
 interface VixYahooResponse {
@@ -33,7 +35,7 @@ export interface MacroData {
    *         failed is blanked to "" (never a fabricated value), so a partial fetch never renders
    *         one — the console shows those specific tiles as "—";
    * false = no FRED fetch happened — every FRED field is blanked to "". `vix` is a live reading
-   *         iff `asOf` is a real date (the key-free Yahoo ^VIX fallback succeeded);
+   *         iff `asOf` is a real date (the keyless ^VIX cascade succeeded);
    *         `asOf === "unavailable"` means even the VIX is blank.
    * undefined = payload from an older build; callers should fall back to the asOf heuristic.
    */
@@ -236,8 +238,8 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
 
 /**
  * Fallback for "no usable FRED data" (no key, or a configured key whose every series fetch failed).
- * Tries to at least fetch a live ^VIX from Yahoo Finance (key-free) so the regime classifier gets a
- * real volatility reading instead of staying "Unknown"; every FRED field is blanked to "" (the
+ * Tries to at least fetch a live ^VIX from the keyless cascade (Yahoo -> Cboe) so the
+ * regime classifier gets a real volatility reading instead of staying "Unknown"; every FRED field is blanked to "" (the
  * partial-fetch convention — em dash on the console, dropped from the prompt by pruneMacro) and
  * `fredSourced` is false either way. Blank, not placeholder: the old DEFAULT_MACRO constants
  * carried a fabricated inverted curve that distorted determineMarketRegime and fed the strategist
@@ -250,7 +252,7 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
  * env-key path resolve to "shared" via macroCacheScopeForKeySource, so their behavior is unchanged.
  */
 async function fetchVixOnlyFallback(scope: MacroCacheScope, userId: string | undefined, now: number): Promise<MacroData> {
-  const liveVix = await fetchVixFromYahoo();
+  const liveVix = await fetchKeylessVix();
   if (liveVix !== null) {
     const lightMacro: MacroData = {
       ...BLANK_MACRO,
@@ -274,23 +276,111 @@ export function clearMacroCacheForTests(): void {
   liveVixCache.entry = null;
 }
 
+// ── Keyless ^VIX cascade ──────────────────────────────────────────────────────
+// VIX is the regime classifier's primary axis and the vol panic brake's main gauge, so it must not
+// hinge on a single free endpoint: Yahoo's chart API is intermittently rate-limited/bot-challenged
+// from datacenter IPs (the driver of the 2026-07-28 prod regime flap). Note FMP is deliberately NOT
+// in this chain — the macro/VIX path never called it (the suspended FMP key only affected the
+// enrichment cascade), and a suspended paid key must not be hammered on every scheduler tick anyway.
+//
+// Lane order (first success wins):
+//   1. Yahoo ^VIX chart  — the proven lane this module has always used; rich JSON chart history.
+//   2. Cboe _VIX delayed — the authoritative VIX publisher's own keyless delayed-quote CDN (same
+//      host family already trusted for _SKEW/_VVIX in market-signals/cboe.ts).
+//
+// This is deliberately a TWO-lane cascade. The third-tier candidates were live-probed and rejected
+// (2026-07-29 verifier review): Stooq's quote endpoint (stooq.com/q/l/) 404s endpoint-level and its
+// daily CSV lane (q/d/l/, used by history.ts for equities) sits behind a JS anti-bot interstitial;
+// Nasdaq's keyless index quote API (api.nasdaq.com/api/quote/{sym}/info?assetclass=index, proven
+// in-repo for NDX) does not carry VIX (a CBOE product — "Symbol not exists"); Yahoo's v7 quote
+// endpoint requires crumb auth and shares Yahoo's failure domain anyway. A dead tier would only
+// emit phantom provider_degraded alerts during real double-outages, so honesty beats lane count.
+//
+// Every lane runs through the repo's shared per-lane circuit breaker (api-circuit-breaker.ts) with
+// failures/successes recorded in api_health_log: a lane whose recent history reads "stopped
+// working" (getLaneHealth: 5 consecutive failures, or active-this-hour with no success) trips for
+// API_CIRCUIT_BREAKER_BACKOFF_MS (default 60s), then ONE half-open probe is allowed — a dead
+// endpoint is retried on a probe cadence, not hammered every tick. ALL sources dead -> null, and
+// the caller's honest "unavailable" path (never a fabricated reading).
+
+/** One keyless VIX fetch through the circuit-breaker + health-log machinery. Null on any failure. */
+async function fetchVixLane(
+  lane: string,
+  url: string,
+  accept: string,
+  parse: (res: Response) => Promise<number | null>
+): Promise<number | null> {
+  const breaker = apiCircuitBreakerShouldSkip(lane, null);
+  if (breaker.skip) return null; // lane backed off — try the next source
+  const start = Date.now();
+  const log = (ok: boolean, errorText?: string) =>
+    // keySource omitted -> stored as NULL, matching the breaker's (lane, null) keyless lane.
+    logApiHealth({ service: lane, ok, latencyMs: Date.now() - start, errorText });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6000);
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { "user-agent": BROWSER_UA, accept }
+    });
+    if (!res.ok) {
+      log(false, `HTTP ${res.status}`);
+      return null;
+    }
+    const value = await parse(res);
+    // A 200 with no usable VIX value still counts against the lane's health: from this module's
+    // perspective the endpoint is not serving the reading we need.
+    log(value !== null, value === null ? "no usable VIX value in response" : undefined);
+    return value;
+  } catch (err) {
+    log(false, err instanceof Error ? err.message : String(err));
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /** Fetch the latest ^VIX close from Yahoo Finance (no API key required). Returns null on any failure. */
 async function fetchVixFromYahoo(): Promise<number | null> {
-  try {
-    const url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=5d&interval=1d";
-    const json = await politeFetchJson<VixYahooResponse>(url, {
-      headers: { "user-agent": BROWSER_UA, accept: "application/json" }
-    });
-    const closes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close ?? [];
-    // Walk back from the end to find the most recent non-null close.
-    for (let i = closes.length - 1; i >= 0; i--) {
-      const c = closes[i];
-      if (typeof c === "number" && Number.isFinite(c) && c > 0) return c;
+  return fetchVixLane(
+    "vix-yahoo",
+    "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=5d&interval=1d",
+    "application/json",
+    async (res) => {
+      const json = (await res.json()) as VixYahooResponse;
+      const closes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close ?? [];
+      // Walk back from the end to find the most recent non-null close.
+      for (let i = closes.length - 1; i >= 0; i--) {
+        const c = closes[i];
+        if (typeof c === "number" && Number.isFinite(c) && c > 0) return c;
+      }
+      return null;
     }
-    return null;
-  } catch {
-    return null;
+  );
+}
+
+/** Cboe delayed _VIX quote from the publisher's own keyless CDN. Returns null on any failure. */
+async function fetchVixFromCboe(): Promise<number | null> {
+  return fetchVixLane(
+    "vix-cboe",
+    "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json",
+    "application/json",
+    async (res) => {
+      const json = (await res.json()) as { data?: { current_price?: unknown } };
+      const px = json?.data?.current_price;
+      return typeof px === "number" && Number.isFinite(px) && px > 0 ? Math.round(px * 100) / 100 : null;
+    }
+  );
+}
+
+/** First successful keyless VIX reading across the cascade; null when every source is down. */
+async function fetchKeylessVix(): Promise<number | null> {
+  for (const source of [fetchVixFromYahoo, fetchVixFromCboe]) {
+    const vix = await source();
+    if (vix !== null) return vix;
   }
+  return null;
 }
 
 // ── Live ^VIX overlay (short TTL, independent of the 24h macro cache) ────────────────────────
@@ -298,8 +388,8 @@ async function fetchVixFromYahoo(): Promise<number | null> {
 // GDP), but VIX can move double digits intraday, so pinning it to the same day-old snapshot means
 // the volatility panic brake and the regime-flip detector could be up to a day blind on a crash
 // day (composite review D/high/S). This is a SEPARATE cache entry with a short TTL, keyed off the
-// same key-free Yahoo ^VIX chart call `fetchVixFromYahoo` already used by the no-FRED fallback path
-// — so no new upstream dependency, just a much shorter TTL and its own cache slot. Callers that
+// same keyless ^VIX cascade (`fetchKeylessVix`: Yahoo -> Cboe) the no-FRED fallback path
+// already uses — so no new upstream dependency, just a much shorter TTL and its own cache slot. Callers that
 // need the freshest possible volatility read (the vol brake, regime-flip detection) should use
 // `fetchLiveVix`/`fetchMacroDataWithLiveVix` instead of trusting the 24h `fetchMacroData` snapshot.
 
@@ -310,7 +400,7 @@ const liveVixCache: { entry: LiveVixEntry | null } = { entry: null };
 
 /**
  * Live ^VIX reading with a short (10 min) TTL, independent of the 24h macro cache. Global/shared —
- * the Yahoo ^VIX chart endpoint is key-free and carries no per-user licensing concern (same
+ * every endpoint in the keyless cascade is key-free and carries no per-user licensing concern (same
  * provenance reasoning as the no-FRED-key VIX fallback in fetchMacroData). Returns `vix: null` when
  * the live fetch fails (never fabricates a reading); `asOf` is only a real ISO timestamp when the
  * fetch actually succeeded this call or a still-fresh cache entry is served.
@@ -319,7 +409,7 @@ export async function fetchLiveVix(now: number = Date.now()): Promise<{ vix: num
   const cached = liveVixCache.entry;
   if (cached && cached.expiresAt > now) return { vix: cached.vix, asOf: cached.vix !== null ? cached.asOf : null };
 
-  const vix = await fetchVixFromYahoo();
+  const vix = await fetchKeylessVix();
   const asOf = new Date(now).toISOString();
   liveVixCache.entry = { expiresAt: now + LIVE_VIX_TTL_MS, vix, asOf };
   return { vix, asOf: vix !== null ? asOf : null };
