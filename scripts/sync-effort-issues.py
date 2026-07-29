@@ -292,7 +292,11 @@ def http_request(
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req) as resp:
+        # Explicit socket timeout: the default (None) lets a stalled connection
+        # hang the job forever, squatting the single socratic-ci runner and
+        # blocking the whole CI queue (seen twice on 2026-07-29, both runs
+        # had to be cancelled manually after 10+ min stuck in this call).
+        with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read()
             return resp.status, (json.loads(raw) if raw else {}), dict(resp.headers)
     except urllib.error.HTTPError as e:
