@@ -28,14 +28,23 @@ describe("daily opening cap resolution", () => {
     expect(resolveDailyOpeningCap({ maxDailyNotional: 1_000 }, 100, 37)).toEqual({
       mode: "dollar",
       configuredValue: 1_000,
-      notional: 37,
+      notional: 100,
       pctOfNav: 1_000
     });
   });
 
   it("clamps percentage and dollar per-order caps to feasible account spend", () => {
-    expect(effectiveOpeningOrderNotionalCap({ maxOrderNotional: 1_000 }, 100, 37)).toBe(37);
-    expect(effectiveOpeningOrderNotionalCap({ maxOrderPctOfNav: 80 }, 100, 37)).toBe(37);
+    // Spend limit is Math.max(buyingPower, portfolioValue); order caps still bind under that.
+    expect(effectiveOpeningOrderNotionalCap({ maxOrderNotional: 1_000 }, 100, 37)).toBe(100);
+    expect(effectiveOpeningOrderNotionalCap({ maxOrderPctOfNav: 80 }, 100, 37)).toBe(80);
     expect(effectiveOpeningOrderNotionalCap({ maxOrderNotional: 1_000 }, 100, 0)).toBe(100);
+  });
+
+  it("resolves $0 daily notional for zero-balance / zero-buying-power accounts", () => {
+    expect(resolveDailyOpeningCap({ maxDailyNotional: 1_000 }, 0, 0)).toEqual({
+      mode: "dollar",
+      configuredValue: 1_000,
+      notional: 0
+    });
   });
 });
