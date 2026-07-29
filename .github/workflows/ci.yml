@@ -188,11 +188,7 @@ jobs:
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && needs.classify.outputs.route == 'self' }}
     runs-on: [self-hosted, socratic-ci]
     timeout-minutes: 30
-    # Single-file lane: this is load-shedding on the production box, NOT the throughput
-    # path (hosted is always available in parallel for other runs via the router).
-    concurrency:
-      group: verify-self-hosted
-      cancel-in-progress: false
+
     permissions:
       contents: read
       packages: read

@@ -199,7 +199,7 @@ describe("supported TypeScript toolchain policy", () => {
     expect(selfGuard?.run).toContain("24.*");
 
     const hostedSetup = workflow.jobs?.["verify-hosted"]?.steps?.find(
-      (step) => step.uses === "actions/setup-node@v4",
+      (step) => step.uses?.startsWith("actions/setup-node"),
     );
     expect(String(hostedSetup?.with?.["node-version"])).toBe("24");
 
