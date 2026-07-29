@@ -1,6 +1,23 @@
 ## 2026-07-29 — Macro Feed Resilience + Unknown-Side Regime-Flip Suppression (KIMI) — DONE (local commit; landing via parent)
 
 Fixed the prod `regime_flip` flap ("Neutral" <-> "Unknown (no macro feed)", 6 transitions on 2026-07-28) from both sides. Change 1: keyless VIX sourcing is now a cascade — Yahoo `^VIX` -> Cboe `_VIX` delayed (honestly 2 lanes: verifier live-probed Stooq q/l 404 + anti-bot interstitial, Nasdaq index API doesn't carry VIX, Yahoo v7 needs crumb auth) — each lane behind the repo's shared per-lane circuit breaker (`api-circuit-breaker.ts` + `api_health_log`, 60s trip + half-open probe), so a dead keyless endpoint is probed on a cooldown, not hammered every scheduler tick. Finding: the macro chain never called FMP — the suspended FMP key only affected enrichment; the flap driver was the single Yahoo lane. Change 2: `checkRegimeFlip` no longer treats a data outage as a regime change — Unknown-side ticks hold the stored last-known label (no flip audit / dirty event / material event / Unknown seeding), emit a once-per-hour `macro_feed_unavailable` diagnostic instead, and a real regime change during the outage is announced on recovery with existing escalation semantics. Throttle marker registered in the account-deletion ownership registry (db.ts). 9 new tests (4 macro cascade/cooldown, 5 regime-watch outage, plus lane-state isolation hardening in macro-live-vix + cache-provenance). All gates green: tsc exit 0, lint 0 errors, 5387/5387 vitest across 464 files, build exit 0. Branch `agent/kimi-lane`. Rollout: `docs/rollouts/2026-07-29-macro-feed-resilience.md`. Prod verification needs SSH to the NEW Oracle host `141.148.182.224` (Hetzner box retired).
+## 2026-07-29 — PR #2256 typecheck unblock (GROK) — DONE
+
+Restored missing `nonNegativeFinite` helper in `src/lib/policy-caps.ts` (dropped in a main merge while call sites remained). Fixed percentage per-order cap test expectation (80% of NAV → 80, not 100). Restored zero-balance daily notional assertion. Worktree `~/apps/trading-grok`.
+
+## 2026-07-28 — CI PR Merge Blocker Root-Cause Diagnosis & Fix (AG) — DONE
+
+Diagnosed exact root causes blocking GitHub PR merges: (1) `security.yml` `gitleaks` job failed on self-hosted Linux CI runners with `Destination file path /tmp/gitleaks.tmp already exists` — fixed by adding a pre-step cleaning `/tmp/gitleaks*`; (2) `verify-hosted` (`npm test`) mock hydration error in `test/milestone-4-challenger.test.ts` — fixed by adding `getDb: vi.fn()` to `vi.mock("../src/lib/db")`. Rollout: `docs/rollouts/2026-07-28-ci-pr-merge-blocker-gitleaks-and-mock-hydration-fix.md`.
+## 2026-07-28 — Daily Notional Cap Zero-Balance & Buying Power Clamping Fix (AG) — DONE
+
+Updated `resolveDailyOpeningCap` in `src/lib/policy-caps.ts` and `deriveSpend` in `app/console/lib/derive.ts` to support non-negative spend limits (`$0` balance/buying power). Accounts with `$0` balance or `$0` buying power now dynamically resolve their effective daily notional limit to `$0.00`, preventing arbitrary `$1,000` cap displays on empty accounts while continuing to support margin/leverage buying power for funded accounts. Rollout: `docs/rollouts/2026-07-28-daily-notional-cap-zero-balance-fix.md`.
+
+## 2026-07-28 — CI PR Merge Blocker Root-Cause Diagnosis & Fix (AG) — DONE
+
+Diagnosed exact root causes blocking GitHub PR merges: (1) `security.yml` `gitleaks` job failed on self-hosted Linux CI runners with `Destination file path /tmp/gitleaks.tmp already exists` — fixed by adding a pre-step cleaning `/tmp/gitleaks*`; (2) `verify-hosted` (`npm test`) mock hydration error in `test/milestone-4-challenger.test.ts` — fixed by adding `getDb: vi.fn()` to `vi.mock("../src/lib/db")`. Rollout: `docs/rollouts/2026-07-28-ci-pr-merge-blocker-gitleaks-and-mock-hydration-fix.md`.
+## 2026-07-28 — Daily Notional Cap Zero-Balance & Buying Power Clamping Fix (AG) — DONE
+
+Updated `resolveDailyOpeningCap` in `src/lib/policy-caps.ts` and `deriveSpend` in `app/console/lib/derive.ts` to support non-negative spend limits (`$0` balance/buying power). Accounts with `$0` balance or `$0` buying power now dynamically resolve their effective daily notional limit to `$0.00`, preventing arbitrary `$1,000` cap displays on empty accounts while continuing to support margin/leverage buying power for funded accounts. Rollout: `docs/rollouts/2026-07-28-daily-notional-cap-zero-balance-fix.md`.
 
 ## 2026-07-28 — Latest Strategy Run Card Component Styling Fix (AG) — DONE
 
