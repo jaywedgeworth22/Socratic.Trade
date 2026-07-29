@@ -20,8 +20,10 @@ beforeAll(() => {
 });
 
 /** Stub global fetch: FRED calls (api.stlouisfed.org) return a constant reading; the Yahoo ^VIX
- *  chart call (query1.finance.yahoo.com) returns the given VIX close (or fails when null). */
-function stubFetch(opts: { fredValue?: string; yahooVix?: number | null }) {
+ *  chart call (query1.finance.yahoo.com) returns the given VIX close (or fails when null); the
+ *  Cboe _VIX delayed quote (cdn.cboe.com) and Stooq ^vix CSV (stooq.com) behave likewise.
+ *  Any unlisted host 404s — so a source left unspecified is simply "down" for that test. */
+function stubFetch(opts: { fredValue?: string; yahooVix?: number | null; cboeVix?: number | null; stooqVix?: number | null }) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
@@ -36,6 +38,22 @@ function stubFetch(opts: { fredValue?: string; yahooVix?: number | null }) {
           })
         };
       }
+      if (url.includes("cdn.cboe.com")) {
+        if (opts.cboeVix === null || opts.cboeVix === undefined) {
+          return { ok: false, status: 500, json: async () => ({}) };
+        }
+        return { ok: true, json: async () => ({ data: { current_price: opts.cboeVix } }) };
+      }
+      if (url.includes("stooq.com")) {
+        if (opts.stooqVix === null || opts.stooqVix === undefined) {
+          return { ok: false, status: 500, text: async () => "" };
+        }
+        return {
+          ok: true,
+          text: async () =>
+            `Symbol,Date,Time,Open,High,Low,Close,Volume\n^VIX,2026-07-29,15:00:00,${opts.stooqVix},${opts.stooqVix},${opts.stooqVix},${opts.stooqVix},0`
+        };
+      }
       if (url.includes("api.stlouisfed.org")) {
         return { ok: true, json: async () => ({ observations: [{ value: opts.fredValue ?? "4.50" }] }) };
       }
@@ -44,10 +62,22 @@ function stubFetch(opts: { fredValue?: string; yahooVix?: number | null }) {
   );
 }
 
+/** Reset the shared circuit breaker and purge the VIX lanes' health rows so one test's recorded
+ *  failures can never trip (or hold open) a breaker lane in the next test. */
+async function resetVixLaneState() {
+  const { resetApiCircuitBreaker } = await import("../src/lib/api-circuit-breaker");
+  resetApiCircuitBreaker();
+  const { getDb } = await import("../src/lib/db");
+  getDb()
+    .prepare("DELETE FROM api_health_log WHERE service IN ('vix-yahoo', 'vix-cboe', 'vix-stooq')")
+    .run();
+}
+
 describe("fetchLiveVix", () => {
   beforeEach(async () => {
     const { clearMacroCacheForTests } = await import("../src/lib/macro");
     clearMacroCacheForTests();
+    await resetVixLaneState();
   });
 
   afterEach(() => {
@@ -97,6 +127,7 @@ describe("fetchMacroDataWithLiveVix", () => {
     delete process.env.FRED_API_KEY;
     const { clearMacroCacheForTests } = await import("../src/lib/macro");
     clearMacroCacheForTests();
+    await resetVixLaneState();
   });
 
   afterEach(() => {
@@ -143,6 +174,10 @@ describe("fetchMacroDataWithLiveVix", () => {
     const unavailable = await fetchMacroData("user-live-vix-3");
     expect(unavailable.asOf).toBe("unavailable");
 
+    // The failed first pass recorded lane failures; clear the breaker/lane history to simulate the
+    // recovery probe AFTER the cooldown has elapsed (otherwise the tripped lanes are skipped).
+    await resetVixLaneState();
+
     // Now the live path succeeds on a later call.
     stubFetch({ yahooVix: 27.0 });
     const { fetchMacroDataWithLiveVix } = await import("../src/lib/macro");
@@ -150,5 +185,84 @@ describe("fetchMacroDataWithLiveVix", () => {
     expect(overlaid.vix).toBe("27.00");
     expect(overlaid.asOf).not.toBe("unavailable");
     expect(overlaid.vixAsOf).toBeDefined();
+  });
+});
+
+describe("keyless VIX cascade (Yahoo -> Cboe -> Stooq)", () => {
+  beforeEach(async () => {
+    delete process.env.FRED_API_KEY;
+    const { clearMacroCacheForTests } = await import("../src/lib/macro");
+    clearMacroCacheForTests();
+    await resetVixLaneState();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("serves the Cboe delayed _VIX quote when the Yahoo lane is down", async () => {
+    stubFetch({ yahooVix: null, cboeVix: 27.5 });
+    const { fetchLiveVix } = await import("../src/lib/macro");
+    const result = await fetchLiveVix();
+    expect(result.vix).toBe(27.5);
+    expect(result.asOf).not.toBeNull();
+    // Yahoo was tried first, Cboe second; Stooq never needed.
+    const urls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes("query1.finance.yahoo.com"))).toBe(true);
+    expect(urls.some((u) => u.includes("cdn.cboe.com"))).toBe(true);
+    expect(urls.some((u) => u.includes("stooq.com"))).toBe(false);
+  });
+
+  it("serves the Stooq ^vix CSV quote when Yahoo and Cboe are both down", async () => {
+    stubFetch({ yahooVix: null, cboeVix: null, stooqVix: 19.25 });
+    const { fetchLiveVix } = await import("../src/lib/macro");
+    const result = await fetchLiveVix();
+    expect(result.vix).toBe(19.25);
+    expect(result.asOf).not.toBeNull();
+  });
+
+  it("with no FRED key, a Cboe-only VIX still yields a timestamped macro snapshot (not 'unavailable')", async () => {
+    stubFetch({ yahooVix: null, cboeVix: 22.0 });
+    const { fetchMacroData } = await import("../src/lib/macro");
+    const macro = await fetchMacroData("user-cascade-cboe");
+    expect(macro.vix).toBe("22.00");
+    expect(macro.asOf).not.toBe("unavailable");
+    expect(macro.fredSourced).toBe(false);
+  });
+
+  it("all sources dead -> honest 'unavailable' (never a fabricated VIX)", async () => {
+    stubFetch({ yahooVix: null, cboeVix: null, stooqVix: null });
+    const { fetchMacroData, fetchLiveVix } = await import("../src/lib/macro");
+    const macro = await fetchMacroData("user-cascade-dead");
+    expect(macro.asOf).toBe("unavailable");
+    expect(macro.vix).toBe("");
+    const live = await fetchLiveVix();
+    expect(live.vix).toBeNull();
+    expect(live.asOf).toBeNull();
+  });
+
+  it("trips the per-lane circuit breaker after lane failures, so a dead endpoint is probed, not hammered every tick", async () => {
+    stubFetch({ yahooVix: null, cboeVix: null, stooqVix: null });
+    const { fetchLiveVix } = await import("../src/lib/macro");
+    const mock = fetch as unknown as ReturnType<typeof vi.fn>;
+
+    // First full cascade round (cache bypassed by advancing past the 10-min TTL): all three lanes
+    // are attempted and their failures are recorded in api_health_log.
+    const base = Date.now();
+    await fetchLiveVix(base);
+    expect(mock.mock.calls.length).toBe(3);
+
+    // The lanes' health now reads "stopped working" (active this hour, zero successes), so the
+    // shared circuit breaker holds each lane open for its backoff window: the next two "ticks"
+    // short-circuit WITHOUT any upstream call — probe cadence, not per-tick hammering.
+    await fetchLiveVix(base + 11 * 60_000);
+    await fetchLiveVix(base + 22 * 60_000);
+    expect(mock.mock.calls.length).toBe(3);
+
+    // And the failures really did land on the per-lane health ledger the breaker consults.
+    const { getLaneHealth } = await import("../src/lib/db-health");
+    for (const lane of ["vix-yahoo", "vix-cboe", "vix-stooq"]) {
+      expect(getLaneHealth(lane, null).stoppedWorking).toBe(true);
+    }
   });
 });
