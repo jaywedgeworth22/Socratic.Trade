@@ -35,7 +35,11 @@ export default defineConfig({
         timeout: process.env.CI ? 600_000 : 240_000,
         env: {
           CF_ACCESS_TRUST_EMAIL_HEADER: "1",
-          PRIMARY_USER_EMAIL: authEmail
+          PRIMARY_USER_EMAIL: authEmail,
+          // Test-only key: next start runs NODE_ENV=production, and the boot guard
+          // (assertEncryptionKeyConfiguredInProduction) refuses to boot without a valid
+          // 64-char hex ENCRYPTION_KEY. The smoke DB is throwaway, so a fixed key is fine.
+          ENCRYPTION_KEY: "0123456789abcdef".repeat(4)
         }
       },
   projects: [
