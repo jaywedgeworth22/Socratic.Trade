@@ -107,14 +107,19 @@ ingest_tagged() {
 }
 
 check_coolify() {
-  if [ -z "${COOLIFY_API_TOKEN:-}" ]; then
-    warn "COOLIFY_API_TOKEN unset — skipping Coolify server reachability"
+  local coolify_token="${COOLIFY_SERVER_STATS:-${COOLIFY_API_TOKEN:-}}"
+  if [ -z "$coolify_token" ]; then
+    warn "COOLIFY_SERVER_STATS / COOLIFY_API_TOKEN unset — skipping Coolify server reachability"
     return 0
   fi
+
+  local coolify_url="https://host.jays.services/api/v1/servers"
   local code
-  code="$(curl -sS -o /tmp/coolify-servers.json -w '%{http_code}' \
-    -H "Authorization: Bearer ${COOLIFY_API_TOKEN}" \
-    "${COOLIFY_API_BASE}/servers" 2>/dev/null || echo 000)"
+  code=$(curl -s -o /tmp/coolify-servers.json -w "%{http_code}" \
+    -H "Authorization: Bearer ${coolify_token}" \
+    -H "Accept: application/json" \
+    --max-time 10 \
+    "$coolify_url")
   if [ "$code" != "200" ]; then
     crit "Coolify /servers HTTP ${code}"
     return 0

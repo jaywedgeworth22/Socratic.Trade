@@ -1,3 +1,13 @@
+## 2026-07-28 — Extracted Lessons from Proposals UI (ANTIGRAVITY, branch `agent/antigravity/strategy-migration`)
+
+Extracted the "Lessons" (learned context) from the "Proposals" tab on the navigation side rail into its own dedicated page `/console/lessons`.
+- Created `app/console/lessons/page.tsx`.
+- Moved `learned-context.tsx` to the `lessons` directory.
+- Updated `nav.tsx` to include "Lessons" and remove the learned items count from the red notification badge on "Proposals", strictly separating them so only pending trade proposals are badged red.
+- Removed the `+N learned` chip from the `approvals` page.
+
+Tested successfully and landed via `scripts/land.sh`. PR merged into `main`.
+
 ## 2026-07-28 — Admin Header UI & Oracle Cloud Metrics Resilience (AG) — DONE
 
 Cleaned up top navigation bar on `/admin`: removed `← Go Back` link and `ADMIN Overview` subtitle. Resolved 403 / "Server error" statuses on `/admin` dashboard cards for Oracle Cloud and standalone host deployments by authorizing `local-fallback` identity source for admin email check in `checkAdmin()` and gracefully returning local `os` system stats when remote Hetzner/Coolify infrastructure API tokens are not configured. Rollout: `docs/rollouts/2026-07-28-admin-header-and-oracle-metrics-fix.md`.

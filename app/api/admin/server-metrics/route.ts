@@ -81,7 +81,7 @@ export async function GET(request: Request) {
 function readConfiguration() {
   const hetznerToken = readText(process.env.HETZNER_API_TOKEN);
   const hetznerServerId = readText(process.env.HETZNER_SERVER_ID);
-  const coolifyToken = readText(process.env.COOLIFY_API_TOKEN);
+  const coolifyToken = readText(process.env.COOLIFY_SERVER_STATS) ?? readText(process.env.COOLIFY_API_TOKEN);
   const coolifyServerUuid = readText(process.env.COOLIFY_SERVER_UUID);
 
   return {
