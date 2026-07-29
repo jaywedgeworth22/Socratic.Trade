@@ -11,14 +11,12 @@ Diagnosed exact root causes blocking GitHub PR merges: (1) `security.yml` `gitle
 ## 2026-07-28 — Daily Notional Cap Zero-Balance & Buying Power Clamping Fix (AG) — DONE
 
 Updated `resolveDailyOpeningCap` in `src/lib/policy-caps.ts` and `deriveSpend` in `app/console/lib/derive.ts` to support non-negative spend limits (`$0` balance/buying power). Accounts with `$0` balance or `$0` buying power now dynamically resolve their effective daily notional limit to `$0.00`, preventing arbitrary `$1,000` cap displays on empty accounts while continuing to support margin/leverage buying power for funded accounts. Rollout: `docs/rollouts/2026-07-28-daily-notional-cap-zero-balance-fix.md`.
+## 2026-07-29 — System Errors Diagnostics and Fixes (AG) — DONE
+
+Investigated and resolved recent system errors: added TTL cache for Pinecone stats to prevent rate limits, updated Red Team LLM retry strategy for faster fallback, fixed related tests, and added diagnostic logging to market data fetchers to prevent silently swallowing quote errors. Rollout: `docs/rollouts/2026-07-29-troubleshoot-system-errors.md`.
 
 ## 2026-07-28 — CI PR Merge Blocker Root-Cause Diagnosis & Fix (AG) — DONE
-
 Diagnosed exact root causes blocking GitHub PR merges: (1) `security.yml` `gitleaks` job failed on self-hosted Linux CI runners with `Destination file path /tmp/gitleaks.tmp already exists` — fixed by adding a pre-step cleaning `/tmp/gitleaks*`; (2) `verify-hosted` (`npm test`) mock hydration error in `test/milestone-4-challenger.test.ts` — fixed by adding `getDb: vi.fn()` to `vi.mock("../src/lib/db")`. Rollout: `docs/rollouts/2026-07-28-ci-pr-merge-blocker-gitleaks-and-mock-hydration-fix.md`.
-## 2026-07-28 — Daily Notional Cap Zero-Balance & Buying Power Clamping Fix (AG) — DONE
-
-Updated `resolveDailyOpeningCap` in `src/lib/policy-caps.ts` and `deriveSpend` in `app/console/lib/derive.ts` to support non-negative spend limits (`$0` balance/buying power). Accounts with `$0` balance or `$0` buying power now dynamically resolve their effective daily notional limit to `$0.00`, preventing arbitrary `$1,000` cap displays on empty accounts while continuing to support margin/leverage buying power for funded accounts. Rollout: `docs/rollouts/2026-07-28-daily-notional-cap-zero-balance-fix.md`.
-
 ## 2026-07-28 — Latest Strategy Run Card Component Styling Fix (AG) — DONE
 
 Fixed visual inconsistency on the main console dashboard where populated `Latest Strategy Run` items were rendered outside a `<Card>` container. Wrapped populated proposal rows inside the standard `<Card>` component with title `<Zap size={13} /> LATEST STRATEGY RUN` matching `OUTCOME LEARNING LOOP`, `MARK TO MARKET`, and `RISK UTILIZATION` card containers. Rollout: `docs/rollouts/2026-07-28-latest-strategy-run-card-styling-fix.md`.
