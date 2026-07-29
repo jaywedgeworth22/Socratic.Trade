@@ -13,7 +13,6 @@ import { ApprovalCard } from "../components/approval-card";
 import { AlertCenter } from "../components/alert-center";
 import { Card, Chip, Btn, Select, TextInput } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
-import { LearnedContextInbox, LearnedFactsArchive } from "./learned-context";
 import {
   approvalEstimatedNotional,
   approvalIsLive,
@@ -47,40 +46,7 @@ const SORT_OPTIONS: Array<{ value: ApprovalSort; label: string }> = [
 const REJECT_ARM_MS = 4_000;
 const BULK_APPROVE_MAX_REQUESTS = 20;
 
-/** Pending learned-context count for the header's "+N learned" chip — the nav
- *  rail's badge folds trade proposals and learned-context items into one
- *  number, but this page only lists proposals, so the header needs its own
- *  read of the same queue to explain the difference. Same 60s/visibility
- *  polling cadence as the nav rail; kept local rather than shared because
- *  DesktopRail/MobileTabBar's hook isn't exported. */
-function useLearnedPendingCount(): number {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      void fetchPendingLearnedContext()
-        .then((items) => {
-          if (!cancelled) setCount(items.length);
-        })
-        .catch(() => {});
-    };
-    load();
-    const interval = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      load();
-    }, 60_000);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") load();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, []);
-  return count;
-}
+
 
 export default function ApprovalsPage() {
   const { snapshot, refresh } = useConsoleData();
@@ -98,8 +64,6 @@ export default function ApprovalsPage() {
   // needed to keep it in sync, and no ref read during render.
   const [rejectArmedCount, setRejectArmedCount] = useState<number | null>(null);
   const rejectArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const learnedSectionRef = useRef<HTMLDivElement | null>(null);
-  const learnedPendingCount = useLearnedPendingCount();
   const pending = useMemo(() => snapshot?.pendingProposals ?? [], [snapshot]);
   const pendingIdSet = useMemo(() => new Set(pending.map((proposal) => proposal.id)), [pending]);
   const effectiveSelectedIds = useMemo(() => {
@@ -270,9 +234,6 @@ export default function ApprovalsPage() {
     }
   };
 
-  // First click arms a "Reject N? Confirm" state for a few seconds; the
-  // second click within that window actually rejects. Deliberately no typed
-  // phrase and no modal — this is a mis-click guard, not a ritual.
   const handleBulkRejectClick = () => {
     if (!rejectArmedEffective) {
       setRejectArmedCount(selection.rejectCount);
@@ -281,10 +242,6 @@ export default function ApprovalsPage() {
     }
     clearRejectArm();
     void runBulkReject();
-  };
-
-  const jumpToLearnedContext = () => {
-    learnedSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   if (!snapshot || !state) return null;
@@ -312,16 +269,6 @@ export default function ApprovalsPage() {
                 </>
               )}
             </h1>
-            {learnedPendingCount > 0 && (
-              <button
-                type="button"
-                className="con-chip con-chip-accent"
-                onClick={jumpToLearnedContext}
-                title={`${learnedPendingCount} learned-context item${learnedPendingCount === 1 ? "" : "s"} also awaiting your decision, below trade proposals — this count is why the nav badge reads higher than the number above. Click to jump there.`}
-              >
-                +{learnedPendingCount} learned
-              </button>
-            )}
           </div>
           <Chip tone={state.tone === "pos" ? "pos" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "warn"}>{state.label}</Chip>
         </div>
@@ -488,11 +435,6 @@ export default function ApprovalsPage() {
             ))}
           </div>
         )}
-
-        <div ref={learnedSectionRef} className="flex scroll-mt-28 flex-col gap-4">
-          <LearnedContextInbox />
-          <LearnedFactsArchive />
-        </div>
 
         <p className="text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Rejections are data, not failures — every idea you pass on keeps being scored, and Results shows how your

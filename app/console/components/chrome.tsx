@@ -107,7 +107,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [open]);
 
   const switchTo = async (id: string) => {
@@ -153,7 +153,11 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
               {account.label || brokerName(account.broker)}
             </span>
             {r.tone !== "live" && <Chip tone={r.tone}>{r.word}</Chip>}
-            {st && st.state !== "halted" && <Chip tone={st.tone}>{st.label}</Chip>}
+            {st && (
+              <Chip tone={st.tone}>
+                {st.label.replace(" · market closed", "")}
+              </Chip>
+            )}
           </span>
           <span className="mt-0.5 block truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             {brokerName(account.broker)}
@@ -824,7 +828,7 @@ export function UserMenu({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [open]);
 
   // No session identity (single-user/local operation) → nothing to sign out of.

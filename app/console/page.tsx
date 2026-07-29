@@ -132,30 +132,37 @@ export default function ConsoleHomePage() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
         <div className="flex min-w-0 flex-col gap-4">
           {latestProposals.length > 0 ? (
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-[length:var(--con-fs-lg)] font-semibold">Latest Strategy Run</h2>
+            <Card
+              title={
+                <span className="flex items-center gap-1.5">
+                  <Zap size={13} /> Latest strategy run
+                </span>
+              }
+              action={
                 <Link href="/console/activity" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
                   Journal <ArrowRight size={12} />
                 </Link>
+              }
+            >
+              <div className="flex flex-col gap-2">
+                {latestProposals.map((row) => {
+                  const proposal = row.proposal ?? row.decision;
+                  const decision = row.decision;
+                  
+                  return (
+                    <ProposalRow
+                      key={row.id}
+                      row={row}
+                      latest={latest}
+                      proposal={proposal as TradeProposal}
+                      decision={decision}
+                      snapshot={snapshot}
+                      refresh={refresh}
+                    />
+                  );
+                })}
               </div>
-              {latestProposals.map((row) => {
-                const proposal = row.proposal ?? row.decision;
-                const decision = row.decision;
-                
-                return (
-                  <ProposalRow
-                    key={row.id}
-                    row={row}
-                    latest={latest}
-                    proposal={proposal as TradeProposal}
-                    decision={decision}
-                    snapshot={snapshot}
-                    refresh={refresh}
-                  />
-                );
-              })}
-            </div>
+            </Card>
           ) : (
             <Card
               title={

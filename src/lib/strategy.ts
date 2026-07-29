@@ -1,5 +1,6 @@
 export * from "./strategy-execution";
 export * from "./strategy-risk";
+import { TradingGraph, GraphContext } from "./orchestration/trading-graph";
 
 import {
   acquireStrategyLock,
@@ -1584,7 +1585,310 @@ export async function runStrategyOnce(
     // Bull userContent so the reviewer fact-checks against the SAME candidate evidence the
     // strategist saw). Undefined when proposal generation was skipped — no openings to review then.
     let adversaryContext: RedTeamReviewContext | undefined;
-    if (!skipLlmDueToScoreThreshold && !skipLlmDueToBudget) {
+
+    // -- TradingGraph Orchestration Initialization --
+    let sizedProposals: TradeProposal[] = [];
+    const fundingSells: TradeProposal[] = [];
+    const debatedProposals: TradeProposal[] = [];
+    const requiresHumanReview = new Set<TradeProposal>();
+    const humanReviewReasons = new Map<TradeProposal, Map<HumanReviewReasonCode, HumanReviewReasonReceipt>>();
+    const reviewResults = new Map<TradeProposal, RedTeamDebateResult>();
+    const requireHumanReview = (proposal: TradeProposal, receipt: HumanReviewReasonReceipt): void => {
+      const reasons = humanReviewReasons.get(proposal) ?? new Map<HumanReviewReasonCode, HumanReviewReasonReceipt>();
+      reasons.set(receipt.code, receipt);
+      humanReviewReasons.set(proposal, reasons);
+      requiresHumanReview.add(proposal);
+    };
+    const clearHumanReviewReason = (proposal: TradeProposal, reason: HumanReviewReasonCode): void => {
+      const reasons = humanReviewReasons.get(proposal);
+      if (!reasons) return;
+      reasons.delete(reason);
+      if (reasons.size > 0) return;
+      humanReviewReasons.delete(proposal);
+      requiresHumanReview.delete(proposal);
+    };
+    const stampHumanReviewReasons = (source: TradeProposal, target: TradeProposal): HumanReviewReasonReceipt[] => {
+      const receipts = [...(humanReviewReasons.get(source)?.values() ?? [])];
+      if (receipts.length > 0) target.humanReviewReasons = receipts;
+      else delete target.humanReviewReasons;
+      return receipts;
+    };
+
+    let calibrationForSizing: ConfidenceCalibrationStat[] | undefined = undefined;
+    let realizedVolPctBySymbol: Record<string, number> = {};
+    let atrStopPctByOpeningSymbol: Record<string, number> = {};
+    let bookHeat: PortfolioHeatResult | undefined = undefined;
+    
+    // Hoisted helpers
+    type BrokerMinimumReviewResult = {
+      review: ReviewedOrder;
+      blockReason?: string;
+      attemptedBumpToNotional?: number;
+    };
+    const insertRunProposal = (proposalInput: Parameters<typeof insertProposal>[0]) => {
+      if (fmpRightsClaim && fmpDerivedProvenance.length > 0) {
+        persistFmpTranscriptDerivedArtifact({
+          claim: fmpRightsClaim,
+          artifactType: "strategy-proposal",
+          artifactId: proposalInput.id,
+          userId,
+          provenance: fmpDerivedProvenance,
+          write: () => insertProposal(proposalInput)
+        });
+        return;
+      }
+      insertProposal(proposalInput);
+    };
+    const reviewBrokerMinimumFinalSize = async (input: {
+      sourceProposal: TradeProposal;
+      proposal: TradeProposal;
+      review: ReviewedOrder;
+      dailyNotionalUsed: number;
+      dailyOpeningOrderCount: number;
+      hourlyNotionalUsed: number;
+    }): Promise<BrokerMinimumReviewResult> => {
+      const { sourceProposal, proposal } = input;
+      let review = input.review;
+      const heldForMinimumGuard = workingPositions.find(
+        (position) => normalizeSymbol(position.symbol) === normalizeSymbol(proposal.symbol)
+      );
+      let blockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, {
+        ...proposal,
+        positionQuantity: heldForMinimumGuard?.quantity
+      });
+      let attemptedBumpToNotional: number | undefined;
+      if (blockReason && (policy.brokerMinimumHandling ?? "bump") === "bump") {
+        const effectiveMaxDailyNotional = effectiveDailyOpeningNotionalCap(
+          policy,
+          workingPortfolio.totalMarketValue
+        );
+        const openingCapNotional = Math.min(
+          applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, workingPortfolio)),
+          effectiveMaxDailyNotional - input.dailyNotionalUsed,
+          (policy.maxHourlyNotional ?? Infinity) - input.hourlyNotionalUsed,
+          Number.isFinite(workingPortfolio.buyingPower) && workingPortfolio.buyingPower > 0
+            ? workingPortfolio.buyingPower
+            : Infinity
+        );
+        const openingCountSpent =
+          (proposal.side === "buy" || proposal.side === "short") &&
+          policy.maxDailyOrders != null &&
+          input.dailyOpeningOrderCount >= policy.maxDailyOrders;
+        const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
+          review,
+          policy.activeBroker,
+          {
+            ...proposal,
+            positionQuantity: heldForMinimumGuard?.quantity,
+            positionMarketValue: heldForMinimumGuard?.marketValue
+          },
+          { openingCapNotional: Number.isFinite(openingCapNotional) ? openingCapNotional : undefined }
+        );
+        if (bumpPlan) {
+          const originalSizing = { quantity: proposal.quantity, dollarAmount: proposal.dollarAmount };
+          const originalReview = review;
+          Object.assign(proposal, bumpPlan.patch);
+          review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+          lockGuard.assertOwned();
+          const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, {
+            ...proposal,
+            positionQuantity: heldForMinimumGuard?.quantity
+          });
+          if (!stillBlocked) {
+            proposal.rationale = `${proposal.rationale} [Sized up from ${bumpPlan.fromNotional.toFixed(2)} to meet the broker's minimum order size (brokerMinimumHandling: bump).]`;
+            audit(
+              "order_bumped_broker_minimum",
+              {
+                runId,
+                symbol: proposal.symbol,
+                side: proposal.side,
+                fromNotional: bumpPlan.fromNotional,
+                toNotional: review.estimatedNotional,
+                reason: blockReason
+              },
+              userId,
+              connectedAccountId
+            );
+
+            if (isRiskAddingOpening(proposal, workingPositions)) {
+              const fullBumpedReview = review;
+              const fullBumpedSizing = {
+                quantity: proposal.quantity,
+                dollarAmount: proposal.dollarAmount
+              };
+              proposal.sizingSnapshot = captureProposalSizingSnapshot({
+                proposal,
+                estimatedNotional: fullBumpedReview.estimatedNotional,
+                policy,
+                portfolioValue: workingPortfolio.totalMarketValue,
+                dailyNotionalUsed: input.dailyNotionalUsed
+              });
+              const quote = marketScan.topCandidates.find(
+                (candidate) => normalizeSymbol(candidate.symbol) === normalizeSymbol(proposal.symbol)
+              );
+              let finalRed: RedTeamDebateResult;
+              try {
+                finalRed = await debateProposal(
+                  proposalForFinalSizeRedReview(proposal),
+                  quote,
+                  userId,
+                  runPolicy,
+                  {
+                    context: adversaryContext,
+                    sizing: redTeamSizingFromSnapshot(proposal.sizingSnapshot)
+                  }
+                );
+              } catch (error) {
+                finalRed = {
+                  rejected: false,
+                  available: false,
+                  reason: `Final-size Red Team review threw unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
+                  failureKind: "provider_error"
+                };
+              }
+              lockGuard.assertOwned();
+              stampRedTeamResult(proposal, finalRed);
+              proposal.preVetoReasons = proposal.preVetoReasons?.filter(
+                (reason) => !reason.startsWith("red_team_veto:")
+              );
+              if (proposal.preVetoReasons?.length === 0) delete proposal.preVetoReasons;
+
+              let ownerApprovalReason: string | undefined;
+              if (!finalRed.available) {
+                ownerApprovalReason = `The final broker-adjusted size could not be re-reviewed by Red (${describeRedTeamFailureKind(finalRed.failureKind)}): ${finalRed.reason}`;
+              } else if (finalRed.rejected || finalRed.verdict === "reject") {
+                ownerApprovalReason = `Red rejected the final broker-adjusted size: ${finalRed.reason}`;
+              } else if (finalRed.verdict === "approve-at-half") {
+                const haircut = applyRedTeamHalfSize(proposal);
+                if (!haircut.applied) {
+                  ownerApprovalReason = `Red authorized only half size, but that size is not executable: ${haircut.note}`;
+                } else {
+                  const haircutReview = await gateway.reviewEquityOrder({
+                    accountNumber: policy.accountNumber,
+                    ...proposal
+                  });
+                  lockGuard.assertOwned();
+                  const haircutBlock = describeBrokerMinimumOrderBlock(
+                    haircutReview,
+                    policy.activeBroker,
+                    { ...proposal, positionQuantity: heldForMinimumGuard?.quantity }
+                  );
+                  if (haircutBlock) {
+                    Object.assign(proposal, fullBumpedSizing);
+                    review = fullBumpedReview;
+                    proposal.sizingSnapshot = captureProposalSizingSnapshot({
+                      proposal,
+                      estimatedNotional: fullBumpedReview.estimatedNotional,
+                      policy,
+                      portfolioValue: workingPortfolio.totalMarketValue,
+                      dailyNotionalUsed: input.dailyNotionalUsed
+                    });
+                    ownerApprovalReason = `Red authorized only half size, but the broker rejects that haircut: ${haircutBlock}`;
+                  } else {
+                    review = haircutReview;
+                    proposal.sizingSnapshot = captureProposalSizingSnapshot({
+                      proposal,
+                      estimatedNotional: haircutReview.estimatedNotional,
+                      policy,
+                      portfolioValue: workingPortfolio.totalMarketValue,
+                      dailyNotionalUsed: input.dailyNotionalUsed
+                    });
+                    proposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at half: ${finalRed.reason} [${haircut.note}]`;
+                    audit(
+                      "red_team_approved_at_half_after_broker_minimum",
+                      {
+                        runId,
+                        symbol: proposal.symbol,
+                        side: proposal.side,
+                        model: finalRed.model,
+                        haircut: haircut.note,
+                        finalNotional: haircutReview.estimatedNotional
+                      },
+                      userId,
+                      connectedAccountId
+                    );
+                  }
+                }
+              } else {
+                proposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at full size: ${finalRed.reason}`;
+              }
+
+              clearHumanReviewReason(sourceProposal, "initial_red_team");
+              clearHumanReviewReason(sourceProposal, "final_size_red_team");
+              if (ownerApprovalReason) {
+                requireHumanReview(sourceProposal, {
+                  code: "final_size_red_team",
+                  title: "Final-size Red review needs your decision",
+                  summary: ownerApprovalReason
+                });
+                proposal.rationale += `\n\nRed Team review — final broker-adjusted size requires owner approval: ${ownerApprovalReason}`;
+              }
+              proposal.finalSizeReview = {
+                trigger: "broker_minimum_bump",
+                fromNotional: bumpPlan.fromNotional,
+                toNotional: fullBumpedReview.estimatedNotional,
+                reviewedAt: new Date().toISOString(),
+                ownerApprovalRequired: Boolean(ownerApprovalReason),
+                ...(ownerApprovalReason ? { ownerApprovalReason } : {})
+              };
+              audit(
+                "red_team_rereview_after_broker_minimum",
+                {
+                  runId,
+                  symbol: proposal.symbol,
+                  side: proposal.side,
+                  fromNotional: bumpPlan.fromNotional,
+                  bumpedNotional: fullBumpedReview.estimatedNotional,
+                  finalNotional: review.estimatedNotional,
+                  verdict: finalRed.verdict,
+                  available: finalRed.available,
+                  model: finalRed.model,
+                  ownerApprovalRequired: Boolean(ownerApprovalReason),
+                  ownerApprovalReason
+                },
+                userId,
+                connectedAccountId
+              );
+            }
+          } else {
+            Object.assign(proposal, originalSizing);
+            review = originalReview;
+            attemptedBumpToNotional = bumpPlan.toNotional;
+          }
+          blockReason = stillBlocked ? blockReason : undefined;
+        }
+      }
+      return {
+        review,
+        ...(blockReason ? { blockReason } : {}),
+        ...(attemptedBumpToNotional !== undefined ? { attemptedBumpToNotional } : {})
+      };
+    };
+    type PreparedBrokerShape = {
+      tradability: { tradable: boolean; reason?: string };
+      minimumReview?: BrokerMinimumReviewResult;
+    };
+    const preparedBrokerShapes = new Map<TradeProposal, PreparedBrokerShape>();
+    const sellToFundMode: any = policy.sellToFundBuy ?? "off";
+    let sellToFundNote = "";
+    let rationaleDiversity: any;
+    let results: StrategyResult["proposals"] = [];
+
+    const graph = new TradingGraph({
+      runId,
+      policy,
+      mode: executionMode,
+      userId,
+      connectedAccountId: connectedAccountId ?? "",
+      proposals: [],
+      errors: [],
+      metadata: {}
+    });
+
+    graph.registerNode({
+      name: "FUNDAMENTAL_PROPOSING",
+      execute: async (context: GraphContext) => {
+        if (!skipLlmDueToScoreThreshold && !skipLlmDueToBudget) {
       // The run is now committed to serving the Green LLM: advance the rotation pointer(s) + audit the
       // pick(s) here (a no-op unless a seat is rotating). Committing at this exact point — after account
       // validation and every usage-budget skip gate, immediately before proposeTrades — is what keeps
@@ -1671,24 +1975,24 @@ export async function runStrategyOnce(
       }
     }
 
-    const insertRunProposal = (proposalInput: Parameters<typeof insertProposal>[0]) => {
-      if (fmpRightsClaim && fmpDerivedProvenance.length > 0) {
-        persistFmpTranscriptDerivedArtifact({
-          claim: fmpRightsClaim,
-          artifactType: "strategy-proposal",
-          artifactId: proposalInput.id,
-          userId,
-          provenance: fmpDerivedProvenance,
-          write: () => insertProposal(proposalInput)
-        });
-        return;
-      }
-      insertProposal(proposalInput);
-    };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     // Item 6: compute the confidence-calibration curve ONCE per run (not per-proposal) when the flag is on,
     // and thread it into every sizing call. Undefined when off → no DB read and byte-identical behavior.
-    const calibrationForSizing: ConfidenceCalibrationStat[] | undefined =
+    calibrationForSizing =
       policy.tuning?.calibrationSizing && policy.accountNumber
         ? getConfidenceCalibration(policy.accountNumber, learningSource, {}, userId, prefetchedFills)
         : undefined;
@@ -1699,7 +2003,7 @@ export async function runStrategyOnce(
     // for an advisory note when the feature is fully off; bars are shared with the ATR precompute's
     // 30-min cache when a symbol is both an open position and a fresh candidate. Best-effort + bounded:
     // a fetch error or insufficient bars simply leaves that symbol's vol-target note/taper skipped.
-    const realizedVolPctBySymbol: Record<string, number> = {};
+    realizedVolPctBySymbol = {};
     if (policy.tuning?.volTargeting === true || policy.atrStops === true) {
       const openingSymbols = Array.from(
         new Set(
@@ -1737,7 +2041,7 @@ export async function runStrategyOnce(
     // bracket's ATR distance off a stale, possibly very different anchor if the stock moved
     // materially since the original entry (Codex review, PR #1371) — so opening candidates always
     // get their OWN fresh computation here, never skipped just because the symbol is also held.
-    const atrStopPctByOpeningSymbol: Record<string, number> = {};
+    atrStopPctByOpeningSymbol = {};
     // Checks BOTH an explicit stopPlan on the proposal AND an INHERITED one from stopPlanBySymbol —
     // a scale-in that omits stopPlan (inheriting the symbol's persisted "atr" plan) still gets that
     // plan applied by enrichOpeningProposal below, so the opening ATR precompute must gate the same
@@ -1785,7 +2089,6 @@ export async function runStrategyOnce(
     // generateProactiveRiskProposals' effectiveStopPct (ATR > beta-scaled > flat) so heat reflects the
     // same protective distances the app already manages. Never fabricates a stop for a position with
     // no basis — computePortfolioHeat excludes it from totalRiskUsd and flags it in perPosition instead.
-    let bookHeat: PortfolioHeatResult | undefined;
     if (policy.tuning?.volTargeting === true && (policy.tuning?.portfolioHeatBudgetPct ?? 0) > 0) {
       const flatStopPct = policy.riskRules.stopLossPct ?? 0;
       const betaStopsOn = policy.betaScaledStops === true;
@@ -1844,7 +2147,7 @@ export async function runStrategyOnce(
     // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
     // has a negative post-cost realized edge BEFORE sizing it — the conservative "don't open a proven
     // money-loser" stance. Unproven theses pass through to the sizer's intentional exploratory floor.
-    const sizedProposals = llmProposals
+    sizedProposals = llmProposals
       .filter((p) => {
         const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId, prefetchedFills);
         if (gate.skip) {
@@ -1859,33 +2162,7 @@ export async function runStrategyOnce(
         return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctByOpeningSymbol, stopPlanBySymbol, stopPlanRationaleBySymbol);
       });
 
-    const debatedProposals: TradeProposal[] = [];
-    // The Red Team review is REQUIRED for every risk-adding opening. If it could not run (no model
-    // chosen, no key, provider error, timeout, malformed verdict) we FAIL CLOSED: keep the proposal
-    // but route it to a human rather than auto-executing an un-reviewed opening with real capital.
-    // The live placement path below checks this set and downgrades these to status "proposed".
-    const requiresHumanReview = new Set<TradeProposal>();
-    const humanReviewReasons = new Map<TradeProposal, Map<HumanReviewReasonCode, HumanReviewReasonReceipt>>();
-    const requireHumanReview = (proposal: TradeProposal, receipt: HumanReviewReasonReceipt): void => {
-      const reasons = humanReviewReasons.get(proposal) ?? new Map<HumanReviewReasonCode, HumanReviewReasonReceipt>();
-      reasons.set(receipt.code, receipt);
-      humanReviewReasons.set(proposal, reasons);
-      requiresHumanReview.add(proposal);
-    };
-    const clearHumanReviewReason = (proposal: TradeProposal, reason: HumanReviewReasonCode): void => {
-      const reasons = humanReviewReasons.get(proposal);
-      if (!reasons) return;
-      reasons.delete(reason);
-      if (reasons.size > 0) return;
-      humanReviewReasons.delete(proposal);
-      requiresHumanReview.delete(proposal);
-    };
-    const stampHumanReviewReasons = (source: TradeProposal, target: TradeProposal): HumanReviewReasonReceipt[] => {
-      const receipts = [...(humanReviewReasons.get(source)?.values() ?? [])];
-      if (receipts.length > 0) target.humanReviewReasons = receipts;
-      else delete target.humanReviewReasons;
-      return receipts;
-    };
+
 
     // ── The SINGLE Red Team review (docs/single-adversary-consolidation.md §3) ──────────────────
     // Universal coverage (O2): every risk-adding opening is reviewed — no conviction gate, no
@@ -2185,241 +2462,241 @@ export async function runStrategyOnce(
       }
     }
 
-    type BrokerMinimumReviewResult = {
-      review: ReviewedOrder;
-      blockReason?: string;
-      attemptedBumpToNotional?: number;
-    };
+
+
+
+
+
 
     /** Apply the broker-minimum mutation and its mandatory exact-size Red review. This helper is
      * used both by the sell-to-fund planning preflight and by the placement loop, so the planner
      * cannot liquidate holdings for an opening whose final broker-adjusted shape later needs a
      * human decision. */
-    const reviewBrokerMinimumFinalSize = async (input: {
-      sourceProposal: TradeProposal;
-      proposal: TradeProposal;
-      review: ReviewedOrder;
-      dailyNotionalUsed: number;
-      dailyOpeningOrderCount: number;
-      hourlyNotionalUsed: number;
-    }): Promise<BrokerMinimumReviewResult> => {
-      const { sourceProposal, proposal } = input;
-      let review = input.review;
-      const heldForMinimumGuard = workingPositions.find(
-        (position) => normalizeSymbol(position.symbol) === normalizeSymbol(proposal.symbol)
-      );
-      let blockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, {
-        ...proposal,
-        positionQuantity: heldForMinimumGuard?.quantity
-      });
-      let attemptedBumpToNotional: number | undefined;
-      if (blockReason && (policy.brokerMinimumHandling ?? "bump") === "bump") {
-        const effectiveMaxDailyNotional = effectiveDailyOpeningNotionalCap(
-          policy,
-          workingPortfolio.totalMarketValue
-        );
-        const openingCapNotional = Math.min(
-          applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, workingPortfolio)),
-          effectiveMaxDailyNotional - input.dailyNotionalUsed,
-          (policy.maxHourlyNotional ?? Infinity) - input.hourlyNotionalUsed,
-          Number.isFinite(workingPortfolio.buyingPower) && workingPortfolio.buyingPower > 0
-            ? workingPortfolio.buyingPower
-            : Infinity
-        );
-        const openingCountSpent =
-          (proposal.side === "buy" || proposal.side === "short") &&
-          policy.maxDailyOrders != null &&
-          input.dailyOpeningOrderCount >= policy.maxDailyOrders;
-        const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
-          review,
-          policy.activeBroker,
-          {
-            ...proposal,
-            positionQuantity: heldForMinimumGuard?.quantity,
-            positionMarketValue: heldForMinimumGuard?.marketValue
-          },
-          { openingCapNotional: Number.isFinite(openingCapNotional) ? openingCapNotional : undefined }
-        );
-        if (bumpPlan) {
-          const originalSizing = { quantity: proposal.quantity, dollarAmount: proposal.dollarAmount };
-          const originalReview = review;
-          Object.assign(proposal, bumpPlan.patch);
-          review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
-          lockGuard.assertOwned();
-          const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, {
-            ...proposal,
-            positionQuantity: heldForMinimumGuard?.quantity
-          });
-          if (!stillBlocked) {
-            proposal.rationale = `${proposal.rationale} [Sized up from $${bumpPlan.fromNotional.toFixed(2)} to meet the broker's minimum order size (brokerMinimumHandling: bump).]`;
-            audit(
-              "order_bumped_broker_minimum",
-              {
-                runId,
-                symbol: proposal.symbol,
-                side: proposal.side,
-                fromNotional: bumpPlan.fromNotional,
-                toNotional: review.estimatedNotional,
-                reason: blockReason
-              },
-              userId,
-              connectedAccountId
-            );
 
-            if (isRiskAddingOpening(proposal, workingPositions)) {
-              const fullBumpedReview = review;
-              const fullBumpedSizing = {
-                quantity: proposal.quantity,
-                dollarAmount: proposal.dollarAmount
-              };
-              proposal.sizingSnapshot = captureProposalSizingSnapshot({
-                proposal,
-                estimatedNotional: fullBumpedReview.estimatedNotional,
-                policy,
-                portfolioValue: workingPortfolio.totalMarketValue,
-                dailyNotionalUsed: input.dailyNotionalUsed
-              });
-              const quote = marketScan.topCandidates.find(
-                (candidate) => normalizeSymbol(candidate.symbol) === normalizeSymbol(proposal.symbol)
-              );
-              let finalRed: RedTeamDebateResult;
-              try {
-                finalRed = await debateProposal(
-                  proposalForFinalSizeRedReview(proposal),
-                  quote,
-                  userId,
-                  runPolicy,
-                  {
-                    context: adversaryContext,
-                    sizing: redTeamSizingFromSnapshot(proposal.sizingSnapshot)
-                  }
-                );
-              } catch (error) {
-                finalRed = {
-                  rejected: false,
-                  available: false,
-                  reason: `Final-size Red Team review threw unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
-                  failureKind: "provider_error"
-                };
-              }
-              lockGuard.assertOwned();
-              stampRedTeamResult(proposal, finalRed);
-              proposal.preVetoReasons = proposal.preVetoReasons?.filter(
-                (reason) => !reason.startsWith("red_team_veto:")
-              );
-              if (proposal.preVetoReasons?.length === 0) delete proposal.preVetoReasons;
 
-              let ownerApprovalReason: string | undefined;
-              if (!finalRed.available) {
-                ownerApprovalReason = `The final broker-adjusted size could not be re-reviewed by Red (${describeRedTeamFailureKind(finalRed.failureKind)}): ${finalRed.reason}`;
-              } else if (finalRed.rejected || finalRed.verdict === "reject") {
-                ownerApprovalReason = `Red rejected the final broker-adjusted size: ${finalRed.reason}`;
-              } else if (finalRed.verdict === "approve-at-half") {
-                const haircut = applyRedTeamHalfSize(proposal);
-                if (!haircut.applied) {
-                  ownerApprovalReason = `Red authorized only half size, but that size is not executable: ${haircut.note}`;
-                } else {
-                  const haircutReview = await gateway.reviewEquityOrder({
-                    accountNumber: policy.accountNumber,
-                    ...proposal
-                  });
-                  lockGuard.assertOwned();
-                  const haircutBlock = describeBrokerMinimumOrderBlock(
-                    haircutReview,
-                    policy.activeBroker,
-                    { ...proposal, positionQuantity: heldForMinimumGuard?.quantity }
-                  );
-                  if (haircutBlock) {
-                    Object.assign(proposal, fullBumpedSizing);
-                    review = fullBumpedReview;
-                    proposal.sizingSnapshot = captureProposalSizingSnapshot({
-                      proposal,
-                      estimatedNotional: fullBumpedReview.estimatedNotional,
-                      policy,
-                      portfolioValue: workingPortfolio.totalMarketValue,
-                      dailyNotionalUsed: input.dailyNotionalUsed
-                    });
-                    ownerApprovalReason = `Red authorized only half size, but the broker rejects that haircut: ${haircutBlock}`;
-                  } else {
-                    review = haircutReview;
-                    proposal.sizingSnapshot = captureProposalSizingSnapshot({
-                      proposal,
-                      estimatedNotional: haircutReview.estimatedNotional,
-                      policy,
-                      portfolioValue: workingPortfolio.totalMarketValue,
-                      dailyNotionalUsed: input.dailyNotionalUsed
-                    });
-                    proposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at half: ${finalRed.reason} [${haircut.note}]`;
-                    audit(
-                      "red_team_approved_at_half_after_broker_minimum",
-                      {
-                        runId,
-                        symbol: proposal.symbol,
-                        side: proposal.side,
-                        model: finalRed.model,
-                        haircut: haircut.note,
-                        finalNotional: haircutReview.estimatedNotional
-                      },
-                      userId,
-                      connectedAccountId
-                    );
-                  }
-                }
-              } else {
-                proposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at full size: ${finalRed.reason}`;
-              }
 
-              clearHumanReviewReason(sourceProposal, "initial_red_team");
-              clearHumanReviewReason(sourceProposal, "final_size_red_team");
-              if (ownerApprovalReason) {
-                requireHumanReview(sourceProposal, {
-                  code: "final_size_red_team",
-                  title: "Final-size Red review needs your decision",
-                  summary: ownerApprovalReason
-                });
-                proposal.rationale += `\n\nRed Team review — final broker-adjusted size requires owner approval: ${ownerApprovalReason}`;
-              }
-              proposal.finalSizeReview = {
-                trigger: "broker_minimum_bump",
-                fromNotional: bumpPlan.fromNotional,
-                toNotional: fullBumpedReview.estimatedNotional,
-                reviewedAt: new Date().toISOString(),
-                ownerApprovalRequired: Boolean(ownerApprovalReason),
-                ...(ownerApprovalReason ? { ownerApprovalReason } : {})
-              };
-              audit(
-                "red_team_rereview_after_broker_minimum",
-                {
-                  runId,
-                  symbol: proposal.symbol,
-                  side: proposal.side,
-                  fromNotional: bumpPlan.fromNotional,
-                  bumpedNotional: fullBumpedReview.estimatedNotional,
-                  finalNotional: review.estimatedNotional,
-                  verdict: finalRed.verdict,
-                  available: finalRed.available,
-                  model: finalRed.model,
-                  ownerApprovalRequired: Boolean(ownerApprovalReason),
-                  ownerApprovalReason
-                },
-                userId,
-                connectedAccountId
-              );
-            }
-          } else {
-            Object.assign(proposal, originalSizing);
-            review = originalReview;
-            attemptedBumpToNotional = bumpPlan.toNotional;
-          }
-          blockReason = stillBlocked ? blockReason : undefined;
-        }
-      }
-      return {
-        review,
-        ...(blockReason ? { blockReason } : {}),
-        ...(attemptedBumpToNotional !== undefined ? { attemptedBumpToNotional } : {})
-      };
-    };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     // Correlation can remove an opening entirely, so it must run before sell-to-fund demand is
     // calculated. Funding sells are risk-reducing exits and are appended after this gate.
@@ -2432,11 +2709,11 @@ export async function runStrategyOnce(
     );
     lockGuard.assertOwned();
 
-    type PreparedBrokerShape = {
-      tradability: { tradable: boolean; reason?: string };
-      minimumReview?: BrokerMinimumReviewResult;
-    };
-    const preparedBrokerShapes = new Map<TradeProposal, PreparedBrokerShape>();
+
+
+
+
+
 
     // ── Sell-to-fund-buy (PR 3) ──────────────────────────────────────────────
     // When this run's intended BUYs exceed buying power, optionally raise cash by trimming holdings.
@@ -2444,7 +2721,7 @@ export async function runStrategyOnce(
     // the funding sells for human approval; "automated" lets them ride the account's existing
     // authority (auto-placed only when already in "decide"). Funding sells carry tradeThesisTag
     // "Sell-to-Fund" so the execution loop can route propose-mode ones correctly.
-    const sellToFundMode = policy.sellToFundBuy ?? "off";
+
     const sellToFundExcludedOpenings = new Set<TradeProposal>();
     if (sellToFundMode !== "off") {
       const correlationKept = new Set(correlationGatedBaseProposals);
@@ -2541,7 +2818,7 @@ export async function runStrategyOnce(
       }
     }
     let fundingSells: TradeProposal[] = [];
-    let sellToFundNote = "";
+
     if (sellToFundMode !== "off") {
       const isOpening = (p: TradeProposal) => p.side === "buy" || p.side === "short";
       // Only fund openings that will ACTUALLY be placed this run. An opening routed to human review
@@ -2601,7 +2878,7 @@ export async function runStrategyOnce(
     // Rationale-diversity check (improvement-program item #8). Computed on the final post-debate,
     // post-gate proposal set. Advisory by default; an optional default-off gate can route collapsed
     // runs to human review (Chat A item 7).
-    const rationaleDiversity = computeRationaleDiversity(proposals.map((p) => p.rationale));
+    rationaleDiversity = computeRationaleDiversity(proposals.map((p) => p.rationale));
     if (rationaleDiversity.collapsed) {
       console.warn(
         `[strategy] Rationale collapse detected: mean pairwise similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > threshold ${rationaleDiversity.threshold} across ${rationaleDiversity.count} proposal(s). LLM may be emitting boilerplate reasoning.`
@@ -2625,8 +2902,17 @@ export async function runStrategyOnce(
     // (The rationale-collapse GATE that routes collapsed openings to human review runs EARLIER — before
     // sell-to-fund planning — so a gated buy can't drive automated funding sells. Only the advisory
     // full-set warning above remains here.)
+        
+        return { nextState: "EXECUTION", context: { ...context, proposals } };
+      }
+    });
 
-    const results = completedProposalResults;
+    graph.registerNode({
+      name: "EXECUTION",
+      execute: async (context: GraphContext) => {
+        const { proposals } = context;
+
+    results = completedProposalResults;
     type SocraticDecisionRecordInput = {
       proposalId: string;
       proposal: TradeProposal;
@@ -3499,6 +3785,22 @@ export async function runStrategyOnce(
       // already emits this; the run-loop placement previously did not).
       emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { runId, proposalId, symbol: normalizedProposal.symbol, orderId: execution.orderId } });
       lockGuard.assertOwned();
+    }
+        
+        return { nextState: "COMPLETED", context };
+      }
+    });
+
+    graph.registerNode({
+      name: "INIT",
+      execute: async (context: GraphContext) => {
+        return { nextState: "FUNDAMENTAL_PROPOSING", context };
+      }
+    });
+
+    const finalContext = await graph.run();
+    if (finalContext.errors.length > 0) {
+      throw finalContext.errors[0];
     }
 
     // Phase 10 B2 — full EvidenceDigest for the WHOLE scored set (chosen AND skipped):
