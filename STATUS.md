@@ -7,6 +7,13 @@ Extracted the "Lessons" (learned context) from the "Proposals" tab on the naviga
 - Removed the `+N learned` chip from the `approvals` page.
 
 Tested successfully and landed via `scripts/land.sh`. PR merged into `main`.
+## 2026-07-28 — Latest Strategy Run Card Component Styling Fix (AG) — DONE
+
+Fixed visual inconsistency on the main console dashboard where populated `Latest Strategy Run` items were rendered outside a `<Card>` container. Wrapped populated proposal rows inside the standard `<Card>` component with title `<Zap size={13} /> LATEST STRATEGY RUN` matching `OUTCOME LEARNING LOOP`, `MARK TO MARKET`, and `RISK UTILIZATION` card containers. Rollout: `docs/rollouts/2026-07-28-latest-strategy-run-card-styling-fix.md`.
+
+## 2026-07-28 — Account Switcher Stopped Chip & Clean Status Labels (AG) — DONE
+
+Updated the account switcher dropdown menu: added explicit `Stopped` status chips for halted accounts (e.g. Alpaca Standard) and stripped redundant `· market closed` text from chips inside the dropdown list items so they display clean status labels (`Paused`, `Stopped`, `Exit-only`). Rollout: `docs/rollouts/2026-07-28-account-switcher-stopped-chip-fix.md`.
 
 ## 2026-07-28 — Admin Header UI & Oracle Cloud Metrics Resilience (AG) — DONE
 
