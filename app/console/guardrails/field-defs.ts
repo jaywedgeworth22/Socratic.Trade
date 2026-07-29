@@ -191,8 +191,8 @@ export const UNIVERSE_FLOOR: FieldDef[] = [
  *  All four are tapers/receipts — none can block an opening or touch an exit. */
 export const VOL_TARGETING: FieldDef[] = [
   { path: "tuning.volTargeting", label: "Volatility-target sizing", kind: "bool", looserWhen: "off", hint: "Tapers an opening order's size down when the name's realized volatility runs hotter than your target (never sizes up, floors at the exploratory minimum). Turning this OFF is looser — wild names get full size." },
-  { path: "tuning.targetPortfolioVolPct", label: "Vol target (%)", kind: "pct", optional: true, looserWhen: "up", hint: "Annualized realized-volatility target per position. A higher target means less tapering (looser). Blank = no vol taper (the heat budget below can still apply)." },
-  { path: "tuning.portfolioHeatBudgetPct", label: "Portfolio heat budget (%)", kind: "pct", optional: true, looserWhen: "up", hint: "The book's total distance-to-stop dollar risk as a % of equity. An opening order's incremental risk is tapered to fit the remaining budget — advisory, never a hard block. Blank = no heat taper." },
+  { path: "tuning.targetPortfolioVolPct", label: "Vol target (%)", kind: "pct", optional: true, looserWhen: "up", hint: "Annualized realized-volatility target per position. A higher target means less tapering (looser). Blank = revert to the default 25% taper. Enter 0 to disable the vol taper (the heat budget below can still apply)." },
+  { path: "tuning.portfolioHeatBudgetPct", label: "Portfolio heat budget (%)", kind: "pct", optional: true, looserWhen: "up", hint: "The book's total distance-to-stop dollar risk as a % of equity. An opening order's incremental risk is tapered to fit the remaining budget — advisory, never a hard block. Blank = revert to the default 10% taper. Enter 0 to disable the heat taper." },
   { path: "tuning.riskReceipts", label: "Risk receipts", kind: "bool", hint: "Appends a correlation profile and a pre-trade stress-scenario note to every opening proposal's rationale (inform-only — never changes size or blocks a trade). Costs a few extra price-bar fetches per candidate." }
 ];
 
@@ -211,7 +211,7 @@ export const TRIGGERS: FieldDef[] = [
     optionValues: { "": null, "true": true, "false": false },
     // Off/global-off = 0, On = 1: opting an account INTO event-driven autonomous runs loosens.
     looseRank: { "": 0, "false": 0, "true": 1 },
-    hint: "Let material events (8-K filings, regime flips, technical signals) fire a strategy run for this account instead of waiting for the fixed interval. Off opts this account out even when the deployment's engine is on. Events are deduped, debounced, and rate-capped."
+    hint: "Let material events (8-K filings, regime flips, technical signals) fire a strategy run for this account instead of waiting for the fixed interval. Off opts this account out even when the deployment's engine is on. Note: On only opts this account IN — it cannot power the engine by itself when the deployment-level TRIGGER_ENGINE env is off. Events are deduped, debounced, and rate-capped."
   },
   {
     path: "triggerSettings.mode",

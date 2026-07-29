@@ -150,3 +150,31 @@ branch in `~/apps/trading-kimi`:
 ## 6. Zero-Code Findings
 
 N/A — code shipped.
+
+## 7. Verifier Review (second pass, 2026-07-28)
+
+**Verdict: SHIP-WITH-NITS.** Two verifier nits fixed in a follow-up commit on this branch:
+
+- **D1 (fixed):** the `tuning.targetPortfolioVolPct` / `tuning.portfolioHeatBudgetPct` UI hints
+  said "Blank = no vol/heat taper" — wrong post-#2249. Blank reverts to the shipped
+  `DEFAULT_POLICY` values (25% vol target / 10% heat budget, both tapers active when
+  `volTargeting` is on); entering **0** is what disables each taper (resolution gates on
+  `> 0` in `strategy-risk.ts`). Both hints now say "Blank = revert to the default 25%/10%
+  taper. Enter 0 to disable."
+- **C1 (fixed):** the `triggerSettings.enabled` hint now tells the user that "On" is inert
+  when the deployment-level `TRIGGER_ENGINE` env is off — a per-account On opts the account
+  IN only when the engine is on globally; it cannot power the engine by itself.
+
+**A1 — owner-awareness note (no code change, by design):** `eventRunMode: "close_only"` is a
+SOFT constraint against two existing explicit-override paths: when
+`socraticOverrideMode = "execute"` the Socratic override executes proposals regardless of the
+gate state, and an `autonomyOverride` similarly bypasses the gate for that account/run. An
+account in close_only event mode with either override armed can still open positions through
+those override paths — same as a breaker-flipped close_only run today (deliberately identical
+semantics, not a new gate class). Owner should know close_only is "gate state", not an
+absolute kill switch, when overrides are in play.
+
+**Verification for this nit-fix commit:** `npx tsc --noEmit` clean; `npm run lint` 0 errors;
+adjacent suites `console-policy-diff` / `guardrails-essentials` / `learning-review-policy-route`
+/ `policy-trigger-settings-route` / `settings-search-index` — 5 files, 44 tests, all passing.
+(Hint-text-only change; no behavior touched.)
