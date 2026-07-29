@@ -26,7 +26,9 @@ describe("CI queue safety", () => {
     for (const name of ["security.yml", "shared-package-pin-check.yml", "e2e.yml"]) {
       const source = workflow(name);
 
-      expect(source).toContain("runs-on: [self-hosted, socratic-ci]");
+      // The live CI pool is GitHub-hosted ubuntu-latest (self-hosted runners
+      // retired 2026-07-29 via this PR; ubuntu-latest assignment is working again).
+      expect(source).toContain("runs-on: ubuntu-latest");
       expect(source).not.toContain("runs-on: [self-hosted, trading-live]");
     }
   });

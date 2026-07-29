@@ -70,7 +70,7 @@ jobs:
     # there is no socratic-deploy unit under /opt/actions-runners, so jobs that
     # target that label queue forever. Route the short failure/schedule-only
     # reporter onto socratic-ci until a dedicated observer runner is restored.
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)
         # Deliberately no `ref:` override: actions/checkout defaults workflow_run events to the
