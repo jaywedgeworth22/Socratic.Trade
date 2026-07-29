@@ -754,6 +754,16 @@
   color: var(--con-accent);
 }
 
+/* Top bar top-inset (for standalone/PWA on iOS so it clears the physical notch/status bar). */
+.con-topbar {
+  padding-top: 0;
+}
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  .con-topbar {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
 /* Bottom tab bar bottom-inset. In a normal browser tab, mobile Safari already
  * holds a `position: fixed; bottom: 0` bar above its own address bar / toolbar,
  * so adding `env(safe-area-inset-bottom)` here stacks a SECOND, redundant
