@@ -97,7 +97,11 @@ const DELETE_TABLES_BY_USER_ID = [
   // are user-scoped (user_id column) like notification_events.
   "option_alert_reservations",
   // Added 2026-07-20: broker_stop_placement_intents (src/lib/db.ts) — user-scoped stop placement intents.
-  "broker_stop_placement_intents"
+  "broker_stop_placement_intents",
+  // Added 2026-07-29: task_journal (src/lib/db.ts, migration 62) — cron/task run journal rows are
+  // user-scoped when attributed (nullable user_id — system-wide runs have none, matching the
+  // generic loop's `WHERE user_id = ?` no-op for those rows, same as due_jobs).
+  "task_journal"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];
