@@ -675,6 +675,41 @@ export interface RiskRules {
    */
   drawdownBreakerAction?: "advisory" | "close_only" | "halt";
   /**
+   * Accuracy breaker (nofx-style consecutive-miss safety mode, docs/oss-lessons.md §8): fires after
+   * this many CONSECUTIVE matured losses on real (placed/filled) decisions. The drawdown breaker
+   * bounds the account's bleed; this one notices the account being WRONG — a thesis regime can
+   * degrade long before a 15% drawdown shows it, especially with small positions. Undefined or <=0
+   * disables the streak trigger. A "flat" or "won" outcome breaks the streak; counterfactual
+   * outcomes of blocked/rejected proposals never count (avoiding a bad trade is a good call, not a
+   * miss). Response governed by `accuracyBreakerAction` (default advisory).
+   */
+  accuracyBreakerConsecutiveLosses?: number;
+  /**
+   * Optional second accuracy trigger: rolling hit-rate window. With `accuracyBreakerMinHitRatePct`
+   * set, the breaker fires when the win rate over the last N matured decisive outcomes (won/lost/
+   * flat on real decisions) drops below the floor. Only evaluates once a FULL window exists — a
+   * tiny sample never fires. Undefined/<=0 disables the hit-rate trigger.
+   */
+  accuracyBreakerWindow?: number;
+  /** Hit-rate floor (%) for the window trigger above (0–100). */
+  accuracyBreakerMinHitRatePct?: number;
+  /**
+   * Auto-recovery: once degraded, the marker clears after this many most-recent decisive outcomes
+   * show no loss (default 2). Recovery clears the marker and notifies — it NEVER flips systemState
+   * back on its own; after a hard close_only flip the owner re-arms (which itself clears the
+   * marker), same philosophy as the drawdown breaker.
+   */
+  accuracyBreakerRecoveryWins?: number;
+  /**
+   * What the accuracy breaker does on fire. Same philosophy as `drawdownBreakerAction`:
+   * - "advisory" (DEFAULT): `policy_violation_accuracy` receipt + one risk_advisory notification
+   *   per degradation. No state change — the agent and owner decide.
+   * - "close_only": OPT-IN hard enforcement — flip systemState → "close_only" (risk-reducing exits
+   *   still flow) + kill_switch notification. Owner re-arms; auto-recovery only clears the marker.
+   * The breaker itself stays opt-in via the thresholds above (unset ⇒ no breaker at all).
+   */
+  accuracyBreakerAction?: "advisory" | "close_only";
+  /**
    * Allow synthetic trailing-stops to fire exits even when systemState is 'halted'.
    * Never registers or updates to looser stops, but will trigger existing ones.
    */
