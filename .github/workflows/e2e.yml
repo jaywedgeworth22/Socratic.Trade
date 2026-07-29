@@ -98,10 +98,12 @@ jobs:
       contents: read
       packages: read
     env:
-      # Leave headroom below the Coolify runner's 3 GiB hard cap for Chromium,
-      # Next build workers, and the webServer process; 2560 MiB allowed the
-      # webServer to be OOM-killed with exit 137 on the admin PR.
-      NODE_OPTIONS: --max-old-space-size=2048
+      # Match ci.yml verify-hosted (3072): the same oracle-a1-socratic-ci runner
+      # completes the identical npm run build at that heap. The old 2048 cap now
+      # aborts the webServer build with V8 OOM exit 134 (build outgrew 2 GiB on
+      # 2026-07-29). Chromium only starts AFTER the webServer health-check, so
+      # build-time heap and browser never peak together.
+      NODE_OPTIONS: --max-old-space-size=3072
     steps:
       - name: Fail closed if classify did not succeed
         if: needs.classify.result != 'success'
