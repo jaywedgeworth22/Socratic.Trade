@@ -142,20 +142,17 @@ The old preview-provisioning scripts (`setup-agent-previews.sh`, `sync-preview-l
 dead after the preview retirement; the pre-push hook they used to install is now installed
 by `scripts/land.sh`). The "Preview freshness policy" section below is historical.
 
-Hosting is now Coolify on the Hetzner box (`135.181.192.190`, 8 GB `ubuntu-8gb-hel1-2`,
+Hosting is now Coolify on Oracle Cloud (`141.148.182.224`,
 dashboard + API `https://host.jays.services` — direct DNS, no Mac dependency; migrated
-2026-07-09 from the 4 GB `91.98.44.8` box, which the owner DELETED 2026-07-10 — that IP
-is gone; DB rollback path is the litestream R2 replica — see
-`docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`).
-**The dashboard moved off the apex the same evening (owner-directed): `jays.services`
+July 2026 from Hetzner to Oracle Cloud; DB rollback path is the litestream R2 replica).
+**The dashboard moved off the apex (owner-directed): `jays.services`
 (apex) now CNAMEs to the Mac Cloudflare tunnel and does NOT reach Coolify — any tool or
 script calling `https://jays.services/api/v1/...` must use
 `https://host.jays.services/api/v1/...` instead.** The box hosts
-`socratic-trade-prod` (= `socratictrade.com`, see the production stanza below) plus the
-`github-runner` service (two GitHub Actions deploy runners).
+`socratic-trade-prod` (= `socratictrade.com`, see the production stanza below).
 **MAC RUNNER RETIRED & DELETED (OWNER DIRECTIVE, 2026-07-21):** The Mac host self-hosted runner `trading-live-mac` is permanently stopped, uninstalled, and deleted from GitHub settings. **DO NOT EVER START, RE-REGISTER, OR REFERENCE `trading-live-mac` OR `trading-live` RUNNER LABELS AGAIN.**
 
-**Fleet CI = Coolify/Hetzner self-hosted only (owner 2026-07-24):** Do **not** use GitHub-hosted `ubuntu-latest`. Workflows target Coolify labels such as `[self-hosted, socratic-ci]`. Two Hetzner servers matter: (1) **prod Coolify host** `135.181.192.190` / `host.jays.services` — control plane + `socratic-trade-prod` deploys; (2) **CI build server** `ci-cpx32` (`77.42.35.209`, Coolify uuid `cantpgkbuwe71n1iqzu4qel6`) — systemd GitHub runners under `/opt/actions-runners/` (`socratic-ci`, `socratic-ci-2`, `congress-ci`, `shared-ci`, `usage-ci`). There is currently **no** `socratic-deploy` unit — do not target that label. Monitor often: `bash scripts/monitor-coolify-runners.sh --ssh` (needs `COOLIFY_API_TOKEN`, a GH token, and `CI_SSH_KEY` / `HETZNER_ROOT` as available).
+**Fleet CI = Coolify/Oracle self-hosted only:** Do **not** use GitHub-hosted `ubuntu-latest`. Workflows target Coolify labels such as `[self-hosted, socratic-ci]`. Two servers matter: (1) **prod Coolify host** `141.148.182.224` (Oracle Cloud) / `host.jays.services` — control plane + `socratic-trade-prod` deploys; (2) **CI build server** `ci-cpx32` (`77.42.35.209`, Coolify uuid `cantpgkbuwe71n1iqzu4qel6`) — systemd GitHub runners under `/opt/actions-runners/` (`socratic-ci`, `socratic-ci-2`, `congress-ci`, `shared-ci`, `usage-ci`). There is currently **no** `socratic-deploy` unit — do not target that label. Monitor often: `bash scripts/monitor-coolify-runners.sh --ssh` (needs `COOLIFY_API_TOKEN`, a GH token, and `CI_SSH_KEY` / `HETZNER_ROOT` as available).
 **Build caveats:** the box's `concurrent_builds` is
 pinned to **1** (two parallel `next build`s OOM-wedged the old 4 GB box on 2026-07-07,
 console reboot required; unproven on the 8 GB box — loosen only deliberately), and Docker

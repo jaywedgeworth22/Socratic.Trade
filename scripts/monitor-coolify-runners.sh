@@ -32,7 +32,7 @@ set -euo pipefail
 
 COOLIFY_API_BASE="${COOLIFY_API_BASE:-https://host.jays.services/api/v1}"
 CI_SSH_HOST="${CI_SSH_HOST:-77.42.35.209}"
-PROD_SSH_HOST="${PROD_SSH_HOST:-135.181.192.190}"
+PROD_SSH_HOST="${PROD_SSH_HOST:-141.148.182.224}"
 CI_SERVER_UUID="${CI_SERVER_UUID:-cantpgkbuwe71n1iqzu4qel6}"
 export CI_SERVER_UUID
 
@@ -136,7 +136,7 @@ for s in data:
     role = "unknown"
     if uuid == ci_uuid or name == "ci-cpx32" or ip == "77.42.35.209":
         role = "ci"
-    elif is_host or ip == "135.181.192.190" or "hel1-2" in name:
+    elif is_host or ip in ("135.181.192.190", "141.148.182.224") or "hel1-2" in name:
         role = "prod"
     found[role] = True
     line = (
