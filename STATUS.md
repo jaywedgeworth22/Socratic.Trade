@@ -3357,4 +3357,5 @@ Completed the SEC/RAG parser and chunker hardening by resolving outstanding stru
 - None.
 
 ## Next Action
-- Run `bash scripts/land.sh` to land the OpenRouter fix branch.
+- Run `bash scripts/land.sh` to land the strategy migration refactoring branch.
+- **[Socratic.Trade][AG] Graph-based execution loop (strategy migration) — COMPLETED 2026-07-28.** Refactored `runStrategyOnce` into discrete graph nodes (`INIT`, `FUNDAMENTAL_PROPOSING`, `RED_TEAM_REVIEW`, `EXECUTION`) using `TradingGraph`. Fixed variable shadowing bug inside the `RED_TEAM_REVIEW` block that was breaking the fail-closed assertion. Test suite passes.
