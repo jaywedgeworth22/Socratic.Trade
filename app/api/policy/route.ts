@@ -126,7 +126,19 @@ export async function PUT(request: Request) {
     tuning: {
       ...current.tuning,
       ...(typeof body.tuning === "object" && body.tuning ? body.tuning : {})
-    }
+    },
+    // Materialize triggerSettings only when something actually sets it — an ABSENT key must stay
+    // absent so "follow the global env" stays distinguishable from an explicit (empty) object.
+    // Cleared sub-keys arrive as null and are removed by stripNullsDeep below, which is how an
+    // account returns to the global default.
+    ...(body.triggerSettings !== undefined || current.triggerSettings !== undefined
+      ? {
+          triggerSettings: {
+            ...current.triggerSettings,
+            ...(typeof body.triggerSettings === "object" && body.triggerSettings ? body.triggerSettings : {})
+          }
+        }
+      : {})
   };
   // Owner directive 2026-07-07: an empty/cleared model is NOT silently deleted or substituted — a
   // blank model id is rejected by validatePolicy so the user must pick one explicitly. This covers
@@ -383,7 +395,7 @@ async function validatePolicy(
     // tuning.redTeamConvictionThreshold was removed 2026-07-07 (single-adversary consolidation O2:
     // the Red Team reviews EVERY risk-adding opening — no conviction gate). Stale values in stored
     // tuning JSON are ignored by the runtime; nothing to validate for it here.
-    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, crisisMaxOpeningExposurePct, bearVetoFcfYieldFloorPct, bearVetoDebtToEquityCeiling, skipNegativeExpectancy, skipNegativeExpectancyEdgePct, gateOnRationaleCollapse, marketableLimitBufferBps } = policy.tuning;
+    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, crisisMaxOpeningExposurePct, bearVetoFcfYieldFloorPct, bearVetoDebtToEquityCeiling, skipNegativeExpectancy, skipNegativeExpectancyEdgePct, gateOnRationaleCollapse, marketableLimitBufferBps, volTargeting, riskReceipts, targetPortfolioVolPct, portfolioHeatBudgetPct } = policy.tuning;
     if (shrinkPrior !== undefined && (!Number.isFinite(shrinkPrior) || shrinkPrior < 0 || shrinkPrior > 100)) return "tuning.shrinkPrior must be between 0 and 100.";
     // Zero/negative would INVERT the marketable exit/entry price (a SELL limit above the quote rests
     // unfilled); >500 bps (5% through the quote) is a typo/units mistake. The exit path also clamps
@@ -401,6 +413,20 @@ async function validatePolicy(
     if (skipNegativeExpectancy !== undefined && typeof skipNegativeExpectancy !== "boolean") return "tuning.skipNegativeExpectancy must be a boolean.";
     if (gateOnRationaleCollapse !== undefined && typeof gateOnRationaleCollapse !== "boolean") return "tuning.gateOnRationaleCollapse must be a boolean.";
     if (skipNegativeExpectancyEdgePct !== undefined && (!Number.isFinite(skipNegativeExpectancyEdgePct) || skipNegativeExpectancyEdgePct < -100 || skipNegativeExpectancyEdgePct > 100)) return "tuning.skipNegativeExpectancyEdgePct must be between -100 and 100.";
+    // Vol-targeting / heat-budget sizing tapers + risk receipts (guardrails UI fields, 2026-07-28).
+    if (volTargeting !== undefined && typeof volTargeting !== "boolean") return "tuning.volTargeting must be a boolean.";
+    if (riskReceipts !== undefined && typeof riskReceipts !== "boolean") return "tuning.riskReceipts must be a boolean.";
+    if (targetPortfolioVolPct !== undefined && (!Number.isFinite(targetPortfolioVolPct) || targetPortfolioVolPct < 0 || targetPortfolioVolPct > 100)) return "tuning.targetPortfolioVolPct must be between 0 (off) and 100.";
+    if (portfolioHeatBudgetPct !== undefined && (!Number.isFinite(portfolioHeatBudgetPct) || portfolioHeatBudgetPct < 0 || portfolioHeatBudgetPct > 100)) return "tuning.portfolioHeatBudgetPct must be between 0 (off) and 100.";
+  }
+  // Per-account event-trigger settings (2026-07-28): every sub-key optional; unset = global env.
+  if (policy.triggerSettings !== undefined) {
+    if (typeof policy.triggerSettings !== "object" || policy.triggerSettings === null || Array.isArray(policy.triggerSettings)) return "triggerSettings must be an object.";
+    const { enabled, mode, fallbackIntervalMinutes, eventRunMode } = policy.triggerSettings;
+    if (enabled !== undefined && typeof enabled !== "boolean") return "triggerSettings.enabled must be a boolean.";
+    if (mode !== undefined && !["interval", "event", "both"].includes(mode)) return "triggerSettings.mode must be interval, event, or both.";
+    if (fallbackIntervalMinutes !== undefined && (!Number.isFinite(fallbackIntervalMinutes) || fallbackIntervalMinutes < 1)) return "triggerSettings.fallbackIntervalMinutes must be at least 1 minute (blank = no cadence fallback).";
+    if (eventRunMode !== undefined && !["full", "close_only"].includes(eventRunMode)) return "triggerSettings.eventRunMode must be full or close_only.";
   }
   if (policy.notificationSettings.webhookUrl?.trim() && (options.enforceWebhookUrlRule ?? true)) {
     // Full SSRF egress check (protocol + DNS + private/loopback/link-local/metadata address

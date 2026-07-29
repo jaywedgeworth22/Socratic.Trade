@@ -70,6 +70,7 @@ if [[ -z "${LAND_FORCE_PUSH:-}" ]]; then
     Claude      → ~/apps/trading-claude   (branch agent/claude)
     Codex       → ~/apps/trading-codex    (branch agent/codex)
     Antigravity → ~/apps/trading-antigravity (branch agent/antigravity)
+    Kimi        -> ~/apps/trading-kimi     (branch agent/kimi-lane)
   To override in a genuine emergency: LAND_FORCE_PUSH=1 bash scripts/land.sh"
   fi
 

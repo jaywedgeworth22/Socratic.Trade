@@ -46,7 +46,9 @@ import {
   SOCRATIC_OVERRIDE,
   SHORTS,
   TAX_RULES,
-  UNIVERSE_FLOOR
+  TRIGGERS,
+  UNIVERSE_FLOOR,
+  VOL_TARGETING
 } from "./field-defs";
 import { StopFlowDiagram } from "./stop-flow";
 
@@ -348,6 +350,11 @@ function AccountScopedGuardrailsPage() {
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>
+          <AdvancedGroup title="Volatility targeting & risk receipts">
+            {VOL_TARGETING.map((def) => (
+              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
+            ))}
+          </AdvancedGroup>
           <AdvancedGroup title="Volatility panic brake">
             {PANIC_BRAKE.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
@@ -355,6 +362,11 @@ function AccountScopedGuardrailsPage() {
           </AdvancedGroup>
           <AdvancedGroup title="Proposal hygiene & pace">
             {HYGIENE.map((def) => (
+              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
+            ))}
+          </AdvancedGroup>
+          <AdvancedGroup title="Event triggers">
+            {TRIGGERS.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>

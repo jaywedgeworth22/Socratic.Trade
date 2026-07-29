@@ -112,3 +112,9 @@ explicitly accepted.
    daily usage × ~1.5?
 5. Are the panel's default caps (6/hour, 24/day, 300s global cooldown) right for live accounts,
    or should Stage 1 start tighter (e.g. 3/hour, 12/day)?
+
+**Update 2026-07-28 (branch `agent/kimi-lane`):** gaps G1 and G2 are now addressed — per-account
+`policy.triggerSettings` ships a `fallbackIntervalMinutes` safety-floor cadence for event-only
+mode, a three-state per-account enabled/mode override, and `eventRunMode: "close_only"` for
+close-only event runs (run-scoped clone, never persisted). See
+`docs/rollouts/2026-07-28-per-account-trigger-guard-settings.md`.

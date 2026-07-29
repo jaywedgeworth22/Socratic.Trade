@@ -1,5 +1,20 @@
 # Socratic Trade Status
 
+## 2026-07-28 — Per-account event-trigger settings + guard tuning UI (KIMI) — DONE (local commit; landing via parent)
+
+Owner-directed follow-up to the guard enablement (#2249): the four `policy.tuning` guard fields
+(vol-target sizing, vol target %, portfolio heat budget %, risk receipts) are now editable per
+account in Guardrails → Advanced ("Volatility targeting & risk receipts") and searchable in
+settings-search. New optional per-account `policy.triggerSettings` (enabled / mode /
+fallbackIntervalMinutes / eventRunMode) wired end to end: scheduler cadence lane resolves per
+account (event mode + fallback interval keeps a safety-floor cadence — closes the known
+silent-producer gap), trigger engine skips opted-out accounts, and `eventRunMode: "close_only"`
+fires event runs with a run-scoped close_only policy clone that can never persist. Guardrails →
+Advanced "Event triggers" section with a three-state Use-global/On/Off select; policy-route
+validation + 18 new tests (fallback interval, per-account suppression, close_only purity, route
+validation + round-trips). Branch `agent/kimi-lane`. Rollout:
+`docs/rollouts/2026-07-28-per-account-trigger-guard-settings.md`.
+
 ## 2026-07-28 — Guard enablement (KIMI) — DONE (local commit; landing via parent)
 
 Owner-approved guards from `docs/guard-enablement-proposal-2026-07-28.md` now DEFAULT ON:

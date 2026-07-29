@@ -26,7 +26,7 @@ import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
 import { isLiveOrderState } from "./broker-side";
 import type { EquityOrder, TradingPolicy } from "./types";
-import { drainMaterialEventQueue, triggerEngineEnabled, triggerMode } from "./triggers";
+import { cadenceLaneDecision, drainMaterialEventQueue } from "./triggers";
 import {
   getTechnicalWatchlist,
   isFilingIngestDue,
@@ -741,8 +741,13 @@ async function tick(): Promise<void> {
         }
 
         // Event-only mode: the trigger engine drives runs; skip the fixed-interval cadence.
-        // (Default — engine off or mode interval/both — leaves the interval lane unchanged.)
-        if (triggerEngineEnabled() && triggerMode() === "event") {
+        // Resolved PER ACCOUNT (2026-07-28): triggerSettings.enabled/mode fall back to the global
+        // TRIGGER_ENGINE/TRIGGER_MODE env, and triggerSettings.fallbackIntervalMinutes keeps a
+        // safety-floor cadence alive in event mode (used as this account's cadenceMs instead of
+        // runCadenceMinutes). Default — engine off for the account, or mode interval/both —
+        // leaves the interval lane byte-identical to before.
+        const cadenceLane = cadenceLaneDecision(policy);
+        if (!cadenceLane.run) {
           schedule.nextRunAt = null;
           continue;
         }
@@ -753,7 +758,7 @@ async function tick(): Promise<void> {
         }
 
         const now = Date.now();
-        const cadenceMs = (policy.runCadenceMinutes ?? 60) * 60_000;
+        const cadenceMs = cadenceLane.cadenceMinutes * 60_000;
 
         if (schedule.lastRunAt !== null) {
           const elapsed = now - new Date(schedule.lastRunAt).getTime();
