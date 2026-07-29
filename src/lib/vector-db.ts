@@ -3810,13 +3810,19 @@ export async function getVectorStoreStats(userId: string = "local"): Promise<Vec
 /** All Pinecone index totals visible to this key. Diagnostic-only: the RAG coverage
  * page is local-ledger based, so this exposes old/alternate indexes that can consume
  * the same org-level Pinecone quota while not appearing in ticker coverage. */
+let cachedAllStats: { ts: number; data: VectorIndexStats[] } | null = null;
+const ALL_STATS_TTL_MS = 60_000;
+
 export async function getAllVectorStoreStats(userId: string = "local"): Promise<VectorIndexStats[]> {
+  if (cachedAllStats && Date.now() - cachedAllStats.ts < ALL_STATS_TTL_MS) {
+    return cachedAllStats.data;
+  }
   const { pc, pineconeSource } = await getClients(userId);
   if (!pc) return [];
   try {
     const indexes = await withRagApiHealth("pinecone", pineconeSource, userId, "listIndexes", () => pc.listIndexes());
     const names = (indexes.indexes ?? []).map((i) => i.name).filter((name): name is string => Boolean(name));
-    return Promise.all(
+    const results = await Promise.all(
       names.map(async (name) => {
         try {
           const stats = (await withRagApiHealth("pinecone", pineconeSource, userId, "describeIndexStats", () =>
@@ -3836,6 +3842,8 @@ export async function getAllVectorStoreStats(userId: string = "local"): Promise<
         }
       })
     );
+    cachedAllStats = { ts: Date.now(), data: results };
+    return results;
   } catch (err) {
     return [{ indexName: indexName(), error: err instanceof Error ? err.message : String(err) }];
   }
