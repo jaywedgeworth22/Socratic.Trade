@@ -1,3 +1,7 @@
+## 2026-07-28 — Daily Notional Cap Zero-Balance & Buying Power Clamping Fix (AG) — DONE
+
+Updated `resolveDailyOpeningCap` in `src/lib/policy-caps.ts` and `deriveSpend` in `app/console/lib/derive.ts` to support non-negative spend limits (`$0` balance/buying power). Accounts with `$0` balance or `$0` buying power now dynamically resolve their effective daily notional limit to `$0.00`, preventing arbitrary `$1,000` cap displays on empty accounts while continuing to support margin/leverage buying power for funded accounts. Rollout: `docs/rollouts/2026-07-28-daily-notional-cap-zero-balance-fix.md`.
+
 ## 2026-07-28 — Latest Strategy Run Card Component Styling Fix (AG) — DONE
 
 Fixed visual inconsistency on the main console dashboard where populated `Latest Strategy Run` items were rendered outside a `<Card>` container. Wrapped populated proposal rows inside the standard `<Card>` component with title `<Zap size={13} /> LATEST STRATEGY RUN` matching `OUTCOME LEARNING LOOP`, `MARK TO MARKET`, and `RISK UTILIZATION` card containers. Rollout: `docs/rollouts/2026-07-28-latest-strategy-run-card-styling-fix.md`.
