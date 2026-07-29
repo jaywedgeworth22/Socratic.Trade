@@ -45,6 +45,7 @@ function accountSettingMatchesSubject(key: unknown, subjectToken: unknown): numb
     "learning_review:legacySeedDone:",
     "last_auto_tune_at:",
     "regime:current:",
+    "regime:macro-unavailable-notified:",
     "congress_score_verdict:",
     "reflection_signature:",
     "model_rotation:",
