@@ -1588,7 +1588,7 @@ export async function runStrategyOnce(
 
     // -- TradingGraph Orchestration Initialization --
     let sizedProposals: TradeProposal[] = [];
-    let fundingSells: TradeProposal[] = [];
+    const fundingSells: TradeProposal[] = [];
     const debatedProposals: TradeProposal[] = [];
     const requiresHumanReview = new Set<TradeProposal>();
     const humanReviewReasons = new Map<TradeProposal, Map<HumanReviewReasonCode, HumanReviewReasonReceipt>>();
@@ -1869,7 +1869,7 @@ export async function runStrategyOnce(
       minimumReview?: BrokerMinimumReviewResult;
     };
     const preparedBrokerShapes = new Map<TradeProposal, PreparedBrokerShape>();
-    let sellToFundMode: any = policy.sellToFundBuy ?? "off";
+    const sellToFundMode: any = policy.sellToFundBuy ?? "off";
     let sellToFundNote = "";
     let rationaleDiversity: any;
     let results: StrategyResult["proposals"] = [];

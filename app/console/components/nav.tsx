@@ -16,6 +16,7 @@ import {
   Globe,
   Inbox,
   LayoutDashboard,
+  GraduationCap,
   LayoutGrid,
   ListChecks,
   MessageSquare,
@@ -32,44 +33,9 @@ import { cx } from "../lib/format";
 import { useNavDirtyGuard } from "../lib/useDirtyGuard";
 import { DEFAULT_MOBILE_TAB_HREFS, MOBILE_TABS_MAX, MOBILE_TABS_MIN, useMobileTabs, type MobileTabsState } from "../lib/mobile-tabs";
 
-/** Pending learned-context confirmations (risk-tier queue). Not part of the
- *  dashboard snapshot, so it's polled here — cheap endpoint, 60s cadence,
- *  refreshed when the tab becomes visible. Errors leave the last good count. */
-function useLearnedPendingCount(): number {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      void fetch("/api/learned-context/pending", { cache: "no-store" })
-        .then((r) => (r.ok ? (r.json() as Promise<unknown>) : null))
-        .then((rows) => {
-          if (!cancelled && Array.isArray(rows)) setCount(rows.length);
-        })
-        .catch(() => {});
-    };
-    load();
-    const interval = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      load();
-    }, 60_000);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") load();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, []);
-  return count;
-}
-
-function badgeTitle(proposals: number, learned: number): string {
-  const parts: string[] = [];
-  if (proposals > 0) parts.push(`${proposals} trade proposal${proposals === 1 ? "" : "s"}`);
-  if (learned > 0) parts.push(`${learned} learned-context item${learned === 1 ? "" : "s"}`);
-  return `${parts.join(" and ")} waiting for your decision`;
+function badgeTitle(proposals: number): string {
+  if (proposals > 0) return `${proposals} trade proposal${proposals === 1 ? "" : "s"} waiting for your decision`;
+  return "";
 }
 
 interface Destination {
@@ -83,6 +49,7 @@ interface Destination {
 export const DESTINATIONS: Destination[] = [
   { href: "/console", label: "Thesis", icon: LayoutDashboard, desc: "Live thesis, actions, evidence, dissent, and framework learning." },
   { href: "/console/approvals", label: "Proposals", icon: Inbox, desc: "Trade proposals awaiting your judgment." },
+  { href: "/console/lessons", label: "Lessons", icon: GraduationCap, desc: "Pending learning and past learning." },
   { href: "/console/activity", label: "Journal", icon: ActivityIcon, desc: "Decision journal: everything the agent did, newest first." },
   { href: "/console/scan", label: "Evidence", icon: Radar, desc: "The market scan: screened and scored symbols from the latest run." },
   { href: "/console/watchlist", label: "Watchlist", icon: Eye, desc: "Symbols the agent monitors, with price alerts that notify you when a level is crossed." },
@@ -116,7 +83,7 @@ function isActive(pathname: string, href: string): boolean {
  *  into the last group so a newly added destination stays reachable even if
  *  this list isn't updated in lockstep. */
 const GROUPED_DESTINATION_HREFS: { label: string; hrefs: string[] }[] = [
-  { label: "Core", hrefs: ["/console", "/console/approvals", "/console/activity"] },
+  { label: "Core", hrefs: ["/console", "/console/approvals", "/console/lessons", "/console/activity"] },
   { label: "Monitor", hrefs: ["/console/scan", "/console/watchlist", "/console/macro", "/console/orders"] },
   { label: "Review", hrefs: ["/console/assistant", "/console/results", "/console/usage"] },
   { label: "Configure", hrefs: ["/console/strategy", "/console/guardrails", "/console/connections", "/console/settings"] }
@@ -139,8 +106,6 @@ export function groupedDestinations(destinations: Destination[]): { label: strin
 export function DesktopRail({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname() ?? "";
   const guardNav = useNavDirtyGuard();
-  const learnedCount = useLearnedPendingCount();
-  const decisionCount = pendingCount + learnedCount;
   return (
     <nav className="hidden w-52 shrink-0 flex-col gap-1 px-3 py-4 lg:flex border-r border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] shadow-sm mr-4" aria-label="Console navigation">
       {groupedDestinations(DESTINATIONS).map((group, i) => (
@@ -161,9 +126,9 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
               >
                 <Icon size={16} />
                 <span className="flex-1">{d.label}</span>
-                {d.href === "/console/approvals" && decisionCount > 0 && (
-                  <span className="con-badge" title={badgeTitle(pendingCount, learnedCount)}>
-                    {decisionCount}
+                {d.href === "/console/approvals" && pendingCount > 0 && (
+                  <span className="con-badge" title={badgeTitle(pendingCount)}>
+                    {pendingCount}
                   </span>
                 )}
               </Link>
@@ -209,9 +174,7 @@ function TabsSheet({
   pathname,
   guardNav,
   tabs,
-  decisionCount,
   pendingCount,
-  learnedCount,
   barHeight
 }: {
   open: boolean;
@@ -219,9 +182,7 @@ function TabsSheet({
   pathname: string;
   guardNav: (event: { preventDefault: () => void } | undefined, href: string) => boolean;
   tabs: MobileTabsState;
-  decisionCount: number;
   pendingCount: number;
-  learnedCount: number;
   barHeight: number;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -352,9 +313,9 @@ function TabsSheet({
                       >
                         <Icon size={16} />
                         <span className="flex-1">{d.label}</span>
-                        {d.href === "/console/approvals" && decisionCount > 0 && (
-                          <span className="con-badge" title={badgeTitle(pendingCount, learnedCount)}>
-                            {decisionCount}
+                        {d.href === "/console/approvals" && pendingCount > 0 && (
+                          <span className="con-badge" title={badgeTitle(pendingCount)}>
+                            {pendingCount}
                           </span>
                         )}
                       </Link>
@@ -388,8 +349,6 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname() ?? "";
   const [tabsOpen, setTabsOpen] = useState(false);
   const guardNav = useNavDirtyGuard();
-  const learnedCount = useLearnedPendingCount();
-  const decisionCount = pendingCount + learnedCount;
   const tabsState = useMobileTabs(DESTINATIONS.map((d) => d.href));
   const navRef = useRef<HTMLElement>(null);
   const [barHeight, setBarHeight] = useState(0);
@@ -448,9 +407,9 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
                   style={active ? { background: "var(--con-accent-soft)" } : undefined}
                 >
                   <Icon size={19} />
-                  {d.href === "/console/approvals" && decisionCount > 0 && (
-                    <span className="con-badge absolute -right-2.5 -top-1" title={badgeTitle(pendingCount, learnedCount)}>
-                      {decisionCount}
+                  {d.href === "/console/approvals" && pendingCount > 0 && (
+                    <span className="con-badge absolute -right-2.5 -top-1" title={badgeTitle(pendingCount)}>
+                      {pendingCount}
                     </span>
                   )}
                 </span>
@@ -486,9 +445,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
         pathname={pathname}
         guardNav={guardNav}
         tabs={tabsState}
-        decisionCount={decisionCount}
         pendingCount={pendingCount}
-        learnedCount={learnedCount}
         barHeight={barHeight}
       />
     </>

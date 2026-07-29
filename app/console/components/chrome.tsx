@@ -107,7 +107,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [open]);
 
   const switchTo = async (id: string) => {
@@ -824,7 +824,7 @@ export function UserMenu({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [open]);
 
   // No session identity (single-user/local operation) → nothing to sign out of.
