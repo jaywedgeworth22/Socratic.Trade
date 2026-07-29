@@ -76,7 +76,7 @@ jobs:
     # Reject fork PRs at admission so fork-controlled repository content never reaches
     # the persistent self-hosted workspace, including through actions/checkout.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
@@ -186,7 +186,7 @@ jobs:
   verify-self:
     needs: classify
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && needs.classify.outputs.route == 'self' }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     # Single-file lane: this is load-shedding on the production box, NOT the throughput
     # path (hosted is always available in parallel for other runs via the router).
@@ -297,7 +297,8 @@ jobs:
   verify-hosted:
     needs: [classify, verify-self]
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && (needs.classify.outputs.route != 'self' || needs.verify-self.result != 'success') }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: read
@@ -382,7 +383,7 @@ jobs:
     # while classify/lane failures cannot silently skip a required check (skipped required
     # checks can fail open — Codex review, PR #370).
     if: ${{ !cancelled() }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -400,7 +401,7 @@ jobs:
           note "### verify gate"
           note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a}, route: ${ROUTE:-n/a})"
           note "- verify-self (macOS, production Mac): ${SELF_RESULT}"
-          note "- verify-hosted (Coolify socratic-ci): ${HOSTED_RESULT}"
+          note "- verify-hosted (GitHub ubuntu-latest): ${HOSTED_RESULT}"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
             note "- RESULT: FAIL — classify did not succeed; the gate never fails open."
@@ -412,9 +413,9 @@ jobs:
           fi
           if [ "$HOSTED_RESULT" = "success" ]; then
             if [ "$SELF_RESULT" = "failure" ]; then
-              note "- RESULT: PASS — produced by Coolify socratic-ci (ARBITER: alternate self-hosted lane failed, Linux lane passed)."
+              note "- RESULT: PASS — produced by GitHub ubuntu-latest (ARBITER: alternate self-hosted lane failed, Linux lane passed)."
             else
-              note "- RESULT: PASS — produced by Coolify socratic-ci."
+              note "- RESULT: PASS — produced by GitHub ubuntu-latest."
             fi
             exit 0
           fi
