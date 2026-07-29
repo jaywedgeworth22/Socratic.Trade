@@ -517,7 +517,8 @@ export interface SpendInfo {
 }
 
 export function deriveSpend(snapshot: DashboardSnapshot): SpendInfo {
-  const cap = resolveDailyOpeningCap(snapshot.policy, snapshot.portfolio?.totalMarketValue);
+  const availableSpend = snapshot.portfolio?.buyingPower ?? snapshot.portfolio?.totalMarketValue;
+  const cap = resolveDailyOpeningCap(snapshot.policy, snapshot.portfolio?.totalMarketValue, availableSpend);
   return {
     usedNotional: snapshot.dailyStats?.notional ?? 0,
     capNotional: cap?.notional,
