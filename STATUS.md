@@ -1,3 +1,6 @@
+## 2026-07-29 — Mobile PWA Account Switcher Touch & Layout Fix (AG) — DONE
+
+Fixed account switching failure on mobile PWA: updated `ScopeSelector` in `app/console/components/chrome.tsx` with responsive width bounds (`w-[min(calc(100vw-48px),360px)]`) to eliminate horizontal offscreen clipping on phone viewports (≤414px), replaced backdrop click `<div>` with a full-screen `<button>` for iOS Safari / PWA touch gesture compatibility, and added immediate menu dismissal in `switchTo()`. Rollout: `docs/rollouts/2026-07-29-mobile-pwa-account-switcher-fix.md`.
 ## 2026-07-29 — PR #2256 typecheck unblock (GROK) — DONE
 
 Restored missing `nonNegativeFinite` helper in `src/lib/policy-caps.ts` (dropped in a main merge while call sites remained). Fixed percentage per-order cap test expectation (80% of NAV → 80, not 100). Restored zero-balance daily notional assertion. Worktree `~/apps/trading-grok`.
