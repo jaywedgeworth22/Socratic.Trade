@@ -1,3 +1,7 @@
+## 2026-07-28 — Account Switcher Stopped Chip & Clean Status Labels (AG) — DONE
+
+Updated the account switcher dropdown menu: added explicit `Stopped` status chips for halted accounts (e.g. Alpaca Standard) and stripped redundant `· market closed` text from chips inside the dropdown list items so they display clean status labels (`Paused`, `Stopped`, `Exit-only`). Rollout: `docs/rollouts/2026-07-28-account-switcher-stopped-chip-fix.md`.
+
 ## 2026-07-28 — Admin Header UI & Oracle Cloud Metrics Resilience (AG) — DONE
 
 Cleaned up top navigation bar on `/admin`: removed `← Go Back` link and `ADMIN Overview` subtitle. Resolved 403 / "Server error" statuses on `/admin` dashboard cards for Oracle Cloud and standalone host deployments by authorizing `local-fallback` identity source for admin email check in `checkAdmin()` and gracefully returning local `os` system stats when remote Hetzner/Coolify infrastructure API tokens are not configured. Rollout: `docs/rollouts/2026-07-28-admin-header-and-oracle-metrics-fix.md`.
