@@ -48,6 +48,15 @@ describe("macro.ts cache-provenance", () => {
     delete process.env.MARKET_DATA_SHARE_USER_KEYED_MACRO;
     const { clearMacroCacheForTests } = await import("../src/lib/macro");
     clearMacroCacheForTests();
+    // The keyless VIX cascade (Yahoo/Cboe/Stooq) records per-lane health and runs through the
+    // shared circuit breaker: a previous test's stubbed failures would otherwise trip the lanes
+    // and silently skip the sources this test expects to be called.
+    const { resetApiCircuitBreaker } = await import("../src/lib/api-circuit-breaker");
+    resetApiCircuitBreaker();
+    const { getDb } = await import("../src/lib/db");
+    getDb()
+      .prepare("DELETE FROM api_health_log WHERE service IN ('vix-yahoo', 'vix-cboe', 'vix-stooq')")
+      .run();
   });
 
   afterEach(() => {
