@@ -8,13 +8,14 @@ again: V8 abort, exit 134 — `FATAL ERROR: Ineffective mark-compacts near heap
 limit` at ~1.84 GiB of a 2048 MiB heap during the webServer's `npm run build`.
 
 ## Changes Made
-- `.github/workflows/e2e.yml`: `NODE_OPTIONS --max-old-space-size` 2048 → 3072
-  for the smoke job, matching ci.yml verify-hosted (which runs the identical
-  build at 3072 on the same `oracle-a1-socratic-ci` runner and passes).
-  Comment updated: the old "2560 MiB allowed exit 137 on the admin PR" note
-  described a different runner/box; on the current runner the 3072 build is
-  proven. Chromium launches only after the webServer health check, so
-  build-time heap and browser never peak together.
+- `ci-pending/e2e.yml`: STAGED (not active) copy of the smoke workflow with
+  `NODE_OPTIONS --max-old-space-size` 2048 → 3072, matching ci.yml
+  verify-hosted. The gh OAuth token lacks `workflow` scope, so the workflow
+  edit itself cannot be pushed by an agent. Owner one-liner to activate:
+  `gh auth refresh -s workflow && cp ci-pending/e2e.yml .github/workflows/e2e.yml`
+  NOTE: since this PR was opened, #2276 moved all workflows to GitHub-hosted
+  ubuntu-latest (7+ GB), but the 2048 NODE_OPTIONS cap still binds there, so
+  this fix remains required either way.
 - `docs/EFFORT-LOG.md`: effort row.
 - This note.
 

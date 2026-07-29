@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   sync:
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
