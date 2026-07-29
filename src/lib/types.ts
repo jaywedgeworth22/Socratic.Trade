@@ -590,6 +590,34 @@ export interface TuningSettings {
   portfolioHeatBudgetPct?: number;
 }
 
+/**
+ * PER-ACCOUNT event-trigger configuration (2026-07-28, owner-directed). Every field is OPTIONAL:
+ * unset means "follow the global env" (TRIGGER_ENGINE / TRIGGER_MODE), preserving byte-identical
+ * pre-existing behavior. These only ever take effect when the trigger engine is reachable for the
+ * deployment; a per-account `enabled: true` cannot turn the engine on when the env has it off
+ * (producers no-op on the env gate) — it can only keep an account IN when the env turns it on, or
+ * opt an account OUT (`enabled: false`) while the env is on.
+ */
+export interface TriggerSettings {
+  /** Per-account opt-in/out of event-triggered runs. Unset = follow the global TRIGGER_ENGINE env. */
+  enabled?: boolean;
+  /** Per-account run mix. Unset = follow the global TRIGGER_MODE env (default "both"). */
+  mode?: "interval" | "event" | "both";
+  /**
+   * When the effective mode is "event": still run the fixed-interval cadence lane at least this
+   * often (a safety floor so a silent producer can never strand the account with no runs at all).
+   * Unset = never (the pre-existing event-mode behavior: the cadence lane is dropped entirely).
+   */
+  fallbackIntervalMinutes?: number;
+  /**
+   * What an event-triggered run may do. "full" (default, current behavior) = a normal strategy
+   * run. "close_only" = the run executes with a RUN-SCOPED policy clone whose systemState is
+   * "close_only" — openings are rejected at the policy gate, exits and all safety maintenance
+   * still flow; the clone is never persisted.
+   */
+  eventRunMode?: "full" | "close_only";
+}
+
 export interface RiskRules {
   stopLossPct?: number;
   stopLossNotional?: number;
@@ -986,6 +1014,7 @@ export interface TradingPolicy {
   notificationSettings: NotificationSettings;
   taxSettings?: TaxSettings;
   tuning?: TuningSettings;
+  triggerSettings?: TriggerSettings;
   activeProfileId?: string;
   activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier";
   // SHORT_SELLING: Feature gate for short/cover order sides.

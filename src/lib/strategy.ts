@@ -229,6 +229,20 @@ export function coverageCheckedFilingsDocTypes(): string[] {
 export { STRATEGY_PROMPT_VERSION };
 type RunnablePolicy = TradingPolicy & { accountNumber: string };
 
+/**
+ * Run-scoped event-trigger state override (policy.triggerSettings.eventRunMode === "close_only").
+ * Returns a CLONE with systemState "close_only" for proposal gating/LLM context — the input
+ * policy object is never mutated, so the breaker `setPolicy(policy)` paths and
+ * `autoRevertOnCapBreach` keep seeing (and can only ever persist) the owner's pristine stored
+ * state. Active-only: a stored close_only/halted state is already narrower and is left alone.
+ */
+export function runScopedGatePolicy(policy: RunnablePolicy, override?: "close_only"): RunnablePolicy {
+  if (override === "close_only" && policy.systemState === "active") {
+    return { ...policy, systemState: "close_only" };
+  }
+  return policy;
+}
+
 export interface StrategyLlmStep {
   step: "bull" | "bear";
   label: string;
@@ -351,7 +365,7 @@ const evidenceAgeAnomalyDedup = new Map<string, number>();
 
 export async function runStrategyOnce(
   userId: string = "local",
-  options: { manual?: boolean; connectedAccountId?: string } = {}
+  options: { manual?: boolean; connectedAccountId?: string; runStateOverride?: "close_only" } = {}
 ): Promise<StrategyResult> {
   // Snapshot the target account exactly once. An explicit override targets a scheduler-selected
   // account; otherwise the active policy supplies the id. Every later read/write stays bound to
@@ -395,6 +409,15 @@ export async function runStrategyOnce(
     const policy: RunnablePolicy = manualRun
       ? { ...savedPolicy, accountNumber, systemState: "active" as const, strategyAuthority: "propose" as const }
       : { ...savedPolicy, accountNumber };
+    // Run-scoped event-trigger override (triggerSettings.eventRunMode === "close_only", threaded in
+    // by the trigger engine's fire path): `gatePolicy` is the close_only CLONE used for proposal
+    // gating and LLM context; `policy` itself stays pristine so NOTHING that persists (the breaker
+    // setPolicy paths, autoRevertOnCapBreach) can ever write the override back. Same pattern as the
+    // runLlmOverride/runPolicy usage-budget downgrade below.
+    const gatePolicy: RunnablePolicy = runScopedGatePolicy(policy, options.runStateOverride);
+    if (gatePolicy !== policy) {
+      audit("run_state_override", { runId, userId, override: options.runStateOverride, storedSystemState: savedPolicy.systemState }, userId, connectedAccountId);
+    }
     const activeAccount = connectedAccountId ? getConnectedAccount(connectedAccountId, userId) : undefined;
     
     const executionState = deriveExecutionState(policy, activeAccount);
@@ -825,10 +848,11 @@ export async function runStrategyOnce(
     // Derived, run-scoped policy used ONLY for LLM-model resolution (proposeTrades, debateProposal,
     // proposal revalidation, and the post-mortem reflection pass below) — never passed to setPolicy or
     // autoRevertOnCapBreach, which continue to use the pristine `policy` object so a cap-breach demotion
-    // persists ONLY `strategyAuthority`, never the in-run model downgrade.
+    // persists ONLY `strategyAuthority`, never the in-run model downgrade. Built on `gatePolicy` so the
+    // LLM context also sees a run-scoped close_only event-trigger override (if any).
     // Merge order matters: the usage-budget downgrade (runLlmOverride) intentionally WINS over the
     // rotation pick — enforcement is the owner's opt-in cost override of whatever would have run.
-    const runPolicy: RunnablePolicy = { ...policy, ...rotationOverride, ...runLlmOverride };
+    const runPolicy: RunnablePolicy = { ...gatePolicy, ...rotationOverride, ...runLlmOverride };
 
     // ── Per-user/day LLM budget ceiling ────────────────────────────────────
     // Computed HERE, AFTER the non-LLM safety work (pending-fill reconciliation + drawdown/volatility
@@ -2469,7 +2493,7 @@ export async function runStrategyOnce(
             continue;
           }
           let planningDecision = evaluateTradeProposal(proposal, {
-            policy,
+            policy: gatePolicy,
             portfolio: workingPortfolio,
             positions: workingPositions,
             dailyNotionalUsed: planningDaily.notional,
@@ -2808,7 +2832,7 @@ export async function runStrategyOnce(
 
       const isLiveExecution = executionMode === "broker/live";
       let decision = evaluateTradeProposal(normalizedProposal, {
-        policy,
+        policy: gatePolicy,
         portfolio: workingPortfolio,
         positions: workingPositions,
         dailyNotionalUsed: dailyNow.notional,

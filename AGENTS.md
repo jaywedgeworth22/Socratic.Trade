@@ -10,7 +10,7 @@ the hard way.
 > [!CAUTION]
 > **CRITICAL RULE: DO NOT WORK IN `/Users/jay/Code/Socratic.Trade` (OR WHATEVER THE MAIN WORKTREE IS).**
 > That is the human owner's integration tree and the fleet's review base. If you check out your branch in the main folder, you will corrupt the review base for other agents (causing it to be drastically out-of-sync with production).
-> **You MUST `cd` into your designated agent lane (e.g., `~/apps/trading-antigravity`) BEFORE doing any work.** A `pre-commit` hook is installed to block agent commits in the main folder.
+> **You MUST `cd` into your designated agent lane (`~/apps/trading-<name>` — Claude → `trading-claude`, Codex → `trading-codex`, Antigravity → `trading-antigravity`, Cursor → `trading-cursor`, Monet → `trading-monet`, Kimi → `trading-kimi`) BEFORE doing any work.** A `pre-commit` hook is installed to block agent commits in the main folder.
 
 - `git status` and `git log -3` first. Another tool may have left uncommitted
   work in the tree — read it before editing on top of it, don't assume a clean
@@ -116,7 +116,8 @@ This repo is touched by several AI tools (Claude Code, Codex, Antigravity/Gemini
 **Each agent works in its OWN git worktree, on its OWN branch** (Claude →
 `~/apps/trading-claude`, Codex → `~/apps/trading-codex`, Antigravity →
 `~/apps/trading-antigravity`, Cursor → `~/apps/trading-cursor`, Monet →
-`~/apps/trading-monet`; `~/Code/Agentic Trading` is the human/integration tree). Every
+`~/apps/trading-monet`, Kimi → `~/apps/trading-kimi` on branch `agent/kimi-lane`;
+`~/Code/Agentic Trading` is the human/integration tree). Every
 worktree has its own `node_modules`, `.next`, `data/app.db`, and `.env.local` — never
 assume any are shared, and never point one worktree's process at another's files.
 
@@ -213,7 +214,8 @@ must not silently drift behind beta after work lands.
 ### How each agent works
 - **Launch yourself in your own worktree dir** (Claude → `~/apps/trading-claude`, Codex →
   `~/apps/trading-codex`, Antigravity → `~/apps/trading-antigravity`, Monet →
-  `~/apps/trading-monet`, Cursor (background/agent mode) → `~/apps/trading-cursor`). Edit
+  `~/apps/trading-monet`, Cursor (background/agent mode) → `~/apps/trading-cursor`, Kimi →
+  `~/apps/trading-kimi` on branch `agent/kimi-lane`). Edit
   only there, on your `agent/<name>` branch. To see your edits live, run `npm run dev` in
   your own worktree (localhost; the old always-on PM2/HMR previews are retired).
 - **Do not edit in another agent's worktree, nor in the `main` integration worktree.**
