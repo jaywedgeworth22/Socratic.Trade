@@ -123,6 +123,8 @@ import { strategyInformationRouting } from "./rag/information-routing";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
+export const MIN_STRATEGY_ACCOUNT_EQUITY = 10;
+
 import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
@@ -532,6 +534,17 @@ export async function runStrategyOnce(
     const selected = accounts.find((account) => account.accountNumber === policy.accountNumber);
     if (!selected) throw new Error("Selected account is not available.");
     if (!selected.agenticAllowed) throw new Error("Selected account is not agentic_allowed.");
+
+    // Minimum equity threshold ($10): skip LLM strategy runs on unfunded/empty accounts to prevent quota waste.
+    const maxFeasibleEquity = Math.max(portfolio?.totalMarketValue ?? 0, portfolio?.buyingPower ?? 0, portfolio?.cash ?? 0);
+    if (maxFeasibleEquity < MIN_STRATEGY_ACCOUNT_EQUITY) {
+      const reason = `Account total equity ($${maxFeasibleEquity.toFixed(2)}) is below the $${MIN_STRATEGY_ACCOUNT_EQUITY.toFixed(2)} minimum threshold required to run strategy proposals. Fund the account or switch to a funded account.`;
+      console.log(`[Strategy] ${reason}`);
+      audit("run_skipped_insufficient_equity", { runId, userId, totalMarketValue: portfolio?.totalMarketValue ?? 0, buyingPower: portfolio?.buyingPower ?? 0, cash: portfolio?.cash ?? 0, minRequired: MIN_STRATEGY_ACCOUNT_EQUITY }, userId, connectedAccountId);
+      result = { runId, status: "skipped", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "skipped", reason, userId);
+      return result;
+    }
 
     // ── Early LLM budget admission (BEFORE market scan / enrichment thrash) ──
     // Usage-Monitor enforce + daily/monthly ceilings + reservation: risk maintenance

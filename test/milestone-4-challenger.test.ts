@@ -51,7 +51,8 @@ vi.mock("../src/lib/db", () => ({
   settleProviderDispatch: vi.fn(),
   cancelUndispatchedProviderReservation: vi.fn(() => true),
   audit: vi.fn(),
-  setInternalSetting: vi.fn()
+  setInternalSetting: vi.fn(),
+  getDb: vi.fn(() => ({ prepare: vi.fn(() => ({ run: vi.fn(), get: vi.fn(() => undefined), all: vi.fn(() => []) })) }))
 }));
 
 describe("Milestone 4 Challenger: User ID Sanitization Edge Cases", () => {
