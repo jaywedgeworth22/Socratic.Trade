@@ -409,6 +409,7 @@ describe("account deletion", () => {
       `learning_review:legacySeedDone:${userId}`,
       `last_auto_tune_at:${userId}:account-id`,
       `regime:current:${userId}`,
+      `regime:macro-unavailable-notified:${userId}`,
       `congress_score_verdict:${userId}`,
       `reflection_signature:${userId}:ACCOUNT`,
       `model_rotation:${userId}:account-id:green`,

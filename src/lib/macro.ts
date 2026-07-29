@@ -238,7 +238,7 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
 
 /**
  * Fallback for "no usable FRED data" (no key, or a configured key whose every series fetch failed).
- * Tries to at least fetch a live ^VIX from the keyless cascade (Yahoo -> Cboe -> Stooq) so the
+ * Tries to at least fetch a live ^VIX from the keyless cascade (Yahoo -> Cboe) so the
  * regime classifier gets a real volatility reading instead of staying "Unknown"; every FRED field is blanked to "" (the
  * partial-fetch convention — em dash on the console, dropped from the prompt by pruneMacro) and
  * `fredSourced` is false either way. Blank, not placeholder: the old DEFAULT_MACRO constants
@@ -287,7 +287,14 @@ export function clearMacroCacheForTests(): void {
 //   1. Yahoo ^VIX chart  — the proven lane this module has always used; rich JSON chart history.
 //   2. Cboe _VIX delayed — the authoritative VIX publisher's own keyless delayed-quote CDN (same
 //      host family already trusted for _SKEW/_VVIX in market-signals/cboe.ts).
-//   3. Stooq ^vix CSV    — independent aggregator; coarser quote but a different failure domain.
+//
+// This is deliberately a TWO-lane cascade. The third-tier candidates were live-probed and rejected
+// (2026-07-29 verifier review): Stooq's quote endpoint (stooq.com/q/l/) 404s endpoint-level and its
+// daily CSV lane (q/d/l/, used by history.ts for equities) sits behind a JS anti-bot interstitial;
+// Nasdaq's keyless index quote API (api.nasdaq.com/api/quote/{sym}/info?assetclass=index, proven
+// in-repo for NDX) does not carry VIX (a CBOE product — "Symbol not exists"); Yahoo's v7 quote
+// endpoint requires crumb auth and shares Yahoo's failure domain anyway. A dead tier would only
+// emit phantom provider_degraded alerts during real double-outages, so honesty beats lane count.
 //
 // Every lane runs through the repo's shared per-lane circuit breaker (api-circuit-breaker.ts) with
 // failures/successes recorded in api_health_log: a lane whose recent history reads "stopped
@@ -367,27 +374,9 @@ async function fetchVixFromCboe(): Promise<number | null> {
   );
 }
 
-/** Stooq ^vix CSV quote (keyless). Returns null on any failure or an "N/D" (no-data) row. */
-async function fetchVixFromStooq(): Promise<number | null> {
-  return fetchVixLane(
-    "vix-stooq",
-    "https://stooq.com/q/l/?s=%5Evix&f=sd2t2ohlcv&h&e=csv",
-    "text/csv",
-    async (res) => {
-      const text = await res.text();
-      // Header line, then one data row: ^VIX,Date,Time,Open,High,Low,Close,Volume
-      const line = text.trim().split("\n")[1] ?? "";
-      const close = line.split(",")[6]?.trim();
-      if (!close || close === "N/D") return null;
-      const value = Number(close);
-      return Number.isFinite(value) && value > 0 ? value : null;
-    }
-  );
-}
-
 /** First successful keyless VIX reading across the cascade; null when every source is down. */
 async function fetchKeylessVix(): Promise<number | null> {
-  for (const source of [fetchVixFromYahoo, fetchVixFromCboe, fetchVixFromStooq]) {
+  for (const source of [fetchVixFromYahoo, fetchVixFromCboe]) {
     const vix = await source();
     if (vix !== null) return vix;
   }
@@ -399,7 +388,7 @@ async function fetchKeylessVix(): Promise<number | null> {
 // GDP), but VIX can move double digits intraday, so pinning it to the same day-old snapshot means
 // the volatility panic brake and the regime-flip detector could be up to a day blind on a crash
 // day (composite review D/high/S). This is a SEPARATE cache entry with a short TTL, keyed off the
-// same keyless ^VIX cascade (`fetchKeylessVix`: Yahoo -> Cboe -> Stooq) the no-FRED fallback path
+// same keyless ^VIX cascade (`fetchKeylessVix`: Yahoo -> Cboe) the no-FRED fallback path
 // already uses — so no new upstream dependency, just a much shorter TTL and its own cache slot. Callers that
 // need the freshest possible volatility read (the vol brake, regime-flip detection) should use
 // `fetchLiveVix`/`fetchMacroDataWithLiveVix` instead of trusting the 24h `fetchMacroData` snapshot.

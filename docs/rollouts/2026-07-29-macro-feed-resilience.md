@@ -23,19 +23,20 @@ deliberately NOT added as a VIX tier (a suspended paid key must not be hammered 
 ## 2. Changes Made
 
 **Change 1 — keyless VIX cascade with shared circuit-breaker cooldowns (`src/lib/macro.ts`):**
-- `fetchVixFromYahoo` generalized into `fetchVixLane(lane, url, accept, parse)` + a three-source
+- `fetchVixFromYahoo` generalized into `fetchVixLane(lane, url, accept, parse)` + a two-source
   cascade `fetchKeylessVix()`, consumed by both `fetchVixOnlyFallback` (24h path) and
   `fetchLiveVix` (10-min live overlay). Lane order (first success wins):
   1. **Yahoo `^VIX` chart** (`vix-yahoo`) — the proven lane this module has always used.
   2. **Cboe `_VIX` delayed quote** (`vix-cboe`) — the authoritative VIX publisher's own keyless CDN,
      same host family already trusted for `_SKEW`/`_VVIX` in `market-signals/cboe.ts`.
-  3. **Stooq `^vix` CSV quote** (`vix-stooq`) — independent aggregator, different failure domain.
+  (A Stooq third tier was shipped in the first commit and then DROPPED after verifier live-probing —
+  see the Verifier review section.)
 - Each lane consults `apiCircuitBreakerShouldSkip(lane, null)` before fetching and records
   success/failure via `logApiHealth` (keyless = NULL keySource lane), reusing the repo's existing
   dead-lane short-circuit: a lane whose recent history reads "stopped working" (getLaneHealth
   predicate) trips for `API_CIRCUIT_BREAKER_BACKOFF_MS` (default 60s), then one half-open probe.
-  A dead endpoint is probed on a 60s cadence, not hammered every scheduler tick; sibling lanes
-  keep serving while one cools down.
+  A dead endpoint is probed on a 60s cadence, not hammered every scheduler tick; the sibling lane
+  keeps serving while one cools down.
 - Honesty preserved: ALL sources dead -> null -> the existing honest `asOf: "unavailable"` path.
   Nothing is fabricated; change 2 makes that state graceful.
 - FRED suite untouched (still used when `FRED_API_KEY` resolves; NaN rates still tolerated by the
@@ -60,11 +61,16 @@ deliberately NOT added as a VIX tier (a suspended paid key must not be hammered 
 **Files touched:**
 - `src/lib/macro.ts`
 - `src/lib/regime-watch.ts`
-- `test/macro-live-vix.test.ts` (extended stubFetch to Cboe/Stooq; new cascade + breaker-cooldown
+- `src/lib/db.ts` (verifier fix: `regime:macro-unavailable-notified:` added to the
+  `accountSettingMatchesSubject` ownership registry so the account-deletion sweep/write fence
+  covers the new throttle marker)
+- `test/macro-live-vix.test.ts` (extended stubFetch to Cboe; new cascade + breaker-cooldown
   describe; per-describe VIX-lane state reset)
 - `test/regime-watch.test.ts` (new "Unknown-side outage suppression" describe, 5 tests)
 - `test/cache-provenance.test.ts` (beforeEach now resets the VIX breaker + purges vix lane health
   rows — a previous test's stubbed failures would otherwise trip the lanes and skip sources)
+- `test/account-deletion.test.ts` (verifier fix: throttle-marker key added to the ownership-registry
+  round-trip test)
 - `STATUS.md`, `docs/EFFORT-LOG.md`, `docs/rollouts/2026-07-29-macro-feed-resilience.md`
 
 ## 3. Decisions & Trade-offs
@@ -74,9 +80,11 @@ deliberately NOT added as a VIX tier (a suspended paid key must not be hammered 
   fences the VIX lanes don't need, and importing the 6k-line `data-providers` closure (robinhood,
   quiver, news-store, ...) into `macro.ts` was unjustified weight. The reused machinery is identical:
   same per-(service, keySource) lane health in `api_health_log`, same 60s trip + half-open probe.
-- **Lane order Yahoo -> Cboe -> Stooq** keeps the existing primary behavior byte-stable; Cboe is the
-  authoritative publisher but its delayed quote is a coarser single number; Stooq is CSV and
-  occasionally N/D. Order is about failure-domain diversity, not data quality ranking.
+- **Lane order Yahoo -> Cboe** keeps the existing primary behavior byte-stable; Cboe is the
+  authoritative publisher but its delayed quote is a coarser single number. Order is about
+  failure-domain diversity, not data quality ranking. The cascade is honestly TWO lanes — every
+  third-tier candidate was live-probed and rejected (see Verifier review); a dead tier would only
+  emit phantom `provider_degraded` alerts during real double-outages.
 - **A 200-with-no-usable-value counts against lane health** — from this module's perspective the
   endpoint is not serving the reading, and the breaker should learn that.
 - **Unknown-side early-return runs AFTER the legacy migration read** so the diagnostic payload can
@@ -87,7 +95,8 @@ deliberately NOT added as a VIX tier (a suspended paid key must not be hammered 
 - **No FMP tier added.** Dormant `fmpMacroDataEnabled`/`fmpRealTimeDataEnabled` flags left as-is
   (out of scope; reviving them is a policy decision for the owner, and the FMP key is suspended).
 - **Throttle marker stored in internal KV (not DB audit count)** — survives restarts, no schema
-  change, mirrors the regime-label storage pattern already in this module.
+  change, mirrors the regime-label storage pattern already in this module. Registered in the
+  `accountSettingMatchesSubject` ownership registry (db.ts) so account deletion covers it.
 
 ## 4. Verification State
 
@@ -104,26 +113,62 @@ npm test            -> 5387 passed / 5387 across 464 files, run in 4 alphabetica
 npm run build       -> exit 0 (Compiled successfully, 36/36 static pages)
 ```
 
-New/updated test coverage (12 new tests total):
-- `test/macro-live-vix.test.ts`: +5 (Cboe fall-through, Stooq fall-through, Cboe-only timestamped
-  snapshot, all-dead honest `unavailable`, breaker trips lanes so dead endpoints are probed not
-  hammered). Existing overlay/fallback tests updated for lane-state isolation.
+Post-verifier-fix gates (second commit): tsc exit 0, lint 0 errors, targeted vitest
+(test/macro-live-vix, test/regime-watch, test/cache-provenance, test/account-deletion) all green,
+plus a broad alphabetical chunk re-run as sanity.
+
+New/updated test coverage (9 new tests total — an earlier draft of this note said 12; the first
+commit actually added 10, and dropping the Stooq tier removed 1):
+- `test/macro-live-vix.test.ts`: +4 (Cboe fall-through, Cboe-only timestamped snapshot, all-dead
+  honest `unavailable`, breaker trips lanes so dead endpoints are probed not hammered). Existing
+  overlay/fallback tests updated for lane-state isolation.
 - `test/regime-watch.test.ts`: +5 (outage tick holds label with zero flip/dirty/event + one
   diagnostic; diagnostic throttled to 1/hour across repeated outage ticks; recovery announces
   exactly one flip from last-known + one material event on escalation; first-ever outage tick never
   seeds Unknown; legacy stored-Unknown repaired silently).
 - `test/cache-provenance.test.ts`: 0 new, beforeEach hardened (12/12 pass).
+- `test/account-deletion.test.ts`: 0 new, ownership-registry key list extended (still 1 test,
+  now covering the throttle marker).
 
-## 5. Next Steps & Blockers
+## 5. Verifier review (2026-07-29, verdict: SHIP-WITH-NITS)
+
+Independent verifier reviewed the first commit (`6698052c`) and live-probed the lane URLs.
+
+1. **MEDIUM — the Stooq tier was dead as deployed; REMOVED.** Verifier live-probe:
+   `https://stooq.com/q/l/?s=%5Evix&f=sd2t2ohlcv&h&e=csv` returns HTTP 404 (HTML) endpoint-level
+   (even `aapl.us` 404s); the sister daily lane `q/d/l/` sits behind a JS anti-bot interstitial
+   ("This site requires JavaScript to verify your browser" — re-confirmed by my own curl probe of
+   both `^vix` and `^spx`). A dead third lane would have emitted phantom `provider_degraded` alerts
+   every 6h during real double-outages (first-failure "no successful call ever" ->
+   `alertConnectionFailure`, db-health.ts:180-191). Third-tier replacement candidates from the repo's
+   own keyless lanes were live-probed before wiring:
+   - Nasdaq keyless index quote (`api.nasdaq.com/api/quote/{sym}/info?assetclass=index`, proven
+     in-repo): 200 + data for `NDX`, but `VIX` / `.VIX` / `%5EVIX` all return
+     `rCode 400 "Symbol not exists"` — VIX is a CBOE product, not carried by Nasdaq's API.
+   - Yahoo v7 quote (`query1.finance.yahoo.com/v7/finance/quote?symbols=%5EVIX`): 401 Unauthorized
+     without the crumb handshake, and it shares Yahoo's failure domain anyway.
+   Verdict: no working in-repo third lane exists, so the cascade is honestly **Yahoo -> Cboe**, with
+   the probe evidence recorded in `macro.ts`'s cascade comment.
+2. **LOW — ownership-registry gap; FIXED.** `regime:macro-unavailable-notified:` is now registered
+   in `accountSettingMatchesSubject` (src/lib/db.ts) next to `regime:current:`, and the
+   account-deletion registry test covers it — the deletion sweep/write fence now includes the
+   throttle marker.
+3. **NIT — test-count drift; FIXED.** The note originally claimed "12 new tests"; the first commit
+   actually added 10, and the Stooq removal leaves 9 (4 macro + 5 regime-watch). Counts above are
+   the real ones.
+4. **Awareness note (accepted, no change):** a first-ever failed fetch on a lane fires one
+   `provider_degraded` alert (6h cooldown) — expected observability on an unhealthy first tick, not
+   a bug; the breaker's probe cadence keeps it bounded.
+
+## 6. Next Steps & Blockers
 
 - **Prod verification requires SSH to the NEW Oracle host `141.148.182.224`** (hosting migrated off
   Hetzner `135.181.192.190` — the old box's SSH now times out; see AGENTS.md hosting section). After
   this lands and auto-deploys: confirm the `regime_flip` flap stops (no Unknown-side rows), confirm
   `macro_feed_unavailable` rows appear at most hourly during any real outage, and check
-  `api_health_log` for `vix-yahoo`/`vix-cboe`/`vix-stooq` lane rows to see which source is serving.
-- Land via parent/owner (`scripts/land.sh` + PR) — committed locally on `agent/kimi-lane` only, per
-  instructions (no push).
+  `api_health_log` for `vix-yahoo`/`vix-cboe` lane rows to see which source is serving.
+- Landed via PR from `agent/kimi-lane` (squash, auto-merge).
 - Optional follow-ups (punted): surfacing per-lane VIX source attribution on the console Macro
   board; revisiting the dormant `fmpMacroDataEnabled`/`fmpRealTimeDataEnabled` flags if the owner
   reinstates an FMP key; considering a longer breaker backoff for keyless lanes if 60s probes still
-  look chatty in prod logs.
+  look chatty in prod logs; revisiting a third keyless VIX tier if a new free source proves out.
