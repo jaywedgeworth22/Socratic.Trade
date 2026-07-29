@@ -149,6 +149,61 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     disclosure: "advanced"
   },
   {
+    id: "guardrails.volTargeting",
+    label: "Volatility-target sizing",
+    synonyms: ["volatile", "wild names", "vol target", "size taper", "volatility taper", "position sizing volatility"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "tuning",
+    backingField: "tuning.volTargeting",
+    disclosure: "advanced",
+    help: "Tapers opening order size down when a name's realized volatility exceeds your target."
+  },
+  {
+    id: "guardrails.heatBudget",
+    label: "Portfolio heat budget",
+    synonyms: ["heat", "risk budget", "portfolio heat", "size taper", "distance to stop", "total risk"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "tuning",
+    backingField: "tuning.portfolioHeatBudgetPct",
+    disclosure: "advanced",
+    help: "Caps the book's total distance-to-stop dollar risk; openings taper to fit what's left."
+  },
+  {
+    id: "guardrails.riskReceipts",
+    label: "Risk receipts",
+    synonyms: ["risk receipt", "correlation receipt", "stress scenario", "pre-trade stress"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "tuning",
+    backingField: "tuning.riskReceipts",
+    disclosure: "advanced",
+    help: "Inform-only correlation + stress notes appended to every opening proposal."
+  },
+  {
+    id: "guardrails.eventTriggers",
+    label: "Event-triggered runs",
+    synonyms: ["event trigger", "signal", "regime flip run", "trigger engine", "event driven", "8-k trigger", "material event"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "operate",
+    backingField: "triggerSettings.enabled",
+    disclosure: "advanced",
+    help: "Let material events (filings, regime flips, signals) fire a run instead of waiting for the interval."
+  },
+  {
+    id: "guardrails.triggerFallbackInterval",
+    label: "Event-mode fallback interval",
+    synonyms: ["fallback interval", "event mode fallback", "cadence fallback", "safety floor", "trigger mode"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "operate",
+    backingField: "triggerSettings.fallbackIntervalMinutes",
+    disclosure: "advanced",
+    help: "Event-only mode: still run the fixed cadence at least this often so a quiet tape can't strand the account."
+  },
+  {
     id: "guardrails.washSaleGuard",
     label: "Taxable-account wash-sale guard",
     synonyms: ["wash sale", "tax lock", "30 day", "cross account"],

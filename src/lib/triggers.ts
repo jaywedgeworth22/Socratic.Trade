@@ -17,6 +17,7 @@
 import { audit, getDb, getPolicy, listUsers } from "./db";
 import { checkLlmDailyBudget } from "./llm-budget";
 import { isRunAllowedNow } from "./market-hours";
+import type { TradingPolicy } from "./types";
 
 export type TriggerMode = "interval" | "event" | "both";
 
@@ -90,6 +91,56 @@ export function triggerEngineEnabled(): boolean {
 export function triggerMode(): TriggerMode {
   const m = String(process.env.TRIGGER_MODE ?? "both").trim().toLowerCase();
   return m === "interval" || m === "event" ? m : "both";
+}
+
+// ── Per-account trigger config (policy.triggerSettings — 2026-07-28) ─────────
+// Every resolution below falls back to the global env when the account has no explicit setting,
+// so an unset triggerSettings is byte-identical to the pre-existing env-only behavior.
+
+export interface AccountTriggerConfig {
+  /** Effective engine on/off for this account (per-account override ?? global env). */
+  enabled: boolean;
+  /** Effective run mix for this account (per-account override ?? global TRIGGER_MODE). */
+  mode: TriggerMode;
+  /** Event-mode safety floor: run the cadence lane at least this often. Unset = never. */
+  fallbackIntervalMinutes?: number;
+  /** What an event-triggered run may do. Default "full" (current behavior). */
+  eventRunMode: "full" | "close_only";
+}
+
+export function resolveAccountTriggerConfig(policy: Pick<TradingPolicy, "triggerSettings" | "runCadenceMinutes">): AccountTriggerConfig {
+  const settings = policy.triggerSettings;
+  return {
+    enabled: settings?.enabled ?? triggerEngineEnabled(),
+    mode: settings?.mode ?? triggerMode(),
+    fallbackIntervalMinutes:
+      typeof settings?.fallbackIntervalMinutes === "number" && settings.fallbackIntervalMinutes > 0
+        ? settings.fallbackIntervalMinutes
+        : undefined,
+    eventRunMode: settings?.eventRunMode === "close_only" ? "close_only" : "full"
+  };
+}
+
+export interface CadenceLaneDecision {
+  /** Whether the fixed-interval cadence lane runs for this account at all. */
+  run: boolean;
+  /** The cadence to use when it runs (the fallback interval when in event mode with one set). */
+  cadenceMinutes: number;
+}
+
+/**
+ * Pure cadence-lane decision for the scheduler. The lane runs when: the engine is disabled for
+ * the account (pure interval — the current default behavior), OR the effective mode includes
+ * interval ("interval"/"both"), OR the effective mode is "event" AND a fallbackIntervalMinutes
+ * floor is set (then that floor, not runCadenceMinutes, is the cadence).
+ */
+export function cadenceLaneDecision(policy: Pick<TradingPolicy, "triggerSettings" | "runCadenceMinutes">): CadenceLaneDecision {
+  const config = resolveAccountTriggerConfig(policy);
+  const base = policy.runCadenceMinutes ?? 60;
+  if (!config.enabled) return { run: true, cadenceMinutes: base };
+  if (config.mode !== "event") return { run: true, cadenceMinutes: base };
+  if (config.fallbackIntervalMinutes !== undefined) return { run: true, cadenceMinutes: config.fallbackIntervalMinutes };
+  return { run: false, cadenceMinutes: base };
 }
 const debounceMs = () => envNum("TRIGGER_DEBOUNCE_MS", 90_000);
 const maxDebounceMs = () => envNum("TRIGGER_MAX_DEBOUNCE_MS", 300_000);
@@ -236,6 +287,9 @@ export function eligibleMaterialTriggerUserIds(): string[] {
   if (!triggerEngineEnabled() || triggerMode() === "interval") return [];
   return listUsers().filter((userId) => {
     const policy = getPolicy(userId);
+    // Per-account opt-out (2026-07-28): an explicit triggerSettings.enabled === false keeps this
+    // account out of the event lane entirely; unset follows the global env exactly as before.
+    if (policy.triggerSettings?.enabled === false) return false;
     return policy.systemState === "active" && Boolean(policy.accountNumber);
   });
 }
@@ -463,11 +517,16 @@ async function fire(userId: string): Promise<void> {
 
     // NOTE: the daily LLM budget ceiling is enforced INSIDE runStrategyOnce (after its non-LLM
     // risk breakers + reconciliation, before proposal generation), so we always enter the run.
+    // Per-account event run scope (2026-07-28): eventRunMode "close_only" runs the strategy with a
+    // RUN-SCOPED close_only policy clone (never persisted — see runStrategyOnce's runStateOverride);
+    // unset/"full" is byte-identical to before.
+    const eventRunMode = resolveAccountTriggerConfig(getPolicy(userId)).eventRunMode;
     audit("trigger_run", {
       userId,
       events: batch.events.length,
       types: distinctTypes(batch.events),
-      reason: "event"
+      reason: "event",
+      eventRunMode
     }, userId);
     heartbeat = setInterval(() => {
       if (!batch || !renewMaterialBatch(userId, batch, Date.now())) {
@@ -476,7 +535,11 @@ async function fire(userId: string): Promise<void> {
     }, Math.max(500, Math.floor(triggerClaimTtlMs() / 3)));
     heartbeat.unref?.();
     const { runStrategyOnce } = await import("./strategy");
-    const strategyResult = await runStrategyOnce(userId);
+    // Byte-identical invocation for the default path: the options argument is passed ONLY when an
+    // override is active, so existing callers/tests asserting runStrategyOnce(userId) are unaffected.
+    const strategyResult = eventRunMode === "close_only"
+      ? await runStrategyOnce(userId, { runStateOverride: "close_only" })
+      : await runStrategyOnce(userId);
     if (!strategyResult || strategyResult.status !== "completed") {
       throw new Error(strategyResult?.summary || "Material-trigger strategy run did not complete.");
     }
@@ -501,6 +564,7 @@ export function admitRun(userId: string, batch: MaterialEvent[]): { ok: boolean;
   if (!triggerEngineEnabled()) return { ok: false, reason: "engine_off" };
   if (triggerMode() === "interval") return { ok: false, reason: "mode_interval" };
   const policy = getPolicy(userId);
+  if (policy.triggerSettings?.enabled === false) return { ok: false, reason: "account_triggers_disabled" };
   if (policy.systemState !== "active") return { ok: false, reason: "system_not_active" };
   if (!policy.accountNumber) return { ok: false, reason: "no_account" };
   if (!isRunAllowedNow(policy.runDuringExtendedHours)) return { ok: false, reason: "market_closed" };

@@ -101,7 +101,12 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
 
   if (def.kind === "select") {
     const fallback = String(getAtPath(DEFAULT_POLICY, def.path) ?? "");
-    const selected = isBlank(value) ? fallback : String(value);
+    // Reverse-map a typed value (boolean/null) back to its string option key when optionValues is
+    // present; plain string-valued selects need no mapping.
+    const selectedKey = def.optionValues
+      ? (Object.keys(def.optionValues).find((key) => def.optionValues![key] === value) ?? "")
+      : String(value);
+    const selected = isBlank(value) ? fallback : selectedKey;
     return (
       <div className="py-2">
         <div className="flex items-end justify-between gap-4">
@@ -110,7 +115,19 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
             {touched && <span className="ml-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">edited</span>}
           </label>
           <div className="w-52">
-            <Select id={`pf-${def.path}`} value={selected} onChange={(e) => draft.set(def.path, e.target.value)}>
+            <Select
+              id={`pf-${def.path}`}
+              value={selected}
+              onChange={(e) => {
+                const raw = e.target.value;
+                // hasOwnProperty (not ??): an explicit null mapping ("" → clear-to-global) must
+                // survive, and ?? would fall through to the raw string for exactly that case.
+                const mapped = def.optionValues && Object.prototype.hasOwnProperty.call(def.optionValues, raw)
+                  ? def.optionValues[raw]
+                  : raw;
+                draft.set(def.path, mapped);
+              }}
+            >
               {(def.options ?? []).map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}

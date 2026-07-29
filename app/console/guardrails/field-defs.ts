@@ -187,6 +187,68 @@ export const UNIVERSE_FLOOR: FieldDef[] = [
   { path: "universeFloor.minDollarVolume", label: "Min daily dollar volume", kind: "money", optional: true, looserWhen: "down" }
 ];
 
+/** Volatility-targeting sizing tapers + risk receipts (policy.tuning, guard enablement 2026-07-28).
+ *  All four are tapers/receipts — none can block an opening or touch an exit. */
+export const VOL_TARGETING: FieldDef[] = [
+  { path: "tuning.volTargeting", label: "Volatility-target sizing", kind: "bool", looserWhen: "off", hint: "Tapers an opening order's size down when the name's realized volatility runs hotter than your target (never sizes up, floors at the exploratory minimum). Turning this OFF is looser — wild names get full size." },
+  { path: "tuning.targetPortfolioVolPct", label: "Vol target (%)", kind: "pct", optional: true, looserWhen: "up", hint: "Annualized realized-volatility target per position. A higher target means less tapering (looser). Blank = no vol taper (the heat budget below can still apply)." },
+  { path: "tuning.portfolioHeatBudgetPct", label: "Portfolio heat budget (%)", kind: "pct", optional: true, looserWhen: "up", hint: "The book's total distance-to-stop dollar risk as a % of equity. An opening order's incremental risk is tapered to fit the remaining budget — advisory, never a hard block. Blank = no heat taper." },
+  { path: "tuning.riskReceipts", label: "Risk receipts", kind: "bool", hint: "Appends a correlation profile and a pre-trade stress-scenario note to every opening proposal's rationale (inform-only — never changes size or blocks a trade). Costs a few extra price-bar fetches per candidate." }
+];
+
+/** Per-account event-trigger settings (policy.triggerSettings, 2026-07-28). Every field falls back
+ *  to the global TRIGGER_ENGINE/TRIGGER_MODE env when unset — "Use global" is the honest default. */
+export const TRIGGERS: FieldDef[] = [
+  {
+    path: "triggerSettings.enabled",
+    label: "Event-triggered runs",
+    kind: "select",
+    options: [
+      { value: "", label: "Use global (env)" },
+      { value: "true", label: "On" },
+      { value: "false", label: "Off" }
+    ],
+    optionValues: { "": null, "true": true, "false": false },
+    // Off/global-off = 0, On = 1: opting an account INTO event-driven autonomous runs loosens.
+    looseRank: { "": 0, "false": 0, "true": 1 },
+    hint: "Let material events (8-K filings, regime flips, technical signals) fire a strategy run for this account instead of waiting for the fixed interval. Off opts this account out even when the deployment's engine is on. Events are deduped, debounced, and rate-capped."
+  },
+  {
+    path: "triggerSettings.mode",
+    label: "Run mix",
+    kind: "select",
+    options: [
+      { value: "", label: "Use global (env)" },
+      { value: "interval", label: "Interval only" },
+      { value: "event", label: "Event only" },
+      { value: "both", label: "Both" }
+    ],
+    optionValues: { "": null },
+    hint: "Interval = fixed-cadence runs only. Event = runs fire only on material events (pair it with a fallback interval below so a quiet tape can't strand the account). Both = events plus the normal cadence."
+  },
+  {
+    path: "triggerSettings.fallbackIntervalMinutes",
+    label: "Event-mode fallback interval",
+    kind: "minutes",
+    optional: true,
+    hint: "Event-only mode: still run the fixed cadence at least this often as a safety floor. Blank = never (a silent event feed means no runs at all)."
+  },
+  {
+    path: "triggerSettings.eventRunMode",
+    label: "Event run scope",
+    kind: "select",
+    options: [
+      { value: "", label: "Full run (default)" },
+      { value: "full", label: "Full run" },
+      { value: "close_only", label: "Close-only" }
+    ],
+    optionValues: { "": null },
+    // close_only is strictly tighter than full: exits only, no new risk on an event.
+    looseRank: { "": 1, "full": 1, "close_only": 0 },
+    hint: "What an event-fired run may do. Full = a normal run (opens + exits). Close-only = the run manages exits and safety maintenance but every new opening is rejected at the policy gate — for this run only; your stored state is never changed."
+  }
+];
+
 export const ALL_DEFS: FieldDef[] = [
   ...ESSENTIALS,
   ...SOCRATIC_OVERRIDE,
@@ -197,7 +259,9 @@ export const ALL_DEFS: FieldDef[] = [
   ...SHORTS,
   ...HYGIENE,
   ...TAX_RULES,
-  ...UNIVERSE_FLOOR
+  ...UNIVERSE_FLOOR,
+  ...VOL_TARGETING,
+  ...TRIGGERS
 ];
 
 export const INDICES: Array<{ id: IndexUniverse; label: string }> = [
