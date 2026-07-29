@@ -24,7 +24,7 @@ describe("daily opening cap resolution", () => {
     expect(effectiveDailyOpeningNotionalCap({ maxDailyNotional: 1_000, maxDailyPctOfNav: 20 }, 100)).toBe(20);
   });
 
-  it("clamps an oversized dollar daily cap to current buying power without changing the configured value", () => {
+  it("clamps an oversized dollar daily cap to current portfolio or buying power without changing the configured value", () => {
     expect(resolveDailyOpeningCap({ maxDailyNotional: 1_000 }, 100, 37)).toEqual({
       mode: "dollar",
       configuredValue: 1_000,

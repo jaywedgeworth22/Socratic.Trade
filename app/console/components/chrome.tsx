@@ -118,6 +118,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
       // removes any window where stale Account A UI could remain interactive while the server points
       // at Account B, and remounts every account-scoped editor from B's snapshot.
       allowNextUnload();
+      close();
       window.location.reload();
     } catch (error) {
       toast.push("neg", "Could not load account", error instanceof ConsoleApiError ? error.message : undefined);
@@ -224,12 +225,17 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
 
       {open && (
         <>
-          {/* invisible click-away backdrop; the panel sits above it */}
-          <div className="fixed inset-0 z-40" onClick={close} aria-hidden />
+          {/* invisible click-away backdrop; uses button for iOS Safari / PWA touch compatibility */}
+          <button
+            type="button"
+            aria-label="Close account menu"
+            className="fixed inset-0 z-40 h-full w-full cursor-default border-0 bg-transparent opacity-0"
+            onClick={close}
+          />
           <div
             role="menu"
             aria-label="Account scope"
-            className="con-menu-drop absolute left-0 top-[calc(100%+4px)] z-50 flex max-h-[min(70vh,480px)] w-[min(92vw,360px)] flex-col gap-2 overflow-y-auto rounded-card border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3 shadow-xl"
+            className="con-menu-drop absolute left-0 top-[calc(100%+4px)] z-50 flex max-h-[min(70vh,480px)] w-[min(calc(100vw-48px),360px)] max-w-[calc(100vw-48px)] sm:w-[360px] sm:max-w-[360px] flex-col gap-2 overflow-y-auto rounded-card border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3 shadow-xl"
           >
             <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
               One account is loaded at a time. Switching rescopes everything — balances, guardrails, approvals, run
