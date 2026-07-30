@@ -8,9 +8,12 @@ const webServerCommand =
 
 // The smoke server is started with `next start` (NODE_ENV=production), so the auth middleware fails
 // closed and redirects `/` to `/access-denied` for an unauthenticated request — the dashboard never
-// renders. Authenticate the test browser the way production does: trust the Cloudflare-Access email
-// header (CF_ACCESS_TRUST_EMAIL_HEADER) on the server, and present that verified-upstream identity on
-// every request. The smoke email is also the server's PRIMARY_USER_EMAIL so it passes the allowlist.
+// renders. CF_ACCESS_TRUST_EMAIL_HEADER can no longer provide that identity: since the CF-Access
+// JWT hardening, the plain email header is only trusted alongside CF_ACCESS_TEAM_DOMAIN +
+// CF_ACCESS_AUD and a verifiable Cf-Access-Jwt-Assertion, none of which CI can produce. Instead the
+// smoke server runs with auth UNCONFIGURED (no AUTH_SECRET, no CF flag), which engages the
+// middleware's documented dev/local fallback to PRIMARY_USER_EMAIL — the same path local
+// `next start` uses. The smoke email is the server's PRIMARY_USER_EMAIL so it passes the allowlist.
 const authEmail = process.env.PLAYWRIGHT_AUTH_EMAIL || "smoke-test@agentic.local";
 
 export default defineConfig({
@@ -34,7 +37,8 @@ export default defineConfig({
         // contention; its full Next build can exceed four minutes without being stuck.
         timeout: process.env.CI ? 600_000 : 240_000,
         env: {
-          CF_ACCESS_TRUST_EMAIL_HEADER: "1",
+          // Deliberately NO CF_ACCESS_TRUST_EMAIL_HEADER and no AUTH_SECRET: auth unconfigured
+          // engages the middleware's dev/local fallback to PRIMARY_USER_EMAIL (see comment above).
           PRIMARY_USER_EMAIL: authEmail,
           // The embedded `npm run build` OOMs at V8's default ~2 GB heap on CI runners
           // (Playwright Smoke failed with "Ineffective mark-compacts near heap limit").
