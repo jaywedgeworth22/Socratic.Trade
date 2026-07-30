@@ -1,6 +1,9 @@
 # Active Implementation Plan
 
-> **2026-07-27 — Pending-order count inflation (CURSOR).** Stop treating Alpaca
+> **2026-07-29 — Adjusted Day P&L for Cash Flows (ANTIGRAVITY, branch `agent/ag-day-pnl`).**
+> Updated `deriveDayPnl` to correctly handle intraday cash deposits and withdrawals by reusing the `inferExternalCashFlows` helper. The dashboard will now compute P&L correctly by netting out any cash flows, preventing the UI from misattributing cash deposits as profit. Tests and build passed. Rollout: `docs/rollouts/2026-07-29-day-pnl-cash-flow-adjusted.md`.
+
+> **2026-07-29 — Expose portfolio errors in UI (ANTIGRAVITY, branch `agent/ag-portfolio-error`).**
 > `done_for_day` history as open/working; ops `?orders=1` for live vs listed
 > diagnosis. Branch `cursor/pending-orders-open-count-0aef`. Rollout:
 > `docs/rollouts/2026-07-27-pending-orders-done-for-day.md`.

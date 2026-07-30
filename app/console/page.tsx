@@ -52,7 +52,7 @@ export default function ConsoleHomePage() {
   const state = deriveStateInfo(snapshot.policy);
   const spend = deriveSpend(snapshot);
   const portfolio = snapshot.portfolio;
-  const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio?.totalMarketValue);
+  const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio);
   const markToMarket = deriveMarkToMarket(snapshot);
   const risk = deriveRiskUtilization(snapshot);
   const equityWindow = selectEquityWindow(
@@ -106,7 +106,11 @@ export default function ConsoleHomePage() {
           </span>
         )}
         <span className="ml-auto flex items-center gap-1.5 text-[length:var(--con-fs-xs)]">
-          {typeof spend.capNotional === "number" ? (
+          {snapshot.portfolioReadError ? (
+            <Chip tone="warn" title={snapshot.portfolioReadError}>
+              Portfolio fetch failed: {snapshot.portfolioReadError.length > 50 ? snapshot.portfolioReadError.slice(0, 50) + "..." : snapshot.portfolioReadError}
+            </Chip>
+          ) : typeof spend.capNotional === "number" ? (
             <>
               <span className="con-num font-semibold text-[color:var(--con-fg)]">
                 {fmtMoneyWhole(Math.max(0, spend.capNotional - spend.usedNotional))}

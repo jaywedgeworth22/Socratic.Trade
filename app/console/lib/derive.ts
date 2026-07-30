@@ -14,10 +14,12 @@ import type {
   ExecutionMode,
   PerformanceSummary,
   SystemState,
-  TradingPolicy
+  TradingPolicy,
+  Portfolio
 } from "@/lib/types";
 import { resolveDailyOpeningCap, type DailyOpeningCapMode } from "@/lib/policy-caps";
 import { isRunAllowedNow, nextMarketOpenHint, previousTradingDayStart } from "@/lib/market-hours";
+import { inferExternalCashFlows } from "@/lib/benchmark";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
 
@@ -339,6 +341,7 @@ export interface DayPnl {
    *  snapshots are missing (the strategy didn't run/snapshot for a stretch) and this P&L is being
    *  compared across a real gap (e.g. a July 7 baseline read on July 17), not just "yesterday". */
   isStaleBaseline: boolean;
+  cashFlowAdjusted?: boolean;
 }
 
 /** Change in equity vs the last persisted snapshot before today (local time)
@@ -347,30 +350,50 @@ export interface DayPnl {
 export function deriveDayPnl(
   performance: PerformanceSummary | undefined,
   mode: ExecutionMode | undefined,
-  currentEquity: number | undefined,
+  portfolio: Pick<Portfolio, "totalMarketValue" | "cash"> | undefined,
   now: Date = new Date()
 ): DayPnl | null {
+  const currentEquity = portfolio?.totalMarketValue;
   if (!performance || typeof currentEquity !== "number" || !Number.isFinite(currentEquity)) return null;
   const curve = mode === "broker/live" ? performance.liveEquityCurve : performance.paperEquityCurve;
   if (!curve || curve.length === 0) return null;
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  let baseline: { timestamp: string; equity: number } | undefined;
+  let baseline: EquityCurvePoint | undefined;
   for (const point of curve) {
     const t = new Date(point.timestamp).getTime();
     if (Number.isFinite(t) && t < todayStart) baseline = point;
   }
   if (!baseline || !Number.isFinite(baseline.equity) || baseline.equity === 0) return null;
-  const pnl = currentEquity - baseline.equity;
+
+  let flow = 0;
+  if (portfolio && typeof portfolio.cash === "number" && typeof baseline.cash === "number") {
+    const fakeCurrent: EquityCurvePoint = {
+      timestamp: now.toISOString(),
+      equity: currentEquity,
+      source: "live" as any,
+      cash: portfolio.cash,
+      positionsValue: currentEquity - portfolio.cash
+    };
+    const flowMap = inferExternalCashFlows([baseline, fakeCurrent], []);
+    // Sum any flows found in the map (there should only be at most 1, keyed by fakeCurrent date)
+    for (const v of flowMap.values()) flow += v;
+  }
+
+  const pnl = currentEquity - baseline.equity - flow;
+  const pctBase = baseline.equity + flow;
+  const pct = pctBase > 0 ? (pnl / pctBase) * 100 : 0;
+
   const baselineDay = new Date(baseline.timestamp);
   const baselineDayStart = new Date(baselineDay.getFullYear(), baselineDay.getMonth(), baselineDay.getDate()).getTime();
   const priorSessionStart = previousTradingDayStart(now).getTime();
   const isStaleBaseline = Number.isFinite(baselineDayStart) && baselineDayStart < priorSessionStart;
   return {
     pnl,
-    pct: (pnl / baseline.equity) * 100,
+    pct,
     baselineAt: baseline.timestamp,
     baselineEquity: baseline.equity,
-    isStaleBaseline
+    isStaleBaseline,
+    ...(Math.abs(flow) > 0.01 ? { cashFlowAdjusted: true } : {})
   };
 }
 

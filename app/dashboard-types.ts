@@ -70,6 +70,7 @@ export interface DashboardSnapshot {
     Pick<TradingPolicy, "systemState" | "strategyAuthority"> & Partial<Pick<TradingPolicy, "runDuringExtendedHours">>
   >;
   portfolio?: Portfolio;
+  portfolioReadError?: string;
   positions: EquityPosition[];
   options?: OptionPosition[];
   symbolMetaBySymbol: Record<string, DashboardSymbolMeta>;
