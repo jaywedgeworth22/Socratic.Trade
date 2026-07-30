@@ -2462,13 +2462,14 @@ export interface NotificationEvent {
 
 // --- Out-of-app multi-channel alert delivery (ported from Atlas) ---
 /** Out-of-app delivery channels for triggered alerts. */
-export type NotifyChannelId = "push" | "webhook" | "email" | "sms";
+export type NotifyChannelId = "push" | "webhook" | "email" | "sms" | "pushover";
 
 /** Per-user notification preferences: enabled channels + per-channel delivery target. */
 export interface NotifyPrefs {
   userId: string;
   channels: NotifyChannelId[];
   pushTarget: string;
+  pushoverTarget: string;
   webhookUrl: string;
   email: string;
   phone: string;

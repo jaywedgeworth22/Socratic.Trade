@@ -171,7 +171,7 @@ export function deleteApiKey(service: string): Promise<{ success: boolean; delet
 // ── Delivery channels (out-of-app alert delivery) ────────────────────────────
 
 export interface DeliveryChannelDescriptor {
-  id: "push" | "webhook" | "email" | "sms";
+  id: "push" | "pushover" | "webhook" | "email" | "sms";
   label: string;
   /** False when the server operator hasn't configured the channel's provider. */
   available: boolean;
@@ -185,6 +185,7 @@ export interface DeliveryChannelDescriptor {
 export interface DeliveryPrefs {
   channels: string[];
   pushTarget: string;
+  pushoverTarget: string;
   webhookUrl: string;
   email: string;
   phone: string;
@@ -193,6 +194,7 @@ export interface DeliveryPrefs {
 export const EMPTY_DELIVERY_PREFS: DeliveryPrefs = {
   channels: [],
   pushTarget: "",
+  pushoverTarget: "",
   webhookUrl: "",
   email: "",
   phone: ""

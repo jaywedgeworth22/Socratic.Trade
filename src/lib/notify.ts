@@ -23,7 +23,8 @@ export interface NotifyConfig {
   retryAttempts: number;
   /** Base backoff between retries in ms (multiplied by the attempt number). 0 disables the wait. */
   retryDelayMs: number;
-  push: { provider: "ntfy" | "pushover"; ntfyServer: string; pushoverToken: string };
+  push: { ntfyServer: string };
+  pushover: { pushoverToken: string };
   email: { provider: "resend"; resendKey: string; from: string };
   sms: { twilioSid: string; twilioToken: string; twilioFrom: string };
 }
@@ -45,7 +46,6 @@ export interface NotifyDispatchDeps {
 
 /** Admin-side delivery config from env. End-user secrets never live here — only in notification_prefs. */
 export function loadNotifyConfig(): NotifyConfig {
-  const provider = process.env.NOTIFY_PUSH_PROVIDER === "pushover" ? "pushover" : "ntfy";
   const timeoutMs = Number(process.env.NOTIFY_TIMEOUT_MS ?? 5000);
   const retryAttempts = Number(process.env.NOTIFY_RETRY_ATTEMPTS ?? 3);
   const retryDelayMs = Number(process.env.NOTIFY_RETRY_DELAY_MS ?? 400);
@@ -54,8 +54,9 @@ export function loadNotifyConfig(): NotifyConfig {
     retryAttempts: Number.isFinite(retryAttempts) && retryAttempts >= 1 ? Math.floor(retryAttempts) : 3,
     retryDelayMs: Number.isFinite(retryDelayMs) && retryDelayMs >= 0 ? retryDelayMs : 400,
     push: {
-      provider,
-      ntfyServer: process.env.NOTIFY_NTFY_SERVER ?? "https://ntfy.sh",
+      ntfyServer: process.env.NOTIFY_NTFY_SERVER ?? "https://ntfy.sh"
+    },
+    pushover: {
       pushoverToken: process.env.PUSHOVER_APP_TOKEN ?? ""
     },
     email: {
@@ -214,49 +215,56 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
   },
 
   push: {
-    available: (cfg) => cfg.push.provider === "ntfy" || (cfg.push.provider === "pushover" && !!cfg.push.pushoverToken),
+    available: () => true,
     target: (p) => p.pushTarget || "",
-    describe: (cfg) => {
-      const isPushover = cfg.push.provider === "pushover";
-      return {
-        id: "push",
-        label: "Phone push",
-        available: CHANNELS.push.available(cfg),
-        provider: cfg.push.provider,
-        targetField: "pushTarget",
-        targetLabel: isPushover ? "Pushover user key" : "ntfy topic",
-        placeholder: isPushover ? "u1a2b3c4d5..." : "alerts-yourname-7c3f",
-        hint: isPushover
-          ? "Install Pushover, then paste your user key. Notices arrive on your phone."
-          : `Free — no key needed. Install the ntfy app, subscribe to a hard-to-guess topic, then paste that exact topic here (server: ${cfg.push.ntfyServer}).`
-      };
-    },
+    describe: (cfg) => ({
+      id: "push",
+      label: "Phone push (ntfy)",
+      available: true,
+      targetField: "pushTarget",
+      targetLabel: "ntfy topic",
+      placeholder: "alerts-yourname-7c3f",
+      hint: `Free — no key needed. Install the ntfy app, subscribe to a hard-to-guess topic, then paste that exact topic here (server: ${cfg.push.ntfyServer}).`
+    }),
     async send(target, msg, { cfg, fetchImpl, timeoutMs, signal }) {
-      if (cfg.push.provider === "pushover") {
-        const form = new URLSearchParams({ token: cfg.push.pushoverToken, user: target, title: msg.title, message: msg.body });
-        await postOrThrow(
-          fetchImpl,
-          "https://api.pushover.net/1/messages.json",
-          { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form.toString() },
-          timeoutMs,
-          signal
-        );
-      } else {
-        const base = cfg.push.ntfyServer.replace(/\/+$/, "");
-        const topic = encodeURIComponent(target.replace(/^\/+/, ""));
-        await postOrThrow(
-          fetchImpl,
-          `${base}/${topic}`,
-          // ntfy carries the title as a raw HTTP header value, which the Fetch/Headers spec requires
-          // to be ByteString (Latin-1 only) — an em dash or other non-Latin-1 char in msg.title (e.g.
-          // from a provider-health alert string) throws `TypeError: Cannot convert argument to a
-          // ByteString` here and silently drops the whole push send. Sanitize just the header value
-          // (the body isn't header-encoded, so it can stay as-is).
-          { method: "POST", headers: { "content-type": "text/plain", title: sanitizeNtfyTitleHeader(msg.title) }, body: msg.body },
-          timeoutMs,
-          signal
-        );
-      }
+      const base = cfg.push.ntfyServer.replace(/\/+$/, "");
+      const topic = encodeURIComponent(target.replace(/^\/+/, ""));
+      await postOrThrow(
+        fetchImpl,
+        `${base}/${topic}`,
+        // ntfy carries the title as a raw HTTP header value, which the Fetch/Headers spec requires
+        // to be ByteString (Latin-1 only) — an em dash or other non-Latin-1 char in msg.title (e.g.
+        // from a provider-health alert string) throws `TypeError: Cannot convert argument to a
+        // ByteString` here and silently drops the whole push send. Sanitize just the header value
+        // (the body isn't header-encoded, so it can stay as-is).
+        { method: "POST", headers: { "content-type": "text/plain", title: sanitizeNtfyTitleHeader(msg.title) }, body: msg.body },
+        timeoutMs,
+        signal
+      );
+    }
+  },
+
+  pushover: {
+    available: (cfg) => !!cfg.pushover.pushoverToken,
+    target: (p) => p.pushoverTarget || "",
+    describe: () => ({
+      id: "pushover",
+      label: "Pushover",
+      available: !!process.env.PUSHOVER_APP_TOKEN,
+      targetField: "pushoverTarget",
+      targetLabel: "Pushover user key",
+      placeholder: "u1a2b3c4d5...",
+      hint: "Install Pushover, then paste your user key. Notices arrive on your phone."
+    }),
+    async send(target, msg, { cfg, fetchImpl, timeoutMs, signal }) {
+      const form = new URLSearchParams({ token: cfg.pushover.pushoverToken, user: target, title: msg.title, message: msg.body });
+      await postOrThrow(
+        fetchImpl,
+        "https://api.pushover.net/1/messages.json",
+        { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form.toString() },
+        timeoutMs,
+        signal
+      );
     }
   },
 
@@ -323,7 +331,7 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
   }
 };
 
-const CHANNEL_ORDER: NotifyChannelId[] = ["push", "webhook", "email", "sms"];
+const CHANNEL_ORDER: NotifyChannelId[] = ["push", "pushover", "webhook", "email", "sms"];
 
 /** UI metadata: which channels exist, which are admin-usable, and the target each needs. */
 export function describeChannels(cfg: NotifyConfig = loadNotifyConfig()): NotifyChannelDescriptor[] {
