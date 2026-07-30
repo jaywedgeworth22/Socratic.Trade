@@ -1,6 +1,7 @@
 import { getDb, getUserSetting, setUserSetting, deleteUserSetting, audit, getInternalSetting, setInternalSetting, deleteInternalSetting, getPolicy, listConnectedAccounts, upsertFillExcursionsByKey } from "./db";
 import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "./llm-usage";
 import { getRegimeScorecard, getThesisScorecard, getThesisRegimeScorecard, getClosedLotsDetailed } from "./performance";
+import { permutationSignificance, significanceConfidence, significanceSentence, type TrackRecordDirection } from "./significance";
 import { ingestLearned } from "./learned-context/store";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import { storeContexts } from "./vector-db";
@@ -206,7 +207,11 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
     // learned from paper/broker accounts benefit every account. An account is an account.
     const allAccounts = listConnectedAccounts(userId);
     const pooledThesisStats = poolThesisStats(allAccounts, userId);
-    await writeThesisTrackRecordFacts(pooledThesisStats, userId, allAccounts);
+    // Jesse significance (docs/oss-lessons.md §6): the raw per-lot returns behind those stats feed a
+    // label-permutation baseline, so a track-record fact also says whether a random same-size bucket
+    // would have done as well — the difference between an edge and luck the LLM should discount.
+    const pooledLotReturns = poolClosedLotReturnsByThesis(allAccounts, userId);
+    await writeThesisTrackRecordFacts(pooledThesisStats, userId, allAccounts, pooledLotReturns);
     // Deterministic thesis x regime "conditioned lesson" vectors — one living, overwrite-in-place
     // doc per well-sampled bucket. Rides this function's existing signature-dedup gate (stats can't
     // change without new fills) and inherits the existing budget/no-key early returns above.
@@ -426,22 +431,64 @@ function poolThesisRegimeStats(
 }
 
 /**
+ * Raw per-lot realized returns grouped by thesis tag, pooled across ALL connected accounts —
+ * the input for the label-permutation significance baseline (significance.ts). Mirrors
+ * poolThesisStats' account iteration and Untagged exclusion; the `pool` is every tagged lot's
+ * returnPct (the label-shuffle null universe).
+ */
+function poolClosedLotReturnsByThesis(
+  accounts: { accountNumber?: string; environment: string; broker: string }[],
+  userId: string
+): { byThesis: Map<string, number[]>; pool: number[] } {
+  const byThesis = new Map<string, number[]>();
+  const pool: number[] = [];
+  for (const account of accounts) {
+    if (!account.accountNumber || account.broker === "test") continue;
+    const source = account.environment === "live" ? "live" : "paper";
+    try {
+      for (const lot of getClosedLotsDetailed(account.accountNumber, source as "paper" | "live", userId)) {
+        const tag = lot.thesisTag && lot.thesisTag.trim() ? lot.thesisTag.trim() : "Untagged";
+        if (tag === "Untagged") continue;
+        pool.push(lot.returnPct);
+        const series = byThesis.get(tag) ?? [];
+        series.push(lot.returnPct);
+        byThesis.set(tag, series);
+      }
+    } catch { /* skip accounts whose lots fail to load */ }
+  }
+  return { byThesis, pool };
+}
+
+/**
  * Emit durable, QUALITATIVE track-record facts per well-sampled thesis into learned_context
  * (origin='autonomous'). Now per-user: pools ALL accounts' trades so lessons benefit every account.
  * The phrasing is deliberately directional and carries NO numeric percent/size token, so the
  * fail-closed classifier admits it as a fact rather than dropping it as a risk-adjacent (numeric)
  * candidate. Untagged buckets are skipped. Best-effort: a failure here never affects the reflection
  * write or any trading path.
+ *
+ * Significance annotation (Jesse lesson, docs/oss-lessons.md §6): each directional fact also carries
+ * one honest sentence about whether the bucket beats a random same-size bucket of the pooled history
+ * (label-permutation baseline), and its confidence is scaled — 0.7 when the edge is unlikely to be
+ * luck, 0.45 when luck is not ruled out. The fact is still written either way: the caveat is
+ * information, not a gate.
  */
 async function writeThesisTrackRecordFacts(
   outcomesByThesis: PooledThesisStat[],
   userId: string,
-  allAccounts: { accountNumber?: string; environment: string }[]
+  allAccounts: { accountNumber?: string; environment: string }[],
+  lotReturns?: { byThesis: Map<string, number[]>; pool: number[] }
 ): Promise<void> {
   for (const stat of outcomesByThesis) {
     if (!stat.thesisTag || stat.thesisTag === "Untagged") continue;
     if (stat.trades < MIN_LOTS_FOR_TRACK_RECORD_FACT) continue;
     const verdict = realizedTrackRecordVerdict(stat.shrunkAvgReturnPct);
+    const direction: TrackRecordDirection = stat.shrunkAvgReturnPct > 0.5 ? "positive" : stat.shrunkAvgReturnPct < -0.5 ? "negative" : "neutral";
+    const significance = lotReturns
+      ? permutationSignificance({ bucket: lotReturns.byThesis.get(stat.thesisTag) ?? [], pool: lotReturns.pool })
+      : undefined;
+    const sigSentence = significance ? significanceSentence(direction, significance) : undefined;
+    const confidence = significance ? significanceConfidence(direction, significance) : 0.6;
     const sourceAccts = stat.source_accounts.join(",");
     const envBreakdown = `paper=${stat.environment_breakdown.paper},live=${stat.environment_breakdown.live}`;
     // Prefer "live" if any live lots contributed, otherwise "paper"
@@ -452,9 +499,9 @@ async function writeThesisTrackRecordFacts(
         {
           kind: "pattern",
           subject: `track_record:${stat.thesisTag}`,
-          value: `The "${stat.thesisTag}" thesis ${verdict} across pooled closed trades from all accounts (${stat.trades} lots). source_accounts: ${sourceAccts} environment_breakdown: ${envBreakdown}`,
+          value: `The "${stat.thesisTag}" thesis ${verdict} across pooled closed trades from all accounts (${stat.trades} lots).${sigSentence ? ` ${sigSentence}` : ""} source_accounts: ${sourceAccts} environment_breakdown: ${envBreakdown}`,
           source: "inferred",
-          confidence: 0.6
+          confidence
         },
         "autonomous",
         { connectedAccountId: undefined, accountEnvironment: dominantEnv }
