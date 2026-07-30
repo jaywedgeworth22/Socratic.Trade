@@ -1,3 +1,7 @@
+## 2026-07-30 — Rule Significance Testing (Jesse label-permutation baseline) (KIMI) — PR #2294
+
+OSS-lessons §6 slice 1 of 3. Track-record facts ingested into learned context now carry an honest significance sentence: does the thesis bucket's mean realized return beat a random same-size bucket of the pooled tagged closed-lot history (label-permutation null, 1000 permutations, +1 correction)? Confidence scales — 0.7 when the edge is unlikely to be luck, 0.45 when luck isn't ruled out (fact still written; annotation not hard-gate). New pure `src/lib/significance.ts` (injectable rng, pool-size floor) + `poolClosedLotReturnsByThesis` wiring in `post-mortem.ts`. Sentence digits are bare p-value + permutation count only — test-verified `classifyRiskTier` keeps it a fact. 15 new tests. All gates green: tsc exit 0, lint 0 errors (3 pre-existing warnings, down from 4), 22/22 targeted, full suite 5446/5446 (3 shards), build exit 0. Branch `kimi/rule-significance`. Rollout: `docs/rollouts/2026-07-30-rule-significance.md`. Slices 2-3 (TraderHarness PIT masking, qlib walk-forward) remain planned/unassigned.
+
 ## 2026-07-29 — Adjusted Day P&L for Cash Flows (ANTIGRAVITY, branch `agent/ag-day-pnl`)
 
 Updated `deriveDayPnl` to correctly handle intraday cash deposits and withdrawals by reusing the `inferExternalCashFlows` helper from the benchmark engine. The dashboard will now compute P&L correctly by netting out any cash flows, preventing the UI from misattributing cash deposits as profit.
