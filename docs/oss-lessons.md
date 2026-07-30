@@ -123,15 +123,21 @@ Guidance for FUTURE mutating surfaces: copy the nearest existing pattern above (
 settings edits, typed ritual for irreversible money-adjacent actions, arm-click for batched
 low-stakes actions) rather than building a new abstraction.
 
-## 6. Backtest integrity for the learning loop — Jesse / TraderHarness / qlib (PLANNED)
+## 6. Backtest integrity for the learning loop — Jesse / TraderHarness / qlib (PARTIALLY IMPLEMENTED — slice 1 landed 2026-07-30, PR #2294)
 
 The Phase 7 learning loop matures outcomes and (eventually) evaluates LLM proposals against
 history. Three contamination traps, three references:
 
-- **Jesse — rule significance**: before a thesis tag or signal is credited with predictive
-  power, test whether the same entries at *random* times would have done as well (permutation /
-  Monte-Carlo baseline). Steal: a `significance.ts` that reports "this rule beats luck at p<X"
-  before the learning loop promotes a lesson. Cheap, high value.
+- **Jesse — rule significance (IMPLEMENTED 2026-07-30, PR #2294)**: before a thesis tag or
+  signal is credited with predictive power, test whether the same trades would have done as
+  well under a random grouping (permutation / Monte-Carlo baseline). As implemented:
+  `src/lib/significance.ts` — a pure label-permutation test (observed thesis-bucket mean
+  realized `returnPct` vs random same-size buckets of the pooled tagged closed-lot history,
+  1000 permutations, +1 p-value correction, pool-size floor) wired into
+  `writeThesisTrackRecordFacts` in `post-mortem.ts`. Each directional track-record fact now
+  carries one honest baseline sentence and its confidence scales (0.7 unlikely-luck / 0.45
+  luck-not-ruled-out / 0.6 fallback) — annotation, not hard-gate. Rollout:
+  `docs/rollouts/2026-07-30-rule-significance.md`.
 - **TraderHarness — PIT masking for LLM evaluation**: an LLM asked to "decide" on 2024 data
   may simply remember 2024. Their fixes: point-in-time masking (only data available at T is in
   context), entity/date anonymization (symbol → random ticker, dates → relative offsets), and
@@ -177,7 +183,7 @@ settings-search rows; 27 tests. Rollout: `docs/rollouts/2026-07-29-accuracy-brea
 | Task brain / cron journal (`task_journal`, scheduler wiring, ops snapshot) | **Implemented 2026-07-29 (this change set)** |
 | Model tiering review | Done — no change (§3) |
 | Preview renderers for mutations | **Completed 2026-07-29 — zero-code finding: already landed bespoke on every surface (§5)** |
-| Backtest-integrity suite | Planned (§6) |
+| Backtest-integrity suite | **Partially implemented — slice 1 (Jesse rule significance) 2026-07-30, PR #2294**; slices 2–3 (PIT masking, walk-forward) planned (§6) |
 | Brokerage-model hardening | Planned (§7) |
 | nofx safety mode | **Implemented 2026-07-29 (§8, PR #2275)** |
 | Graph flows | Existing `TradingGraph` orchestrator (strategy.ts) is the LangGraph-lesson landing spot; extend nodes there rather than adopting LangGraph |
