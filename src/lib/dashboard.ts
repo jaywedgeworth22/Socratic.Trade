@@ -842,6 +842,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     connectedAccounts,
     connectedAccountPolicies,
     portfolio: displayPortfolio,
+    portfolioReadError,
     positions: displayPositions,
     options,
     symbolMetaBySymbol,
