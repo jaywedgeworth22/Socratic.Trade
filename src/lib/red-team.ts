@@ -350,7 +350,7 @@ export async function debateProposal(
           finalModel = attemptCanonicalModel;
 
           try {
-            // Bounded same-model retry on transient failures (§4.3): 2 attempts total, fresh
+            // Fast fallback to secondary models (§4.3): 1 attempt total per provider model, fresh
             // per-attempt timeout signal so a hung provider can't wedge the per-user run lock.
             const response = await fetchLlmWithRetry(
               attempt.url,
@@ -360,7 +360,7 @@ export async function debateProposal(
                 body: JSON.stringify(attempt.body)
               },
               {
-                attempts: 2,
+                attempts: 1,
                 baseDelayMs: 500,
                 timeoutMs: RED_TEAM_TIMEOUT_MS,
                 onRetry: (info) =>

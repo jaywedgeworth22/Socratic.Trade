@@ -3,6 +3,7 @@ import { listMobileCommands, mobileControlCatalog, mobileReadiness } from "@/lib
 import { resolveRequestUser } from "@/lib/request-user";
 import { listAlerts } from "@/lib/alerts";
 import { listWatchlist } from "@/lib/watchlist";
+import { isWorkingOrderState } from "@/lib/broker-held-orders";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +37,7 @@ export async function GET(request: Request) {
     scheduler: snapshot.scheduler,
     portfolio: snapshot.portfolio,
     positions: snapshot.positions,
-    orders: snapshot.orders,
+    orders: snapshot.orders.filter(o => isWorkingOrderState(o.state)),
     pendingProposals: snapshot.pendingProposals,
     dailyStats: snapshot.dailyStats,
     performance: snapshot.performance,

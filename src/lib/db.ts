@@ -163,13 +163,15 @@ export function installAccountWriteFenceTriggers(database: Database.Database): v
     "provider_usage_outbox",
     "rag_usage",
     "strategy_runs",
+    "task_journal",
     "trade_proposals"
   ]);
   const preparedInsertAllowed = new Set([
     "api_health_log",
     "audit_events",
     "provider_usage_outbox",
-    "rag_usage"
+    "rag_usage",
+    "task_journal"
   ]);
   for (const { name } of tables) {
     if (noFence.has(name)) continue;
@@ -2457,6 +2459,30 @@ const MIGRATIONS: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 62,
+    name: "task_journal",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS task_journal (
+          id TEXT PRIMARY KEY,
+          task_name TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('running','ok','error','skipped')),
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          duration_ms INTEGER,
+          user_id TEXT,
+          connected_account_id TEXT,
+          summary TEXT,
+          error TEXT,
+          metadata TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_journal_task_started ON task_journal (task_name, started_at);
+        CREATE INDEX IF NOT EXISTS idx_task_journal_started ON task_journal (started_at);
+        CREATE INDEX IF NOT EXISTS idx_task_journal_user_started ON task_journal (user_id, started_at);
+      `);
+    }
   }
 ];
 
@@ -3880,3 +3906,4 @@ export * from "./db-economic-events";
 export * from "./db-retrieval-usefulness";
 export * from "./db-earningscalls";
 export * from "./db-document-abstracts";
+export * from "./db-task-journal";

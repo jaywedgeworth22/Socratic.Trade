@@ -81,7 +81,11 @@ export async function GET(request: Request) {
 function readConfiguration() {
   const hetznerToken = readText(process.env.HETZNER_API_TOKEN);
   const hetznerServerId = readText(process.env.HETZNER_SERVER_ID);
-  const coolifyToken = readText(process.env.COOLIFY_API_TOKEN);
+  // Prefer the read-only Coolify stats token. Never use COOLIFY_AGENTS (full deploy/admin)
+  // for the website server-stats panel. COOLIFY_API_TOKEN is accepted only as a legacy
+  // alias that Infisical should set to the same read-only value as COOLIFY_SERVER_STATS.
+  const coolifyToken =
+    readText(process.env.COOLIFY_SERVER_STATS) || readText(process.env.COOLIFY_API_TOKEN);
   const coolifyServerUuid = readText(process.env.COOLIFY_SERVER_UUID);
 
   return {

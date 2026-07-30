@@ -40,6 +40,8 @@ import { acquireOrRenewLeadership, releaseLease, LEASE_OWNER } from "./scheduler
 import { reconcilePendingFills } from "./strategy-execution";
 import { safeErrorMessage } from "./telemetry-sanitize";
 import { runStPrimaryBridgeWriterIfDue } from "./st-primary-bridge-writer";
+import { journalLane } from "./task-journal";
+import { pruneTaskJournal } from "./db-task-journal";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
 export const MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY = "scheduler:managedVectorReconcile:lastAttempt";
@@ -410,11 +412,18 @@ async function tick(): Promise<void> {
   // Must run BEFORE the single-leader gate so stale rows are always repaired (idempotent: the
   // UPDATE has a `WHERE status = 'running'` guard, so even two concurrent sweeps won't double-count).
   try {
-    const repaired = markStaleRunningRuns(Date.now());
-    if (repaired > 0) console.log(`[scheduler] marked ${repaired} stale running run(s) as failed`);
+    await journalLane("stale-run-sweep", {}, () => {
+      const repaired = markStaleRunningRuns(Date.now());
+      if (repaired > 0) console.log(`[scheduler] marked ${repaired} stale running run(s) as failed`);
+      return { status: repaired > 0 ? ("ok" as const) : ("skipped" as const), summary: `repaired=${repaired}` };
+    });
   } catch (err) {
     console.error("[scheduler] stale-run sweep error:", err);
   }
+
+  // Task-journal retention: 'skipped' heartbeat rows age out in 24h, ok/error in 30d
+  // (db-task-journal.ts). One cheap indexed DELETE per tick; never throws.
+  pruneTaskJournal();
 
   // Single-leader gate (default ON, including unset/empty). Only an explicit false/off/0/no-style
   // value disables it; otherwise only the lease holder runs the background updates and per-account tick body
@@ -453,37 +462,43 @@ async function tick(): Promise<void> {
   // flags. Events may be produced by filings, transcripts, broker state, or operator actions;
   // gating this on one source would strand queued work indefinitely.
   try {
-    drainMaterialEventQueue();
+    await journalLane("material-event-drain", {}, () => drainMaterialEventQueue());
   } catch (err) {
     console.error("[scheduler] material-event drain error:", err);
   }
 
   // Global managed-vector crash repair is cadence-gated and single-flight. It must never block or
   // throw into trading work; failed or lease-busy attempts persist their hourly retry marker.
-  void reconcileManagedVectorRecordsIfDue();
+  void journalLane("managed-vector-reconcile", {}, async () => {
+    const run = await reconcileManagedVectorRecordsIfDue();
+    if (run === null) return { status: "skipped" as const, summary: "not due" };
+    return { status: "ok" as const, summary: `status=${run.status}` };
+  }).catch((err) => console.error("[scheduler] managed-vector reconcile journal error:", err));
 
   // Default-off, cadence-gated export of only the primary local user's Gemini
   // and DeepSeek credentials to the isolated Usage Monitor bridge path. The
   // writer is self-guarded and returns sanitized status codes without throwing
   // into trading work.
-  void runStPrimaryBridgeWriterIfDue().then((result) => {
+  void journalLane("st-primary-bridge-writer", {}, () => runStPrimaryBridgeWriterIfDue()).then((result) => {
     if (result.status === "error") {
       console.error(
         `[scheduler] ST primary credential bridge failed (${result.errorCode ?? "unknown"})`
       );
     }
-  });
+  }).catch((err) => console.error("[scheduler] ST primary bridge journal error:", err));
 
   // Refresh backend web sources (congressional trades, etc.) independently of the
   // trading loop — these are low-frequency (cadence-gated, ~daily) data reads that
   // keep the dashboard + agent context fresh even while autonomous trading is paused.
   // Skipped instantly when not yet due; fully self-guarded so it can't break a tick.
-  void refreshDueWebSources().catch((err) => console.error("[scheduler] web-source refresh error:", err));
+  void journalLane("web-source-refresh", {}, () => refreshDueWebSources())
+    .catch((err) => console.error("[scheduler] web-source refresh error:", err));
 
   // Nightly (cadence-gated) market-data paid-tier watchdog: probes the Massive/FMP keys' actual tier
   // and, on a confident "free" detection (e.g. a lapsed sub), notifies + auto-clamps Massive to the
   // free-safe 5/min so the raised paid default can't 429-storm. No-op until due; fully self-guarded.
-  void runProviderTierCheckIfDue().catch((err) => console.error("[scheduler] provider-tier check error:", err));
+  void journalLane("provider-tier-check", {}, () => runProviderTierCheckIfDue())
+    .catch((err) => console.error("[scheduler] provider-tier check error:", err));
 
   // 10-K/10-Q bodies and default-OFF FMP transcripts have separate producer cadences, request
   // budgets, and cursors. They share the durable RAG_REINDEX operation lease and this demand-first
@@ -523,14 +538,14 @@ async function tick(): Promise<void> {
     void (async () => {
       if (filingIngestDue) {
         try {
-          await refreshFilingBodies(symbols);
+          await journalLane("filing-body-ingest", { metadata: { symbols: symbols.length } }, () => refreshFilingBodies(symbols));
         } catch (err) {
           console.error("[scheduler] filing-body refresh error:", err);
         }
       }
       if (transcriptIngestDue) {
         try {
-          await refreshFmpTranscripts(symbols);
+          await journalLane("fmp-transcript-ingest", { metadata: { symbols: symbols.length } }, () => refreshFmpTranscripts(symbols));
         } catch {
           // The connector captures sanitized failures in its result/audit. Do not print a thrown
           // provider error here: it could contain request context and transcript bodies are untrusted.
@@ -549,7 +564,7 @@ async function tick(): Promise<void> {
   // like refreshFilingBodies/refreshFmpTranscripts; a busy lease is a benign deferred pass —
   // the daily watermark is untouched, so a later tick retries). Self-guarded.
   if (isEarningsCallsRefreshDue() && checkMonthlyLlmSpendCeiling().ok) {
-    void refreshEarningsCallsTranscriptsIfDue().catch((err) =>
+    void journalLane("earningscalls-refresh", {}, () => refreshEarningsCallsTranscriptsIfDue()).catch((err) =>
       console.error("[scheduler] earningscalls transcript refresh error:", err instanceof Error ? err.message : err)
     );
   }
@@ -557,14 +572,14 @@ async function tick(): Promise<void> {
   // Once-per-day share of company refs + daily closes + the S&P-500 series to congress.trade
   // (App A) so it can avoid spending the shared FMP quota. No-op unless CONGRESS_TRADE_TOKEN +
   // CONGRESS_SHARE_ENABLED are set and the batch hasn't already run today. Fully self-guarded.
-  void runCongressDailyShareIfDue(Date.now()).catch((err) =>
+  void journalLane("congress-daily-share", {}, () => runCongressDailyShareIfDue(Date.now())).catch((err) =>
     console.error("[scheduler] congress-share daily batch error:", err)
   );
 
   // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded. Runs per-user so
   // each user's stored regime label is independent; multi-user setups can't share one KV row.
   for (const userId of listUsers()) {
-    void checkRegimeFlip(userId).catch((err) =>
+    void journalLane("regime-flip-check", { userId }, () => checkRegimeFlip(userId)).catch((err) =>
       console.error(`[scheduler] regime check error for ${userId}:`, err)
     );
   }
@@ -574,7 +589,7 @@ async function tick(): Promise<void> {
   // digest, so lessons built on corrupted evidence (execution defects blamed on theses) get caught.
   // Annotate-only unless the owner opted into "decide". No-op unless enabled + due; self-guarded.
   for (const userId of listUsers()) {
-    void runDailyLearningReviewIfDue(userId).catch((err) =>
+    void journalLane("learning-review", { userId }, () => runDailyLearningReviewIfDue(userId)).catch((err) =>
       console.error(`[scheduler] learning-review error for ${userId}:`, err)
     );
   }
@@ -585,25 +600,35 @@ async function tick(): Promise<void> {
   // SQLite-only — no provider or LLM calls. Advisory observability + a bounded ranking nudge.
   for (const userId of listUsers()) {
     void import("./retrieval-usefulness")
-      .then(({ runRetrievalUsefulnessJoinIfDue }) => runRetrievalUsefulnessJoinIfDue(userId))
+      .then(({ runRetrievalUsefulnessJoinIfDue }) =>
+        journalLane("retrieval-usefulness-join", { userId }, () => runRetrievalUsefulnessJoinIfDue(userId))
+      )
       .catch((err) => console.error(`[scheduler] retrieval-usefulness join error for ${userId}:`, err));
   }
 
   // Atlas public-repo port: evaluate armed price alerts against live quotes every tick.
-  void checkAllUserPriceAlerts().catch((err) => console.error("[scheduler] price-alert check error:", err));
+  void journalLane("price-alert-check", {}, () => checkAllUserPriceAlerts())
+    .catch((err) => console.error("[scheduler] price-alert check error:", err));
 
   // Mobile/PWA command gateway: drain queued user commands from the durable queue. Route handlers
   // also kick this worker immediately after enqueueing, but the scheduler makes queued commands
   // recover after a process restart or an interrupted request.
   void import("./mobile-api")
-    .then(({ processPendingMobileCommands }) => processPendingMobileCommands({ limit: 5 }))
+    .then(({ processPendingMobileCommands }) =>
+      journalLane("mobile-command-drain", {}, async () => {
+        const result = await processPendingMobileCommands({ limit: 5 });
+        return { status: result.processed > 0 ? ("ok" as const) : ("skipped" as const), summary: `processed=${result.processed}` };
+      })
+    )
     .catch((err) => console.error("[scheduler] mobile-command worker error:", err));
 
   // Durable due-jobs: drain due 15m/1h intraday outcome-sampling jobs (db-jobs.ts + outcome-engine's
   // drainDueIntradaySampleJobs) so sampling survives process downtime instead of depending on a
   // strategy run coincidentally landing inside the narrow tolerance window.
   void import("./outcome-engine")
-    .then(({ drainDueIntradaySampleJobs }) => drainDueIntradaySampleJobs())
+    .then(({ drainDueIntradaySampleJobs }) =>
+      journalLane("due-job-intraday-drain", {}, () => drainDueIntradaySampleJobs())
+    )
     .catch((err) => console.error("[scheduler] due-jobs intraday sample drain error:", err));
 
   try {
@@ -653,8 +678,11 @@ async function tick(): Promise<void> {
         // Deterministic proposal expiry runs independently of the trading cadence so a stale
         // approval queue self-clears even while the system is halted or the market is closed.
         if (policy.accountNumber) {
-          void expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber })
-            .catch((err) => console.error("[scheduler] proposal-expiry error:", err));
+          void journalLane(
+            "proposal-expiry",
+            { userId, connectedAccountId: accountId },
+            () => expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber })
+          ).catch((err) => console.error("[scheduler] proposal-expiry error:", err));
         }
 
         if (!policy.accountNumber) {
@@ -666,15 +694,19 @@ async function tick(): Promise<void> {
         
         if (account.isDraining) {
           if (brokerGateway && policy.accountNumber) {
-            void brokerGateway.getEquityOrders(policy.accountNumber).then(async (orders) => {
+            const gw = brokerGateway;
+            const accountNumber = policy.accountNumber;
+            void journalLane("account-drain", { userId, connectedAccountId: accountId }, async () => {
+              const orders = await gw.getEquityOrders(accountNumber);
               const openOrders = drainingAccountLiveOrders(orders);
               for (const o of openOrders) {
-                await brokerGateway.cancelEquityOrder(policy.accountNumber!, o.id).catch((err: unknown) => {
+                await gw.cancelEquityOrder(accountNumber, o.id).catch((err: unknown) => {
                   console.error(`[scheduler] draining account cancel error for order ${o.id}:`, err);
                 });
               }
-              await reconcilePendingFills(brokerGateway, policy.accountNumber!, userId, policy.connectedAccountId);
+              await reconcilePendingFills(gw, accountNumber, userId, policy.connectedAccountId);
               if (openOrders.length === 0) purgeConnectedAccount(accountId, userId);
+              return { status: "ok" as const, summary: `open=${openOrders.length}` };
             }).catch((err: unknown) => console.error("[scheduler] draining account order check error:", err));
           } else {
             purgeConnectedAccount(accountId, userId);
@@ -687,15 +719,15 @@ async function tick(): Promise<void> {
           staleExitInFlight.add(key);
           const gw = brokerGateway;
           const stalePolicy = policy as TradingPolicy & { accountNumber: string }; // accountNumber checked non-null above
-          void gw.getEquityOrders(policy.accountNumber)
-            .then(async (orders) => {
-              await notifyStaleLimitOrders({ userId, policy, orders });
-              // Auto-cancel-replace stale EXIT limits with market orders (MU deadlock backstop). No-op
-              // when disabled; defers to the human on a live account with typed confirmation on. The
-              // in-flight guard above + the per-order cooldown inside autoRemediateStaleExitOrders keep
-              // a slow broker cancel from triggering a second market sell on the next tick.
-              await autoRemediateStaleExitOrders({ userId, policy: stalePolicy, activeAccount: account, gateway: gw, orders });
-            })
+          void journalLane("stale-limit-scan", { userId, connectedAccountId: accountId }, async () => {
+            const orders = await gw.getEquityOrders(stalePolicy.accountNumber);
+            await notifyStaleLimitOrders({ userId, policy, orders });
+            // Auto-cancel-replace stale EXIT limits with market orders (MU deadlock backstop). No-op
+            // when disabled; defers to the human on a live account with typed confirmation on. The
+            // in-flight guard above + the per-order cooldown inside autoRemediateStaleExitOrders keep
+            // a slow broker cancel from triggering a second market sell on the next tick.
+            await autoRemediateStaleExitOrders({ userId, policy: stalePolicy, activeAccount: account, gateway: gw, orders });
+          })
             .catch((err) => console.error("[scheduler] stale-limit-order handling error:", err))
             .finally(() => staleExitInFlight.delete(key));
         }
@@ -711,7 +743,13 @@ async function tick(): Promise<void> {
         // reduce exposure after a breaker trips. `halted` remains the only no-order state unless protectWhileHalted is active.
         if (protectiveState && !stopMonitorInFlight.has(key)) {
           stopMonitorInFlight.add(key);
-          void runSyntheticStopMonitor(userId, policy, true)
+          void journalLane("synthetic-stop-monitor", { userId, connectedAccountId: accountId }, async () => {
+            const result = await runSyntheticStopMonitor(userId, policy, true);
+            return {
+              status: "ok" as const,
+              summary: `evaluated=${result.evaluated} triggered=${result.triggered} exited=${result.exited}`
+            };
+          })
             .catch((err) => console.error("[scheduler] synthetic-stop monitor error:", err))
             .finally(() => stopMonitorInFlight.delete(key));
         }
@@ -721,8 +759,14 @@ async function tick(): Promise<void> {
         // pending_reconciliation until the next strategy run. Applies to broker/paper and broker/live;
         // Test/local has no broker order lifecycle.
         if (brokerGateway) {
-          void reconcilePendingFills(brokerGateway, policy.accountNumber, userId, policy.connectedAccountId)
-            .catch((err) => console.error("[scheduler] pending-fill reconcile error:", err));
+          // Captured outside the closure: the !accountNumber `continue` guard above narrows the
+          // property here, but property narrowing does not propagate into arrow closures.
+          const accountNumber = policy.accountNumber;
+          void journalLane(
+            "pending-fill-reconcile",
+            { userId, connectedAccountId: accountId },
+            () => reconcilePendingFills(brokerGateway, accountNumber, userId, policy.connectedAccountId)
+          ).catch((err) => console.error("[scheduler] pending-fill reconcile error:", err));
         }
 
         // Fast pre-proposal broker health gate.
@@ -731,6 +775,12 @@ async function tick(): Promise<void> {
         const healthSignals = await checkBrokerHealth(userId, account, brokerGateway);
         if (!healthSignals.isHealthy) {
           console.warn(`[scheduler] Skipping account ${accountId}: ${healthSignals.reason}`);
+          // Journal the suppression itself: an unhealthy gate is exactly the event an operator
+          // later asks "why didn't this account trade?" about.
+          void journalLane("broker-health-gate", { userId, connectedAccountId: accountId }, () => ({
+            status: "ok" as const,
+            summary: `suppressed: ${healthSignals.reason ?? "unhealthy"}`
+          })).catch(() => undefined);
           schedule.nextRunAt = null; // Re-evaluate on next tick without advancing the cadence
           continue;
         }
@@ -817,7 +867,10 @@ async function tick(): Promise<void> {
       // safety maintenance for the rest of the day. So we always enter the run; it skips only LLM work.
       const p = (async () => {
         if (runDelayMs > 0) await new Promise((r) => setTimeout(r, runDelayMs));
-        await runScheduledStrategyAndMaybeTune(userId, accountId);
+        await journalLane("strategy-run", { userId, connectedAccountId: accountId }, async () => {
+          const result = await runScheduledStrategyAndMaybeTune(userId, accountId);
+          return { status: "ok" as const, summary: `status=${result.status}` };
+        });
       })()
         // Item 1 (opt-in): after a successful cadence run, attempt account-bound, cadence-gated
         // autonomous weight tuning. Failed/busy runs never tune; the helper owns that invariant.

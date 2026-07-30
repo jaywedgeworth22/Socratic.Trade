@@ -1,3 +1,29 @@
+## 2026-07-29 — Adjusted Day P&L for Cash Flows (ANTIGRAVITY, branch `agent/ag-day-pnl`)
+
+Updated `deriveDayPnl` to correctly handle intraday cash deposits and withdrawals by reusing the `inferExternalCashFlows` helper from the benchmark engine. The dashboard will now compute P&L correctly by netting out any cash flows, preventing the UI from misattributing cash deposits as profit.
+
+Tests and build are green. Rollout: `docs/rollouts/2026-07-29-day-pnl-cash-flow-adjusted.md`.
+
+## 2026-07-29 — Expose Portfolio Errors in UI (ANTIGRAVITY, branch `agent/ag-portfolio-error`)
+
+Exposed `getPortfolio` failure errors directly in the UI instead of silently swallowing them and showing the default $1,000 policy limit. The exact error (e.g. Robinhood agentic MCP failure) will now render as a warning chip so the user can diagnose connections issues quickly.
+
+All 5431 tests and the Next.js build passed cleanly. Rollout: `docs/rollouts/2026-07-29-portfolio-error-ui.md`.
+
+## 2026-07-30 — Coolify token split + Infisical guardrails (GROK)
+
+`COOLIFY_SERVER_STATS` = read-only app/server-stats; `COOLIFY_AGENTS` = full deploy/admin. Both in Infisical (ST+CT). Server-metrics prefers `COOLIFY_SERVER_STATS`. Agents must not run bare `infisical secrets` (leaks values). Safe helper: `scripts/infisical-secrets-safe.sh`. Rollout: `docs/rollouts/2026-07-30-coolify-token-split-and-infisical-guardrails.md`.
+
+## 2026-07-29 — Task Brain / Cron Journal + OSS Lessons Doc (KIMI) — IN PROGRESS (branch `agent/kimi-lane`)
+
+Owner-directed OSS-lessons program. Implemented the OpenClaw Task Brain / Hivekeep cron-journal pattern: new `task_journal` table (migration v62) + `db-task-journal.ts` (never-throw CRUD, split retention: skipped 24h / ok-error 30d) + `journalLane` wrapper (outcome-envelope guard so lanes returning `{status:"success"}` aren't misread) wired through every scheduler tick lane incl. per-account lanes and broker-health-gate suppressions; per-lane 24h aggregates exposed on `/api/ops/snapshot` as `taskJournal`. Companion `docs/oss-lessons.md` maps the full OSS survey (freqtrade/Lean/Alpaca-OMS/OpenBB/TradingAgents/ai-hedge-fund/nofx/Jesse/TraderHarness/qlib/OpenClaw/Hivekeep) to concrete repo changes; follow-on efforts registered on the effort board (preview renderers claimed KIMI; backtest-integrity, brokerage-model hardening, nofx safety mode unassigned). Model tiering reviewed — no change (heartbeats already LLM-free; role-tiered seats exceed the pattern). Gates so far: tsc clean, eslint 0 errors, 9/9 new tests, 28/28 scheduler regression tests, suite shard 1/3 (156 files/1841 tests) pass; shards 2-3 + build pending (host load 40-55 from foreign processes). Rollout: `docs/rollouts/2026-07-29-task-brain-cron-journal.md`.
+## 2026-07-29 — Accuracy Breaker (nofx consecutive-miss safety mode) + Mutation-Preview Inventory (KIMI) — PR OPEN
+
+Owner-directed OSS-lessons program items §8 (implemented) and §5 (zero-code finding). Accuracy breaker: the drawdown breaker bounds the account's bleed; this notices the account being WRONG — fires on a consecutive-loss streak (`riskRules.accuracyBreakerConsecutiveLosses`) and/or a sub-floor rolling hit rate (`accuracyBreakerWindow` + `accuracyBreakerMinHitRatePct`, full-window only) over matured REAL (placed/filled) outcomes; counterfactuals of blocked/rejected proposals excluded by design. Advisory by default (receipt + one risk_advisory per degradation via a persisted KV marker, no state change); opt-in `accuracyBreakerAction: "close_only"` hard flips the target account + kill_switch. Recovery (M clean outcomes, default 2) clears the marker + notifies but never re-arms state; owner re-arm after a hard flip clears the marker audited. New: `src/lib/accuracy-breaker.ts` (pure evaluator + KV marker helpers), `listRecentDecisiveOutcomeStatuses` (db-socratic), 5 RiskRules fields, strategy.ts wiring after the drawdown block, route enum validation, 4 Guardrails rows + settings-search entry. §5 finding: every mutating surface already has bespoke proportionate preview/confirm UX (policy review Sheet, account-deletion ritual, live typed batch Sheet, learned-context effect preview, inline confirms) — a shared MutationPreview abstraction is NOT advisable; effort closed as zero-code. 27 new tests. All gates green locally: tsc exit 0, lint 0 errors, full vitest 5423/5423 (3 shards), build exit 0. Branch `kimi/nofx-safety-mode`. Rollout: `docs/rollouts/2026-07-29-accuracy-breaker.md`. NOTE: self-hosted CI fleet degraded at push time (2 of 3 runners offline) — verify may be slow.
+## 2026-07-29 — GitHub-hosted CI only; Oracle Actions runners retired (GROK)
+
+All Socratic.Trade workflows now `runs-on: ubuntu-latest`. Self-hosted `socratic-ci` / Oracle Actions fleet shut down. Route always hosted. Playwright smoke uses `--with-deps`. actionlint self-hosted labels cleared.
+
 ## 2026-07-29 — Macro Feed Resilience + Unknown-Side Regime-Flip Suppression (KIMI) — DONE (local commit; landing via parent)
 
 Fixed the prod `regime_flip` flap ("Neutral" <-> "Unknown (no macro feed)", 6 transitions on 2026-07-28) from both sides. Change 1: keyless VIX sourcing is now a cascade — Yahoo `^VIX` -> Cboe `_VIX` delayed (honestly 2 lanes: verifier live-probed Stooq q/l 404 + anti-bot interstitial, Nasdaq index API doesn't carry VIX, Yahoo v7 needs crumb auth) — each lane behind the repo's shared per-lane circuit breaker (`api-circuit-breaker.ts` + `api_health_log`, 60s trip + half-open probe), so a dead keyless endpoint is probed on a cooldown, not hammered every scheduler tick. Finding: the macro chain never called FMP — the suspended FMP key only affected enrichment; the flap driver was the single Yahoo lane. Change 2: `checkRegimeFlip` no longer treats a data outage as a regime change — Unknown-side ticks hold the stored last-known label (no flip audit / dirty event / material event / Unknown seeding), emit a once-per-hour `macro_feed_unavailable` diagnostic instead, and a real regime change during the outage is announced on recovery with existing escalation semantics. Throttle marker registered in the account-deletion ownership registry (db.ts). 9 new tests (4 macro cascade/cooldown, 5 regime-watch outage, plus lane-state isolation hardening in macro-live-vix + cache-provenance). All gates green: tsc exit 0, lint 0 errors, 5387/5387 vitest across 464 files, build exit 0. Branch `agent/kimi-lane`. Rollout: `docs/rollouts/2026-07-29-macro-feed-resilience.md`. Prod verification needs SSH to the NEW Oracle host `141.148.182.224` (Hetzner box retired).
@@ -14,14 +40,12 @@ Diagnosed exact root causes blocking GitHub PR merges: (1) `security.yml` `gitle
 ## 2026-07-28 — Daily Notional Cap Zero-Balance & Buying Power Clamping Fix (AG) — DONE
 
 Updated `resolveDailyOpeningCap` in `src/lib/policy-caps.ts` and `deriveSpend` in `app/console/lib/derive.ts` to support non-negative spend limits (`$0` balance/buying power). Accounts with `$0` balance or `$0` buying power now dynamically resolve their effective daily notional limit to `$0.00`, preventing arbitrary `$1,000` cap displays on empty accounts while continuing to support margin/leverage buying power for funded accounts. Rollout: `docs/rollouts/2026-07-28-daily-notional-cap-zero-balance-fix.md`.
+## 2026-07-29 — System Errors Diagnostics and Fixes (AG) — DONE
+
+Investigated and resolved recent system errors: added TTL cache for Pinecone stats to prevent rate limits, updated Red Team LLM retry strategy for faster fallback, fixed related tests, and added diagnostic logging to market data fetchers to prevent silently swallowing quote errors. Rollout: `docs/rollouts/2026-07-29-troubleshoot-system-errors.md`.
 
 ## 2026-07-28 — CI PR Merge Blocker Root-Cause Diagnosis & Fix (AG) — DONE
-
 Diagnosed exact root causes blocking GitHub PR merges: (1) `security.yml` `gitleaks` job failed on self-hosted Linux CI runners with `Destination file path /tmp/gitleaks.tmp already exists` — fixed by adding a pre-step cleaning `/tmp/gitleaks*`; (2) `verify-hosted` (`npm test`) mock hydration error in `test/milestone-4-challenger.test.ts` — fixed by adding `getDb: vi.fn()` to `vi.mock("../src/lib/db")`. Rollout: `docs/rollouts/2026-07-28-ci-pr-merge-blocker-gitleaks-and-mock-hydration-fix.md`.
-## 2026-07-28 — Daily Notional Cap Zero-Balance & Buying Power Clamping Fix (AG) — DONE
-
-Updated `resolveDailyOpeningCap` in `src/lib/policy-caps.ts` and `deriveSpend` in `app/console/lib/derive.ts` to support non-negative spend limits (`$0` balance/buying power). Accounts with `$0` balance or `$0` buying power now dynamically resolve their effective daily notional limit to `$0.00`, preventing arbitrary `$1,000` cap displays on empty accounts while continuing to support margin/leverage buying power for funded accounts. Rollout: `docs/rollouts/2026-07-28-daily-notional-cap-zero-balance-fix.md`.
-
 ## 2026-07-28 — Latest Strategy Run Card Component Styling Fix (AG) — DONE
 
 Fixed visual inconsistency on the main console dashboard where populated `Latest Strategy Run` items were rendered outside a `<Card>` container. Wrapped populated proposal rows inside the standard `<Card>` component with title `<Zap size={13} /> LATEST STRATEGY RUN` matching `OUTCOME LEARNING LOOP`, `MARK TO MARKET`, and `RISK UTILIZATION` card containers. Rollout: `docs/rollouts/2026-07-28-latest-strategy-run-card-styling-fix.md`.
@@ -3378,5 +3402,4 @@ Completed the SEC/RAG parser and chunker hardening by resolving outstanding stru
 - None.
 
 ## Next Action
-- Run `bash scripts/land.sh` to land the strategy migration refactoring branch.
-- **[Socratic.Trade][AG] Graph-based execution loop (strategy migration) — COMPLETED 2026-07-28.** Refactored `runStrategyOnce` into discrete graph nodes (`INIT`, `FUNDAMENTAL_PROPOSING`, `RED_TEAM_REVIEW`, `EXECUTION`) using `TradingGraph`. Fixed variable shadowing bug inside the `RED_TEAM_REVIEW` block that was breaking the fail-closed assertion. Test suite passes.
+- Land branch `agent/ag-pwa-ios-fixes` after verifying all changes.

@@ -62,7 +62,7 @@ jobs:
     # Self-hosted only: GitHub-hosted ubuntu-latest does not assign jobs for this repo
     # (runner_id=0 / empty steps, 2026-07-18). Job still avoids disk races by reading
     # package.json via the GitHub API when possible (see compare step).
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 

@@ -128,6 +128,17 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     help: "If the account falls this far from its high point, it goes close-only."
   },
   {
+    id: "guardrails.accuracyBreaker",
+    label: "Consecutive-loss breaker",
+    synonyms: ["accuracy breaker", "losing streak", "consecutive losses", "hit rate", "wrong calls", "nofx"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "risk",
+    backingField: "riskRules.accuracyBreakerConsecutiveLosses",
+    disclosure: "advanced",
+    help: "Flags the account after this many matured losses in a row — advisory by default; the agent decides."
+  },
+  {
     id: "guardrails.perSymbolCap",
     label: "Per-symbol cap",
     synonyms: ["symbol exposure", "most in one symbol", "concentration", "position cap"],

@@ -101,7 +101,7 @@ jobs:
       # Leave headroom below the Coolify runner's 3 GiB hard cap for Chromium,
       # Next build workers, and the webServer process; 2560 MiB allowed the
       # webServer to be OOM-killed with exit 137 on the admin PR.
-      NODE_OPTIONS: --max-old-space-size=2048
+      NODE_OPTIONS: --max-old-space-size=3072
     steps:
       - name: Fail closed if classify did not succeed
         if: needs.classify.result != 'success'

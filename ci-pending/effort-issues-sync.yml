@@ -40,7 +40,10 @@ permissions:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, socratic-ci]
+    # Backstop: a hung sync must self-terminate, not squat the single
+    # socratic-ci runner (the script also has a 30s per-request timeout).
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4

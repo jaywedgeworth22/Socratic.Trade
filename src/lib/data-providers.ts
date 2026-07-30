@@ -2281,7 +2281,8 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
           }
           result[symbol] = data;
         }
-      } catch {
+      } catch (error) {
+        console.warn(`[${this.name}] Failed to fetch quotes for ${chunk.join(",")}:`, error);
         for (const symbol of chunk) result[symbol] = {};
       }
     }
@@ -2438,7 +2439,8 @@ export class NasdaqQuoteEnrichmentProvider implements MarketEnrichmentProvider {
               cache.set(`nasdaq-quote:${symbol}`, { expiresAt: now + ttlMs(), data });
             }
             result[symbol] = data;
-          } catch {
+          } catch (error) {
+            console.warn(`[${this.name}] Failed to fetch quote for ${symbol}:`, error);
             result[symbol] = {};
           }
         })

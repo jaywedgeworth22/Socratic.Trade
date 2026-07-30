@@ -1,5 +1,6 @@
 import { getInternalSetting } from "./db-settings";
 import { getDb, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers, peekPolicy, getServiceHealthSummaries, databasePath } from "./db";
+import { getTaskJournalSummary } from "./db-task-journal";
 import { userHasAnyLlmCredential } from "./db-api-keys";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { computeAccountTradingLiveness } from "./trading-liveness";
@@ -133,6 +134,8 @@ export interface OpsSnapshot {
     topSources: Array<{ source: string; wins: number }>;
     providerFailureCount: number;
   } | null;
+  /** Task brain: per-lane aggregates from the unified task_journal cron ledger (24h lookback). */
+  taskJournal?: import("./db-task-journal").TaskJournalLaneSummary[];
   users: OpsUserSnapshot[];
 }
 
@@ -454,6 +457,7 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     dependencies,
     storage,
     enrichmentCoverage,
+    taskJournal: getTaskJournalSummary(new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString()),
     users
   };
 }
