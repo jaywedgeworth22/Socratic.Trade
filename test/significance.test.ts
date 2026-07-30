@@ -152,7 +152,7 @@ describe("significanceSentence", () => {
     ].filter((s): s is string => typeof s === "string");
     expect(sentences.length).toBe(4);
     for (const s of sentences) {
-      expect(classifyRiskTier({ subject: "thesis track record", value: s, intent: "learning" })).toBe("fact");
+      expect(classifyRiskTier({ kind: "pattern", subject: "thesis track record", value: s, intent: "learning" })).toBe("fact");
       expect(s).not.toMatch(/[%$]/);
       expect(s.toLowerCase()).not.toMatch(/\bpercent\b|\bshares\b|\blots\b/);
     }
