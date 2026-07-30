@@ -1,3 +1,5 @@
+- **[Socratic.Trade][AG] Adjust Day P&L for intraday cash flows — COMPLETED 2026-07-29.** Updated `deriveDayPnl` to correctly handle intraday cash deposits and withdrawals by reusing the `inferExternalCashFlows` helper. The dashboard will now compute P&L correctly by netting out any cash flows, preventing the UI from misattributing cash deposits as profit.
+
 - **[Socratic.Trade][AG] Expose portfolio fetch errors in UI to fix hidden $1000 fallback — COMPLETED 2026-07-29.** Added `portfolioReadError` to `DashboardSnapshot` to surface backend portfolio fetch failures (e.g. Robinhood agentic MCP errors) directly on the dashboard UI instead of swallowing them and defaulting to the policy fallback cap.
 
 - **[Socratic.Trade][KIMI] Playwright Smoke NODE_OPTIONS 2048→3072 OOM fix (branch `kimi/smoke-node-memory`) — In Progress 2026-07-29.** Follow-up to #2267: webServer build V8-aborts (exit 134) at the 2048 MiB heap cap on main smoke run 30481452853; raising e2e.yml to 3072 to match ci.yml verify-hosted, proven on the same runner. PR open, auto-merge armed.

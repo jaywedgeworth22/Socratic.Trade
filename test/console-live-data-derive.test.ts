@@ -355,7 +355,7 @@ describe("deriveDayPnl — stale-baseline gap detection (item 23)", () => {
   it("is not stale when the baseline is the immediately preceding trading day", () => {
     const now = new Date("2026-06-11T14:00:00Z"); // Thursday
     const performance = performanceWith([{ timestamp: "2026-06-10T20:00:00Z", equity: 10_000 }]); // Wed close
-    const result = deriveDayPnl(performance, "broker/paper", 10_500, now);
+    const result = deriveDayPnl(performance, "broker/paper", { totalMarketValue: 10_500, cash: 0 }, now);
     expect(result?.isStaleBaseline).toBe(false);
     expect(result?.pnl).toBe(500);
   });
@@ -363,14 +363,14 @@ describe("deriveDayPnl — stale-baseline gap detection (item 23)", () => {
   it("is not stale across a normal weekend gap (Friday baseline read on Monday)", () => {
     const now = new Date("2026-06-15T14:00:00Z"); // Monday
     const performance = performanceWith([{ timestamp: "2026-06-12T20:00:00Z", equity: 10_000 }]); // Fri close
-    const result = deriveDayPnl(performance, "broker/paper", 10_500, now);
+    const result = deriveDayPnl(performance, "broker/paper", { totalMarketValue: 10_500, cash: 0 }, now);
     expect(result?.isStaleBaseline).toBe(false);
   });
 
   it("IS stale when the baseline predates the prior trading session by a real gap (the Jul-7-on-Jul-17 production bug)", () => {
     const now = new Date("2026-06-17T14:00:00Z"); // Wednesday; previous session is Tue Jun 16
     const performance = performanceWith([{ timestamp: "2026-06-05T20:00:00Z", equity: 10_000 }]); // 12 days earlier
-    const result = deriveDayPnl(performance, "broker/paper", 10_500, now);
+    const result = deriveDayPnl(performance, "broker/paper", { totalMarketValue: 10_500, cash: 0 }, now);
     expect(result?.isStaleBaseline).toBe(true);
     // The number is still computed honestly — the UI decides whether to caveat/suppress it.
     expect(result?.pnl).toBe(500);
@@ -378,7 +378,7 @@ describe("deriveDayPnl — stale-baseline gap detection (item 23)", () => {
 
   it("stays null (never invents a comparison) with no prior-day snapshot at all", () => {
     const now = new Date("2026-06-11T14:00:00Z");
-    expect(deriveDayPnl(performanceWith([]), "broker/paper", 10_500, now)).toBeNull();
+    expect(deriveDayPnl(performanceWith([]), "broker/paper", { totalMarketValue: 10_500, cash: 0 }, now)).toBeNull();
   });
 });
 
