@@ -10,6 +10,9 @@ Exposed `getPortfolio` failure errors directly in the UI instead of silently swa
 
 All 5431 tests and the Next.js build passed cleanly. Rollout: `docs/rollouts/2026-07-29-portfolio-error-ui.md`.
 
+## 2026-07-30 — Coolify token split + Infisical guardrails (GROK)
+
+`COOLIFY_SERVER_STATS` = read-only app/server-stats; `COOLIFY_AGENTS` = full deploy/admin. Both in Infisical (ST+CT). Server-metrics prefers `COOLIFY_SERVER_STATS`. Agents must not run bare `infisical secrets` (leaks values). Safe helper: `scripts/infisical-secrets-safe.sh`. Rollout: `docs/rollouts/2026-07-30-coolify-token-split-and-infisical-guardrails.md`.
 
 ## 2026-07-29 — Task Brain / Cron Journal + OSS Lessons Doc (KIMI) — IN PROGRESS (branch `agent/kimi-lane`)
 

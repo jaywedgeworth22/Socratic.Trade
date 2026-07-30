@@ -154,6 +154,8 @@ script calling `https://jays.services/api/v1/...` must use
 **MAC RUNNER RETIRED & DELETED (OWNER DIRECTIVE, 2026-07-21):** The Mac host self-hosted runner `trading-live-mac` is permanently stopped, uninstalled, and deleted from GitHub settings. **DO NOT EVER START, RE-REGISTER, OR REFERENCE `trading-live-mac` OR `trading-live` RUNNER LABELS AGAIN.**
 
 **Fleet CI = GitHub-hosted only (2026-07-29):** Workflows use `ubuntu-latest`. Self-hosted Oracle/Coolify Actions runners (`socratic-ci`, `oracle-ci`, `fleet-ci-*`) are **retired** — do not reintroduce `[self-hosted, …]` labels. Production app hosting remains Coolify on Oracle Cloud (`141.148.182.224`, dashboard/API `https://host.jays.services`).
+
+**Coolify tokens (do not mix — 2026-07-30):** `COOLIFY_SERVER_STATS` is **read-only** (website server-stats only). `COOLIFY_AGENTS` is **full** deploy/admin (agent ops / GH deploy only). Never store `COOLIFY_AGENTS` as the app's `COOLIFY_API_TOKEN`. Infisical must keep both keys; if `COOLIFY_API_TOKEN` exists for metrics it must equal the read-only stats token. **Never run bare `infisical secrets`** (it prints every value into the transcript) — use `scripts/infisical-secrets-safe.sh`. Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Secret handoff.
 **Build caveats:** the box's `concurrent_builds` is
 pinned to **1** (two parallel `next build`s OOM-wedged the old 4 GB box on 2026-07-07,
 console reboot required; unproven on the 8 GB box — loosen only deliberately), and Docker
