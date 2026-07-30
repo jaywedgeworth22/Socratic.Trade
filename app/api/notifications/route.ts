@@ -14,6 +14,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     channels?: unknown;
     pushTarget?: unknown;
+    pushoverTarget?: unknown;
     webhookUrl?: unknown;
     email?: unknown;
     phone?: unknown;

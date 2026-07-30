@@ -14,7 +14,8 @@ const baseCfg = (): NotifyConfig => ({
   timeoutMs: 1000,
   retryAttempts: 3,
   retryDelayMs: 0, // no real backoff waits in tests
-  push: { provider: "ntfy", ntfyServer: "https://ntfy.example", pushoverToken: "" },
+  push: { ntfyServer: "https://ntfy.example" },
+  pushover: { pushoverToken: "" },
   email: { provider: "resend", resendKey: "rk_test", from: "alerts@example.com" },
   sms: { twilioSid: "AC1", twilioToken: "tok", twilioFrom: "+10000000000" }
 });

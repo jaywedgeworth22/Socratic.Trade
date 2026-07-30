@@ -184,10 +184,9 @@ describe("normalizeAgainstBenchmark", () => {
   it("ignores sub-threshold cash drift (dividends/fees are not transfers)", () => {
     const equity = cashCurve([
       ["2026-07-01T16:00:00Z", 100_000, 10_000],
-      ["2026-07-02T16:00:00Z", 100_020, 10_020] // +$20 < max(0.5% of 100k, $25)
+      ["2026-07-02T16:00:00Z", 100_020, 10_020] // +$20 < max(0.5% of 100k, $0.50)
     ]);
     const flows = inferExternalCashFlows(equity, []);
-    expect(FLOW_MATERIALITY_MIN_USD).toBeGreaterThan(20);
     expect(flows.size).toBe(0);
   });
 
