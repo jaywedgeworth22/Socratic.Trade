@@ -597,6 +597,11 @@ describe("OOS walk-forward gate (Task 1)", () => {
     // weights IC (0.10). The gate now reads oosICCandidate vs oosICBaseline (not oosIC vs default).
     mockRunWalkForwardOOS.mockResolvedValueOnce({
       trainObservations: 100, testObservations: 40, trainDates: 10, testDates: 4,
+      window: {
+        trainStartDate: "2026-05-01", trainEndDate: "2026-06-01",
+        embargoDates: 2, purgedTrainDates: 0,
+        testStartDate: "2026-06-05", testEndDate: "2026-06-15"
+      },
       trainICs: [], icWeights: customWeights as any,
       oosIC: 0.99, oosICDefault: 0.01,        // data-derived vs default — must be IGNORED by the gate now
       oosICCandidate: 0.05,                    // proposed weights: worse than current
@@ -645,6 +650,11 @@ describe("OOS walk-forward gate (Task 1)", () => {
     // OOS result where the CANDIDATE (proposed) weights IC (0.15) beats the current/baseline IC (0.10).
     mockRunWalkForwardOOS.mockResolvedValueOnce({
       trainObservations: 100, testObservations: 40, trainDates: 10, testDates: 4,
+      window: {
+        trainStartDate: "2026-05-01", trainEndDate: "2026-06-01",
+        embargoDates: 2, purgedTrainDates: 0,
+        testStartDate: "2026-06-05", testEndDate: "2026-06-15"
+      },
       trainICs: [], icWeights: customWeights as any,
       oosIC: 0.01, oosICDefault: 0.99,        // data-derived vs default — must be IGNORED by the gate now
       oosICCandidate: 0.15,                    // proposed weights: better than current
@@ -667,6 +677,9 @@ describe("OOS walk-forward gate (Task 1)", () => {
     // An OOS info-caution must be present.
     const cautions = proposal.cautions.join(" ");
     expect(cautions).toMatch(/OOS-validated|improved OOS IC over the current/i);
+    // §6 slice 3: the readout names the exact held-out window and discloses the partial in-sample overlap.
+    expect(cautions).toMatch(/held-out window 2026-06-05→2026-06-15 \(4 dates; train 2026-05-01→2026-06-01, 10 dates; embargo 2, purge 0\)/);
+    expect(cautions).toMatch(/Partially in-sample/i);
   });
 
   it("keeps proposed weights but flags them NOT out-of-sample validated when OOS has insufficient snapshots", async () => {
