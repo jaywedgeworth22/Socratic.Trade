@@ -36,6 +36,11 @@ export default defineConfig({
         env: {
           CF_ACCESS_TRUST_EMAIL_HEADER: "1",
           PRIMARY_USER_EMAIL: authEmail,
+          // The embedded `npm run build` OOMs at V8's default ~2 GB heap on CI runners
+          // (Playwright Smoke failed with "Ineffective mark-compacts near heap limit").
+          // Set it here, on the spawned server process, so the limit holds regardless of
+          // which workflow env the job runs with (e2e.yml also sets this globally).
+          NODE_OPTIONS: "--max-old-space-size=3072",
           // Test-only key: next start runs NODE_ENV=production, and the boot guard
           // (assertEncryptionKeyConfiguredInProduction) refuses to boot without a valid
           // 64-char hex ENCRYPTION_KEY. The smoke DB is throwaway, so a fixed key is fine.
