@@ -47,8 +47,7 @@ interface Destination {
 
 export const DESTINATIONS: Destination[] = [
   { href: "/console", label: "Thesis", icon: LayoutDashboard, desc: "Live thesis, actions, evidence, dissent, and framework learning." },
-  { href: "/console/approvals", label: "Proposals", icon: Inbox, desc: "Trade proposals awaiting your judgment." },
-  { href: "/console/lessons", label: "Lessons", icon: GraduationCap, desc: "Pending learning and past learning." },
+  { href: "/console/approvals", label: "Proposals", icon: Inbox, desc: "Trade proposals and learning awaiting your judgment." },
   { href: "/console/activity", label: "Journal", icon: ActivityIcon, desc: "Decision journal: everything the agent did, newest first." },
   { href: "/console/scan", label: "Evidence", icon: Radar, desc: "The market scan: screened and scored symbols from the latest run." },
   { href: "/console/watchlist", label: "Watchlist", icon: Eye, desc: "Symbols the agent monitors, with price alerts that notify you when a level is crossed." },
@@ -82,7 +81,7 @@ function isActive(pathname: string, href: string): boolean {
  *  into the last group so a newly added destination stays reachable even if
  *  this list isn't updated in lockstep. */
 const GROUPED_DESTINATION_HREFS: { label: string; hrefs: string[] }[] = [
-  { label: "Core", hrefs: ["/console", "/console/approvals", "/console/lessons", "/console/activity"] },
+  { label: "Core", hrefs: ["/console", "/console/approvals", "/console/activity"] },
   { label: "Monitor", hrefs: ["/console/scan", "/console/watchlist", "/console/macro", "/console/orders"] },
   { label: "Review", hrefs: ["/console/assistant", "/console/results", "/console/usage"] },
   { label: "Configure", hrefs: ["/console/strategy", "/console/guardrails", "/console/connections", "/console/settings"] }

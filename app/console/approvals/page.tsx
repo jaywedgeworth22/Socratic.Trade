@@ -6,8 +6,9 @@ import type { PendingProposal } from "@/lib/types";
 import { deriveStateInfo, activeConnectedAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { bulkApproveProposals, LiveConfirmationRequiredError, rejectProposal, type ApproveResult } from "../lib/api";
-import { fmtMoney } from "../lib/format";
+import { cx, fmtMoney } from "../lib/format";
 import { fetchPendingLearnedContext } from "../lib/learned-context";
+import { LearnedContextInbox, LearnedFactsArchive } from "../lessons/learned-context";
 import { isSuccessfulApprovalResult } from "../lib/thesis";
 import { ApprovalCard } from "../components/approval-card";
 import { AlertCenter } from "../components/alert-center";
@@ -46,11 +47,17 @@ const SORT_OPTIONS: Array<{ value: ApprovalSort; label: string }> = [
 const REJECT_ARM_MS = 4_000;
 const BULK_APPROVE_MAX_REQUESTS = 20;
 
+type Tab = "proposals" | "lessons";
 
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: "proposals", label: "Trade proposals" },
+  { id: "lessons", label: "Lessons" }
+];
 
 export default function ApprovalsPage() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
+  const [tab, setTab] = useState<Tab>("proposals");
   const [query, setQuery] = useState("");
   const [side, setSide] = useState<ApprovalSideFilter>("all");
   const [reality, setReality] = useState<ApprovalRealityFilter>("all");
@@ -260,7 +267,7 @@ export default function ApprovalsPage() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-[length:var(--con-fs-lg)] font-bold">
               {destinationLabel("/console/approvals")}
-              {pending.length > 0 && (
+              {tab === "proposals" && pending.length > 0 && (
                 <>
                   {" "}
                   <span className="con-num text-[color:var(--con-accent)]">
@@ -269,9 +276,29 @@ export default function ApprovalsPage() {
                 </>
               )}
             </h1>
+            <div className="flex gap-1 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1 ml-2">
+              {TABS.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTab(t.id)}
+                  className={cx(
+                    "rounded-control px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
+                    tab === t.id
+                      ? "bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]"
+                      : "text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)]"
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
           <Chip tone={state.tone === "pos" ? "pos" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "warn"}>{state.label}</Chip>
         </div>
+
+        {tab === "proposals" && (
+          <div className="flex min-w-0 flex-col gap-4">
 
         {/* Triage apparatus (stat tiles, search, filters, bulk actions) only earns its
             space when there's a queue to triage — an empty queue leads with the
@@ -440,6 +467,15 @@ export default function ApprovalsPage() {
           Rejections are data, not failures — every idea you pass on keeps being scored, and Results shows how your
           judgment is doing.
         </p>
+          </div>
+        )}
+
+        {tab === "lessons" && (
+          <div className="flex flex-col gap-8">
+            <LearnedContextInbox />
+            <LearnedFactsArchive />
+          </div>
+        )}
       </div>
 
       <div className="flex min-w-0 flex-col gap-4">
