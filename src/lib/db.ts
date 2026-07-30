@@ -2483,6 +2483,20 @@ const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_task_journal_user_started ON task_journal (user_id, started_at);
       `);
     }
+  },
+  {
+    version: 63,
+    name: "pushover_target_column",
+    up: (database) => {
+      try {
+        const cols = database.pragma("table_info(notification_prefs)") as { name: string }[];
+        if (cols.length > 0 && !cols.some((c) => c.name === "pushover_target")) {
+          database.exec(`ALTER TABLE notification_prefs ADD COLUMN pushover_target TEXT NOT NULL DEFAULT '';`);
+        }
+      } catch (e) {
+        // Table might not exist in isolated tests
+      }
+    }
   }
 ];
 
@@ -3137,6 +3151,7 @@ function migrate(database: Database.Database): void {
       user_id TEXT PRIMARY KEY,
       channels TEXT NOT NULL DEFAULT '[]',
       push_target TEXT NOT NULL DEFAULT '',
+      pushover_target TEXT NOT NULL DEFAULT '',
       webhook_url TEXT NOT NULL DEFAULT '',
       email TEXT NOT NULL DEFAULT '',
       phone TEXT NOT NULL DEFAULT '',

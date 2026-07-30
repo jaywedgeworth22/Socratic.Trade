@@ -31,9 +31,13 @@ const nextConfig = {
   },
   serverExternalPackages: ["better-sqlite3", "@pinecone-database/pinecone", "voyageai"],
   webpack: (config, { isServer, nextRuntime }) => {
+    config.resolve.alias = {
+      ...(config.resolve.alias ?? {}),
+      "@": dirname(fileURLToPath(import.meta.url)) + "/src",
+    };
     if (!isServer || nextRuntime === "edge") {
       config.resolve.alias = {
-        ...(config.resolve.alias ?? {}),
+        ...config.resolve.alias,
         "better-sqlite3": false,
         "@pinecone-database/pinecone": false,
         "voyageai": false,
@@ -42,16 +46,6 @@ const nextConfig = {
         "node:crypto": false,
         "node:zlib": false,
         "node:stream": false,
-        // src/lib/egress-guard.ts (SSRF guard) statically imports node:dns/node:net. It is
-        // Node-runtime-only in practice (imported by src/lib/notify.ts and notifications.ts,
-        // which instrumentation.ts's register() reaches via a dynamic, non-webpackIgnore'd
-        // `await import("./src/lib/db")` -> db.ts's `export * from "./db-health"` ->
-        // db-health.ts's dynamic `import("./notify")`/`import("./notifications")`). Because
-        // instrumentation.ts is compiled by webpack for the edge runtime too (see the
-        // node:dns webpackIgnore comment in that file), webpack still has to resolve this
-        // whole chain for the edge/client targets even though it never runs there — same
-        // class of problem as better-sqlite3 and the node:fs/path/crypto/zlib/stream stubs
-        // above, just for two builtins nothing needed until this guard existed.
         "node:dns": false,
         "node:net": false
       };

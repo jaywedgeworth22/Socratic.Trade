@@ -1589,7 +1589,7 @@ export function markPriceAlertTriggered(id: string, userId: string, triggeredPri
 
 // ── Notification preferences ──────────────────────────────────────────────────
 
-const NOTIFY_CHANNEL_IDS: readonly NotifyChannelId[] = ["push", "webhook", "email", "sms"];
+const NOTIFY_CHANNEL_IDS: readonly NotifyChannelId[] = ["push", "webhook", "email", "sms", "pushover"];
 
 function isNotifyChannelId(value: unknown): value is NotifyChannelId {
   return typeof value === "string" && (NOTIFY_CHANNEL_IDS as readonly string[]).includes(value);
@@ -1597,10 +1597,10 @@ function isNotifyChannelId(value: unknown): value is NotifyChannelId {
 
 export function getNotifyPrefs(userId: string = "local"): NotifyPrefs {
   const row = getDb().prepare("SELECT * FROM notification_prefs WHERE user_id = ?").get(userId) as
-    | { user_id: string; channels: string; push_target: string; webhook_url: string; email: string; phone: string; updated_at: string | null }
+    | { user_id: string; channels: string; push_target: string; pushover_target: string; webhook_url: string; email: string; phone: string; updated_at: string | null }
     | undefined;
   if (!row) {
-    return { userId, channels: [], pushTarget: "", webhookUrl: "", email: "", phone: "", updatedAt: null };
+    return { userId, channels: [], pushTarget: "", pushoverTarget: "", webhookUrl: "", email: "", phone: "", updatedAt: null };
   }
   let channels: NotifyChannelId[] = [];
   try {
@@ -1613,6 +1613,7 @@ export function getNotifyPrefs(userId: string = "local"): NotifyPrefs {
     userId: row.user_id,
     channels,
     pushTarget: row.push_target,
+    pushoverTarget: row.pushover_target ?? "",
     webhookUrl: row.webhook_url,
     email: row.email,
     phone: row.phone,
@@ -1622,29 +1623,31 @@ export function getNotifyPrefs(userId: string = "local"): NotifyPrefs {
 
 export function setNotifyPrefs(
   userId: string,
-  partial: { channels?: unknown; pushTarget?: unknown; webhookUrl?: unknown; email?: unknown; phone?: unknown }
+  partial: { channels?: unknown; pushTarget?: unknown; pushoverTarget?: unknown; webhookUrl?: unknown; email?: unknown; phone?: unknown }
 ): NotifyPrefs {
   const next: NotifyPrefs = { ...getNotifyPrefs(userId), userId };
   if (Array.isArray(partial.channels)) {
     next.channels = [...new Set(partial.channels.filter(isNotifyChannelId))];
   }
   if (typeof partial.pushTarget === "string") next.pushTarget = partial.pushTarget.trim();
+  if (typeof partial.pushoverTarget === "string") next.pushoverTarget = partial.pushoverTarget.trim();
   if (typeof partial.webhookUrl === "string") next.webhookUrl = partial.webhookUrl.trim();
   if (typeof partial.email === "string") next.email = partial.email.trim();
   if (typeof partial.phone === "string") next.phone = partial.phone.trim();
   next.updatedAt = new Date().toISOString();
   getDb()
     .prepare(
-      `INSERT INTO notification_prefs (user_id, channels, push_target, webhook_url, email, phone, updated_at)
-       VALUES (@userId, @channels, @pushTarget, @webhookUrl, @email, @phone, @updatedAt)
+      `INSERT INTO notification_prefs (user_id, channels, push_target, pushover_target, webhook_url, email, phone, updated_at)
+       VALUES (@userId, @channels, @pushTarget, @pushoverTarget, @webhookUrl, @email, @phone, @updatedAt)
        ON CONFLICT(user_id) DO UPDATE SET
-         channels = excluded.channels, push_target = excluded.push_target, webhook_url = excluded.webhook_url,
+         channels = excluded.channels, push_target = excluded.push_target, pushover_target = excluded.pushover_target, webhook_url = excluded.webhook_url,
          email = excluded.email, phone = excluded.phone, updated_at = excluded.updated_at`
     )
     .run({
       userId,
       channels: JSON.stringify(next.channels),
       pushTarget: next.pushTarget,
+      pushoverTarget: next.pushoverTarget,
       webhookUrl: next.webhookUrl,
       email: next.email,
       phone: next.phone,

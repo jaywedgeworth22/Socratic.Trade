@@ -31,12 +31,13 @@ import {
 
 const CHANNEL_TITLE: Record<DeliveryChannelDescriptor["id"], string> = {
   push: "A push notification on your phone via a notification app — usually the fastest and cheapest channel.",
+  pushover: "Pushover push notifications to your phone. Needs user key.",
   webhook: "An HTTPS POST with a JSON payload to any URL you control (chat webhooks get rich embeds).",
   email: "An email per alert. Needs the server operator to have configured an email provider.",
   sms: "A text message per alert. Needs the server operator's Twilio credentials; carrier rates may apply."
 };
 
-type TargetField = "pushTarget" | "webhookUrl" | "email" | "phone";
+type TargetField = "pushTarget" | "pushoverTarget" | "webhookUrl" | "email" | "phone";
 
 interface TestResult {
   channel: string;
