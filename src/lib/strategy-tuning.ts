@@ -44,7 +44,7 @@ import {
 import { getReflectionSummary } from "./post-mortem";
 import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
-import { runWalkForwardOOS, buildSpyReturnToNowMap } from "./backtest";
+import { runWalkForwardOOS, buildSpyReturnToNowMap, formatOosWindow, type OOSWindowReport } from "./backtest";
 import { validateTuningInvariants } from "./tuning-invariants";
 import { recordLearningMutation, revertLearningMutation, LEARNING_SUBSYSTEM_SCORING_WEIGHTS } from "./learning-ledger";
 import type {
@@ -708,7 +708,12 @@ async function applyOosGate(
   const baselineIC = oosResult.oosICBaseline;
   if (candidateIC == null || baselineIC == null) return withOosUnvalidatedCaution(proposal, "the OOS run returned no composite IC", withhold);
   const improves = candidateIC > baselineIC;
-  const oosReadout = `OOS walk-forward: proposed-weights composite IC=${candidateIC.toFixed(3)} vs current IC=${baselineIC.toFixed(3)}, ICIR=${oosResult.oosICIR.toFixed(2)}.`;
+  // §6 slice 3 (qlib walk-forward honesty): name the exact held-out window, and disclose that the
+  // tuner's proposal evidence (realized closed-lot outcomes, scorecards, skipped-candidate
+  // counterfactuals) spans that same recent window — so the candidate-vs-current comparison is
+  // PARTIALLY in-sample. A pass is necessary, not sufficient, evidence of an edge.
+  const windowClause = formatOosWindow(oosResult.window, oosResult.testDates, oosResult.trainDates);
+  const oosReadout = `OOS walk-forward: proposed-weights composite IC=${candidateIC.toFixed(3)} vs current IC=${baselineIC.toFixed(3)}, ICIR=${oosResult.oosICIR.toFixed(2)}; ${windowClause}. Partially in-sample: the tuner's proposal evidence includes realized outcomes from inside the held-out window — treat a pass as necessary, not sufficient.`;
 
   const cautions = [...proposal.cautions];
   const patch = { ...proposal.proposedPatch };
@@ -1285,6 +1290,10 @@ export interface AutonomousWeightDecision {
     trainDates?: number;
     trainObservations?: number;
     testObservations?: number;
+    /** §6 slice 3: the exact held-out window the decision was validated on (qlib walk-forward report). */
+    window?: OOSWindowReport;
+    /** §6 slice 3: disclosure that the tuner's proposal evidence spans the held-out window. */
+    partiallyInSampleCaveat?: string;
   };
   /** The autonomous thresholds in effect. */
   thresholds?: ReturnType<typeof autonomousOosThresholds>;
@@ -1430,7 +1439,12 @@ async function evaluateAutonomousWeightTuning(
     // P2-7 provenance: fold shape (distinct dates + observation counts) so an apply is reproducible/auditable.
     trainDates: oos.trainDates,
     trainObservations: oos.trainObservations,
-    testObservations: oos.testObservations
+    testObservations: oos.testObservations,
+    // §6 slice 3 (qlib): the exact held-out window + the partially-in-sample caveat, carried into the
+    // ledger/provenance evidence so an auditor sees WHAT was held out and that the tuner's proposal
+    // evidence spans it.
+    window: oos.window,
+    partiallyInSampleCaveat: PARTIALLY_IN_SAMPLE_CAVEAT
   };
   const withOos: AutonomousWeightDecision = { ...base, oosICCandidate: candidateIC, oosICBaseline: baselineIC, oosReadout, thresholds: th };
 
@@ -1466,6 +1480,17 @@ async function evaluateAutonomousWeightTuning(
 /** P2-5 drawdown-guard constants. Tolerance in drawdown percentage points; min fold depth for the guard. */
 const AUTO_TUNE_DRAWDOWN_TOLERANCE_PCT = 2;
 const AUTO_TUNE_DRAWDOWN_GUARD_MIN_TEST_DATES = 8;
+
+/**
+ * §6 slice 3 (qlib walk-forward honesty, docs/oss-lessons.md §6): the tuner's proposal evidence
+ * (realized closed-lot outcomes, factor/source scorecards, skipped-candidate counterfactuals) is
+ * drawn from ALL history — which includes the recent held-out OOS test fold. The candidate is
+ * therefore partly fitted on evaluation-period outcomes; the candidate-vs-baseline comparison is
+ * PARTIALLY in-sample. Carried on every autonomous OOS readout so the ledger/provenance evidence
+ * discloses it. (Used inside the evaluator; initialized at module load before any call.)
+ */
+const PARTIALLY_IN_SAMPLE_CAVEAT =
+  "Partially in-sample: the tuner's proposal evidence includes realized outcomes from inside the held-out window — treat a pass as necessary, not sufficient, evidence of an edge.";
 
 /**
  * Item 1 (panel-hardened): cadence-gated AUTONOMOUS application of the auto-tuner's factor-weight changes.
