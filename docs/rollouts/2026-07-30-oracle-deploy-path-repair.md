@@ -112,3 +112,75 @@ docker exec coolify-db psql -U coolify -d coolify -t -A -c "DELETE FROM personal
 ```
 
 Watch: `docker exec coolify-db psql -U coolify -d coolify -t -A -c "select status, finished_at from application_deployment_queues order by created_at desc limit 3;"`
+
+## Addendum (06:51 UTC): auto-deploy proven end-to-end
+
+The webhook created above initially did NOT trigger deployments. Two more
+defects were found and fixed:
+
+1. **Wrong route.** The webhook pointed at `/webhooks/source/github/events`
+   (the GitHub App handler, `Github::normal`), which answered
+   `Nothing to do. No GitHub App found.` for every push. Repo webhooks must
+   use the manual handler: `/webhooks/source/github/events/manual`
+   (`routes/webhooks.php:16`). Updated via
+   `gh api -X PATCH repos/jaywedgeworth22/Socratic.Trade/hooks/658869484`.
+2. **Signature mismatch.** With the right route the handler matched the app
+   but returned `Invalid signature.` — the secret stored Coolify-side did not
+   survive decrypt/re-encrypt round-trips done during the env repair
+   (`manual_webhook_secret_github` has an `encrypted` Eloquent cast;
+   `app/Models/Application.php:226`). Fixed by rotating the secret through
+   Eloquent (`Str::random(40)`, saved via the model so the cast encrypts
+   exactly once) and PATCHing the same value into the GitHub webhook config
+   without printing it to any log (staged via `docker cp`/`scp`, shredded
+   after).
+
+Verification: redelivered the `refs/heads/main` push for `13b9afa9` →
+response `[{"application":"Socratic.Trade","status":"success","message":"Deployment queued.", ... "deployment_uuid":"dy3rciku9supsivz0c51l8xn"}]`;
+queue row shows `is_webhook=t, in_progress` at 06:51:39 UTC. Auto-deploy on
+push to `main` is restored end-to-end (push → GitHub webhook → Coolify
+manual handler → signature OK → queued build).
+
+## Addendum 2 (07:15 UTC): first real auto-deploy + two operational fixes
+
+The first webhook-triggered build (`dy3rciku9supsivz0c51l8xn`) FAILED at
+06:55 with `ENOSPC: no space left on device` in `npm run build` — the root
+disk had crept back to 92% (28 GB of Docker images, 8.4 GB build cache).
+Fixed with `docker builder prune -af` + `docker image prune -af` → 69% used,
+14 GB free. **This makes "move Docker data-root to /data" (below) urgent,
+not optional** — every deploy costs ~2-4 GB and the margin is thin.
+
+Then the real proof arrived by itself: PR #2294 merged to `main` at
+06:58:18 UTC (`e05c9210`), the GitHub webhook fired, Coolify deployment
+`o14i7cknz8wp7t9lcbyodjl6` ran `is_webhook=t` and **finished successfully
+07:08:18 UTC** — the first unattended push→build→rolling-deploy since the
+migration. The merge-to-main auto-deploy loop is fully restored.
+
+One more defect surfaced by that rolling deploy: **Coolify names each new
+container `socratic-app-<timestamp>` and deletes the old one, but the
+oracle-caddy Caddyfile routes `socratictrade.com` to the static name
+`socratic-app:4000`** → public 502 the moment the old container disappeared
+(the same trap as the earlier rename 502). Fixed two ways:
+
+- Immediate: `docker network disconnect coolify <new-container>` /
+  `docker network connect --alias socratic-app coolify <new-container>` →
+  site back to 200 in seconds.
+- Persistent: `applications.custom_docker_run_options =
+  '--network-alias socratic-app'` so every future Coolify container gets the
+  alias at creation. **VERIFIED 07:39 UTC**: a further API-triggered deploy
+  (`j7my0njjnz4xs1dqy7ckx33f`, started after the setting was written) came up
+  reachable as `socratic-app` on the `coolify` network with zero manual
+  steps — public `/api/health` stayed 200 through the rolling swap. (The one
+  intervening deploy that 502'd, `ctcapy89lv90r8k62jyj570h`, had read its
+  config before the setting landed; fixed with the two network commands
+  above, which remain the fallback if any future deploy misses the alias.)
+
+Note: a duplicate deployment of the same HEAD (queued by a manual webhook
+redelivery during testing) is harmless — Coolify builds the current branch
+tip, not the redelivered SHA.
+
+Final state: webhook id 658869484 on `jaywedgeworth22/Socratic.Trade` →
+`/webhooks/source/github/events/manual`, rotated secret stored via Eloquent
+(encrypted cast) and mirrored GitHub-side; two webhook-triggered deploys
+finished green (`o14i7cknz8wp7t9lcbyodjl6` 07:08, `j7my0njjnz4xs1dqy7ckx33f`
+07:39); container naming/routing survives rolling deploys; root disk 69-74%
+after prune (data-root move to /data still the recommended durable fix).
