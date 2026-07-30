@@ -50,7 +50,8 @@ function guardedNotifyConfig(retryDelayMs = 10_000): NotifyConfig {
     timeoutMs: 10_000,
     retryAttempts: 3,
     retryDelayMs,
-    push: { provider: "ntfy", ntfyServer: "https://ntfy.example", pushoverToken: "" },
+    push: { ntfyServer: "https://ntfy.example" },
+    pushover: { pushoverToken: "" },
     email: { provider: "resend", resendKey: "resend-test-key", from: "alerts@example.test" },
     sms: { twilioSid: "", twilioToken: "", twilioFrom: "" }
   };
@@ -61,6 +62,7 @@ function guardedNotifyPrefs(userId: string): NotifyPrefs {
     userId,
     channels: ["push", "email"],
     pushTarget: "lease-test-topic",
+    pushoverTarget: "",
     webhookUrl: "",
     email: "owner@example.test",
     phone: "",

@@ -80,6 +80,7 @@ function notificationDeliveryControl(options: SendNotificationOptions): Notifica
 
 const CHANNEL_LABELS: Record<NotifyChannelId, string> = {
   push: "Phone push",
+  pushover: "Pushover",
   webhook: "Webhook",
   email: "Email",
   sms: "SMS"

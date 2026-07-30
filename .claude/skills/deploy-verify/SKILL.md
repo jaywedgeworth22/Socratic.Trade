@@ -64,7 +64,7 @@ Current pin: `0.5.12` (pinned back from `0.5.14` after the 2026-07-10 TCP socket
 Litestream 0.5.14 leaked TCP sockets, exhausting kernel `tcp_mem`. Symptoms: deploys fail at `git clone` with TLS "unexpected eof"; app stays healthy but stale; `dmesg` shows "TCP: out of memory"; fd count on the litestream PID climbs into the thousands over the container's uptime (`ls /proc/<pid>/fd | wc -l`, sample more than once -- it's a sawtooth).
 
 ```bash
-ssh -i ~/.ssh/hetzner root@135.181.192.190
+ssh ubuntu@141.148.182.224
 cat /etc/sysctl.d/99-socratic-tcpmem.conf 2>/dev/null || echo "not raised"
 ```
 
@@ -75,7 +75,7 @@ The raised `tcp_mem` ceiling (`273945 365343 548010`, 3x the distro default) is 
 Builds serialize (`concurrent_builds=1`). If a deploy failed at build, or you need to bypass the CF-blocked API from section 2:
 
 ```bash
-ssh -i ~/.ssh/hetzner root@135.181.192.190
+ssh ubuntu@141.148.182.224
 df -h / | grep -E 'Use%|^/dev'
 ps aux | grep nixpacks | grep -v grep   # a real build in progress; "deploy-runner" containers are idle GH Actions runners, not builds
 docker ps --filter name=m1os7ijf31bg3fanil152e4b

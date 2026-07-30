@@ -41,7 +41,7 @@ function isoDate(ts: string | number | undefined): string | null {
 /** A flow is only "external" when it clears both floors — below that, cash drift is
  *  indistinguishable from dividends/fees/rounding and must NOT be treated as a transfer. */
 export const FLOW_MATERIALITY_PCT_OF_EQUITY = 0.5; // % of prior equity
-export const FLOW_MATERIALITY_MIN_USD = 25;
+export const FLOW_MATERIALITY_MIN_USD = 0.50;
 
 type CurvePoint = {
   equity: number;
