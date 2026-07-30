@@ -123,7 +123,7 @@ Guidance for FUTURE mutating surfaces: copy the nearest existing pattern above (
 settings edits, typed ritual for irreversible money-adjacent actions, arm-click for batched
 low-stakes actions) rather than building a new abstraction.
 
-## 6. Backtest integrity for the learning loop — Jesse / TraderHarness / qlib (PARTIALLY IMPLEMENTED — slice 1 landed 2026-07-30, PR #2294)
+## 6. Backtest integrity for the learning loop — Jesse / TraderHarness / qlib (PARTIALLY IMPLEMENTED — slices 1+3 landed 2026-07-30, PRs #2294/#2305)
 
 The Phase 7 learning loop matures outcomes and (eventually) evaluates LLM proposals against
 history. Three contamination traps, three references:
@@ -143,9 +143,19 @@ history. Three contamination traps, three references:
   context), entity/date anonymization (symbol → random ticker, dates → relative offsets), and
   full decision-trajectory export. Steal all three before any LLM-in-the-loop historical
   evaluation; without them a "backtest" of an LLM strategy measures memorization.
-- **qlib — walk-forward discipline**: train/score windows roll forward; nothing fitted on the
-  full sample. Applies to auto-tune weights (`auto-tune-scheduler.ts`): confirm tuning windows
-  never include the evaluation window, and add a walk-forward report when they do.
+- **qlib — walk-forward discipline (IMPLEMENTED 2026-07-30, PR #2305)**: train/score windows roll
+  forward; nothing fitted on the full sample. Audit finding: the split in `backtest.ts` was
+  already sound (chronological unique-date split, always-on test-side embargo of `horizonDays`
+  date-buckets, opt-in train-side purge via `policy.tuning.oosPurgeEmbargo`). The residual leak
+  was upstream: the tuner's candidate weights are proposed from ALL-history evidence (closed-lot
+  outcomes, scorecards, skipped-candidate counterfactuals) that includes the recent held-out test
+  fold — partially in-sample. As implemented: `splitWalkForward` returns exact fold-boundary
+  indices; `OOSResult` carries a required `window` report (train/test first+last dates,
+  embargo/purge counts); the manual + autonomous OOS readouts name the held-out window and carry
+  a "partially in-sample — a pass is necessary, not sufficient" caveat into the cautions, ledger,
+  and provenance evidence. Rollout: `docs/rollouts/2026-07-30-walk-forward-window.md`.
+  Follow-up (board): time-bounded proposal evidence — cut the tuner's evidence queries off at
+  the test-fold start so the caveat can be retired for the weight path.
 
 ## 7. Brokerage-model order-state hardening (PLANNED — umbrella for §4 items)
 
@@ -183,7 +193,7 @@ settings-search rows; 27 tests. Rollout: `docs/rollouts/2026-07-29-accuracy-brea
 | Task brain / cron journal (`task_journal`, scheduler wiring, ops snapshot) | **Implemented 2026-07-29 (this change set)** |
 | Model tiering review | Done — no change (§3) |
 | Preview renderers for mutations | **Completed 2026-07-29 — zero-code finding: already landed bespoke on every surface (§5)** |
-| Backtest-integrity suite | **Partially implemented — slice 1 (Jesse rule significance) 2026-07-30, PR #2294**; slices 2–3 (PIT masking, walk-forward) planned (§6) |
+| Backtest-integrity suite | **Partially implemented — slice 1 (Jesse rule significance) PR #2294 + slice 3 (qlib walk-forward window report) PR #2305, 2026-07-30**; slice 2 (PIT masking) planned (§6) |
 | Brokerage-model hardening | Planned (§7) |
 | nofx safety mode | **Implemented 2026-07-29 (§8, PR #2275)** |
 | Graph flows | Existing `TradingGraph` orchestrator (strategy.ts) is the LangGraph-lesson landing spot; extend nodes there rather than adopting LangGraph |
