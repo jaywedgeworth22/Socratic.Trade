@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Cpu, RefreshCw, AlertTriangle } from "lucide-react";
+import { Cpu, RefreshCw, AlertTriangle, Database } from "lucide-react";
 import { Card, Chip, Dot, Btn, Stat, Meter, type ChipTone } from "../console/ui/primitives";
 import { describeProbeStatus } from "./lib/probe-error";
 
@@ -46,12 +46,33 @@ interface TranscriptSummary {
   turns: Array<{ id: string; role: string; text: string; model: string | null; createdAt: string }>;
 }
 
+interface R2Summary {
+  configured: boolean;
+  intervalHours: number;
+  thresholdPct: number;
+  snapshot: {
+    checkedAt: string;
+    metrics: Array<{
+      id: "storage" | "classA" | "classB";
+      label: string;
+      mtd: number;
+      limit: number;
+      pctUsed: number;
+      projected: number;
+      projectedPct: number;
+      exceeded: boolean;
+      unit: "bytes" | "ops";
+    }>;
+  } | null;
+}
+
 export default function OperatorDashboard() {
   const [connections, setConnections] = useState<ConnectionSummary | null>(null);
   const [llm, setLlm] = useState<LlmSummary | null>(null);
   const [rag, setRag] = useState<RagSummary | null>(null);
   const [server, setServer] = useState<ServerSummary | null>(null);
   const [transcript, setTranscript] = useState<TranscriptSummary | null>(null);
+  const [r2, setR2] = useState<R2Summary | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,10 +91,11 @@ export default function OperatorDashboard() {
         fetch("/api/admin/llm-usage?sinceDays=30"),
         fetch("/api/admin/rag-coverage?sinceDays=30"),
         fetch("/api/admin/server-metrics"),
-        fetch("/api/chat-history?limit=10")
+        fetch("/api/chat-history?limit=10"),
+        fetch("/api/admin/r2-usage")
       ]);
 
-      const [resConn, resLlm, resRag, resServ, resTrans] = results;
+      const [resConn, resLlm, resRag, resServ, resTrans, resR2] = results;
       const errs: Record<string, number | "network"> = {};
 
       if (resConn.status === "fulfilled") {
@@ -100,6 +122,11 @@ export default function OperatorDashboard() {
         if (resTrans.value.ok) setTranscript(await resTrans.value.json());
         else errs.transcript = resTrans.value.status;
       } else errs.transcript = "network";
+
+      if (resR2.status === "fulfilled") {
+        if (resR2.value.ok) setR2(await resR2.value.json());
+        else errs.r2 = resR2.value.status;
+      } else errs.r2 = "network";
 
       setProbeErrors(errs);
     } catch (e) {
@@ -423,6 +450,63 @@ export default function OperatorDashboard() {
                   {server?.resources?.filter((c) => { const s = c.status ?? ""; return (s.includes("running") || s.includes("healthy")) && !s.includes("unhealthy"); }).length ?? 0} Running
                 </span>
               </div>
+            </div>
+          </Card>
+
+          {/* ── 4b. R2 free-tier usage (scheduler snapshot; alert threshold) ── */}
+          <Card title="R2 Storage Usage" className="flex h-full flex-col">
+            <div className="space-y-4">
+              {probeErrors.r2 && (
+                <div
+                  className="mb-2 flex items-center gap-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
+                  title={typeof probeErrors.r2 === "number" ? `HTTP ${probeErrors.r2}` : undefined}
+                >
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  {probeErrorLabel(probeErrors.r2)}
+                </div>
+              )}
+              {!r2?.configured && (
+                <div className="py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                  Not configured — set <span className="con-mono">CLOUDFLARE_ST_API_TOKEN</span> +{" "}
+                  <span className="con-mono">CLOUDFLARE_ST_ACCOUNT_ID</span> to monitor the R2 free tier.
+                </div>
+              )}
+              {r2?.configured && !r2.snapshot && (
+                <div className="py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                  No usage check yet — the scheduler lane runs every {r2.intervalHours}h.
+                </div>
+              )}
+              {r2?.snapshot && (
+                <div className="space-y-3">
+                  {r2.snapshot.metrics.map((m) => {
+                    const fmt = (v: number) =>
+                      m.unit === "bytes" ? `${(v / 1024 ** 3).toFixed(2)} GiB` : Math.round(v).toLocaleString();
+                    return (
+                      <div key={m.id}>
+                        <div className="mb-1 flex items-center justify-between text-[length:var(--con-fs-xs)]">
+                          <span className="flex items-center gap-1 text-[color:var(--con-muted)]">
+                            <Database className="h-3.5 w-3.5" /> {m.label}
+                          </span>
+                          <span className={`con-num font-semibold ${m.exceeded ? "text-[color:var(--con-warn)]" : ""}`}>
+                            {fmt(m.mtd)} · {m.pctUsed.toFixed(1)}%
+                          </span>
+                        </div>
+                        <Meter value={Math.min(m.pctUsed, 100)} max={100} />
+                        <div className="mt-0.5 text-right text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                          pace → {m.projectedPct.toFixed(0)}% by month end
+                          {m.exceeded ? ` (>${r2.thresholdPct}% threshold)` : ""}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-3 text-[length:var(--con-fs-xs)]">
+                    <span className="text-[color:var(--con-muted)]">Free tier · checked</span>
+                    <span className="con-mono text-[color:var(--con-faint)]">
+                      {new Date(r2.snapshot.checkedAt).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </Card>
 
