@@ -74,6 +74,16 @@ export function defaultLitestreamStatePath(dbPath: string): string {
 }
 
 /**
+ * Default Unix socket for Litestream's local IPC control plane (`GET /list`).
+ * Colocate with the DB so the non-root app user can bind it in containers —
+ * `/var/run/litestream.sock` is root-only and leaves production health stuck
+ * on `storageDegraded: unavailable` despite healthy R2 replication.
+ */
+export function defaultLitestreamSocketPath(dbPath: string): string {
+  return join(dirname(dbPath), "litestream.sock");
+}
+
+/**
  * Decide whether the available signal proves the production R2 recovery path is healthy.
  * File mtimes are retained as diagnostics only; they do not prove a successful remote upload.
  */
@@ -286,7 +296,7 @@ export async function getLitestreamRuntimeHealth(options: {
   const nowMs = options.nowMs ?? Date.now();
   const socketPath = options.socketPath?.trim()
     || process.env.LITESTREAM_SOCKET_PATH?.trim()
-    || "/var/run/litestream.sock";
+    || defaultLitestreamSocketPath(options.dbPath);
   try {
     const payload = await readUnixSocketJson(
       socketPath,
