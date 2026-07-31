@@ -102,3 +102,26 @@ Owner directives (2026-07-30):
    (owner already asked for this — gated on step 2 verification).
 4. The R2 usage monitor activates automatically on deploy (env already in
    Infisical); first alert state establishes on the first 6h tick.
+
+## Addendum (2026-07-31 ~22:00 UTC): fully resolved, verified live
+
+All blockers above cleared the same day:
+
+1. **Working new-account R2 credentials installed** by Grok in the Coolify
+   env store (~20:54 UTC, prod + preview rows); PR #2312 merged 20:38 UTC and
+   its deploy finished 21:56 UTC with the new `AWS_*` code path.
+2. **Replication verified**: `socratic-trade-bucket` shows 482,344,960 bytes
+   (460 MiB) at 21:20 UTC from the first litestream sync; zero
+   `NotEntitled`/`InvalidAccessKeyId`/ERROR lines in container logs since.
+3. **Old `LITESTREAM_S3_*` keys deleted** from Infisical ST prod (Grok) and
+   the Coolify env store; Infisical's placeholder `AWS_ACCESS_KEY_ID`/
+   `AWS_SECRET_ACCESS_KEY` values were replaced with the working ones
+   (decrypted from the Coolify store, written via Infisical CLI, verified by
+   SHA-256 prefix match — values never printed). Infisical and Coolify are
+   now consistent, both carrying only the new `AWS_*` + `CLOUDFLARE_ST_*`
+   names — matching Congress.Trade's convention.
+4. **Monitor live in prod**: first `r2_usage.check` audit event at
+   21:30:42 UTC — storage 0 B / 110 Class A / 30 Class B ops at that point,
+   `exceeded: []`, `alertsSent: 0`. Snapshot feeds the `/admin` "R2 Storage
+   Usage" card; 70%-pace alerts fire via notify() (Pushover etc.) on
+   threshold crossings.
