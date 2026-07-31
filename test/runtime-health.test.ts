@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { once } from "node:events";
 import {
   assessLitestreamRuntimeHealth,
+  defaultLitestreamSocketPath,
   defaultLitestreamStatePath,
   getLitestreamRuntimeHealth,
   isLitestreamReplicatingStatus,
@@ -71,6 +72,13 @@ describe("runtime release identity", () => {
 describe("Litestream runtime health", () => {
   it("uses Litestream 0.5.x's hidden default metadata directory", () => {
     expect(defaultLitestreamStatePath("/app/data/app.db")).toBe("/app/data/.app.db-litestream");
+  });
+
+  it("defaults the IPC socket next to the DB (writable by non-root container users)", () => {
+    expect(defaultLitestreamSocketPath("/app/data/app.db")).toBe("/app/data/litestream.sock");
+    expect(defaultLitestreamSocketPath("/Users/jay/apps/trading-live/data/app.db")).toBe(
+      "/Users/jay/apps/trading-live/data/litestream.sock"
+    );
   });
 
   it("accepts both documented active-replication status spellings", () => {
