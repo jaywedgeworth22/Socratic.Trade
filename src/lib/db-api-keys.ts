@@ -15,6 +15,7 @@ import type {
   MemoryItem,
   NotifyChannelId,
   NotifyPrefs,
+  NotifyPrefsSecrets,
   PriceAlert,
   PriceAlertOp,
   PriceAlertStatus,
@@ -1597,10 +1598,13 @@ function isNotifyChannelId(value: unknown): value is NotifyChannelId {
 
 export function getNotifyPrefs(userId: string = "local"): NotifyPrefs {
   const row = getDb().prepare("SELECT * FROM notification_prefs WHERE user_id = ?").get(userId) as
-    | { user_id: string; channels: string; push_target: string; pushover_target: string; webhook_url: string; email: string; phone: string; updated_at: string | null }
+    | { user_id: string; channels: string; push_target: string; pushover_target: string; webhook_url: string; email: string; phone: string;
+        pushover_app_token?: string; twilio_account_sid?: string; twilio_auth_token?: string; twilio_from?: string;
+        updated_at: string | null }
     | undefined;
   if (!row) {
-    return { userId, channels: [], pushTarget: "", pushoverTarget: "", webhookUrl: "", email: "", phone: "", updatedAt: null };
+    return { userId, channels: [], pushTarget: "", pushoverTarget: "", webhookUrl: "", email: "", phone: "",
+      pushoverAppTokenSet: false, twilioAccountSidSet: false, twilioAuthTokenSet: false, twilioFromSet: false, updatedAt: null };
   }
   let channels: NotifyChannelId[] = [];
   try {
@@ -1617,13 +1621,33 @@ export function getNotifyPrefs(userId: string = "local"): NotifyPrefs {
     webhookUrl: row.webhook_url,
     email: row.email,
     phone: row.phone,
+    pushoverAppTokenSet: Boolean(row.pushover_app_token),
+    twilioAccountSidSet: Boolean(row.twilio_account_sid),
+    twilioAuthTokenSet: Boolean(row.twilio_auth_token),
+    twilioFromSet: Boolean(row.twilio_from),
     updatedAt: row.updated_at
+  };
+}
+
+/** Server-side only: decrypted per-user channel credentials. Empty string =
+ *  not set — callers fall back to the server env. Never serialize to clients. */
+export function getNotifyPrefsSecrets(userId: string = "local"): NotifyPrefsSecrets {
+  const row = getDb().prepare("SELECT pushover_app_token, twilio_account_sid, twilio_auth_token, twilio_from FROM notification_prefs WHERE user_id = ?").get(userId) as
+    | { pushover_app_token: string; twilio_account_sid: string; twilio_auth_token: string; twilio_from: string }
+    | undefined;
+  const dec = (v: string | undefined): string => (v ? decryptValue(v) : "");
+  return {
+    pushoverAppToken: dec(row?.pushover_app_token),
+    twilioAccountSid: dec(row?.twilio_account_sid),
+    twilioAuthToken: dec(row?.twilio_auth_token),
+    twilioFrom: dec(row?.twilio_from),
   };
 }
 
 export function setNotifyPrefs(
   userId: string,
-  partial: { channels?: unknown; pushTarget?: unknown; pushoverTarget?: unknown; webhookUrl?: unknown; email?: unknown; phone?: unknown }
+  partial: { channels?: unknown; pushTarget?: unknown; pushoverTarget?: unknown; webhookUrl?: unknown; email?: unknown; phone?: unknown;
+             pushoverAppToken?: unknown; twilioAccountSid?: unknown; twilioAuthToken?: unknown; twilioFrom?: unknown }
 ): NotifyPrefs {
   const next: NotifyPrefs = { ...getNotifyPrefs(userId), userId };
   if (Array.isArray(partial.channels)) {
@@ -1653,8 +1677,28 @@ export function setNotifyPrefs(
       phone: next.phone,
       updatedAt: next.updatedAt
     });
+
+  // Secret credential fields: undefined = keep stored value, "" = clear,
+  // non-empty = encrypt + replace. Values are never returned to clients —
+  // the UI round-trips presence flags (next.*Set) only.
+  const secretFields: Array<[string, unknown]> = [
+    ["pushover_app_token", partial.pushoverAppToken],
+    ["twilio_account_sid", partial.twilioAccountSid],
+    ["twilio_auth_token", partial.twilioAuthToken],
+    ["twilio_from", partial.twilioFrom],
+  ];
+  for (const [column, value] of secretFields) {
+    if (value === undefined) continue;
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    getDb()
+      .prepare(`UPDATE notification_prefs SET ${column} = ? WHERE user_id = ?`)
+      .run(trimmed === "" ? "" : encryptValue(trimmed), userId);
+    audit("notify.prefs.secret_set", { userId, column, action: trimmed === "" ? "cleared" : "replaced" }, userId);
+  }
+
   audit("notify.prefs.set", { userId, channels: next.channels }, userId);
-  return next;
+  return getNotifyPrefs(userId);
 }
 
 // ── Chat turns ────────────────────────────────────────────────────────────────

@@ -66,6 +66,10 @@ function guardedNotifyPrefs(userId: string): NotifyPrefs {
     webhookUrl: "",
     email: "owner@example.test",
     phone: "",
+    pushoverAppTokenSet: false,
+    twilioAccountSidSet: false,
+    twilioAuthTokenSet: false,
+    twilioFromSet: false,
     updatedAt: null
   };
 }
