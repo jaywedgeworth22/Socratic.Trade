@@ -28,7 +28,9 @@ import { suppressUsageMonitorProvider } from "./usage-monitor-provider-policy";
 import {
   createUsageTelemetryClient,
   telemetryEventClassifier,
+  UsageTelemetryApiError,
   UsageTelemetryV2EventSchema,
+  deriveUsageTelemetryV2IdempotencyKey,
   type UsageTelemetryV2Event,
   type UsageTelemetryMetricType,
   type UsageTelemetryUnit,
@@ -99,7 +101,7 @@ function classifierTelemetryMetadata(ctx: {
   userId?: string;
 }): Record<string, string> {
   try {
-    return telemetryEventClassifier({
+    const metadata = telemetryEventClassifier({
       sourceApp: SOURCE_APP,
       environment: usageMonitorEnv(),
       service: ctx.service,
@@ -107,7 +109,16 @@ function classifierTelemetryMetadata(ctx: {
       keyRef: ctx.keyRef,
       gitSha: classifierGitSha(),
       user: ctx.userId,
-    });
+    }) as Record<string, string>;
+    // IDEMPOTENT-REPLAY STABILITY: gitSha changes on EVERY auto-deploy, and the monitor compares
+    // full event metadata when deduping an idempotency key — so a replayed ledger row rebuilt
+    // after a deploy collided ("Idempotency key collision", monitor 409) with the same key's
+    // pre-deploy content, permanently wedging the replay watermark (prod 2026-07-28..30). Every
+    // other classifier field is stable across deploys for a given ledger row; gitSha is the only
+    // volatile one, so it is deliberately excluded from the pushed event metadata. The deployed
+    // sha remains observable via /api/health and llm_usage-side telemetry, not here.
+    delete metadata.gitSha;
+    return metadata;
   } catch (err) {
     console.warn("[usage-monitor-push] classifier metadata build failed; pushing without it:", err instanceof Error ? err.message : String(err));
     return {};
@@ -947,14 +958,40 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
 const REPLAY_SEND_TIMEOUT_MS = 30_000;
 
 /**
+ * Extract the monitor-side idempotency key named in a 409 idempotency_conflict message
+ * (`Idempotency key collision for "<key>". ...`). Null when the error isn't that contract.
+ */
+export function usageMonitorCollisionKeyFromError(err: unknown): string | null {
+  if (!(err instanceof UsageTelemetryApiError) || err.code !== "idempotency_conflict") return null;
+  const match = /Idempotency key collision for "([^"]+)"/.exec(err.message);
+  return match ? match[1] : null;
+}
+
+/**
+ * The monitor's canonical v2 persistence key for one of OUR events — needed by the replay lane
+ * to map a 409 collision key back to the exact ledger row the monitor already holds.
+ */
+export async function usageMonitorV2IdempotencyKey(eventId: string): Promise<string> {
+  return deriveUsageTelemetryV2IdempotencyKey({ producerId: SOURCE_APP, eventId });
+}
+
+/**
  * Send a caller-owned batch and report whether the monitor acknowledged it. Unlike the live
  * in-memory queue, this does not retain failed events: durable callers keep their ledger cursor
  * unchanged and reconstruct the exact same idempotent payload on the next pass.
  *
  * Applies an AbortSignal timeout so that a connection stall cannot permanently block the caller
  * (the replay worker's inFlight guard is never cleared if the POST promise never settles).
+ *
+ * `onIdempotencyCollision` fires (synchronously, before the false return) when the monitor
+ * rejects the whole batch with a 409 idempotency_conflict, with the exact key it named — the
+ * durable caller can then skip THAT row (the monitor already holds an event under the key) and
+ * resend the rest instead of wedging its watermark behind one poison row forever.
  */
-async function sendReplayBatch(events: UsageMonitorEvent[]): Promise<boolean> {
+async function sendReplayBatch(
+  events: UsageMonitorEvent[],
+  options?: { onIdempotencyCollision?: (idempotencyKey: string) => void }
+): Promise<boolean> {
   if (events.length === 0) return true;
   if (!usageMonitorEnabled()) return false;
 
@@ -999,6 +1036,14 @@ async function sendReplayBatch(events: UsageMonitorEvent[]): Promise<boolean> {
     return true;
   } catch (err) {
     recordUsageMonitorHealth(false, start, err);
+    const collisionKey = usageMonitorCollisionKeyFromError(err);
+    if (collisionKey && options?.onIdempotencyCollision) {
+      try {
+        options.onIdempotencyCollision(collisionKey);
+      } catch {
+        /* the collision hint is best-effort; the false return still signals failure */
+      }
+    }
     const retryAfter =
       err && typeof err === "object" && "retryAfterSeconds" in err
         ? Number((err as { retryAfterSeconds?: unknown }).retryAfterSeconds)
@@ -1015,9 +1060,10 @@ async function sendReplayBatch(events: UsageMonitorEvent[]): Promise<boolean> {
 }
 
 export async function sendUsageMonitorBatch(
-  events: UsageMonitorEvent[]
+  events: UsageMonitorEvent[],
+  options?: { onIdempotencyCollision?: (idempotencyKey: string) => void }
 ): Promise<boolean> {
-  return sendReplayBatch(events);
+  return sendReplayBatch(events, options);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

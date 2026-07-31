@@ -22,7 +22,5 @@ The user requested adding Pushover as a notification option. This required a sch
 - `npm test`: Full test suite passed successfully. (The failing `test/persistence-hardening.test.ts` due to migration schema dependencies was fully resolved and passes.)
 - Tested SQLite migrations directly.
 
-## Next Steps & Blockers (Handoff to Kimi / Next Agent)
-- The code for the Pushover notification channel is complete.
-- **Current State:** `land.sh` is currently running in the background (task-3676 in the Antigravity session). It failed the build step once due to a stray lockfile which was removed, and now it is re-running the test suite prior to build and deployment.
-- **For Kimi:** If you are taking over, please verify that `socratic-trade-prod` has successfully auto-deployed the Pushover feature once `land.sh` completes in the Antigravity lane. Then, ensure you pull `origin/main` into your `agent/kimi-lane` worktree (`~/apps/trading-kimi`) to inherit the new `pushover_target` DB migration (migration 63) and related UI changes before starting your next task. Do not interrupt the Antigravity worktree (`~/apps/trading-antigravity`) while `land.sh` is finishing.
+## Next Steps & Blockers
+- None. Code is ready to be landed and auto-deployed.

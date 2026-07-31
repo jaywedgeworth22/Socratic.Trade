@@ -611,6 +611,12 @@ export interface OOSResult {
   testObservations: number;
   trainDates: number;
   testDates: number;
+  /**
+   * qlib walk-forward window report: the exact chronological folds this result was computed on.
+   * Consumers that gate a candidate on this result should surface these dates — a validation is
+   * only as honest as the window it held out is visible.
+   */
+  window: OOSWindowReport;
   trainICs: FactorIC[];
   icWeights: ScoringWeights;
   /** Mean cross-sectional IC of the IC-weighted composite score on OOS dates. */
@@ -655,6 +661,32 @@ export interface OOSResult {
   note: string;
 }
 
+/**
+ * qlib walk-forward window report (docs/oss-lessons.md §6 slice 3): the exact chronological folds
+ * an OOS result was computed on, so a consumer can SEE — and disclose — what was held out.
+ */
+export interface OOSWindowReport {
+  /** First/last unique snapshot date in the train fold (after any purge). */
+  trainStartDate: string;
+  trainEndDate: string;
+  /** Unique dates embargoed between the train fold and the surviving test fold. */
+  embargoDates: number;
+  /** Unique train-side dates dropped by the P1-2 purge (0 when purge is off). */
+  purgedTrainDates: number;
+  /** First/last unique snapshot date in the surviving (held-out) test fold. */
+  testStartDate: string;
+  testEndDate: string;
+}
+
+/** PURE. Compact one-clause rendering of the window report for readouts/cautions. */
+export function formatOosWindow(window: OOSWindowReport, testDates: number, trainDates: number): string {
+  return (
+    `held-out window ${window.testStartDate}→${window.testEndDate} (${testDates} dates; ` +
+    `train ${window.trainStartDate}→${window.trainEndDate}, ${trainDates} dates; ` +
+    `embargo ${window.embargoDates}, purge ${window.purgedTrainDates})`
+  );
+}
+
 /** Extra split controls (panel P1-2). All default-preserving. */
 export interface SplitWalkForwardOptions {
   /**
@@ -682,9 +714,15 @@ export function splitWalkForward(
   trainFraction: number = 0.7,
   horizonDays: number = 0,
   options: SplitWalkForwardOptions = {}
-): { train: FactorObservation[]; test: FactorObservation[] } {
+): { train: FactorObservation[]; test: FactorObservation[]; boundary: WalkForwardBoundary } {
   const dates = [...new Set(observations.map((o) => o.date))].sort();
-  if (dates.length < 2) return { train: observations, test: [] };
+  if (dates.length < 2) {
+    return {
+      train: observations,
+      test: [],
+      boundary: { totalDates: dates.length, cutIdx: 0, trainCutIdx: 0, testCutIdx: dates.length }
+    };
+  }
   const cutIdx = Math.max(1, Math.floor(dates.length * trainFraction));
 
   // PURGE (P1-2, opt-in): the train rows whose forward-return window overlaps the first test date are the
@@ -695,13 +733,26 @@ export function splitWalkForward(
   const trainDates = new Set(dates.slice(0, trainCutIdx));
 
   // EMBARGO (predates P1-2): remove the first `horizonDays` test-date buckets after the training fold's end.
-  const testCutIdx = cutIdx + horizonDays;
+  const testCutIdx = Math.min(cutIdx + horizonDays, dates.length);
   const testDates = new Set(dates.slice(testCutIdx));
 
   return {
     train: observations.filter((o) => trainDates.has(o.date)),
-    test: observations.filter((o) => testDates.has(o.date))
+    test: observations.filter((o) => testDates.has(o.date)),
+    boundary: { totalDates: dates.length, cutIdx, trainCutIdx, testCutIdx }
   };
+}
+
+/** Exact fold-boundary indices (into the sorted unique-date array) a split produced — the qlib-style
+ *  walk-forward window report's raw material. */
+export interface WalkForwardBoundary {
+  totalDates: number;
+  /** Index where the test side would start before the embargo. */
+  cutIdx: number;
+  /** First train-side index dropped by the P1-2 purge (= cutIdx when purge is off). */
+  trainCutIdx: number;
+  /** First surviving test-side index after the always-on embargo. */
+  testCutIdx: number;
 }
 
 /**
@@ -1034,7 +1085,7 @@ export async function runWalkForwardOOS(
 
   // P1-2: the purge is opt-in via `purgeEmbargo`; the embargo (`horizonDays`) is always applied. Default OFF
   // → byte-identical split. Fails safe: purging shrinks the train sample, which can only strip weights.
-  const { train, test } = splitWalkForward(rawObservations, trainFraction, horizonDays, { purge: options.purgeEmbargo ?? false });
+  const { train, test, boundary } = splitWalkForward(rawObservations, trainFraction, horizonDays, { purge: options.purgeEmbargo ?? false });
   if (train.length === 0 || test.length === 0) return null;
 
   const trainICs = computeFactorICs(train);
@@ -1114,11 +1165,25 @@ export async function runWalkForwardOOS(
   const trainDates = new Set(train.map((o) => o.date)).size;
   const testDates = new Set(adjustedTest.map((o) => o.date)).size;
 
+  // qlib window report (§6 slice 3): exact fold dates, straight from the split boundary indices —
+  // a gate consumer can show WHAT was held out, not just that something was.
+  const trainUnique = [...new Set(train.map((o) => o.date))].sort();
+  const testUnique = [...new Set(adjustedTest.map((o) => o.date))].sort();
+  const window: OOSWindowReport = {
+    trainStartDate: trainUnique[0],
+    trainEndDate: trainUnique[trainUnique.length - 1],
+    embargoDates: boundary.testCutIdx - boundary.cutIdx,
+    purgedTrainDates: boundary.cutIdx - boundary.trainCutIdx,
+    testStartDate: testUnique[0],
+    testEndDate: testUnique[testUnique.length - 1]
+  };
+
   return {
     trainObservations: train.length,
     testObservations: adjustedTest.length,
     trainDates,
     testDates,
+    window,
     trainICs,
     icWeights,
     oosIC,

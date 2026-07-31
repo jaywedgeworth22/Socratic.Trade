@@ -117,6 +117,54 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     }
   }, 30_000);
 
+  it("flag ON: an HTTP-200 EMPTY body from the primary transparently fails over (provider glitch, not an HTTP error)", async () => {
+    // Prod incident 2026-07-28..30: OpenRouter returned 200 with EMPTY content, which
+    // isRetryableLlmError deliberately doesn't match, so the whole run failed even with a
+    // healthy fallback configured. The empty body now fails over like any other transient
+    // attempt failure, with an explicit reason on the failover audit row.
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
+        const bodyStr = init?.body ? String(init.body) : "";
+        if (bodyStr.includes("claude")) {
+          return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "" } }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return geminiOk();
+      }
+      if (href.includes("nasdaq.com")) return nasdaqRow();
+      return new Response("not found", { status: 404 });
+    });
+    await setup(true);
+    // Use a DISTINCT primary provider lane: the 429 test above legitimately parks the `openai`
+    // lane in the provider-cooldown registry (llm_provider_cooldown_skip keys the underlying
+    // provider from the model prefix), which would skip the primary attempt here entirely
+    // instead of letting it return the empty body under test.
+    const { setPolicy, getPolicy } = await import("../src/lib/db");
+    setPolicy({ ...getPolicy("local"), llmModel: "openrouter/anthropic/claude-3-haiku" });
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { listAudit } = await import("../src/lib/db");
+
+    const result = await runStrategyOnce();
+
+    expect(result.status).toBe("completed");
+    const failoverRows = listAudit(5000).filter(
+      (e) => (e.payload as { runId?: string })?.runId === result.runId && e.kind === "strategy_llm_failover"
+    );
+    expect(failoverRows.length).toBeGreaterThan(0);
+    const bullFailover = failoverRows.find(
+      (e) => (e.payload as { step?: string })?.step === "bull"
+    );
+    expect((bullFailover?.payload as { reason?: string })?.reason).toBe("empty_response");
+    expect((bullFailover?.payload as { toModel?: string })?.toModel).toBe("google/gemini-2.5-flash");
+    const bullStep = result.llmSteps?.find((s) => s.step === "bull");
+    expect(bullStep?.provider).toBe("gemini");
+  }, 30_000);
+
   it("flag OFF (default): a primary 429 is a hard failure — no failover, behavior unchanged", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {

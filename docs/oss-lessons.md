@@ -100,40 +100,62 @@ terminalization migration.
   `order_replacements` + `task_journal` (new) are close to a replayable log; documenting the
   reconstruction path (and a recovery drill) is the gap, not the data.
 
-## 5. Preview renderers for mutating operations — Hivekeep (PLANNED, claimed KIMI)
+## 5. Preview renderers for mutating operations — Hivekeep (COMPLETED 2026-07-29, zero-code finding)
 
 Hivekeep renders a human-readable preview card for every mutating tool call (`update_memory`,
-`delete_cron`, `update_secret`, …) before commit. We have this exactly once: the
-trade-proposal approval card. Generalize:
+`delete_cron`, `update_secret`, …) before commit. **Finding from a full mutation-surface
+inventory (2026-07-29): this lesson is ALREADY landed in bespoke, proportionate form on every
+mutating console surface** — a shared `MutationPreview` abstraction would refactor 8+ carefully
+tuned surfaces for marginal consistency, and is not advisable:
 
-- Define a `MutationPreview` contract: `{ title, diff: Array<{field, before, after}>, consequences: string[], confirmLabel, requiresTypedConfirmation }`.
-- First candidates (non-trade mutations with real blast radius): policy/guardrail edits
-  (Settings → Guardrails), account drain/purge, API-key deletion/tombstoning, learning-queue
-  approve/reject, autonomy re-arm after boot-halt.
-- Policy edits are the highest-value one: a "you are changing X from A to B; this affects
-  account(s) …; last changed …" card would have made several past misconfigurations visible
-  before save.
-- Implementation sketch: server-side `buildMutationPreview(kind, before, after)` +
-  one shared `<MutationPreviewCard>` component; wire per surface. Typed confirmation already
-  exists for live-account dangerous actions — reuse that gate.
+| Surface | Existing preview/confirmation UX |
+|---|---|
+| Policy/Guardrails edits | Review Sheet with per-field diff + Locks Down/Unlocks direction tags + typed CONFIRM for loosening on live accounts (`app/console/components/policy-form.tsx`, `app/console/lib/policy-diff.ts`) |
+| Account deletion | Server-side preview (per-table counts + activity blockers) + 5 acknowledgements + typed email + typed phrase, local-operator extra phrase (`app/console/settings/danger.tsx`) |
+| Live proposal approve | Typed batch Sheet with per-order notional (`app/console/approvals/page.tsx`) |
+| Proposal reject | 4-second arm-click with stale-arm auto-disarm (no ritual — proportionate) |
+| Learned-context approve | Confirm dialog with the exact effect preview, incl. the directive block that would be appended (`app/console/lessons/learned-context.tsx`) |
+| Learned-context reject | One-click discard — applies nothing, so proportionate |
+| Learned-fact delete / broker disconnect / API-key delete | Inline confirms with consequence text |
+| Autonomy re-arm (halted→start) | One-tap — deliberate owner-directed design (`app/console/components/chrome.tsx` ControlSheet: "Friction is reserved for what SELLS or halts") |
 
-## 6. Backtest integrity for the learning loop — Jesse / TraderHarness / qlib (PLANNED)
+Guidance for FUTURE mutating surfaces: copy the nearest existing pattern above (review Sheet for
+settings edits, typed ritual for irreversible money-adjacent actions, arm-click for batched
+low-stakes actions) rather than building a new abstraction.
+
+## 6. Backtest integrity for the learning loop — Jesse / TraderHarness / qlib (PARTIALLY IMPLEMENTED — slices 1+3 landed 2026-07-30, PRs #2294/#2305)
 
 The Phase 7 learning loop matures outcomes and (eventually) evaluates LLM proposals against
 history. Three contamination traps, three references:
 
-- **Jesse — rule significance**: before a thesis tag or signal is credited with predictive
-  power, test whether the same entries at *random* times would have done as well (permutation /
-  Monte-Carlo baseline). Steal: a `significance.ts` that reports "this rule beats luck at p<X"
-  before the learning loop promotes a lesson. Cheap, high value.
+- **Jesse — rule significance (IMPLEMENTED 2026-07-30, PR #2294)**: before a thesis tag or
+  signal is credited with predictive power, test whether the same trades would have done as
+  well under a random grouping (permutation / Monte-Carlo baseline). As implemented:
+  `src/lib/significance.ts` — a pure label-permutation test (observed thesis-bucket mean
+  realized `returnPct` vs random same-size buckets of the pooled tagged closed-lot history,
+  1000 permutations, +1 p-value correction, pool-size floor) wired into
+  `writeThesisTrackRecordFacts` in `post-mortem.ts`. Each directional track-record fact now
+  carries one honest baseline sentence and its confidence scales (0.7 unlikely-luck / 0.45
+  luck-not-ruled-out / 0.6 fallback) — annotation, not hard-gate. Rollout:
+  `docs/rollouts/2026-07-30-rule-significance.md`.
 - **TraderHarness — PIT masking for LLM evaluation**: an LLM asked to "decide" on 2024 data
   may simply remember 2024. Their fixes: point-in-time masking (only data available at T is in
   context), entity/date anonymization (symbol → random ticker, dates → relative offsets), and
   full decision-trajectory export. Steal all three before any LLM-in-the-loop historical
   evaluation; without them a "backtest" of an LLM strategy measures memorization.
-- **qlib — walk-forward discipline**: train/score windows roll forward; nothing fitted on the
-  full sample. Applies to auto-tune weights (`auto-tune-scheduler.ts`): confirm tuning windows
-  never include the evaluation window, and add a walk-forward report when they do.
+- **qlib — walk-forward discipline (IMPLEMENTED 2026-07-30, PR #2305)**: train/score windows roll
+  forward; nothing fitted on the full sample. Audit finding: the split in `backtest.ts` was
+  already sound (chronological unique-date split, always-on test-side embargo of `horizonDays`
+  date-buckets, opt-in train-side purge via `policy.tuning.oosPurgeEmbargo`). The residual leak
+  was upstream: the tuner's candidate weights are proposed from ALL-history evidence (closed-lot
+  outcomes, scorecards, skipped-candidate counterfactuals) that includes the recent held-out test
+  fold — partially in-sample. As implemented: `splitWalkForward` returns exact fold-boundary
+  indices; `OOSResult` carries a required `window` report (train/test first+last dates,
+  embargo/purge counts); the manual + autonomous OOS readouts name the held-out window and carry
+  a "partially in-sample — a pass is necessary, not sufficient" caveat into the cautions, ledger,
+  and provenance evidence. Rollout: `docs/rollouts/2026-07-30-walk-forward-window.md`.
+  Follow-up (board): time-bounded proposal evidence — cut the tuner's evidence queries off at
+  the test-fold start so the caveat can be retired for the weight path.
 
 ## 7. Brokerage-model order-state hardening (PLANNED — umbrella for §4 items)
 
@@ -142,19 +164,27 @@ constraint validation pre-submission, per-account broker-mutation mutex, freqtra
 uniform protection receipts. Targets the exact bug classes from 2026-07-27/28 (done_for_day
 inflation, order_placement_uncertain storms, bracket-order 422s).
 
-## 8. nofx-style consecutive-miss safety mode (PLANNED)
+## 8. nofx-style consecutive-miss safety mode (IMPLEMENTED 2026-07-29, PR #2275)
 
 nofx tracks rolling prediction accuracy; after N consecutive misses (default 3) the system
 closes/hedges, suppresses new signals, and goes observation-only until accuracy recovers. We
 have drawdown-based breakers but nothing *accuracy*-based: a thesis regime can degrade long
 before a 15% drawdown, especially with small positions.
 
-Design sketch: per-account rolling window of matured proposal outcomes (we already persist
-outcomes via `outcome-engine.ts`); when the last K matured proposals are all adverse AND the
-rolling hit-rate drops below a floor, auto-transition the account to a `degraded` posture:
-no new openings (close-only), a `risk_advisory` notification (channel exists), and automatic
-recovery after M clean observations or owner re-arm. Guardrails UI surface + policy.tuning
-fields, mirroring the 2026-07-28 guard enablement pattern.
+**As implemented** (`src/lib/accuracy-breaker.ts` + `strategy.ts` wiring, mirroring the
+drawdown-breaker pattern): a pure evaluator over matured REAL (placed/filled) decisive outcomes
+(`listRecentDecisiveOutcomeStatuses` in db-socratic.ts — counterfactual outcomes of
+blocked/rejected proposals are excluded: avoiding a bad trade is a good call, not a miss). Two
+independent opt-in triggers (deviation from the sketch's AND — nofx itself fires on the streak
+alone): `riskRules.accuracyBreakerConsecutiveLosses` (newest K decisive outcomes all lost) and/or
+`accuracyBreakerWindow` + `accuracyBreakerMinHitRatePct` (rolling hit rate below floor; full
+window required, never fires on a tiny sample). Response per `riskRules.accuracyBreakerAction`:
+advisory by default (persisted KV degraded marker + one `risk_advisory` notification per
+degradation, no state change) or opt-in `close_only` hard flip of the run's target account +
+`kill_switch`. Recovery (`accuracyBreakerRecoveryWins` most-recent clean outcomes, default 2)
+clears the marker and notifies but NEVER flips systemState back; owner re-arm after a hard flip
+clears the marker (audited `accuracy_breaker_rearmed`). Off by default. Guardrails +
+settings-search rows; 27 tests. Rollout: `docs/rollouts/2026-07-29-accuracy-breaker.md`.
 
 ## 9. Implementation status
 
@@ -162,10 +192,10 @@ fields, mirroring the 2026-07-28 guard enablement pattern.
 |---|---|
 | Task brain / cron journal (`task_journal`, scheduler wiring, ops snapshot) | **Implemented 2026-07-29 (this change set)** |
 | Model tiering review | Done — no change (§3) |
-| Preview renderers for mutations | Planned (§5) |
-| Backtest-integrity suite | Planned (§6) |
+| Preview renderers for mutations | **Completed 2026-07-29 — zero-code finding: already landed bespoke on every surface (§5)** |
+| Backtest-integrity suite | **Partially implemented — slice 1 (Jesse rule significance) PR #2294 + slice 3 (qlib walk-forward window report) PR #2305, 2026-07-30**; slice 2 (PIT masking) planned (§6) |
 | Brokerage-model hardening | Planned (§7) |
-| nofx safety mode | Planned (§8) |
+| nofx safety mode | **Implemented 2026-07-29 (§8, PR #2275)** |
 | Graph flows | Existing `TradingGraph` orchestrator (strategy.ts) is the LangGraph-lesson landing spot; extend nodes there rather than adopting LangGraph |
 
 ## 10. Graph flows — note

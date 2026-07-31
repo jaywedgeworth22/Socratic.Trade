@@ -11,6 +11,7 @@ import { isEarningsCallsRefreshDue, refreshEarningsCallsTranscriptsIfDue } from 
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
+import { runR2UsageCheckIfDue } from "./r2-usage";
 import { checkBrokerHealth } from "./broker-health";
 import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
@@ -499,6 +500,13 @@ async function tick(): Promise<void> {
   // free-safe 5/min so the raised paid default can't 429-storm. No-op until due; fully self-guarded.
   void journalLane("provider-tier-check", {}, () => runProviderTierCheckIfDue())
     .catch((err) => console.error("[scheduler] provider-tier check error:", err));
+
+  // Cloudflare R2 free-tier watchdog (owner directive 2026-07-30: never pace >70%
+  // of the 10 GiB / 1M Class A / 10M Class B monthly free tier). Cadence-gated
+  // (default 6h), leader-only, self-guarded; alerts via notify() on threshold
+  // crossings and persists a snapshot for the admin dashboard card.
+  void journalLane("r2-usage-check", {}, () => runR2UsageCheckIfDue())
+    .catch((err) => console.error("[scheduler] r2 usage check error:", err));
 
   // 10-K/10-Q bodies and default-OFF FMP transcripts have separate producer cadences, request
   // budgets, and cursors. They share the durable RAG_REINDEX operation lease and this demand-first

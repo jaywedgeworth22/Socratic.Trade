@@ -30,12 +30,12 @@ dbs:
         # TRADEOFF: replica RPO 1s -> 10s. NOT a fix for the leak itself — see
         # docs/rollouts/2026-07-19-deploy-wedge-diagnosis.md.
         sync-interval: 10s
-        bucket: ${LITESTREAM_S3_BUCKET}
+        bucket: ${AWS_S3_BUCKET_NAME}
         path: trading-live/app.db
-        # Literal, not ${LITESTREAM_S3_REGION:-auto}: litestream does its own ${VAR}
+        # Literal, not ${AWS_REGION:-auto}: litestream does its own ${VAR}
         # substitution and does NOT support bash `:-` defaults, so that form resolved to
         # an EMPTY region (confirmed in the startup banner: `region=""`). R2 wants "auto".
         region: auto
-        endpoint: ${LITESTREAM_S3_ENDPOINT}
-        access-key-id: ${LITESTREAM_S3_ACCESS_KEY_ID}
-        secret-access-key: ${LITESTREAM_S3_SECRET_ACCESS_KEY}
+        endpoint: ${AWS_S3_ENDPOINT}
+        access-key-id: ${AWS_ACCESS_KEY_ID}
+        secret-access-key: ${AWS_SECRET_ACCESS_KEY}
