@@ -155,6 +155,8 @@ script calling `https://jays.services/api/v1/...` must use
 
 **Fleet CI = GitHub-hosted only (2026-07-29):** Workflows use `ubuntu-latest`. Self-hosted Oracle/Coolify Actions runners (`socratic-ci`, `oracle-ci`, `fleet-ci-*`) are **retired** — do not reintroduce `[self-hosted, …]` labels. Production app hosting remains Coolify on Oracle Cloud (`141.148.182.224`, dashboard/API `https://host.jays.services`).
 
+**Hetzner servers DELETED (owner directive, 2026-07-31):** both Hetzner boxes are gone — the old prod host (`135.181.192.190`, retired in the July Oracle migration) and the CI build server `ci-cpx32` (`77.42.35.209`, Coolify server uuid `cantpgkbuwe71n1iqzu4qel6`). There is nothing to migrate back to and no runner registrations to clean up (GitHub shows none; the fleet's `oracle-*-ci` runners for the *other* repos live on Oracle). `scripts/monitor-coolify-runners.sh` and `scripts/ops/fleet-site-watchdog.sh` were deleted the same day (both monitored dead boxes); `scripts/sync-provider-knobs.sh` defaults now point at the Oracle host but its box-env read path needs rework (app env lives in Coolify's DB, not a `/data/coolify` tree). Rollout: `docs/rollouts/2026-07-31-hetzner-servers-deleted.md`.
+
 **Coolify tokens (do not mix — 2026-07-30):** `COOLIFY_SERVER_STATS` is **read-only** (website server-stats only). `COOLIFY_AGENTS` is **full** deploy/admin (agent ops / GH deploy only). Never store `COOLIFY_AGENTS` as the app's `COOLIFY_API_TOKEN`. Infisical must keep both keys; if `COOLIFY_API_TOKEN` exists for metrics it must equal the read-only stats token. **Never run bare `infisical secrets`** (it prints every value into the transcript) — use `scripts/infisical-secrets-safe.sh`. Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Secret handoff.
 **Build caveats:** the box's `concurrent_builds` is
 pinned to **1** (two parallel `next build`s OOM-wedged the old 4 GB box on 2026-07-07,
@@ -576,16 +578,10 @@ When investigating **live** strategy runs, multi-account behavior, or production
 bash scripts/fetch-prod-ops-snapshot.sh
 ```
 
-When investigating **CI / Actions runner** health (queued jobs, missing labels, Coolify
-server reachability), **run often**:
-
-```bash
-bash scripts/monitor-coolify-runners.sh --ssh
-```
-
-Needs `COOLIFY_API_TOKEN`, a GH token (`GITHUB_MCP_TOKEN` / `GH_TOKEN`), and SSH access to
-ci-cpx32 (`CI_SSH_KEY`) plus optional `HETZNER_ROOT` for the prod host. See
-`docs/rollouts/2026-07-24-coolify-runners-only.md`.
+When investigating **CI / Actions runner** health (queued jobs, missing labels), use the
+GitHub API directly (`gh run list`, `gh api repos/.../actions/runners`) — fleet CI is
+GitHub-hosted only. The old `scripts/monitor-coolify-runners.sh` was deleted 2026-07-31
+with the Hetzner servers it monitored.
 
 **One-time owner setup (both sides must use the same token):**
 
