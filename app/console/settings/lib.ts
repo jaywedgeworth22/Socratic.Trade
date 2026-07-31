@@ -189,6 +189,18 @@ export interface DeliveryPrefs {
   webhookUrl: string;
   email: string;
   phone: string;
+  /** Presence flags for per-user channel credentials (server never returns
+   *  the secret values themselves). */
+  pushoverAppTokenSet?: boolean;
+  twilioAccountSidSet?: boolean;
+  twilioAuthTokenSet?: boolean;
+  twilioFromSet?: boolean;
+  /** Write-only credential inputs: send a non-empty string to set/replace,
+   *  "" to clear, and omit (undefined) to leave the stored value untouched. */
+  pushoverAppToken?: string;
+  twilioAccountSid?: string;
+  twilioAuthToken?: string;
+  twilioFrom?: string;
 }
 
 export const EMPTY_DELIVERY_PREFS: DeliveryPrefs = {

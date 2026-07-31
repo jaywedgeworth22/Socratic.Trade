@@ -5,7 +5,7 @@
 // every enabled channel that is both admin-available and has a target. All network calls go through
 // an injectable `fetchImpl` so tests stay offline. Ported from reference/atlas-public-src/bff/notify.
 
-import { audit, getNotifyPrefs } from "./db";
+import { audit, getNotifyPrefs, getNotifyPrefsSecrets } from "./db";
 import { validateWebhookUrl, type HostResolver } from "./egress-guard";
 import type {
   NotifyChannelDescriptor,
@@ -68,6 +68,28 @@ export function loadNotifyConfig(): NotifyConfig {
       twilioSid: process.env.TWILIO_ACCOUNT_SID ?? "",
       twilioToken: process.env.TWILIO_AUTH_TOKEN ?? "",
       twilioFrom: process.env.TWILIO_FROM ?? ""
+    }
+  };
+}
+
+/**
+ * Per-user effective config (owner directive 2026-07-31): Pushover/Twilio
+ * credentials are user-specific and configured in Settings → Delivery
+ * (notification_prefs, encrypted at rest). A stored user value WINS over the
+ * server env; an unset field falls back to env, so operator-configured env
+ * keeps working for users who haven't pasted their own.
+ */
+export function loadUserNotifyConfig(userId: string, base: NotifyConfig = loadNotifyConfig()): NotifyConfig {
+  const secrets = getNotifyPrefsSecrets(userId);
+  return {
+    ...base,
+    pushover: {
+      pushoverToken: secrets.pushoverAppToken || base.pushover.pushoverToken
+    },
+    sms: {
+      twilioSid: secrets.twilioAccountSid || base.sms.twilioSid,
+      twilioToken: secrets.twilioAuthToken || base.sms.twilioToken,
+      twilioFrom: secrets.twilioFrom || base.sms.twilioFrom
     }
   };
 }
@@ -247,10 +269,10 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
   pushover: {
     available: (cfg) => !!cfg.pushover.pushoverToken,
     target: (p) => p.pushoverTarget || "",
-    describe: () => ({
+    describe: (cfg) => ({
       id: "pushover",
       label: "Pushover",
-      available: !!process.env.PUSHOVER_APP_TOKEN,
+      available: CHANNELS.pushover.available(cfg),
       targetField: "pushoverTarget",
       targetLabel: "Pushover user key",
       placeholder: "u1a2b3c4d5...",
@@ -350,7 +372,7 @@ export async function notify(
   deps: NotifyDispatchDeps = {}
 ): Promise<NotifyChannelResult[]> {
   assertNotifyActive(deps);
-  const cfg = deps.config ?? loadNotifyConfig();
+  const cfg = deps.config ?? loadUserNotifyConfig(userId);
   const fetchImpl = deps.fetchImpl ?? fetch;
   const prefs = deps.prefs ?? getNotifyPrefs(userId);
   const results: NotifyChannelResult[] = [];
