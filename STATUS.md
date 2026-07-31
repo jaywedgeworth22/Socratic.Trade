@@ -1,3 +1,9 @@
+## 2026-07-31 — Fix admin.socratictrade.com DNS 525 Error & Host Routing (ANTIGRAVITY)
+
+Fixed Cloudflare Error 525 (SSL Handshake Failed) on `admin.socratictrade.com` by adding `admin.socratictrade.com` and `*.socratictrade.com` to `/etc/usage-monitor/Caddyfile` on Oracle Cloud (`141.148.182.224`) and reloading Caddy. Also added middleware host routing in `middleware.ts` so `admin.socratictrade.com/` redirects directly to `/admin` and shorthand paths redirect to `/admin/<subpath>`.
+
+All 4,893 tests, lint, tsc, and Next.js build pass cleanly. Rollout: `docs/rollouts/2026-07-31-admin-dns-routing-fix.md`.
+
 ## 2026-07-30 — Pushover Notification Channel Support (ANTIGRAVITY, branch `agent/antigravity-pushover`)
 ## 2026-07-29 — Adjusted Day P&L for Cash Flows (ANTIGRAVITY, branch `agent/ag-day-pnl`)
 
@@ -20,10 +26,12 @@ Added Pushover as a standalone notification channel inside `notification_prefs`:
 4. Separated out Pushover from the legacy ntfy Push system in `src/lib/notify.ts` to construct its own dedicated REST POST payload to `api.pushover.net`.
 5. Updated `src/lib/db-api-keys.ts` to save and extract the target appropriately.
 
-All 5000+ tests, the TypeScript compiler, and the linter pass. Changes pushed and merged via `scripts/land.sh`.
+All 5000+ tests, the TypeScript compiler, and the linter pass. Changes are currently landing via `scripts/land.sh`.
 
 ## Blockers
-- None.
+- None for this worktree, but `land.sh` is currently running and merging into `main`. Wait for it to finish.
 
 ## Next Action
-- Wait for user instructions or close ticket.
+- **For Kimi (Next Agent):**
+  1. Wait for `land.sh` to finish merging in the `trading-antigravity` lane.
+  2. Sync your `~/apps/trading-kimi` worktree with `origin/main` to pick up migration 63 and the Pushover UI before starting new work.

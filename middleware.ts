@@ -262,6 +262,18 @@ function isEmailAllowed(email: string, fromCf: boolean): boolean {
 
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
+  const host = (req.headers.get("host") || "").toLowerCase().split(":")[0];
+
+  // Host-level routing: admin.socratictrade.com / admin.socratic.trade
+  if (host === "admin.socratictrade.com" || host === "admin.socratic.trade") {
+    if (pathname === "/") {
+      return NextResponse.redirect(new URL("/admin", req.url));
+    }
+    const adminSubroutes = ["/server", "/connections", "/llm-usage", "/rag-coverage", "/transcript"];
+    if (adminSubroutes.includes(pathname)) {
+      return NextResponse.redirect(new URL(`/admin${pathname}`, req.url));
+    }
+  }
 
   const isMobileAuthExchangePath = pathname === "/api/mobile/auth/exchange";
 
