@@ -237,3 +237,77 @@ describe("formatR2MetricValue", () => {
     expect(formatR2MetricValue(opsM)).toBe("123,456");
   });
 });
+
+describe("daily digest", () => {
+  beforeEach(() => {
+    deleteInternalSetting("r2usage:lastDigestAt");
+    delete process.env.R2_USAGE_DAILY_DIGEST;
+    delete process.env.R2_USAGE_DIGEST_INTERVAL_HOURS;
+  });
+
+  it("buildR2UsageDigestMessage covers all three metrics with pace and flags", async () => {
+    const { buildR2UsageDigestMessage } = await import("../src/lib/r2-usage");
+    const snapshot = {
+      checkedAt: "2026-07-16T12:00:00.000Z",
+      month: { startISO: "2026-07-01T00:00:00.000Z", endISO: "2026-08-01T00:00:00.000Z", elapsedFraction: 0.5 },
+      thresholdPct: 70,
+      bucketFilter: "socratic-trade-bucket",
+      metrics: assessR2Usage({
+        storageBytes: 8 * 1024 ** 3, // over pace mid-month
+        classAOps: 100_000,
+        classBOps: 1_000_000,
+        thresholdPct: 70,
+        now: MID_JULY,
+      }),
+    };
+    const { title, body } = buildR2UsageDigestMessage(snapshot);
+    expect(title).toContain("2026-07-16");
+    expect(title).toContain("⚠️"); // storage over pace
+    expect(body).toContain("Storage: 8.00 GiB MTD (80.0%)");
+    expect(body).toContain("Class A operations: 100,000 MTD (10.0%)");
+    expect(body).toContain("Class B operations: 1,000,000 MTD (10.0%)");
+    expect(body).toContain("⚠️"); // flagged line
+    expect(body).toContain("✓"); // clean lines
+    expect(body).toContain("socratic-trade-bucket");
+  });
+
+  it("is due by default when configured; respects the off flag and interval", async () => {
+    const { isR2UsageDigestDue } = await import("../src/lib/r2-usage");
+    expect(isR2UsageDigestDue(MID_JULY)).toBe(false); // no creds
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "acct";
+    expect(isR2UsageDigestDue(MID_JULY)).toBe(true);
+    process.env.R2_USAGE_DAILY_DIGEST = "off";
+    expect(isR2UsageDigestDue(MID_JULY)).toBe(false);
+  });
+
+  it("sends a fresh summary via notify and watermarks the day", async () => {
+    const { runR2UsageDailyDigestIfDue, isR2UsageDigestDue } = await import("../src/lib/r2-usage");
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "acct";
+    const notifyCalls: Array<{ title: string; body: string; kind?: string }> = [];
+    const notifyImpl = (async (_u: string, msg: { title: string; body: string; kind?: string }) => {
+      notifyCalls.push(msg);
+      return [];
+    }) as never;
+    const res = await runR2UsageDailyDigestIfDue(MID_JULY, {
+      fetchImpl: graphqlStorageAndOps(1 * 1024 ** 3, 500, 900),
+      notifyImpl,
+    });
+    expect(res.status).toBe("sent");
+    expect(notifyCalls).toHaveLength(1);
+    expect(notifyCalls[0].kind).toBe("r2-usage-digest");
+    expect(notifyCalls[0].body).toContain("Storage: 1.00 GiB MTD");
+    expect(notifyCalls[0].body).toContain("Class A operations: 500 MTD");
+    expect(notifyCalls[0].body).toContain("Class B operations: 900 MTD");
+    // Watermarked: not due again within the interval.
+    expect(isR2UsageDigestDue(MID_JULY + 3600_000)).toBe(false);
+    expect(isR2UsageDigestDue(MID_JULY + 25 * 3600_000)).toBe(true);
+  });
+
+  it("skips silently when the monitor is unconfigured", async () => {
+    const { runR2UsageDailyDigestIfDue } = await import("../src/lib/r2-usage");
+    const res = await runR2UsageDailyDigestIfDue(MID_JULY);
+    expect(res.status).toBe("skipped");
+  });
+});
