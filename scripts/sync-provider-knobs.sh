@@ -39,15 +39,20 @@
 # ENV OVERRIDES (defaults in [brackets])
 #   USAGE_API            [https://usage.jays.services/api/subscriptions]
 #   USAGE_MONITOR_ENV    [~/.secrets/usage-monitor.env]   file holding USAGE_INGEST_TOKEN
-#   KNOB_SYNC_SSH_KEY    [~/.ssh/hetzner]
-#   KNOB_SYNC_SSH_HOST   [root@135.181.192.190]
+#   KNOB_SYNC_SSH_KEY    [~/.ssh/id_ed25519]
+#   KNOB_SYNC_SSH_HOST   [ubuntu@141.148.182.224]   (Oracle Coolify prod host; the Hetzner
+#                                                    box root@135.181.192.190 was deleted 2026-07-31)
 #   KNOB_SYNC_BOX_ENV    [/data/coolify/applications/m1os7ijf31bg3fanil152e4b/.env]
+#     NOTE 2026-07-31: on the Oracle host the app env lives in Coolify's Postgres
+#     (environment_variables, encrypted) — there is NO /data/coolify tree. The remote
+#     read/apply path below needs rework against the DB (see the artisan-tinker pattern in
+#     docs/rollouts/2026-07-30-oracle-deploy-path-repair.md) before --apply is usable again.
 set -u
 
 USAGE_API="${USAGE_API:-https://usage.jays.services/api/subscriptions}"
 USAGE_MONITOR_ENV="${USAGE_MONITOR_ENV:-$HOME/.secrets/usage-monitor.env}"
-SSH_KEY="${KNOB_SYNC_SSH_KEY:-$HOME/.ssh/hetzner}"
-SSH_HOST="${KNOB_SYNC_SSH_HOST:-root@135.181.192.190}"
+SSH_KEY="${KNOB_SYNC_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+SSH_HOST="${KNOB_SYNC_SSH_HOST:-ubuntu@141.148.182.224}"
 BOX_ENV="${KNOB_SYNC_BOX_ENV:-/data/coolify/applications/m1os7ijf31bg3fanil152e4b/.env}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
