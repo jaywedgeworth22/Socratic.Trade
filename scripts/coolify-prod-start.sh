@@ -2,7 +2,7 @@
 # Boot script for the PRODUCTION app on the Coolify box (socratictrade.com).
 # Coolify start_command runs this script directly; it self-wraps in
 # scripts/infisical-run.mjs, so by phase 2 the full Infisical `prod` env
-# (app secrets + LITESTREAM_S3_*) is present.
+# (app secrets + AWS_*) is present.
 #
 # Phase 1 (no secrets yet): download pinned litestream + infisical CLI binaries
 #   onto the persistent volume (cached across restarts), put them on PATH, then
