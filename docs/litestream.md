@@ -30,12 +30,15 @@ bucket. You get an **Access Key ID**, a **Secret Access Key**, and an **endpoint
 ### 3. Add credentials to `~/apps/trading-live/.env.local`
 
 ```bash
-LITESTREAM_S3_BUCKET=trading-live-backups
-LITESTREAM_S3_REGION=auto
-LITESTREAM_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-LITESTREAM_S3_ACCESS_KEY_ID=...
-LITESTREAM_S3_SECRET_ACCESS_KEY=...
+AWS_S3_BUCKET_NAME=trading-live-backups
+AWS_REGION=auto
+AWS_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
 ```
+
+(Names follow the fleet-wide `AWS_*` convention shared with Congress.Trade —
+renamed from the older `LITESTREAM_S3_*` set on 2026-07-30.)
 
 ### 4. Deploy the config + launcher and start under PM2
 
@@ -107,7 +110,7 @@ runbook step that must be performed once from `~/apps/trading-live`.
 ### Runbook: perform and record a restore drill
 
 Run this periodically (recommend: quarterly, and after any Litestream/litestream.yml
-version bump) from a shell with the production `LITESTREAM_S3_*` creds available
+version bump) from a shell with the production `AWS_*` creds available
 (via `.env.local` or `infisical run`, per `docs/deployment.md`):
 
 ```bash

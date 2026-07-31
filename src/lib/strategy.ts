@@ -5673,6 +5673,17 @@ async function proposeTrades(input: {
             const finishReason = extractBullFinishReason(payload);
 
             if (!text) {
+              // An HTTP-200 with EMPTY content is a provider-side glitch (overloaded/deprecated
+              // model), not a proposal — isRetryableLlmError deliberately doesn't match it, so
+              // without this branch the whole run died even with healthy fallbacks configured.
+              // Fail over like any other transient attempt failure; only a chain-wide empty
+              // response fails the run.
+              if (!isLast) {
+                lastError = new Error("Empty response returned from LLM API.");
+                console.warn(`[Bull] ${attempt.model}/${attempt.provider} returned an empty response; failing over to ${next.model}/${next.provider}.`);
+                audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, reason: "empty_response", toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);
+                continue;
+              }
               throw new Error("Empty response returned from LLM API.");
             }
 

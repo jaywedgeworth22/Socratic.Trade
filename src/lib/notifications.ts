@@ -94,6 +94,79 @@ const DIRECT_NOTIFY_SKIP_SET: ReadonlySet<NotificationEventType> = new Set([
   "storage_warning"
 ]);
 
+// ── Repeat-notification suppression (block / pending_approval) ────────────────
+// A policy-blocked or escalated proposal notifies on EVERY strategy run that re-proposes the
+// same trade. While a condition persists (a stuck broker sell order holding all shares, a quote
+// provider outage tripping the staleness gate, ...) the same notification re-fires many times a
+// day — prod 2026-07-28..30: "Sell AAPL blocked (available 0)" 6+ times in 48h for ONE stuck
+// order, plus dozens of identical staleness_gate blocks/escalations. The block/escalation itself
+// is unchanged (still persisted as a run proposal and visible in Approvals); only the repeated
+// NOTIFICATION is suppressed for a cooldown window, keyed by (type, symbol, side, normalized
+// primary reason) — digits collapsed so a changing quote age or requested qty can't defeat it.
+const REPEAT_NOTIFICATION_DEDUP_TYPES: ReadonlySet<NotificationEventType> = new Set(["block", "pending_approval"]);
+
+function repeatNotificationDedupMs(): number {
+  const raw = Number(process.env.NOTIFICATION_REPEAT_DEDUP_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 6 * 60 * 60_000; // 6h
+}
+
+function normalizeReasonForFingerprint(reason: string): string {
+  return reason.toLowerCase().replace(/\d+/g, "#").replace(/\s+/g, " ").trim().slice(0, 200);
+}
+
+/** Stable identity of a block/escalation notification's SITUATION (not its run), or null when
+ *  the payload doesn't carry enough structure to fingerprint safely (never dedup those). */
+export function repeatNotificationFingerprint(input: {
+  type: NotificationEventType;
+  payload: unknown;
+}): string | null {
+  if (!REPEAT_NOTIFICATION_DEDUP_TYPES.has(input.type)) return null;
+  const payload = input.payload as {
+    proposal?: { symbol?: unknown; side?: unknown };
+    decision?: { reasons?: unknown };
+  } | null;
+  const symbol = typeof payload?.proposal?.symbol === "string" ? payload.proposal.symbol.toUpperCase() : "";
+  const side = typeof payload?.proposal?.side === "string" ? payload.proposal.side.toLowerCase() : "";
+  const reasons = Array.isArray(payload?.decision?.reasons) ? payload.decision.reasons : [];
+  const firstReason = typeof reasons[0] === "string" ? reasons[0] : "";
+  if (!symbol && !firstReason) return null;
+  return [input.type, symbol, side, normalizeReasonForFingerprint(firstReason)].join("|");
+}
+
+/** True when an IDENTICAL situation already produced a DELIVERED notification within the window.
+ *  Only status='sent' rows dedupe — a skipped/failed delivery must not suppress the next attempt
+ *  (same rule as the option-alert dedupe). Read-only, never throws. */
+function recentRepeatNotificationSent(
+  userId: string,
+  connectedAccountId: string,
+  fingerprint: string,
+  cooldownMs: number
+): boolean {
+  try {
+    const cutoff = new Date(Date.now() - cooldownMs).toISOString();
+    const rows = getDb()
+      .prepare(
+        `SELECT type, payload FROM notification_events
+         WHERE user_id = ? AND COALESCE(connected_account_id, '') = ?
+           AND created_at > ? AND status = 'sent'
+         ORDER BY rowid DESC LIMIT 200`
+      )
+      .all(userId, connectedAccountId, cutoff) as Array<{ type: NotificationEventType; payload: string }>;
+    for (const row of rows) {
+      if (!REPEAT_NOTIFICATION_DEDUP_TYPES.has(row.type)) continue;
+      try {
+        const prior = repeatNotificationFingerprint({ type: row.type, payload: JSON.parse(row.payload) });
+        if (prior === fingerprint) return true;
+      } catch {
+        /* unparseable historical payload — skip it */
+      }
+    }
+    return false;
+  } catch {
+    return false; // dedup is best-effort; never block a notification on a DB hiccup
+  }
+}
+
 // The ntfy push channel (notify.ts's CHANNELS.push.send) carries the message TITLE as a raw HTTP
 // header value. The Fetch/Headers spec requires header values to be ByteString (Latin-1, code
 // points 0x00-0xFF) — anything outside that range throws `TypeError: Cannot convert argument to a
@@ -147,6 +220,32 @@ export async function sendNotification(
   if (!settings.enabledEvents.includes(input.type)) {
     assertNotificationActive(options);
     return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId, connectedAccountId);
+  }
+
+  // Repeat suppression: the identical block/escalation situation already delivered within the
+  // cooldown — return an unrecorded "skipped" event (no notification_events row, no delivery)
+  // so the feed and push channels aren't re-spammed every strategy run. The underlying block
+  // remains fully persisted via the run-proposal path.
+  if (REPEAT_NOTIFICATION_DEDUP_TYPES.has(input.type)) {
+    const fingerprint = repeatNotificationFingerprint(input);
+    if (
+      fingerprint &&
+      recentRepeatNotificationSent(userId, connectedAccountId ?? "", fingerprint, repeatNotificationDedupMs())
+    ) {
+      assertNotificationActive(options);
+      const event: NotificationEvent = {
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        type: input.type,
+        title: input.title,
+        status: "skipped",
+        payload: input.payload,
+        error: "Duplicate of a recently delivered notification for the same block/approval situation; suppressed by repeat-dedup.",
+        connectedAccountId
+      };
+      audit("notification", event, userId, connectedAccountId);
+      return event;
+    }
   }
 
   const results: NotifyChannelResult[] = [];
