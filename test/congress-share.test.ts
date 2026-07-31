@@ -691,7 +691,8 @@ describe("fetchCongressPriceNeeds", () => {
       { ticker: "NEED", oldestTradeDate: "2019-01-01", needsDeepHistory: true, reasons: ["no_price_history"] }
     ]);
     expect(res.spx?.needsHistoryBefore).toBe("2014-01-01");
-    expect(String(okFetch.mock.calls[0][0])).toContain("/api/export/price-needs?limit=50");
+    const calls = okFetch.mock.calls as unknown as Array<[unknown, ...unknown[]]>;
+    expect(String(calls[0]?.[0] ?? "")).toContain("/api/export/price-needs?limit=50");
 
     const bad = await fetchCongressPriceNeeds(
       10,
