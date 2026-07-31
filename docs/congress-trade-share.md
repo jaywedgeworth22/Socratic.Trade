@@ -117,6 +117,22 @@ applied** — App A's tables don't exist until then, and pushing those rows earl
 - A persisted marker (`congress-share:lastDailyRunDate`) makes the nightly batch
   idempotent per UTC day.
 
+## Congressional price-needs (performance vs S&P)
+
+App A exposes `GET /api/export/price-needs` (same `INGEST_TOKEN` as import). The nightly
+share **always** pulls a page of those tickers and merges them ahead of the monitored
+universe so congressional trades missing `tx_performance` anchors get prices first.
+Tickers flagged `needsDeepHistory` are sent with **full** history (not the ~1y nightly cap).
+
+Ops one-shot deep backfill:
+
+```http
+POST /api/admin/congress-share
+{ "fromAppANeeds": true, "fullHistory": true }
+```
+
+Optional: `CONGRESS_SHARE_PRICE_NEEDS_LIMIT` (default 500).
+
 ## Manual trigger (ops)
 
 `POST /api/admin/congress-share` (admin-gated via `requireAdmin`) runs the batch

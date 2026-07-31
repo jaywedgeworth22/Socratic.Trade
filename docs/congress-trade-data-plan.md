@@ -98,5 +98,4 @@ slower cadence and rely more on each other's cache; nothing requires a paid tier
 - [ ] Apply #46 migration (then App B flips `CONGRESS_SHARE_FUNDAMENTALS_ENABLED`).
 - [ ] Treat App B prices as fill/fallback vs FMP-adjusted until §4.1 is settled; then cut FMP
   price-refresh to gap-fills.
-- [ ] (Optional) expose the distinct-ticker list (or a "missing price history" list) so App B can
-  backfill exactly what App A needs.
+- [x] Expose missing price-history list: App A `GET /api/export/price-needs`; App B merges + deep-shares (2026-07-30).
