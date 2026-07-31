@@ -8,6 +8,7 @@
 // local watermark write is harmless (the receiver dedupes the deterministic v2 identity).
 
 import {
+  audit,
   getDb,
   listProviderUsageOutboxRows,
   reconcileStaleProviderDispatches,
@@ -19,6 +20,7 @@ import {
   createRagUsageMonitorEvent,
   sendUsageMonitorBatch,
   usageMonitorEnabled,
+  usageMonitorV2IdempotencyKey,
   type UsageMonitorEvent,
 } from "./usage-monitor-push";
 
@@ -382,10 +384,18 @@ function optionalFinite(value: number | null): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-async function llmEvents(rows: LlmUsageLedgerRow[]): Promise<UsageMonitorEvent[]> {
+/** One ledger row paired with the exact event built from it, so a monitor-named collision key
+ *  can be mapped back to the precise row to skip. */
+interface RowEventPair<Row> {
+  row: Row;
+  event: UsageMonitorEvent;
+}
+
+async function llmEvents(rows: LlmUsageLedgerRow[]): Promise<RowEventPair<LlmUsageLedgerRow>[]> {
   return Promise.all(
-    rows.map((row) =>
-      createLlmUsageMonitorEvent({
+    rows.map(async (row) => ({
+      row,
+      event: await createLlmUsageMonitorEvent({
         sourceEventId: row.id,
         occurredAt: row.created_at,
         provider: row.provider,
@@ -399,14 +409,15 @@ async function llmEvents(rows: LlmUsageLedgerRow[]): Promise<UsageMonitorEvent[]
         totalTokens: optionalFinite(row.total_tokens),
         costUsd: optionalFinite(row.cost_usd),
       })
-    )
+    }))
   );
 }
 
-async function ragEvents(rows: RagUsageLedgerRow[]): Promise<UsageMonitorEvent[]> {
+async function ragEvents(rows: RagUsageLedgerRow[]): Promise<RowEventPair<RagUsageLedgerRow>[]> {
   return Promise.all(
-    rows.map((row) =>
-      createRagUsageMonitorEvent({
+    rows.map(async (row) => ({
+      row,
+      event: await createRagUsageMonitorEvent({
         sourceEventId: row.id,
         occurredAt: row.created_at,
         provider: row.provider,
@@ -418,7 +429,7 @@ async function ragEvents(rows: RagUsageLedgerRow[]): Promise<UsageMonitorEvent[]
         batchCount: optionalFinite(row.batch_count),
         costUsd: optionalFinite(row.cost_est_usd),
       })
-    )
+    }))
   );
 }
 
@@ -434,22 +445,41 @@ function readProviderRows(
     : rows;
 }
 
-async function providerEvents(rows: ProviderUsageOutboxRow[]): Promise<UsageMonitorEvent[]> {
+async function providerEvents(rows: ProviderUsageOutboxRow[]): Promise<RowEventPair<ProviderUsageOutboxRow>[]> {
   // Retired provider families return null from createProviderDispatchUsageMonitorEvent. Drop them
   // here so replay still advances its watermark past those rows (empty batches ACK as true).
-  const built = await Promise.all(rows.map((row) => createProviderDispatchUsageMonitorEvent({
-    sourceEventId: row.id,
-    occurredAt: row.occurred_at,
-    provider: row.provider,
-    operation: row.operation,
-    credentialRef: row.credential_ref,
-    userId: row.user_id,
-    outcome: row.outcome,
-    requests: row.requests,
-    estimatedCostUsd: row.estimated_cost_usd,
-    ...(row.actual_cost_usd == null ? {} : { actualCostUsd: row.actual_cost_usd }),
+  const built = await Promise.all(rows.map(async (row) => ({
+    row,
+    event: await createProviderDispatchUsageMonitorEvent({
+      sourceEventId: row.id,
+      occurredAt: row.occurred_at,
+      provider: row.provider,
+      operation: row.operation,
+      credentialRef: row.credential_ref,
+      userId: row.user_id,
+      outcome: row.outcome,
+      requests: row.requests,
+      estimatedCostUsd: row.estimated_cost_usd,
+      ...(row.actual_cost_usd == null ? {} : { actualCostUsd: row.actual_cost_usd }),
+    })
   })));
-  return built.filter((event): event is UsageMonitorEvent => event !== null);
+  return built.filter((pair): pair is RowEventPair<ProviderUsageOutboxRow> => pair.event !== null);
+}
+
+/**
+ * Bound on collision-skip retries within one page: each 409 names exactly one key, so a page
+ * with several poison rows needs one resend per poison row. Beyond this cap the pass fails and
+ * the next interval continues — the skip is audited per row, never silent.
+ */
+const MAX_COLLISION_SKIPS_PER_PAGE = 25;
+
+/** Index of the pair whose event the monitor named in a 409 collision, or -1 when none matches. */
+async function findCollisionPairIndex<Row>(
+  pairs: RowEventPair<Row>[],
+  collisionKey: string
+): Promise<number> {
+  const keys = await Promise.all(pairs.map((pair) => usageMonitorV2IdempotencyKey(pair.event.eventId)));
+  return keys.findIndex((key) => key === collisionKey);
 }
 
 async function replayLedger<Row extends { id: string; created_at: string }>(input: {
@@ -464,7 +494,7 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
     limit: number,
     upperBound?: ReplayCursor | null
   ) => Row[];
-  toEvents: (rows: Row[]) => Promise<UsageMonitorEvent[]>;
+  toEvents: (rows: Row[]) => Promise<RowEventPair<Row>[]>;
 }): Promise<LedgerReplayResult> {
   let sent = 0;
   try {
@@ -484,10 +514,53 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
         return { sent, complete: true, failed: false };
       }
 
-      const events = await input.toEvents(rows);
-      const acknowledged = await sendUsageMonitorBatch(events);
-      if (!acknowledged) {
-        return { sent, complete: false, failed: true };
+      const pending = await input.toEvents(rows);
+      // IDEMPOTENCY-COLLISION SELF-HEAL (prod incident 2026-07-28..30): the monitor answers a
+      // batch containing a key it already holds with DIFFERENT content by 409-ing the WHOLE
+      // batch. Pre-gitSha-strip events (see usage-monitor-push.ts) collide after every deploy,
+      // which wedged the watermark behind one row and starved every newer row behind it. When
+      // the monitor names the colliding key, that row's usage is already recorded monitor-side
+      // (the collision IS proof of prior delivery), so skip exactly that row — audited — and
+      // resend the rest instead of failing the page forever.
+      let acknowledged = false;
+      let collisionSkips = 0;
+      for (;;) {
+        let collisionKey: string | null = null;
+        acknowledged = await sendUsageMonitorBatch(
+          pending.map((pair) => pair.event),
+          { onIdempotencyCollision: (key) => { collisionKey = key; } }
+        );
+        if (acknowledged) break;
+        if (!collisionKey || collisionSkips >= MAX_COLLISION_SKIPS_PER_PAGE) {
+          return { sent, complete: false, failed: true };
+        }
+        const index = await findCollisionPairIndex(pending, collisionKey);
+        if (index === -1) {
+          // The named key isn't in this page — nothing safe to skip; fail the pass as before.
+          return { sent, complete: false, failed: true };
+        }
+        const [skipped] = pending.splice(index, 1);
+        collisionSkips += 1;
+        console.warn(
+          `[usage-monitor-replay] skipping ledger row ${skipped.row.id} (${input.watermarkKey}): ` +
+          `monitor already holds idempotency key ${collisionKey} (prior-delivery collision).`
+        );
+        audit(
+          "usage_monitor_replay_collision_skip",
+          {
+            watermarkKey: input.watermarkKey,
+            rowId: skipped.row.id,
+            rowCreatedAt: skipped.row.created_at,
+            idempotencyKey: collisionKey
+          },
+          "local"
+        );
+        if (pending.length === 0) {
+          // Every row in the page was already monitor-side: treat the page as acknowledged so
+          // the watermark advances past it.
+          acknowledged = true;
+          break;
+        }
       }
 
       const last = rows.at(-1)!;

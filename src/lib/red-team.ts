@@ -413,6 +413,15 @@ export async function debateProposal(
             finalModel = attempt.model;
 
             if (!text) {
+              // An HTTP-200 with EMPTY content is a provider-side glitch (overloaded/deprecated
+              // model), not a verdict: fail over to the next planned reviewer when one remains
+              // instead of declaring the whole review unavailable. Fail-closed semantics are
+              // unchanged — if the chain is exhausted the review is still unavailable.
+              if (!isLast) {
+                lastError = new Error("Red Team review returned no response.");
+                console.warn(`[RedTeam] ${attempt.model}/${attempt.provider} returned an empty response; failing over to ${next.model}/${next.provider}.`);
+                continue;
+              }
               return {
                 text: undefined,
                 debate: unavailable("Red Team review returned no response.", "malformed_response", attempt.model)
@@ -439,6 +448,15 @@ export async function debateProposal(
             const verdictKeyOccurrences = (escapeNormalizedText.match(/(?<![\w"'])["']?verdict["']?\s*:/g) ?? []).length;
             if (verdictKeyOccurrences > 1) {
               console.warn(`Red Team response contained ${verdictKeyOccurrences} verdict blocks; treating the review as ambiguous/unavailable.`);
+              // The ambiguity guard stays fail-CLOSED for THIS attempt (no verdict is guessed),
+              // but a second conflicting block is one model's output quirk — a fallback reviewer
+              // usually won't emit it, so fail over when the chain has another attempt. If the
+              // chain is exhausted the review is unavailable exactly as before.
+              if (!isLast) {
+                lastError = new Error("Red Team returned multiple conflicting verdict blocks.");
+                console.warn(`[RedTeam] ${attempt.model}/${attempt.provider} returned an ambiguous response; failing over to ${next.model}/${next.provider}.`);
+                continue;
+              }
               return {
                 text,
                 debate: unavailable(
@@ -460,6 +478,13 @@ export async function debateProposal(
               parsed = JSON.parse(extractJsonPayload(text));
             } catch {
               const looksLikeRefusal = /^(i can'?t|i cannot|i'?m not able|i am not able|as an ai)/i.test(text.trim());
+              // Unparseable output is model-specific garbage, not a verdict: fail over to the
+              // next planned reviewer when one remains (fail-closed if the chain is exhausted).
+              if (!isLast) {
+                lastError = new Error("Red Team returned an unparseable response (not valid JSON).");
+                console.warn(`[RedTeam] ${attempt.model}/${attempt.provider} returned an unparseable response; failing over to ${next.model}/${next.provider}.`);
+                continue;
+              }
               return {
                 text,
                 debate: unavailable(
@@ -481,6 +506,13 @@ export async function debateProposal(
             const verdict = validateRedTeamVerdictShape(parsed);
             if (!verdict) {
               console.warn(`Red Team returned a malformed verdict; first 200 chars: ${text.slice(0, 200)}`);
+              // Shape failure is this model's output problem: fail over when a fallback reviewer
+              // remains; fail closed only once the whole chain has failed.
+              if (!isLast) {
+                lastError = new Error("Red Team returned a malformed verdict (missing/unknown 'verdict').");
+                console.warn(`[RedTeam] ${attempt.model}/${attempt.provider} returned a malformed verdict; failing over to ${next.model}/${next.provider}.`);
+                continue;
+              }
               return {
                 text,
                 debate: unavailable(

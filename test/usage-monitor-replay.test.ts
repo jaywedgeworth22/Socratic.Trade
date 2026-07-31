@@ -705,4 +705,66 @@ describe("usage monitor durable replay", () => {
     expect(breaker.consecutiveFailures).toBe(0); // breaker untouched by the local validation reject
     expect(breaker.openUntil).toBe(0);
   });
+
+  it("self-heals a 409 idempotency collision: skips exactly the monitor-named row, resends the rest, advances the watermark", async () => {
+    // Prod incident 2026-07-28..30: a row already persisted monitor-side (pre-deploy content,
+    // volatile gitSha) made the monitor 409 the WHOLE batch on every replay, permanently
+    // wedging the watermark and starving every newer row. The collision IS proof of prior
+    // delivery, so replay now skips exactly the named row (audited) and resends the rest.
+    insertLlm({ id: "llm-collide", createdAt: "2026-07-29T10:00:00.000Z", costUsd: 0.07 });
+    insertLlm({ id: "llm-fresh", createdAt: "2026-07-29T10:01:00.000Z", costUsd: 0.08 });
+    getDb().prepare("DELETE FROM audit_events WHERE kind = 'usage_monitor_replay_collision_skip'").run();
+    const collidingKey = await push.usageMonitorV2IdempotencyKey(telemetryKey("llm", "llm-collide"));
+
+    const captured: CapturedRequest[] = [];
+    let calls = 0;
+    push.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
+      calls += 1;
+      const rawBody = String(init?.body ?? "{}");
+      captured.push({ rawBody, body: JSON.parse(rawBody) });
+      if (calls === 1) {
+        return new Response(
+          JSON.stringify({ error: `Idempotency key collision for "${collidingKey}". Event content differs from the stored event.` }),
+          { status: 409, headers: { "content-type": "application/json" } }
+        );
+      }
+      return ack(JSON.parse(rawBody).events.length);
+    }) as unknown as typeof fetch);
+
+    const result = await replay.runUsageMonitorReplay();
+
+    expect(result.llm).toEqual({ sent: 2, complete: true, failed: false });
+    expect(calls).toBe(2); // first attempt 409'd; resend without the poison row ACKed
+    const firstIds = captured[0]!.body.events.map((event) => event.eventId);
+    expect(firstIds).toEqual([telemetryKey("llm", "llm-collide"), telemetryKey("llm", "llm-fresh")]);
+    const resentIds = captured[1]!.body.events.map((event) => event.eventId);
+    expect(resentIds).toEqual([telemetryKey("llm", "llm-fresh")]); // only the colliding row was dropped
+    // Watermark advanced past BOTH rows (the collision row counts as delivered monitor-side).
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toEqual({
+      createdAt: "2026-07-29T10:01:00.000Z",
+      id: "llm-fresh",
+    });
+    // The skip is loudly audited, never silent.
+    const skipAudit = getDb()
+      .prepare("SELECT payload FROM audit_events WHERE kind = 'usage_monitor_replay_collision_skip'")
+      .all() as Array<{ payload: string }>;
+    expect(skipAudit).toHaveLength(1);
+    expect(JSON.parse(skipAudit[0]!.payload)).toMatchObject({
+      rowId: "llm-collide",
+      idempotencyKey: collidingKey,
+    });
+  });
+
+  it("still fails the pass when the monitor names a collision key that is NOT in the page", async () => {
+    insertLlm({ id: "llm-innocent", createdAt: "2026-07-29T11:00:00.000Z", costUsd: 0.05 });
+    push.__setUsageMonitorFetch((async () => new Response(
+      JSON.stringify({ error: 'Idempotency key collision for "socratic-trade:llm:not-in-this-page".' }),
+      { status: 409, headers: { "content-type": "application/json" } }
+    )) as unknown as typeof fetch);
+
+    const result = await replay.runUsageMonitorReplay();
+
+    expect(result.llm).toEqual({ sent: 0, complete: false, failed: true });
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toBeNull();
+  });
 });
