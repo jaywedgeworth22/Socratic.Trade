@@ -163,7 +163,23 @@ sent, responses, autoEnabled }`, where `responses` carries App A's per-POST
 | `CONGRESS_SHARE_REF_TTL_MS` | `21600000` (6h) | Per-symbol scan-refs throttle. |
 | `CONGRESS_SHARE_TIMEOUT_MS` | `15000` | Per-POST timeout. |
 
-## Reverse direction (not implemented)
+## Reverse direction (App A pulls App B — implemented 2026-07-31)
+
+App A can now PULL App B's EOD bars over HTTP (cache-aside primary price source), token-gated with
+the same `APP_B_INGEST_TOKEN` bearer as `/api/admin/securities/import`
+(`verifySecuritiesImportToken`; middleware passes bearer requests through to exactly these two paths):
+
+- `GET /api/market/prices/{symbol}?from=YYYY-MM-DD&to=YYYY-MM-DD` → the shared-package
+  `PriceSeries` envelope: `{ ticker, closes: [{date, close, volume?}, ...], currentPrice,
+  currentPriceDate }`. Closes are DESCENDING (closes[0] = latest); `from`/`to` optional, inclusive
+  (default ~1y back → today); `currentPrice` is the newest close of the FULL series
+  (range-independent). Unknown symbol / empty range → 200 with `{ ticker, closes: [] }` — never an
+  error status, so App A only treats genuine non-200s as "try the fallback provider".
+- `GET /api/market/spx?from=&to=` → `{ closes: [...] }` DESCENDING, from SPY daily bars (the
+  benchmark convention App A already uses).
+
+Bars come from the canonical `fetchDailyOHLC` cascade (Massive keyed first, ~30min in-process
+cache) — see `src/lib/market-read.ts` and `docs/rollouts/2026-07-31-market-read-routes.md`.
 
 App A also exposes public, no-auth reads (e.g.
 `GET https://congress.trade/api/analytics/ticker/{TICKER}` → a `ref` object) that
