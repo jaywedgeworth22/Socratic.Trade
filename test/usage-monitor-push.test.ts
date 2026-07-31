@@ -817,4 +817,84 @@ describe("usage-monitor-push", () => {
       expect(debug.breaker.openUntil).toBeGreaterThan(Date.now());
     });
   });
+
+  describe("idempotency-replay stability (prod 2026-07-28..30 collision incident)", () => {
+    it("never embeds the volatile deploy gitSha in pushed event metadata, even when one is set", async () => {
+      // The monitor compares FULL event metadata when deduping an idempotency key. gitSha
+      // changes on every auto-deploy, so a replayed ledger row rebuilt after a deploy collided
+      // with the same key's pre-deploy content (monitor 409, wedged watermark). gitSha must be
+      // absent from the wire metadata even when the deploy env exposes one.
+      process.env.GITHUB_SHA = "abc1234deadbeef";
+      try {
+        const captured: CapturedRequest[] = [];
+        push.__setUsageMonitorFetch(makeFetchStub(captured));
+        push.pushLlmUsage({
+          sourceEventId: "llm-gitsha-strip",
+          provider: "anthropic",
+          model: "anthropic/claude-opus-4-8",
+          context: "strategy",
+          userId: "local",
+          keySource: "operator",
+          totalTokens: 100,
+          costUsd: 0.01,
+        });
+        await push.flushUsageMonitor();
+
+        expect(captured).toHaveLength(1);
+        const metadata = captured[0]!.body.events[0]!.metadata as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty("gitSha");
+        // The stable classifier fields still ship — only the volatile one is stripped.
+        expect(metadata.model).toBe("anthropic/claude-opus-4-8");
+      } finally {
+        delete process.env.GITHUB_SHA;
+      }
+    });
+
+    it("usageMonitorCollisionKeyFromError extracts the monitor-named key from a 409, null otherwise", async () => {
+      const { UsageTelemetryApiError } = await import("@jaywedgeworth22/congress-trading-shared");
+      const conflict = new UsageTelemetryApiError({
+        status: 409,
+        code: "idempotency_conflict",
+        message: 'Idempotency key collision for "socratic-trade:llm:deadbeef". Event content differs from the stored event.',
+        retryable: false,
+      });
+      expect(push.usageMonitorCollisionKeyFromError(conflict)).toBe("socratic-trade:llm:deadbeef");
+
+      const rateLimited = new UsageTelemetryApiError({
+        status: 429,
+        code: "rate_limited",
+        message: "slow down",
+        retryable: true,
+      });
+      expect(push.usageMonitorCollisionKeyFromError(rateLimited)).toBeNull();
+      expect(push.usageMonitorCollisionKeyFromError(new Error("Idempotency key collision for \"x\""))).toBeNull();
+      expect(push.usageMonitorCollisionKeyFromError("string error")).toBeNull();
+    });
+
+    it("sendUsageMonitorBatch surfaces a 409 collision key through onIdempotencyCollision and returns false", async () => {
+      push.__setUsageMonitorFetch((async () => new Response(
+        JSON.stringify({ error: 'Idempotency key collision for "socratic-trade:llm:cafe".' }),
+        { status: 409, headers: { "content-type": "application/json" } }
+      )) as unknown as typeof fetch);
+
+      const collisions: string[] = [];
+      const ok = await push.sendUsageMonitorBatch(
+        [{
+          environment: "test",
+          provider: "openai",
+          service: "llm",
+          project: "socratic-trade",
+          metricType: "cost",
+          quantity: 1,
+          unit: "token",
+          confidence: "actual",
+          occurredAt: "2026-07-29T00:00:00.000Z",
+          eventId: "socratic-trade:llm:collision-test",
+        }] as unknown as Parameters<typeof push.sendUsageMonitorBatch>[0],
+        { onIdempotencyCollision: (key) => collisions.push(key) }
+      );
+      expect(ok).toBe(false); // batch as a whole was rejected; the caller skips the named row
+      expect(collisions).toEqual(["socratic-trade:llm:cafe"]);
+    });
+  });
 });
