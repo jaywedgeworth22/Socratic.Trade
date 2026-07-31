@@ -38,6 +38,8 @@ import {
   marketQuoteToRef,
   ohlcBarsToCloses,
   ohlcBarsToPriceEntry,
+  fetchCongressPriceNeeds,
+  mergeShareUniverse,
   resetCongressRefThrottle,
   runCongressDailyShare,
   runCongressDailyShareIfDue,
@@ -528,7 +530,10 @@ describe("runCongressDailyShare — insider + short-volume on the nightly batch"
     const res = await runCongressDailyShare({ now: Date.now(), force: true }); // non-custom → builds both
     expect(res.insiderRows).toBeGreaterThanOrEqual(1);
     expect(res.shortVolRows).toBeGreaterThanOrEqual(1);
-    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    // Scheduled runs also GET /price-needs (no body); only parse POSTs with a body.
+    const bodies = fetchSpy.mock.calls
+      .filter((c) => (c[1] as RequestInit | undefined)?.body != null)
+      .map((c) => JSON.parse((c[1] as RequestInit).body as string));
     expect(bodies.some((b) => Array.isArray(b.insider) && b.insider.length >= 1)).toBe(true);
     expect(bodies.some((b) => Array.isArray(b.shortVolume) && b.shortVolume.length >= 1)).toBe(true);
     // No single POST bundles everything — each dataset rides its own bounded request.
@@ -647,5 +652,94 @@ describe("shareScanRefs — fundamentals + analyst", () => {
     expect(body.refs[0].ticker).toBe("AAPL"); // refs still flow
     expect(body.fundamentals).toEqual([]); // held
     expect(body.analyst).toEqual([]); // held
+  });
+});
+
+// ── App A price-needs (congressional performance vs S&P) ───────────────────────
+
+describe("mergeShareUniverse", () => {
+  it("puts needs first, dedupes, and caps", () => {
+    expect(mergeShareUniverse(["MSFT", "AAPL"], ["NEED", "aapl"], 10)).toEqual(["NEED", "AAPL", "MSFT"]);
+    expect(mergeShareUniverse(["A", "B", "C"], ["X", "Y"], 3)).toEqual(["X", "Y", "A"]);
+  });
+});
+
+describe("fetchCongressPriceNeeds", () => {
+  it("returns empty without token", async () => {
+    delete process.env.CONGRESS_TRADE_TOKEN;
+    const res = await fetchCongressPriceNeeds(10);
+    expect(res.tickers).toEqual([]);
+  });
+
+  it("parses App A response and soft-fails on HTTP errors", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_TRADE_BASE_URL = "https://congress.example";
+    const okFetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          tickers: [
+            { ticker: "need", oldestTradeDate: "2019-01-01", needsDeepHistory: true, reasons: ["no_price_history"] },
+            { ticker: "" }
+          ],
+          spx: { needsHistoryBefore: "2014-01-01" }
+        }),
+        { status: 200 }
+      )
+    );
+    const res = await fetchCongressPriceNeeds(50, okFetch as unknown as typeof fetch);
+    expect(res.tickers).toEqual([
+      { ticker: "NEED", oldestTradeDate: "2019-01-01", needsDeepHistory: true, reasons: ["no_price_history"] }
+    ]);
+    expect(res.spx?.needsHistoryBefore).toBe("2014-01-01");
+    const calls = okFetch.mock.calls as unknown as Array<[unknown, ...unknown[]]>;
+    expect(String(calls[0]?.[0] ?? "")).toContain("/api/export/price-needs?limit=50");
+
+    const bad = await fetchCongressPriceNeeds(
+      10,
+      vi.fn(async () => new Response("nope", { status: 403 })) as unknown as typeof fetch
+    );
+    expect(bad.tickers).toEqual([]);
+  });
+});
+
+describe("runCongressDailyShare — fromAppANeeds + deep history for needs", () => {
+  it("shares App A needs tickers with full history when needsDeepHistory", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_MAX_CLOSES_PER_TICKER = "2";
+    const bars = (n: number): OHLCBar[] =>
+      Array.from({ length: n }, (_, i) => ({
+        time: `2020-01-${String(i + 1).padStart(2, "0")}`,
+        close: 100 + i
+      }));
+    mockedFetchDailyOHLC.mockImplementation(async (sym: string) => {
+      if (sym === "^GSPC") return bars(5);
+      return bars(5);
+    });
+    const fetchSpy = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/export/price-needs")) {
+        return new Response(
+          JSON.stringify({
+            tickers: [{ ticker: "NEED", needsDeepHistory: true, oldestTradeDate: "2020-01-01" }],
+            spx: { needsHistoryBefore: "2020-01-01" }
+          }),
+          { status: 200 }
+        );
+      }
+      // import POST
+      return new Response(JSON.stringify({ ok: true, perfTickers: 1 }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const summary = await runCongressDailyShare({ force: true, fromAppANeeds: true });
+    expect(summary.ok).toBe(true);
+    expect(summary.tickers).toBe(1);
+    // price-needs GET + SPX/prices POSTs
+    const importBodies = fetchSpy.mock.calls
+      .filter((c) => String(c[0]).includes("/securities/import"))
+      .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+    const pricePost = importBodies.find((b) => Array.isArray(b.prices) && b.prices.length);
+    expect(pricePost?.prices[0].ticker).toBe("NEED");
+    // full history despite MAX_CLOSES=2
+    expect(pricePost?.prices[0].closes.length).toBe(5);
   });
 });
