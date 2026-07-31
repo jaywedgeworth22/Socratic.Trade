@@ -11,7 +11,7 @@ import { isEarningsCallsRefreshDue, refreshEarningsCallsTranscriptsIfDue } from 
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
-import { runR2UsageCheckIfDue } from "./r2-usage";
+import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
 import { checkBrokerHealth } from "./broker-health";
 import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
@@ -507,6 +507,12 @@ async function tick(): Promise<void> {
   // crossings and persists a snapshot for the admin dashboard card.
   void journalLane("r2-usage-check", {}, () => runR2UsageCheckIfDue())
     .catch((err) => console.error("[scheduler] r2 usage check error:", err));
+
+  // Daily R2 free-tier digest (owner opt-in 2026-07-31): fresh check + notify()
+  // summary of MTD usage and month-end pace, whether or not anything crossed.
+  // Separate watermark from the 6h check; disable with R2_USAGE_DAILY_DIGEST=off.
+  void journalLane("r2-usage-daily-digest", {}, () => runR2UsageDailyDigestIfDue())
+    .catch((err) => console.error("[scheduler] r2 usage digest error:", err));
 
   // 10-K/10-Q bodies and default-OFF FMP transcripts have separate producer cadences, request
   // budgets, and cursors. They share the durable RAG_REINDEX operation lease and this demand-first
