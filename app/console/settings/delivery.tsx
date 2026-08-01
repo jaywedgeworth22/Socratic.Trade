@@ -31,13 +31,49 @@ import {
 
 const CHANNEL_TITLE: Record<DeliveryChannelDescriptor["id"], string> = {
   push: "A push notification on your phone via a notification app — usually the fastest and cheapest channel.",
-  pushover: "Pushover push notifications to your phone. Needs user key.",
+  pushover: "Pushover push notifications to your phone. Paste your own application API token + user key below — no server setup needed.",
   webhook: "An HTTPS POST with a JSON payload to any URL you control (chat webhooks get rich embeds).",
   email: "An email per alert. Needs the server operator to have configured an email provider.",
-  sms: "A text message per alert. Needs the server operator's Twilio credentials; carrier rates may apply."
+  sms: "A text message per alert. Uses your own Twilio credentials below, or the server operator's if none are saved here; carrier rates may apply."
 };
 
 type TargetField = "pushTarget" | "pushoverTarget" | "webhookUrl" | "email" | "phone";
+
+/** Per-user channel credential fields (write-only secrets; server stores them
+ *  encrypted and only ever returns presence flags). */
+type SecretField = "pushoverAppToken" | "twilioAccountSid" | "twilioAuthToken" | "twilioFrom";
+
+const SECRET_FIELD_META: Record<SecretField, { label: string; placeholder: string; hint: string; setFlag: "pushoverAppTokenSet" | "twilioAccountSidSet" | "twilioAuthTokenSet" | "twilioFromSet" }> = {
+  pushoverAppToken: {
+    label: "Pushover application API token",
+    placeholder: "azGDORePK8gMaC0QOYAMyEEuzJnyUi",
+    hint: "Your own Pushover app token — create one at pushover.net/apps. Stored encrypted; never shown again.",
+    setFlag: "pushoverAppTokenSet"
+  },
+  twilioAccountSid: {
+    label: "Twilio Account SID",
+    placeholder: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    hint: "From your Twilio console. Stored encrypted; never shown again.",
+    setFlag: "twilioAccountSidSet"
+  },
+  twilioAuthToken: {
+    label: "Twilio Auth Token",
+    placeholder: "••••••••",
+    hint: "From your Twilio console. Stored encrypted; never shown again.",
+    setFlag: "twilioAuthTokenSet"
+  },
+  twilioFrom: {
+    label: "Twilio sender number (From)",
+    placeholder: "+14155551234",
+    hint: "Your Twilio phone number that alerts are sent from.",
+    setFlag: "twilioFromSet"
+  }
+};
+
+const CHANNEL_SECRET_FIELDS: Partial<Record<DeliveryChannelDescriptor["id"], SecretField[]>> = {
+  pushover: ["pushoverAppToken"],
+  sms: ["twilioAccountSid", "twilioAuthToken", "twilioFrom"]
+};
 
 interface TestResult {
   channel: string;
@@ -102,6 +138,10 @@ export function DeliveryChannelsCard() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [testBusy, setTestBusy] = useState(false);
   const [results, setResults] = useState<TestResult[] | null>(null);
+  // In-progress secret edits, keyed by field. Kept OUT of the persisted prefs
+  // object until blur — undefined keys are dropped by JSON.stringify, so an
+  // untouched secret input never clears the stored server-side value.
+  const [secretDrafts, setSecretDrafts] = useState<Partial<Record<SecretField, string>>>({});
 
   const load = useCallback(async () => {
     try {
@@ -151,6 +191,25 @@ export function DeliveryChannelsCard() {
 
   const targetValue = (field: TargetField) => prefs[field];
   const setTarget = (field: TargetField, value: string) => setLocal((l) => ({ ...(l ?? prefs), [field]: value }));
+
+  const commitSecret = (field: SecretField) => {
+    const value = (secretDrafts[field] ?? "").trim();
+    if (!value) return; // untouched or whitespace → no write, never clear by accident
+    const next = { ...prefs, [field]: value };
+    persist(next, {
+      onError: () => undefined,
+      successToast: { title: `${SECRET_FIELD_META[field].label} saved` }
+    });
+    setSecretDrafts((d) => ({ ...d, [field]: "" }));
+  };
+
+  const clearSecret = (field: SecretField) => {
+    const next = { ...prefs, [field]: "" };
+    persist(next, {
+      onError: () => undefined,
+      successToast: { title: `${SECRET_FIELD_META[field].label} removed` }
+    });
+  };
 
   const commitTarget = (field: TargetField) => {
     const raw = targetValue(field);
@@ -254,9 +313,9 @@ export function DeliveryChannelsCard() {
                     {!ch.available && (
                       <span
                         className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
-                        title="The server operator hasn't configured this channel's provider, so it can't be enabled from here."
+                        title="No credentials for this channel yet — add your own below, or ask the server operator to configure it."
                       >
-                        not configured on the server
+                        not configured
                       </span>
                     )}
                   </div>
@@ -279,6 +338,49 @@ export function DeliveryChannelsCard() {
                         title={ch.hint}
                       />
                     </Field>
+                  </div>
+                )}
+                {/* Per-user channel credentials (Pushover app token, Twilio set).
+                    Always visible for these channels — they are how you make an
+                    unavailable channel work without any server-side setup. */}
+                {(CHANNEL_SECRET_FIELDS[ch.id] ?? []).length > 0 && (
+                  <div className="mt-2 flex max-w-md flex-col gap-2 border-t border-[color:var(--con-line)] pt-2">
+                    {(CHANNEL_SECRET_FIELDS[ch.id] ?? []).map((field) => {
+                      const meta = SECRET_FIELD_META[field];
+                      const isSet = Boolean(prefs[meta.setFlag]);
+                      return (
+                        <Field
+                          key={field}
+                          label={meta.label}
+                          hint={meta.hint}
+                          htmlFor={`cred-${field}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <TextInput
+                              id={`cred-${field}`}
+                              type="password"
+                              autoComplete="off"
+                              value={secretDrafts[field] ?? ""}
+                              placeholder={isSet ? "Saved — enter to replace" : meta.placeholder}
+                              onChange={(e) => setSecretDrafts((d) => ({ ...d, [field]: e.target.value }))}
+                              onBlur={() => commitSecret(field)}
+                              title={meta.hint}
+                            />
+                            {isSet && (
+                              <Btn
+                                size="sm"
+                                variant="ghost"
+                                disabled={busy}
+                                onClick={() => clearSecret(field)}
+                                title={`Remove the saved ${meta.label} (the channel falls back to the server env if one is configured).`}
+                              >
+                                Remove
+                              </Btn>
+                            )}
+                          </div>
+                        </Field>
+                      );
+                    })}
                   </div>
                 )}
                 {/* The older, always-on legacy webhook (see WebhookUrlRow above) sits under this

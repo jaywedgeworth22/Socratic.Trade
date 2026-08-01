@@ -2473,7 +2473,22 @@ export interface NotifyPrefs {
   webhookUrl: string;
   email: string;
   phone: string;
+  /** Presence flags for per-user channel credentials — the API only ever
+   *  exposes whether a secret is stored, never the value. */
+  pushoverAppTokenSet: boolean;
+  twilioAccountSidSet: boolean;
+  twilioAuthTokenSet: boolean;
+  twilioFromSet: boolean;
   updatedAt: string | null;
+}
+
+/** Decrypted per-user delivery-channel credentials (server-side only — never
+ *  serialized to the client). Empty string = not set → env fallback applies. */
+export interface NotifyPrefsSecrets {
+  pushoverAppToken: string;
+  twilioAccountSid: string;
+  twilioAuthToken: string;
+  twilioFrom: string;
 }
 
 export interface NotifyMessage {

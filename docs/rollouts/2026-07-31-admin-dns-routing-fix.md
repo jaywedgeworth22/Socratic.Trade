@@ -30,6 +30,16 @@ Upon inspection, curling `https://admin.socratictrade.com` failed with **Cloudfl
 - **Litestream R2 Credential Repair**:
   - Found `AWS_ACCESS_KEY_ID` in Infisical project `39d93bb7-76f9-498c-8b50-a7def52e072f` was set to a 40-character string instead of the 32-character Cloudflare R2 Access Key ID.
   - Updated `AWS_ACCESS_KEY_ID` (32 chars) and `AWS_SECRET_ACCESS_KEY` (64 chars) in Infisical `prod` env via API, then restarted `socratic-app`. Litestream replication & compaction now run 100% error-free.
+- **Tests (`test/middleware-auth.test.ts`)**:
+  - Added unit test cases verifying host routing redirects for `admin.socratictrade.com`.
+
+## 4. Verification State
+- `curl -isL https://admin.socratictrade.com` -> HTTP 200 (Clean response via Cloudflare edge proxy).
+- `npx vitest test/middleware-auth.test.ts --run` -> All 38 tests passed.
+- `npm run lint` -> Passed with 0 errors.
+- `npx tsc --noEmit` -> Passed cleanly with 0 type errors.
+- `npm test` -> All 418 test files and 4,893 tests passed.
+- `npm run build` -> Full Next.js production build succeeded.
 
 ## 5. Files Touched
 - `/etc/usage-monitor/Caddyfile` (on Oracle Cloud host `141.148.182.224`)

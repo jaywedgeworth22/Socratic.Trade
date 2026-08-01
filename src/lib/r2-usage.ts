@@ -430,3 +430,86 @@ export async function runR2UsageCheckIfDue(now: number = Date.now()): Promise<vo
     }
   }
 }
+
+// ── Daily digest (owner opt-in 2026-07-31): a Pushover/notify summary of
+// free-tier consumption + pace every day, whether or not anything crossed. ──
+
+const LAST_DIGEST_KEY = "r2usage:lastDigestAt";
+
+export function r2UsageDigestEnabled(): boolean {
+  const raw = process.env.R2_USAGE_DAILY_DIGEST?.trim().toLowerCase();
+  // Default ON when the monitor is configured; explicit off/false/0/no disables.
+  return !(raw === "off" || raw === "false" || raw === "0" || raw === "no");
+}
+
+export function isR2UsageDigestDue(now: number = Date.now()): boolean {
+  const cfg = loadR2UsageMonitorConfig();
+  if (!cfg.token || !cfg.accountId || !r2UsageDigestEnabled()) return false;
+  const intervalMs = numericEnv("R2_USAGE_DIGEST_INTERVAL_HOURS", 24, 1) * 3600_000;
+  const last = getInternalSetting<string>(LAST_DIGEST_KEY);
+  if (!last) return true;
+  const lastMs = Date.parse(last);
+  if (!Number.isFinite(lastMs)) return true;
+  return now - lastMs >= intervalMs;
+}
+
+/** Compose the digest message from a snapshot. Exported for tests. */
+export function buildR2UsageDigestMessage(
+  snapshot: R2UsageSnapshot,
+): { title: string; body: string } {
+  const day = snapshot.checkedAt.slice(0, 10);
+  const anyExceeded = snapshot.metrics.some((m) => m.exceeded);
+  const title = anyExceeded
+    ? `📊 R2 free-tier daily — ${day} — ⚠️ over ${snapshot.thresholdPct}% pace`
+    : `📊 R2 free-tier daily — ${day}`;
+  const lines = snapshot.metrics.map((m) => {
+    const flag = m.exceeded ? " ⚠️" : " ✓";
+    return (
+      `${m.label}: ${formatR2MetricValue(m)} MTD (${m.pctUsed.toFixed(1)}%)` +
+      ` → pace ${m.projectedPct.toFixed(0)}% by month end${flag}`
+    );
+  });
+  const body =
+    lines.join("\n") +
+    `\n\nFree tier: 10 GiB storage / 1M Class A / 10M Class B ops per month.` +
+    ` Alert threshold: ${snapshot.thresholdPct}% pace.` +
+    (snapshot.bucketFilter ? ` Bucket: ${snapshot.bucketFilter}.` : " Scope: whole account.") +
+    `\nChecked: ${snapshot.checkedAt}`;
+  return { title, body };
+}
+
+export interface R2UsageDigestResult {
+  status: "sent" | "skipped" | "error";
+  reason?: string;
+}
+
+/** Runs a FRESH usage check (so the digest is never stale), then notifies the
+ *  summary. Self-guarded; watermark-first. */
+export async function runR2UsageDailyDigestIfDue(
+  now: number = Date.now(),
+  deps: GraphqlDeps & { notifyImpl?: typeof notify } = {},
+): Promise<R2UsageDigestResult> {
+  try {
+    if (!isR2UsageDigestDue(now)) return { status: "skipped", reason: "not_due" };
+    setInternalSetting(LAST_DIGEST_KEY, new Date(now).toISOString());
+    const check = await runR2UsageCheck(now, deps);
+    if (check.status !== "ok" || !check.snapshot) {
+      return { status: "skipped", reason: check.reason ?? "check_failed" };
+    }
+    const { title, body } = buildR2UsageDigestMessage(check.snapshot);
+    const notifyImpl = deps.notifyImpl ?? notify;
+    await notifyImpl("local", { title, body, kind: "r2-usage-digest" });
+    audit("r2_usage.digest", {
+      exceeded: check.snapshot.metrics.filter((m) => m.exceeded).map((m) => m.id),
+    });
+    return { status: "sent" };
+  } catch (err) {
+    console.error("[r2-usage] daily digest error:", err);
+    try {
+      audit("r2_usage.digest_error", { error: err instanceof Error ? err.message : String(err) });
+    } catch {
+      /* never throw */
+    }
+    return { status: "error", reason: err instanceof Error ? err.message : String(err) };
+  }
+}
