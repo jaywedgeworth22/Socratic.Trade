@@ -625,4 +625,22 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.headers.get("x-middleware-request-x-authenticated-user-email")).toBeNull();
     expect(res.headers.get("x-middleware-request-x-user-id")).toBeNull();
   });
+
+  it("redirects admin.socratictrade.com / and shorthand routes to /admin", async () => {
+    const middleware = await loadMiddleware();
+
+    const rootReq = new NextRequest("https://admin.socratictrade.com/", {
+      headers: { host: "admin.socratictrade.com" }
+    });
+    const rootRes = await middleware(rootReq);
+    expect(rootRes.status).toBe(307);
+    expect(rootRes.headers.get("location")).toBe("https://admin.socratictrade.com/admin");
+
+    const serverReq = new NextRequest("https://admin.socratictrade.com/server", {
+      headers: { host: "admin.socratictrade.com" }
+    });
+    const serverRes = await middleware(serverReq);
+    expect(serverRes.status).toBe(307);
+    expect(serverRes.headers.get("location")).toBe("https://admin.socratictrade.com/admin/server");
+  });
 });

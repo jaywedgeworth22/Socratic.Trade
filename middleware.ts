@@ -262,6 +262,18 @@ function isEmailAllowed(email: string, fromCf: boolean): boolean {
 
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
+  const host = (req.headers.get("host") || "").toLowerCase().split(":")[0];
+
+  // Host-level routing: admin.socratictrade.com / admin.socratic.trade
+  if (host === "admin.socratictrade.com" || host === "admin.socratic.trade") {
+    if (pathname === "/") {
+      return NextResponse.redirect(new URL("/admin", req.url));
+    }
+    const adminSubroutes = ["/server", "/connections", "/llm-usage", "/rag-coverage", "/transcript"];
+    if (adminSubroutes.includes(pathname)) {
+      return NextResponse.redirect(new URL(`/admin${pathname}`, req.url));
+    }
+  }
 
   const isMobileAuthExchangePath = pathname === "/api/mobile/auth/exchange";
 
@@ -363,6 +375,14 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   } else if (pathname.startsWith("/api/admin/") && (req.headers.has("x-admin-token") || (req.headers.get("authorization") ?? "").trim().toLowerCase().startsWith("bearer "))) {
     // Allow unauthenticated requests with an x-admin-token or bearer token to reach the admin route handlers.
     // The middleware does NOT validate the token; the route handler's `requireAdmin()` or custom auth (like verifySecuritiesImportToken) will strictly validate it.
+  } else if (
+    (pathname.startsWith("/api/market/prices/") || pathname === "/api/market/spx") &&
+    (req.headers.get("authorization") ?? "").trim().toLowerCase().startsWith("bearer ")
+  ) {
+    // Allow unauthenticated requests with a bearer token to reach the token-gated market READ handlers
+    // (congress.trade cache-aside price pulls). The middleware does NOT validate the token; the route
+    // handler's verifySecuritiesImportToken (APP_B_INGEST_TOKEN) strictly validates it. Deliberately
+    // scoped to these two paths only — /api/market/flatfile stays session-gated.
   } else {
     // No verified identity and auth is configured (or armed) → FAIL CLOSED.
     return withSecurityHeaders(

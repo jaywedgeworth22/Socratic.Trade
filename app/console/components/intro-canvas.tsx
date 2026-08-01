@@ -228,7 +228,7 @@ function buildModel(): Model {
     s.bt = s.wt + (wh - bh) * u.off; s.bb = s.bt + bh; s.col = u.col;
   };
   const candleAt = (j: number, t: number, L: Layout): Geo => {
-    if (t < BL[j]) { const g = chartGeom(j, t, L); g.col = g.up ? "#18b271" : "#d3365a"; return g; }
+    if (t < BL[j]) { const g = chartGeom(j, t, L); g.col = g.up ? "#059669" : "#dc2626"; return g; }
     const header = { ...headerGeom(j, L), col: INCOL[j] };
     if (!CENTER_WORDMARK_STEP) {
       // Direct path: each candle flies chart -> header logo in one leg, then ticks.
@@ -373,7 +373,7 @@ export function ConsoleIntro() {
       L.header = cur;
       ctx.clearRect(0, 0, VW, VH);
       for (let j = 0; j < model.M; j++) {
-        const c = model.candleAt(j, t, L); const col = c.col || "#18b271";
+        const c = model.candleAt(j, t, L); const col = c.col || "#059669";
         ctx.strokeStyle = col; ctx.lineWidth = Math.max(1, c.bw * 0.26); ctx.lineCap = "round";
         ctx.beginPath(); ctx.moveTo(c.x, c.wt); ctx.lineTo(c.x, c.wb); ctx.stroke();
         ctx.fillStyle = col; const bh = Math.max(1.4, c.bb - c.bt); roundRect(ctx, c.x - c.bw / 2, c.bt, c.bw, bh, Math.min(2, c.bw * 0.25)); ctx.fill();

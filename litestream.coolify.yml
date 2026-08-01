@@ -9,7 +9,11 @@
 # scripts/coolify-prod-start.sh; harmless everywhere else.
 socket:
   enabled: true
-  path: /var/run/litestream.sock
+  # Writable by the container `node` user. /var/run/litestream.sock fails with
+  # "bind: permission denied" under Coolify (node is non-root), which left IPC
+  # dead and /api/health stuck on storageDegraded=unavailable even while R2
+  # replication was healthy. Keep next to the DB volume.
+  path: /app/data/litestream.sock
   permissions: 0600
 
 dbs:

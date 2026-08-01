@@ -2497,6 +2497,26 @@ const MIGRATIONS: Migration[] = [
         // Table might not exist in isolated tests
       }
     }
+  },
+  {
+    version: 64,
+    name: "notify_per_user_channel_credentials",
+    up: (database) => {
+      // Per-user delivery-channel credentials (owner directive 2026-07-31):
+      // Pushover app token + Twilio set live in user settings, encrypted at rest
+      // via db-api-keys' encryptValue; server env vars remain as fallback.
+      try {
+        const cols = database.pragma("table_info(notification_prefs)") as { name: string }[];
+        if (cols.length === 0) return;
+        for (const col of ["pushover_app_token", "twilio_account_sid", "twilio_auth_token", "twilio_from"]) {
+          if (!cols.some((c) => c.name === col)) {
+            database.exec(`ALTER TABLE notification_prefs ADD COLUMN ${col} TEXT NOT NULL DEFAULT '';`);
+          }
+        }
+      } catch (e) {
+        // Table might not exist in isolated tests
+      }
+    }
   }
 ];
 
