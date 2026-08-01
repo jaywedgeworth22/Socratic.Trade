@@ -49,3 +49,16 @@ entirely.
 
 - None. If the owner wants storage pace alerting anyway (accepting the
   month-start noise), that's a one-line change to storage's alertBasis.
+
+## Verification addendum (2026-08-01 19:54 UTC): proven in prod
+
+- PR #2326 merged 15:39 UTC; deployed 17:11 UTC (one transient build failure
+  at 16:04 self-recovered on retry; disk healthy at 34%/56% post-migration).
+- First post-deploy check ran 19:54:08 UTC (watermark cleared manually to
+  avoid a 3h wait): `exceeded: []` with storage at 6.3 GiB (59% absolute,
+  quiet under the new basis) and Class A at 36.4k ops (floored pace ~18%).
+- **2 recovery notifications fired and delivered via `push` AND `pushover`**
+  — the latter being the first organic deliveries through the owner's new
+  per-user Pushover app token (set in Settings at 19:34 UTC). The full loop
+  — per-user credentials → per-user config → delivery — is proven.
+- Next daily digest (~23:12 UTC) runs the new basis automatically.
