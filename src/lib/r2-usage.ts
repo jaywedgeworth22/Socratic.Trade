@@ -19,6 +19,7 @@
 //   R2_USAGE_ALERT_THRESHOLD_PCT     (default 70)
 //   R2_USAGE_BUCKET_FILTER           (optional — only count this bucket; default: whole account)
 
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { getInternalSetting, setInternalSetting } from "./db-settings";
 import { audit } from "./db";
 import { notify } from "./notify";
@@ -173,6 +174,8 @@ export interface R2UsageSnapshot {
 const SNAPSHOT_KEY = "r2usage:lastSnapshot";
 const ALERT_STATE_KEY = "r2usage:alertState";
 const LAST_CHECK_KEY = "r2usage:lastCheckAt";
+const DAILY_REPORT_KEY = "r2usage:lastDailyReportAt";
+const DAILY_REPORT_INTERVAL_MS = 24 * 3600_000;
 
 export function getR2UsageSnapshot(): R2UsageSnapshot | undefined {
   try {
@@ -312,6 +315,15 @@ export interface R2UsageMonitorConfig {
   intervalHours: number;
   thresholdPct: number;
   bucketFilter: string | null;
+  /** Daily usage summary notification (owner directive 2026-08-01). Default on. */
+  dailyReport: boolean;
+  /** Hard kill-switch: when armed (live prod) and any metric is on pace past the
+   *  threshold, write the disable marker and restart the container WITHOUT
+   *  litestream so R2 usage stops growing (owner directive 2026-08-01). Default on. */
+  autoDisable: boolean;
+  /** Marker path on the persistent volume; coolify-prod-start.sh skips
+   *  `litestream replicate` while this file exists. */
+  disableMarkerPath: string;
 }
 
 export function loadR2UsageMonitorConfig(): R2UsageMonitorConfig {
@@ -323,7 +335,25 @@ export function loadR2UsageMonitorConfig(): R2UsageMonitorConfig {
     intervalHours: numericEnv("R2_USAGE_MONITOR_INTERVAL_HOURS", 6, 1),
     thresholdPct: numericEnv("R2_USAGE_ALERT_THRESHOLD_PCT", 70, 1),
     bucketFilter: process.env.R2_USAGE_BUCKET_FILTER?.trim() || null,
+    dailyReport: process.env.R2_USAGE_DAILY_REPORT !== "0",
+    autoDisable: process.env.R2_USAGE_AUTO_DISABLE !== "0",
+    disableMarkerPath: process.env.R2_USAGE_DISABLE_MARKER?.trim() || "/app/data/.litestream-r2-disabled",
   };
+}
+
+/** The auto-disable only arms in the live production container — never in dev, tests,
+ *  or a DB_BOOTSTRAP=fresh boot (which runs no replication anyway). */
+export function isR2AutoDisableArmed(cfg: R2UsageMonitorConfig): boolean {
+  return cfg.autoDisable && process.env.DB_BOOTSTRAP === "live";
+}
+
+/** True while litestream replication is disabled by the kill-switch marker. */
+export function isR2ReplicationDisabled(cfg: R2UsageMonitorConfig = loadR2UsageMonitorConfig()): boolean {
+  try {
+    return existsSync(cfg.disableMarkerPath);
+  } catch {
+    return false;
+  }
 }
 
 export function isR2UsageCheckDue(now: number = Date.now()): boolean {
@@ -348,7 +378,7 @@ export interface R2UsageCheckResult {
 
 export async function runR2UsageCheck(
   now: number = Date.now(),
-  deps: GraphqlDeps & { notifyImpl?: typeof notify } = {},
+  deps: GraphqlDeps & { notifyImpl?: typeof notify; exitImpl?: (code: number) => void } = {},
 ): Promise<R2UsageCheckResult> {
   const cfg = loadR2UsageMonitorConfig();
   if (!cfg.token || !cfg.accountId) return { status: "skipped", reason: "not_configured" };
@@ -403,6 +433,86 @@ export async function runR2UsageCheck(
     }
   }
 
+  // Daily usage summary (owner directive 2026-08-01): a standing once-a-day report of
+  // month-to-date usage + month-end projection for every metric, independent of the
+  // threshold-transition alerts above, so the owner always knows where the free tier stands.
+  let dailyReportSent = false;
+  if (cfg.dailyReport) {
+    const lastReport = getInternalSetting<string>(DAILY_REPORT_KEY);
+    const lastReportMs = lastReport ? Date.parse(lastReport) : Number.NaN;
+    if (!Number.isFinite(lastReportMs) || now - lastReportMs >= DAILY_REPORT_INTERVAL_MS) {
+      setInternalSetting(DAILY_REPORT_KEY, new Date(now).toISOString());
+      const lines = metrics.map(
+        (m) =>
+          `${m.label}: ${formatR2MetricValue(m)} MTD (${m.pctUsed.toFixed(1)}% of free tier) — ` +
+          `projected ${formatR2Projected(m)} (${m.projectedPct.toFixed(1)}%)`
+      );
+      try {
+        await notifyImpl("local", {
+          title: `R2 free-tier daily usage report`,
+          body:
+            `Month-to-date vs the Cloudflare R2 free tier (10 GiB storage, 1M Class A ops, 10M Class B ops):\n` +
+            lines.join("\n") +
+            `\nAlert/auto-disable threshold: ${cfg.thresholdPct}% projected month-end.` +
+            (isR2ReplicationDisabled(cfg)
+              ? `\nLitestream replication is currently DISABLED by the kill-switch marker.`
+              : ""),
+          kind: "r2-usage",
+        });
+        dailyReportSent = true;
+      } catch (err) {
+        console.error("[r2-usage] daily report notify error:", err);
+      }
+    }
+  }
+
+  // Hard kill-switch (owner directive 2026-08-01): when armed (live prod only) and any metric
+  // is on pace past the threshold, STOP consuming R2 — write the persistent disable marker
+  // (coolify-prod-start.sh boots without `litestream replicate` while it exists) and restart
+  // the container so replication actually halts. Stays off until the owner decides what to do
+  // and resumes via POST /api/admin/r2-usage/resume (or by deleting the marker + restarting).
+  const exceededMetrics = metrics.filter((m) => m.exceeded);
+  let autoDisabled = false;
+  if (exceededMetrics.length > 0 && isR2AutoDisableArmed(cfg) && !isR2ReplicationDisabled(cfg)) {
+    const markerPayload = {
+      disabledAt: new Date(now).toISOString(),
+      reason: `on pace to exceed ${cfg.thresholdPct}% of the R2 free tier`,
+      thresholdPct: cfg.thresholdPct,
+      exceeded: exceededMetrics.map((m) => ({
+        id: m.id,
+        mtd: m.mtd,
+        projectedPct: Number(m.projectedPct.toFixed(2)),
+      })),
+      resume: "POST /api/admin/r2-usage/resume (admin) or delete this file and restart the container",
+    };
+    try {
+      writeFileSync(cfg.disableMarkerPath, JSON.stringify(markerPayload, null, 2));
+      audit("r2_usage.auto_disabled", markerPayload);
+      try {
+        await notifyImpl("local", {
+          title: `🛑 R2 free-tier kill-switch: litestream replication auto-disabled`,
+          body:
+            `On pace to exceed ${cfg.thresholdPct}% of the R2 free tier:\n` +
+            exceededMetrics
+              .map((m) => `${m.label}: projected ${formatR2Projected(m)} (${m.projectedPct.toFixed(1)}% of free tier)`)
+              .join("\n") +
+            `\n\nReplication is OFF (container restarting without litestream) and stays off until you resume it: ` +
+            `POST /api/admin/r2-usage/resume or delete ${cfg.disableMarkerPath} and restart. ` +
+            `Note: PITR backups to R2 are paused while disabled.`,
+          kind: "r2-usage",
+        });
+      } catch (err) {
+        console.error("[r2-usage] auto-disable notify error:", err);
+      }
+      autoDisabled = true;
+    } catch (err) {
+      console.error("[r2-usage] failed to write disable marker:", err);
+      try {
+        audit("r2_usage.auto_disable_failed", { error: err instanceof Error ? err.message : String(err) });
+      } catch { /* never throw */ }
+    }
+  }
+
   audit("r2_usage.check", {
     storageBytes: raw.storageBytes,
     classAOps: raw.classAOps,
@@ -410,8 +520,38 @@ export async function runR2UsageCheck(
     elapsedFraction: Number(window.elapsedFraction.toFixed(4)),
     exceeded: metrics.filter((m) => m.exceeded).map((m) => m.id),
     alertsSent,
+    dailyReportSent,
+    autoDisabled,
   });
+
+  if (autoDisabled) {
+    // Restart the container so the start script re-boots WITHOUT litestream. notify() was
+    // awaited above, so delivery already happened; exit code is arbitrary (Coolify restarts).
+    const exitImpl = deps.exitImpl ?? ((code: number) => process.exit(code));
+    exitImpl(41);
+  }
   return { status: "ok", alertsSent, snapshot };
+}
+
+/**
+ * Re-enable litestream replication after an auto-disable: remove the kill-switch marker and
+ * restart the container (the start script boots under `litestream replicate` again). The
+ * process exit means the HTTP caller may see a connection reset — the resume still happened.
+ */
+export async function resumeR2Replication(
+  deps: { exitImpl?: (code: number) => void } = {},
+): Promise<{ resumed: boolean; reason?: string }> {
+  const cfg = loadR2UsageMonitorConfig();
+  if (!isR2ReplicationDisabled(cfg)) return { resumed: false, reason: "not_disabled" };
+  try {
+    unlinkSync(cfg.disableMarkerPath);
+  } catch (err) {
+    return { resumed: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  audit("r2_usage.resumed", { marker: cfg.disableMarkerPath });
+  const exitImpl = deps.exitImpl ?? ((code: number) => process.exit(code));
+  exitImpl(42);
+  return { resumed: true };
 }
 
 /** Cadence-gated scheduler entrypoint. Watermark-first so a busy tick loop

@@ -2636,6 +2636,15 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     const rawEarningsGrowth = (fd.earningsGrowth as { raw?: number })?.raw;
     const rawFcf = (fd.freeCashflow as { raw?: number })?.raw;
     const rawMarketCap = (sd.marketCap as { raw?: number })?.raw;
+    // FREE tier gap-fills (owner directive 2026-08-01): the financialData module is already
+    // fetched — map the analyst price-target block and revenue growth so these fields
+    // populate without FMP/congress.trade (both were the only prior sources; FMP's key is
+    // suspended and targets are otherwise paid-only).
+    const rawTargetMean = (fd.targetMeanPrice as { raw?: number })?.raw;
+    const rawTargetHigh = (fd.targetHighPrice as { raw?: number })?.raw;
+    const rawTargetLow = (fd.targetLowPrice as { raw?: number })?.raw;
+    const rawTargetMedian = (fd.targetMedianPrice as { raw?: number })?.raw;
+    const rawRevenueGrowth = (fd.revenueGrowth as { raw?: number })?.raw;
 
     const peRatio = typeof rawPe === "number" && rawPe > 0 ? rawPe : undefined;
     // Yahoo returns yield as decimal fraction (0.0036 = 0.36%); store as percentage points.
@@ -2652,6 +2661,15 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     if (typeof rawFcf === "number" && typeof rawMarketCap === "number" && rawMarketCap > 0) {
       fcfYield = Math.round((rawFcf / rawMarketCap) * 10000) / 100;
     }
+    // Positive-only targets (a 0/negative is a "no value" sentinel, matching the congress.trade
+    // and FMP parsers — never let a bad target win first-wins).
+    const targetMean = typeof rawTargetMean === "number" && rawTargetMean > 0 ? rawTargetMean : undefined;
+    const targetHigh = typeof rawTargetHigh === "number" && rawTargetHigh > 0 ? rawTargetHigh : undefined;
+    const targetLow = typeof rawTargetLow === "number" && rawTargetLow > 0 ? rawTargetLow : undefined;
+    const targetMedian = typeof rawTargetMedian === "number" && rawTargetMedian > 0 ? rawTargetMedian : undefined;
+    // Yahoo returns revenue growth as a decimal fraction (0.094 = 9.4%); store percentage
+    // points like dividendYield.
+    const revenueGrowth = typeof rawRevenueGrowth === "number" ? normalizePercent(rawRevenueGrowth) : undefined;
     const sector = typeof ap.sector === "string" && ap.sector ? ap.sector : undefined;
     const industry = typeof ap.industry === "string" && ap.industry ? ap.industry : undefined;
 
@@ -2687,6 +2705,14 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
       ...(debtToEquity !== undefined && { debtToEquity }),
       ...(epsGrowth !== undefined && { epsGrowth }),
       ...(fcfYield !== undefined && { fcfYield }),
+      // market.ts treats fcfYield and freeCashFlowYield as aliases downstream; emit both so
+      // the coverage report and any direct freeCashFlowYield consumer see the free value too.
+      ...(fcfYield !== undefined && { freeCashFlowYield: fcfYield }),
+      ...(targetMean !== undefined && { targetMean }),
+      ...(targetHigh !== undefined && { targetHigh }),
+      ...(targetLow !== undefined && { targetLow }),
+      ...(targetMedian !== undefined && { targetMedian }),
+      ...(revenueGrowth !== undefined && { revenueGrowth }),
       ...(daysToEarnings !== undefined && { daysToEarnings }),
       ...(institutionOwnershipPct !== undefined && { institutionOwnershipPct }),
       ...(analystBySource !== undefined && { analystBySource })
