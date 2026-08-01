@@ -22,7 +22,7 @@ dbs:
     # DB-level `snapshot:` settings (see the note in the Mac's litestream.yml).
     snapshot:
       interval: 24h
-      retention: 720h # 30 days of snapshot history
+      retention: 168h # 7 days of snapshot history (was 720h/30d; R2 free-tier headroom, 2026-08-01)
     replicas:
       - type: s3
         # Throttles the R2 request rate. Litestream 0.5.x opens a NEW connection per
