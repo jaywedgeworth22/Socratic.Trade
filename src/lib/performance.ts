@@ -825,7 +825,7 @@ export function getSourceValueScorecard(
   currentPrices: Record<string, number> = {},
   userId: string = "local",
   prefetched?: PrefetchedFills,
-  options: { connectedAccountId?: string; auditLimit?: number; counterfactualLimit?: number } = {}
+  options: { connectedAccountId?: string; auditLimit?: number; counterfactualLimit?: number; closedBefore?: string } = {}
 ): SourceValueStat[] {
   const snapshots = new Map<string, CandidateEvidence>();
   for (const event of listAuditByKind("signal_snapshot", options.auditLimit ?? 2_000, userId, options.connectedAccountId)) {
@@ -855,6 +855,8 @@ export function getSourceValueScorecard(
   const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   for (const lot of closedLots) {
     if (!lot.entryRunId || !lot.symbol) continue;
+    // PIT cutoff: only outcomes realized before the held-out fold (lots without exitAt are excluded).
+    if (options.closedBefore && !(typeof lot.exitAt === "string" && lot.exitAt < options.closedBefore)) continue;
     add(snapshots.get(`${lot.entryRunId}|${normalizeSymbol(lot.symbol)}`), lot.returnPct, true);
   }
 
@@ -865,6 +867,8 @@ export function getSourceValueScorecard(
     options.connectedAccountId
   )) {
     if (row.returnPct === undefined) continue;
+    // PIT cutoff: only counterfactuals whose return window ENDED before the fold (exitDate < cutoff).
+    if (options.closedBefore && !(typeof row.exitDate === "string" && row.exitDate < options.closedBefore)) continue;
     const key = `${row.runId}|${normalizeSymbol(row.symbol)}`;
     if (seenSkipped.has(key)) continue;
     seenSkipped.add(key); // rows are horizon-ascending within newest decision time
@@ -897,6 +901,12 @@ export interface FactorScorecardStat {
  */
 export interface FactorScorecardOptions {
   regime?: string;
+  /**
+   * PIT evidence cutoff (§6 slice-3 follow-up): when set, only lots whose outcome was REALIZED
+   * before this date (`exitAt < closedBefore`) are aggregated; lots without an `exitAt` timestamp
+   * are excluded (conservative — their realization time is unproven). Unset → all lots (legacy).
+   */
+  closedBefore?: string;
 }
 
 export function getFactorScorecard(
@@ -912,9 +922,12 @@ export function getFactorScorecard(
   // Exact-string join: `lot.regime` is the `entryMarketRegime` stamped from one of the
   // MARKET_REGIME_LABELS values (src/lib/macro.ts) — a persisted contract. See that const's
   // doc comment before renaming a label; existing rows would silently stop matching.
-  const closedLots = options?.regime
+  const regimeFiltered = options?.regime
     ? allLots.filter((lot) => lot.regime?.trim() === options.regime?.trim())
     : allLots;
+  const closedLots = options?.closedBefore
+    ? regimeFiltered.filter((lot) => typeof lot.exitAt === "string" && lot.exitAt < options.closedBefore!)
+    : regimeFiltered;
   if (closedLots.length === 0) return [];
 
   const factorByKey = new Map<string, MarketFactor>();
@@ -972,7 +985,7 @@ export interface SkippedCandidateReturn {
 export function getSkippedCandidateReturns(
   currentPrices: Record<string, number>,
   userId: string = "local",
-  options: { limit?: number; maxAgeDays?: number; connectedAccountId?: string; benchmarkReturnBySnapshotDate?: Map<string, number> } = {}
+  options: { limit?: number; maxAgeDays?: number; connectedAccountId?: string; benchmarkReturnBySnapshotDate?: Map<string, number>; maturedBefore?: string } = {}
 ): SkippedCandidateReturn[] {
   const limit = options.limit ?? 12;
   const maxAgeDays = options.maxAgeDays ?? 14;
@@ -989,6 +1002,8 @@ export function getSkippedCandidateReturns(
   const returns: SkippedCandidateReturn[] = listMaturedSkippedCounterfactuals(userId, limit * 3, options.connectedAccountId)
     .map((row): SkippedCandidateReturn | undefined => {
       if (!row.exitPrice || row.returnPct === undefined) return undefined;
+      // PIT cutoff: only counterfactuals whose return window ENDED before the held-out fold.
+      if (options.maturedBefore && !(typeof row.exitDate === "string" && row.exitDate < options.maturedBefore)) return undefined;
       const asOfTime = new Date(row.snapshotAt).getTime();
       const ageDays = Number.isFinite(asOfTime) ? (now - asOfTime) / 86_400_000 : undefined;
       if (typeof ageDays === "number" && ageDays > maxAgeDays) return undefined;
