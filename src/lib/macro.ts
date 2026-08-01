@@ -284,9 +284,9 @@ export function clearMacroCacheForTests(): void {
 // enrichment cascade), and a suspended paid key must not be hammered on every scheduler tick anyway.
 //
 // Lane order (first success wins):
-//   1. Yahoo ^VIX chart  — the proven lane this module has always used; rich JSON chart history.
-//   2. Cboe _VIX delayed — the authoritative VIX publisher's own keyless delayed-quote CDN (same
+//   1. Cboe _VIX delayed — the authoritative VIX publisher's own keyless delayed-quote CDN (same
 //      host family already trusted for _SKEW/_VVIX in market-signals/cboe.ts).
+//   2. Yahoo ^VIX chart  — secondary fallback (intermittently rate-limited/blocked from datacenter IPs).
 //
 // This is deliberately a TWO-lane cascade. The third-tier candidates were live-probed and rejected
 // (2026-07-29 verifier review): Stooq's quote endpoint (stooq.com/q/l/) 404s endpoint-level and its
@@ -376,7 +376,7 @@ async function fetchVixFromCboe(): Promise<number | null> {
 
 /** First successful keyless VIX reading across the cascade; null when every source is down. */
 async function fetchKeylessVix(): Promise<number | null> {
-  for (const source of [fetchVixFromYahoo, fetchVixFromCboe]) {
+  for (const source of [fetchVixFromCboe, fetchVixFromYahoo]) {
     const vix = await source();
     if (vix !== null) return vix;
   }

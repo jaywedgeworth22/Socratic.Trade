@@ -1,3 +1,9 @@
+## 2026-08-01 — CBOE-First VIX Cascade Optimization (ANTIGRAVITY)
+
+Re-ordered keyless ^VIX fetch cascade in `src/lib/macro.ts` to query CBOE delayed quotes (`vix-cboe`) first and Yahoo Finance (`vix-yahoo`) second. CBOE operates a keyless, public CDN that does not rate-limit or block datacenter IPs. Eliminates recurring 429 errors from Yahoo Finance on datacenter IPs.
+
+All tests, tsc, and Next.js build pass cleanly. Rollout: `docs/rollouts/2026-08-01-cboe-first-vix-cascade.md`.
+
 ## 2026-08-01 — App Icon White Background & Light-Mode Candlesticks (ANTIGRAVITY)
 
 Updated app icon background in `public/icon.svg` to pure white (`#ffffff`) and regenerated PWA/iOS PNG icons (`icon-512.png`, `icon-192.png`, `apple-touch-icon-180.png`). Optimized candlestick green and red color palettes in `public/icon.svg`, `candle-ticker.ts`, `intro-canvas.tsx`, and `candlewordmarkhorizontal.svg` for high contrast against light backgrounds.
