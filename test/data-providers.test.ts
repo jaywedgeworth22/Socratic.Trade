@@ -1393,6 +1393,78 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
     expect(cookieAttempts).toBe(2); // failed once, retried once, succeeded
   });
 
+  it("maps analyst targets, revenue growth, and freeCashFlowYield from the already-fetched financialData module (free tier)", async () => {
+    // Owner directive 2026-08-01: with FMP suspended and no paid target source, the free Yahoo
+    // quoteSummary financialData module must populate target*/revenueGrowth/freeCashFlowYield.
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("api.nasdaq.com")) return new Response(JSON.stringify({ data: null }), { status: 200 });
+      if (u === "https://fc.yahoo.com") return new Response(null, { status: 200, headers: { "set-cookie": "A=1; Path=/" } });
+      if (u.startsWith("https://query1.finance.yahoo.com/v1/test/getcrumb")) return new Response("test-crumb", { status: 200 });
+      if (u.startsWith("https://query1.finance.yahoo.com/v10/finance/quoteSummary/")) {
+        return new Response(
+          JSON.stringify({
+            quoteSummary: {
+              result: [{
+                summaryDetail: { marketCap: { raw: 3_000_000_000_000 } },
+                financialData: {
+                  targetMeanPrice: { raw: 250.5 },
+                  targetHighPrice: { raw: 300 },
+                  targetLowPrice: { raw: 180 },
+                  targetMedianPrice: { raw: 247 },
+                  revenueGrowth: { raw: 0.094 }, // decimal fraction → 9.4 percentage points
+                  freeCashflow: { raw: 100_000_000_000 },
+                },
+                assetProfile: {},
+              }]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+
+    const provider = getEnrichmentProvider();
+    const result = await provider.enrich(["AAPL"]);
+    expect(result.AAPL?.targetMean).toBe(250.5);
+    expect(result.AAPL?.targetHigh).toBe(300);
+    expect(result.AAPL?.targetLow).toBe(180);
+    expect(result.AAPL?.targetMedian).toBe(247);
+    expect(result.AAPL?.revenueGrowth).toBeCloseTo(9.4, 5);
+    expect(result.AAPL?.fcfYield).toBeCloseTo(3.33, 2);
+    expect(result.AAPL?.freeCashFlowYield).toBe(result.AAPL?.fcfYield);
+  });
+
+  it("drops zero/negative analyst targets (sentinel values) instead of letting them win first-wins", async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("api.nasdaq.com")) return new Response(JSON.stringify({ data: null }), { status: 200 });
+      if (u === "https://fc.yahoo.com") return new Response(null, { status: 200, headers: { "set-cookie": "A=1; Path=/" } });
+      if (u.startsWith("https://query1.finance.yahoo.com/v1/test/getcrumb")) return new Response("test-crumb", { status: 200 });
+      if (u.startsWith("https://query1.finance.yahoo.com/v10/finance/quoteSummary/")) {
+        return new Response(
+          JSON.stringify({
+            quoteSummary: { result: [{ financialData: { targetMeanPrice: { raw: 0 }, revenueGrowth: { raw: -0.02 } }, assetProfile: {} }] }
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+
+    const provider = getEnrichmentProvider();
+    const result = await provider.enrich(["AAPL"]);
+    expect(result.AAPL?.targetMean).toBeUndefined();
+    expect(result.AAPL?.revenueGrowth).toBe(-2); // negative growth is real data, kept
+  });
+
   it("still degrades to empty (never throws) when the retry also fails", async () => {
     const { clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();

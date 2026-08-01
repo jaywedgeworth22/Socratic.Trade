@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/admin";
-import { getR2UsageSnapshots, loadR2UsageAccounts, loadR2UsageMonitorConfig } from "@/lib/r2-usage";
+import {
+  getR2UsageSnapshots,
+  isR2AutoDisableArmed,
+  isR2ReplicationDisabled,
+  loadR2UsageAccounts,
+  loadR2UsageMonitorConfig,
+} from "@/lib/r2-usage";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +26,8 @@ export async function GET(request: Request) {
     intervalHours: cfg.intervalHours,
     thresholdPct: cfg.thresholdPct,
     bucketFilter: cfg.bucketFilter,
+    replicationDisabled: isR2ReplicationDisabled(cfg),
+    autoDisableArmed: isR2AutoDisableArmed(cfg),
     snapshots,
   });
 }

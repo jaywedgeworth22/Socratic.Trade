@@ -130,4 +130,17 @@ if [ ! -f "$MARKER" ]; then
 fi
 
 log "DB_BOOTSTRAP=live - starting under litestream replicate"
+
+# R2 free-tier kill-switch (owner directive 2026-08-01): when the app's R2 usage
+# monitor projects >70% of the free tier it writes this marker and restarts the
+# container; while the marker exists we boot WITHOUT litestream replication so R2
+# usage stops growing. Resume: delete the marker (POST /api/admin/r2-usage/resume
+# does this + restarts) and the next boot re-enables replication.
+R2_DISABLE_MARKER="${R2_USAGE_DISABLE_MARKER:-$DATA_DIR/.litestream-r2-disabled}"
+if [ -f "$R2_DISABLE_MARKER" ]; then
+  log "R2 kill-switch marker present ($R2_DISABLE_MARKER) - starting WITHOUT litestream replication"
+  log "marker contents: $(cat "$R2_DISABLE_MARKER" 2>/dev/null | head -c 500)"
+  exec npm run start
+fi
+
 exec litestream replicate -config "$CONFIG" -exec "npm run start"

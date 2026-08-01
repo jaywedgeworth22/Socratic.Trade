@@ -80,7 +80,9 @@ const PATENTS_LOOKBACK_DAYS = 180;
 
 /** The sole registration gate: trimmed QUIVER_API_KEY, or undefined when unset/blank. */
 export function resolveQuiverApiKey(): string | undefined {
-  const key = (process.env.QUIVER_API_KEY ?? "").trim();
+  // Accept both spellings — the owner's secret store has long carried QUIVERQUANT_API_TOKEN,
+  // so keying only on QUIVER_API_KEY silently left the provider dormant (prod 2026-08-01).
+  const key = (process.env.QUIVER_API_KEY ?? "").trim() || (process.env.QUIVERQUANT_API_TOKEN ?? "").trim();
   return key || undefined;
 }
 

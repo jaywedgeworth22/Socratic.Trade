@@ -294,19 +294,34 @@ export async function getLitestreamRuntimeHealth(options: {
   nowMs?: number;
 }): Promise<LitestreamRuntimeHealth> {
   const nowMs = options.nowMs ?? Date.now();
-  const socketPath = options.socketPath?.trim()
-    || process.env.LITESTREAM_SOCKET_PATH?.trim()
-    || defaultLitestreamSocketPath(options.dbPath);
-  try {
-    const payload = await readUnixSocketJson(
-      socketPath,
-      options.timeoutMs ?? 500,
-      options.maxResponseBytes ?? LITESTREAM_IPC_MAX_RESPONSE_BYTES
-    );
-    const parsed = parseLitestreamListPayload(payload, options.dbPath, nowMs);
-    if (parsed) return parsed;
-  } catch {
-    // Fall through to the explicitly configured/legacy local state source.
+  // Candidate control-socket paths, most-explicit first. The last entry is the
+  // Litestream 0.5.x DEFAULT control-socket location (<db-dir>/litestream.sock):
+  // 0.5.12 ignores the config file's `socket.path` and listens there instead —
+  // prod 2026-07-30..08-01 reported litestreamState "unknown" for days while
+  // replication was perfectly healthy, purely because the probe only tried the
+  // configured /var/run path. Trying both makes the health check correct
+  // regardless of which location the running version picked.
+  const socketCandidates = [
+    options.socketPath?.trim(),
+    process.env.LITESTREAM_SOCKET_PATH?.trim(),
+    "/var/run/litestream.sock",
+    defaultLitestreamSocketPath(options.dbPath),
+  ].filter((p): p is string => Boolean(p));
+  const seen = new Set<string>();
+  for (const socketPath of socketCandidates) {
+    if (seen.has(socketPath)) continue;
+    seen.add(socketPath);
+    try {
+      const payload = await readUnixSocketJson(
+        socketPath,
+        options.timeoutMs ?? 500,
+        options.maxResponseBytes ?? LITESTREAM_IPC_MAX_RESPONSE_BYTES
+      );
+      const parsed = parseLitestreamListPayload(payload, options.dbPath, nowMs);
+      if (parsed) return parsed;
+    } catch {
+      // Try the next candidate, then fall through to the file source.
+    }
   }
 
   const fallback = options.allowFileFallback === false ? null : fileFallback(options.statePath, nowMs);
