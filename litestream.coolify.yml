@@ -22,7 +22,7 @@ dbs:
     # DB-level `snapshot:` settings (see the note in the Mac's litestream.yml).
     snapshot:
       interval: 24h
-      retention: 168h # 7 days of snapshot history (was 720h/30d; R2 free-tier headroom, 2026-08-01)
+      retention: 48h # 2 days (was 720h/30d): measured ~3 GB/day growth (1.5G DB + WAL churn), so only ~3d of history fits the 10 GiB R2 free tier - 48h is ~6 GiB steady state. Deeper PITR needs the paid tier (~$1.35/mo for 30d).
     replicas:
       - type: s3
         # Throttles the R2 request rate. Litestream 0.5.x opens a NEW connection per
