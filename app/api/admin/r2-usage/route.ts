@@ -1,22 +1,25 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/admin";
-import { getR2UsageSnapshot, loadR2UsageMonitorConfig } from "@/lib/r2-usage";
+import { getR2UsageSnapshots, loadR2UsageAccounts, loadR2UsageMonitorConfig } from "@/lib/r2-usage";
 
 export const dynamic = "force-dynamic";
 
-/** Last R2 free-tier usage snapshot written by the scheduler lane — reads the
- *  persisted KV only, never calls Cloudflare on page load. */
+/** Latest per-account R2 free-tier snapshots written by the scheduler lane —
+ *  reads the persisted KV only, never calls Cloudflare on page load. The fleet
+ *  uses three Cloudflare accounts (st/ct/um), each with its own free tier. */
 export async function GET(request: Request) {
   const denied = requireAdmin(request);
   if (denied) return denied;
 
   const cfg = loadR2UsageMonitorConfig();
-  const snapshot = getR2UsageSnapshot() ?? null;
+  const accounts = loadR2UsageAccounts();
+  const snapshots = getR2UsageSnapshots();
   return NextResponse.json({
-    configured: Boolean(cfg.token && cfg.accountId),
+    configured: accounts.length > 0,
+    accountsConfigured: accounts.map((a) => ({ id: a.id, label: a.label })),
     intervalHours: cfg.intervalHours,
     thresholdPct: cfg.thresholdPct,
     bucketFilter: cfg.bucketFilter,
-    snapshot,
+    snapshots,
   });
 }

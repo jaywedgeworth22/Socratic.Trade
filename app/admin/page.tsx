@@ -46,24 +46,30 @@ interface TranscriptSummary {
   turns: Array<{ id: string; role: string; text: string; model: string | null; createdAt: string }>;
 }
 
+interface R2Metric {
+  id: "storage" | "classA" | "classB";
+  label: string;
+  mtd: number;
+  limit: number;
+  pctUsed: number;
+  projected: number;
+  projectedPct: number;
+  exceeded: boolean;
+  alertBasis: "absolute" | "pace";
+  unit: "bytes" | "ops";
+}
+
 interface R2Summary {
   configured: boolean;
+  accountsConfigured: Array<{ id: string; label: string }>;
   intervalHours: number;
   thresholdPct: number;
-  snapshot: {
+  snapshots: Array<{
+    accountId: string;
+    accountLabel: string;
     checkedAt: string;
-    metrics: Array<{
-      id: "storage" | "classA" | "classB";
-      label: string;
-      mtd: number;
-      limit: number;
-      pctUsed: number;
-      projected: number;
-      projectedPct: number;
-      exceeded: boolean;
-      unit: "bytes" | "ops";
-    }>;
-  } | null;
+    metrics: R2Metric[];
+  }>;
 }
 
 export default function OperatorDashboard() {
@@ -454,7 +460,7 @@ export default function OperatorDashboard() {
           </Card>
 
           {/* ── 4b. R2 free-tier usage (scheduler snapshot; alert threshold) ── */}
-          <Card title="R2 Storage Usage" className="flex h-full flex-col">
+          <Card title="R2 Free-Tier Usage" className="flex h-full flex-col">
             <div className="space-y-4">
               {probeErrors.r2 && (
                 <div
@@ -467,44 +473,51 @@ export default function OperatorDashboard() {
               )}
               {!r2?.configured && (
                 <div className="py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-                  Not configured — set <span className="con-mono">CLOUDFLARE_ST_API_TOKEN</span> +{" "}
-                  <span className="con-mono">CLOUDFLARE_ST_ACCOUNT_ID</span> to monitor the R2 free tier.
+                  Not configured — set the <span className="con-mono">CLOUDFLARE_*_API_TOKEN</span> +{" "}
+                  <span className="con-mono">CLOUDFLARE_*_ACCOUNT_ID</span> env pairs (ST/CT/JAY) to monitor the R2 free tiers.
                 </div>
               )}
-              {r2?.configured && !r2.snapshot && (
+              {r2?.configured && r2.snapshots.length === 0 && (
                 <div className="py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
                   No usage check yet — the scheduler lane runs every {r2.intervalHours}h.
                 </div>
               )}
-              {r2?.snapshot && (
-                <div className="space-y-3">
-                  {r2.snapshot.metrics.map((m) => {
-                    const fmt = (v: number) =>
-                      m.unit === "bytes" ? `${(v / 1024 ** 3).toFixed(2)} GiB` : Math.round(v).toLocaleString();
-                    return (
-                      <div key={m.id}>
-                        <div className="mb-1 flex items-center justify-between text-[length:var(--con-fs-xs)]">
-                          <span className="flex items-center gap-1 text-[color:var(--con-muted)]">
-                            <Database className="h-3.5 w-3.5" /> {m.label}
-                          </span>
-                          <span className={`con-num font-semibold ${m.exceeded ? "text-[color:var(--con-warn)]" : ""}`}>
-                            {fmt(m.mtd)} · {m.pctUsed.toFixed(1)}%
-                          </span>
-                        </div>
-                        <Meter value={Math.min(m.pctUsed, 100)} max={100} />
-                        <div className="mt-0.5 text-right text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                          pace → {m.projectedPct.toFixed(0)}% by month end
-                          {m.exceeded ? ` (>${r2.thresholdPct}% threshold)` : ""}
-                        </div>
+              {r2 && r2.snapshots.length > 0 && (
+                <div className="space-y-4">
+                  {r2.snapshots.map((snap) => (
+                    <div key={snap.accountId} className="space-y-3">
+                      <div className="text-[length:var(--con-fs-xs)] font-semibold uppercase tracking-wide text-[color:var(--con-faint)]">
+                        {snap.accountLabel}
                       </div>
-                    );
-                  })}
-                  <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-3 text-[length:var(--con-fs-xs)]">
-                    <span className="text-[color:var(--con-muted)]">Free tier · checked</span>
-                    <span className="con-mono text-[color:var(--con-faint)]">
-                      {new Date(r2.snapshot.checkedAt).toLocaleString()}
-                    </span>
-                  </div>
+                      {snap.metrics.map((m) => {
+                        const fmt = (v: number) =>
+                          m.unit === "bytes" ? `${(v / 1024 ** 3).toFixed(2)} GiB` : Math.round(v).toLocaleString();
+                        return (
+                          <div key={`${snap.accountId}-${m.id}`}>
+                            <div className="mb-1 flex items-center justify-between text-[length:var(--con-fs-xs)]">
+                              <span className="flex items-center gap-1 text-[color:var(--con-muted)]">
+                                <Database className="h-3.5 w-3.5" /> {m.label}
+                              </span>
+                              <span className={`con-num font-semibold ${m.exceeded ? "text-[color:var(--con-warn)]" : ""}`}>
+                                {fmt(m.mtd)} · {m.pctUsed.toFixed(1)}%
+                              </span>
+                            </div>
+                            <Meter value={Math.min(m.pctUsed, 100)} max={100} />
+                            <div className="mt-0.5 text-right text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                              {m.alertBasis === "pace" ? `pace → ${m.projectedPct.toFixed(0)}% by month end` : "absolute usage"}
+                              {m.exceeded ? ` (>${r2.thresholdPct}% threshold)` : ""}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-xs)]">
+                        <span className="text-[color:var(--con-muted)]">Free tier · checked</span>
+                        <span className="con-mono text-[color:var(--con-faint)]">
+                          {new Date(snap.checkedAt).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
