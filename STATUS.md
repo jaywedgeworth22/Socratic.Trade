@@ -7,24 +7,41 @@ of work), effort state lives in `docs/EFFORT-LOG.md`, and entries written here b
 
 Last updated: 2026-08-01.
 
+> [!IMPORTANT]
+> **Work in progress on `monet/codex-review-remediation` is PAUSED (owner instruction).**
+> Wave 1 is committed locally as `e7a1b65c` — **not pushed, no PR**. Wave 2 is on disk,
+> **uncommitted and completely unreviewed** (6 agents stopped mid-flight; `tsc` is clean but
+> tests and lint have never run against it). Do not treat it as correct, and do not land it
+> without reviewing it first. Resume instructions, the file→finding map, and the
+> union-merge trap that will bite on the next `origin/main` merge:
+> `docs/rollouts/2026-08-01-codex-review-remediation-handoff.md`.
+
 ## Where things stand
 
 | | |
 |---|---|
-| `main` | `88e614d7` — CI green, no known failing gate |
-| Production (`socratictrade.com`) | `d456ca58` — **3 commits behind `main`** |
+| `main` | `ad1c1d5c` — CI green, no known failing gate |
+| Production (`socratictrade.com`) | `d456ca58` — **5 commits behind `main`, and not advancing** |
 | Deploy mechanism | auto-deploy on push to `main` (Coolify `socratic-trade-prod`) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
 | Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
 
 ## Blockers
 
-1. **Production is behind `main` and auto-deploy did not close the gap.** Live health
-   reports `d456ca58`; `main` is `88e614d7`. The two intervening code changes (PIT tuner
-   evidence `3ff5209e`, R2 multi-account `88e614d7`) are merged but **not running**.
-   Merging is no longer sufficient evidence that something shipped — verify with
-   `bash scripts/verify-live-sha.sh` before believing a change is live. Owner action may be
-   needed on the Coolify side (a wedged/zombie deployment blocks the queue).
+1. **Production is behind `main` and auto-deploy is not closing the gap — OWNER ACTION.**
+   Live health reported `d456ca58` at 21:33Z and *still* reported `d456ca58` more than an
+   hour later, while `main` advanced from `88e614d7` to `ad1c1d5c`. That is 5 commits
+   merged and not running, and the gap is growing, so this is not a slow build. Merging is
+   currently **not** evidence that anything shipped.
+
+   Verify before believing a change is live:
+   ```bash
+   bash scripts/verify-deploy-sha.sh            # defaults to origin/main
+   ```
+   Agents must NOT hand-trigger a Coolify deploy (manual deploy claims/triggers are
+   retired). The likely causes are on the Coolify side — a wedged/zombie `in_progress`
+   deployment blocking the queue, or the GitHub webhook not being delivered — and both need
+   the owner at the dashboard.
 
 2. **Local verification is broken on npm 11.16 (all agent lanes).** `npm install` and
    `npm ci` both fail preparing the `congress-trading-shared` git dependency:

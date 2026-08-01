@@ -7,6 +7,30 @@ import { getDb } from "./db";
 // single cold failure can trip. Exported so consumers key off the condition, not a brittle string.
 export const HEALTH_REASON_CONSECUTIVE_FAILURES = "Last 5 consecutive calls all failed";
 
+/**
+ * FIFO retention for api_health_log: only the newest N rows per (service, key_source) lane survive
+ * (enforced on every insert in logApiHealth). Exported because it is NOT just a storage detail — the
+ * `callsLastHour`/`callsLast24h` window counts below are computed over this same capped table, so on
+ * a busy lane they are a FLOOR, not a total, and any UI that prints them must say so (see
+ * ServiceHealthSummary.laneLogCap). Note the equivalence that makes that cheap to detect: a window
+ * count can only reach the cap when every retained row falls inside the window, which is exactly the
+ * case where older rows may have been evicted out of it -- so `count === cap` is precisely the
+ * "saturated" condition, no extra bookkeeping needed. (The residual ambiguity: a lane with exactly
+ * `cap` calls and nothing evicted also reads as saturated. "500+" is still true there.)
+ */
+export const HEALTH_LOG_LANE_CAP = 500;
+
+/**
+ * Which condition set `stoppedWorking` (see getServiceHealthSummaries). "consecutive-failures" is
+ * the HARD one — the only one strong enough to act on automatically (`app/api/health` fails
+ * liveness on it, data-providers.ts trips the enrichment breaker on it). The two "no-success"
+ * kinds are SOFT heuristics that a single cold-start failure can trip, and consumers that count or
+ * alarm on stopped lanes must weight them below the hard one rather than lumping all three into one
+ * number. Carried alongside `stoppedReason` so a client that cannot import this module (the admin
+ * connections page is "use client") discriminates on the kind instead of string-matching the prose.
+ */
+export type HealthStoppedReasonKind = "consecutive-failures" | "no-success-ever" | "no-success-this-hour";
+
 // RAG services (Pinecone, embed, rerank) already get their OWN explicit, operation-scoped alert
 // from vector-db.ts's withRagApiHealth -> alertRagConnectionFailure (richer message: which
 // operation failed, usage-limit escalation via alertUsageLimitHit, its own 1h cooldown). Without
@@ -86,10 +110,20 @@ export interface ServiceHealthSummary {
   lastSuccessLatencyMs: number | null;
   lastFailureTs: string | null;
   lastFailureError: string | null;
+  /** Calls in the trailing hour / 24h, counted over the CAPPED log (see HEALTH_LOG_LANE_CAP): a
+   *  value equal to `laneLogCap` means "at least this many", not "exactly this many". */
   callsLastHour: number;
   callsLast24h: number;
   stoppedWorking: boolean;
   stoppedReason: string | null;
+  /** Which condition set `stoppedWorking` — hard vs soft; null when not stopped. Optional so the
+   *  admin connections route can keep synthesizing never-used placeholder lanes as plain object
+   *  literals (they have no log and no stop state). */
+  stoppedReasonKind?: HealthStoppedReasonKind | null;
+  /** Row-retention cap the two window counts were computed against, so a caller can render the
+   *  saturated case honestly ("500+") without importing this module. Optional for the same
+   *  placeholder-lane reason; a lane with no rows cannot be saturated. */
+  laneLogCap?: number;
 }
 
 export interface HealthLogRow {
@@ -145,7 +179,13 @@ export function logApiHealth(opts: {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(id, opts.service, now, opts.ok ? 1 : 0, opts.latencyMs ?? null, opts.errorText ?? null, keySource, userId);
 
-      // Enforce FIFO cap of 500 rows per (service, key_source) credential lane
+      // Enforce the FIFO cap of HEALTH_LOG_LANE_CAP rows per (service, key_source) credential lane.
+      // The cap has NO user_id predicate, but getLaneHealth scopes its counts to one user on
+      // keySource === "user" lanes — so on a multi-tenant user lane one tenant's traffic can evict
+      // another tenant's rows and shrink that tenant's callsLastHour. Benign today (the only
+      // consumer tests `callsLastHour > 0`, and eviction can only push it toward 0, i.e. the
+      // breaker fails open) but do not build anything on those per-user counts being complete.
+      // `LIMIT ${...}` interpolates a module constant, never user input.
       db.prepare(
         `DELETE FROM api_health_log
          WHERE service = ? AND key_source IS ?
@@ -153,7 +193,7 @@ export function logApiHealth(opts: {
              SELECT id FROM api_health_log
              WHERE service = ? AND key_source IS ?
              ORDER BY ts DESC, rowid DESC
-             LIMIT 500
+             LIMIT ${HEALTH_LOG_LANE_CAP}
            )`
       ).run(opts.service, keySource, opts.service, keySource);
 
@@ -276,16 +316,20 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
 
       let stoppedWorking = false;
       let stoppedReason: string | null = null;
+      let stoppedReasonKind: HealthStoppedReasonKind | null = null;
 
       if (last5.length >= 5 && last5.every((r) => r.ok === 0)) {
         stoppedWorking = true;
         stoppedReason = HEALTH_REASON_CONSECUTIVE_FAILURES;
+        stoppedReasonKind = "consecutive-failures";
       } else if (callsLastHour > 0 && !lastSuccess) {
         stoppedWorking = true;
         stoppedReason = "Active in past hour but no successful call ever";
+        stoppedReasonKind = "no-success-ever";
       } else if (callsLastHour > 0 && lastSuccess && lastSuccess.ts < hourAgo) {
         stoppedWorking = true;
         stoppedReason = "Active in past hour but no success in 60 min";
+        stoppedReasonKind = "no-success-this-hour";
       }
 
       return {
@@ -299,6 +343,8 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         callsLast24h,
         stoppedWorking,
         stoppedReason,
+        stoppedReasonKind,
+        laneLogCap: HEALTH_LOG_LANE_CAP,
       };
     });
   } catch {

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Btn, Card } from "../../console/ui/primitives";
 import { Markdown } from "./markdown";
+import { describeLongTurn } from "./long-turn";
 import { describeProbeNetworkError, describeProbeStatus, type ProbeErrorDescription } from "../lib/probe-error";
 
 interface Turn {
@@ -68,26 +69,44 @@ export function TranscriptClient() {
       )}
 
       <div className="space-y-3">
-        {turns.map((t) => (
-          <Card key={t.id}>
-            <div className="mb-1 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
-              <span className={t.role === "assistant" ? "font-medium text-[color:var(--con-accent)]" : "font-medium text-[color:var(--con-fg)]"}>
-                {t.role === "assistant" ? "Assistant" : "You"}
-              </span>
-              {t.role === "assistant" && (
-                <span className="con-chip con-mono">{t.model ?? "—"}</span>
-              )}
-              {t.intent && <span className="text-[color:var(--con-muted)]">· {t.intent}</span>}
-              {t.redacted && <span className="text-[color:var(--con-neg)]">· redacted</span>}
-              <span className="ml-auto text-[color:var(--con-faint)]">{new Date(t.createdAt).toLocaleString()}</span>
-            </div>
-            {t.role === "assistant" ? (
+        {turns.map((t) => {
+          const long = describeLongTurn(t.text);
+          const body =
+            t.role === "assistant" ? (
               <Markdown>{t.text}</Markdown>
             ) : (
               <p className="whitespace-pre-wrap text-[length:var(--con-fs-sm)]">{t.text}</p>
-            )}
-          </Card>
-        ))}
+            );
+          return (
+            <Card key={t.id}>
+              {/* Metadata header stays OUTSIDE the disclosure: who spoke, which model,
+                  intent, redaction, and when are what you scan an audit view for, and they
+                  must stay readable whether or not the body is collapsed. */}
+              <div className="mb-1 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
+                <span className={t.role === "assistant" ? "font-medium text-[color:var(--con-accent)]" : "font-medium text-[color:var(--con-fg)]"}>
+                  {t.role === "assistant" ? "Assistant" : "You"}
+                </span>
+                {t.role === "assistant" && (
+                  <span className="con-chip con-mono">{t.model ?? "—"}</span>
+                )}
+                {t.intent && <span className="text-[color:var(--con-muted)]">· {t.intent}</span>}
+                {t.redacted && <span className="text-[color:var(--con-neg)]">· redacted</span>}
+                <span className="ml-auto text-[color:var(--con-faint)]">{new Date(t.createdAt).toLocaleString()}</span>
+              </div>
+              {long.collapse ? (
+                <details className="con-disclosure">
+                  <summary className="flex items-center gap-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                    <span className="con-disclosure-label" />
+                    <span>{long.label}</span>
+                  </summary>
+                  <div className="mt-2">{body}</div>
+                </details>
+              ) : (
+                body
+              )}
+            </Card>
+          );
+        })}
       </div>
     </div>
   );

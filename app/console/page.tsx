@@ -24,6 +24,7 @@ import { EquityChart } from "./components/equity-chart";
 import { PositionsCard } from "./components/positions";
 import { deriveDayPnl, deriveMarkToMarket, deriveReality, deriveRiskUtilization, deriveSpend, deriveStateInfo, selectEquityWindow } from "./lib/derive";
 import { cx, EM_DASH, fmtDay, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
+import { describeLastRun } from "./lib/last-run";
 import {
   decisionStatusLabel,
   evidenceKindLabel,
@@ -62,6 +63,7 @@ export default function ConsoleHomePage() {
   );
   const latest = snapshot.latestStrategyRun;
   const latestRow = snapshot.strategyRuns?.[0];
+  const lastRun = latestRow ? describeLastRun(latestRow) : null;
   const nextRun = snapshot.scheduler?.nextRunAt;
   const primaryDecision = snapshot.socratic?.decisions?.[0];
   const primaryTrace = latest?.proposals?.[0];
@@ -95,10 +97,31 @@ export default function ConsoleHomePage() {
             {primaryProposal.redTeamVerdict.rejected ? "Red Team: thesis rejected" : "Red Team: thesis survived"}
           </Chip>
         )}
-        {latestRow && (
-          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+        {latestRow && lastRun && (
+          <span
+            className={cx(
+              "text-[length:var(--con-fs-xs)]",
+              lastRun.failed ? "text-[color:var(--con-neg)]" : "text-[color:var(--con-muted)]"
+            )}
+            title={lastRun.title}
+          >
             Last run {latestRow.status} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
+            {lastRun.cause && (
+              <>
+                {" "}
+                {EM_DASH} {lastRun.cause}
+              </>
+            )}
           </span>
+        )}
+        {/* Only on failure. The "Latest strategy run" card below has its own Journal link,
+            but that card renders only when the run produced proposals — which a failed run
+            usually did not, so on exactly the occasion you most want the record there is no
+            way through to it from here. */}
+        {lastRun?.failed && (
+          <Link href="/console/activity" className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
+            Journal
+          </Link>
         )}
         {state.state === "active" && nextRun && (
           <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">

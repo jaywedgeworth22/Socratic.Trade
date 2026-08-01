@@ -18,6 +18,13 @@ interface ServiceHealthSummary {
   callsLast24h: number;
   stoppedWorking: boolean;
   stoppedReason: string | null;
+  // Mirrors src/lib/db-health.ts's HealthStoppedReasonKind / HEALTH_LOG_LANE_CAP, re-declared here
+  // rather than imported: this is a "use client" component and importing db-health would drag
+  // better-sqlite3 into the browser bundle. Both arrive verbatim on the /api/admin/connections-health
+  // `services` payload. Optional because that route also synthesizes placeholder rows for lanes that
+  // have never logged a call.
+  stoppedReasonKind?: "consecutive-failures" | "no-success-ever" | "no-success-this-hour" | null;
+  laneLogCap?: number;
 }
 
 interface HealthLogRow {
@@ -57,8 +64,35 @@ function relTime(iso: string | null): string {
   return `${Math.round(diff / 86_400_000)}d ago`;
 }
 
+/** The health store sets `stoppedWorking` for three different conditions, only one of which is
+ *  strong evidence the lane is actually broken: five consecutive failures. The other two ("active
+ *  this hour but no success yet" / "no success in 60 min") are soft heuristics that a SINGLE cold
+ *  first call can trip, so counting them as "stopped" inflates the header count with lanes that are
+ *  merely warming up. This is the same hard/soft split app/api/health/route.ts already uses to
+ *  decide what fails liveness versus what is only `degraded` — keep the two consistent.
+ *  A stopped lane with no `stoppedReasonKind` (never-seen shape) counts as HARD: fail loud rather
+ *  than silently demoting a real outage to a muted chip. */
+function isHardStopped(s: ServiceHealthSummary): boolean {
+  if (!s.stoppedWorking) return false;
+  return s.stoppedReasonKind !== "no-success-ever" && s.stoppedReasonKind !== "no-success-this-hour";
+}
+
+/** Window call counts come from a log capped at `laneLogCap` rows per lane, so a count that reached
+ *  the cap is a floor. Render it as "500+" — a busy lane pegged at the cap otherwise reads as an
+ *  exact (and permanently wrong) total. Exported for direct unit testing. */
+export function formatLaneCallCount(count: number, laneLogCap: number | undefined): string {
+  if (typeof laneLogCap === "number" && laneLogCap > 0 && count >= laneLogCap) return `${laneLogCap}+`;
+  return String(count);
+}
+
+function callCountTitle(laneLogCap: number | undefined): string | undefined {
+  if (typeof laneLogCap !== "number" || laneLogCap <= 0) return undefined;
+  return `Only the most recent ${laneLogCap} calls per lane are retained, so these counts saturate at ${laneLogCap}+.`;
+}
+
 function statusTone(s: ServiceHealthSummary): "pos" | "neg" | "warn" | "muted" {
-  if (s.stoppedWorking) return "neg";
+  if (isHardStopped(s)) return "neg";
+  if (s.stoppedWorking) return "warn";
   if (!s.lastSuccessTs) return s.callsLast24h > 0 ? "warn" : "muted";
   if (s.lastFailureTs && s.lastFailureTs > s.lastSuccessTs) return "warn";
   return "pos";
@@ -76,6 +110,8 @@ function ServiceCard({
   selected: boolean;
 }) {
   const tone = statusTone(summary);
+  const hardStopped = isHardStopped(summary);
+  const capTitle = callCountTitle(summary.laneLogCap);
 
   // Hand-authored card recipe (not .con-card): the con-card class sets
   // background/border in unlayered CSS, which beats Tailwind's layered
@@ -93,7 +129,7 @@ function ServiceCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <Dot tone={tone} pulse={summary.stoppedWorking} />
+          <Dot tone={tone} pulse={hardStopped} />
           <span className="truncate text-[length:var(--con-fs-sm)] font-medium">
             {summary.service === "congress.trade" ? "Congress.Trade (Public API)" : summary.service}
             {summary.keySource && (
@@ -102,15 +138,15 @@ function ServiceCard({
           </span>
         </div>
         {summary.stoppedWorking && (
-          <Chip tone="neg">STOPPED</Chip>
+          hardStopped ? <Chip tone="neg">STOPPED</Chip> : <Chip tone="warn">DEGRADED</Chip>
         )}
       </div>
 
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
         <span>Last OK: <span className="text-[color:var(--con-fg)]">{relTime(summary.lastSuccessTs)}</span></span>
         <span>Last fail: <span className="text-[color:var(--con-fg)]">{relTime(summary.lastFailureTs)}</span></span>
-        <span>1h calls: <span className="text-[color:var(--con-fg)]">{summary.callsLastHour}</span></span>
-        <span>24h calls: <span className="text-[color:var(--con-fg)]">{summary.callsLast24h}</span></span>
+        <span title={capTitle}>1h calls: <span className="text-[color:var(--con-fg)]">{formatLaneCallCount(summary.callsLastHour, summary.laneLogCap)}</span></span>
+        <span title={capTitle}>24h calls: <span className="text-[color:var(--con-fg)]">{formatLaneCallCount(summary.callsLast24h, summary.laneLogCap)}</span></span>
       </div>
 
       {summary.lastSuccessLatencyMs !== null && (
@@ -120,7 +156,9 @@ function ServiceCard({
       )}
 
       {summary.stoppedWorking && summary.stoppedReason && (
-        <div className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-neg)]">{summary.stoppedReason}</div>
+        <div className={cx("mt-2 text-[length:var(--con-fs-xs)]", hardStopped ? "text-[color:var(--con-neg)]" : "text-[color:var(--con-warn)]")}>
+          {summary.stoppedReason}
+        </div>
       )}
     </button>
   );
@@ -280,7 +318,12 @@ export function ConnectionsHealthClient() {
 
   const laneKey = (s: ServiceHealthSummary) => `${s.service}:${s.keySource ?? ""}`;
   const selectedSummary = data?.services.find((s) => laneKey(s) === selected) ?? null;
-  const stoppedCount = data?.services.filter((s) => s.stoppedWorking).length ?? 0;
+  // Split rather than one flat "N stopped": a lane tripped by the soft "no success yet this hour"
+  // heuristic (one cold failure is enough) is not the same event as a lane that failed five calls in
+  // a row, and merging them made the header count read alarmingly high for a healthy box.
+  const stoppedLanes = data?.services.filter((s) => s.stoppedWorking) ?? [];
+  const hardStoppedCount = stoppedLanes.filter(isHardStopped).length;
+  const degradedCount = stoppedLanes.length - hardStoppedCount;
 
   return (
     <div className="space-y-4">
@@ -292,9 +335,14 @@ export function ConnectionsHealthClient() {
             <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Last updated {relTime(data.asOf)}</p>
           )}
         </div>
-        {stoppedCount > 0 && (
-          <Chip tone="neg">{stoppedCount} stopped</Chip>
-        )}
+        <div className="flex items-center gap-1.5">
+          {hardStoppedCount > 0 && (
+            <Chip tone="neg">{hardStoppedCount} stopped</Chip>
+          )}
+          {degradedCount > 0 && (
+            <Chip tone="warn">{degradedCount} degraded</Chip>
+          )}
+        </div>
       </div>
 
       {loading && !data && (
@@ -327,6 +375,11 @@ export function ConnectionsHealthClient() {
                 {data.services
                   .slice()
                   .sort((a, b) => {
+                    // Hard-stopped first, then soft-degraded, then healthy — same weighting as the
+                    // header chips, so the list order matches the counts above it.
+                    const aHard = isHardStopped(a);
+                    const bHard = isHardStopped(b);
+                    if (aHard !== bHard) return aHard ? -1 : 1;
                     if (a.stoppedWorking !== b.stoppedWorking) return a.stoppedWorking ? -1 : 1;
                     const svcCmp = a.service.localeCompare(b.service);
                     if (svcCmp !== 0) return svcCmp;

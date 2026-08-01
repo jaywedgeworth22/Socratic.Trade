@@ -555,11 +555,47 @@ function claimNextQueuedCommand(): MobileCommandRecord | undefined {
 
 function finishCommand(command: MobileCommandRecord, status: "succeeded" | "failed", result: unknown, error?: string): MobileCommandRecord {
   const nowIso = new Date().toISOString();
-  getDb()
+  const database = getDb();
+  const args = [status, result === undefined ? null : JSON.stringify(result), error ?? null, nowIso, nowIso, command.id, command.userId] as const;
+  // The `AND status = 'running'` guard exists to DETECT (not to lose) the race with
+  // markStaleRunningMobileCommands: a command that outlived the stale threshold while still
+  // genuinely executing gets stamped 'failed'/"outcome unknown" by the sweep, and then this worker
+  // reports in with the real outcome. Without the guard the overwrite is silent, and the audit
+  // trail shows an unexplained mobile_command_crashed -> mobile_command_succeeded pair for the
+  // same commandId.
+  const info = database
     .prepare(
-      "UPDATE mobile_commands SET status = ?, result = ?, error = ?, finished_at = ?, updated_at = ? WHERE id = ? AND user_id = ?"
+      "UPDATE mobile_commands SET status = ?, result = ?, error = ?, finished_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'running'"
     )
-    .run(status, result === undefined ? null : JSON.stringify(result), error ?? null, nowIso, nowIso, command.id, command.userId);
+    .run(...args);
+  if (info.changes === 0) {
+    const superseded = getMobileCommandRecord(command.id, command.userId);
+    // The row can also be gone entirely (account deletion swept mobile_commands mid-flight). There
+    // is nothing left to correct or emit; hand the caller the in-memory outcome so the normal
+    // return contract holds.
+    if (!superseded) return { ...command, status, result, error, finishedAt: nowIso, updatedAt: nowIso };
+    // The worker's outcome supersedes the sweep's guess: the sweep only ever knew "this looked
+    // dead", whereas the worker knows whether the broker call actually happened. Leaving the
+    // operator with "outcome unknown" for a command we can fully account for would be the less
+    // honest record. Receipt the correction first so the crashed->terminal sequence is explained.
+    audit(
+      "mobile_command_late_completion",
+      {
+        commandId: command.id,
+        commandType: command.commandType,
+        supersededStatus: superseded.status,
+        supersededError: superseded.error,
+        status,
+        error
+      },
+      command.userId
+    );
+    database
+      .prepare(
+        "UPDATE mobile_commands SET status = ?, result = ?, error = ?, finished_at = ?, updated_at = ? WHERE id = ? AND user_id = ?"
+      )
+      .run(...args);
+  }
   const updated = getMobileCommandRecord(command.id, command.userId)!;
   audit(
     status === "succeeded" ? "mobile_command_succeeded" : "mobile_command_failed",
@@ -864,6 +900,128 @@ export function mobileCommandBacklog(): { queued: number; running: number } {
     queued: rows.find((row) => row.status === "queued")?.n ?? 0,
     running: rows.find((row) => row.status === "running")?.n ?? 0
   };
+}
+
+// Mirrors STALE_RUN_THRESHOLD_MS in db-execution.ts, and for the same reason: the longest command
+// here (strategy.run_once) wraps the very strategy run that threshold was raised to 30 min to
+// accommodate, so anything tighter would re-create the 2026-07-08 incident on the mobile path.
+// Consequence worth stating plainly: after a crash, a stranded command — and therefore the
+// account-deletion blocker it feeds — clears in up to 30 minutes, not instantly.
+const STALE_MOBILE_COMMAND_THRESHOLD_MS = 30 * 60_000;
+
+// This string is read by a human on their phone, and it must not lie. The sweep knows only that
+// the worker stopped reporting — it does NOT know whether the command ran. Saying "failed" here
+// would tell an operator whose proposal.approve had already crossed the broker submission boundary
+// that nothing happened, and the natural next action is a duplicate order. State the uncertainty
+// and point at verification instead.
+const STALE_MOBILE_COMMAND_ERROR =
+  "Interrupted by a process restart while running. The outcome is UNKNOWN - this command may have completed, partly completed, or never started. Check your orders and settings before retrying; do not assume it did nothing.";
+
+/**
+ * Liveness evidence for a command that is already past the time cutoff. Returning true means "slow,
+ * not dead" — the sweep must leave it alone. Only the two command types that can legitimately run
+ * long have evidence to check; every other type is a single DB write or one bounded HTTP call, so
+ * 30 minutes past `started_at` can only mean the worker process died.
+ */
+function staleMobileCommandStillAlive(
+  db: ReturnType<typeof getDb>,
+  row: { user_id: string; command_type: MobileCommandType; started_at: string; payload: string },
+  cutoffIso: string
+): boolean {
+  if (row.command_type === "strategy.run_once") {
+    // The command wraps runStrategyOnce, which inserts a strategy_runs row immediately. A run this
+    // user started at/after the command claim and that is STILL 'running' is the command's own body
+    // still executing. This deliberately reads the run's live status rather than its own clock: the
+    // scheduler sweeps strategy_runs on the same tick with the same threshold and the same
+    // audit-activity grace, so a run that is genuinely alive keeps its 'running' status and hands
+    // that grace straight through to the command here. A concurrent unrelated run for the same user
+    // would also grant grace — that errs toward not declaring a live command dead, which is the
+    // side to err on.
+    const liveRun = db
+      .prepare("SELECT 1 FROM strategy_runs WHERE user_id = ? AND status = 'running' AND started_at >= ? LIMIT 1")
+      .get(row.user_id, row.started_at);
+    if (liveRun) return true;
+  }
+  if (row.command_type === "proposal.approve") {
+    // The money-path case. executeProposal receipts every step of an approval under the proposal's
+    // id (order_placement_uncertain, order_rejected_by_broker, proposal_approved, ...), so an
+    // approval still emitting audit rows inside the lookback window is demonstrably mid-flight —
+    // the same evidence markStaleRunningRuns uses via '$.runId'. Declaring a live approval dead is
+    // the single worst outcome this sweep can produce: the operator reads "outcome unknown" while
+    // the broker submission is still in progress, and the natural response is a duplicate order.
+    let proposalId: string | undefined;
+    try {
+      const payload = JSON.parse(row.payload) as Record<string, unknown>;
+      proposalId = typeof payload.proposalId === "string" ? payload.proposalId : undefined;
+    } catch {
+      // A malformed payload can't have executed an approval; fall through with no grace.
+    }
+    if (proposalId) {
+      const recentActivity = db
+        .prepare("SELECT 1 FROM audit_events WHERE json_extract(payload, '$.proposalId') = ? AND created_at >= ? LIMIT 1")
+        .get(proposalId, cutoffIso);
+      if (recentActivity) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Sweep mobile_commands rows left in status='running' after a process crash / kill / unhandled
+ * rejection (claimNextQueuedCommand set 'running', and finishCommand never ran). Without this,
+ * such a row is stuck forever: nothing in the codebase selects or updates 'running' commands, so
+ * account deletion stays blocked on `activeMobileCommands` permanently, the PWA spins forever, and
+ * `mobileCommandBacklog().running` never returns to zero.
+ *
+ * Rows are marked FAILED, never requeued. A stranded proposal.approve may already have crossed the
+ * broker submission boundary, so re-executing it could duplicate a real order — the correct repair
+ * is to record that the outcome is unknown and let the operator decide, not to retry.
+ *
+ * Returns the number of repaired rows for logging/auditing.
+ */
+export function markStaleRunningMobileCommands(now: number = Date.now()): number {
+  const db = getDb();
+  const cutoffIso = new Date(now - STALE_MOBILE_COMMAND_THRESHOLD_MS).toISOString();
+  const stale = db
+    .prepare(
+      `SELECT id, user_id, command_type, payload, started_at FROM mobile_commands
+       WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?`
+    )
+    .all(cutoffIso) as Array<{
+      id: string;
+      user_id: string;
+      command_type: MobileCommandType;
+      payload: string;
+      started_at: string;
+    }>;
+  let count = 0;
+  for (const row of stale) {
+    if (staleMobileCommandStillAlive(db, row, cutoffIso)) continue;
+
+    const nowIso = new Date(now).toISOString();
+    const res = db
+      .prepare(
+        "UPDATE mobile_commands SET status = 'failed', error = ?, finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'"
+      )
+      .run(STALE_MOBILE_COMMAND_ERROR, nowIso, nowIso, row.id);
+    // Only receipt+count rows this sweep actually transitioned, so a concurrent scheduler instance
+    // that repaired the row between our SELECT and UPDATE doesn't produce a duplicate receipt.
+    if (res.changes === 0) continue;
+    audit(
+      "mobile_command_crashed",
+      {
+        commandId: row.id,
+        commandType: row.command_type,
+        startedAt: row.started_at,
+        reason: "marked failed by stale mobile-command sweep; outcome unknown"
+      },
+      row.user_id
+    );
+    const updated = getMobileCommandRecord(row.id, row.user_id);
+    if (updated) emitMobileCommandEvent(updated);
+    count++;
+  }
+  return count;
 }
 
 export function mobileControlCatalog() {

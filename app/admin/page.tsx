@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Cpu, RefreshCw, AlertTriangle, Database } from "lucide-react";
 import { Card, Chip, Dot, Btn, Stat, Meter, type ChipTone } from "../console/ui/primitives";
 import { describeProbeStatus } from "./lib/probe-error";
+import { Markdown } from "./transcript/markdown";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -561,9 +562,15 @@ export default function OperatorDashboard() {
                       {new Date(t.createdAt).toLocaleString()}
                     </span>
                   </div>
-                  <p className="con-tile con-mono line-clamp-2 text-[length:var(--con-fs-xs)] italic text-[color:var(--con-muted)]">
-                    {t.text}
-                  </p>
+                  {/* The turn text is markdown SOURCE. Interpolating it as a text node made
+                      every `**bold**`, `###`, and table pipe show up literally, in a monospace
+                      italic that read as "this is code" — it isn't. Render it through the same
+                      component the full transcript uses, clamped by HEIGHT rather than
+                      `line-clamp`: `-webkit-line-clamp` clamps one inline flow, so a heading,
+                      list, or table in the reply would escape it and blow out the card. */}
+                  <div className="con-tile overflow-hidden">
+                    <Markdown className="max-h-[3.3em] overflow-hidden text-[color:var(--con-muted)]">{t.text}</Markdown>
+                  </div>
                 </div>
               ))}
               {transcript?.turns.filter((t) => t.role === "assistant").length === 0 && (

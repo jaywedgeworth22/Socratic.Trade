@@ -12,19 +12,53 @@ import {
 import { getLease } from "@/lib/scheduler-lease";
 import { getTradingLivenessSummary } from "@/lib/trading-liveness";
 import { getOpenRouterCreditStatus } from "@/lib/openrouter-credits";
+import { authorizeOpsRequest } from "@/lib/ops-auth";
 import { statSync, statfsSync } from "fs";
 import { dirname } from "path";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Drop the `<pid>:` prefix from a scheduler-lease owner (`${process.pid}:${randomUUID()}`, see
+ * scheduler-lease.ts). The uuid half is what makes "did the leader change / is this the same
+ * process?" answerable; the pid half is host detail an anonymous caller has no use for. Owners
+ * written in some other format are returned untouched.
+ */
+function leaseOwnerWithoutPid(owner: string): string {
+  return owner.replace(/^\d+:/, "");
+}
 
 // Real liveness probe (was an unconditional {ok:true}). A health check that can never fail is
 // worse than none for a system that can hold real positions — it hides outages. This probes:
 //   - DB reachability (the getInternalSetting read throws if SQLite is unwritable/locked), and
 //   - scheduler liveness (age of the last tick heartbeat; stale ⇒ autonomy/stops aren't running).
 // Returns 503 when a critical check fails so PM2/uptime tooling can act.
-export async function GET() {
+//
+// TWO AUDIENCES. This route is in middleware's PUBLIC_PREFIXES, so everything it emits is
+// world-readable — correct for the external uptime monitor that polls it and for the
+// credential-less deploy-verify runbook (.claude/skills/deploy-verify/SKILL.md greps
+// `.checks.db`, `.checks.schedulerAgeSeconds`, `.checks.storage.litestream*`). Three items are
+// operator-only and are therefore gated on the SAME token as /api/ops/snapshot (`x-ops-token`,
+// ops-auth.ts) rather than a second auth scheme:
+//   - the OpenRouter prepaid balance in USD — publishing "the LLM budget is nearly exhausted"
+//     hands an anonymous caller a precisely-timed, cheap window to drain what is (post-#1703
+//     universal routing) the single point of failure for every LLM call and all RAG embedding,
+//   - the host disk / SQLite byte counts — free capacity reconnaissance, and
+//   - the raw scheduler-lease owner, which carries this container's OS pid.
+// Gating is a PROJECTION only: `ok`, the 200/503 status, and every degraded flag are computed from
+// the same values either way and are byte-identical between the two views. Do not fold any of this
+// into the status logic — a spurious 503 restarts the container, which re-halts autonomy via the
+// boot interlock (see the trading-liveness note below).
+//
+// Failure mode worth knowing: authorizeOpsRequest fails closed on an UNCONFIGURED secret — with
+// neither OPS_DIAGNOSTIC_TOKEN nor ADMIN_REINDEX_TOKEN set it returns false for everyone, quietly,
+// so the operator sees the public view too. That is the same condition that already makes
+// /api/ops/snapshot unusable, so it is a token-provisioning problem, not a health-route one; the
+// full lease owner is still on /api/ready (session-gated, no ops token needed) either way.
+export async function GET(request: Request) {
   const checks: Record<string, unknown> = {};
   let ok = true;
+  const detailed = authorizeOpsRequest(request);
 
   const release = runtimeReleaseIdentity();
   checks.release = release;
@@ -56,7 +90,7 @@ export async function GET() {
     const lease = getLease();
     if (lease) {
       checks.schedulerLease = {
-        owner: lease.owner,
+        owner: detailed ? lease.owner : leaseOwnerWithoutPid(lease.owner),
         acquiredAt: lease.acquiredAt,
         expiresAt: lease.expiresAt,
         ageSeconds: Math.round(lease.ageMs / 1000),
@@ -222,11 +256,17 @@ export async function GET() {
 
   // OpenRouter prepaid-credit balance. Universal routing (#1703) makes OpenRouter the single point
   // of failure for every LLM call AND all RAG embedding, so a drained balance = total decision-loop
-  // outage (see docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md). We surface the balance on
-  // this PUBLIC probe so an EXTERNAL monitor (Uptime Robot) alerts when the money runs low — a
-  // low balance sets dependencies.openrouter.ok=false (DEGRADE only; never 503, since a restart
-  // can't refill credits and would just restart-loop). Cached + best-effort; a failed READ never
-  // flips ok=false (see openrouter-credits.ts). Omitted entirely when no OpenRouter key is set.
+  // outage (see docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md). We surface the low-balance
+  // SIGNAL on this PUBLIC probe so an EXTERNAL monitor (Uptime Robot) alerts when the money runs
+  // low — a low balance sets dependencies.openrouter.ok=false (DEGRADE only; never 503, since a
+  // restart can't refill credits and would just restart-loop). Cached + best-effort; a failed READ
+  // never flips ok=false (see openrouter-credits.ts). Omitted entirely when no OpenRouter key is set.
+  //
+  // The USD FIGURES are operator-only (see the header comment) — the boolean is the alert, the
+  // numbers are an attacker's countdown to a cheap total-outage window. `ok` MUST stay the first
+  // serialized key of this object: the Uptime Robot keyword monitor matches the literal substring
+  // `"openrouterCredits":{"ok":false` (docs/rollouts/2026-07-18-openrouter-credit-health-signal.md),
+  // which is unchanged by this projection.
   try {
     const credits = await getOpenRouterCreditStatus();
     if (credits) {
@@ -239,9 +279,9 @@ export async function GET() {
       checks.dependencies = deps;
       checks.openrouterCredits = {
         ok: credits.ok,
-        remainingUsd: credits.remainingUsd,
-        totalUsd: credits.totalUsd,
-        usedUsd: credits.usedUsd,
+        ...(detailed
+          ? { remainingUsd: credits.remainingUsd, totalUsd: credits.totalUsd, usedUsd: credits.usedUsd }
+          : {}),
         thresholdUsd: credits.thresholdUsd,
         checkedAt: credits.checkedAt,
         ...(credits.error ? { error: credits.error } : {})
@@ -296,11 +336,12 @@ export async function GET() {
       latestLocalActivityAtMs: latestLocalActivityAtMs || null
     });
 
+    // Byte counts are operator-only (see the header comment); every litestream/backup-continuity
+    // field below stays public because the credential-less deploy-verify runbook reads exactly
+    // those, and `storageDegraded` (computed from the raw numbers, not from this object) keeps the
+    // disk/WAL thresholds visible to an anonymous monitor without publishing the capacity itself.
     checks.storage = {
-      dbSizeBytes,
-      walSizeBytes,
-      freeBytes,
-      totalBytes,
+      ...(detailed ? { dbSizeBytes, walSizeBytes, freeBytes, totalBytes } : {}),
       litestreamAgeSeconds,
       litestreamState,
       litestreamStatus: freshness.state === "known" ? freshness.status : null,
