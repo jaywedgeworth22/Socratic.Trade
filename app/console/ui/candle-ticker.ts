@@ -13,8 +13,8 @@ export type Wordmark = {
   hshort: boolean[]; // per-cell "short stroke" flag (fuller body)
 };
 
-export const TICKER_GREENS = ["#0e9358", "#12a565", "#18b271"];
-export const TICKER_REDS = ["#c22648", "#d3365a", "#dd4076"];
+export const TICKER_GREENS = ["#047857", "#059669", "#089981"];
+export const TICKER_REDS = ["#be123c", "#dc2626", "#e11d48"];
 
 /** Measured aspect ratio (width / height) of the "SOCRATIC TRADE" wordmark at
  *  the shared sample params (700 200px Arial, tracking 10) — i.e. the exact

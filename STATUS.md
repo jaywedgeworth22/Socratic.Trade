@@ -1,3 +1,9 @@
+## 2026-08-01 — App Icon White Background & Light-Mode Candlesticks (ANTIGRAVITY)
+
+Updated app icon background in `public/icon.svg` to pure white (`#ffffff`) and regenerated PWA/iOS PNG icons (`icon-512.png`, `icon-192.png`, `apple-touch-icon-180.png`). Optimized candlestick green and red color palettes in `public/icon.svg`, `candle-ticker.ts`, `intro-canvas.tsx`, and `candlewordmarkhorizontal.svg` for high contrast against light backgrounds.
+
+All tests, lint, tsc, and Next.js build pass cleanly. Rollout: `docs/rollouts/2026-08-01-app-icon-white-bg-candlesticks.md`.
+
 ## 2026-07-31 — Fix admin.socratictrade.com DNS 525 Error & Host Routing (ANTIGRAVITY)
 
 Fixed Cloudflare Error 525 (SSL Handshake Failed) on `admin.socratictrade.com` by adding `admin.socratictrade.com` and `*.socratictrade.com` to `/etc/usage-monitor/Caddyfile` on Oracle Cloud (`141.148.182.224`) and reloading Caddy. Also added middleware host routing in `middleware.ts` so `admin.socratictrade.com/` redirects directly to `/admin` and shorthand paths redirect to `/admin/<subpath>`.
