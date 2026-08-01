@@ -5,13 +5,15 @@ import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   assessR2Usage,
+  buildR2UsageDigestMessage,
   classifyR2Action,
   fetchR2RawUsage,
   formatR2MetricValue,
-  getR2UsageSnapshot,
+  getR2UsageSnapshots,
   isR2AutoDisableArmed,
   isR2ReplicationDisabled,
   isR2UsageCheckDue,
+  loadR2UsageAccounts,
   loadR2UsageMonitorConfig,
   r2AlertTransitions,
   r2MonthWindow,
@@ -26,12 +28,15 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  deleteInternalSetting("r2usage:lastSnapshot");
+  deleteInternalSetting("r2usage:lastSnapshots");
   deleteInternalSetting("r2usage:alertState");
   deleteInternalSetting("r2usage:lastCheckAt");
-  deleteInternalSetting("r2usage:lastDailyReportAt");
   delete process.env.CLOUDFLARE_ST_API_TOKEN;
   delete process.env.CLOUDFLARE_ST_ACCOUNT_ID;
+  delete process.env.CLOUDFLARE_CT_API_TOKEN;
+  delete process.env.CLOUDFLARE_CT_ACCOUNT_ID;
+  delete process.env.CLOUDFLARE_JAY_API_TOKEN;
+  delete process.env.CLOUDFLARE_JAY_ACCOUNT_ID;
   delete process.env.R2_USAGE_MONITOR_INTERVAL_HOURS;
   delete process.env.R2_USAGE_ALERT_THRESHOLD_PCT;
   delete process.env.R2_USAGE_BUCKET_FILTER;
@@ -39,7 +44,6 @@ beforeEach(() => {
   delete process.env.R2_USAGE_AUTO_DISABLE;
   delete process.env.DB_BOOTSTRAP;
   // Existing alert tests assert exact notification counts; daily-report tests opt in explicitly.
-  process.env.R2_USAGE_DAILY_REPORT = "0";
 });
 
 // 2026-07-16T00:00:00Z — exactly mid-month-ish for July (31 days): 15/31 elapsed.
@@ -238,7 +242,8 @@ describe("runR2UsageCheck", () => {
     expect(notifyCalls[0].title).toContain("Storage");
     expect(notifyCalls[0].title).toContain("⚠️");
 
-    const snap = getR2UsageSnapshot()!;
+    const snap = getR2UsageSnapshots()[0]!;
+    expect(snap.accountId).toBe("acct");
     expect(snap.metrics.find((m) => m.id === "storage")!.exceeded).toBe(true);
 
     // Second identical run: steady-exceeded → no repeat alert.
@@ -278,34 +283,6 @@ describe("runR2UsageCheck", () => {
     // runR2UsageCheck doesn't set the cadence watermark (runR2UsageCheckIfDue does),
     // so it remains due — guard against accidental coupling.
     expect(isR2UsageCheckDue(MID_JULY + 1000)).toBe(true);
-  });
-
-  it("sends the daily usage summary once per 24h, independent of threshold alerts", async () => {
-    process.env.CLOUDFLARE_ST_API_TOKEN = "t";
-    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "acct";
-    process.env.R2_USAGE_DAILY_REPORT = "1";
-    const notifyCalls: Array<{ title: string; body: string }> = [];
-    const notifyImpl = (async (_u: string, msg: { title: string; body: string }) => {
-      notifyCalls.push(msg);
-      return [];
-    }) as never;
-    const deps = { fetchImpl: graphqlStorageAndOps(1 * 1024 ** 3, 100, 100), notifyImpl };
-
-    const first = await runR2UsageCheck(MID_JULY, deps);
-    expect(first.status).toBe("ok");
-    expect(notifyCalls).toHaveLength(1); // daily report only — nothing exceeded
-    expect(notifyCalls[0].title).toContain("daily usage report");
-    expect(notifyCalls[0].body).toContain("Storage");
-    expect(notifyCalls[0].body).toContain("Class A");
-
-    // 1h later: not due — no notification at all.
-    await runR2UsageCheck(MID_JULY + 3600_000, deps);
-    expect(notifyCalls).toHaveLength(1);
-
-    // 25h later: due again.
-    await runR2UsageCheck(MID_JULY + 25 * 3600_000, deps);
-    expect(notifyCalls).toHaveLength(2);
-    expect(notifyCalls[1].title).toContain("daily usage report");
   });
 
   it("auto-disable (armed, live boot) writes the kill-switch marker, notifies, and exits — once", async () => {
@@ -370,6 +347,44 @@ describe("runR2UsageCheck", () => {
     expect(existsSync(marker)).toBe(false);
     expect(isR2AutoDisableArmed(loadR2UsageMonitorConfig())).toBe(false);
   });
+
+  it("kill-switch is st-scoped: another Cloudflare account over threshold never disables OUR litestream", async () => {
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t-st";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "acct-st";
+    process.env.CLOUDFLARE_CT_API_TOKEN = "t-ct";
+    process.env.CLOUDFLARE_CT_ACCOUNT_ID = "acct-ct";
+    process.env.DB_BOOTSTRAP = "live";
+    const marker = join(tmpdir(), `r2-disable-${randomUUID()}`);
+    process.env.R2_USAGE_DISABLE_MARKER = marker;
+    const exitCodes: number[] = [];
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      const query = String(init?.body ?? "");
+      const isSt = query.includes("acct-st");
+      const payloadSize = isSt ? 1 * 1024 ** 3 : 9 * 1024 ** 3; // ct massively over (90% absolute), st fine (10%)
+      if (query.includes("r2StorageAdaptiveGroups")) {
+        return new Response(JSON.stringify({
+          data: { viewer: { accounts: [{ r2StorageAdaptiveGroups: [
+            { max: { objectCount: 7, payloadSize }, dimensions: { bucketName: "b", datetime: "2026-07-16T00:00:00Z" } },
+          ] }] } },
+          errors: null,
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        data: { viewer: { accounts: [{ r2OperationsAdaptiveGroups: [] }] } },
+        errors: null,
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await runR2UsageCheck(MID_JULY, {
+      fetchImpl,
+      notifyImpl: (async () => []) as never,
+      exitImpl: (code: number) => { exitCodes.push(code); },
+    });
+
+    expect(exitCodes).toEqual([]); // st is under threshold — ct's overage must NOT stop our litestream
+    expect(existsSync(marker)).toBe(false);
+    expect(isR2ReplicationDisabled()).toBe(false);
+  });
 });
 
 describe("formatR2MetricValue", () => {
@@ -388,30 +403,38 @@ describe("daily digest", () => {
     delete process.env.R2_USAGE_DIGEST_INTERVAL_HOURS;
   });
 
-  it("buildR2UsageDigestMessage covers all three metrics with pace and flags", async () => {
-    const { buildR2UsageDigestMessage } = await import("../src/lib/r2-usage");
+  it("buildR2UsageDigestMessage renders per-account sections with flags", async () => {
     const snapshot = {
+      accountId: "acct-st",
+      accountLabel: "Socratic.Trade",
       checkedAt: "2026-07-16T12:00:00.000Z",
       month: { startISO: "2026-07-01T00:00:00.000Z", endISO: "2026-08-01T00:00:00.000Z", elapsedFraction: 0.5 },
       thresholdPct: 70,
-      bucketFilter: "socratic-trade-bucket",
+      bucketFilter: null,
       metrics: assessR2Usage({
-        storageBytes: 8 * 1024 ** 3, // over pace mid-month
+        storageBytes: 8 * 1024 ** 3, // 80% absolute — over threshold
         classAOps: 100_000,
         classBOps: 1_000_000,
         thresholdPct: 70,
         now: MID_JULY,
       }),
     };
-    const { title, body } = buildR2UsageDigestMessage(snapshot);
+    const ct = {
+      ...snapshot,
+      accountId: "acct-ct",
+      accountLabel: "Congress.Trade",
+      metrics: assessR2Usage({ storageBytes: 1 * 1024 ** 3, classAOps: 5_000, classBOps: 2_000, thresholdPct: 70, now: MID_JULY }),
+    };
+    const { title, body } = buildR2UsageDigestMessage([snapshot, ct]);
     expect(title).toContain("2026-07-16");
-    expect(title).toContain("⚠️"); // storage over pace
+    expect(title).toContain("⚠️"); // ST storage over threshold
+    expect(body).toContain("Socratic.Trade");
+    expect(body).toContain("Congress.Trade");
     expect(body).toContain("Storage: 8.00 GiB MTD (80.0%)");
     expect(body).toContain("Class A operations: 100,000 MTD (10.0%)");
-    expect(body).toContain("Class B operations: 1,000,000 MTD (10.0%)");
     expect(body).toContain("⚠️"); // flagged line
     expect(body).toContain("✓"); // clean lines
-    expect(body).toContain("socratic-trade-bucket");
+    expect(body).toContain("Free tier per account");
   });
 
   it("is due by default when configured; respects the off flag and interval", async () => {
@@ -452,5 +475,58 @@ describe("daily digest", () => {
     const { runR2UsageDailyDigestIfDue } = await import("../src/lib/r2-usage");
     const res = await runR2UsageDailyDigestIfDue(MID_JULY);
     expect(res.status).toBe("skipped");
+  });
+});
+
+describe("multi-account", () => {
+  it("loadR2UsageAccounts returns one entry per configured env pair", () => {
+    expect(loadR2UsageAccounts()).toHaveLength(0);
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t1";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "a1";
+    process.env.CLOUDFLARE_JAY_API_TOKEN = "t3";
+    process.env.CLOUDFLARE_JAY_ACCOUNT_ID = "a3";
+    const accounts = loadR2UsageAccounts();
+    expect(accounts.map((a) => a.id)).toEqual(["st", "um"]);
+    expect(accounts[0].label).toBe("Socratic.Trade");
+    expect(accounts[1].label).toBe("Usage Monitor");
+  });
+
+  it("checks every configured account; one failing account doesn't block the others", async () => {
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t1";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "a1";
+    process.env.CLOUDFLARE_CT_API_TOKEN = "t2";
+    process.env.CLOUDFLARE_CT_ACCOUNT_ID = "a2";
+    const okFetch = graphqlStorageAndOps(1 * 1024 ** 3, 100, 200);
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const body = String(init?.body ?? "");
+      if (body.includes("a2")) return new Response(JSON.stringify({ data: null, errors: [{ message: "ct down" }] }), { status: 200 });
+      return okFetch(url, init);
+    }) as unknown as typeof fetch;
+    const res = await runR2UsageCheck(MID_JULY, { fetchImpl, notifyImpl: (async () => []) as never });
+    expect(res.status).toBe("partial");
+    expect(res.results).toHaveLength(2);
+    expect(res.results.find((r) => r.accountId === "a1")!.status).toBe("ok");
+    expect(res.results.find((r) => r.accountId === "a2")!.status).toBe("error");
+    // The healthy account's snapshot still persists.
+    expect(getR2UsageSnapshots()).toHaveLength(1);
+    expect(getR2UsageSnapshots()[0].accountId).toBe("a1");
+  });
+
+  it("alert state tracks accounts independently", async () => {
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t1";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "a1";
+    process.env.CLOUDFLARE_CT_API_TOKEN = "t2";
+    process.env.CLOUDFLARE_CT_ACCOUNT_ID = "a2";
+    const notifyCalls: Array<{ title: string }> = [];
+    const notifyImpl = (async (_u: string, msg: { title: string }) => { notifyCalls.push(msg); return []; }) as never;
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const body = String(init?.body ?? "");
+      // ST hot (8 GiB), CT quiet (1 GiB) — only ST should alert.
+      const hot = body.includes("a1");
+      return graphqlStorageAndOps(hot ? 8 * 1024 ** 3 : 1 * 1024 ** 3, 100, 100)(url, init);
+    }) as unknown as typeof fetch;
+    await runR2UsageCheck(MID_JULY, { fetchImpl, notifyImpl });
+    expect(notifyCalls).toHaveLength(1);
+    expect(notifyCalls[0].title).toContain("Socratic.Trade");
   });
 });
