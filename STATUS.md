@@ -1,3 +1,8 @@
+## 2026-08-01 — CBOE-First VIX Cascade Optimization (ANTIGRAVITY)
+
+Re-ordered keyless ^VIX fetch cascade in `src/lib/macro.ts` to query CBOE delayed quotes (`vix-cboe`) first and Yahoo Finance (`vix-yahoo`) second. CBOE operates a keyless, public CDN that does not rate-limit or block datacenter IPs. Eliminates recurring 429 errors from Yahoo Finance on datacenter IPs.
+
+All tests, tsc, and Next.js build pass cleanly. Rollout: `docs/rollouts/2026-08-01-cboe-first-vix-cascade.md`.
 ## 2026-08-01 — Time-Bounded (PIT) Proposal Evidence for the Auto-Tuner (KIMI) — PR #2327
 
 Definitive fix for the §6 slice-3 finding (PR #2305): the auto-tuner's candidate weights were proposed from ALL-history realized outcomes spanning the held-out OOS fold. Now `computeOosEvidenceCutoff` (IO-lite, audit-only, no OHLC) replicates the fold arithmetic on matured signal_snapshot dates, and `proposeStrategyTuning` cuts its realized-outcome evidence (performance summary, fills, factor + source-value scorecards, skipped-candidate counterfactuals) off at the fold start — default ON via `policy.tuning.pitEvidenceCutoff`, no-op when no fold exists. The OOS readout discloses the cutoff INSTEAD of the partially-in-sample caveat (weight path is now genuinely OOS); autonomous ledger/provenance evidence carries it too. Aggregate learning state intentionally not cut (§6 slice-2 territory). 5 new tests. Gates: tsc clean, lint 0 errors, 154 targeted, full suite 5538/5538 (3 shards); local build blocked by a foreign session's staged r2-usage WIP (unrelated) — build gate via verify CI. Branch `kimi/pit-evidence`. Rollout: `docs/rollouts/2026-08-01-pit-evidence-cutoff.md`.
