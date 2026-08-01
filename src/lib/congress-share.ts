@@ -832,6 +832,7 @@ export interface CongressDailyShareSummary {
   reason?: string;
   tickers: number;
   priced: number;
+  refRows?: number;
   spxRows: number;
   insiderRows: number;
   shortVolRows: number;
@@ -894,6 +895,54 @@ export async function runCongressDailyShare(
     return await promise;
   } finally {
     activeDailySharePromise = null;
+  }
+}
+
+async function fetchNasdaqScreenerRefs(universe: string[]): Promise<CongressRef[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch("https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=8000&offset=0", {
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { accept: "application/json", "user-agent": "Mozilla/5.0" }
+    });
+    if (!response.ok) return [];
+    const payload = await response.json();
+    const rows = Array.isArray(payload?.data?.table?.rows) ? payload.data.table.rows : [];
+    
+    const universeSet = new Set(universe.map(u => canonicalOutboundSymbol(u)).filter(Boolean));
+    const refs: CongressRef[] = [];
+    
+    for (const row of rows) {
+      const rawSymbol = String(row.symbol ?? "");
+      const sym = normalizeSymbol(rawSymbol).replace(/\//g, "-");
+      const ticker = canonicalOutboundSymbol(sym);
+      if (!ticker || !universeSet.has(ticker)) continue;
+      
+      const ref: CongressRef = { ticker, assetClass: "equity" };
+      
+      const rawName = typeof row.name === "string" ? row.name.trim() : "";
+      const cleanedName = rawName.replace(/\s*\(Representing\s*[-–—]*\s*\)\s*$/i, "").trim();
+      const companyName = cleanedName || rawName;
+      if (companyName) ref.companyName = companyName;
+      
+      if (typeof row.sector === "string" && row.sector.trim()) ref.sector = row.sector.trim();
+      if (typeof row.industry === "string" && row.industry.trim()) ref.industry = row.industry.trim();
+      
+      const marketCapStr = String(row.marketCap ?? "").replace(/[$,%\s,]/g, "");
+      const marketCap = Number(marketCapStr);
+      if (Number.isFinite(marketCap) && marketCap > 0) ref.marketCap = marketCap;
+      
+      refs.push(ref);
+      universeSet.delete(ticker); // Avoid duplicates if screener has multiple rows mapping to same canonical ticker
+    }
+    return refs;
+  } catch (err) {
+    console.error("[congress-share] failed to fetch screener refs:", err);
+    return [];
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -1024,12 +1073,16 @@ async function runCongressDailyShareUnlocked(
   // Skip on targeted custom/needs-only runs so a performance backfill stays price-focused.
   const insider = advancesDailyMarker ? buildInsiderImport() : [];
   const shortVolume = advancesDailyMarker ? buildShortVolumeImport() : [];
+  
+  // Push company refs for the current share universe using the public screener
+  const refs = await fetchNasdaqScreenerRefs(universe);
 
   // Send each dataset as its OWN bounded POST(s) rather than one bundled megabatch: App A's per-call
   // work (upserts + per-trade perf recompute) made big combined payloads exceed the timeout, and a
   // bundled POST also let one oversized dataset abort the rest. Independent small POSTs each succeed.
   const payloads: CongressSharePayload[] = [];
   if (spx.length > 0) payloads.push({ spx });
+  for (const rows of rowChunks(refs, MAX_REFS_PER_POST)) payloads.push({ refs: rows });
   for (const rows of rowChunks(insider)) payloads.push({ insider: rows });
   for (const rows of rowChunks(shortVolume)) payloads.push({ shortVolume: rows });
   for (const prices of chunkPrices(priceEntries)) payloads.push({ prices });
@@ -1037,7 +1090,7 @@ async function runCongressDailyShareUnlocked(
   const responses: unknown[] = [];
   let posts = 0;
   let failedPosts = 0;
-  const sent = { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 };
+  const sent = { refs: 0, spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 };
   for (const payload of payloads) {
     assertOperationLeaseOwnership(operationLeaseClaim);
     const result = await shareWithCongressTrade(payload);
@@ -1045,6 +1098,7 @@ async function runCongressDailyShareUnlocked(
     posts++;
     if (result.ok) {
       responses.push(result.response);
+      sent.refs += result.sent.refs ?? 0;
       sent.spx += result.sent.spx;
       sent.prices += result.sent.prices;
       sent.closes += result.sent.closes;
@@ -1075,6 +1129,7 @@ async function runCongressDailyShareUnlocked(
     ok: posts === 0 && universe.length === 0 ? true : ok,
     tickers: universe.length,
     priced: priceEntries.length,
+    refRows: refs.length,
     spxRows: spx.length,
     insiderRows: insider.length,
     shortVolRows: shortVolume.length,
@@ -1089,6 +1144,7 @@ async function runCongressDailyShareUnlocked(
       reason: posts === 0 ? (universe.length === 0 ? "nothing-to-send" : "nothing-to-send") : undefined,
       tickers: summary.tickers,
       priced: summary.priced,
+      refRows: summary.refRows,
       spxRows: summary.spxRows,
       insiderRows: summary.insiderRows,
       shortVolRows: summary.shortVolRows,
