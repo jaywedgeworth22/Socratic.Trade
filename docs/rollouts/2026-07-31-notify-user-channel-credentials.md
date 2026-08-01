@@ -67,3 +67,21 @@ the "Pushover not configured on the server" dead end the owner hit.
   stay as fallback.
 - Owner: create the Pushover application token (pushover.net/apps) and paste
   it + user key in Settings → Delivery; Send test to verify.
+
+## Addendum (2026-08-01 00:30 UTC): deployed + owner Twilio set migrated
+
+- PR #2321 merged 23:48 UTC. The deploy queue wedged on a zombie ENOSPC
+  failure (23:00 build, `webpack.cache` write — same disk-pressure pattern as
+  the morning): cancelled 3 stale rows (Coolify cancel API returns
+  "Undefined variable $application" but DOES cancel — status
+  `cancelled-by-user`), removed the zombie helper, retriggered. Both queued
+  deploys finished green 00:18/00:20 UTC; container healthy; public 200.
+- The owner's working Twilio set is now mirrored into the `local` user
+  settings row (`twilio_account_sid`/`twilio_auth_token`/`twilio_from`,
+  encrypted with the app's own envelope inside the container, decrypt
+  round-trip hash-verified — values never left the box unencrypted and were
+  never printed). SMS delivery now works via **user settings**; the Infisical
+  env copies remain as operator fallback.
+- Remaining (owner, 2 min): pushover.net/apps → create app token → paste it
+  + Pushover user key in Settings → Delivery → Send test. No restart needed —
+  per-user credentials take effect on save.
