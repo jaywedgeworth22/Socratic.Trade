@@ -27,6 +27,13 @@ function stubFetch(opts: { fredValue?: string; yahooVix?: number | null; cboeVix
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
+      if (url.includes("cdn.cboe.com")) {
+        const vix = opts.cboeVix !== undefined ? opts.cboeVix : opts.yahooVix;
+        if (vix === null || vix === undefined) {
+          return { ok: false, status: 500, json: async () => ({}) };
+        }
+        return { ok: true, json: async () => ({ data: { current_price: vix } }) };
+      }
       if (url.includes("query1.finance.yahoo.com")) {
         if (opts.yahooVix === null || opts.yahooVix === undefined) {
           return { ok: false, status: 500, json: async () => ({}) };
@@ -37,12 +44,6 @@ function stubFetch(opts: { fredValue?: string; yahooVix?: number | null; cboeVix
             chart: { result: [{ indicators: { quote: [{ close: [opts.yahooVix] }] } }] }
           })
         };
-      }
-      if (url.includes("cdn.cboe.com")) {
-        if (opts.cboeVix === null || opts.cboeVix === undefined) {
-          return { ok: false, status: 500, json: async () => ({}) };
-        }
-        return { ok: true, json: async () => ({ data: { current_price: opts.cboeVix } }) };
       }
       if (url.includes("api.stlouisfed.org")) {
         return { ok: true, json: async () => ({ observations: [{ value: opts.fredValue ?? "4.50" }] }) };
@@ -178,7 +179,7 @@ describe("fetchMacroDataWithLiveVix", () => {
   });
 });
 
-describe("keyless VIX cascade (Yahoo -> Cboe)", () => {
+describe("keyless VIX cascade (Cboe -> Yahoo)", () => {
   beforeEach(async () => {
     delete process.env.FRED_API_KEY;
     const { clearMacroCacheForTests } = await import("../src/lib/macro");
@@ -190,16 +191,16 @@ describe("keyless VIX cascade (Yahoo -> Cboe)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("serves the Cboe delayed _VIX quote when the Yahoo lane is down", async () => {
-    stubFetch({ yahooVix: null, cboeVix: 27.5 });
+  it("serves the Cboe delayed _VIX quote first, falling back to Yahoo if Cboe is down", async () => {
+    stubFetch({ cboeVix: null, yahooVix: 27.5 });
     const { fetchLiveVix } = await import("../src/lib/macro");
     const result = await fetchLiveVix();
     expect(result.vix).toBe(27.5);
     expect(result.asOf).not.toBeNull();
-    // Yahoo was tried first, Cboe second — the two-lane cascade stops at the first success.
+    // Cboe was tried first, Yahoo second — the two-lane cascade stops at the first success.
     const urls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
-    expect(urls.some((u) => u.includes("query1.finance.yahoo.com"))).toBe(true);
     expect(urls.some((u) => u.includes("cdn.cboe.com"))).toBe(true);
+    expect(urls.some((u) => u.includes("query1.finance.yahoo.com"))).toBe(true);
   });
 
   it("with no FRED key, a Cboe-only VIX still yields a timestamped macro snapshot (not 'unavailable')", async () => {
