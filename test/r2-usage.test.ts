@@ -4,11 +4,13 @@ import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   assessR2Usage,
+  buildR2UsageDigestMessage,
   classifyR2Action,
   fetchR2RawUsage,
   formatR2MetricValue,
-  getR2UsageSnapshot,
+  getR2UsageSnapshots,
   isR2UsageCheckDue,
+  loadR2UsageAccounts,
   r2AlertTransitions,
   r2MonthWindow,
   runR2UsageCheck,
@@ -21,11 +23,15 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  deleteInternalSetting("r2usage:lastSnapshot");
+  deleteInternalSetting("r2usage:lastSnapshots");
   deleteInternalSetting("r2usage:alertState");
   deleteInternalSetting("r2usage:lastCheckAt");
   delete process.env.CLOUDFLARE_ST_API_TOKEN;
   delete process.env.CLOUDFLARE_ST_ACCOUNT_ID;
+  delete process.env.CLOUDFLARE_CT_API_TOKEN;
+  delete process.env.CLOUDFLARE_CT_ACCOUNT_ID;
+  delete process.env.CLOUDFLARE_JAY_API_TOKEN;
+  delete process.env.CLOUDFLARE_JAY_ACCOUNT_ID;
   delete process.env.R2_USAGE_MONITOR_INTERVAL_HOURS;
   delete process.env.R2_USAGE_ALERT_THRESHOLD_PCT;
   delete process.env.R2_USAGE_BUCKET_FILTER;
@@ -227,7 +233,8 @@ describe("runR2UsageCheck", () => {
     expect(notifyCalls[0].title).toContain("Storage");
     expect(notifyCalls[0].title).toContain("⚠️");
 
-    const snap = getR2UsageSnapshot()!;
+    const snap = getR2UsageSnapshots()[0]!;
+    expect(snap.accountId).toBe("acct");
     expect(snap.metrics.find((m) => m.id === "storage")!.exceeded).toBe(true);
 
     // Second identical run: steady-exceeded → no repeat alert.
@@ -286,30 +293,38 @@ describe("daily digest", () => {
     delete process.env.R2_USAGE_DIGEST_INTERVAL_HOURS;
   });
 
-  it("buildR2UsageDigestMessage covers all three metrics with pace and flags", async () => {
-    const { buildR2UsageDigestMessage } = await import("../src/lib/r2-usage");
+  it("buildR2UsageDigestMessage renders per-account sections with flags", async () => {
     const snapshot = {
+      accountId: "acct-st",
+      accountLabel: "Socratic.Trade",
       checkedAt: "2026-07-16T12:00:00.000Z",
       month: { startISO: "2026-07-01T00:00:00.000Z", endISO: "2026-08-01T00:00:00.000Z", elapsedFraction: 0.5 },
       thresholdPct: 70,
-      bucketFilter: "socratic-trade-bucket",
+      bucketFilter: null,
       metrics: assessR2Usage({
-        storageBytes: 8 * 1024 ** 3, // over pace mid-month
+        storageBytes: 8 * 1024 ** 3, // 80% absolute — over threshold
         classAOps: 100_000,
         classBOps: 1_000_000,
         thresholdPct: 70,
         now: MID_JULY,
       }),
     };
-    const { title, body } = buildR2UsageDigestMessage(snapshot);
+    const ct = {
+      ...snapshot,
+      accountId: "acct-ct",
+      accountLabel: "Congress.Trade",
+      metrics: assessR2Usage({ storageBytes: 1 * 1024 ** 3, classAOps: 5_000, classBOps: 2_000, thresholdPct: 70, now: MID_JULY }),
+    };
+    const { title, body } = buildR2UsageDigestMessage([snapshot, ct]);
     expect(title).toContain("2026-07-16");
-    expect(title).toContain("⚠️"); // storage over pace
+    expect(title).toContain("⚠️"); // ST storage over threshold
+    expect(body).toContain("Socratic.Trade");
+    expect(body).toContain("Congress.Trade");
     expect(body).toContain("Storage: 8.00 GiB MTD (80.0%)");
     expect(body).toContain("Class A operations: 100,000 MTD (10.0%)");
-    expect(body).toContain("Class B operations: 1,000,000 MTD (10.0%)");
     expect(body).toContain("⚠️"); // flagged line
     expect(body).toContain("✓"); // clean lines
-    expect(body).toContain("socratic-trade-bucket");
+    expect(body).toContain("Free tier per account");
   });
 
   it("is due by default when configured; respects the off flag and interval", async () => {
@@ -350,5 +365,58 @@ describe("daily digest", () => {
     const { runR2UsageDailyDigestIfDue } = await import("../src/lib/r2-usage");
     const res = await runR2UsageDailyDigestIfDue(MID_JULY);
     expect(res.status).toBe("skipped");
+  });
+});
+
+describe("multi-account", () => {
+  it("loadR2UsageAccounts returns one entry per configured env pair", () => {
+    expect(loadR2UsageAccounts()).toHaveLength(0);
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t1";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "a1";
+    process.env.CLOUDFLARE_JAY_API_TOKEN = "t3";
+    process.env.CLOUDFLARE_JAY_ACCOUNT_ID = "a3";
+    const accounts = loadR2UsageAccounts();
+    expect(accounts.map((a) => a.id)).toEqual(["st", "um"]);
+    expect(accounts[0].label).toBe("Socratic.Trade");
+    expect(accounts[1].label).toBe("Usage Monitor");
+  });
+
+  it("checks every configured account; one failing account doesn't block the others", async () => {
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t1";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "a1";
+    process.env.CLOUDFLARE_CT_API_TOKEN = "t2";
+    process.env.CLOUDFLARE_CT_ACCOUNT_ID = "a2";
+    const okFetch = graphqlStorageAndOps(1 * 1024 ** 3, 100, 200);
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const body = String(init?.body ?? "");
+      if (body.includes("a2")) return new Response(JSON.stringify({ data: null, errors: [{ message: "ct down" }] }), { status: 200 });
+      return okFetch(url, init);
+    }) as unknown as typeof fetch;
+    const res = await runR2UsageCheck(MID_JULY, { fetchImpl, notifyImpl: (async () => []) as never });
+    expect(res.status).toBe("partial");
+    expect(res.results).toHaveLength(2);
+    expect(res.results.find((r) => r.accountId === "a1")!.status).toBe("ok");
+    expect(res.results.find((r) => r.accountId === "a2")!.status).toBe("error");
+    // The healthy account's snapshot still persists.
+    expect(getR2UsageSnapshots()).toHaveLength(1);
+    expect(getR2UsageSnapshots()[0].accountId).toBe("a1");
+  });
+
+  it("alert state tracks accounts independently", async () => {
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t1";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "a1";
+    process.env.CLOUDFLARE_CT_API_TOKEN = "t2";
+    process.env.CLOUDFLARE_CT_ACCOUNT_ID = "a2";
+    const notifyCalls: Array<{ title: string }> = [];
+    const notifyImpl = (async (_u: string, msg: { title: string }) => { notifyCalls.push(msg); return []; }) as never;
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const body = String(init?.body ?? "");
+      // ST hot (8 GiB), CT quiet (1 GiB) — only ST should alert.
+      const hot = body.includes("a1");
+      return graphqlStorageAndOps(hot ? 8 * 1024 ** 3 : 1 * 1024 ** 3, 100, 100)(url, init);
+    }) as unknown as typeof fetch;
+    await runR2UsageCheck(MID_JULY, { fetchImpl, notifyImpl });
+    expect(notifyCalls).toHaveLength(1);
+    expect(notifyCalls[0].title).toContain("Socratic.Trade");
   });
 });
