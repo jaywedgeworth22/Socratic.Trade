@@ -198,11 +198,19 @@ export default function OperatorDashboard() {
           ? { label: "Available", tone: "pos" as const }
           : { label: "Not checked", tone: "muted" as const };
 
-  // All five probes 403'd → this login isn't an operator. One honest notice
+  // Every operator-gated probe 403'd → this login isn't an operator. One honest notice
   // instead of five per-card probe errors (presentation of a real 403, not a gate).
-  const allForbidden =
-    Object.keys(probeErrors).length === 5 &&
-    Object.values(probeErrors).every((e) => e === 403);
+  //
+  // Enumerated rather than counted. `fetchDashboardData` fires SIX requests, but only these
+  // five are behind requireAdmin — `/api/chat-history` (the `transcript` key) is an ordinary
+  // per-user endpoint that answers 200 for a non-operator. The old test was
+  // `Object.keys(probeErrors).length === 5 && every(=== 403)`, which happened to be right only
+  // because the sixth probe usually succeeds and writes no key: any transient network failure
+  // on chat-history added a sixth key and silently suppressed this notice, and adding a seventh
+  // admin card would have broken it outright. Keyed membership has neither failure mode — a new
+  // admin probe just gets its key added here.
+  const ADMIN_PROBE_KEYS = ["connections", "llm", "rag", "server", "r2"] as const;
+  const allForbidden = ADMIN_PROBE_KEYS.every((key) => probeErrors[key] === 403);
 
   // Short, human chip/badge text for a single probe's failure — see ./lib/probe-error for the
   // "why" (this presents a real 403 from requireAdmin, it doesn't paper over it).

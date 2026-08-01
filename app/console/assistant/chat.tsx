@@ -120,6 +120,9 @@ export function AssistantChat() {
   /** Per-provider key availability ({} until loaded — treated as available so
    *  the gate never flashes before the check resolves). */
   const [providerStatus, setProviderStatus] = useState<Partial<Record<string, boolean>>>({});
+  /** True when the availability check itself failed, so "no 'no key' badges" means
+   *  "we couldn't check" rather than "every provider has a key". */
+  const [statusUnknown, setStatusUnknown] = useState(false);
   const [clearArmed, setClearArmed] = useState(false);
   const [clearing, setClearing] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -205,11 +208,26 @@ export function AssistantChat() {
     const load = async () => {
       try {
         const res = await fetch("/api/chat/providers");
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (!cancelled) setStatusUnknown(true);
+          return;
+        }
         const body = (await res.json()) as { providers?: Partial<Record<string, boolean>> };
-        if (!cancelled && body.providers) setProviderStatus(body.providers);
+        if (cancelled) return;
+        if (body.providers) {
+          setProviderStatus(body.providers);
+          setStatusUnknown(false);
+        } else {
+          setStatusUnknown(true);
+        }
       } catch {
-        /* availability is best-effort; fail open so every model stays selectable */
+        // Availability stays FAIL-OPEN: every model remains selectable. Failing closed here
+        // would mean one flaky /api/chat/providers response locks the user out of Coach
+        // entirely, which is a far worse outcome than letting them pick a provider whose key
+        // is missing — that case already surfaces a clear error on send. What we must NOT do
+        // is keep quiet about it, because an empty status map is indistinguishable from
+        // "everything has a key". `statusUnknown` makes the difference visible instead.
+        if (!cancelled) setStatusUnknown(true);
       }
     };
     void load();
@@ -405,7 +423,11 @@ export function AssistantChat() {
                 inputRef.current?.focus();
               }}
               style={{ padding: "3px 8px", fontSize: "var(--con-fs-xs)" }}
-              title="Which AI model answers. $ signs are relative cost within the provider. 'no key' means that provider has no key in Settings; Mock is a deterministic offline model that needs no key."
+              title={
+                statusUnknown
+                  ? "Which AI model answers. $ signs are relative cost within the provider. Key availability could NOT be checked right now, so no model is marked 'no key' — a provider without a key will fail on send."
+                  : "Which AI model answers. $ signs are relative cost within the provider. 'no key' means that provider has no key in Settings; Mock is a deterministic offline model that needs no key."
+              }
               aria-label="Chat model"
             >
               <option value="" disabled>Choose a model…</option>

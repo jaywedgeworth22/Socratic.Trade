@@ -58,4 +58,48 @@ export default [
       "@next/next/no-html-link-for-pages": "warn",
     },
   },
+  {
+    // Client/server bundle boundary (2026-08-01).
+    //
+    // `app/console/**` and `app/mobile/**` are client trees: nearly every module under them is
+    // reachable from a "use client" component, so a single value-import of a server module drags
+    // its whole transitive graph into the browser bundle. That is not hypothetical — importing
+    // `inferExternalCashFlows` from `@/lib/benchmark` pulled `history.ts` → the `db` barrel →
+    // migrations and API-key crypto into a client chunk, which is why the browser console was
+    // warning about a missing `ENCRYPTION_KEY`. The fix was to extract the pure helper into
+    // `@/lib/cash-flows`; this rule is what stops the next person re-attaching it.
+    //
+    // `allowTypeImports: true` is deliberate — `import type` is erased before bundling, so a
+    // type-only reference to `@/lib/db` (e.g. `PositionStopPlan` in console/lib/derive.ts) costs
+    // the bundle nothing and stays legal.
+    //
+    // Server work belongs in a route handler or server component under `app/api/**`; the client
+    // should be calling it over HTTP, not importing it.
+    files: ["app/console/**/*.{ts,tsx}", "app/mobile/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "@/lib/db",
+                "@/lib/db-*",
+                "@/lib/history",
+                "@/lib/benchmark",
+                "@/lib/strategy",
+                "@/lib/scheduler",
+                "@/lib/market",
+                "@/lib/broker*",
+                "@/lib/llm-*",
+              ],
+              allowTypeImports: true,
+              message:
+                "Server-only module: value-importing this from a client tree pulls the DB/crypto graph into the browser bundle. Extract the pure part (see @/lib/cash-flows) or call an API route. `import type` is fine.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];
