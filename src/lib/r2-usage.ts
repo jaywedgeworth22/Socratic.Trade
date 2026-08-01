@@ -19,7 +19,10 @@
 //   R2_USAGE_ALERT_THRESHOLD_PCT     (default 70)
 //   R2_USAGE_BUCKET_FILTER           (optional — only count this bucket; default: whole account)
 
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+// Use bare "fs" (not the "node:" scheme) so Next.js webpack can externalize it for server
+// bundles — the "node:" URI scheme fails client/edge compilation when this module is pulled
+// in transitively (dashboard -> scheduler -> r2-usage), same trap as egress-guard's dns/net.
+import { existsSync, unlinkSync, writeFileSync } from "fs";
 import { getInternalSetting, setInternalSetting } from "./db-settings";
 import { audit } from "./db";
 import { notify } from "./notify";
