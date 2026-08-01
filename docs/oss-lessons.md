@@ -154,8 +154,10 @@ history. Three contamination traps, three references:
   embargo/purge counts); the manual + autonomous OOS readouts name the held-out window and carry
   a "partially in-sample — a pass is necessary, not sufficient" caveat into the cautions, ledger,
   and provenance evidence. Rollout: `docs/rollouts/2026-07-30-walk-forward-window.md`.
-  Follow-up (board): time-bounded proposal evidence — cut the tuner's evidence queries off at
-  the test-fold start so the caveat can be retired for the weight path.
+  Follow-up LANDED 2026-08-01 (PR #2327): time-bounded proposal evidence — the tuner's
+  realized-outcome evidence is now cut off at the fold start (`computeOosEvidenceCutoff` +
+  `policy.tuning.pitEvidenceCutoff`, default ON), so the caveat is retired for the weight path.
+  Aggregate learning state (lessons/reflection) remains uncut — that is slice 2's territory.
 
 ## 7. Brokerage-model order-state hardening (PLANNED — umbrella for §4 items)
 

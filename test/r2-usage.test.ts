@@ -103,11 +103,52 @@ describe("assessR2Usage", () => {
     expect(R2_FREE_TIER.classAOps).toBe(1_000_000);
     expect(R2_FREE_TIER.classBOps).toBe(10_000_000);
   });
+
+  it("storage alerts on ABSOLUTE usage only — pace never fires for bytes", () => {
+    // 5.5 GiB at 1% of the month elapsed: raw pace would be ~550 GiB (5500%),
+    // but storage is a stock metric — absolute 54% < 70 threshold → no alert.
+    const early = Date.UTC(2026, 6, 1, 8); // ~8h into July
+    const metrics = assessR2Usage({
+      storageBytes: 5.5 * 1024 ** 3,
+      classAOps: 0,
+      classBOps: 0,
+      thresholdPct: 70,
+      now: early,
+    });
+    const storage = metrics.find((m) => m.id === "storage")!;
+    expect(storage.alertBasis).toBe("absolute");
+    expect(storage.pctUsed).toBeCloseTo(55, 0);
+    expect(storage.exceeded).toBe(false);
+    // Absolute crossing still alerts regardless of pace semantics.
+    const hot = assessR2Usage({ storageBytes: 8 * 1024 ** 3, classAOps: 0, classBOps: 0, thresholdPct: 70, now: early });
+    expect(hot.find((m) => m.id === "storage")!.exceeded).toBe(true);
+  });
+
+  it("ops pace uses the 0.2 elapsed floor — month-start bursts don't false-fire", () => {
+    // ~7.4h into the month (elapsedFraction ≈ 0.01): 100k Class A ops.
+    // Raw projection would be ~10M (1000% — absurd); floored: 100k/0.2 = 500k = 50% < 70.
+    const early = Date.UTC(2026, 6, 1, 7, 26);
+    const metrics = assessR2Usage({
+      storageBytes: 0,
+      classAOps: 100_000,
+      classBOps: 0,
+      thresholdPct: 70,
+      now: early,
+    });
+    const classA = metrics.find((m) => m.id === "classA")!;
+    expect(classA.alertBasis).toBe("pace");
+    expect(classA.projectedPct).toBeCloseTo(50, 0);
+    expect(classA.exceeded).toBe(false);
+    // A genuinely hot month-start still fires: 200k ops → floored 1M = 100% > 70.
+    const hot = assessR2Usage({ storageBytes: 0, classAOps: 200_000, classBOps: 0, thresholdPct: 70, now: early });
+    expect(hot.find((m) => m.id === "classA")!.exceeded).toBe(true);
+  });
 });
 
 describe("r2AlertTransitions", () => {
   const mk = (id: "storage" | "classA" | "classB", exceeded: boolean) => ({
-    id, label: id, mtd: 0, limit: 1, pctUsed: 0, projected: 0, projectedPct: exceeded ? 99 : 1, exceeded, unit: "ops" as const,
+    id, label: id, mtd: 0, limit: 1, pctUsed: 0, projected: 0, projectedPct: exceeded ? 99 : 1, exceeded,
+    alertBasis: (id === "storage" ? "absolute" : "pace") as "absolute" | "pace", unit: "ops" as const,
   });
   it("emits crossed only on ok → exceeded", () => {
     const t = r2AlertTransitions({}, [mk("storage", true)]);
