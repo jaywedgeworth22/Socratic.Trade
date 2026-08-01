@@ -1047,6 +1047,69 @@ function toBusinessDayLocal(time: number | string | undefined): string | undefin
 }
 
 /**
+ * Where the OOS test fold begins for evidence-cutoff purposes (§6 slice-3 follow-up —
+ * time-bounded proposal evidence). Everything the tuner sees must be realized BEFORE this date
+ * or the candidate is partly fitted on evaluation-period outcomes.
+ */
+export interface OOSEvidenceCutoff {
+  /** First surviving held-out (test-fold) snapshot date. Evidence realized before this date is PIT-clean. */
+  cutoffDate: string;
+  /** Last train-fold snapshot date. */
+  trainEndDate: string;
+  /** Unique matured snapshot dates considered (after the audit-limit window). */
+  totalDates: number;
+}
+
+/**
+ * IO-lite (audit read only, NO OHLC fetches). Computes where `runWalkForwardOOS`'s surviving test
+ * fold STARTS, so `proposeStrategyTuning` can cut its evidence off there — the definitive fix for
+ * the "partially in-sample" caveat: candidate weights are then generated WITHOUT seeing
+ * evaluation-period outcomes.
+ *
+ * Replicates the fold arithmetic on the same signal_snapshot source with the same defaults
+ * (horizonDays, auditLimit, trainFraction 0.7, embargo = horizonDays date-buckets), restricted to
+ * MATURED dates (forward window fully elapsed) to mirror what buildFactorObservations can resolve.
+ * Approximation: the actual fold uses dates with resolved per-symbol observations; a date bucket
+ * whose symbols all fail to resolve shifts the real fold slightly. Bias is acceptable for an
+ * evidence filter — and when in doubt, less-recent evidence is the safe side. Returns undefined
+ * when no surviving test fold exists (< 4 matured dates, or the embargo swallows the tail) — the
+ * caller then applies no cutoff (and keeps the partially-in-sample caveat).
+ */
+export function computeOosEvidenceCutoff(
+  userId: string = "local",
+  options: {
+    horizonDays?: number;
+    auditLimit?: number;
+    trainFraction?: number;
+    now?: number;
+    connectedAccountId?: string;
+  } = {}
+): OOSEvidenceCutoff | undefined {
+  const now = options.now ?? Date.now();
+  const horizonDays = boundedInteger(options.horizonDays ?? DEFAULT_HORIZON_DAYS, 1, 252, DEFAULT_HORIZON_DAYS);
+  const auditLimit = boundedInteger(options.auditLimit ?? DEFAULT_AUDIT_LIMIT, 1, 5000, DEFAULT_AUDIT_LIMIT);
+  const trainFraction = Math.max(0.5, Math.min(0.9, options.trainFraction ?? 0.7));
+
+  const rows = listSignalSnapshotAuditAfter(userId, undefined, auditLimit, options.connectedAccountId);
+  const today = marketDateOf(new Date(now).toISOString());
+  const dates = [
+    ...new Set(
+      rows
+        .map((row) => parseSnapshot(row)?.snapshotDate)
+        .filter((d): d is string => Boolean(d))
+        // Maturity mirror: only dates whose forward window has fully elapsed can resolve.
+        .filter((d) => !today || targetBusinessDate(d, horizonDays) <= today)
+    )
+  ].sort();
+  if (dates.length < 4) return undefined;
+
+  const cutIdx = Math.max(1, Math.floor(dates.length * trainFraction));
+  const testCutIdx = Math.min(cutIdx + horizonDays, dates.length);
+  if (testCutIdx >= dates.length) return undefined; // embargo swallows the tail → no surviving fold
+  return { cutoffDate: dates[testCutIdx], trainEndDate: dates[cutIdx - 1], totalDates: dates.length };
+}
+
+/**
  * IO. Walk-forward out-of-sample validation.
  *
  * 1. Builds factor observations from the `signal_snapshot` audit log.

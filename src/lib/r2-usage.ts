@@ -78,10 +78,26 @@ export interface R2MetricAssessment {
   pctUsed: number;
   projected: number;
   projectedPct: number;
-  /** On pace to exceed the alert threshold by month end (or already over it). */
+  /** Alert condition met (basis depends on metric — see alertBasis). */
   exceeded: boolean;
+  /**
+   * What drives `exceeded` for this metric:
+   *  - "absolute": storage — a step-function stock metric (one bulk snapshot
+   *    upload is not a continuing rate), so only absolute MTD usage vs the
+   *    threshold alerts. Pace is displayed but never alerts.
+   *  - "pace": operation counters — true rate metrics; pace alerts fire on
+   *    the floored projection OR absolute MTD usage past the threshold.
+   */
+  alertBasis: "absolute" | "pace";
   unit: "bytes" | "ops";
 }
+
+/** Floor for the month-elapsed fraction used in ops pace projection. Without
+ *  it, a one-time burst in the first days of a month (e.g. an initial
+ *  litestream snapshot upload) projects to absurd month-end values (0.5%
+ *  elapsed = 200x multiplier) and false-fires. 0.2 caps the multiplier at
+ *  5x — still catches genuine runaway burn, tames month-start noise. */
+export const R2_OPS_PACE_ELAPSED_FLOOR = 0.2;
 
 export interface R2UsageAssessmentInput {
   storageBytes: number;
@@ -100,9 +116,17 @@ export function assessR2Usage(input: R2UsageAssessmentInput): R2MetricAssessment
     limit: number,
     unit: "bytes" | "ops",
   ): R2MetricAssessment => {
-    const projected = mtd / elapsedFraction;
     const pctUsed = (mtd / limit) * 100;
+    const alertBasis: "absolute" | "pace" = unit === "bytes" ? "absolute" : "pace";
+    // Ops pace uses the floored elapsed fraction; storage shows raw pace for
+    // display only (its alert is absolute — see alertBasis).
+    const paceElapsed = alertBasis === "pace" ? Math.max(elapsedFraction, R2_OPS_PACE_ELAPSED_FLOOR) : elapsedFraction;
+    const projected = mtd / paceElapsed;
     const projectedPct = (projected / limit) * 100;
+    const exceeded =
+      alertBasis === "absolute"
+        ? pctUsed >= input.thresholdPct
+        : projectedPct > input.thresholdPct || pctUsed >= input.thresholdPct;
     return {
       id,
       label,
@@ -111,7 +135,8 @@ export function assessR2Usage(input: R2UsageAssessmentInput): R2MetricAssessment
       pctUsed,
       projected,
       projectedPct,
-      exceeded: projectedPct > input.thresholdPct,
+      exceeded,
+      alertBasis,
       unit,
     };
   };
@@ -414,17 +439,23 @@ export async function runR2UsageCheck(
   let alertsSent = 0;
   for (const t of transitions) {
     const m = t.metric;
+    const crossedTitle =
+      m.alertBasis === "absolute"
+        ? `⚠️ R2 ${m.label} at ${m.pctUsed.toFixed(0)}% of free tier`
+        : `⚠️ R2 ${m.label} on pace to exceed ${cfg.thresholdPct}% of free tier`;
     const title =
       t.direction === "crossed"
-        ? `⚠️ R2 ${m.label} on pace to exceed ${cfg.thresholdPct}% of free tier`
-        : `✅ R2 ${m.label} back under ${cfg.thresholdPct}% pace`;
+        ? crossedTitle
+        : `✅ R2 ${m.label} back under ${cfg.thresholdPct}% ${m.alertBasis === "pace" ? "pace" : "usage"}`;
     const body =
       `${m.label}: ${formatR2MetricValue(m)} used month-to-date (${m.pctUsed.toFixed(1)}% of the free tier).\n` +
-      `Projected month-end: ${formatR2Projected(m)} (${m.projectedPct.toFixed(1)}%).\n` +
+      (m.alertBasis === "pace"
+        ? `Projected month-end: ${formatR2Projected(m)} (${m.projectedPct.toFixed(1)}%).\n`
+        : `Storage alerts on absolute usage, not pace — current level is what matters.\n`) +
       `Free tier limit: ${m.unit === "bytes" ? "10 GiB" : m.limit.toLocaleString("en-US")} — alert threshold ${cfg.thresholdPct}%.\n` +
       (t.direction === "crossed"
         ? `Review litestream/upload activity on the socratic-trade-bucket (SocraticTrade.com Cloudflare account) before paid usage kicks in.`
-        : `Projection is back inside the free-tier pace.`);
+        : `Usage is back inside the free-tier threshold.`);
     try {
       await notifyImpl("local", { title, body, kind: "r2-usage" });
       alertsSent += 1;
