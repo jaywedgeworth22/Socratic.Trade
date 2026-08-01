@@ -467,7 +467,9 @@ async function checkOneAccount(
         : `Storage alerts on absolute usage, not pace — current level is what matters.\n`) +
       `Free tier limit: ${m.unit === "bytes" ? "10 GiB" : m.limit.toLocaleString("en-US")} — alert threshold ${cfg.thresholdPct}%.\n` +
       (t.direction === "crossed"
-        ? `Review litestream/upload activity on this Cloudflare account before paid usage kicks in.`
+        ? m.alertBasis === "absolute"
+          ? `Review litestream retention on this account: litestream.coolify.yml currently keeps snapshot.retention=720h of daily snapshots plus WAL — lowering retention (e.g. 168h = 7 days) or widening snapshot.interval reclaims the most R2 storage. Also check for non-litestream uploads filling the bucket.`
+          : `Review litestream/upload activity on this Cloudflare account before paid usage kicks in.`
         : `Usage is back inside the free-tier threshold.`);
     try {
       await notifyImpl("local", { title, body, kind: "r2-usage" });
