@@ -27,6 +27,9 @@ Upon inspection, curling `https://admin.socratictrade.com` failed with **Cloudfl
   - Added host-level routing for `admin.socratictrade.com` and `admin.socratic.trade`.
   - Requests for `/` on `admin.socratictrade.com` automatically redirect to `/admin`.
   - Shorthand admin paths (`/server`, `/connections`, `/llm-usage`, `/rag-coverage`, `/transcript`) automatically redirect to `/admin<path>`.
+- **Litestream R2 Credential Repair**:
+  - Found `AWS_ACCESS_KEY_ID` in Infisical project `39d93bb7-76f9-498c-8b50-a7def52e072f` was set to a 40-character string instead of the 32-character Cloudflare R2 Access Key ID.
+  - Updated `AWS_ACCESS_KEY_ID` (32 chars) and `AWS_SECRET_ACCESS_KEY` (64 chars) in Infisical `prod` env via API, then restarted `socratic-app`. Litestream replication & compaction now run 100% error-free.
 - **Tests (`test/middleware-auth.test.ts`)**:
   - Added unit test cases verifying host routing redirects for `admin.socratictrade.com`.
 
