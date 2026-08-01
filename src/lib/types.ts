@@ -447,6 +447,15 @@ export interface TuningSettings {
    */
   oosPurgeEmbargo?: boolean;
   /**
+   * DEFAULT TRUE (§6 slice-3 follow-up, 2026-08-01): when on and an OOS test fold exists,
+   * `proposeStrategyTuning` cuts its realized-outcome evidence (factor/source scorecards, recent
+   * fills, performance summary, skipped-candidate counterfactuals) off at the fold's start date —
+   * candidate weights are generated WITHOUT seeing evaluation-period outcomes, retiring the
+   * "partially in-sample" caveat for the weight path. No-op when snapshot history is insufficient
+   * for a fold (nothing to leak into). Set false to restore the legacy all-history evidence.
+   */
+  pitEvidenceCutoff?: boolean;
+  /**
    * OPT-IN (DEFAULT false, panel P1-3): when true, each autonomous-tuning EVALUATION records a SHADOW ledger
    * row — what the tuner WOULD have applied and the OOS readout — WITHOUT applying it (never touches policy).
    * A forward-A/B audit trail so an operator can watch the tuner's decisions accrue before trusting autonomy.
@@ -2325,6 +2334,13 @@ export interface StrategyTuningProposal {
   cautions: string[];
   confidenceScore: number;
   generatedBy: "llm" | "local_rules";
+  /**
+   * §6 slice-3 follow-up: when `policy.tuning.pitEvidenceCutoff` is on (default) and an OOS test
+   * fold exists, the date the tuner's realized-outcome evidence was cut off at (the fold's start).
+   * Present ⇒ the candidate was generated WITHOUT evaluation-period outcomes, so the OOS readout
+   * drops the "partially in-sample" caveat in favor of this cutoff disclosure.
+   */
+  evidenceCutoffDate?: string;
 }
 
 export interface PortfolioSnapshot {

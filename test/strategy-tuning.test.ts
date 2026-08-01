@@ -682,6 +682,63 @@ describe("OOS walk-forward gate (Task 1)", () => {
     expect(cautions).toMatch(/Partially in-sample/i);
   });
 
+  it("PIT evidence cutoff (§6 follow-up): stamps the proposal and retires the in-sample caveat", async () => {
+    const { insertFillEvent, setPolicy, audit } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    delete process.env.OPENROUTER_API_KEY;
+    // Dedicated userId so the seeded snapshot history cannot leak into other tests' cutoff math.
+    const userId = `pit-swap-${randomUUID()}`;
+    const accountNumber = "PIT-SWAP";
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } }, userId);
+
+    // 20 matured June-2026 snapshot dates → fold cutoff 2026-06-26 (mirrors the unit test in
+    // pit-evidence.test.ts; "now" is the real clock, well past the horizon for these dates).
+    const juneDates = [
+      "2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05",
+      "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12",
+      "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18", "2026-06-19",
+      "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26"
+    ];
+    for (const date of juneDates) {
+      audit("signal_snapshot", { runId: `run-${date}`, asOf: `${date}T15:00:00Z`, signals: [{ symbol: "AAPL", refPrice: 100, factorBreakdown: { momentum: 50 } }] }, userId);
+    }
+    // 20 losing lots closed 2026-06-15 (BEFORE the 06-26 cutoff → PIT-clean evidence) so the
+    // local-rules path proposes weight changes.
+    let t = 0;
+    for (let i = 0; i < 20; i++) {
+      const sym = `PS${i}`;
+      insertFillEvent({ accountNumber, source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z`, userId });
+      insertFillEvent({ accountNumber, source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z`, userId });
+    }
+
+    mockRunWalkForwardOOS.mockResolvedValueOnce({
+      trainObservations: 100, testObservations: 40, trainDates: 10, testDates: 4,
+      window: {
+        trainStartDate: "2026-05-01", trainEndDate: "2026-06-01",
+        embargoDates: 2, purgedTrainDates: 0,
+        testStartDate: "2026-06-26", testEndDate: "2026-07-15"
+      },
+      trainICs: [], icWeights: customWeights as any,
+      oosIC: 0.01, oosICDefault: 0.99,
+      oosICCandidate: 0.15,
+      oosICBaseline: 0.10,
+      oosICIR: 0.8,
+      equityCurve: [], annualizedReturn: null, benchmarkAnnualizedReturn: null,
+      activeReturn: null, sharpeRatio: null, maxDrawdownPct: 3,
+      note: "test"
+    });
+
+    const proposal = await proposeStrategyTuning(userId);
+
+    // The proposal carries the cutoff, and the OOS readout discloses IT instead of the caveat.
+    expect(proposal.evidenceCutoffDate).toBe("2026-06-26");
+    const cautions = proposal.cautions.join(" ");
+    expect(cautions).toMatch(/PIT evidence cutoff 2026-06-26/);
+    expect(cautions).not.toMatch(/Partially in-sample/i);
+  });
+
   it("keeps proposed weights but flags them NOT out-of-sample validated when OOS has insufficient snapshots", async () => {
     const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");

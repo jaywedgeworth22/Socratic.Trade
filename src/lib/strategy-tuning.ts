@@ -44,7 +44,7 @@ import {
 import { getReflectionSummary } from "./post-mortem";
 import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
-import { runWalkForwardOOS, buildSpyReturnToNowMap, formatOosWindow, type OOSWindowReport } from "./backtest";
+import { runWalkForwardOOS, buildSpyReturnToNowMap, formatOosWindow, computeOosEvidenceCutoff, type OOSWindowReport } from "./backtest";
 import { validateTuningInvariants } from "./tuning-invariants";
 import { recordLearningMutation, revertLearningMutation, LEARNING_SUBSYSTEM_SCORING_WEIGHTS } from "./learning-ledger";
 import type {
@@ -384,9 +384,38 @@ export async function proposeStrategyTuning(
   const macro = await fetchMacroData(userId);
   assertOwned?.();
   const accountNumber = policy.accountNumber;
-  const performance = accountNumber ? getPerformanceSummary(accountNumber, {}, userId) : undefined;
+  // §6 slice-3 follow-up (PIT evidence, default ON via tuning.pitEvidenceCutoff): cut realized-outcome
+  // evidence off at the OOS test-fold start, so candidate weights are generated WITHOUT seeing
+  // evaluation-period outcomes (retires the partially-in-sample caveat for the weight path). Undefined
+  // when no fold exists (nothing to leak into) or the flag is off — the caveat then stays. Aggregate
+  // learning state (lessons/reflection/regime scorecards) is intentionally NOT cut here — that is the
+  // §6 slice-2 (TraderHarness PIT masking) territory.
+  let evidenceCutoffDate: string | undefined;
+  if (policy.tuning?.pitEvidenceCutoff ?? true) {
+    try {
+      // Same account scoping as the OOS run below (undefined accountId → user-wide fold, matching
+      // applyOosGate's user-wide run for the legacy single-account case).
+      evidenceCutoffDate = computeOosEvidenceCutoff(userId, { connectedAccountId: accountId })?.cutoffDate;
+    } catch {
+      evidenceCutoffDate = undefined; // best-effort: never break a paid review over the cutoff
+    }
+  }
+  const pitFills = (rows: FillEvent[]): FillEvent[] =>
+    evidenceCutoffDate ? rows.filter((f) => f.filledAt < evidenceCutoffDate) : rows;
+  const performance = accountNumber
+    ? getPerformanceSummary(accountNumber, {}, userId, evidenceCutoffDate
+        ? {
+            liveFills: pitFills(listFillEvents(accountNumber, "live", 500, userId)),
+            paperFills: pitFills(listFillEvents(accountNumber, "paper", 500, userId))
+          }
+        : undefined)
+    : undefined;
   const source = fillSourceForExecutionMode(executionState);
-  const fills = accountNumber ? listFillEvents(accountNumber, source, 30, userId) : [];
+  const fills = accountNumber
+    ? (evidenceCutoffDate
+        ? pitFills(listFillEvents(accountNumber, source, 500, userId)).slice(0, 30)
+        : listFillEvents(accountNumber, source, 30, userId))
+    : [];
   const closedLotCount = accountNumber ? getClosedLotCount(accountNumber, source, userId) : 0;
   const minLotsForWeights = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
   const runs = listStrategyRuns(10, userId, accountId);
@@ -406,12 +435,12 @@ export async function proposeStrategyTuning(
   let benchmarkReturnBySnapshotDate: Map<string, number> | undefined;
   if (benchmarkRelative) {
     // Pre-scan the snapshot dates the skipped rows will span, then build one SPY entry→now map for them.
-    const preScan = getSkippedCandidateReturns({}, userId, { limit: skippedLimit, maxAgeDays: 30, connectedAccountId: accountId });
+    const preScan = getSkippedCandidateReturns({}, userId, { limit: skippedLimit, maxAgeDays: 30, connectedAccountId: accountId, maturedBefore: evidenceCutoffDate });
     const dates = Array.from(new Set(preScan.map((r) => r.asOf?.slice(0, 10)).filter((d): d is string => Boolean(d))));
     benchmarkReturnBySnapshotDate = await buildSpyReturnToNowMap(dates).catch(() => new Map<string, number>());
     assertOwned?.();
   }
-  const skippedRows = getSkippedCandidateReturns({}, userId, { limit: skippedLimit, maxAgeDays: 30, connectedAccountId: accountId, benchmarkReturnBySnapshotDate });
+  const skippedRows = getSkippedCandidateReturns({}, userId, { limit: skippedLimit, maxAgeDays: 30, connectedAccountId: accountId, benchmarkReturnBySnapshotDate, maturedBefore: evidenceCutoffDate });
   // Kill-survivorship disclosure: the tuner (and anything rendering this summary) sees how many
   // counterfactuals actually resolved vs terminally failed, instead of a silently survivor-thinned list.
   const missedOpportunityCoverage = getMissedOpportunityCoverage(userId, accountId);
@@ -427,16 +456,16 @@ export async function proposeStrategyTuning(
         if (currentRegime) {
           const regime = currentRegime;
           // Attempt regime-filtered scorecard; fall back to all-regime when regime bucket is too thin.
-          const regimeScorecard = getFactorScorecard(accountNumber, source, {}, userId, { regime });
+          const regimeScorecard = getFactorScorecard(accountNumber, source, {}, userId, { regime, closedBefore: evidenceCutoffDate });
           const regimeLots = regimeScorecard.reduce((s, r) => s + r.trades, 0);
           if (regimeLots >= minLotsForWeights) return regimeScorecard;
           // Regime bucket too thin — use all-regime aggregate.
         }
-        return getFactorScorecard(accountNumber, source, {}, userId);
+        return getFactorScorecard(accountNumber, source, {}, userId, { closedBefore: evidenceCutoffDate });
       })()
     : [];
   const sourceValueScorecard = accountNumber
-    ? getSourceValueScorecard(accountNumber, source, {}, userId, undefined, { connectedAccountId: accountId })
+    ? getSourceValueScorecard(accountNumber, source, {}, userId, undefined, { connectedAccountId: accountId, closedBefore: evidenceCutoffDate })
         .filter((row) => row.learningStatus !== "insufficient")
         .slice(0, 12)
     : [];
@@ -599,6 +628,11 @@ export async function proposeStrategyTuning(
     ...(sectorScorecard ? { sectorScorecard } : {}),
     ...(learningMutations ? { learningMutations } : {}),
     ...(regimeContext ? { regime: regimeContext } : {}),
+    // PIT disclosure to the reviewer model: the realized-outcome sections above are cut off at the
+    // OOS fold start — do not ask for or assume fresher outcomes than this date.
+    ...(evidenceCutoffDate
+      ? { evidenceCutoff: { date: evidenceCutoffDate, note: "Realized-outcome evidence (scorecards, fills, performance, counterfactuals) excludes outcomes realized on/after this date — it is held out for out-of-sample validation of your proposed weights." } }
+      : {}),
     macro
   };
 
@@ -611,6 +645,7 @@ export async function proposeStrategyTuning(
   // provider 400 for an empty model instead of producing a usable local proposal.
   if (!llmKey || !llmModel) {
     const localProposal = localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard, showPaperSide: source === "paper" });
+    if (evidenceCutoffDate) localProposal.evidenceCutoffDate = evidenceCutoffDate;
     return applyOosGate(localProposal, userId, accountId, assertOwned);
   }
 
@@ -633,7 +668,8 @@ export async function proposeStrategyTuning(
     proposedPatch,
     cautions,
     confidenceScore: typeof payload.confidenceScore === "number" ? clamp(payload.confidenceScore, 0, 100) : 50,
-    generatedBy: "llm"
+    generatedBy: "llm",
+    ...(evidenceCutoffDate ? { evidenceCutoffDate } : {})
   };
   return applyOosGate(llmProposal, userId, accountId, assertOwned);
 }
@@ -708,12 +744,16 @@ async function applyOosGate(
   const baselineIC = oosResult.oosICBaseline;
   if (candidateIC == null || baselineIC == null) return withOosUnvalidatedCaution(proposal, "the OOS run returned no composite IC", withhold);
   const improves = candidateIC > baselineIC;
-  // §6 slice 3 (qlib walk-forward honesty): name the exact held-out window, and disclose that the
-  // tuner's proposal evidence (realized closed-lot outcomes, scorecards, skipped-candidate
-  // counterfactuals) spans that same recent window — so the candidate-vs-current comparison is
-  // PARTIALLY in-sample. A pass is necessary, not sufficient, evidence of an edge.
+  // §6 slice 3 (qlib walk-forward honesty): name the exact held-out window. The disclosure that
+  // follows depends on whether the tuner's evidence was PIT-cut at the fold start (the follow-up's
+  // definitive fix): with a cutoff the candidate never saw evaluation-period outcomes and the
+  // comparison is genuinely out-of-sample; without one it is PARTIALLY in-sample and a pass is
+  // necessary, not sufficient, evidence of an edge.
   const windowClause = formatOosWindow(oosResult.window, oosResult.testDates, oosResult.trainDates);
-  const oosReadout = `OOS walk-forward: proposed-weights composite IC=${candidateIC.toFixed(3)} vs current IC=${baselineIC.toFixed(3)}, ICIR=${oosResult.oosICIR.toFixed(2)}; ${windowClause}. Partially in-sample: the tuner's proposal evidence includes realized outcomes from inside the held-out window — treat a pass as necessary, not sufficient.`;
+  const inSampleNote = proposal.evidenceCutoffDate
+    ? `PIT evidence cutoff ${proposal.evidenceCutoffDate}: the tuner's evidence excluded outcomes realized on/after the held-out window — this comparison is out-of-sample for the weight path.`
+    : `Partially in-sample: the tuner's proposal evidence includes realized outcomes from inside the held-out window — treat a pass as necessary, not sufficient.`;
+  const oosReadout = `OOS walk-forward: proposed-weights composite IC=${candidateIC.toFixed(3)} vs current IC=${baselineIC.toFixed(3)}, ICIR=${oosResult.oosICIR.toFixed(2)}; ${windowClause}. ${inSampleNote}`;
 
   const cautions = [...proposal.cautions];
   const patch = { ...proposal.proposedPatch };
@@ -1292,7 +1332,9 @@ export interface AutonomousWeightDecision {
     testObservations?: number;
     /** §6 slice 3: the exact held-out window the decision was validated on (qlib walk-forward report). */
     window?: OOSWindowReport;
-    /** §6 slice 3: disclosure that the tuner's proposal evidence spans the held-out window. */
+    /** §6 slice-3 follow-up: the PIT evidence cutoff in effect (present ⇒ genuinely out-of-sample). */
+    evidenceCutoffDate?: string;
+    /** §6 slice 3: disclosure that the tuner's proposal evidence spans the held-out window (only when NO PIT cutoff was in effect). */
     partiallyInSampleCaveat?: string;
   };
   /** The autonomous thresholds in effect. */
@@ -1303,6 +1345,8 @@ export interface AutonomousWeightDecision {
   confidenceScore?: number;
   generatedBy?: StrategyTuningProposal["generatedBy"];
   cautions?: string[];
+  /** §6 slice-3 follow-up: PIT evidence cutoff stamped on the underlying proposal, when in effect. */
+  evidenceCutoffDate?: string;
 }
 
 /**
@@ -1376,7 +1420,7 @@ async function evaluateAutonomousWeightTuning(
   assertOwned?.();
   // WRITE-SCOPE SAFETY (panel B1): scoringWeights ONLY — never the patch's policy/prompt sub-fields.
   const proposedWeights = proposal.proposedPatch.scoringWeights;
-  const proposalMeta = { confidenceScore: proposal.confidenceScore, generatedBy: proposal.generatedBy, cautions: proposal.cautions };
+  const proposalMeta = { confidenceScore: proposal.confidenceScore, generatedBy: proposal.generatedBy, cautions: proposal.cautions, evidenceCutoffDate: proposal.evidenceCutoffDate };
   if (!proposedWeights || Object.keys(proposedWeights).length === 0) {
     return { wouldApply: false, reason: "no_validated_weight_changes", ...proposalMeta };
   }
@@ -1440,11 +1484,14 @@ async function evaluateAutonomousWeightTuning(
     trainDates: oos.trainDates,
     trainObservations: oos.trainObservations,
     testObservations: oos.testObservations,
-    // §6 slice 3 (qlib): the exact held-out window + the partially-in-sample caveat, carried into the
-    // ledger/provenance evidence so an auditor sees WHAT was held out and that the tuner's proposal
-    // evidence spans it.
+    // §6 slice 3 (qlib): the exact held-out window, carried into the ledger/provenance evidence so an
+    // auditor sees WHAT was held out. The follow-up's PIT cutoff decides the honesty note: with an
+    // evidence cutoff the candidate never saw fold-period outcomes (genuinely out-of-sample); without
+    // one the partially-in-sample caveat stands.
     window: oos.window,
-    partiallyInSampleCaveat: PARTIALLY_IN_SAMPLE_CAVEAT
+    ...(proposal.evidenceCutoffDate
+      ? { evidenceCutoffDate: proposal.evidenceCutoffDate }
+      : { partiallyInSampleCaveat: PARTIALLY_IN_SAMPLE_CAVEAT })
   };
   const withOos: AutonomousWeightDecision = { ...base, oosICCandidate: candidateIC, oosICBaseline: baselineIC, oosReadout, thresholds: th };
 
