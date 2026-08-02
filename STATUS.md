@@ -5,13 +5,14 @@ Snapshot only: what is true right now, what is blocked, what to do next. This fi
 of work), effort state lives in `docs/EFFORT-LOG.md`, and entries written here before
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-01.
+Last updated: 2026-08-02.
 
 ## Where things stand
 
 | | |
 |---|---|
-| `main` / PR #2341 | `ag/codex-review-remediation` — PR #2341 open, auto-merge armed, CI gates clean |
+| `main` | `c117afb9` (shared v2.4.1 lockfile restore); PR #2341 (Codex remediation) merged |
+| In flight (MONET) | `monet/connections-route-skeleton` — /console/connections route-local skeleton (Codex finding 22 residual; usage half was PR #2341). Rollout: `docs/rollouts/2026-08-02-connections-route-skeleton.md` |
 | Production (`socratictrade.com`) | Coolify `socratic-trade-prod` (auto-deploys on `main` push) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
 | Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
