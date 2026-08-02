@@ -198,12 +198,6 @@ export function getUsageMonitorKnobsCached(opts: { fetchImpl?: typeof fetch } = 
   return cached?.map ?? {};
 }
 
-/** Test-only. */
-export function resetUsageMonitorKnobsForTests(): void {
-  delete cacheHost.__usageMonitorKnobsCache;
-  delete cacheHost.__usageMonitorKnobsLastFailureAt;
-  cacheHost.__usageMonitorKnobsRefreshing = false;
-}
 
 /** Look up one env-var name in the cached knob map and parse it as a finite number, mirroring how
  *  provider-rate-limit.ts's finiteEnvNumber treats process.env — undefined when absent, blank, or
@@ -221,4 +215,5 @@ export function usageMonitorKnobNumber(name: string, opts: { fetchImpl?: typeof 
 export function resetUsageMonitorKnobsCacheForTests(): void {
   delete cacheHost.__usageMonitorKnobsCache;
   delete cacheHost.__usageMonitorKnobsRefreshing;
+  delete cacheHost.__usageMonitorKnobsLastFailureAt;
 }

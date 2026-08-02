@@ -17,15 +17,15 @@ beforeEach(async () => {
   process.env.USAGE_MONITOR_BASE_URL = "http://127.0.0.1:1"; // never reached — fetchImpl injected
   process.env.USAGE_READ_TOKEN = "test-dummy-value"; // fetchKnobMap requires this before it will call fetchImpl
   delete process.env.USAGE_MONITOR_KNOBS_ENABLED;
-  const { resetUsageMonitorKnobsForTests } = await import("../src/lib/usage-monitor-knobs");
-  resetUsageMonitorKnobsForTests();
+  const { resetUsageMonitorKnobsCacheForTests } = await import("../src/lib/usage-monitor-knobs");
+  resetUsageMonitorKnobsCacheForTests();
 });
 
 afterEach(async () => {
   delete process.env.USAGE_MONITOR_BASE_URL;
   delete process.env.USAGE_READ_TOKEN;
-  const { resetUsageMonitorKnobsForTests } = await import("../src/lib/usage-monitor-knobs");
-  resetUsageMonitorKnobsForTests();
+  const { resetUsageMonitorKnobsCacheForTests } = await import("../src/lib/usage-monitor-knobs");
+  resetUsageMonitorKnobsCacheForTests();
   vi.useRealTimers();
 });
 
