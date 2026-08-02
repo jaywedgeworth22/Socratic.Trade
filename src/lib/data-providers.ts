@@ -5227,7 +5227,7 @@ const secXbrlInFlight = new Set<string>();
 /** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity (from debt-specific concepts).
  *  EPS is intentionally NOT returned — see the note below (annual SEC EPS ≠ TTM).
  *  Pure function — no I/O. Safe to call with any unknown input; never throws. */
-export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
+export function parseCompanyFacts(json: unknown): { debtToEquity?: number; revenueGrowth?: number } {
   try {
     if (!json || typeof json !== "object") return {};
     const root = json as Record<string, unknown>;
@@ -5237,7 +5237,7 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
     if (!gaap || typeof gaap !== "object") return {};
     const concepts = gaap as Record<string, unknown>;
 
-    type Fact = { end: string; val: number; form?: string; filed?: string };
+    type Fact = { start?: string; end: string; val: number; form?: string; filed?: string };
 
     // Helper: extract entries array for a concept + unit (keeping form + filed date).
     function getEntries(concept: string, unit: string): Fact[] {
@@ -5257,6 +5257,7 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
         const form = typeof r.form === "string" ? r.form : undefined;
         if (!form || !SEC_XBRL_PERIODIC_FORMS.has(form)) continue;
         out.push({
+          start: typeof r.start === "string" ? r.start : undefined,
           end: r.end,
           val: r.val,
           form,
@@ -5373,7 +5374,47 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
       }
     }
 
-    return debtToEquity !== undefined ? { debtToEquity } : {};
+    // ── revenueGrowth: fiscal-year-over-fiscal-year % change from full-year 10-K revenue facts ──
+    // Restricted to true ANNUAL-duration entries (350–380 day span) tagged on a 10-K/10-K/A so a
+    // same-concept quarterly or YTD-cumulative duration (XBRL tags both under the identical concept
+    // name, distinguished only by start/end) can never be mistaken for the full fiscal year — that
+    // ambiguity is why this stays annual-only rather than attempting a TTM figure from quarterly facts.
+    // Free-tier best-effort: SEC-XBRL sits after FMP/roic in the cascade, so this only matters for
+    // symbols neither paid provider covered; one fiscal year's growth is a reasonable free stand-in for
+    // the TTM figure a paid provider would supply.
+    function annualEntries(concept: string): Fact[] {
+      return getEntries(concept, "USD").filter((e) => {
+        if (e.form !== "10-K" && e.form !== "10-K/A") return false;
+        if (!e.start) return false;
+        const days = (Date.parse(e.end) - Date.parse(e.start)) / 86_400_000;
+        return Number.isFinite(days) && days >= 350 && days <= 380;
+      });
+    }
+    let revenueGrowth: number | undefined;
+    const revenueEntries = (() => {
+      // Prefer the pure Revenues concept; fall back to the post-ASC-606 concept some filers tag instead.
+      const primary = annualEntries("Revenues");
+      return primary.length > 0 ? primary : annualEntries("RevenueFromContractWithCustomerExcludingAssessedTax");
+    })();
+    const latestRevenue = latestEntry(revenueEntries);
+    if (latestRevenue !== undefined) {
+      // Prior fiscal year: the annual entry ending 340–390 days before the latest one (tolerates fiscal
+      // calendars that don't fall on exact 365-day boundaries).
+      const priorCandidates = revenueEntries.filter((e) => {
+        if (e.end >= latestRevenue.end) return false;
+        const gapDays = (Date.parse(latestRevenue.end) - Date.parse(e.end)) / 86_400_000;
+        return Number.isFinite(gapDays) && gapDays >= 340 && gapDays <= 390;
+      });
+      const prior = latestEntry(priorCandidates);
+      if (prior !== undefined && prior.val > 0) {
+        revenueGrowth = Math.round(((latestRevenue.val - prior.val) / prior.val) * 100 * 100) / 100;
+      }
+    }
+
+    const out: { debtToEquity?: number; revenueGrowth?: number } = {};
+    if (debtToEquity !== undefined) out.debtToEquity = debtToEquity;
+    if (revenueGrowth !== undefined) out.revenueGrowth = revenueGrowth;
+    return out;
   } catch {
     return {};
   }

@@ -3,6 +3,7 @@ import { apiCircuitBreakerShouldSkip } from "./api-circuit-breaker";
 import { logApiHealth } from "./db-health";
 import { expiresAtRespectingMarketClose } from "./market-hours";
 import { BROWSER_UA } from "./web-sources/http";
+import { fetchTreasuryYieldCurve } from "./market-signals/treasury";
 
 // Minimal Yahoo Finance chart shape — only the fields we read.
 interface VixYahooResponse {
@@ -41,6 +42,16 @@ export interface MacroData {
    * undefined = payload from an older build; callers should fall back to the asOf heuristic.
    */
   fredSourced?: boolean;
+  /**
+   * Mirrors `fredSourced`'s honesty contract, but for the KEYLESS Treasury.gov par-yield fallback:
+   * true = dgs3moTreasury/dgs2Treasury/dgs10Treasury (and the curve3m10y/curve2s10s metrics derived
+   *        from them) are a real reading from home.treasury.gov's daily XML feed, fetched WITHOUT a
+   *        FRED key. Only ever set on the no-FRED-key fallback path — a full FRED fetch already marks
+   *        these fields `fredSourced` and doesn't need this flag.
+   * false/undefined = no keyless Treasury reading this session; those three fields follow the normal
+   *        fredSourced rule (blank unless a FRED key supplied them).
+   */
+  treasurySourced?: boolean;
 }
 
 /**
@@ -70,7 +81,8 @@ const BLANK_MACRO: MacroData = {
   vix: "",
   vix3m: "",
   asOf: "unavailable",
-  fredSourced: false
+  fredSourced: false,
+  treasurySourced: false
 };
 
 // ── Cache-provenance scoping (mirrors src/lib/history.ts) ─────────────────────
@@ -239,12 +251,14 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
 
 /**
  * Fallback for "no usable FRED data" (no key, or a configured key whose every series fetch failed).
- * Tries to at least fetch a live ^VIX from the keyless cascade (Yahoo -> Cboe) so the
- * regime classifier gets a real volatility reading instead of staying "Unknown"; every FRED field is blanked to "" (the
- * partial-fetch convention — em dash on the console, dropped from the prompt by pruneMacro) and
- * `fredSourced` is false either way. Blank, not placeholder: the old DEFAULT_MACRO constants
- * carried a fabricated inverted curve that distorted determineMarketRegime and fed the strategist
- * placeholder metrics via deriveMacroMetrics.
+ * Tries to at least fetch a live ^VIX from the keyless cascade (Yahoo -> Cboe) AND the keyless
+ * Treasury.gov par-yield curve (3-month/2-year/10-year), so the regime classifier and the rates board
+ * get real readings instead of staying blank/"Unknown". Every FRED-only field (Fed funds, inflation,
+ * GDP, etc.) still blanks to "" (the partial-fetch convention — em dash on the console, dropped from
+ * the prompt by pruneMacro); `fredSourced` stays false either way — only `treasurySourced` flips true
+ * when the Treasury feed actually supplied a rate. Blank, not placeholder: the old DEFAULT_MACRO
+ * constants carried a fabricated inverted curve that distorted determineMarketRegime and fed the
+ * strategist placeholder metrics via deriveMacroMetrics.
  *
  * Cached under the CALLER's scope (not hardcoded "shared"): a configured per-USER key that failed
  * must write only that user's PRIVATE entry. Hardcoding "shared" here poisoned the global cache —
@@ -253,21 +267,31 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
  * env-key path resolve to "shared" via macroCacheScopeForKeySource, so their behavior is unchanged.
  */
 async function fetchVixOnlyFallback(scope: MacroCacheScope, userId: string | undefined, now: number): Promise<MacroData> {
-  const liveVix = await fetchKeylessVix();
-  if (liveVix !== null) {
-    const lightMacro: MacroData = {
-      ...BLANK_MACRO,
-      vix: liveVix.toFixed(2),
-      asOf: new Date().toISOString().split("T")[0],
-      fredSourced: false // only the VIX is live; every FRED field is blank
-    };
-    writeMacroCache(scope, userId, lightMacro, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
-    return lightMacro;
+  const [liveVix, treasury] = await Promise.all([
+    fetchKeylessVix(),
+    fetchTreasuryYieldCurve(now).catch(() => null)
+  ]);
+  const anyLive = liveVix !== null || treasury !== null;
+  if (!anyLive) {
+    // Every keyless source failed — everything blank ("unavailable") so the regime stays Unknown.
+    const fallback = { ...BLANK_MACRO };
+    writeMacroCache(scope, userId, fallback, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
+    return fallback;
   }
-  // VIX fetch also failed — everything blank ("unavailable") so the regime stays Unknown.
-  const fallback = { ...BLANK_MACRO };
-  writeMacroCache(scope, userId, fallback, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
-  return fallback;
+  const lightMacro: MacroData = {
+    ...BLANK_MACRO,
+    asOf: new Date().toISOString().split("T")[0],
+    fredSourced: false
+  };
+  if (liveVix !== null) lightMacro.vix = liveVix.toFixed(2);
+  if (treasury !== null) {
+    if (treasury.y3mo !== undefined) lightMacro.dgs3moTreasury = `${treasury.y3mo.toFixed(2)}%`;
+    if (treasury.y2 !== undefined) lightMacro.dgs2Treasury = `${treasury.y2.toFixed(2)}%`;
+    if (treasury.y10 !== undefined) lightMacro.dgs10Treasury = `${treasury.y10.toFixed(2)}%`;
+    lightMacro.treasurySourced = true;
+  }
+  writeMacroCache(scope, userId, lightMacro, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
+  return lightMacro;
 }
 
 /** Clear both caches (test helper). */

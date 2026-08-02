@@ -80,6 +80,17 @@ it is our own prod-observed fact).
   ratios prove necessary after tiingo relieves cascade pressure; FMP Ultimate
   ($149/mo-annual) only if transcript value plus the required content license justify it.
 
+**Tiingo is now ALSO a history-cascade source, added 2026-08-02.** Previously
+`TiingoEnrichmentProvider` only called `/iex` (quote) and `/tiingo/daily/{ticker}`
+(latest-price metadata) — never the actual `/tiingo/daily/{ticker}/prices` EOD
+history endpoint, so a configured Tiingo key delivered NONE of the "30+ years
+split/dividend-adjusted history" value this doc's research pass promised.
+`history.ts`'s `fetchDailyOHLC` now calls that endpoint too, seated after
+Tradier and before Marketstack (its free tier's real 1,000/day cap comfortably
+beats Marketstack's 100/month), sharing the SAME account-wide `"tiingo"`
+`RATE_QUOTAS` budget as the enrichment provider via `admitProviderRequests` so
+the two call sites can't together exceed the real 50/hour vendor cap.
+
 ## Where the dials live
 
 Every quota/pacing/tier flag is an env var in **Infisical prod** (seeded with
@@ -232,6 +243,24 @@ also fails here, it's the host, not the tool).
     `withProviderLimit` is not itself proof a provider is throttled — check
     `RATE_QUOTAS`/`HARD_DEFAULTS` has a matching entry, don't trust the call
     site's comment alone.**
+13. **`TIINGO_API_KEY` (and `TWELVEDATA_API_KEY`) are NOT a live env fallback —
+    they are `per-user-only` credential tier** (`db-api-keys.ts` `API_KEY_TIER`;
+    tiingo/twelvedata are absent from the `shared-operator-infra` list that
+    Massive/FMP/Finnhub/Marketstack/AlphaVantage/ROIC/FilingAPI/FRED all sit in).
+    Setting the env var only reaches `resolveApiKeyWithSource` via the ONE-TIME
+    `migrateLocalEnvCredentials` startup migration into the **"local" user's**
+    Connections-stored key row — the exact same trap `AGENTS.md`'s "Don't"
+    section already documents for `OPENROUTER_API_KEY`. Rotating/adding the env
+    value after that migration already ran (or on a redeploy where the DB row
+    already exists) changes nothing; the reliable path is pasting the key
+    directly on the Connections page. **This was verified 2026-08-02 while
+    investigating why a configured `TIINGO_API_KEY` might not be reaching the
+    cascade** — confirmed live against `db-api-keys.ts`'s `API_KEY_TIER` map and
+    an existing test (`api-keys-env-purge.test.ts`) that deliberately asserts
+    per-tenant isolation for tiingo/twelvedata ("tenants without stored keys fail
+    closed"), so this reads as an intentional per-user/BYOK design for these two
+    vendors, not an oversight to "fix" by moving them to shared-operator-infra —
+    do not reclassify without an explicit owner decision.
 
 ## RapidAPI-hosted lanes (shared marketplace account, combined daily budget)
 
@@ -294,11 +323,13 @@ separate paid data subscription. Verified 2026-07-10 against this repo.
 | **Yahoo Finance** (`yahoo-finance`) | Final keyless tier in the enrichment cascade (`data-providers.ts:1732,791`) + free fallback in the history cascade (`history.ts` `fetchYahoo`) | Free, unofficial, no SLA. Paced (`minIntervalMs: 400, concurrency: 2` in `provider-rate-limit.ts:42`) because the prod egress IP gets HTTP 429 on unpaced bursts |
 | **NASDAQ Delayed Screener** (`nasdaq-delayed-screener`) | PRIMARY market-scan universe source (~8,000 rows) — `src/lib/market.ts:88-90`, hits `api.nasdaq.com/api/screener/stocks` | Free, public, unauthenticated — "no user API key is consumed, so this single shared cache is safe to serve to all users" (code comment). No rate-limit knob wired in `provider-rate-limit.ts` |
 | **Webull unofficial** (`webull-unofficial`) | Opt-in quote bridge shelling out to `scripts/webull_unofficial_quote.py` (community `tedchou12/webull` package, no login) — `data-providers.ts:1140-1146` | Free but unofficial/ToS-gray-area. Default **OFF** (`WEBULL_UNOFFICIAL_ENABLED`); capped at 20 symbols / 8s timeout by default (`WEBULL_UNOFFICIAL_MAX_SYMBOLS`, `WEBULL_UNOFFICIAL_TIMEOUT_MS`) |
-| **SEC XBRL** (`sec-xbrl`) | Fills `debtToEquity` from audited 10-K/10-Q filings via the public companyfacts API — `data-providers.ts:3464-3473` | Free, keyless, public `data.sec.gov`. Default **OFF** (`SEC_XBRL_ENRICHMENT_ENABLED`); 300ms polite inter-symbol delay + 8s wall-clock scan budget, per SEC fair-access guidance |
+| **SEC XBRL** (`sec-xbrl`) | Fills `debtToEquity` (+ `revenueGrowth`, added 2026-08-02: fiscal-YoY from annual-duration 10-K `Revenues`/`RevenueFromContractWithCustomerExcludingAssessedTax` facts, restricted to true ~365-day spans so a same-concept quarterly/YTD duration is never mistaken for the full year) from audited 10-K/10-Q filings via the public companyfacts API this provider already fetches per symbol — `data-providers.ts` `parseCompanyFacts` | Free, keyless, public `data.sec.gov`. Default **OFF** (`SEC_XBRL_ENRICHMENT_ENABLED`); 300ms polite inter-symbol delay + 8s wall-clock scan budget, per SEC fair-access guidance |
 | **SEC EDGAR** (`sec-edgar`) | Insider-sentiment sourcing (`market.ts:348-349`) + RAG filings corpus ingestion (`vector-db.ts:1381`) | Free, keyless besides a required `SEC_EDGAR_USER_AGENT` string — a UA SEC requires, not a secret (`db-api-keys.ts` comment: "one per app") |
 | **Alpaca news + snapshot** (`alpaca-news`, `alpaca-snapshot`) | Headlines/sentiment (`data-providers.ts:1444-1503`) + real-time price/bid/ask/volume/vwap (`:1592+`) | Rides the SAME broker API key/secret already used for order execution — not a separate subscription (`resolveAlpacaMarketData`: own key → operator's paper key for background/shared passes). Defaults to the free **IEX** feed; **SIP** (full consolidated tape) needs the paid Algo Trader Plus subscription below — configurable via `ALPACA_DATA_FEED=iex\|sip\|otc`, and SIP without the subscription returns HTTP 403 |
 | **Robinhood quotes + fundamentals** (`robinhood-quotes`, `robinhood-fundamentals`) | Position quote fallback (`robinhood.ts:239,350`, `provider: "robinhood"`) + delayed fundamentals — pe_ratio, 52wk hi/lo, avg volume, sector/industry (`data-providers.ts:1379-1420`) | Rides the user's own Robinhood MCP/OAuth broker connection — not a separate data subscription. Per-user; fails closed with no user in scope (never borrows the operator's `'local'` token for a shared/background pass) |
-| **Stooq** (`stooq`) | Last-resort free daily-OHLC CSV fallback, tried only after Yahoo fails (`history.ts:296-304`) | Free, keyless, no documented SLA |
+| ~~Stooq~~ (`stooq`) | **REMOVED from the history cascade 2026-08-02** — `parseStooqCsv` stays exported (pure/tested) but nothing calls `fetchDailyOHLC`'s old Stooq tier anymore | Its daily-CSV endpoint now sits behind an Anubis-style JS proof-of-work bot wall (live-confirmed 2026-08-01/02) — not merely rate-limited. Circumventing it would mean defeating bot protection, so the tier was removed rather than kept as permanently-dead code |
+| **US Treasury par-yield curve** (`treasury-yield`, `src/lib/market-signals/treasury.ts`) | Keyless fallback for `dgs3moTreasury`/`dgs2Treasury`/`dgs10Treasury` (+ the `curve3m10y`/`curve2s10s` metrics computed from them) when no FRED key is configured — `macro.ts`'s `fetchVixOnlyFallback`, added 2026-08-02 | Free, keyless, public domain (home.treasury.gov's legacy Atom/XML feed — NOT on the fiscaldata.treasury.gov REST API, which 404s for this dataset). Requires a browser-like User-Agent (a bare `curl`-default UA times out) |
+| **Cboe VIX9D** (`market-signals/cboe.ts`) | Added alongside the existing SKEW/VVIX keyless quotes 2026-08-02 — completes the near-term vol term structure (VIX9D vs VIX vs VIX3M) | Free, keyless, same `cdn.cboe.com` delayed-quote CDN as SKEW/VVIX |
 
 **congress.trade (App A)** — not a vendor. `CONGRESS_TRADE_TOKEN` +
 `CONGRESS_SHARE_ENABLED` (outbound) / `CONGRESS_TRADE_READS_ENABLED` (inbound)

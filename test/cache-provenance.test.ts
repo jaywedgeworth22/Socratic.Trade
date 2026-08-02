@@ -159,7 +159,8 @@ describe("macro.ts cache-provenance", () => {
 
   it("no-key path tries Yahoo VIX; falls back to asOf=unavailable when Yahoo also fails", async () => {
     delete process.env.FRED_API_KEY;
-    // Stub fetch to simulate a failing Yahoo response (network error).
+    // Stub fetch to simulate a failing Yahoo response (network error) — this also fails the
+    // keyless Treasury yield-curve fallback, since it shares the same stubbed fetch.
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Network error")));
 
     const { fetchMacroData, clearMacroCacheForTests } = await import("../src/lib/macro");
@@ -167,7 +168,80 @@ describe("macro.ts cache-provenance", () => {
 
     const result = await fetchMacroData(undefined);
     expect(result.asOf).toBe("unavailable");
-    // Nothing was sourced — the flag says so explicitly.
+    // Nothing was sourced — the flags say so explicitly.
+    expect(result.fredSourced).toBe(false);
+    expect(result.treasurySourced).toBe(false);
+    expect(result.dgs3moTreasury).toBe("");
+    expect(result.dgs10Treasury).toBe("");
+  });
+
+  it("no-key path sources the yield curve keylessly from Treasury.gov when VIX also fails", async () => {
+    delete process.env.FRED_API_KEY;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("home.treasury.gov")) {
+          return {
+            ok: true,
+            text: async () =>
+              `<feed><entry><content type="application/xml"><m:properties>` +
+              `<d:NEW_DATE m:type="Edm.DateTime">2026-07-31T00:00:00</d:NEW_DATE>` +
+              `<d:BC_3MONTH m:type="Edm.Double">3.90</d:BC_3MONTH>` +
+              `<d:BC_2YEAR m:type="Edm.Double">4.20</d:BC_2YEAR>` +
+              `<d:BC_10YEAR m:type="Edm.Double">4.55</d:BC_10YEAR>` +
+              `</m:properties></content></entry></feed>`
+          };
+        }
+        // Every VIX lane (Cboe + Yahoo) fails.
+        throw new Error("Network error");
+      })
+    );
+
+    const { fetchMacroData, clearMacroCacheForTests } = await import("../src/lib/macro");
+    clearMacroCacheForTests();
+
+    const result = await fetchMacroData(undefined);
+    expect(result.asOf).not.toBe("unavailable");
+    expect(result.dgs3moTreasury).toBe("3.90%");
+    expect(result.dgs2Treasury).toBe("4.20%");
+    expect(result.dgs10Treasury).toBe("4.55%");
+    expect(result.treasurySourced).toBe(true);
+    // The VIX lane genuinely failed — never fabricated, even though the curve is real.
+    expect(result.vix).toBe("");
+    // Still not a full FRED fetch — every non-Treasury FRED field stays blank.
+    expect(result.fredSourced).toBe(false);
+    expect(result.fedFundsRate).toBe("");
+  });
+
+  it("no-key path sources BOTH a live VIX and the Treasury yield curve when both keyless lanes succeed", async () => {
+    delete process.env.FRED_API_KEY;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("home.treasury.gov")) {
+          return {
+            ok: true,
+            text: async () =>
+              `<feed><entry><content type="application/xml"><m:properties>` +
+              `<d:NEW_DATE m:type="Edm.DateTime">2026-07-31T00:00:00</d:NEW_DATE>` +
+              `<d:BC_10YEAR m:type="Edm.Double">4.55</d:BC_10YEAR>` +
+              `</m:properties></content></entry></feed>`
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({ chart: { result: [{ indicators: { quote: [{ close: [22.5] }] } }] } })
+        };
+      })
+    );
+
+    const { fetchMacroData, clearMacroCacheForTests } = await import("../src/lib/macro");
+    clearMacroCacheForTests();
+
+    const result = await fetchMacroData(undefined);
+    expect(parseFloat(result.vix)).toBeCloseTo(22.5, 1);
+    expect(result.dgs10Treasury).toBe("4.55%");
+    expect(result.treasurySourced).toBe(true);
     expect(result.fredSourced).toBe(false);
   });
 

@@ -2,11 +2,18 @@
 //
 // Two consumers share this: the technical connector (`web-sources/technical.ts`, which
 // only reads closes) and the symbol-drilldown price chart (`/api/history`, which needs
-// full candles). Sources cascade keyed-first then free: Massive → Tradier → Marketstack →
-// Yahoo → Stooq. Keyed providers are reliable from datacenter IPs; the free endpoints
-// (Yahoo/Stooq) are frequently rate-limited (HTTP 429) or bot-challenged server-side, so a
-// keyed provider is strongly recommended. Server-side only; cached briefly. Never fabricates
-// — no bars → returns null, callers degrade to "—".
+// full candles). Sources cascade keyed-first then free: Massive → Tradier → Tiingo →
+// Marketstack → Yahoo. Keyed providers are reliable from datacenter IPs; the free Yahoo
+// endpoint is frequently rate-limited (HTTP 429) or bot-challenged server-side, so a keyed
+// provider is strongly recommended. Server-side only; cached briefly. Never fabricates —
+// no bars → returns null, callers degrade to "—".
+//
+// Stooq was the terminal free fallback here until 2026-08: research confirmed its daily-CSV
+// endpoint now sits behind an Anubis-style JS proof-of-work wall (bot-blocked, not merely
+// rate-limited) — integrating around that would mean circumventing bot protection, so the tier
+// was removed rather than kept as permanently-dead code. `parseStooqCsv` stays exported (still
+// unit-tested as a pure parser, and re-exported from web-sources/technical.ts for back-compat)
+// in case a future non-bot-walled CSV source needs the same shape.
 
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
@@ -17,11 +24,13 @@ import { recordProviderCall } from "./usage-monitor-push";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { fetchRobinhoodHistoricals } from "./robinhood";
 import { appAClosesToBars, congressReadsEnabled, getCongressTradeClient } from "./api-clients/congress";
-import { BROWSER_UA, politeFetchJson, politeFetchText } from "./web-sources/http";
+import { BROWSER_UA, politeFetchJson } from "./web-sources/http";
+import { admitProviderRequests } from "./provider-rate-limit";
+import { apiKeyFingerprint } from "./data-providers";
 
 const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
 const cache = new Map<string, { expiresAt: number; bars: OHLCBar[] }>();
-const KEYED_HISTORY_SERVICES = ["massive", "marketstack"] as const;
+const KEYED_HISTORY_SERVICES = ["massive", "marketstack", "tiingo"] as const;
 type CacheScope = "shared" | "private" | "pool";
 
 interface YahooChartResponse {
@@ -50,12 +59,12 @@ function historyTtlMs(): number {
 
 /**
  * Fetch ~5y of daily OHLC bars for a symbol, cached briefly. Cascades keyed providers
- * first (reliable, generous limits): Massive (Polygon-compatible) → Tradier → Marketstack,
- * then the free fallbacks Yahoo → Stooq. Keyed sources are skipped when no user/env key is
- * available. Returns the first source that yields ≥2 bars, or null (never fabricated). Free
- * endpoints (Yahoo/Stooq) are frequently rate-limited or bot-challenged from datacenter IPs,
- * so a keyed provider is strongly recommended for reliable charts + the in-house technical
- * "computed" producer.
+ * first (reliable, generous limits): Massive (Polygon-compatible) → Tradier → Tiingo →
+ * Marketstack, then the free fallback Yahoo. Keyed sources are skipped when no user/env key is
+ * available. Returns the first source that yields ≥2 bars, or null (never fabricated). The free
+ * Yahoo endpoint is frequently rate-limited or bot-challenged from datacenter IPs, so a keyed
+ * provider is strongly recommended for reliable charts + the in-house technical "computed"
+ * producer.
  */
 export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now(), userId?: string): Promise<OHLCBar[] | null> {
   const symbol = normalizeSymbol(rawSymbol);
@@ -63,7 +72,8 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
 
   const keySources: Record<(typeof KEYED_HISTORY_SERVICES)[number], { key?: string; source: ApiKeySource }> = {
     massive: resolveApiKeyWithSource("massive", userId),
-    marketstack: resolveApiKeyWithSource("marketstack", userId)
+    marketstack: resolveApiKeyWithSource("marketstack", userId),
+    tiingo: resolveApiKeyWithSource("tiingo", userId)
   };
   const tradierCredential = resolveTradierHistoryCredential();
   const privateCacheKey = historyCacheKey(symbol, userId, "private");
@@ -100,6 +110,12 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
     // Always "shared" — sourced from the owner's own connected broker account, not a per-user key
     // or consent-gated pool contribution (see resolveTradierHistoryCredential's doc comment).
     { scope: "shared", fetch: () => fetchTradier(symbol, startDate, tradierCredential.key, tradierCredential.baseUrl) },
+    // Tiingo's free tier (50/hr, 1,000/day) gives real split+dividend-adjusted EOD history — richer
+    // than Marketstack's 100/month free cap, so it's seated ahead of Marketstack. Shares the SAME
+    // account-wide "tiingo" quota bucket as TiingoEnrichmentProvider (provider-rate-limit.ts
+    // RATE_QUOTAS) via admitProviderRequests, so a scan's enrichment calls and a chart's history call
+    // can't together bust the real 50/hour cap.
+    { scope: cacheScopeForKeySource(keySources.tiingo.source, userId), fetch: () => fetchTiingo(symbol, startDate, keySources.tiingo.key) },
     { scope: cacheScopeForKeySource(keySources.marketstack.source, userId), fetch: () => fetchMarketstack(symbol, keySources.marketstack.key) },
     // First-party broker history — inert unless ROBINHOOD_ADAPTER=mcp + OAuth token present.
     // SECURITY: the Robinhood token is per-user, so this tier is FETCHED only when an explicit
@@ -111,8 +127,7 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
     ...(userId
       ? [{ scope: cacheScopeForKeySource("user", userId), fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year", userId }) }]
       : []),
-    { scope: "shared", fetch: () => fetchYahoo(symbol) },
-    { scope: "shared", fetch: () => fetchStooq(symbol) }
+    { scope: "shared", fetch: () => fetchYahoo(symbol) }
   ];
 
   for (const source of sources) {
@@ -243,6 +258,62 @@ async function fetchTradier(symbol: string, startDate: string, key: string | und
   }
 }
 
+interface TiingoPriceRow {
+  date?: string;
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
+  adjOpen?: number;
+  adjHigh?: number;
+  adjLow?: number;
+  adjClose?: number;
+  adjVolume?: number;
+}
+
+/**
+ * Tiingo EOD history (`/tiingo/daily/{ticker}/prices`) — 30+ years of split/dividend-adjusted daily
+ * bars on the free Starter tier (50 req/hour, 1,000/day, 500 unique symbols/month). Admits against the
+ * SAME "tiingo" quota bucket TiingoEnrichmentProvider uses (provider-rate-limit.ts RATE_QUOTAS), since
+ * both draw on one real account-wide rate limit — a scan's enrichment calls must not let a chart's
+ * history call (or vice versa) blow the hourly cap. Prefers adjOpen/High/Low/Close over the raw OHLC
+ * (same technique fetchYahoo uses: scale raw O/H/L by adjClose/close so all four stay on one basis).
+ */
+async function fetchTiingo(symbol: string, startDate: string, key?: string): Promise<OHLCBar[] | null> {
+  if (!key) return null;
+  const credKey = await apiKeyFingerprint(key);
+  if (admitProviderRequests("tiingo", credKey, 1) < 1) return null; // hourly/daily budget exhausted this pass
+  try {
+    const url = `https://api.tiingo.com/tiingo/daily/${symbol.toLowerCase()}/prices?startDate=${startDate}&token=${key}`;
+    const json = await politeFetchJson<TiingoPriceRow[]>(url, { headers: { Authorization: `Token ${key}`, Accept: "application/json" } });
+    recordProviderCall("tiingo", { service: "market-data", ok: true });
+    const rows = Array.isArray(json) ? json : [];
+    const bars: OHLCBar[] = [];
+    for (const r of rows) {
+      if (!r.date) continue;
+      const rawClose = numOrUndef(r.close);
+      const adjClose = numOrUndef(r.adjClose);
+      const close = adjClose ?? rawClose;
+      if (close === undefined) continue;
+      let o = numOrUndef(r.open);
+      let h = numOrUndef(r.high);
+      let l = numOrUndef(r.low);
+      if (adjClose !== undefined && rawClose !== undefined && rawClose !== 0) {
+        const factor = adjClose / rawClose;
+        if (o !== undefined) o = o * factor;
+        if (h !== undefined) h = h * factor;
+        if (l !== undefined) l = l * factor;
+      }
+      bars.push({ time: r.date.slice(0, 10), open: o, high: h, low: l, close, volume: numOrUndef(r.adjVolume ?? r.volume) });
+    }
+    return bars.length >= 2 ? bars : null;
+  } catch {
+    recordProviderCall("tiingo", { service: "market-data", ok: false });
+    return null;
+  }
+}
+
 interface MarketstackEodRow {
   date?: string;
   open?: number;
@@ -321,18 +392,12 @@ async function fetchYahoo(symbol: string): Promise<OHLCBar[] | null> {
   }
 }
 
-async function fetchStooq(symbol: string): Promise<OHLCBar[] | null> {
-  try {
-    const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(symbol.toLowerCase())}.us&i=d`;
-    const text = await politeFetchText(url, { headers: { "user-agent": BROWSER_UA } });
-    const bars = parseStooqCsv(text);
-    return bars.length >= 2 ? bars : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Parse a Stooq daily CSV (Date,Open,High,Low,Close,Volume) into bars. Pure / unit-tested. */
+/**
+ * Parse a Stooq daily CSV (Date,Open,High,Low,Close,Volume) into bars. Pure / unit-tested.
+ * The cascade no longer CALLS Stooq (see the header comment — its endpoint sits behind a
+ * proof-of-work bot wall as of 2026-08). Kept exported in case a future non-bot-walled CSV
+ * source needs the same shape.
+ */
 export function parseStooqCsv(text: string): OHLCBar[] {
   const out: OHLCBar[] = [];
   for (const line of text.split(/\r?\n/)) {

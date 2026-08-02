@@ -5,19 +5,18 @@ Snapshot only: what is true right now, what is blocked, what to do next. This fi
 of work), effort state lives in `docs/EFFORT-LOG.md`, and entries written here before
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-01.
+Last updated: 2026-08-02 (MONET — data-provider hardening pass; the rows below other
+than "Data providers" reflect 2026-08-01 state, NOT re-verified this session).
 
 ## Where things stand
 
 | | |
 |---|---|
-| `main` / PR #2341 | `ag/codex-review-remediation` — PR #2341 open, auto-merge armed, CI gates clean |
+| `main` / PR #2341 | `ag/codex-review-remediation` — PR #2341 open, auto-merge armed, CI gates clean (as of 2026-08-01; not re-checked) |
 | Production (`socratictrade.com`) | Coolify `socratic-trade-prod` (auto-deploys on `main` push) |
-| Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
-| Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
+| Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating (as of 2026-08-01; not re-checked) |
+| Data providers | `dataProvidersDegraded=true` (FMP plan probe 403, Massive capped to ~2y history — unchanged, owner decision pending). Separately hardened 2026-08-02 on `monet/data-cascade-freshness`: Tiingo now ALSO an OHLC-history source (was enrichment-only — a configured key delivered none of the promised adjusted-history value until this landed), dead Stooq tier removed from history.ts, keyless Treasury.gov yield-curve fallback (3M/2Y/10Y + curves, no FRED key needed), Cboe VIX9D, SEC-XBRL revenueGrowth. See `docs/rollouts/2026-08-02-data-provider-hardening.md`. |
 | Deploy mechanism | auto-deploy on push to `main` (Coolify `socratic-trade-prod`) |
-| Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
-| Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
 
 ## Blockers
 
