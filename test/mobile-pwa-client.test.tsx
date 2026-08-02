@@ -5,6 +5,7 @@ import {
   getMobileCommandAvailability,
   MobileSnapshotUnavailable,
   nextDraftAfterCommandAcceptance,
+  proposalActionFeedback,
   requestMobileSnapshot,
   type MobileSnapshot
 } from "../app/mobile/mobile-pwa-client";
@@ -165,5 +166,67 @@ describe("mobile PWA command drafts", () => {
 
     const editedWhileSubmitting = { ...submitted, price: "205" };
     expect(nextDraftAfterCommandAcceptance(editedWhileSubmitting, submitted, true, empty)).toBe(editedWhileSubmitting);
+  });
+});
+
+describe("mobile PWA proposal action feedback", () => {
+  const proposalId = "prop-1";
+
+  it("is null with no busy key, notice, or tracked command", () => {
+    expect(proposalActionFeedback({ proposalId, busyKey: null })).toBeNull();
+    // A busy key for a different proposal must not leak onto this card.
+    expect(proposalActionFeedback({ proposalId, busyKey: "proposal.approve:other" })).toBeNull();
+    expect(proposalActionFeedback({ proposalId, busyKey: "strategy.stop" })).toBeNull();
+  });
+
+  it("shows sending while this card's POST is in flight", () => {
+    expect(proposalActionFeedback({ proposalId, busyKey: `proposal.approve:${proposalId}` })).toEqual({
+      phase: "sending",
+      action: "approve"
+    });
+    expect(proposalActionFeedback({ proposalId, busyKey: `proposal.reject:${proposalId}` })).toEqual({
+      phase: "sending",
+      action: "reject"
+    });
+  });
+
+  it("follows the queued command through queued/running/succeeded/failed", () => {
+    const base = { proposalId, busyKey: null };
+    expect(
+      proposalActionFeedback({ ...base, trackedCommand: { status: "queued", commandType: "proposal.approve" } })
+    ).toEqual({ phase: "pending", action: "approve", status: "queued" });
+    expect(
+      proposalActionFeedback({ ...base, trackedCommand: { status: "running", commandType: "proposal.approve" } })
+    ).toEqual({ phase: "pending", action: "approve", status: "running" });
+    expect(
+      proposalActionFeedback({ ...base, trackedCommand: { status: "succeeded", commandType: "proposal.reject" } })
+    ).toEqual({ phase: "succeeded", action: "reject" });
+    expect(
+      proposalActionFeedback({
+        ...base,
+        trackedCommand: { status: "failed", commandType: "proposal.approve", error: "Proposal is already blocked." }
+      })
+    ).toEqual({ phase: "failed", action: "approve", message: "Proposal is already blocked." });
+  });
+
+  it("surfaces a worker failure even when the record has no error text", () => {
+    expect(
+      proposalActionFeedback({
+        proposalId,
+        busyKey: null,
+        trackedCommand: { status: "failed", commandType: "proposal.approve" }
+      })
+    ).toEqual({ phase: "failed", action: "approve", message: "Command failed — see the command log below." });
+  });
+
+  it("prefers a submit-time notice over an older tracked command", () => {
+    expect(
+      proposalActionFeedback({
+        proposalId,
+        busyKey: null,
+        notice: { message: "Command failed.", action: "approve" },
+        trackedCommand: { status: "succeeded", commandType: "proposal.approve" }
+      })
+    ).toEqual({ phase: "failed", action: "approve", message: "Command failed." });
   });
 });

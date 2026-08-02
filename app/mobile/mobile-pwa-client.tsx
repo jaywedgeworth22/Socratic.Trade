@@ -9,6 +9,7 @@ import {
   CircleStop,
   ExternalLink,
   Loader2,
+  LogOut,
   Plus,
   RefreshCw,
   ShieldAlert,
@@ -25,7 +26,7 @@ import { redTeamFailureMeta, redTeamVerdictLabel } from "../console/lib/red-team
 import { normalizeSymbol } from "@/lib/money";
 
 type CommandStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
-type MobileCommand = {
+export type MobileCommand = {
   id: string;
   commandType: string;
   status: CommandStatus;
@@ -307,6 +308,41 @@ export function nextDraftAfterCommandAcceptance<T>(current: T, submitted: T, acc
   return accepted && Object.is(current, submitted) ? empty : current;
 }
 
+export type ProposalActionFeedback =
+  | { phase: "sending"; action: "approve" | "reject" }
+  | { phase: "pending"; action: "approve" | "reject"; status: "queued" | "running" }
+  | { phase: "failed"; action: "approve" | "reject"; message: string }
+  | { phase: "succeeded"; action: "approve" | "reject" }
+  | null;
+
+function proposalActionFromCommandType(commandType: string): "approve" | "reject" {
+  return commandType === "proposal.reject" ? "reject" : "approve";
+}
+
+/** Derives what the proposal card should show about its own approve/reject action. Commands are
+ *  queued server-side and executed by an async worker, so "the POST succeeded" is NOT "the trade
+ *  was approved" — this tracks the queued command through recentCommands so the card itself shows
+ *  queued → running → succeeded/failed instead of silently doing nothing until a refresh. */
+export function proposalActionFeedback(input: {
+  proposalId: string;
+  busyKey: string | null;
+  notice?: { message: string; action: "approve" | "reject" };
+  trackedCommand?: Pick<MobileCommand, "status" | "commandType" | "error">;
+}): ProposalActionFeedback {
+  if (input.busyKey === `proposal.approve:${input.proposalId}`) return { phase: "sending", action: "approve" };
+  if (input.busyKey === `proposal.reject:${input.proposalId}`) return { phase: "sending", action: "reject" };
+  if (input.notice) return { phase: "failed", action: input.notice.action, message: input.notice.message };
+  const command = input.trackedCommand;
+  if (!command) return null;
+  const action = proposalActionFromCommandType(command.commandType);
+  if (command.status === "queued" || command.status === "running") return { phase: "pending", action, status: command.status };
+  if (command.status === "failed") {
+    return { phase: "failed", action, message: command.error ?? "Command failed — see the command log below." };
+  }
+  if (command.status === "succeeded") return { phase: "succeeded", action };
+  return null;
+}
+
 export function MobileSnapshotUnavailable({ error, onRetry }: { error: string; onRetry: () => void }) {
   return (
     <main className="grid min-h-dvh place-items-center bg-bg px-5 text-fg">
@@ -333,6 +369,15 @@ export function MobilePwaClient() {
   const [snapshot, setSnapshot] = useState<MobileSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyCommand, setBusyCommand] = useState<string | null>(null);
+  // Which specific control was tapped (e.g. "proposal.approve:<id>") so only that button spins,
+  // instead of every disabled button looking equally dead while a command posts.
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  // proposalId -> queued command id, so the card can follow its own command through
+  // queued/running/succeeded/failed in recentCommands (commands execute async server-side).
+  const [proposalCommandIds, setProposalCommandIds] = useState<Record<string, string>>({});
+  // proposalId -> submit-time failure that should render on the card itself, not just the top banner.
+  const [proposalNotices, setProposalNotices] = useState<Record<string, { message: string; action: "approve" | "reject" }>>({});
+  const [dangerZoneOpen, setDangerZoneOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [symbolInput, setSymbolInput] = useState("");
   const [alertInput, setAlertInput] = useState({ symbol: "", op: ">", price: "" });
@@ -441,9 +486,23 @@ export function MobilePwaClient() {
     };
   }, [load]);
 
-  const submitCommand = async (commandType: string, payload: Record<string, unknown> = {}): Promise<boolean> => {
+  const submitCommand = async (
+    commandType: string,
+    payload: Record<string, unknown> = {},
+    opts: { key?: string; proposal?: { id: string; action: "approve" | "reject" } } = {}
+  ): Promise<boolean> => {
     setBusyCommand(commandType);
+    setBusyKey(opts.key ?? commandType);
     setError(null);
+    if (opts.proposal) {
+      const proposalId = opts.proposal.id;
+      setProposalNotices((prev) => {
+        if (!(proposalId in prev)) return prev;
+        const next = { ...prev };
+        delete next[proposalId];
+        return next;
+      });
+    }
     try {
       const response = await fetch("/api/mobile/commands", {
         method: "POST",
@@ -456,16 +515,30 @@ export function MobilePwaClient() {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error ?? "Command failed.");
+      const acceptedCommandId = typeof (body as { command?: { id?: unknown } }).command?.id === "string"
+        ? (body as { command: { id: string } }).command.id
+        : null;
+      if (opts.proposal && acceptedCommandId && mountedRef.current) {
+        const proposalId = opts.proposal.id;
+        setProposalCommandIds((prev) => ({ ...prev, [proposalId]: acceptedCommandId }));
+      }
       const refreshed = await load();
       if (!refreshed && mountedRef.current) {
         setError((current) => `Command accepted, but current mobile data could not be refreshed: ${current ?? "Refresh failed."}`);
       }
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Command failed.");
+      const message = err instanceof Error ? err.message : "Command failed.";
+      if (opts.proposal && mountedRef.current) {
+        const failed = opts.proposal;
+        setProposalNotices((prev) => ({ ...prev, [failed.id]: { message, action: failed.action } }));
+      } else {
+        setError(message);
+      }
       return false;
     } finally {
       setBusyCommand(null);
+      setBusyKey(null);
     }
   };
 
@@ -514,6 +587,7 @@ export function MobilePwaClient() {
   const positions = snapshot?.positions ?? [];
   const watchlist = snapshot?.watchlist ?? [];
   const alerts = snapshot?.alerts ?? [];
+  const connectedAccounts = snapshot?.connectedAccounts ?? [];
   const commandAvailability = useMemo(
     () => getMobileCommandAvailability(snapshot, busyCommand, isOnline, snapshotFreshness),
     [snapshot, busyCommand, isOnline, snapshotFreshness]
@@ -621,7 +695,7 @@ export function MobilePwaClient() {
               disabled={!commandAvailability.canSubmitTrading}
               onClick={() => void submitCommand("strategy.run_once")}
             >
-              <Activity className="h-4 w-4" />
+              {busyKey === "strategy.run_once" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
               Run once
             </button>
             <button
@@ -629,7 +703,7 @@ export function MobilePwaClient() {
               disabled={!commandAvailability.canSubmitTrading}
               onClick={() => void submitCommand("strategy.start")}
             >
-              <Wifi className="h-4 w-4" />
+              {busyKey === "strategy.start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wifi className="h-4 w-4" />}
               Start
             </button>
             <button
@@ -637,7 +711,7 @@ export function MobilePwaClient() {
               disabled={!commandAvailability.canSubmitAccountCommand}
               onClick={() => void submitCommand("strategy.close_only")}
             >
-              <ShieldAlert className="h-4 w-4" />
+              {busyKey === "strategy.close_only" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldAlert className="h-4 w-4" />}
               Close only
             </button>
             <button
@@ -645,7 +719,7 @@ export function MobilePwaClient() {
               disabled={!commandAvailability.canSubmitStop}
               onClick={() => void submitCommand("strategy.stop")}
             >
-              <CircleStop className="h-4 w-4" />
+              {busyKey === "strategy.stop" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CircleStop className="h-4 w-4" />}
               Stop
             </button>
           </div>
@@ -670,6 +744,52 @@ export function MobilePwaClient() {
 
         <section className="space-y-2">
           <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">Accounts</h2>
+            <span className="text-xs text-faint">{connectedAccounts.length}</span>
+          </div>
+          {connectedAccounts.length === 0 ? (
+            <Empty label="No broker accounts connected — add one in the console" />
+          ) : (
+            connectedAccounts.map((account) => (
+              <div key={account.id} className="flex min-h-11 items-center gap-3 rounded-md border border-line bg-surface px-3 py-2 text-sm">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium">{account.label}</p>
+                  <p className="truncate text-xs text-faint">
+                    {account.broker} · {account.environment}
+                    {account.accountNumber ? ` · ${account.accountNumber}` : ""}
+                  </p>
+                </div>
+                {account.isActive ? (
+                  <span className="rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+                    Active
+                  </span>
+                ) : (
+                  <button
+                    className="flex min-h-9 items-center gap-1.5 rounded-md border border-line bg-bg px-3 text-xs font-semibold text-fg disabled:opacity-50"
+                    disabled={!commandAvailability.canSubmit}
+                    onClick={() =>
+                      void submitCommand("account.activate", { accountId: account.id }, { key: `account.activate:${account.id}` })
+                    }
+                  >
+                    {busyKey === `account.activate:${account.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    Activate
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+          <div className="flex min-h-11 items-center justify-between gap-3 rounded-md border border-line bg-surface px-3 text-sm">
+            <span className="min-w-0 truncate text-muted">{snapshot?.currentUser?.email ?? "Signed in"}</span>
+            <a href="/logout" className="flex shrink-0 items-center gap-1.5 font-semibold text-fg">
+              <LogOut className="h-4 w-4" />
+              Sign out
+            </a>
+          </div>
+          <p className="text-xs text-faint">Sign out to switch the Google or Apple login used for this app.</p>
+        </section>
+
+        <section className="space-y-2">
+          <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold">Approvals</h2>
             <span className="text-xs text-faint">{pendingProposals.length}</span>
           </div>
@@ -685,6 +805,17 @@ export function MobilePwaClient() {
               const expectedLiveText = liveApprovalText(proposal.proposal.symbol);
               const livePhraseMatches = !willPromptTyped || typedText.trim().toUpperCase() === expectedLiveText;
               const estPnl = estimatedExitPnl(proposal, snapshot?.positions);
+              const trackedCommandId = proposalCommandIds[proposal.id];
+              const feedback = proposalActionFeedback({
+                proposalId: proposal.id,
+                busyKey,
+                notice: proposalNotices[proposal.id],
+                trackedCommand: trackedCommandId
+                  ? snapshot?.recentCommands?.find((command) => command.id === trackedCommandId)
+                  : undefined
+              });
+              const actionInFlight = feedback?.phase === "sending" || feedback?.phase === "pending";
+              const actionSettled = feedback?.phase === "succeeded";
               return (
                 <div key={proposal.id} className="rounded-md border border-line bg-surface p-3">
                   <div className="flex items-start justify-between gap-3">
@@ -736,34 +867,52 @@ export function MobilePwaClient() {
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button
                       className="min-h-11 rounded-md bg-emerald-500 px-3 text-sm font-semibold text-black disabled:opacity-50"
-                      disabled={!commandAvailability.canSubmitAccountCommand || !livePhraseMatches}
+                      disabled={!commandAvailability.canSubmitAccountCommand || !livePhraseMatches || actionInFlight || actionSettled}
                       onClick={() =>
-                        void submitCommand("proposal.approve", {
-                          proposalId: proposal.id,
-                          ...(willPromptTyped
-                            ? {
-                                liveConfirmation: {
-                                  proposalId: proposal.id,
-                                  accountNumber: proposal.accountNumber,
-                                  executionMode: "broker/live",
-                                  estimatedNotional: proposal.estimatedNotional ?? null,
-                                  typedText: typedText.trim().toUpperCase()
+                        void submitCommand(
+                          "proposal.approve",
+                          {
+                            proposalId: proposal.id,
+                            ...(willPromptTyped
+                              ? {
+                                  liveConfirmation: {
+                                    proposalId: proposal.id,
+                                    accountNumber: proposal.accountNumber,
+                                    executionMode: "broker/live",
+                                    estimatedNotional: proposal.estimatedNotional ?? null,
+                                    typedText: typedText.trim().toUpperCase()
+                                  }
                                 }
-                              }
-                            : {})
-                        })
+                              : {})
+                          },
+                          { key: `proposal.approve:${proposal.id}`, proposal: { id: proposal.id, action: "approve" } }
+                        )
                       }
                     >
-                      <Check className="mr-1 inline h-4 w-4" />
-                      Approve
+                      {feedback?.action === "approve" && actionInFlight ? (
+                        <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />
+                      ) : (
+                        <Check className="mr-1 inline h-4 w-4" />
+                      )}
+                      {feedback?.action === "approve" && actionInFlight ? "Approving…" : "Approve"}
                     </button>
                     <button
                       className="min-h-11 rounded-md border border-line bg-bg px-3 text-sm font-semibold text-fg disabled:opacity-50"
-                      disabled={!commandAvailability.canSubmitAccountCommand}
-                      onClick={() => void submitCommand("proposal.reject", { proposalId: proposal.id })}
+                      disabled={!commandAvailability.canSubmitAccountCommand || actionInFlight || actionSettled}
+                      onClick={() =>
+                        void submitCommand(
+                          "proposal.reject",
+                          { proposalId: proposal.id },
+                          { key: `proposal.reject:${proposal.id}`, proposal: { id: proposal.id, action: "reject" } }
+                        )
+                      }
                     >
-                      <X className="mr-1 inline h-4 w-4" />
-                      Reject
+                      {feedback?.action === "reject" && actionInFlight ? (
+                        <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />
+                      ) : (
+                        <X className="mr-1 inline h-4 w-4" />
+                      )}
+                      {feedback?.action === "reject" && actionInFlight ? "Rejecting…" : "Reject"}
                     </button>
                   </div>
                 </div>
@@ -922,29 +1071,47 @@ export function MobilePwaClient() {
           )}
         </section>
 
-        <section className="space-y-3 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-500/30 dark:bg-red-500/5">
-          <div className="flex items-start gap-3">
-            <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-200" />
-            <div>
-              <h2 className="text-sm font-semibold text-red-800 dark:text-red-100">Delete app account</h2>
-              <p className="mt-1 text-sm leading-relaxed text-red-700 dark:text-red-100/80">
-                This deletes the backend account tied to the current Google or Apple login. Broker and provider
-                secrets stored on the server are deleted. Signing in later with the same provider creates a fresh
-                app account with no prior trading data attached.
-              </p>
-            </div>
-          </div>
-
-          {!deletionRequest ? (
+        {/* Collapsed by default so a destructive control doesn't sit on the main screen styled
+            like the error/failed-command banners around it. Red styling only appears after an
+            explicit tap to expand. */}
+        <section className="border-t border-line pt-4">
+          {!dangerZoneOpen ? (
             <button
-              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-red-300 bg-red-100 px-3 text-sm font-semibold text-red-800 disabled:opacity-50 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-100"
-              disabled={deleteBusy}
-              onClick={() => void startDeletion()}
             >
-              <Trash2 className="h-4 w-4" />
-              Start deletion steps
+              Delete app account…
             </button>
           ) : (
+            <div className="space-y-3 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-500/30 dark:bg-red-500/5">
+              <div className="flex items-start gap-3">
+                <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-200" />
+                <div>
+                  <h2 className="text-sm font-semibold text-red-800 dark:text-red-100">Delete app account</h2>
+                  <p className="mt-1 text-sm leading-relaxed text-red-700 dark:text-red-100/80">
+                    This deletes the backend account tied to the current Google or Apple login. Broker and provider
+                    secrets stored on the server are deleted. Signing in later with the same provider creates a fresh
+                    app account with no prior trading data attached.
+                  </p>
+                </div>
+              </div>
+
+              {!deletionRequest ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    className="min-h-11 rounded-md border border-line bg-surface px-3 text-sm font-semibold text-fg"
+                    onClick={() => setDangerZoneOpen(false)}
+                  >
+                    Keep account
+                  </button>
+                  <button
+                    className="flex min-h-11 items-center justify-center gap-2 rounded-md border border-red-300 bg-red-100 px-3 text-sm font-semibold text-red-800 disabled:opacity-50 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-100"
+                    disabled={deleteBusy}
+                    onClick={() => void startDeletion()}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Start deletion steps
+                  </button>
+                </div>
+              ) : (
             <div className="space-y-3">
               <ol className="list-decimal space-y-1 pl-5 text-sm text-red-700 dark:text-red-100/80">
                 {deletionRequest.steps.map((step, index) => (
@@ -974,6 +1141,7 @@ export function MobilePwaClient() {
                     setDeletionRequest(null);
                     setDeleteIdentity("");
                     setDeletePhrase("");
+                    setDangerZoneOpen(false);
                   }}
                 >
                   Cancel
@@ -995,6 +1163,8 @@ export function MobilePwaClient() {
                 This resets the backend account. OAuth access at Google or Apple is provider-side; revoke it in
                 that account's security settings if you also want to remove this app from your provider account.
               </p>
+                </div>
+              )}
             </div>
           )}
         </section>
