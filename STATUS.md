@@ -16,6 +16,22 @@ Last updated: 2026-08-02.
 
 ## Where things stand
 
+**2026-08-02 — Exit-0 outage root-caused + exit-code hardening (MONET, branch
+`monet/exit0-outage-audit`).** The 15:29Z "clean exit 0, stayed down" outage was an
+**unpaired docker-API stop**, with the 0 fabricated by a pid-1 signal-re-raise bug in the
+infisical wrappers plus in-container npm swallowing SIGTERM (sandbox-reproduced in the
+real image; every deploy had been hard-killing next-server). Fixed: wrappers exit 128+N,
+boot script now supervises the app (spontaneous clean exit → 40, every exit logged,
+`node_modules/.bin/next start` direct — npm banned from the exec chain), new
+production-gated `src/lib/exit-guard.ts` re-tags spontaneous in-app exit(0) → 43 with
+call-site receipts. Restart policy is already `unless-stopped` — evaluated, **no flip**
+(it restarts any spontaneous exit; the outage class is API stops, now covered by rule +
+honest codes). `docker events` forensics verified broken (~256-event ring ≈ minutes on
+this box) — journalctl is the durable source. Contract + traps codified in AGENTS.md
+("Production exit-code contract"). Rollout:
+`docs/rollouts/2026-08-02-exit0-outage-audit.md`. Next prod stop/deploy should log
+`app exited with code 143 after forwarded SIGTERM` as live confirmation.
+
 **2026-08-02 — 5-Year Local Flat-File Price History Priority (ANTIGRAVITY).** Added `fetchLocalFlatFileHistory(symbol)` as the #1 primary tier in `src/lib/history.ts` (`fetchDailyOHLC`) and `fetchGroupedBarsLocal(date)` in `src/lib/market-signals/massive.ts`. Any pre-hoarded 5-year Massive flat files (`data/history-5y/`, `data/massive-history/`) are read directly from disk without hitting external REST APIs, providing instant zero-cost history for backtests and Congress.Trade EOD price feeds (`/api/market/prices/[symbol]`, `/api/market/spx`). Rollout: `docs/rollouts/2026-08-02-local-flatfile-history-priority.md`.
 
 **2026-08-02 — Mobile PWA owner-feedback round (Monet, cloud session).** Branch

@@ -28,6 +28,12 @@ export async function register() {
   const dns = await import(/* webpackIgnore: true */ "node:dns");
   dns.setDefaultResultOrder("ipv4first");
 
+  // Process-exit receipts + the "no spontaneous exit 0" tripwire (production-gated;
+  // no-op in dev/tests). Installed before anything below can exit or receive a stop
+  // signal. See src/lib/exit-guard.ts and docs/rollouts/2026-08-02-exit0-outage-audit.md.
+  const { installProcessExitGuard } = await import("./src/lib/exit-guard");
+  installProcessExitGuard();
+
   // Fail fast if this deployment requires a secrets manager but wasn't launched through one
   // (REQUIRE_SECRETS_MANAGER set, but not started via start:secrets). Default off →
   // no effect on local dev / tests / CI. Runs before anything reads a credential.
