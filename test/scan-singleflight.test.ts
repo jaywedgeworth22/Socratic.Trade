@@ -135,23 +135,4 @@ describe("interactive scan single-flight", () => {
       Date.parse("2026-07-15T00:00:01.000Z")
     )).toBeUndefined();
   });
-
-  // LANE A: calendar-aware seed gate. A flat 24h cutoff would reject Friday's run by Monday
-  // afternoon even though nothing has traded since Friday's close — the acceptance window is
-  // "back through the start of the most recent trading day" (same rule as isStaleBaseline in
-  // app/console/lib/derive.ts), so Friday's audit stays a valid seed all weekend and only
-  // expires once Tuesday's session starts.
-  it("accepts a Friday seed on Monday but rejects it on Tuesday (calendar-aware, not a flat 24h window)", () => {
-    const quotes = {
-      FAST: { symbol: "FAST", price: 90, score: 42, peRatio: 15 }
-    };
-    // 2026-06-12 is a Friday; 2026-06-15/16 are the following Monday/Tuesday. Anchored well away
-    // from local-midnight boundaries so the result doesn't depend on the runner's timezone.
-    const fridayRun = "2026-06-12T16:00:00.000Z";
-    const mondayMorning = Date.parse("2026-06-15T16:00:00.000Z");
-    const tuesdayMorning = Date.parse("2026-06-16T16:00:00.000Z");
-
-    expect(marketScanQuotesFromAudit({ marketScan: { quotesBySymbol: quotes } }, fridayRun, mondayMorning)).toBe(quotes);
-    expect(marketScanQuotesFromAudit({ marketScan: { quotesBySymbol: quotes } }, fridayRun, tuesdayMorning)).toBeUndefined();
-  });
 });

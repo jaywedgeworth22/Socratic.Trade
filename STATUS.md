@@ -25,14 +25,6 @@ delete-account panel is collapsed behind a neutral link so it stops mimicking er
 mobile test file 10/10, lint 0 errors. Landed as #2351 (`44069368`).
 Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
 
-**2026-08-02 — Data-provider hardening pass (MONET, `monet/data-cascade-freshness`).**
-Implemented the free-tier research doc's own recommendations: Tiingo now ALSO an
-OHLC-history source in `history.ts` (was enrichment-only — a configured key delivered
-none of the promised adjusted-history value until this landed), dead Stooq tier removed
-(confirmed PoW-bot-walled), keyless Treasury.gov yield-curve fallback (3M/2Y/10Y +
-curves, no FRED key needed), Cboe VIX9D, SEC-XBRL `revenueGrowth`. Full gates green.
-Rollout: `docs/rollouts/2026-08-02-data-provider-hardening.md`.
-
 | | |
 |---|---|
 | `main` | `44069368` — Codex remediation (#2341), npm `allowScripts` fixes (#2345, #2349), mobile PWA feedback round (#2351) |
@@ -40,7 +32,7 @@ Rollout: `docs/rollouts/2026-08-02-data-provider-hardening.md`.
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
-| Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history (unchanged, owner decision pending) |
+| Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
 
 ## Blockers
 

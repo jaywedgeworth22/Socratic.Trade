@@ -7,7 +7,6 @@
 import { LANE_WAITS, withAccountMutation } from "./account-mutation";
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
-import { runMarketScanFreshnessIfDue } from "./market-scan-freshness";
 import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getInternalSetting, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
 import { isEarningsCallsRefreshDue, refreshEarningsCallsTranscriptsIfDue } from "./earningscalls-transcripts";
 import { runDailyLearningReviewIfDue } from "./learning-review";
@@ -610,15 +609,6 @@ async function tick(): Promise<void> {
   // CONGRESS_SHARE_ENABLED are set and the batch hasn't already run today. Fully self-guarded.
   void journalLane("congress-daily-share", {}, () => runCongressDailyShareIfDue(Date.now())).catch((err) =>
     console.error("[scheduler] congress-share daily batch error:", err)
-  );
-
-  // Weekend/off-hours Market Scan freshness guarantee: scanMarket otherwise has no scheduled
-  // caller, so a Friday-evening scan would sit stale until a user visits the app Monday.
-  // Deliberately does NOT pass through isRunAllowedNow/isTradingDay — this is a data-freshness
-  // read, not a trading action — and never places an order or invokes the LLM. Cadence-gated on
-  // the newest persisted scan's age (default 20h; MARKET_SCAN_FRESHNESS_MAX_AGE_HOURS=0 disables).
-  void journalLane("market-scan-freshness", {}, () => runMarketScanFreshnessIfDue(Date.now())).catch((err) =>
-    console.error("[scheduler] market-scan freshness error:", err)
   );
 
   // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded. Runs per-user so

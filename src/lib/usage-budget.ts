@@ -44,19 +44,6 @@ export interface ProviderBudget {
   spentUsd: number;
   remainingUsd: number | null;
   percentUsed: number | null;
-  /**
-   * Forecast-aware fields (the monitor's forecasting.ts / budget-status.ts "S9" projection) — end-
-   * of-month spend at current burn and the date the projection crosses the budget. Optional: older
-   * monitor responses (or a provider the monitor never forecasted, e.g. `unconfigured`) omit them,
-   * in which case parseBudgetStatus leaves them `null` rather than treating the response as
-   * malformed.
-   */
-  projectedEomUsd: number | null;
-  projectedRunoutDate: string | null;
-  /** CostCoverage on the monitor side ("complete" | "partial" | "unknown" | "legacy_unknown") — kept
-   *  as a loose string here (not a closed union) so a new coverage label the monitor adds doesn't
-   *  need a lockstep type change on this side; `null` when the response doesn't carry it. */
-  spendCoverage: string | null;
 }
 
 export interface BudgetStatus {
@@ -141,10 +128,6 @@ function numOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-function strOrNull(v: unknown): string | null {
-  return typeof v === "string" && v.length > 0 ? v : null;
-}
-
 /** Defensive parse of the monitor response — tolerant of extra/missing fields. */
 function parseBudgetStatus(json: unknown): BudgetStatus | null {
   if (!json || typeof json !== "object") return null;
@@ -162,9 +145,6 @@ function parseBudgetStatus(json: unknown): BudgetStatus | null {
       spentUsd: numOrNull(p.spentUsd) ?? 0,
       remainingUsd: numOrNull(p.remainingUsd),
       percentUsed: numOrNull(p.percentUsed),
-      projectedEomUsd: numOrNull(p.projectedEomUsd),
-      projectedRunoutDate: strOrNull(p.projectedRunoutDate),
-      spendCoverage: strOrNull(p.spendCoverage),
     });
   }
   const summaryRaw = (obj.summary && typeof obj.summary === "object" ? obj.summary : {}) as Record<string, unknown>;
@@ -234,36 +214,6 @@ export async function getBudgetStatusCached(opts: { force?: boolean; fetchImpl?:
   return status; // null on failure → fail-open
 }
 
-// ── Forecast-aware alert level ───────────────────────────────────────────────────
-// ADVISORY ONLY — the alert/advisory surface below considers the forecasted end-of-month spend, not
-// just lagging month-to-date spend, so early-month burn that's on pace to blow the budget is
-// visible before it actually does. Phase 2 enforcement (evaluateBudgetForRun/computeBudgetDecision)
-// deliberately still keys off the monitor's own lagging `status` field only — unchanged by this.
-
-// Mirrors the monitor's own WARNING_RATIO (budget-status.ts) so a forecast-derived level lines up
-// with what the monitor itself would call "warning" — advisory-only, not the enforcement threshold.
-const FORECAST_WARNING_RATIO = 0.8;
-
-const LEVEL_SEVERITY: Record<BudgetLevel, number> = { unconfigured: 0, ok: 0, warning: 1, exceeded: 2 };
-
-/** Level implied by projectedEomUsd vs monthlyBudgetUsd alone, ignoring the monitor's own lagging
- *  `status`. "unconfigured" (== not worth alerting on) when either figure is missing/non-positive —
- *  a provider the monitor never forecasted must not spuriously read as "ok" via a 0/0 ratio. */
-function forecastAlertLevel(p: ProviderBudget): BudgetLevel {
-  if (p.projectedEomUsd == null || p.monthlyBudgetUsd == null || p.monthlyBudgetUsd <= 0) return "unconfigured";
-  const ratio = p.projectedEomUsd / p.monthlyBudgetUsd;
-  if (ratio >= 1) return "exceeded";
-  if (ratio >= FORECAST_WARNING_RATIO) return "warning";
-  return "ok";
-}
-
-/** More severe of the monitor's own lagging `status` and the locally-derived forecast level, so a
- *  provider comfortably under MTD spend but on pace to blow its monthly budget still surfaces. */
-function alertLevel(p: ProviderBudget): BudgetLevel {
-  const forecast = forecastAlertLevel(p);
-  return LEVEL_SEVERITY[forecast] > LEVEL_SEVERITY[p.status] ? forecast : p.status;
-}
-
 // ── Phase 1: alerts ──────────────────────────────────────────────────────────────
 
 function shouldAlert(userId: string, provider: string, level: BudgetLevel): boolean {
@@ -290,25 +240,19 @@ export async function checkBudgetAndAlert(
     const status = deps.status ?? (await getBudgetStatusCached({ fetchImpl: deps.fetchImpl }));
     if (!status) return;
     for (const p of status.providers) {
-      // Forecast-aware: alert on either the monitor's own lagging status OR a projected EOM spend
-      // that's on pace to breach the budget, whichever is worse — not lagging spend alone.
-      const level = alertLevel(p);
-      if (level !== "exceeded" && level !== "warning") continue;
-      if (!shouldAlert(userId, p.name, level)) continue;
-      const laggingLevel = p.status === "exceeded" || p.status === "warning";
-      const forecastOnly = !laggingLevel; // triggered purely by the forecast, MTD spend is still ok
+      if (p.status !== "exceeded" && p.status !== "warning") continue;
+      if (!shouldAlert(userId, p.name, p.status)) continue;
       await alertUsageLimitHit({
         userId,
         provider: p.name,
         operation: "usage-monitor.budget-status",
         limitName: "monthly usage budget",
-        status: level === "exceeded" ? "exceeded" : "warning",
+        status: p.status === "exceeded" ? "exceeded" : "warning",
         used: p.spentUsd,
         limit: p.monthlyBudgetUsd,
         unit: "USD",
-        recommendation: forecastOnly
-          ? `Month-to-date spend is still within budget, but the projected end-of-month spend ($${p.projectedEomUsd?.toFixed(2) ?? "?"}) is on pace to ${level === "exceeded" ? "exceed" : "approach"} the budget${p.projectedRunoutDate ? ` (~${p.projectedRunoutDate})` : ""} — worth getting ahead of it now rather than waiting for the lagging total to catch up.`
-          : level === "exceeded"
+        recommendation:
+          p.status === "exceeded"
             ? "If usage is intentional and useful, raise the provider budget. If not, inspect repeated calls, retries, model selection, and batching."
             : "Watch trend and decide whether to raise the budget or reduce usage before the provider blocks useful work.",
         payload: {
@@ -316,9 +260,6 @@ export async function checkBudgetAndAlert(
           monthlyBudgetUsd: p.monthlyBudgetUsd,
           remainingUsd: p.remainingUsd,
           percentUsed: p.percentUsed,
-          projectedEomUsd: p.projectedEomUsd,
-          projectedRunoutDate: p.projectedRunoutDate,
-          spendCoverage: p.spendCoverage,
           month: status.month,
           policyConnectedAccountId: policy.connectedAccountId
         }
@@ -558,33 +499,25 @@ export async function previewBudgetDecision(
  * never a command. Returns undefined when there's nothing worth surfacing (monitor unconfigured,
  * or every provider is comfortably under budget) so callers can omit the field entirely.
  *
- * Only mentions providers at "warning" or "exceeded" by the forecast-aware `alertLevel` (matches
- * checkBudgetAndAlert's alerting threshold, so the prompt and the notification pipe agree on what
- * counts as "worth mentioning") — so a provider that's still fine on lagging MTD spend but on pace
- * to blow its budget by end of month still surfaces here, not just once it's already over.
+ * Only mentions providers at "warning" or "exceeded" — "ok"/"unconfigured" providers are silent
+ * (matches checkBudgetAndAlert's alerting threshold, so the prompt and the notification pipe agree
+ * on what counts as "worth mentioning").
  */
 export function formatBudgetAdvisory(status: BudgetStatus | null | undefined): string | undefined {
   if (!status) return undefined;
-  const notable = status.providers.filter((p) => {
-    const level = alertLevel(p);
-    return level === "exceeded" || level === "warning";
-  });
+  const notable = status.providers.filter((p) => p.status === "exceeded" || p.status === "warning");
   if (notable.length === 0) return undefined;
 
   const lines = notable.map((p) => {
-    const level = alertLevel(p);
     const pct = typeof p.percentUsed === "number" ? ` (${Math.round(p.percentUsed)}%)` : "";
     const budgetTxt = typeof p.monthlyBudgetUsd === "number" ? `$${p.monthlyBudgetUsd.toFixed(0)}` : "no set budget";
-    const forecastTxt = typeof p.projectedEomUsd === "number" ? `, projected EOM $${p.projectedEomUsd.toFixed(2)}` : "";
-    const runoutTxt = p.projectedRunoutDate ? `, projected runout ${p.projectedRunoutDate}` : "";
-    const levelTxt = level !== p.status ? ` (forecast=${level})` : "";
-    return `${p.name}: $${p.spentUsd.toFixed(2)} spent of ${budgetTxt}${pct} this month${forecastTxt}${runoutTxt}, status=${p.status}${levelTxt}`;
+    return `${p.name}: $${p.spentUsd.toFixed(2)} spent of ${budgetTxt}${pct} this month, status=${p.status}`;
   });
 
-  const anyExceeded = notable.some((p) => alertLevel(p) === "exceeded");
+  const anyExceeded = notable.some((p) => p.status === "exceeded");
   const suggestion = anyExceeded
-    ? "At least one provider is over (or, on current pace, projected to go over) its monthly budget — worth weighing a cheaper model tier or skipping this cycle's LLM call, but it's your call."
-    : "At least one provider is approaching (or, on current pace, projected to approach) its monthly budget — worth keeping an eye on model choice/frequency, but it's your call.";
+    ? "At least one provider is over its monthly budget — worth weighing a cheaper model tier or skipping this cycle's LLM call, but it's your call."
+    : "At least one provider is approaching its monthly budget — worth keeping an eye on model choice/frequency, but it's your call.";
 
   return `Operator LLM spend status: ${lines.join("; ")}. ${suggestion}`;
 }

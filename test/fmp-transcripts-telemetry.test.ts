@@ -75,12 +75,6 @@ beforeAll(() => {
   process.env.USAGE_MONITOR_BASE_URL = "https://usage.jays.services";
   process.env.USAGE_INGEST_TOKEN = "usage-test-token";
   process.env.USAGE_MONITOR_ENV = "test";
-  // usage-monitor-knobs.ts's subscription->knob lane gates on the SAME USAGE_MONITOR_BASE_URL set
-  // above (for the unrelated usage-push telemetry this file tests) and defaults ON once a base URL
-  // is configured. Left enabled, resolveProviderQuota("fmp") triggers a background refresh fetch
-  // that hits this file's own stubbed global `fetch` and gets miscounted as an FMP provider request
-  // — disable it explicitly so this file's request-count assertions only see real FMP calls.
-  process.env.USAGE_MONITOR_KNOBS_ENABLED = "off";
 });
 
 afterAll(() => {
@@ -98,8 +92,7 @@ afterAll(() => {
     "API_CIRCUIT_BREAKER_BACKOFF_MS",
     "USAGE_MONITOR_BASE_URL",
     "USAGE_INGEST_TOKEN",
-    "USAGE_MONITOR_ENV",
-    "USAGE_MONITOR_KNOBS_ENABLED"
+    "USAGE_MONITOR_ENV"
   ]) delete process.env[key];
 });
 

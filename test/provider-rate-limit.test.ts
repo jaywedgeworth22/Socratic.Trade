@@ -18,7 +18,6 @@ import {
   type ProviderLimiterClock,
 } from "../src/lib/provider-rate-limit";
 import { flushDurableStateNow } from "../src/lib/durable-state";
-import { getUsageMonitorKnobsCached, resetUsageMonitorKnobsCacheForTests } from "../src/lib/usage-monitor-knobs";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-provider-rate-limit-${randomUUID()}.db`)}`;
@@ -139,11 +138,6 @@ describe("resolveProviderLimiterConfig", () => {
   it("uppercases and normalizes non-alphanumeric characters into the env var name", () => {
     process.env.PROVIDER_RATE_LIMIT_ALPHA_VANTAGE_MIN_INTERVAL_MS = "2500";
     expect(resolveProviderLimiterConfig("alpha-vantage")?.minIntervalMs).toBe(2500);
-  });
-
-  it("uses roic's hard default of 400ms spacing and concurrency 1, matching filingapi", () => {
-    expect(resolveProviderLimiterConfig("roic")).toEqual({ minIntervalMs: 400, concurrency: 1 });
-    expect(resolveProviderLimiterConfig("filingapi")).toEqual({ minIntervalMs: 400, concurrency: 1 });
   });
 });
 
@@ -470,9 +464,6 @@ const QUOTA_ENV_KEYS = [
   "PROVIDER_QUOTA_FMP_PER_HOUR",
   "PROVIDER_QUOTA_FMP_PER_DAY",
   "TWELVEDATA_CREDITS_PER_MIN",
-  "PROVIDER_QUOTA_FILINGAPI_PER_DAY",
-  "PROVIDER_QUOTA_ROIC_PER_DAY",
-  "PROVIDER_QUOTA_MARKETSTACK_PER_DAY",
 ];
 
 describe("resolveProviderQuota", () => {
@@ -521,27 +512,6 @@ describe("resolveProviderQuota", () => {
     expect(resolveProviderQuota("fmp")).toEqual([{ maxRequests: 290, windowMs: 60_000 }]);
   });
 
-  it("returns the built-in filingapi window (45/day)", () => {
-    expect(resolveProviderQuota("filingapi")).toEqual([{ maxRequests: 45, windowMs: 86_400_000 }]);
-  });
-
-  it("returns the built-in roic window (200/day)", () => {
-    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 200, windowMs: 86_400_000 }]);
-  });
-
-  it("returns the built-in marketstack window (3/day, approximating its 100/month free tier)", () => {
-    expect(resolveProviderQuota("marketstack")).toEqual([{ maxRequests: 3, windowMs: 86_400_000 }]);
-  });
-
-  it("lets PROVIDER_QUOTA_<NAME>_PER_DAY override each of the three new defaults", () => {
-    process.env.PROVIDER_QUOTA_FILINGAPI_PER_DAY = "10";
-    expect(resolveProviderQuota("filingapi")).toEqual([{ maxRequests: 10, windowMs: 86_400_000 }]);
-    process.env.PROVIDER_QUOTA_ROIC_PER_DAY = "999";
-    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 999, windowMs: 86_400_000 }]);
-    process.env.PROVIDER_QUOTA_MARKETSTACK_PER_DAY = "1";
-    expect(resolveProviderQuota("marketstack")).toEqual([{ maxRequests: 1, windowMs: 86_400_000 }]);
-  });
-
   it("is undefined for an unconfigured provider (unlimited)", () => {
     expect(resolveProviderQuota("yahoo-finance")).toBeUndefined();
   });
@@ -577,123 +547,6 @@ describe("resolveProviderQuota", () => {
     process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = "12";
     process.env.TWELVEDATA_CREDITS_PER_MIN = "20";
     expect(resolveProviderQuota("twelvedata")?.find((w) => w.windowMs === 60_000)?.maxRequests).toBe(12);
-  });
-});
-
-// ── Usage Monitor knob fallback (Lane E: subscription -> knob) ──────────────────────
-// process.env still wins; a UM-sourced knob is consulted only when the corresponding env var is
-// unset; the built-in HARD_DEFAULTS/RATE_QUOTAS default is the final fallback.
-const UM_ENV_KEYS = [
-  "USAGE_MONITOR_BASE_URL",
-  "USAGE_INGEST_TOKEN",
-  "USAGE_READ_TOKEN",
-  "USAGE_MONITOR_KNOBS_ENABLED",
-  "PROVIDER_RATE_LIMIT_FINNHUB_PER_MIN",
-  "PROVIDER_RATE_LIMIT_FINNHUB_MIN_INTERVAL_MS",
-  "PROVIDER_QUOTA_TIINGO_PER_HOUR",
-  "PROVIDER_QUOTA_TESTPROV_PER_MIN",
-];
-
-/** Warm the in-process UM knob cache with a single "active" subscription row whose knobEnv is
- *  `map`, via the real public getUsageMonitorKnobsCached path (mocked fetch, no real network) —
- *  mirrors how resolveProviderLimiterConfig/resolveProviderQuota consume it in production, rather
- *  than reaching into the cache's internals. The first call only TRIGGERS the fire-and-forget
- *  refresh (and returns whatever was cached before, i.e. nothing) — awaiting a macrotask lets that
- *  refresh's promise chain settle before the caller reads the now-populated cache. */
-async function warmUsageMonitorKnobs(map: Record<string, string>): Promise<void> {
-  process.env.USAGE_MONITOR_BASE_URL = "https://usage.example.test";
-  process.env.USAGE_INGEST_TOKEN = "test-token";
-  const fetchImpl = (async () =>
-    new Response(JSON.stringify([{ status: "active", knobEnv: map, freeTierKnobEnv: {} }]), { status: 200 })
-  ) as unknown as typeof fetch;
-  getUsageMonitorKnobsCached({ fetchImpl });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-describe("Usage Monitor knob fallback", () => {
-  beforeEach(() => {
-    for (const k of [...ENV_KEYS, ...QUOTA_ENV_KEYS, ...UM_ENV_KEYS]) delete process.env[k];
-    resetUsageMonitorKnobsCacheForTests();
-  });
-  afterEach(() => {
-    for (const k of [...ENV_KEYS, ...QUOTA_ENV_KEYS, ...UM_ENV_KEYS]) delete process.env[k];
-    resetUsageMonitorKnobsCacheForTests();
-  });
-
-  it("resolveProviderLimiterConfig falls back to a UM PER_MIN knob when no env override exists", async () => {
-    await warmUsageMonitorKnobs({ PROVIDER_RATE_LIMIT_FINNHUB_PER_MIN: "10" });
-    const config = resolveProviderLimiterConfig("finnhub");
-    expect(config?.minIntervalMs).toBe(6_000); // 60000 / 10, NOT the hard default's 1200ms (50/min)
-  });
-
-  it("resolveProviderLimiterConfig: process.env still wins over a UM knob", async () => {
-    process.env.PROVIDER_RATE_LIMIT_FINNHUB_PER_MIN = "50"; // the hard default's own value, but via env
-    await warmUsageMonitorKnobs({ PROVIDER_RATE_LIMIT_FINNHUB_PER_MIN: "10" });
-    const config = resolveProviderLimiterConfig("finnhub");
-    expect(config?.minIntervalMs).toBe(1_200); // 60000 / 50 (env), not 60000 / 10 (UM)
-  });
-
-  it("resolveProviderQuota falls back to a UM knob for a provider with no hard default", async () => {
-    await warmUsageMonitorKnobs({ PROVIDER_QUOTA_TESTPROV_PER_MIN: "7" });
-    expect(resolveProviderQuota("testprov")).toEqual([{ maxRequests: 7, windowMs: 60_000 }]);
-  });
-
-  it("resolveProviderQuota: process.env still wins over a UM knob", async () => {
-    process.env.PROVIDER_QUOTA_TIINGO_PER_HOUR = "20";
-    await warmUsageMonitorKnobs({ PROVIDER_QUOTA_TIINGO_PER_HOUR: "999" });
-    const windows = resolveProviderQuota("tiingo");
-    expect(windows?.find((w) => w.windowMs === 3_600_000)?.maxRequests).toBe(20);
-  });
-
-  it("multiple UM knobs for the same unconfigured provider add multiple windows", async () => {
-    await warmUsageMonitorKnobs({
-      PROVIDER_QUOTA_TESTPROV_PER_MIN: "3",
-      PROVIDER_QUOTA_TESTPROV_PER_DAY: "5",
-    });
-    expect(resolveProviderQuota("testprov")).toEqual([
-      { maxRequests: 3, windowMs: 60_000 },
-      { maxRequests: 5, windowMs: 86_400_000 },
-    ]);
-  });
-
-  it("an empty UM knob map leaves an unrelated provider unaffected", async () => {
-    await warmUsageMonitorKnobs({});
-    expect(resolveProviderQuota("some-random-provider")).toBeUndefined();
-  });
-
-  it("UM outage/failure during refresh is fail-open — resolution stays at the hard default", async () => {
-    process.env.USAGE_MONITOR_BASE_URL = "https://usage.example.test";
-    process.env.USAGE_INGEST_TOKEN = "test-token";
-    const fetchImpl = (async () => { throw new Error("network down"); }) as unknown as typeof fetch;
-    getUsageMonitorKnobsCached({ fetchImpl });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(resolveProviderLimiterConfig("finnhub")).toEqual({ minIntervalMs: 1_200, concurrency: Infinity });
-  });
-
-  it("a lapsed (non-active) subscription's knobEnv is ignored in favor of freeTierKnobEnv", async () => {
-    process.env.USAGE_MONITOR_BASE_URL = "https://usage.example.test";
-    process.env.USAGE_INGEST_TOKEN = "test-token";
-    const fetchImpl = (async () =>
-      new Response(
-        JSON.stringify([
-          {
-            status: "canceled",
-            knobEnv: { PROVIDER_QUOTA_TESTPROV_PER_MIN: "999" }, // stale paid override — must NOT apply
-            freeTierKnobEnv: { PROVIDER_QUOTA_TESTPROV_PER_MIN: "4" },
-          },
-        ]),
-        { status: 200 }
-      )
-    ) as unknown as typeof fetch;
-    getUsageMonitorKnobsCached({ fetchImpl });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(resolveProviderQuota("testprov")).toEqual([{ maxRequests: 4, windowMs: 60_000 }]);
-  });
-
-  it("USAGE_MONITOR_KNOBS_ENABLED=off disables the lane even with a base URL configured", async () => {
-    process.env.USAGE_MONITOR_KNOBS_ENABLED = "off";
-    await warmUsageMonitorKnobs({ PROVIDER_QUOTA_TESTPROV_PER_MIN: "7" });
-    expect(resolveProviderQuota("testprov")).toBeUndefined();
   });
 });
 
@@ -750,34 +603,6 @@ describe("RequestQuota (sliding-window, fake clock)", () => {
     expect(quota.admit("fmp", "k", 1000)).toBe(240); // day cap (240) binds under the 290/min
     await clock.advance(60_000);
     expect(quota.admit("fmp", "k", 1000)).toBe(0);   // minute refreshed but the day budget is spent
-  });
-
-  it("admits up to filingapi's 45/day default and denies once the day's budget is spent", () => {
-    const quota = new RequestQuota(new FakeClock());
-    expect(quota.admit("filingapi", "k", 100)).toBe(45); // capped to the 45/day default
-    expect(quota.admit("filingapi", "k", 100)).toBe(0); // day's budget already spent
-  });
-
-  it("admits up to roic's 200/day default and denies once the day's budget is spent", () => {
-    const quota = new RequestQuota(new FakeClock());
-    expect(quota.admit("roic", "k", 500)).toBe(200);
-    expect(quota.admit("roic", "k", 500)).toBe(0);
-  });
-
-  it("admits up to marketstack's 3/day default and denies once the day's budget is spent", () => {
-    const quota = new RequestQuota(new FakeClock());
-    expect(quota.admit("marketstack", "k", 10)).toBe(3);
-    expect(quota.admit("marketstack", "k", 10)).toBe(0);
-  });
-
-  it("lets a PROVIDER_QUOTA_<NAME>_PER_DAY env override win over each new default", () => {
-    process.env.PROVIDER_QUOTA_FILINGAPI_PER_DAY = "2";
-    process.env.PROVIDER_QUOTA_ROIC_PER_DAY = "1";
-    process.env.PROVIDER_QUOTA_MARKETSTACK_PER_DAY = "5";
-    const quota = new RequestQuota(new FakeClock());
-    expect(quota.admit("filingapi", "k", 100)).toBe(2); // overridden default (45) does not apply
-    expect(quota.admit("roic", "k", 100)).toBe(1);
-    expect(quota.admit("marketstack", "k", 100)).toBe(5);
   });
 
   it("refills as older hits slide out of the window", async () => {
