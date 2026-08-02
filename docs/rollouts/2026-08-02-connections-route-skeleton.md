@@ -109,7 +109,14 @@ Connections can NOT join `SNAPSHOT_INDEPENDENT_ROUTES` (BrokerAccountsCard reads
   coverage, design-system/a11y) + per-finding refutation agents, 10 agents total —
   7 findings confirmed, 0 refuted, ALL 7 fixed before landing (see §3).
 
-## 5. Next Steps & Blockers — PARKED BY OWNER STOP-ORDER 2026-08-02
+## 5. Next Steps & Blockers — PARKED 2026-08-02, then RESOLVED same day
+
+**Resolution addendum:** the park was picked up (AG marked PR #2350 ready; squash
+auto-merge armed) and CI's `verify` ran the full test+build GREEN on the final tree,
+closing the one gap listed below. The branch was then re-merged with `main`
+(#2349/#2351 had advanced it; the ruleset's strict up-to-date rule stalls auto-merge
+otherwise) with the union-spliced STATUS.md de-spliced again, and lands unattended on
+the re-run's green. Historical park-state record follows.
 
 Work was stopped by the owner mid-landing. Exact state at park time:
 
