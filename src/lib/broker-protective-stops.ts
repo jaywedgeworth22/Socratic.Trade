@@ -60,7 +60,24 @@ import {
   deleteBrokerStopPlacementIntent,
   type BrokerStopPlacementIntent
 } from "./db";
+import { auditDeduped } from "./audit-dedupe";
 import { isRejectedOrCanceledState, liveExitOrderCoverage } from "./broker-side";
+
+// Steady-state skip reasons fire once per tick per position (~14k identical
+// events/day in prod — see src/lib/audit-dedupe.ts). Log the first occurrence
+// and then at most once per 6h per (symbol, kind, note) signature.
+function auditStopSkipped(
+  payload: { symbol?: unknown; kind?: unknown; note?: unknown } & Record<string, unknown>,
+  userId: string,
+  connectedAccountId?: string,
+): void {
+  auditDeduped(
+    "broker_protective_stop_skipped",
+    payload,
+    [payload.symbol as string, payload.kind as string, String(payload.note ?? "")],
+    { userId, connectedAccountId },
+  );
+}
 import { normalizeSymbol } from "./money";
 import { livePreflightBlocks } from "./preflight-live-guard";
 import type { BrokerGateway, EquityOrder, EquityPosition, ExecutionMode, FillSource, StopPlanStyle, TradingPolicy } from "./types";
@@ -1057,7 +1074,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       // same check on a later tick either recovers it (isDoneRestingState, above) or the drift
       // check runs cleanly against the final position size.
       if (trackedOrder && String(trackedOrder.state ?? "").trim().toLowerCase() === "partially_filled") {
-        audit("broker_protective_stop_skipped", {
+        auditStopSkipped({
           symbol: sym, kind: symKind, note: "tracked order is partially filled and actively executing at the broker — leaving it resting rather than cancelling into an uncertain in-flight state"
         }, userId, policy.connectedAccountId);
         continue;
@@ -1096,7 +1113,7 @@ export async function reconcileBrokerProtectiveStops(args: {
             upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
           }
         } else {
-          audit("broker_protective_stop_skipped", { symbol: sym, kind: symKind, note: "order list unavailable this tick — leaving the existing broker-held stop untouched rather than resizing on unknown coverage" }, userId, policy.connectedAccountId);
+          auditStopSkipped({ symbol: sym, kind: symKind, note: "order list unavailable this tick — leaving the existing broker-held stop untouched rather than resizing on unknown coverage" }, userId, policy.connectedAccountId);
         }
         continue;
       }
@@ -1143,7 +1160,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       // order already covers the position, so no replacement is needed and cancelling the redundant
       // (stacking) oversized stop is strictly safe — don't arm-gate that (Codex review, PR #1738).
       if (mismatchNote && symKind === "trailing" && (!isQuantityShrink || (haltedProtectOnly && qty > 0)) && !canArmTrailingNow(pos, sym, newStopPrice)) {
-        audit("broker_protective_stop_skipped", {
+        auditStopSkipped({
           symbol: sym, kind: symKind, note: `mismatch (${mismatchNote}) detected but the replacement would be refused this tick${haltedProtectOnly ? " (halted — no synthetic fallback)" : ""} — keeping the existing stop rather than cancelling into no protection`
         }, userId, policy.connectedAccountId);
         mismatchNote = undefined;
@@ -1158,7 +1175,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       // row that a broker-covered position doesn't have and the monitor won't register while halted
       // (Codex review, PR #1738 — corrects the round-2 "synthetic covers it" assumption).
       if (mismatchNote && haltedProtectOnly && !isQuantityShrink) {
-        audit("broker_protective_stop_skipped", {
+        auditStopSkipped({
           symbol: sym, kind: symKind, note: `mismatch (${mismatchNote}) detected but system is halted — keeping the existing stop rather than cancelling into a replacement that can't be placed while halted`
         }, userId, policy.connectedAccountId);
         mismatchNote = undefined;
@@ -1367,7 +1384,7 @@ export async function reconcileBrokerProtectiveStops(args: {
           // Order list unavailable OR non-authoritative this tick — genuinely unknown whether the
           // earlier request landed. Skip this symbol entirely rather than guess: a fresh placement here
           // could double up on an order that WAS accepted but simply isn't visible this tick.
-          audit("broker_protective_stop_skipped", {
+          auditStopSkipped({
             symbol: sym, kind: priorIntent.kind,
             note: ordersListed
               ? "a prior placement's outcome is still unresolved and the broker order list is not authoritative for terminal orders — waiting rather than risking a duplicate"
@@ -1395,11 +1412,11 @@ export async function reconcileBrokerProtectiveStops(args: {
     // normal, confident skip.
     const qty = desiredStopQuantity(pos, sym, symKind);
     if (qty === null) {
-      audit("broker_protective_stop_skipped", { symbol: sym, kind: symKind, note: "order list unavailable this tick — coverage unknown, deferring placement to the synthetic monitor rather than guessing" }, userId, policy.connectedAccountId);
+      auditStopSkipped({ symbol: sym, kind: symKind, note: "order list unavailable this tick — coverage unknown, deferring placement to the synthetic monitor rather than guessing" }, userId, policy.connectedAccountId);
       continue;
     }
     if (!(qty > 0)) {
-      audit("broker_protective_stop_skipped", {
+      auditStopSkipped({
         symbol: sym,
         kind: symKind,
         note: "no uncovered whole shares — other live exit orders (or sub-share size) cover this position; the synthetic monitor covers any remainder"
@@ -1421,7 +1438,7 @@ export async function reconcileBrokerProtectiveStops(args: {
     // #1331, three rounds — see canArmTrailingNow's doc comment for the native-vs-ratcheted logic).
     if (symKind === "trailing" && !canArmTrailingNow(pos, sym, stopPrice)) {
       const mark = pos.marketValue / pos.quantity;
-      audit("broker_protective_stop_skipped", {
+      auditStopSkipped({
         symbol: sym,
         kind: symKind,
         stopPrice,

@@ -130,6 +130,7 @@ export const MIN_STRATEGY_ACCOUNT_EQUITY = 10;
 import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
+import { auditBoundedStrategyRunResult } from "./audit-bounded-run";
 import { clearStopPlans, clearTakeProfitTrimBands, filterFullStopPlansByLiveBasis, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, persistedOrFallbackStopPct, recordStopPlan, listSyntheticStops } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
@@ -4105,7 +4106,7 @@ export async function runStrategyOnce(
   }
 
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
-  audit("strategy_run", result, userId, connectedAccountId);
+  audit("strategy_run", auditBoundedStrategyRunResult(result), userId, connectedAccountId);
   // Push a dashboard event so open clients refresh immediately instead of waiting for their
   // next poll (the SSE bus is in-process; no-op when nothing is subscribed).
   emitDashboardEvent({ type: "run-complete", userId, at: new Date().toISOString(), detail: { runId } });
