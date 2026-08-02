@@ -187,7 +187,13 @@ environment). Remedies per row: `block` (OrderValidationError → proposal statu
 `reshape` (corrected copy + `order_constraint_reshaped` audit receipt — never block an exit over
 decorative bracket legs). One unit test per constraint + fixture-coverage gate
 (test/broker-order-constraints.test.ts). Rollout: docs/rollouts/2026-08-02-broker-order-constraints.md.
-Slices 3–4 (per-account broker-mutation mutex, uniform protection receipts) remain planned.
+Slice 3 PR-1 (IMPLEMENTED 2026-08-02, branch `monet/broker-mutation-mutex`): per-account
+broker-mutation lease — `src/lib/account-mutation.ts` over the operation-lease primitive, keyed
+`broker-mutation:${userId}:${accountNumber}`, sequence-scoped windows (never whole lanes), wrapping
+the stop-monitor pass, stale-exit remediation, drain, and manual replace; standalone cancels stay
+unleased (doctrine in the module header); advisory `broker_mutation_unleased` receipt backstop at
+the gateway. PR-2 (strategy/approval placement windows) and slice 4 (uniform protection receipts)
+remain planned. Rollout: docs/rollouts/2026-08-02-account-mutation-lease-pr1.md.
 
 ## 8. nofx-style consecutive-miss safety mode (IMPLEMENTED 2026-07-29, PR #2275)
 

@@ -15,7 +15,15 @@ export const OPERATION_LEASE_GROUPS = {
   SEC_INGEST_SEED: "sec-ingest-seed"
 } as const;
 
-export type OperationLeaseGroup = typeof OPERATION_LEASE_GROUPS[keyof typeof OPERATION_LEASE_GROUPS];
+/** Dynamic per-account broker-mutation groups (account-mutation.ts, oss-lessons §7 slice 3).
+ *  Template-typed rather than enumerated: one group per (userId, account key). All lease
+ *  mechanics below treat the group as an opaque key, so the widening changes no behavior;
+ *  the test sweep (`LIKE 'operation_lease:%'`) already covers these keys. */
+export type BrokerMutationLeaseGroup = `broker-mutation:${string}`;
+
+export type OperationLeaseGroup =
+  | typeof OPERATION_LEASE_GROUPS[keyof typeof OPERATION_LEASE_GROUPS]
+  | BrokerMutationLeaseGroup;
 
 export interface OperationLeaseBusy {
   status: "busy";
@@ -67,7 +75,7 @@ export interface OperationLeaseRunOptions {
 }
 
 export type OperationLeaseRunResult<T> =
-  | { acquired: true; value: T }
+  | { acquired: true; value: T; tookOverExpired?: OperationLeaseTakeover }
   | { acquired: false; busy: OperationLeaseBusy };
 
 const leaseKey = (group: OperationLeaseGroup): string => `operation_lease:${group}`;
@@ -133,20 +141,29 @@ function busyResult(
   };
 }
 
+/** Present on a fresh acquisition that displaced an EXPIRED record — crash/stall evidence
+ *  the caller can receipt (e.g. broker_mutation_takeover_expired). */
+export interface OperationLeaseTakeover {
+  operation: string;
+  expiresAt: string;
+}
+
 function acquireOperationLease(
   group: OperationLeaseGroup,
   operation: string,
   ttlMs: number,
   now: Date = new Date()
-): { claim: OperationLeaseClaim } | { busy: OperationLeaseBusy } {
+): { claim: OperationLeaseClaim; tookOverExpired?: OperationLeaseTakeover } | { busy: OperationLeaseBusy } {
   const owner = `${process.pid}:${globalThis.crypto.randomUUID()}`;
   const nowIso = now.toISOString();
   let active: OperationLeaseRecord | null = null;
+  let tookOverExpired: OperationLeaseTakeover | undefined;
   try {
     const database = getDb();
     const acquire = database.transaction((): boolean => {
       active = readLease(group);
       if (active && Date.parse(active.expiresAt) > now.getTime()) return false;
+      if (active) tookOverExpired = { operation: active.operation, expiresAt: active.expiresAt };
       upsertLease(group, {
         owner,
         operation,
@@ -163,7 +180,7 @@ function acquireOperationLease(
 
   const claim = Object.freeze({ [claimBrand]: true }) as OperationLeaseClaim;
   claimStates.set(claim, { group, owner, active: true, controller: new AbortController() });
-  return { claim };
+  return { claim, tookOverExpired };
 }
 
 function renewOperationLease(claim: OperationLeaseClaim, ttlMs: number, now: Date = new Date()): boolean {
@@ -309,7 +326,7 @@ export async function runWithOperationLease<T>(
     // Do not rely only on the heartbeat's AbortSignal at the success boundary: after an event-loop
     // pause, the awaited work's continuation can run before the overdue interval callback.
     assertOperationLeaseOwnership(acquired.claim);
-    return { acquired: true, value };
+    return { acquired: true, value, tookOverExpired: acquired.tookOverExpired };
   } finally {
     clearInterval(interval);
     releaseOperationLease(acquired.claim);

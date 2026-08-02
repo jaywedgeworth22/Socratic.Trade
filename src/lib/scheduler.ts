@@ -4,6 +4,7 @@
 // plus Node module caching ensures startScheduler() is effectively a no-op on
 // subsequent calls within the same process. In production (`next start`) it runs once.
 
+import { LANE_WAITS, withAccountMutation } from "./account-mutation";
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
 import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getInternalSetting, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
@@ -731,16 +732,26 @@ async function tick(): Promise<void> {
             const gw = brokerGateway;
             const accountNumber = policy.accountNumber;
             void journalLane("account-drain", { userId, connectedAccountId: accountId }, async () => {
-              const orders = await gw.getEquityOrders(accountNumber);
-              const openOrders = drainingAccountLiveOrders(orders);
-              for (const o of openOrders) {
-                await gw.cancelEquityOrder(accountNumber, o.id).catch((err: unknown) => {
-                  console.error(`[scheduler] draining account cancel error for order ${o.id}:`, err);
-                });
-              }
-              await reconcilePendingFills(gw, accountNumber, userId, policy.connectedAccountId);
-              if (openOrders.length === 0) purgeConnectedAccount(accountId, userId);
-              return { status: "ok" as const, summary: `open=${openOrders.length}` };
+              // §7 slice 3: drain is a multi-cancel + purge sequence — hold the account mutation
+              // lease so it cannot interleave with a stop-monitor or replacement window mid-flight.
+              // (These are sequence cancels, not the sacred STANDALONE cancel — that stays unleased.)
+              const outcome = await withAccountMutation(
+                { userId, accountNumber, connectedAccountId: accountId, lane: "account-drain" },
+                async () => {
+                  const orders = await gw.getEquityOrders(accountNumber);
+                  const openOrders = drainingAccountLiveOrders(orders);
+                  for (const o of openOrders) {
+                    await gw.cancelEquityOrder(accountNumber, o.id).catch((err: unknown) => {
+                      console.error(`[scheduler] draining account cancel error for order ${o.id}:`, err);
+                    });
+                  }
+                  await reconcilePendingFills(gw, accountNumber, userId, policy.connectedAccountId);
+                  if (openOrders.length === 0) purgeConnectedAccount(accountId, userId);
+                  return openOrders.length;
+                }
+              );
+              if (!outcome.acquired) return { status: "skipped" as const, summary: "account mutation lease busy" };
+              return { status: "ok" as const, summary: `open=${outcome.value}` };
             }).catch((err: unknown) => console.error("[scheduler] draining account order check error:", err));
           } else {
             purgeConnectedAccount(accountId, userId);
@@ -760,7 +771,16 @@ async function tick(): Promise<void> {
             // when disabled; defers to the human on a live account with typed confirmation on. The
             // in-flight guard above + the per-order cooldown inside autoRemediateStaleExitOrders keep
             // a slow broker cancel from triggering a second market sell on the next tick.
-            await autoRemediateStaleExitOrders({ userId, policy: stalePolicy, activeAccount: account, gateway: gw, orders });
+            // §7 slice 3: the cancel-then-place bodies run under the account's mutation lease.
+            // Bounded wait (not try-once): this lane reaches its acquisition only after a broker
+            // read, so a try-once would deterministically lose the phase race to the stop-monitor
+            // lane every tick and starve the replacement pump (adversarial-review finding).
+            const outcome = await withAccountMutation(
+              { userId, accountNumber: stalePolicy.accountNumber, connectedAccountId: accountId, lane: "stale-exit-replacement", waitMs: LANE_WAITS.staleExit },
+              (ctx) => autoRemediateStaleExitOrders({ userId, policy: stalePolicy, activeAccount: account, gateway: gw, orders, fence: ctx.assertOwned })
+            );
+            if (!outcome.acquired) return { status: "skipped" as const, summary: "account mutation lease busy" };
+            return undefined;
           })
             .catch((err) => console.error("[scheduler] stale-limit-order handling error:", err))
             .finally(() => staleExitInFlight.delete(key));
@@ -778,7 +798,14 @@ async function tick(): Promise<void> {
         if (protectiveState && !stopMonitorInFlight.has(key)) {
           stopMonitorInFlight.add(key);
           void journalLane("synthetic-stop-monitor", { userId, connectedAccountId: accountId }, async () => {
-            const result = await runSyntheticStopMonitor(userId, policy, true);
+            // §7 slice 3: the whole read-decide-mutate pass holds the account mutation lease so
+            // its coverage math cannot go stale under a concurrent replacement/drain sequence.
+            const outcome = await withAccountMutation(
+              { userId, accountNumber: policy.accountNumber, connectedAccountId: accountId, lane: "stop-monitor" },
+              (ctx) => runSyntheticStopMonitor(userId, policy, true, undefined, ctx.assertOwned)
+            );
+            if (!outcome.acquired) return { status: "skipped" as const, summary: "account mutation lease busy" };
+            const result = outcome.value;
             return {
               status: "ok" as const,
               summary: `evaluated=${result.evaluated} triggered=${result.triggered} exited=${result.exited}`
