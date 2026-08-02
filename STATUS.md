@@ -24,9 +24,6 @@ an Accounts section (switch broker account via `account.activate`, sign-out link
 login), per-proposal realtime approve/reject feedback (tapped button spins; card follows its queued
 command through queued/running/succeeded/failed instead of failures hiding in the Command Log), and the
 delete-account panel is collapsed behind a neutral link so it stops mimicking error banners. tsc clean,
-mobile test file 10/10, lint 0 errors. Landing to main via `scripts/land.sh`.
-Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
-
 mobile test file 10/10, lint 0 errors. Landed as #2351 (`44069368`).
 Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
 
