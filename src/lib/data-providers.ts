@@ -806,9 +806,22 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
         // Bound the pull to the freshness window: rowIsFresh discards anything older than
         // CONGRESS_TRADE_MAX_STALE_DAYS, so there's no point downloading the full history.
         const fromDate = new Date(now - congressMaxStaleMs()).toISOString().slice(0, 10);
+        // Usage-only telemetry (never cost — App A is a cross-app cache, not a billed provider):
+        // mirrors the ok/fail split fetchWithRetry records for every other keyed provider, so
+        // Congress.Trade shows up in the Usage Monitor's call-volume view instead of staying
+        // invisible. Recorded per underlying HTTP call (fundamentals/analyst), not per symbol
+        // batch, matching how recordProviderCall is used everywhere else in this file.
         const [fundamentals, analyst] = await Promise.all([
-          congressFundamentalsEnabled() ? client.getFundamentals(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as FundamentalRow[]; }) : Promise.resolve([] as FundamentalRow[]),
-          congressFundamentalsEnabled() ? client.getAnalyst(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AnalystRow[]; }) : Promise.resolve([] as AnalystRow[]),
+          congressFundamentalsEnabled()
+            ? client.getFundamentals(symbol, { from: fromDate })
+                .then((r) => { recordProviderCall(this.name, { service: "fundamentals", ok: true, userId: this.userId }); return r; })
+                .catch(() => { transportError = true; recordProviderCall(this.name, { service: "fundamentals", ok: false, userId: this.userId }); return [] as FundamentalRow[]; })
+            : Promise.resolve([] as FundamentalRow[]),
+          congressFundamentalsEnabled()
+            ? client.getAnalyst(symbol, { from: fromDate })
+                .then((r) => { recordProviderCall(this.name, { service: "analyst", ok: true, userId: this.userId }); return r; })
+                .catch(() => { transportError = true; recordProviderCall(this.name, { service: "analyst", ok: false, userId: this.userId }); return [] as AnalystRow[]; })
+            : Promise.resolve([] as AnalystRow[]),
         ]);
 
         // Do NOT log a synthetic health failure here: the shared getCongressTradeClient()
@@ -1916,6 +1929,8 @@ export class WebullUnofficialEnrichmentProvider implements MarketEnrichmentProvi
 
     const python = process.env.WEBULL_UNOFFICIAL_PYTHON || "python3";
     const script = process.env.WEBULL_UNOFFICIAL_SCRIPT || `${process.cwd()}/scripts/webull_unofficial_quote.py`;
+    // Usage-only telemetry (never cost — no billed API key, just an unofficial local script): one
+    // call per enrich() invocation, matching the single execFile dispatch below (not per symbol).
     try {
       const stdout = await runWebullUnofficialScript(python, script, misses, webullUnofficialTimeoutMs());
       const payload = JSON.parse(stdout || "{}") as Record<string, unknown>;
@@ -1924,7 +1939,9 @@ export class WebullUnofficialEnrichmentProvider implements MarketEnrichmentProvi
         cache.set(`${this.name}:${symbol}`, { expiresAt: expiresAtRespectingMarketClose(new Date(now), ttlMs()), data });
         result[symbol] = data;
       }
+      recordProviderCall(this.name, { service: "quote", ok: true });
     } catch {
+      recordProviderCall(this.name, { service: "quote", ok: false });
       for (const symbol of misses) result[symbol] = {};
     }
     return result;
@@ -5437,8 +5454,12 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
         const data = parseCompanyFacts(json);
         cache.set(cacheKey, { expiresAt: now + SEC_XBRL_TTL_MS, data });
         result[symbol] = data;
+        // Usage-only telemetry (never cost — SEC EDGAR is free/keyless): recorded once per
+        // successful companyfacts fetch, mirroring the other keyless providers in this file.
+        recordProviderCall(this.name, { service: "companyfacts", ok: true });
       } catch {
         // best-effort — this symbol falls through to the next provider
+        recordProviderCall(this.name, { service: "companyfacts", ok: false });
       } finally {
         secXbrlInFlight.delete(symbol);
       }

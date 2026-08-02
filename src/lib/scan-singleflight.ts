@@ -98,8 +98,12 @@ export function resetScanSingleFlightForTests(): void {
 }
 
 /**
- * Read the full per-symbol quote map from a persisted strategy-run audit without
- * trusting an older compact prompt snapshot or a malformed audit payload.
+ * Read the full per-symbol quote map from a persisted market-scan-bearing audit without
+ * trusting an older compact prompt snapshot or a malformed audit payload. Accepts either
+ * payload shape in the wild: a `strategy_run` audit nests it at `.marketScan`; the scheduled/
+ * interactive `market_scan` audit kind nests it at `.scan` (see market-scan-freshness.ts and
+ * app/api/scan/route.ts) — both are the same MarketScan on disk, just written by different
+ * callers, so a caller comparing freshness across both kinds doesn't need to know which one won.
  */
 export function marketScanQuotesFromAudit(
   payload: unknown,
@@ -117,7 +121,8 @@ export function marketScanQuotesFromAudit(
     return undefined;
   }
   if (!payload || typeof payload !== "object") return undefined;
-  const marketScan = (payload as { marketScan?: unknown }).marketScan;
+  const marketScan = (payload as { marketScan?: unknown; scan?: unknown }).marketScan
+    ?? (payload as { scan?: unknown }).scan;
   if (!marketScan || typeof marketScan !== "object") return undefined;
   const quotes = (marketScan as { quotesBySymbol?: unknown }).quotesBySymbol;
   if (!quotes || typeof quotes !== "object" || Array.isArray(quotes)) return undefined;

@@ -11,6 +11,7 @@
 // so the cascade's chunking logic can stay untouched.
 
 import { createDurableMap, hasHydratedNamespace, resetDurableStateCacheForTests } from "./durable-state";
+import { usageMonitorKnobNumber } from "./usage-monitor-knobs";
 
 export interface ProviderLimiterClock {
   now(): number;
@@ -88,10 +89,12 @@ function finiteEnvNumber(name: string): number | undefined {
 }
 
 /**
- * Effective limiter config for a provider: env overrides win over hard defaults, and
- * `_MIN_INTERVAL_MS` wins over `_PER_MIN` when both env vars are set for the same
- * provider. Returns `undefined` when neither env nor a hard default applies — meaning
- * unlimited (callers must treat that as a passthrough, not a zero-wait limiter).
+ * Effective limiter config for a provider: `process.env` overrides win over the Usage Monitor's
+ * subscription-derived knob (see usage-monitor-knobs.ts — a synced "what plan am I actually on"
+ * value), which in turn wins over the hard default, and `_MIN_INTERVAL_MS` wins over `_PER_MIN`
+ * within EACH of those two tiers when both are set for the same provider. Returns `undefined` when
+ * none of env/UM/hard-default applies — meaning unlimited (callers must treat that as a
+ * passthrough, not a zero-wait limiter).
  */
 export function resolveProviderLimiterConfig(provider: string): ProviderLimiterConfig | undefined {
   const hard = HARD_DEFAULTS[provider];
@@ -101,14 +104,30 @@ export function resolveProviderLimiterConfig(provider: string): ProviderLimiterC
   const envMinInterval = finiteEnvNumber(`PROVIDER_RATE_LIMIT_${key}_MIN_INTERVAL_MS`);
   const envConcurrency = finiteEnvNumber(`PROVIDER_RATE_LIMIT_${key}_CONCURRENCY`);
 
+  // UM knob values share the exact PROVIDER_RATE_LIMIT_<NAME>_* names an operator would set in
+  // env (see the monitor's seeded alphavantage/finnhub knobEnv), so the same key strings resolve
+  // both tiers — only the source differs.
+  const umPerMin = usageMonitorKnobNumber(`PROVIDER_RATE_LIMIT_${key}_PER_MIN`);
+  const umMinInterval = usageMonitorKnobNumber(`PROVIDER_RATE_LIMIT_${key}_MIN_INTERVAL_MS`);
+  const umConcurrency = usageMonitorKnobNumber(`PROVIDER_RATE_LIMIT_${key}_CONCURRENCY`);
+
   const minIntervalMs =
     envMinInterval !== undefined && envMinInterval >= 0
       ? envMinInterval
       : envPerMin !== undefined && envPerMin > 0
         ? Math.ceil(60_000 / envPerMin)
-        : hard?.minIntervalMs ?? (hard?.perMin ? Math.ceil(60_000 / hard.perMin) : undefined);
+        : umMinInterval !== undefined && umMinInterval >= 0
+          ? umMinInterval
+          : umPerMin !== undefined && umPerMin > 0
+            ? Math.ceil(60_000 / umPerMin)
+            : hard?.minIntervalMs ?? (hard?.perMin ? Math.ceil(60_000 / hard.perMin) : undefined);
 
-  const concurrency = envConcurrency !== undefined && envConcurrency > 0 ? envConcurrency : hard?.concurrency;
+  const concurrency =
+    envConcurrency !== undefined && envConcurrency > 0
+      ? envConcurrency
+      : umConcurrency !== undefined && umConcurrency > 0
+        ? umConcurrency
+        : hard?.concurrency;
 
   if (minIntervalMs === undefined && concurrency === undefined) return undefined;
   return { minIntervalMs: minIntervalMs ?? 0, concurrency: concurrency ?? Infinity };
@@ -289,8 +308,10 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
 };
 
 /** Env-overridable effective windows for a provider. `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`
- *  overrides (or adds) the corresponding window; a value <= 0 removes that window. Returns the merged
- *  window list, or `undefined` for an unlimited provider. */
+ *  overrides (or adds) the corresponding window; a value <= 0 removes that window. `process.env` wins
+ *  over the Usage Monitor's subscription-derived knob (usage-monitor-knobs.ts, same env-var names),
+ *  which wins over the built-in RATE_QUOTAS default. Returns the merged window list, or `undefined`
+ *  for an unlimited provider. */
 // Back-compat: providers whose per-minute knob had a different name before the unified quota. The
 // new PROVIDER_QUOTA_<NAME>_PER_MIN wins; the legacy name is honored only when the new one is unset,
 // so an operator who set the old var to match a paid/retuned plan doesn't silently fall back to the
@@ -305,11 +326,12 @@ export function resolveProviderQuota(provider: string): RateWindow[] | undefined
   const legacyPerMinEnv = LEGACY_PER_MIN_ENV[provider];
   const perMin =
     finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_MIN`) ??
-    (legacyPerMinEnv ? finiteEnvNumber(legacyPerMinEnv) : undefined);
+    (legacyPerMinEnv ? finiteEnvNumber(legacyPerMinEnv) : undefined) ??
+    usageMonitorKnobNumber(`PROVIDER_QUOTA_${key}_PER_MIN`);
   const overrides: Array<[number, number]> = [
     [perMin ?? NaN, MINUTE],
-    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_HOUR`) ?? NaN, HOUR],
-    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_DAY`) ?? NaN, DAY]
+    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_HOUR`) ?? usageMonitorKnobNumber(`PROVIDER_QUOTA_${key}_PER_HOUR`) ?? NaN, HOUR],
+    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_DAY`) ?? usageMonitorKnobNumber(`PROVIDER_QUOTA_${key}_PER_DAY`) ?? NaN, DAY]
   ];
   for (const [max, windowMs] of overrides) {
     if (Number.isNaN(max)) continue;

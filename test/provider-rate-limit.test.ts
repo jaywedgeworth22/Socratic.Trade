@@ -18,6 +18,7 @@ import {
   type ProviderLimiterClock,
 } from "../src/lib/provider-rate-limit";
 import { flushDurableStateNow } from "../src/lib/durable-state";
+import { getUsageMonitorKnobsCached, resetUsageMonitorKnobsCacheForTests } from "../src/lib/usage-monitor-knobs";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-provider-rate-limit-${randomUUID()}.db`)}`;
@@ -576,6 +577,123 @@ describe("resolveProviderQuota", () => {
     process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = "12";
     process.env.TWELVEDATA_CREDITS_PER_MIN = "20";
     expect(resolveProviderQuota("twelvedata")?.find((w) => w.windowMs === 60_000)?.maxRequests).toBe(12);
+  });
+});
+
+// ── Usage Monitor knob fallback (Lane E: subscription -> knob) ──────────────────────
+// process.env still wins; a UM-sourced knob is consulted only when the corresponding env var is
+// unset; the built-in HARD_DEFAULTS/RATE_QUOTAS default is the final fallback.
+const UM_ENV_KEYS = [
+  "USAGE_MONITOR_BASE_URL",
+  "USAGE_INGEST_TOKEN",
+  "USAGE_READ_TOKEN",
+  "USAGE_MONITOR_KNOBS_ENABLED",
+  "PROVIDER_RATE_LIMIT_FINNHUB_PER_MIN",
+  "PROVIDER_RATE_LIMIT_FINNHUB_MIN_INTERVAL_MS",
+  "PROVIDER_QUOTA_TIINGO_PER_HOUR",
+  "PROVIDER_QUOTA_TESTPROV_PER_MIN",
+];
+
+/** Warm the in-process UM knob cache with a single "active" subscription row whose knobEnv is
+ *  `map`, via the real public getUsageMonitorKnobsCached path (mocked fetch, no real network) —
+ *  mirrors how resolveProviderLimiterConfig/resolveProviderQuota consume it in production, rather
+ *  than reaching into the cache's internals. The first call only TRIGGERS the fire-and-forget
+ *  refresh (and returns whatever was cached before, i.e. nothing) — awaiting a macrotask lets that
+ *  refresh's promise chain settle before the caller reads the now-populated cache. */
+async function warmUsageMonitorKnobs(map: Record<string, string>): Promise<void> {
+  process.env.USAGE_MONITOR_BASE_URL = "https://usage.example.test";
+  process.env.USAGE_INGEST_TOKEN = "test-token";
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify([{ status: "active", knobEnv: map, freeTierKnobEnv: {} }]), { status: 200 })
+  ) as unknown as typeof fetch;
+  getUsageMonitorKnobsCached({ fetchImpl });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+describe("Usage Monitor knob fallback", () => {
+  beforeEach(() => {
+    for (const k of [...ENV_KEYS, ...QUOTA_ENV_KEYS, ...UM_ENV_KEYS]) delete process.env[k];
+    resetUsageMonitorKnobsCacheForTests();
+  });
+  afterEach(() => {
+    for (const k of [...ENV_KEYS, ...QUOTA_ENV_KEYS, ...UM_ENV_KEYS]) delete process.env[k];
+    resetUsageMonitorKnobsCacheForTests();
+  });
+
+  it("resolveProviderLimiterConfig falls back to a UM PER_MIN knob when no env override exists", async () => {
+    await warmUsageMonitorKnobs({ PROVIDER_RATE_LIMIT_FINNHUB_PER_MIN: "10" });
+    const config = resolveProviderLimiterConfig("finnhub");
+    expect(config?.minIntervalMs).toBe(6_000); // 60000 / 10, NOT the hard default's 1200ms (50/min)
+  });
+
+  it("resolveProviderLimiterConfig: process.env still wins over a UM knob", async () => {
+    process.env.PROVIDER_RATE_LIMIT_FINNHUB_PER_MIN = "50"; // the hard default's own value, but via env
+    await warmUsageMonitorKnobs({ PROVIDER_RATE_LIMIT_FINNHUB_PER_MIN: "10" });
+    const config = resolveProviderLimiterConfig("finnhub");
+    expect(config?.minIntervalMs).toBe(1_200); // 60000 / 50 (env), not 60000 / 10 (UM)
+  });
+
+  it("resolveProviderQuota falls back to a UM knob for a provider with no hard default", async () => {
+    await warmUsageMonitorKnobs({ PROVIDER_QUOTA_TESTPROV_PER_MIN: "7" });
+    expect(resolveProviderQuota("testprov")).toEqual([{ maxRequests: 7, windowMs: 60_000 }]);
+  });
+
+  it("resolveProviderQuota: process.env still wins over a UM knob", async () => {
+    process.env.PROVIDER_QUOTA_TIINGO_PER_HOUR = "20";
+    await warmUsageMonitorKnobs({ PROVIDER_QUOTA_TIINGO_PER_HOUR: "999" });
+    const windows = resolveProviderQuota("tiingo");
+    expect(windows?.find((w) => w.windowMs === 3_600_000)?.maxRequests).toBe(20);
+  });
+
+  it("multiple UM knobs for the same unconfigured provider add multiple windows", async () => {
+    await warmUsageMonitorKnobs({
+      PROVIDER_QUOTA_TESTPROV_PER_MIN: "3",
+      PROVIDER_QUOTA_TESTPROV_PER_DAY: "5",
+    });
+    expect(resolveProviderQuota("testprov")).toEqual([
+      { maxRequests: 3, windowMs: 60_000 },
+      { maxRequests: 5, windowMs: 86_400_000 },
+    ]);
+  });
+
+  it("an empty UM knob map leaves an unrelated provider unaffected", async () => {
+    await warmUsageMonitorKnobs({});
+    expect(resolveProviderQuota("some-random-provider")).toBeUndefined();
+  });
+
+  it("UM outage/failure during refresh is fail-open — resolution stays at the hard default", async () => {
+    process.env.USAGE_MONITOR_BASE_URL = "https://usage.example.test";
+    process.env.USAGE_INGEST_TOKEN = "test-token";
+    const fetchImpl = (async () => { throw new Error("network down"); }) as unknown as typeof fetch;
+    getUsageMonitorKnobsCached({ fetchImpl });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(resolveProviderLimiterConfig("finnhub")).toEqual({ minIntervalMs: 1_200, concurrency: Infinity });
+  });
+
+  it("a lapsed (non-active) subscription's knobEnv is ignored in favor of freeTierKnobEnv", async () => {
+    process.env.USAGE_MONITOR_BASE_URL = "https://usage.example.test";
+    process.env.USAGE_INGEST_TOKEN = "test-token";
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify([
+          {
+            status: "canceled",
+            knobEnv: { PROVIDER_QUOTA_TESTPROV_PER_MIN: "999" }, // stale paid override — must NOT apply
+            freeTierKnobEnv: { PROVIDER_QUOTA_TESTPROV_PER_MIN: "4" },
+          },
+        ]),
+        { status: 200 }
+      )
+    ) as unknown as typeof fetch;
+    getUsageMonitorKnobsCached({ fetchImpl });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(resolveProviderQuota("testprov")).toEqual([{ maxRequests: 4, windowMs: 60_000 }]);
+  });
+
+  it("USAGE_MONITOR_KNOBS_ENABLED=off disables the lane even with a base URL configured", async () => {
+    process.env.USAGE_MONITOR_KNOBS_ENABLED = "off";
+    await warmUsageMonitorKnobs({ PROVIDER_QUOTA_TESTPROV_PER_MIN: "7" });
+    expect(resolveProviderQuota("testprov")).toBeUndefined();
   });
 });
 

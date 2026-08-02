@@ -23,7 +23,15 @@ const TOKEN = "test-token";
 
 type BudgetStatus = Awaited<ReturnType<typeof budget.getBudgetStatusCached>>;
 
-function status(providers: Array<{ name: string; status: "ok" | "warning" | "exceeded" | "unconfigured"; spentUsd?: number; monthlyBudgetUsd?: number }>): NonNullable<BudgetStatus> {
+function status(providers: Array<{
+  name: string;
+  status: "ok" | "warning" | "exceeded" | "unconfigured";
+  spentUsd?: number;
+  monthlyBudgetUsd?: number;
+  projectedEomUsd?: number | null;
+  projectedRunoutDate?: string | null;
+  spendCoverage?: string | null;
+}>): NonNullable<BudgetStatus> {
   return {
     generatedAt: new Date().toISOString(),
     month: "2026-07",
@@ -34,6 +42,9 @@ function status(providers: Array<{ name: string; status: "ok" | "warning" | "exc
       spentUsd: p.spentUsd ?? 0,
       remainingUsd: null,
       percentUsed: null,
+      projectedEomUsd: p.projectedEomUsd ?? null,
+      projectedRunoutDate: p.projectedRunoutDate ?? null,
+      spendCoverage: p.spendCoverage ?? null,
     })),
     summary: {
       totalBudgetUsd: 100,
@@ -194,6 +205,46 @@ describe("usage-budget: getBudgetStatusCached", () => {
     const s = await budget.getBudgetStatusCached({ force: true });
     expect(s).toBeNull();
   });
+
+  it("parses projectedEomUsd/projectedRunoutDate/spendCoverage forecast fields when present", async () => {
+    process.env.USAGE_MONITOR_BASE_URL = BASE;
+    process.env.USAGE_INGEST_TOKEN = TOKEN;
+    const raw = {
+      generatedAt: new Date().toISOString(),
+      month: "2026-07",
+      providers: [
+        {
+          name: "openai",
+          status: "ok",
+          monthlyBudgetUsd: 100,
+          spentUsd: 20,
+          remainingUsd: 80,
+          percentUsed: 20,
+          projectedEomUsd: 145.5,
+          projectedRunoutDate: "2026-07-22",
+          spendCoverage: "complete",
+        },
+      ],
+      summary: { totalBudgetUsd: 100, totalSpentUsd: 20, remainingUsd: 80, percentUsed: 20, overBudget: false, warning: false },
+    };
+    const fetchImpl = (async () => new Response(JSON.stringify(raw), { status: 200 })) as unknown as typeof fetch;
+
+    const s = await budget.getBudgetStatusCached({ force: true, fetchImpl });
+    expect(s?.providers[0]?.projectedEomUsd).toBe(145.5);
+    expect(s?.providers[0]?.projectedRunoutDate).toBe("2026-07-22");
+    expect(s?.providers[0]?.spendCoverage).toBe("complete");
+  });
+
+  it("defaults forecast fields to null when the monitor response omits them (older monitor)", async () => {
+    process.env.USAGE_MONITOR_BASE_URL = BASE;
+    process.env.USAGE_INGEST_TOKEN = TOKEN;
+    const fetchImpl = (async () => new Response(JSON.stringify(status([{ name: "openai", status: "ok" }])), { status: 200 })) as unknown as typeof fetch;
+
+    const s = await budget.getBudgetStatusCached({ force: true, fetchImpl });
+    expect(s?.providers[0]?.projectedEomUsd).toBeNull();
+    expect(s?.providers[0]?.projectedRunoutDate).toBeNull();
+    expect(s?.providers[0]?.spendCoverage).toBeNull();
+  });
 });
 
 describe("usage-budget: checkBudgetAndAlert", () => {
@@ -247,6 +298,33 @@ describe("usage-budget: checkBudgetAndAlert", () => {
     // A fresh process must still honor the cooldown recorded before the "restart" — no duplicate alert.
     expect(afterSecond).toBe(afterFirst);
   });
+
+  it("alerts on a forecasted breach even when lagging MTD status is still ok", async () => {
+    const provider = `forecast-provider-${Date.now()}`;
+    // MTD spend is comfortably ok (20/100 = 20%), but the projected EOM spend (145) is well past
+    // the 100 budget — the forecast-aware alert must still fire.
+    const st = status([{
+      name: provider,
+      status: "ok",
+      spentUsd: 20,
+      monthlyBudgetUsd: 100,
+      projectedEomUsd: 145,
+      projectedRunoutDate: "2026-07-22",
+    }]);
+    const before = listNotificationEvents("local", 200).filter((n) => n.type === "budget_alert").length;
+    await budget.checkBudgetAndAlert("local", DEFAULT_POLICY, { status: st });
+    const after = listNotificationEvents("local", 200).filter((n) => n.type === "budget_alert").length;
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it("does not alert when MTD is ok and there is no forecasted breach", async () => {
+    const provider = `no-breach-provider-${Date.now()}`;
+    const st = status([{ name: provider, status: "ok", spentUsd: 10, monthlyBudgetUsd: 100, projectedEomUsd: 30 }]);
+    const before = listNotificationEvents("local", 200).filter((n) => n.type === "budget_alert").length;
+    await budget.checkBudgetAndAlert("local", DEFAULT_POLICY, { status: st });
+    const after = listNotificationEvents("local", 200).filter((n) => n.type === "budget_alert").length;
+    expect(after).toBe(before);
+  });
 });
 
 describe("usage-budget: formatBudgetAdvisory", () => {
@@ -289,5 +367,23 @@ describe("usage-budget: formatBudgetAdvisory", () => {
     const line = budget.formatBudgetAdvisory(s);
     expect(line).toContain("anthropic");
     expect(line).not.toContain("openai");
+  });
+
+  it("surfaces a provider that's ok on lagging spend but forecasted to breach, with forecast fields", () => {
+    const s = status([{
+      name: "openai",
+      status: "ok",
+      spentUsd: 20,
+      monthlyBudgetUsd: 100,
+      projectedEomUsd: 145,
+      projectedRunoutDate: "2026-07-22",
+    }]);
+    const line = budget.formatBudgetAdvisory(s);
+    expect(line).toBeTruthy();
+    expect(line).toContain("openai");
+    expect(line).toContain("projected EOM $145.00");
+    expect(line).toContain("projected runout 2026-07-22");
+    expect(line).toContain("status=ok");
+    expect(line).toContain("forecast=exceeded");
   });
 });

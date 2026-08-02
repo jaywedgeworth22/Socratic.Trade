@@ -34,11 +34,28 @@ export function listAudit(
   }));
 }
 
+export interface AuditEventRow {
+  id: string;
+  createdAt: string;
+  kind: string;
+  payload: unknown;
+  connectedAccountId?: string;
+}
+
+/** Newer of two audit rows by `createdAt` (undefined-safe). For call sites that must judge
+ *  freshness across two different audit KINDS, either of which can independently hold the
+ *  most recent evidence (e.g. a scheduled `market_scan` vs an LLM `strategy_run`). */
+export function newerAuditEntry(a: AuditEventRow | undefined, b: AuditEventRow | undefined): AuditEventRow | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(b.createdAt) > Date.parse(a.createdAt) ? b : a;
+}
+
 export function latestAuditByKind(
   kind: string,
   userId: string = "local",
   connectedAccountId?: string
-): { id: string; createdAt: string; kind: string; payload: unknown; connectedAccountId?: string } | undefined {
+): AuditEventRow | undefined {
   const row = (connectedAccountId
     ? getDb()
       .prepare("SELECT id, connected_account_id, created_at, kind, payload FROM audit_events WHERE kind = ? AND user_id = ? AND connected_account_id = ? ORDER BY created_at DESC LIMIT 1")
