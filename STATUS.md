@@ -9,6 +9,15 @@ Last updated: 2026-08-02.
 
 ## Where things stand
 
+**2026-08-02 — Mobile PWA owner-feedback round (Monet, cloud session).** Branch
+`agent/antigravity/mobile-pwa-feedback` (applying patch from Monet): PWA gets
+an Accounts section (switch broker account via `account.activate`, sign-out link to switch Google/Apple
+login), per-proposal realtime approve/reject feedback (tapped button spins; card follows its queued
+command through queued/running/succeeded/failed instead of failures hiding in the Command Log), and the
+delete-account panel is collapsed behind a neutral link so it stops mimicking error banners. tsc clean,
+mobile test file 10/10, lint 0 errors. Landing to main via `scripts/land.sh`.
+Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
+
 | | |
 |---|---|
 | `main` | `c117afb9` — includes the full 30-finding Codex remediation (#2341, AG-reviewed) and the npm `allowScripts` fix (#2345) |
