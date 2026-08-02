@@ -9,6 +9,9 @@
  * key credentials. We use the REST API here, so no S3 signing is needed.)
  */
 
+import fs from "fs";
+import path from "path";
+import zlib from "zlib";
 import { getInternalSetting, resolveApiKeyWithSource } from "../db";
 
 let cachedFetchWithRetry: typeof import("../data-providers").fetchWithRetry | undefined;
@@ -106,12 +109,55 @@ export function clearMassiveRestBudgetForTests(): void {
 
 export interface GroupedDailyBar { ticker: string; open?: number; high?: number; low?: number; close: number; volume?: number; vwap?: number }
 
+function fetchGroupedBarsLocal(date: string): GroupedDailyBar[] | null {
+  if ((process.env.MASSIVE_LOCAL_HISTORY_ENABLED ?? "on").toLowerCase() === "off") return null;
+  try {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    const [yyyy, mm] = date.split("-");
+    const baseDir = path.join(process.cwd(), "data", "massive-history");
+    const gzFile = path.join(baseDir, yyyy, mm, `${date}.json.gz`);
+    const jsonFile = path.join(baseDir, yyyy, mm, `${date}.json`);
+
+    let buf: Buffer | null = null;
+    if (fs.existsSync(gzFile)) {
+      buf = zlib.gunzipSync(fs.readFileSync(gzFile));
+    } else if (fs.existsSync(jsonFile)) {
+      buf = fs.readFileSync(jsonFile);
+    }
+    if (!buf) return null;
+    const json = JSON.parse(buf.toString("utf8"));
+    const rows = Array.isArray(json) ? json : Array.isArray(json?.results) ? json.results : [];
+    const bars: GroupedDailyBar[] = [];
+    for (const r of rows) {
+      const ticker = r.T ?? r.ticker ?? r.symbol;
+      const c = typeof r.c === "number" ? r.c : typeof r.close === "number" ? r.close : undefined;
+      if (typeof ticker === "string" && typeof c === "number" && Number.isFinite(c)) {
+        bars.push({
+          ticker,
+          open: numOrUndef(r.o ?? r.open),
+          high: numOrUndef(r.h ?? r.high),
+          low: numOrUndef(r.l ?? r.low),
+          close: c,
+          volume: numOrUndef(r.v ?? r.volume),
+          vwap: numOrUndef(r.vw ?? r.vwap)
+        });
+      }
+    }
+    return bars.length > 0 ? bars : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Bulk daily OHLCV for the whole US stock market via the REST grouped-daily endpoint (~12k
- * tickers in one call). This is the working bulk source — the S3 flat files give the same data
- * across more asset classes but object download is plan-gated (403 "forbidden") on this account.
+ * Bulk daily OHLCV for the whole US stock market via local flat files (data/massive-history/)
+ * or REST grouped-daily endpoint (~12k tickers in one call).
  */
 export async function fetchGroupedBarsRest(date: string, userId?: string): Promise<GroupedDailyBar[] | null> {
+  const localBars = fetchGroupedBarsLocal(date);
+  if (localBars && localBars.length > 0) {
+    return localBars;
+  }
   const { key, source } = resolveApiKeyWithSource("massive", userId);
   if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   const cacheKey = `${userId ?? "local"}:${date}`;

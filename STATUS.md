@@ -16,12 +16,17 @@ Last updated: 2026-08-02.
 
 ## Where things stand
 
+**2026-08-02 — 5-Year Local Flat-File Price History Priority (ANTIGRAVITY).** Added `fetchLocalFlatFileHistory(symbol)` as the #1 primary tier in `src/lib/history.ts` (`fetchDailyOHLC`) and `fetchGroupedBarsLocal(date)` in `src/lib/market-signals/massive.ts`. Any pre-hoarded 5-year Massive flat files (`data/history-5y/`, `data/massive-history/`) are read directly from disk without hitting external REST APIs, providing instant zero-cost history for backtests and Congress.Trade EOD price feeds (`/api/market/prices/[symbol]`, `/api/market/spx`). Rollout: `docs/rollouts/2026-08-02-local-flatfile-history-priority.md`.
+
 **2026-08-02 — Mobile PWA owner-feedback round (Monet, cloud session).** Branch
 `agent/antigravity/mobile-pwa-feedback` (applying patch from Monet): PWA gets
 an Accounts section (switch broker account via `account.activate`, sign-out link to switch Google/Apple
 login), per-proposal realtime approve/reject feedback (tapped button spins; card follows its queued
 command through queued/running/succeeded/failed instead of failures hiding in the Command Log), and the
 delete-account panel is collapsed behind a neutral link so it stops mimicking error banners. tsc clean,
+mobile test file 10/10, lint 0 errors. Landing to main via `scripts/land.sh`.
+Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
+
 mobile test file 10/10, lint 0 errors. Landed as #2351 (`44069368`).
 Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
 
