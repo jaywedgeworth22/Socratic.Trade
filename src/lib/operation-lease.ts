@@ -7,6 +7,19 @@
 
 import { getDb } from "./db";
 
+/** Distinguishes an ownership-loss/lease-lost condition from an arbitrary Error so money-path
+ *  callers can short-circuit it (never contact the broker, never audit order_placement_uncertain)
+ *  instead of laundering it through generic placement-error recovery (see account-mutation.ts
+ *  §7 slice 3 PR-2's mutationCtx.assertOwned() fence). Every throw site that signals ownership
+ *  loss — assertOperationLeaseOwnership, validateInheritedClaim, the heartbeat's markClaimLost,
+ *  and throwIfOperationLeaseCancelled's fallback — constructs this type. */
+export class OperationLeaseOwnershipError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "OperationLeaseOwnershipError";
+  }
+}
+
 export const OPERATION_LEASE_GROUPS = {
   RAG_REINDEX: "rag-reindex",
   CONGRESS_SHARE: "congress-share",
@@ -234,13 +247,13 @@ function releaseOperationLease(claim: OperationLeaseClaim): void {
 function validateInheritedClaim(claim: OperationLeaseClaim, group: OperationLeaseGroup): ClaimState {
   const state = claimStates.get(claim);
   if (!state?.active || state.group !== group) {
-    throw new Error(`Operation lease claim does not authorize group "${group}".`);
+    throw new OperationLeaseOwnershipError(`Operation lease claim does not authorize group "${group}".`);
   }
   let persisted: OperationLeaseRecord | null;
   try {
     persisted = readLease(group);
   } catch (error) {
-    const ownershipError = new Error(`Operation lease claim ownership for group "${group}" could not be verified.`, {
+    const ownershipError = new OperationLeaseOwnershipError(`Operation lease claim ownership for group "${group}" could not be verified.`, {
       cause: error
     });
     markClaimLost(claim, ownershipError);
@@ -251,7 +264,7 @@ function validateInheritedClaim(claim: OperationLeaseClaim, group: OperationLeas
     persisted.owner !== state.owner ||
     Date.parse(persisted.expiresAt) <= Date.now()
   ) {
-    const ownershipError = new Error(`Operation lease claim no longer owns group "${group}".`);
+    const ownershipError = new OperationLeaseOwnershipError(`Operation lease claim no longer owns group "${group}".`);
     markClaimLost(claim, ownershipError);
     throw ownershipError;
   }
@@ -271,11 +284,11 @@ function markClaimLost(claim: OperationLeaseClaim, error: Error): void {
  */
 export function assertOperationLeaseOwnership(claim: OperationLeaseClaim): void {
   const state = claimStates.get(claim);
-  if (!state) throw new Error("Operation lease claim is not active.");
+  if (!state) throw new OperationLeaseOwnershipError("Operation lease claim is not active.");
   if (state.controller.signal.aborted) {
     throw state.controller.signal.reason instanceof Error
       ? state.controller.signal.reason
-      : new Error(`Operation lease claim no longer owns group "${state.group}".`);
+      : new OperationLeaseOwnershipError(`Operation lease claim no longer owns group "${state.group}".`);
   }
   validateInheritedClaim(claim, state.group);
 }
@@ -285,7 +298,7 @@ export function throwIfOperationLeaseCancelled(signal: AbortSignal): void {
   if (!signal.aborted) return;
   throw signal.reason instanceof Error
     ? signal.reason
-    : new Error("Operation lease ownership was lost.");
+    : new OperationLeaseOwnershipError("Operation lease ownership was lost.");
 }
 
 /**
@@ -315,7 +328,7 @@ export async function runWithOperationLease<T>(
     if (!renewOperationLease(acquired.claim, ttl)) {
       markClaimLost(
         acquired.claim,
-        new Error(`Operation lease heartbeat could not prove ownership of group "${options.group}".`)
+        new OperationLeaseOwnershipError(`Operation lease heartbeat could not prove ownership of group "${options.group}".`)
       );
     }
   }, heartbeatMs(ttl, options.heartbeatMs));
@@ -366,7 +379,7 @@ export function startDetachedOperationLease(
     if (!renewOperationLease(acquired.claim, ttl)) {
       markClaimLost(
         acquired.claim,
-        new Error(`Operation lease heartbeat could not prove ownership of group "${options.group}".`)
+        new OperationLeaseOwnershipError(`Operation lease heartbeat could not prove ownership of group "${options.group}".`)
       );
     }
   }, heartbeatMs(ttl, options.heartbeatMs));
