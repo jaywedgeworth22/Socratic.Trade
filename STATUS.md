@@ -7,6 +7,13 @@ of work), effort state lives in `docs/EFFORT-LOG.md`, and entries written here b
 
 Last updated: 2026-08-02.
 
+> [!NOTE]
+> **MONET session stopped 2026-08-02 ~05:40Z (owner instruction) — clean handoff.** All
+> claimed work is either merged or riding an armed auto-merge (PR #2349: npm-12-proof
+> `allowScripts` key + record corrections — lands and deploys unattended once `verify` is
+> green). Nothing uncommitted anywhere. Session handoff with the full state map:
+> `docs/rollouts/2026-08-02-monet-session-handoff.md`.
+
 ## Where things stand
 
 **2026-08-02 — Mobile PWA owner-feedback round (Monet, cloud session).** Branch
@@ -21,7 +28,7 @@ Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
 | | |
 |---|---|
 | `main` | `c117afb9` — includes the full 30-finding Codex remediation (#2341, AG-reviewed) and the npm `allowScripts` fix (#2345) |
-| Production (`socratictrade.com`) | `19dfd51b` verified live 2026-08-02 ~04:47Z (`scripts/verify-deploy-sha.sh` PASS); `c117afb9` should follow via the repaired webhook |
+| Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
 | Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
@@ -41,6 +48,24 @@ Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
    now). Full receipts + recurrence warning:
    `docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md`.
 
+2. **RESOLVED — npm `EALLOWSCRIPTS` on the shared git dep (and the earlier explanation
+   here was wrong).** A clean-shell reproduction with the repo's exact files PASSES: the
+   repo as committed installs fine, and a stale `allowScripts` tag was NOT the trigger.
+   The real triggers (npm 11.16.0+, upstream bug npm/cli#9783, open, unfixed through npm
+   12.0.2): an `allow-scripts=...` line in ANY `.npmrc` layer, or an inherited
+   `npm_config_allow_scripts` env var — npm forwards it into its git-dep preparation
+   subprocess, which rejects it as a flag. This Mac had live `npx`-launched processes
+   exporting `npm_config_allow_scripts=@wasp.sh/wasp-cli`; any shell descending from that
+   lineage fails every `npm ci` instantly. If EALLOWSCRIPTS appears: check
+   `env | grep npm_config_allow_scripts` and relaunch the contaminated parent — and NEVER
+   add `allow-scripts` to `.npmrc`, even though npm's own error message suggests it.
+   Also fixed forward: `allowScripts` git-dep keys in tag form (`#vX.Y.Z`) can never match
+   (npm compares against the resolved 40-char SHA), which npm 12 escalates from a warning
+   to a hard block on the dep's `prepare` — the key is now committish-free
+   (`"github:jaywedgeworth22/congress-trading-shared": true`, verified: coverage warning
+   gone). #2345's lockfile regen also fixed a real silent bug: the old lockfile pinned the
+   v2.3.0 commit while package.json said v2.4.x, so `npm ci` was silently shipping the old
+   shared package. Verified 2026-08-02: plain `npm ci` = exit 0, 575 packages, clean shell.
 2. **RESOLVED 2026-08-02 (PR #2345) — npm 11.16 `EALLOWSCRIPTS` on the shared git dep.**
    `npm install`/`npm ci` failed preparing `congress-trading-shared` and left `node_modules`
    EMPTY (easily misread as janitor reaping); the interim workaround was `npx -y npm@10 ci`.
@@ -59,6 +84,9 @@ Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
 
 - Watch that `c117afb9` (and subsequent merges) deploy organically via the repaired
   webhook — `bash scripts/verify-deploy-sha.sh` after merging.
+- (Retracted: the `schedulerLease.owner` "residual" flagged earlier does not exist — the
+  landed code already strips the pid for unauthenticated callers; prod serves the bare
+  instance uuid. Observation was made against the pre-deploy payload.)
 - Small follow-up in flight: fold `schedulerLease.owner` behind the ops token on
   `/api/health` (the one residual of finding 27's minimization).
 - Owner decisions pending: FMP subscription, Massive plan tier; and whether hook-secret
