@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { audit } from "@/lib/db";
 import { fetchPriceSeries, parseMarketRange } from "@/lib/market-read";
 import { verifySecuritiesImportToken } from "@/lib/securities-import-auth";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ symbol: 
     audit("market_read_rejected", { reason: "token", route: "prices" });
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
+  const rateLimitResp = enforceRateLimit("peer-app", "peer-read", RATE_LIMITS.peerRead);
+  if (rateLimitResp) return rateLimitResp;
   const { symbol } = await params;
   const series = await fetchPriceSeries(symbol, parseMarketRange(req.url));
   return NextResponse.json(series);
