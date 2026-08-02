@@ -32,13 +32,24 @@ Last updated: 2026-08-02.
    now). Full receipts + recurrence warning:
    `docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md`.
 
-2. **RESOLVED 2026-08-02 (PR #2345) — npm 11.16 `EALLOWSCRIPTS` on the shared git dep.**
-   `npm install`/`npm ci` failed preparing `congress-trading-shared` and left `node_modules`
-   EMPTY (easily misread as janitor reaping); the interim workaround was `npx -y npm@10 ci`.
-   #2345 restored the `allowScripts` entry for the current tag and regenerated the lockfile
-   for shared v2.4.1. If plain `npm ci` regresses again after a future shared-package bump,
-   check that `package.json`'s `allowScripts` key names the CURRENT `#vX.Y.Z` spec — a
-   stale tag reproduces the identical failure.
+2. **RESOLVED — npm `EALLOWSCRIPTS` on the shared git dep (and the earlier explanation
+   here was wrong).** A clean-shell reproduction with the repo's exact files PASSES: the
+   repo as committed installs fine, and a stale `allowScripts` tag was NOT the trigger.
+   The real triggers (npm 11.16.0+, upstream bug npm/cli#9783, open, unfixed through npm
+   12.0.2): an `allow-scripts=...` line in ANY `.npmrc` layer, or an inherited
+   `npm_config_allow_scripts` env var — npm forwards it into its git-dep preparation
+   subprocess, which rejects it as a flag. This Mac had live `npx`-launched processes
+   exporting `npm_config_allow_scripts=@wasp.sh/wasp-cli`; any shell descending from that
+   lineage fails every `npm ci` instantly. If EALLOWSCRIPTS appears: check
+   `env | grep npm_config_allow_scripts` and relaunch the contaminated parent — and NEVER
+   add `allow-scripts` to `.npmrc`, even though npm's own error message suggests it.
+   Also fixed forward: `allowScripts` git-dep keys in tag form (`#vX.Y.Z`) can never match
+   (npm compares against the resolved 40-char SHA), which npm 12 escalates from a warning
+   to a hard block on the dep's `prepare` — the key is now committish-free
+   (`"github:jaywedgeworth22/congress-trading-shared": true`, verified: coverage warning
+   gone). #2345's lockfile regen also fixed a real silent bug: the old lockfile pinned the
+   v2.3.0 commit while package.json said v2.4.x, so `npm ci` was silently shipping the old
+   shared package. Verified 2026-08-02: plain `npm ci` = exit 0, 575 packages, clean shell.
 
 3. **Two provider lanes are degraded and need an owner decision, not an agent fix.**
    FMP's plan probe returns 403 (subscription state) and Massive is history-capped to the
@@ -50,8 +61,9 @@ Last updated: 2026-08-02.
 
 - Watch that `c117afb9` (and subsequent merges) deploy organically via the repaired
   webhook — `bash scripts/verify-deploy-sha.sh` after merging.
-- Small follow-up in flight: fold `schedulerLease.owner` behind the ops token on
-  `/api/health` (the one residual of finding 27's minimization).
+- (Retracted: the `schedulerLease.owner` "residual" flagged earlier does not exist — the
+  landed code already strips the pid for unauthenticated callers; prod serves the bare
+  instance uuid. Observation was made against the pre-deploy payload.)
 - Owner decisions pending: FMP subscription, Massive plan tier; and whether hook-secret
   re-sync should be added to the Coolify app-recreate recipe (see the 2026-08-02 rollout
   note — if recreation regenerated the secret, this failure recurs on the next recreate).

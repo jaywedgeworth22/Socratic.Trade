@@ -97,6 +97,6 @@
     "sharp@0.34.5": true,
     "esbuild@0.23.1": true,
     "unrs-resolver@1.12.2": true,
-    "github:jaywedgeworth22/congress-trading-shared#v2.4.1": true
+    "github:jaywedgeworth22/congress-trading-shared": true
   }
 }
