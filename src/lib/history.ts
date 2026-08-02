@@ -69,7 +69,12 @@ function historyTtlMs(): number {
  * provider is strongly recommended for reliable charts + the in-house technical "computed"
  * producer.
  */
-export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now(), userId?: string): Promise<OHLCBar[] | null> {
+export async function fetchDailyOHLC(
+  rawSymbol: string,
+  now: number = Date.now(),
+  userId?: string,
+  opts?: { skipAppATier?: boolean },
+): Promise<OHLCBar[] | null> {
   const symbol = normalizeSymbol(rawSymbol);
   if (!symbol) return null;
 
@@ -111,7 +116,12 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
     // to spend the shared quota once and save App B's own (keyed) history calls. Returns close-only
     // bars (no OHLC), so an enabled price chart renders a line, not candles, on App A hits. No-op
     // unless CONGRESS_TRADE_READS_ENABLED is on; "shared" scope (App A is a public external source).
-    { scope: "shared", fetch: () => fetchAppAHistory(symbol) },
+    // skipAppATier: the peer read routes serving App A itself must not echo the request back at App
+    // A — it asks precisely because its own series needs topping up, so the echo can only return the
+    // stale closes App A already has (one guaranteed-wasted HTTP hop per cache miss).
+    ...(opts?.skipAppATier
+      ? []
+      : [{ scope: "shared" as const, fetch: () => fetchAppAHistory(symbol) }]),
     { scope: cacheScopeForKeySource(keySources.massive.source, userId), fetch: () => fetchMassive(symbol, startDate, keySources.massive.key) },
     // Always "shared" — sourced from the owner's own connected broker account, not a per-user key
     // or consent-gated pool contribution (see resolveTradierHistoryCredential's doc comment).

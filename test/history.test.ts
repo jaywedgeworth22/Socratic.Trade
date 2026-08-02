@@ -423,3 +423,54 @@ describe("fetchDailyOHLC", () => {
     }
   });
 });
+
+describe("fetchDailyOHLC App A tier skip (peer-serving reads)", () => {
+  const appABody = JSON.stringify({
+    ticker: "AAPL",
+    closes: [
+      { date: "2026-06-17", close: 11.8 },
+      { date: "2026-06-16", close: 10.5 }
+    ]
+  });
+
+  const yahooBody = () => {
+    const n = 250;
+    const timestamp = Array.from({ length: n }, (_, i) => Math.floor(Date.UTC(2025, 0, 1) / 1000) + i * 86_400);
+    const arr = (base: number) => Array.from({ length: n }, (_, i) => base + i);
+    const quote = [{ open: arr(100), high: arr(101), low: arr(99), close: arr(100), volume: arr(1000) }];
+    return JSON.stringify({ chart: { result: [{ timestamp, indicators: { quote } }] } });
+  };
+
+  beforeEach(() => {
+    process.env.CONGRESS_TRADE_READS_ENABLED = "on";
+  });
+  afterEach(() => {
+    delete process.env.CONGRESS_TRADE_READS_ENABLED;
+  });
+
+  it("consults the App A tier by default when reads are enabled (control)", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) =>
+      String(url).includes("congress.trade")
+        ? new Response(appABody, { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL");
+    expect(bars).toHaveLength(2);
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("congress.trade"))).toBe(true);
+  });
+
+  it("skipAppATier never echoes the request back to App A and still serves from later tiers", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) =>
+      String(url).includes("finance.yahoo.com")
+        ? new Response(yahooBody(), { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL", Date.now(), undefined, { skipAppATier: true });
+    expect(bars).not.toBeNull();
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("congress.trade"))).toBe(false);
+  });
+});
