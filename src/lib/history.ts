@@ -57,6 +57,47 @@ function historyTtlMs(): number {
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_TTL_MS;
 }
 
+// ── Yahoo v8/finance/chart HTTP 429 hardening ────────────────────────────────
+// Live-verified 2026-08-02: this endpoint does NOT require the crumb+cookie session handshake that
+// v7/finance/quote and v10/finance/quoteSummary now enforce (401 "Invalid Crumb" without one) — a
+// plain GET with a browser User-Agent (BROWSER_UA) returns real chart data. What it DOES do is
+// intermittently rate-limit (HTTP 429) shared/datacenter egress IPs in short bursts that usually
+// clear within a second or two. `politeFetchJson` already retries once on 429 (web-sources/http.ts),
+// but a single retry isn't always enough for this specific bot-detection pattern, so this dedicated
+// helper layers true exponential backoff on top, retrying ONLY on 429 — any other failure (network
+// error, timeout, non-429 status) still fails on the first attempt so the cascade degrades to the
+// next tier promptly instead of stalling.
+const YAHOO_CHART_TIMEOUT_MS = 9000;
+const YAHOO_CHART_MAX_ATTEMPTS = 4; // 1 initial try + 3 retries
+const YAHOO_CHART_BASE_BACKOFF_MS = 400;
+
+async function fetchYahooChartJson<T>(url: string): Promise<T> {
+  for (let attempt = 0; attempt < YAHOO_CHART_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), YAHOO_CHART_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        headers: { "user-agent": BROWSER_UA, accept: "application/json" },
+        cache: "no-store",
+        signal: controller.signal
+      });
+      if (res.status === 429 && attempt < YAHOO_CHART_MAX_ATTEMPTS - 1) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(4000, YAHOO_CHART_BASE_BACKOFF_MS * 2 ** attempt))
+        );
+        continue;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      return (await res.json()) as T;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  // Unreachable in practice — every iteration above either returns or throws — but TS can't prove
+  // the loop always exits early, so this keeps the function's return type sound.
+  throw new Error(`HTTP 429 for ${url} (exhausted retries)`);
+}
+
 /**
  * Fetch ~5y of daily OHLC bars for a symbol, cached briefly. Cascades keyed providers
  * first (reliable, generous limits): Massive (Polygon-compatible) → Tradier → Tiingo →
@@ -359,7 +400,7 @@ async function fetchMarketstack(symbol: string, key?: string): Promise<OHLCBar[]
 async function fetchYahoo(symbol: string): Promise<OHLCBar[] | null> {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1y&interval=1d`;
-    const json = await politeFetchJson<YahooChartResponse>(url, { headers: { "user-agent": BROWSER_UA, accept: "application/json" } });
+    const json = await fetchYahooChartJson<YahooChartResponse>(url);
     const result = json?.chart?.result?.[0];
     const ts = result?.timestamp ?? [];
     const q = result?.indicators?.quote?.[0];
