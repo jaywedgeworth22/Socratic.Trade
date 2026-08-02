@@ -61,10 +61,22 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
  *  fetches `/api/llm-usage` itself.
  *
  *  Before adding a route here, grep it (and everything it renders) for `useConsoleData` and
- *  confirm it does not read `snapshot`. `/console/connections` looks like a candidate and is
- *  NOT one — BrokerAccountsCard needs connectedAccounts, policy, and per-account pending
- *  proposal counts. */
+ *  confirm it does not read `snapshot`. A route that DOES read the snapshot but can degrade
+ *  gracefully belongs in SELF_SKELETON_ROUTES below instead. */
 const SNAPSHOT_INDEPENDENT_ROUTES = new Set(["/console/usage"]);
+
+/** Console routes that DO read the snapshot but handle `snapshot === null` themselves — their
+ *  page renders a route-local skeleton (and its own error/retry state) instead of returning
+ *  null — so they get the same early render as SNAPSHOT_INDEPENDENT_ROUTES rather than the
+ *  full-screen loader. `/console/connections`: BrokerAccountsCard needs connectedAccounts,
+ *  policy, and per-account pending counts, so it skeletons until the snapshot lands — but
+ *  ApiKeysCard fetches /api/keys itself and is usable the whole time, which matters on a slow
+ *  broker chain (~24s worst case).
+ *
+ *  Before adding a route here: its page must render something meaningful for BOTH
+ *  `snapshot === null` states — still loading AND first-load watchdog error — because this
+ *  branch also bypasses the shell's error card below. */
+const SELF_SKELETON_ROUTES = new Set(["/console/connections"]);
 
 function ShellFrame({ children }: { children: ReactNode }) {
   const { snapshot, fetchedAt, loading, error, stream, refresh } = useConsoleData();
@@ -73,28 +85,20 @@ function ShellFrame({ children }: { children: ReactNode }) {
   const { dataConsoleFont } = useConsoleFont();
   const pathname = usePathname();
 
-  // A route that needs nothing from the snapshot renders immediately, on its own data, with
-  // the shell's theming/token wrapper but without the snapshot-derived chrome. The chrome
-  // (and STOP) appear as soon as the snapshot lands and this branch stops applying — which
-  // is strictly better than today, where the same window shows a full-screen loader and no
-  // STOP either.
-  if (!snapshot && pathname && SNAPSHOT_INDEPENDENT_ROUTES.has(pathname)) {
-    return (
-      <div
-        className="console-root flex min-h-dvh flex-col"
-        data-theme={dataTheme}
-        data-textbox-font={dataTextBoxFont}
-        data-console-font={dataConsoleFont}
-        suppressHydrationWarning
-      >
-        <main className="mx-auto min-w-0 w-full max-w-[1400px] flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">
-          {children}
-        </main>
-      </div>
-    );
-  }
+  // A route that needs nothing from the snapshot — or that skeletons its snapshot-dependent
+  // parts itself — renders immediately instead of waiting behind the full-screen loader (and
+  // instead of the shell error card below: such a route's page owns the error surface too).
+  // It shares the ONE tree at the bottom with the loaded state: the snapshot-derived chrome
+  // renders into stable null slots, so when the snapshot lands React mounts the chrome
+  // AROUND the live page instead of remounting it — in-progress page state (a half-typed
+  // API key, a visible toast) survives the flip, and ConsoleIntro plays over the skeleton
+  // from the start exactly as it does over the loader. Do NOT split the bare and loaded
+  // states back into separate returns: keyless index reconciliation would turn the
+  // snapshot's arrival into a destroy-and-recreate of the whole page subtree.
+  const bare =
+    !snapshot && !!pathname && (SNAPSHOT_INDEPENDENT_ROUTES.has(pathname) || SELF_SKELETON_ROUTES.has(pathname));
 
-  if (loading) {
+  if (!bare && loading) {
     return (
       <div
         className="console-root flex min-h-dvh items-center justify-center"
@@ -121,7 +125,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!snapshot) {
+  if (!bare && !snapshot) {
     return (
       <div
         className="console-root flex min-h-dvh items-center justify-center px-6"
@@ -165,28 +169,39 @@ function ShellFrame({ children }: { children: ReactNode }) {
           viewport as its last child, and the --con-* design tokens (colors, radii,
           shadows) are scoped to .console-root — a toast mounted outside it would
           render unstyled. The provider adds no DOM around the children, so the
-          flex column layout is unchanged; the toasts div is position:fixed. */}
+          flex column layout is unchanged; the toasts div is position:fixed. It is
+          also required in the bare window: ApiKeysCard on /console/connections calls
+          useToast unconditionally, so children may never render without it. */}
       <SymbolDrawerProvider>
         <ToastProvider>
           {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile.
               MobileFreshnessBar lives here (not bottom-anchored) because the fixed bottom tab
-              bar (nav.tsx) overlays anything at document end on phones. */}
-          <div className="con-topbar sticky top-0 z-50 bg-[color:var(--con-bg)]">
-            <RealityBanner snapshot={snapshot} />
-            <ChromeBar snapshot={snapshot} theme={theme} setTheme={setTheme} />
-            <MobileFreshnessBar snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />
-          </div>
+              bar (nav.tsx) overlays anything at document end on phones. Every
+              snapshot-derived piece renders in a fixed slot (null while bare) so child
+              indices — and therefore the page subtree's identity — are stable across the
+              snapshot's arrival. */}
+          {snapshot ? (
+            <div className="con-topbar sticky top-0 z-50 bg-[color:var(--con-bg)]">
+              <RealityBanner snapshot={snapshot} />
+              <ChromeBar snapshot={snapshot} theme={theme} setTheme={setTheme} />
+              <MobileFreshnessBar snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />
+            </div>
+          ) : null}
           <div className="mx-auto flex w-full max-w-[1400px] flex-1">
-            <DesktopRail pendingCount={snapshot.pendingProposals.length} />
+            {snapshot ? <DesktopRail pendingCount={snapshot.pendingProposals.length} /> : null}
             <main className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
           </div>
-          <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />
-          <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
-          {/* Blocking shared-data-pool consent gate — same semantics as the
-              legacy dashboard gate; renders nothing once answered. */}
-          <ConsentGate />
-          {/* ⌘K / Ctrl+K command palette — from-anywhere jump to any console screen. */}
-          <CommandPalette />
+          {snapshot ? (
+            <>
+              <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />
+              <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
+              {/* Blocking shared-data-pool consent gate — same semantics as the
+                  legacy dashboard gate; renders nothing once answered. */}
+              <ConsentGate />
+              {/* ⌘K / Ctrl+K command palette — from-anywhere jump to any console screen. */}
+              <CommandPalette />
+            </>
+          ) : null}
         </ToastProvider>
       </SymbolDrawerProvider>
     </div>

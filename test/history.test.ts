@@ -4,8 +4,10 @@ import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { clearHistoryCache, fetchDailyOHLC, parseStooqCsv, toBusinessDay } from "../src/lib/history";
 import { clearMassiveRestBudgetForTests } from "../src/lib/market-signals/massive";
-import { clearMarketDataDemandsForTests, getDb, upsertConnectedAccount, upsertUserApiKey } from "../src/lib/db";
+import { clearMarketDataDemandsForTests, deleteUserApiKey, getDb, upsertConnectedAccount, upsertUserApiKey } from "../src/lib/db";
 import { subscribeDashboardEvents, type DashboardEvent } from "../src/lib/events";
+import { admitProviderRequests, resetProviderQuotaState } from "../src/lib/provider-rate-limit";
+import { apiKeyFingerprint } from "../src/lib/data-providers";
 
 const historyTestDb = `file:${join(tmpdir(), `agentic-history-cache-test-${randomUUID()}.db`)}`;
 
@@ -19,7 +21,12 @@ beforeEach(() => {
   delete process.env.MASSIVE_REST_MAX_CALLS_PER_MINUTE;
   delete process.env.MASSIVE_HISTORY_ENABLED;
   delete process.env.MARKETSTACK_API_KEY;
+  delete process.env.TIINGO_API_KEY;
   delete process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY;
+  resetProviderQuotaState("tiingo");
+  // Tiingo is per-user-only tier (db-api-keys.ts) — a prior test's upsertUserApiKey("local", "tiingo", …)
+  // would otherwise persist across tests sharing historyTestDb, same concern as the Tradier row below.
+  deleteUserApiKey("local", "tiingo");
   // Tradier's credential now comes from a connected_accounts row, not an env var — a prior test's
   // connectTradier() call would otherwise persist across tests sharing historyTestDb (unlike the
   // deleted env vars above, which reset per-test on their own).
@@ -82,6 +89,12 @@ describe("fetchDailyOHLC", () => {
     ]
   });
 
+  // Second bar has a 2:1 split between raw close (60) and adjClose (30) — exercises the O/H/L scaling.
+  const tiingoBody = JSON.stringify([
+    { date: "2026-06-16T00:00:00.000Z", open: 30, high: 31, low: 29, close: 30, volume: 3000, adjOpen: 30, adjHigh: 31, adjLow: 29, adjClose: 30, adjVolume: 3000 },
+    { date: "2026-06-17T00:00:00.000Z", open: 62, high: 64, low: 60, close: 60, volume: 4000, adjOpen: 31, adjHigh: 32, adjLow: 30, adjClose: 30, adjVolume: 8000 }
+  ]);
+
   const yahooBody = (n: number) => {
     const timestamp = Array.from({ length: n }, (_, i) => Math.floor(Date.UTC(2025, 0, 1) / 1000) + i * 86_400);
     const arr = (base: number) => Array.from({ length: n }, (_, i) => base + i);
@@ -136,6 +149,50 @@ describe("fetchDailyOHLC", () => {
     expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer tradier-inactive-key" });
   });
 
+  it("uses Tiingo ahead of Marketstack, applying adjClose-scaled O/H/L", async () => {
+    // Tiingo is a "per-user-only" credential tier (db-api-keys.ts) — TIINGO_API_KEY only reaches
+    // resolveApiKeyWithSource via the one-time env→DB migration at startup, not a live per-call env
+    // read (unlike Marketstack/Massive, which ARE shared-operator-infra). Store it the same way the
+    // Connections page / that migration would, on the "local" user resolveApiKeyWithSource falls back
+    // to when no specific userId is passed (the background/scan-time call shape fetchDailyOHLC uses here).
+    upsertUserApiKey("local", "tiingo", "tiingo-history-test-key");
+    process.env.MARKETSTACK_API_KEY = "marketstack-test-key"; // present but must be skipped — Tiingo wins first
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).includes("api.tiingo.com")) return new Response(tiingoBody, { status: 200 });
+      return new Response("unexpected source", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL");
+    expect(bars).not.toBeNull();
+    expect(bars).toHaveLength(2);
+    expect(bars![0]).toMatchObject({ time: "2026-06-16", close: 30, volume: 3000 });
+    // Second bar: adjClose(30)/close(60) = 0.5 factor scales raw open/high/low onto the adjusted basis.
+    expect(bars![1]).toMatchObject({ time: "2026-06-17", open: 31, high: 32, low: 30, close: 30, volume: 8000 });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("api.tiingo.com/tiingo/daily/aapl/prices");
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Token tiingo-history-test-key" });
+    // Marketstack must never be reached — Tiingo already satisfied the cascade.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("api.marketstack.com"))).toBe(false);
+  });
+
+  it("falls through to Marketstack when Tiingo's hourly/daily budget is already exhausted", async () => {
+    upsertUserApiKey("local", "tiingo", "tiingo-history-test-key");
+    process.env.MARKETSTACK_API_KEY = "marketstack-test-key";
+    // Drain the SAME "tiingo" quota bucket TiingoEnrichmentProvider would share, from outside this call.
+    const credKey = await apiKeyFingerprint("tiingo-history-test-key");
+    admitProviderRequests("tiingo", credKey, 50); // exhausts the 50/hour default
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).includes("api.marketstack.com")) return new Response(marketstackBody, { status: 200 });
+      return new Response("unexpected source (Tiingo should have been skipped, not called)", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL");
+    expect(bars).not.toBeNull();
+    expect(bars![0]).toMatchObject({ close: 20.5 });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("api.tiingo.com"))).toBe(false);
+  });
+
   it("falls back from Tradier to Marketstack before free sources", async () => {
     connectTradier("tradier-test-key");
     process.env.MARKETSTACK_API_KEY = "marketstack-test-key";
@@ -186,6 +243,24 @@ describe("fetchDailyOHLC", () => {
 
     const second = await fetchDailyOHLC("AAPL", now + 1000); // within TTL → cache hit
     expect(second).toBe(first);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expire a Saturday-written cache entry before Monday's open (LANE A weekend-stable TTL)", async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      String(url).includes("query1.finance.yahoo.com") ? new Response(yahooBody(60), { status: 200 }) : new Response("nope", { status: 404 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const saturday = Date.UTC(2026, 5, 20, 12, 0, 0); // Sat 2026-06-20, noon UTC (8am EDT — still Saturday)
+    const sunday = Date.UTC(2026, 5, 21, 12, 0, 0); // Sun 2026-06-21, noon UTC — 24h later, well past the
+    // naive 30-min OHLC TTL, but still inside the same weekend closed stretch.
+
+    const first = await fetchDailyOHLC("AAPL", saturday);
+    expect(first).not.toBeNull();
+
+    const second = await fetchDailyOHLC("AAPL", sunday);
+    expect(second).toBe(first); // still cached — the market hasn't traded since Saturday
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -302,16 +377,18 @@ describe("fetchDailyOHLC", () => {
     expect(events.filter((event) => event.type === "market-data")).toHaveLength(0);
   });
 
-  it("falls back to Stooq when Yahoo yields nothing", async () => {
+  it("no longer falls back to Stooq when Yahoo yields nothing (tier removed 2026-08 — bot-walled)", async () => {
     const stooq = `Date,Open,High,Low,Close,Volume\n2026-06-16,10,11,9,10.5,1000\n2026-06-17,10.5,12,10,11.8,2000`;
-    vi.stubGlobal("fetch", async (url: string) => {
+    const fetchMock = vi.fn(async (url: string) => {
       if (String(url).includes("query1.finance.yahoo.com")) return new Response(JSON.stringify({ chart: { result: [{}] } }), { status: 200 });
       if (String(url).includes("stooq.com")) return new Response(stooq, { status: 200 });
       return new Response("nope", { status: 404 });
     });
+    vi.stubGlobal("fetch", fetchMock);
     const bars = await fetchDailyOHLC("BBB");
-    expect(bars).not.toBeNull();
-    expect(bars!.length).toBe(2);
+    expect(bars).toBeNull();
+    // Stooq must never even be called — its endpoint sits behind a proof-of-work bot wall.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("stooq.com"))).toBe(false);
   });
 
   it("returns null when no source has data (never fabricates)", async () => {

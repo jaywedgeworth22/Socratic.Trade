@@ -38,6 +38,7 @@ import {
 } from "./db";
 import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
 import { apiCircuitBreakerShouldSkip, CircuitOpenError } from "./api-circuit-breaker";
+import { expiresAtRespectingMarketClose } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
@@ -805,9 +806,22 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
         // Bound the pull to the freshness window: rowIsFresh discards anything older than
         // CONGRESS_TRADE_MAX_STALE_DAYS, so there's no point downloading the full history.
         const fromDate = new Date(now - congressMaxStaleMs()).toISOString().slice(0, 10);
+        // Usage-only telemetry (never cost — App A is a cross-app cache, not a billed provider):
+        // mirrors the ok/fail split fetchWithRetry records for every other keyed provider, so
+        // Congress.Trade shows up in the Usage Monitor's call-volume view instead of staying
+        // invisible. Recorded per underlying HTTP call (fundamentals/analyst), not per symbol
+        // batch, matching how recordProviderCall is used everywhere else in this file.
         const [fundamentals, analyst] = await Promise.all([
-          congressFundamentalsEnabled() ? client.getFundamentals(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as FundamentalRow[]; }) : Promise.resolve([] as FundamentalRow[]),
-          congressFundamentalsEnabled() ? client.getAnalyst(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AnalystRow[]; }) : Promise.resolve([] as AnalystRow[]),
+          congressFundamentalsEnabled()
+            ? client.getFundamentals(symbol, { from: fromDate })
+                .then((r) => { recordProviderCall(this.name, { service: "fundamentals", ok: true, userId: this.userId }); return r; })
+                .catch(() => { transportError = true; recordProviderCall(this.name, { service: "fundamentals", ok: false, userId: this.userId }); return [] as FundamentalRow[]; })
+            : Promise.resolve([] as FundamentalRow[]),
+          congressFundamentalsEnabled()
+            ? client.getAnalyst(symbol, { from: fromDate })
+                .then((r) => { recordProviderCall(this.name, { service: "analyst", ok: true, userId: this.userId }); return r; })
+                .catch(() => { transportError = true; recordProviderCall(this.name, { service: "analyst", ok: false, userId: this.userId }); return [] as AnalystRow[]; })
+            : Promise.resolve([] as AnalystRow[]),
         ]);
 
         // Do NOT log a synthetic health failure here: the shared getCongressTradeClient()
@@ -1915,15 +1929,19 @@ export class WebullUnofficialEnrichmentProvider implements MarketEnrichmentProvi
 
     const python = process.env.WEBULL_UNOFFICIAL_PYTHON || "python3";
     const script = process.env.WEBULL_UNOFFICIAL_SCRIPT || `${process.cwd()}/scripts/webull_unofficial_quote.py`;
+    // Usage-only telemetry (never cost — no billed API key, just an unofficial local script): one
+    // call per enrich() invocation, matching the single execFile dispatch below (not per symbol).
     try {
       const stdout = await runWebullUnofficialScript(python, script, misses, webullUnofficialTimeoutMs());
       const payload = JSON.parse(stdout || "{}") as Record<string, unknown>;
       for (const symbol of misses) {
         const data = parseWebullUnofficialQuote(payload[symbol]);
-        cache.set(`${this.name}:${symbol}`, { expiresAt: now + ttlMs(), data });
+        cache.set(`${this.name}:${symbol}`, { expiresAt: expiresAtRespectingMarketClose(new Date(now), ttlMs()), data });
         result[symbol] = data;
       }
+      recordProviderCall(this.name, { service: "quote", ok: true });
     } catch {
+      recordProviderCall(this.name, { service: "quote", ok: false });
       for (const symbol of misses) result[symbol] = {};
     }
     return result;
@@ -3491,7 +3509,7 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
             // empty row for the full TTL and suppress the cross-check until expiry. A 404 (no row for
             // this ticker) is a "fulfilled" empty result and DOES cache (a real, stable "no data").
             if (shortRaw.status === "fulfilled" && floatRaw.status === "fulfilled") {
-              writeEnrichmentCache("massive", symbol, this.scope, this.userId, data, now + massiveShortInterestTtlMs());
+              writeEnrichmentCache("massive", symbol, this.scope, this.userId, data, expiresAtRespectingMarketClose(new Date(now), massiveShortInterestTtlMs()));
             }
             result[symbol] = data;
           } catch {
@@ -3690,7 +3708,10 @@ export class RoicAiEnrichmentProvider implements MarketEnrichmentProvider {
 
             if (Object.keys(item).length > 0) {
               result[symbol] = item;
-              writeEnrichmentCache("roic", symbol, this.scope, this.userId, item, now + 30 * 60_000);
+              // Raised from a 30-min TTL to the fundamentals-tier 6h norm (matches ttlMs() used by
+              // the other providers on this file) — ROIC profile/ratio data moves as slowly as any
+              // other fundamentals source, so the tighter TTL was just needless quota burn.
+              writeEnrichmentCache("roic", symbol, this.scope, this.userId, item, expiresAtRespectingMarketClose(new Date(now), ttlMs()));
             }
           } catch (err) {
             console.warn(`[roic] failed enrichment for ${symbol}:`, err);
@@ -5206,7 +5227,7 @@ const secXbrlInFlight = new Set<string>();
 /** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity (from debt-specific concepts).
  *  EPS is intentionally NOT returned — see the note below (annual SEC EPS ≠ TTM).
  *  Pure function — no I/O. Safe to call with any unknown input; never throws. */
-export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
+export function parseCompanyFacts(json: unknown): { debtToEquity?: number; revenueGrowth?: number } {
   try {
     if (!json || typeof json !== "object") return {};
     const root = json as Record<string, unknown>;
@@ -5216,7 +5237,7 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
     if (!gaap || typeof gaap !== "object") return {};
     const concepts = gaap as Record<string, unknown>;
 
-    type Fact = { end: string; val: number; form?: string; filed?: string };
+    type Fact = { start?: string; end: string; val: number; form?: string; filed?: string };
 
     // Helper: extract entries array for a concept + unit (keeping form + filed date).
     function getEntries(concept: string, unit: string): Fact[] {
@@ -5236,6 +5257,7 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
         const form = typeof r.form === "string" ? r.form : undefined;
         if (!form || !SEC_XBRL_PERIODIC_FORMS.has(form)) continue;
         out.push({
+          start: typeof r.start === "string" ? r.start : undefined,
           end: r.end,
           val: r.val,
           form,
@@ -5352,7 +5374,47 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
       }
     }
 
-    return debtToEquity !== undefined ? { debtToEquity } : {};
+    // ── revenueGrowth: fiscal-year-over-fiscal-year % change from full-year 10-K revenue facts ──
+    // Restricted to true ANNUAL-duration entries (350–380 day span) tagged on a 10-K/10-K/A so a
+    // same-concept quarterly or YTD-cumulative duration (XBRL tags both under the identical concept
+    // name, distinguished only by start/end) can never be mistaken for the full fiscal year — that
+    // ambiguity is why this stays annual-only rather than attempting a TTM figure from quarterly facts.
+    // Free-tier best-effort: SEC-XBRL sits after FMP/roic in the cascade, so this only matters for
+    // symbols neither paid provider covered; one fiscal year's growth is a reasonable free stand-in for
+    // the TTM figure a paid provider would supply.
+    function annualEntries(concept: string): Fact[] {
+      return getEntries(concept, "USD").filter((e) => {
+        if (e.form !== "10-K" && e.form !== "10-K/A") return false;
+        if (!e.start) return false;
+        const days = (Date.parse(e.end) - Date.parse(e.start)) / 86_400_000;
+        return Number.isFinite(days) && days >= 350 && days <= 380;
+      });
+    }
+    let revenueGrowth: number | undefined;
+    const revenueEntries = (() => {
+      // Prefer the pure Revenues concept; fall back to the post-ASC-606 concept some filers tag instead.
+      const primary = annualEntries("Revenues");
+      return primary.length > 0 ? primary : annualEntries("RevenueFromContractWithCustomerExcludingAssessedTax");
+    })();
+    const latestRevenue = latestEntry(revenueEntries);
+    if (latestRevenue !== undefined) {
+      // Prior fiscal year: the annual entry ending 340–390 days before the latest one (tolerates fiscal
+      // calendars that don't fall on exact 365-day boundaries).
+      const priorCandidates = revenueEntries.filter((e) => {
+        if (e.end >= latestRevenue.end) return false;
+        const gapDays = (Date.parse(latestRevenue.end) - Date.parse(e.end)) / 86_400_000;
+        return Number.isFinite(gapDays) && gapDays >= 340 && gapDays <= 390;
+      });
+      const prior = latestEntry(priorCandidates);
+      if (prior !== undefined && prior.val > 0) {
+        revenueGrowth = Math.round(((latestRevenue.val - prior.val) / prior.val) * 100 * 100) / 100;
+      }
+    }
+
+    const out: { debtToEquity?: number; revenueGrowth?: number } = {};
+    if (debtToEquity !== undefined) out.debtToEquity = debtToEquity;
+    if (revenueGrowth !== undefined) out.revenueGrowth = revenueGrowth;
+    return out;
   } catch {
     return {};
   }
@@ -5433,8 +5495,12 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
         const data = parseCompanyFacts(json);
         cache.set(cacheKey, { expiresAt: now + SEC_XBRL_TTL_MS, data });
         result[symbol] = data;
+        // Usage-only telemetry (never cost — SEC EDGAR is free/keyless): recorded once per
+        // successful companyfacts fetch, mirroring the other keyless providers in this file.
+        recordProviderCall(this.name, { service: "companyfacts", ok: true });
       } catch {
         // best-effort — this symbol falls through to the next provider
+        recordProviderCall(this.name, { service: "companyfacts", ok: false });
       } finally {
         secXbrlInFlight.delete(symbol);
       }

@@ -45,7 +45,7 @@ export default function MacroPage() {
         >
           the market backdrop the strategist trades against
         </span>
-        {board && macroSourcing(board).fred && board.macro.asOf && (
+        {board && (macroSourcing(board).fred || macroSourcing(board).treasury) && board.macro.asOf && (
           <>
             <div className="flex-1" />
             <span
@@ -98,7 +98,7 @@ function BoardView({
   return (
     <>
       <RegimeCard board={board} sourcing={sourcing} regimeScorecard={snapshot.regimeScorecard} />
-      {!sourcing.fred && <UnsourcedNotice vixLive={sourcing.vix} />}
+      {!sourcing.fred && <UnsourcedNotice vixLive={sourcing.vix} treasuryLive={sourcing.treasury} />}
       <TrendsCard history={board.history} />
       {sections.map((s) => (
         <Card key={s.id} title={<span title={s.desc}>{s.title}</span>}>
@@ -116,25 +116,31 @@ function BoardView({
   );
 }
 
-function UnsourcedNotice({ vixLive }: { vixLive: boolean }) {
+function UnsourcedNotice({ vixLive, treasuryLive }: { vixLive: boolean; treasuryLive: boolean }) {
   return (
     <div className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-sm)]">
       <span className="font-semibold text-[color:var(--con-warn)]">
-        {vixLive ? "FRED macro feed unsourced — live VIX only." : "Macro feed unsourced."}
+        {vixLive || treasuryLive ? "FRED macro feed unsourced — partial key-free data only." : "Macro feed unsourced."}
       </span>{" "}
       <span className="text-[color:var(--con-muted)]">
-        {vixLive ? (
+        {vixLive || treasuryLive ? (
           <>
-            No FRED API key is configured. The VIX is still a live reading (fetched key-free), but every FRED-based
-            tile below shows {EM_DASH} instead of the backend&apos;s placeholder constants — this board never shows
-            fabricated numbers. The regime label is degraded too: its yield-curve input was a placeholder, so treat it
-            as VIX-informed only.{" "}
+            No FRED API key is configured.{" "}
+            {vixLive && treasuryLive
+              ? "The VIX and the 3M/2Y/10Y Treasury yields (and the two curves computed from them) are still live readings, fetched key-free from Yahoo/Cboe and Treasury.gov"
+              : vixLive
+                ? "The VIX is still a live reading (fetched key-free)"
+                : "The 3M/2Y/10Y Treasury yields (and the two curves computed from them) are still live readings, fetched key-free from Treasury.gov"}
+            , but every other FRED-based tile below shows {EM_DASH} instead of the backend&apos;s placeholder
+            constants — this board never shows fabricated numbers. The regime label is degraded too: its yield-curve-
+            vs-Fed-funds input needs a FRED key for the Fed funds rate, so treat the label as {vixLive ? "VIX" : "curve"}-informed
+            only.{" "}
           </>
         ) : (
           <>
-            No FRED API key is configured and the key-free VIX lookup failed, so the regime reads &quot;Unknown&quot;.
-            The FRED-based tiles below show {EM_DASH} instead of the backend&apos;s placeholder constants — this board
-            never shows fabricated numbers.{" "}
+            No FRED API key is configured and the key-free VIX lookup and Treasury yield-curve lookup both failed, so
+            the regime reads &quot;Unknown&quot;. The FRED-based tiles below show {EM_DASH} instead of the
+            backend&apos;s placeholder constants — this board never shows fabricated numbers.{" "}
           </>
         )}
         Signals from other free sources (Cboe, CFTC, factors, breadth, news) still show real readings. Add a FRED key

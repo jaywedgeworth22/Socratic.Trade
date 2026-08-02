@@ -86,6 +86,10 @@ export interface MarketReplaceInput {
   orderId: string;
   liveConfirmation?: MarketReplaceConfirmation;
   cancelSettleMs?: number;
+  /** §7 slice 3 mutation-lease fence (AccountMutationContext.assertOwned): checked before the
+   *  risk-CREATING market placement so a window that lost its lease cannot place into another
+   *  sequence. The CANCEL half runs unfenced — cancels are risk-reducing and proceed on loss. */
+  fence?: () => void;
 }
 
 export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput): Promise<MarketReplaceResult> {
@@ -454,6 +458,7 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       // We claimed it, transition immediately
       let execution;
       try {
+        input.fence?.();
         execution = await input.gateway.placeEquityOrder({ ...marketOrder, refId: row.replacement_ref_id });
       } catch (error) {
         // Transition to replacement_submitted instead of failing — the broker may have
@@ -713,6 +718,8 @@ export async function autoRemediateStaleExitOrders(input: {
   gateway: BrokerGateway;
   orders?: EquityOrder[];
   now?: Date;
+  /** Mutation-lease fence — see MarketReplaceInput.fence. */
+  fence?: () => void;
 }): Promise<{ remediated: number; attempted: number; deferred: number }> {
   const userId = input.userId ?? "local";
   const out = { remediated: 0, attempted: 0, deferred: 0 };
@@ -804,7 +811,8 @@ export async function autoRemediateStaleExitOrders(input: {
         policy: input.policy,
         activeAccount: input.activeAccount,
         gateway: input.gateway,
-        orderId: row.original_order_id
+        orderId: row.original_order_id,
+        fence: input.fence
       });
     } catch (e: any) {
       if (e instanceof MarketReplacePreconditionError) {

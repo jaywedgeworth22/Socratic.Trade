@@ -159,7 +159,7 @@ history. Three contamination traps, three references:
   `policy.tuning.pitEvidenceCutoff`, default ON), so the caveat is retired for the weight path.
   Aggregate learning state (lessons/reflection) remains uncut — that is slice 2's territory.
 
-## 7. Brokerage-model order-state hardening (PARTIALLY IMPLEMENTED — slice 1 landed 2026-08-01, PR #2335)
+## 7. Brokerage-model order-state hardening (PARTIALLY IMPLEMENTED — slices 1–2 landed; slices 3–4 planned)
 
 Tracked as its own effort row: conformance status tables per broker, declarative order-type
 constraint validation pre-submission, per-account broker-mutation mutex, freqtrade-style
@@ -175,7 +175,25 @@ vocabulary or classifier edit in either direction is now a CI failure. The audit
 `broker-held-orders.ts` carrying a drifted local decline set (missing `failed`/`error`, zero
 importers); it now re-exports the canonical `broker-side.isRejectedOrCanceledState`, making
 the drift structurally impossible. Rollout: `docs/rollouts/2026-08-01-broker-status-conformance.md`.
-Slices 2–4 remain planned.
+Slices 2-4 status: slice 2 implemented (below); 3-4 remain planned.
+
+**Slice 2 (IMPLEMENTED 2026-08-02, branch `monet/broker-order-constraints`): declarative
+per-broker order-type constraint validation.** `src/lib/broker-order-constraints.ts` encodes each
+broker's order-shape rules as data (10 receipted rows: alpaca bracket-legs-entry-only — THE
+2026-07-27 T sell 422 fix — trailing/extended-hours/stop-price rules; robinhood short/trailing/
+bracket rules; tradier trailing fail-closed + market-entry bracket strip), applied at the single
+placement choke point (`withOrderConstraints` in broker.ts, inside `withLivePreflight`, every
+environment). Remedies per row: `block` (OrderValidationError → proposal status "blocked") or
+`reshape` (corrected copy + `order_constraint_reshaped` audit receipt — never block an exit over
+decorative bracket legs). One unit test per constraint + fixture-coverage gate
+(test/broker-order-constraints.test.ts). Rollout: docs/rollouts/2026-08-02-broker-order-constraints.md.
+Slice 3 PR-1 (IMPLEMENTED 2026-08-02, branch `monet/broker-mutation-mutex`): per-account
+broker-mutation lease — `src/lib/account-mutation.ts` over the operation-lease primitive, keyed
+`broker-mutation:${userId}:${accountNumber}`, sequence-scoped windows (never whole lanes), wrapping
+the stop-monitor pass, stale-exit remediation, drain, and manual replace; standalone cancels stay
+unleased (doctrine in the module header); advisory `broker_mutation_unleased` receipt backstop at
+the gateway. PR-2 (strategy/approval placement windows) and slice 4 (uniform protection receipts)
+remain planned. Rollout: docs/rollouts/2026-08-02-account-mutation-lease-pr1.md.
 
 ## 8. nofx-style consecutive-miss safety mode (IMPLEMENTED 2026-07-29, PR #2275)
 
@@ -207,7 +225,7 @@ settings-search rows; 27 tests. Rollout: `docs/rollouts/2026-07-29-accuracy-brea
 | Model tiering review | Done — no change (§3) |
 | Preview renderers for mutations | **Completed 2026-07-29 — zero-code finding: already landed bespoke on every surface (§5)** |
 | Backtest-integrity suite | **Partially implemented — slice 1 (Jesse rule significance) PR #2294 + slice 3 (qlib walk-forward window report) PR #2305, 2026-07-30**; slice 2 (PIT masking) planned (§6) |
-| Brokerage-model hardening | **Partially implemented — slice 1 (per-broker status conformance tables + decline-set unification) PR #2335, 2026-08-01**; slices 2–4 (order-type constraints, per-account mutex, protection receipts) planned (§7) |
+| Brokerage-model hardening | **Partially implemented — slice 1 (status conformance tables) PR #2335; slice 2 (declarative order-type constraints) 2026-08-02**; slices 3–4 (per-account mutex, protection receipts) planned (§7) |
 | nofx safety mode | **Implemented 2026-07-29 (§8, PR #2275)** |
 | Graph flows | Existing `TradingGraph` orchestrator (strategy.ts) is the LangGraph-lesson landing spot; extend nodes there rather than adopting LangGraph |
 

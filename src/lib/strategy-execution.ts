@@ -35,7 +35,7 @@ import { buildSocraticDecisionCase } from "./socratic-runtime";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { freshPlacementBlockReason } from "./system-state-placement-guard";
 import { getUserWashSaleLockProvenance } from "./tax";
-import { ExecutionMode, FillEvent, PolicyDecision, BrokerGateway, TradeProposal, ReviewedOrder, MarketScan, EquityOrder, EquityPosition, FillSource } from "./types";
+import { ExecutionMode, FillEvent, OrderValidationError, PolicyDecision, BrokerGateway, TradeProposal, ReviewedOrder, MarketScan, EquityOrder, EquityPosition, FillSource } from "./types";
 import { applyRedTeamHalfSize, approvedEscalationsFromDecision, isRiskAddingOpening, shouldEscalateDecision } from "./strategy-risk";
 import {
   createExecuteProposalLockOwner,
@@ -1187,6 +1187,34 @@ export async function executeProposal(
     } catch (placeError) {
       const message = placeError instanceof Error ? placeError.message : String(placeError);
       const sym = proposal.symbol;
+      // OrderValidationError is a DETERMINISTIC pre-submission refusal (adapter or the
+      // broker-order-constraints tables) — the broker was never contacted, so asking it what
+      // happened is pointless and, worse, concludes not_placed ("safe to retry") for an order
+      // that will be refused identically every retry. Mirror the autonomous lane's short-circuit
+      // (strategy.ts) and the protective-state block above: honest terminal "blocked".
+      if (placeError instanceof OrderValidationError) {
+        const blockedDecision: PolicyDecision = {
+          ...decision,
+          approved: false,
+          reasons: [...decision.reasons, message]
+        };
+        updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
+        audit(
+          "order_blocked_validation",
+          { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval" },
+          userId,
+          policy.connectedAccountId
+        );
+        await sendNotification(
+          {
+            type: "block",
+            title: `${sym} order blocked before submission`,
+            payload: { proposalId, refId, proposal, reason: message, decision: blockedDecision }
+          },
+          { policy, userId }
+        );
+        return { status: "blocked", reasons: [message] };
+      }
       // Ask the broker what actually happened (via the refId idempotency key) rather than firing a
       // perpetual "verify with broker" alert. Mirrors the autonomous run-loop catch above.
       const outcome = await reconcilePlacementError({
