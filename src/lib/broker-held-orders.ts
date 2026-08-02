@@ -59,16 +59,12 @@ export function isWorkingOrderState(state: string | undefined): boolean {
   return isActiveBrokerOrderState(normalized) || EXTRA_WORKING_ORDER_STATES.has(normalized);
 }
 
-export const REJECTED_OR_CANCELED_STATES = new Set([
-  "canceled",
-  "cancelled",
-  "rejected",
-  "expired"
-]);
-
-export function isRejectedOrCanceledState(state: string | undefined): boolean {
-  return REJECTED_OR_CANCELED_STATES.has(String(state ?? "").trim().toLowerCase());
-}
+// CANONICAL HOME: broker-side.ts. This module previously carried its own drifted local copy
+// ({canceled, cancelled, rejected, expired} — missing "failed" and "error") with NO importers;
+// found by the §7 conformance audit and replaced by this re-export so the two modules can never
+// diverge again. The conformance tables (broker-status-conformance.ts) lock the canonical set
+// against every broker's documented vocabulary in CI.
+export { isRejectedOrCanceledState } from "./broker-side";
 
 export function evaluateBrokerHeldExitAvailability(
   proposal: TradeProposal,

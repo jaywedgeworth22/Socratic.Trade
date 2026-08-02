@@ -1,87 +1,107 @@
-## 2026-08-01 — Free-tier cascade gap-fills + R2 kill-switch + litestream socket fix + stuck orders (KIMI) — branch `agent/kimi-lane`
+# STATUS — current repo snapshot
 
-Owner directives batch: (1) FREE-TIER CASCADE — ground-truth audit (`scripts/cascade-audit.ts`) found 19 unpopulated enrichment fields; Yahoo's already-fetched financialData now maps analyst targets (mean/high/low/median), revenueGrowth, and freeCashFlowYield, and quiver keys resolve from `QUIVERQUANT_API_TOKEN` too — gaps down to 8 (bid/ask/vwap = Alpaca tier present in prod + weekend-empty; IV/PCR = opt-in Robinhood options, now ENABLED in prod Infisical; senateTrades = congress.trade present in prod; insiderSentiment = only true gap, SEC Form 4 follow-up filed). (2) R2 — daily usage report (once/24h notify) + kill-switch: on pace >70% of free tier in a live boot, writes `/app/data/.litestream-r2-disabled`, restarts the container WITHOUT litestream (start-script honors the marker), resume via `POST /api/admin/r2-usage/resume`. (3) LITESTREAM — the "unknown" alarm was a wrong socket path (0.5.12 listens at `<db-dir>/litestream.sock`, ignoring config `socket.path`); probe now tries legacy + db-dir candidates; replication was healthy all along (prod now `known/ipc`). (4) STUCK SELLS — AAPL/JNJ trailing stops had already FILLED; EA/AFL/BAC trailing stops on Alpaca Paper canceled (HTTP 204 ×3); the app's stop monitor re-placed EA per its stop plan (sell-vs-protect decision flagged to owner). Also survived/documented the 03:14–04:00 UTC prod outage from another operator's docker data-root migration. 8 new tests (175/175 targeted green, tsc/lint clean; full suite+build delegated to CI verify under host load). Rollout: `docs/rollouts/2026-08-01-free-tier-cascade-r2-killswitch.md`.
-## 2026-08-01 — CBOE-First VIX Cascade Optimization (ANTIGRAVITY)
+Snapshot only: what is true right now, what is blocked, what to do next. This file is
+**not** a changelog. Chronological history lives in `docs/rollouts/` (one note per piece
+of work), effort state lives in `docs/EFFORT-LOG.md`, and entries written here before
+2026-08-01 were moved to `docs/status-archive.md`.
 
-Re-ordered keyless ^VIX fetch cascade in `src/lib/macro.ts` to query CBOE delayed quotes (`vix-cboe`) first and Yahoo Finance (`vix-yahoo`) second. CBOE operates a keyless, public CDN that does not rate-limit or block datacenter IPs. Eliminates recurring 429 errors from Yahoo Finance on datacenter IPs.
+Last updated: 2026-08-02.
 
-All tests, tsc, and Next.js build pass cleanly. Rollout: `docs/rollouts/2026-08-01-cboe-first-vix-cascade.md`.
-## 2026-08-01 — Time-Bounded (PIT) Proposal Evidence for the Auto-Tuner (KIMI) — PR #2327
+> [!NOTE]
+> **MONET session stopped 2026-08-02 ~05:40Z (owner instruction) — clean handoff.** All
+> claimed work is either merged or riding an armed auto-merge (PR #2349: npm-12-proof
+> `allowScripts` key + record corrections — lands and deploys unattended once `verify` is
+> green). Nothing uncommitted anywhere. Session handoff with the full state map:
+> `docs/rollouts/2026-08-02-monet-session-handoff.md`.
 
-Definitive fix for the §6 slice-3 finding (PR #2305): the auto-tuner's candidate weights were proposed from ALL-history realized outcomes spanning the held-out OOS fold. Now `computeOosEvidenceCutoff` (IO-lite, audit-only, no OHLC) replicates the fold arithmetic on matured signal_snapshot dates, and `proposeStrategyTuning` cuts its realized-outcome evidence (performance summary, fills, factor + source-value scorecards, skipped-candidate counterfactuals) off at the fold start — default ON via `policy.tuning.pitEvidenceCutoff`, no-op when no fold exists. The OOS readout discloses the cutoff INSTEAD of the partially-in-sample caveat (weight path is now genuinely OOS); autonomous ledger/provenance evidence carries it too. Aggregate learning state intentionally not cut (§6 slice-2 territory). 5 new tests. Gates: tsc clean, lint 0 errors, 154 targeted, full suite 5538/5538 (3 shards); local build blocked by a foreign session's staged r2-usage WIP (unrelated) — build gate via verify CI. Branch `kimi/pit-evidence`. Rollout: `docs/rollouts/2026-08-01-pit-evidence-cutoff.md`.
+## Where things stand
 
-## 2026-08-01 — App Icon White Background & Light-Mode Candlesticks (ANTIGRAVITY)
+**2026-08-02 — Mobile PWA owner-feedback round (Monet, cloud session).** Branch
+`agent/antigravity/mobile-pwa-feedback` (applying patch from Monet): PWA gets
+an Accounts section (switch broker account via `account.activate`, sign-out link to switch Google/Apple
+login), per-proposal realtime approve/reject feedback (tapped button spins; card follows its queued
+command through queued/running/succeeded/failed instead of failures hiding in the Command Log), and the
+delete-account panel is collapsed behind a neutral link so it stops mimicking error banners. tsc clean,
+mobile test file 10/10, lint 0 errors. Landing to main via `scripts/land.sh`.
+Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
 
-Updated app icon background in `public/icon.svg` to pure white (`#ffffff`) and regenerated PWA/iOS PNG icons (`icon-512.png`, `icon-192.png`, `apple-touch-icon-180.png`). Optimized candlestick green and red color palettes in `public/icon.svg`, `candle-ticker.ts`, `intro-canvas.tsx`, and `candlewordmarkhorizontal.svg` for high contrast against light backgrounds.
-
-All tests, lint, tsc, and Next.js build pass cleanly. Rollout: `docs/rollouts/2026-08-01-app-icon-white-bg-candlesticks.md`.
-
-## 2026-07-31 — Fix admin.socratictrade.com DNS 525 Error & Host Routing (ANTIGRAVITY)
-
-Fixed Cloudflare Error 525 (SSL Handshake Failed) on `admin.socratictrade.com` by adding `admin.socratictrade.com` and `*.socratictrade.com` to `/etc/usage-monitor/Caddyfile` on Oracle Cloud (`141.148.182.224`) and reloading Caddy. Also added middleware host routing in `middleware.ts` so `admin.socratictrade.com/` redirects directly to `/admin` and shorthand paths redirect to `/admin/<subpath>`.
-
-All 4,893 tests, lint, tsc, and Next.js build pass cleanly. Rollout: `docs/rollouts/2026-07-31-admin-dns-routing-fix.md`.
-## 2026-07-31 — Litestream IPC socket writable path (GROK) — branch `agent/grok-litestream-socket`
-
-Production R2 replication was healthy after the AWS_* cutover, but `/api/health` stayed
-`storageDegraded` with `litestreamDegradedReasons: ["unavailable"]` because the control
-socket at `/var/run/litestream.sock` could not bind as the non-root `node` user. Moved the
-socket to `/app/data/litestream.sock` (DB volume) in `litestream.coolify.yml` and made
-`defaultLitestreamSocketPath(dbPath)` the health-probe default. Rollout:
-`docs/rollouts/2026-07-31-litestream-socket-writable-path.md`.
-## 2026-07-31 — Hetzner servers deleted: formal in-repo retirement (KIMI) — branch `kimi/retire-hetzner-servers`
-
-Owner deleted both Hetzner boxes 2026-07-31 (ci-cpx32 build server `77.42.35.209` + old prod `135.181.192.190`). Deleted `scripts/monitor-coolify-runners.sh` + `scripts/ops/fleet-site-watchdog.sh` (dead-box tooling; grep-verified no references), repointed `scripts/sync-provider-knobs.sh` defaults to the Oracle host with a Coolify-DB rework note (no `/data/coolify` tree there; env lives encrypted in Coolify Postgres), added an AGENTS.md retirement stanza, staged the `sentry-ci-report.yml` stale-comment refresh under `ci-pending/` (push token still lacks `workflow` scope). GitHub-side verified clean: zero runner registrations from the deleted boxes (fleet `oracle-*-ci` runners belong to the other repos), DNS proxied/current, AGENT-SYNC.md/README untouched. Rollout: `docs/rollouts/2026-07-31-hetzner-servers-deleted.md`.
-
-## 2026-07-31 — Token-Gated Market-Data Read Routes for congress.trade (KIMI) — branch `agent/kimi-market-read-routes`
-
-App A (congress.trade) can now PULL EOD price history from App B (cache-aside primary price source): `GET /api/market/prices/{symbol}?from=&to=` → shared-package `PriceSeries` envelope (closes DESCENDING, closes[0] = latest, `currentPrice`/`currentPriceDate` range-independent) and `GET /api/market/spx?from=&to=` → `{ closes }` from SPY daily bars. Unknown symbol / empty range → 200 with empty closes (non-200 = fallback trigger only). Auth reuses the exact `APP_B_INGEST_TOKEN` bearer mechanism of `POST /api/admin/securities/import` (`verifySecuritiesImportToken`); middleware gains a narrowly-scoped bearer pass-through for the two paths (`/api/market/flatfile` stays session-gated). Bars come from the canonical `fetchDailyOHLC` cascade (Massive keyed first, ~30min in-process cache) — `data/history-5y/` confirmed dev-only (not in git/image/prod volume), no new pipeline. New `src/lib/market-read.ts` (injectable fetcher) + 22 tests. Gates: targeted 22/22, tsc clean, lint 0 errors, full suite + build green (all under Node 24 per `.nvmrc`). Built in dedicated worktree `~/apps/trading-kimi-market-read` (lane was in active concurrent use). Rollout: `docs/rollouts/2026-07-31-market-read-routes.md`.
-## 2026-07-31 — Notification-error root-cause fixes (KIMI) — branch `agent/kimi-lane`
-
-Owner reported the recurring notification-feed errors of 2026-07-28..30. Four code fixes: (1) Red Team now fails over to `redTeamFallbackModels` on empty/ambiguous/unparseable/malformed-shape HTTP-200 content (previously only HTTP errors/timeouts failed over → the "Red Team unavailable" storm); (2) the Bull step fails over on an empty LLM body with `strategy_llm_failover{reason:"empty_response"}` (previously the whole run died — "Empty response returned from LLM API."); (3) usage telemetry no longer embeds the volatile deploy `gitSha` in event metadata, and the replay lane self-heals monitor 409 idempotency collisions by skipping exactly the monitor-named row (audited `usage_monitor_replay_collision_skip`) instead of wedging the watermark; (4) repeat `block`/`pending_approval` notifications are suppressed for 6h (env `NOTIFICATION_REPEAT_DEDUP_MS`) by a digit-normalized situation fingerprint — the underlying blocks remain persisted as run proposals. 18 new tests. Gates: tsc clean, lint 0 errors, full suite 5472/5472, build green, targeted 110/110 after merging origin/main (#2310). Rollout + owner action items (Massive/Polygon plan lapsed, FMP 403, litestream socket unreadable on prod, stuck sell orders): `docs/rollouts/2026-07-31-notification-error-root-causes.md`. NOTE: the market-read-routes code below is stashed uncommitted (labeled stash on `agent/kimi-market-read-routes`) — restore with `git stash pop` there.
-
-## 2026-07-31 — Token-Gated Market-Data Read Routes for congress.trade (KIMI) — branch `agent/kimi-market-read-routes`
-
-App A (congress.trade) can now PULL EOD price history from App B (cache-aside primary price source): `GET /api/market/prices/{symbol}?from=&to=` → shared-package `PriceSeries` envelope (closes DESCENDING, closes[0] = latest, `currentPrice`/`currentPriceDate` range-independent) and `GET /api/market/spx?from=&to=` → `{ closes }` from SPY daily bars. Unknown symbol / empty range → 200 with empty closes (non-200 = fallback trigger only). Auth reuses the exact `APP_B_INGEST_TOKEN` bearer mechanism of `POST /api/admin/securities/import` (`verifySecuritiesImportToken`); middleware gains a narrowly-scoped bearer pass-through for the two paths (`/api/market/flatfile` stays session-gated). Bars come from the canonical `fetchDailyOHLC` cascade (Massive keyed first, ~30min in-process cache) — `data/history-5y/` confirmed dev-only (not in git/image/prod volume), no new pipeline. New `src/lib/market-read.ts` (injectable fetcher) + 22 tests. Gates: targeted 22/22, tsc clean, lint 0 errors, full suite + build green (all under Node 24 per `.nvmrc`). Rollout: `docs/rollouts/2026-07-31-market-read-routes.md`.
-
-## 2026-07-30 — qlib Walk-Forward Window Report + In-Sample Disclosure (KIMI) — PR #2305
-
-OSS-lessons §6 slice 3 of 3. Audit finding: the walk-forward SPLIT was already sound (chronological, always-on embargo, opt-in purge); the residual leak is that the tuner's candidate weights are proposed from ALL-history evidence that includes the recent held-out OOS test fold — partially in-sample. Implemented the qlib report: `splitWalkForward` returns exact fold-boundary indices; `OOSResult` gains a required `window` (train/test first+last dates, embargo/purge counts) + pure `formatOosWindow`; the manual `applyOosGate` readout names the held-out window and carries the partially-in-sample disclosure in both caution branches; the autonomous `oosReadout` (ledger + provenance evidence) gains the window + caveat. Definitive fix (time-bounded proposal evidence) filed as a follow-up board row. 8 new/updated tests + 3 fixtures. All gates green: tsc exit 0, lint 0 errors (7 pre-existing warnings), 89/89 affected, full suite 5450/5450 (3 shards), build exit 0. Branch `kimi/walk-forward-window`. Rollout: `docs/rollouts/2026-07-30-walk-forward-window.md`.
-
-## 2026-07-30 — Rule Significance Testing (Jesse label-permutation baseline) (KIMI) — PR #2294
-
-OSS-lessons §6 slice 1 of 3. Track-record facts ingested into learned context now carry an honest significance sentence: does the thesis bucket's mean realized return beat a random same-size bucket of the pooled tagged closed-lot history (label-permutation null, 1000 permutations, +1 correction)? Confidence scales — 0.7 when the edge is unlikely to be luck, 0.45 when luck isn't ruled out (fact still written; annotation not hard-gate). New pure `src/lib/significance.ts` (injectable rng, pool-size floor) + `poolClosedLotReturnsByThesis` wiring in `post-mortem.ts`. Sentence digits are bare p-value + permutation count only — test-verified `classifyRiskTier` keeps it a fact. 15 new tests. All gates green: tsc exit 0, lint 0 errors (3 pre-existing warnings, down from 4), 22/22 targeted, full suite 5446/5446 (3 shards), build exit 0. Branch `kimi/rule-significance`. Rollout: `docs/rollouts/2026-07-30-rule-significance.md`. Slices 2-3 (TraderHarness PIT masking, qlib walk-forward) remain planned/unassigned.
-
-## 2026-07-30 — Pushover Notification Channel Support (ANTIGRAVITY, branch `agent/antigravity-pushover`)
-## 2026-07-29 — Adjusted Day P&L for Cash Flows (ANTIGRAVITY, branch `agent/ag-day-pnl`)
-
-Updated `deriveDayPnl` to correctly handle intraday cash deposits and withdrawals by reusing the `inferExternalCashFlows` helper from the benchmark engine. The dashboard will now compute P&L correctly by netting out any cash flows, preventing the UI from misattributing cash deposits as profit.
-
-Tests and build are green. Rollout: `docs/rollouts/2026-07-29-day-pnl-cash-flow-adjusted.md`.
-
-## 2026-07-29 — Expose Portfolio Errors in UI (ANTIGRAVITY, branch `agent/ag-portfolio-error`)
-
-Exposed `getPortfolio` failure errors directly in the UI instead of silently swallowing them and showing the default $1,000 policy limit. The exact error (e.g. Robinhood agentic MCP failure) will now render as a warning chip so the user can diagnose connections issues quickly.
-
-All 5431 tests and the Next.js build passed cleanly. Rollout: `docs/rollouts/2026-07-29-portfolio-error-ui.md`.
-
-## 2026-07-30 — Coolify token split + Infisical guardrails (GROK)
-
-Added Pushover as a standalone notification channel inside `notification_prefs`:
-1. Updated types `NotifyPrefs` and `NotifyChannelId` in `src/lib/types.ts`.
-2. Created a new SQLite migration `063-notification-prefs-pushover.sql` and appended versioned migration 63 to `src/lib/db.ts` to add the `pushover_target` column. Also hardened the migration to support isolated partial test schemas.
-3. Updated `app/console/settings/delivery.tsx` and `lib.ts` to allow configuring the Pushover User Key.
-4. Separated out Pushover from the legacy ntfy Push system in `src/lib/notify.ts` to construct its own dedicated REST POST payload to `api.pushover.net`.
-5. Updated `src/lib/db-api-keys.ts` to save and extract the target appropriately.
-
-All 5000+ tests, the TypeScript compiler, and the linter pass. Changes are currently landing via `scripts/land.sh`.
-All 5000+ tests, the TypeScript compiler, and the linter pass. Changes pushed and merged via `scripts/land.sh`.
+| | |
+|---|---|
+| `main` | `c117afb9` — includes the full 30-finding Codex remediation (#2341, AG-reviewed) and the npm `allowScripts` fix (#2345) |
+| Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
+| Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
+| Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
+| Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
 
 ## Blockers
-- None for this worktree, but `land.sh` is currently running and merging into `main`. Wait for it to finish.
 
-## Next Action
-- **For Kimi (Next Agent):**
-  1. Wait for `land.sh` to finish merging in the `trading-antigravity` lane.
-  2. Sync your `~/apps/trading-kimi` worktree with `origin/main` to pick up migration 63 and the Pushover UI before starting new work.
-- Wait for user instructions or close ticket.
+1. **RESOLVED 2026-08-02 — auto-deploy was broken by a webhook HMAC mismatch.** Every push
+   to `refs/heads/main` was answered by Coolify with
+   `[{"status":"failed","message":"Invalid signature."}]` (visible only in the GitHub hook
+   delivery RESPONSE BODY — the hook page showed green 200s throughout), so no deployment
+   was ever created; the queue sat empty and the single 2026-08-01 deploy was the owner's
+   manual click. Repair: synced the GitHub hook secret to the Coolify app's
+   `manual_webhook_secret_github`, deleted the exact-duplicate second hook, redelivered the
+   newest main push -> a real deployment was created immediately, and
+   `scripts/verify-deploy-sha.sh 19dfd51b` reported **PASS** (~04:47Z). Merge==live is
+   trustworthy again. Also fixed: AGENTS.md's stale Coolify uuid (the app is `socratic-app`
+   now). Full receipts + recurrence warning:
+   `docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md`.
+
+2. **RESOLVED — npm `EALLOWSCRIPTS` on the shared git dep (and the earlier explanation
+   here was wrong).** A clean-shell reproduction with the repo's exact files PASSES: the
+   repo as committed installs fine, and a stale `allowScripts` tag was NOT the trigger.
+   The real triggers (npm 11.16.0+, upstream bug npm/cli#9783, open, unfixed through npm
+   12.0.2): an `allow-scripts=...` line in ANY `.npmrc` layer, or an inherited
+   `npm_config_allow_scripts` env var — npm forwards it into its git-dep preparation
+   subprocess, which rejects it as a flag. This Mac had live `npx`-launched processes
+   exporting `npm_config_allow_scripts=@wasp.sh/wasp-cli`; any shell descending from that
+   lineage fails every `npm ci` instantly. If EALLOWSCRIPTS appears: check
+   `env | grep npm_config_allow_scripts` and relaunch the contaminated parent — and NEVER
+   add `allow-scripts` to `.npmrc`, even though npm's own error message suggests it.
+   Also fixed forward: `allowScripts` git-dep keys in tag form (`#vX.Y.Z`) can never match
+   (npm compares against the resolved 40-char SHA), which npm 12 escalates from a warning
+   to a hard block on the dep's `prepare` — the key is now committish-free
+   (`"github:jaywedgeworth22/congress-trading-shared": true`, verified: coverage warning
+   gone). #2345's lockfile regen also fixed a real silent bug: the old lockfile pinned the
+   v2.3.0 commit while package.json said v2.4.x, so `npm ci` was silently shipping the old
+   shared package. Verified 2026-08-02: plain `npm ci` = exit 0, 575 packages, clean shell.
+2. **RESOLVED 2026-08-02 (PR #2345) — npm 11.16 `EALLOWSCRIPTS` on the shared git dep.**
+   `npm install`/`npm ci` failed preparing `congress-trading-shared` and left `node_modules`
+   EMPTY (easily misread as janitor reaping); the interim workaround was `npx -y npm@10 ci`.
+   #2345 restored the `allowScripts` entry for the current tag and regenerated the lockfile
+   for shared v2.4.1. If plain `npm ci` regresses again after a future shared-package bump,
+   check that `package.json`'s `allowScripts` key names the CURRENT `#vX.Y.Z` spec — a
+   stale tag reproduces the identical failure.
+
+3. **Two provider lanes are degraded and need an owner decision, not an agent fix.**
+   FMP's plan probe returns 403 (subscription state) and Massive is history-capped to the
+   free tier. Agents must not provision replacement keys. Several optional/telemetry lanes
+   (Usage Monitor, VIX-Yahoo, Nasdaq Quote, some RapidAPI lanes) are also down; those are
+   fallback tiers and the cascade still serves real data.
+
+## Next action
+
+- Watch that `c117afb9` (and subsequent merges) deploy organically via the repaired
+  webhook — `bash scripts/verify-deploy-sha.sh` after merging.
+- (Retracted: the `schedulerLease.owner` "residual" flagged earlier does not exist — the
+  landed code already strips the pid for unauthenticated callers; prod serves the bare
+  instance uuid. Observation was made against the pre-deploy payload.)
+- Small follow-up in flight: fold `schedulerLease.owner` behind the ops token on
+  `/api/health` (the one residual of finding 27's minimization).
+- Owner decisions pending: FMP subscription, Massive plan tier; and whether hook-secret
+  re-sync should be added to the Coolify app-recreate recipe (see the 2026-08-02 rollout
+  note — if recreation regenerated the secret, this failure recurs on the next recreate).
+
+## Conventions that bite (do not re-derive these)
+
+- **Board files are `merge=union`.** `.gitattributes` union-merges `STATUS.md`,
+  `PLAN.md`, and `docs/EFFORT-LOG.md` so concurrent PRs do not conflict on them. The cost
+  is that union **interleaves** both sides instead of conflicting, which silently produces
+  duplicated rows and entries spliced under the wrong heading. `docs/EFFORT-LOG.md` had 13
+  exact-duplicate blocks from this (deduped 2026-08-01) and `STATUS.md` had one agent's
+  notes filed under another's heading (preserved as evidence in `docs/status-archive.md`).
+  Keep entries to a single line where you can, and re-read your own row after a merge.
+- **Node 24 is required.** The Mac's default `node` is v26 and mass-fails the suite on a
+  `better-sqlite3` ABI mismatch. Prefix gate commands with
+  `export PATH="/opt/homebrew/opt/node@24/bin:$PATH"`.

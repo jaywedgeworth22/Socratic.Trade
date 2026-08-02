@@ -1,7 +1,8 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { useFocusTrap } from "./focus-trap";
 
 interface SymbolDrawerContent {
   title: ReactNode;
@@ -35,19 +36,14 @@ export function SymbolDrawerProvider({ children }: { children: ReactNode }) {
     [closeDrawer, updateDrawerTitle]
   );
 
-  useEffect(() => {
-    if (!content) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeDrawer();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [closeDrawer, content]);
-
   return (
     <SymbolDrawerContext.Provider value={api}>
       {children}
-      {content && <SymbolDrawerHost content={content} onClose={closeDrawer} />}
+      {/* Keyed on the drawer's identity so opening a DIFFERENT symbol from inside the open
+       *  drawer remounts the host: the focus trap re-runs and moves focus into the new
+       *  content. `updateDrawerTitle` keeps the same ariaLabel on purpose, so a title
+       *  refresh does NOT remount and cannot yank focus mid-read. */}
+      {content && <SymbolDrawerHost key={content.ariaLabel} content={content} onClose={closeDrawer} />}
     </SymbolDrawerContext.Provider>
   );
 }
@@ -59,10 +55,23 @@ export function useSymbolDrawer() {
 }
 
 function SymbolDrawerHost({ content, onClose }: { content: SymbolDrawerContent; onClose: () => void }) {
+  const drawerRef = useRef<HTMLElement>(null);
+  // The host only mounts while a drawer is open, so the trap is active for its whole life:
+  // focus moves in on mount, Tab stays inside, Escape closes, and unmount hands focus back
+  // to the SymbolButton that opened it.
+  useFocusTrap(drawerRef, true, { onEscape: onClose });
+
   return (
     <>
       <div className="con-drawer-scrim" onClick={onClose} aria-hidden />
-      <aside className="con-drawer" role="dialog" aria-modal="true" aria-label={content.ariaLabel} tabIndex={-1}>
+      <aside
+        ref={drawerRef}
+        className="con-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label={content.ariaLabel}
+        tabIndex={-1}
+      >
         <header className="con-drawer-header">
           <h2 className="min-w-0 text-[length:var(--con-fs-md)] font-semibold">{content.title}</h2>
           <button

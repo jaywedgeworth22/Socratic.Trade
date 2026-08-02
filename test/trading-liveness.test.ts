@@ -215,7 +215,8 @@ describe("trading-liveness", () => {
     });
 
     const { GET } = await import("../app/api/health/route");
-    const response = await GET();
+    // Anonymous (no x-ops-token): the trading-liveness aggregate is public in both views.
+    const response = await GET(new Request("http://localhost/api/health"));
     // Trading-liveness degradation must NEVER 503 — a restart would re-trigger the boot
     // autonomy interlock and halt the very account this signal is trying to protect.
     expect(response.status).toBe(200);

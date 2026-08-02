@@ -130,7 +130,9 @@ export const RATE_LIMITS = {
    *  so a tight-loop refresh can hammer upstreams. 30/min covers manual refreshes with headroom. */
   scan: { limit: 30, windowMs: 60_000 },
   /** Paid strategy tuning performs a full LLM review; contain retries and compromised-session spend. */
-  strategyTuning: { limit: 10, windowMs: 60_000 }
+  strategyTuning: { limit: 10, windowMs: 60_000 },
+  /** Peer reads from App A (congress.trade) */
+  peerRead: { limit: 120, windowMs: 60_000 }
 } as const satisfies Record<string, RateLimitOptions>;
 
 /**

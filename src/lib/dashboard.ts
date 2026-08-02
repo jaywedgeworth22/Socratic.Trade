@@ -630,6 +630,26 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const latestStrategyRun = latestRunAudit
     ? ({ ...(latestRunAudit.payload as StrategyDecisionLike), createdAt: latestRunAudit.createdAt } satisfies StrategyDecisionLike)
     : undefined;
+
+  const latestScanAudit = (policy.connectedAccountId
+    ? latestAuditByKind("market_scan", userId, policy.connectedAccountId)
+    : undefined) ?? latestAuditByKind("market_scan", userId);
+  
+  const standaloneScanPayload = latestScanAudit?.payload as { scan?: MarketScan } | undefined;
+  const standaloneScan = standaloneScanPayload?.scan
+    ? { ...standaloneScanPayload.scan, createdAt: latestScanAudit!.createdAt }
+    : undefined;
+
+  const runScan = latestStrategyRun?.marketScan
+    ? { ...(latestStrategyRun.marketScan as MarketScan), createdAt: latestStrategyRun.createdAt }
+    : undefined;
+
+  let newestScan = runScan;
+  if (standaloneScan) {
+    if (!newestScan || new Date(standaloneScan.createdAt).getTime() > new Date(newestScan.createdAt).getTime()) {
+      newestScan = standaloneScan;
+    }
+  }
   // Decision cases stay ACCOUNT-SCOPED: they drive the active account's Live thesis,
   // Autonomous action rows, and coach form (primaryDecision = decisions[0]), which must
   // reflect the account whose portfolio/capital is shown — not another account's latest trade.
@@ -752,7 +772,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   // macro/signals/history/news were already fetched in parallel with the broker chain above.
   // Only compute internals from a full scan. Some historical/trimmed audit shapes only
   // preserve symbol metadata, which is useful for UI labels but not valuation math.
-  const scanForInternals = fullMarketScan(latestStrategyRun?.marketScan);
+  const scanForInternals = fullMarketScan(newestScan);
   const marketEarningsYield = scanForInternals
     ? computeMarketInternals(scanForInternals).medianEarnYld
     : undefined;
@@ -852,6 +872,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     auditFeed,
     unifiedFeed,
     latestStrategyRun,
+    latestScan: newestScan,
     dailyStats,
     strategyRuns: listStrategyRuns(15, userId, policy.connectedAccountId),
     pendingProposals: pendingProposalsWithPerf,

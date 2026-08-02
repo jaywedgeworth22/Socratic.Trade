@@ -6,28 +6,20 @@
 # ONLY documentation-class paths (*.md anywhere, docs/**) the gate reports success immediately
 # without running the suite. Fail-closed in every ambiguous state.
 #
-# Hybrid resource-aware runner routing (2026-07-04, follow-up PR): the suite originally ran on the
-# self-hosted Mac runner ONLY when the Mac itself advertised spare capacity, hosted otherwise.
-# 2026-07-18: GitHub-hosted `ubuntu-latest` stopped assigning runners for this repo (jobs failed
-# before step 1 with runner_id=0/no log blob), while the Coolify Hetzner CI runner is online.
-# Required CI jobs therefore run on `[self-hosted, Linux, X64]`.
-# History matters here: verify was deliberately moved OFF the self-hosted runner on 2026-07-01
-# because it was the runner-queue bottleneck. The owner re-confirmed hybrid AFTER that tradeoff
-# was re-surfaced, with this resource-aware design:
-#   - A Mac-side publisher (scripts/runner-availability.sh, pm2-run, owner-started) computes
-#     availability (load, free RAM, runner alive, pm2 `trading` online) every 60s with
-#     hysteresis and publishes the repo variable VERIFY_RUNNER_STATE = {"mode","ts"}.
-#   - The `classify` job routes to the Mac ONLY when mode=self and ts is fresh (<5 min) on a
-#     same-repo pull_request/push event. Busy, stale, absent, fork, schedule, merge_group ->
-#     hosted instantly. A busy or asleep Mac never queues CI work.
-#   - Linux is the arbiter: a verify-self FAILURE triggers exactly one automatic hosted re-run
-#     (verify-hosted) and the gate takes the hosted result on disagreement. A self PASS stands.
-#     A nightly scheduled hosted canary keeps a continuous Linux baseline on main.
-#   - The `verify` gate job annotates which environment produced every result (audit receipt).
-#   - Until the owner starts the Mac-side publisher, VERIFY_RUNNER_STATE is absent/stale and
-#     EVERYTHING routes hosted - merging this file changes nothing until explicitly activated.
-# Runner policy (2026-07-29): GitHub-hosted `ubuntu-latest` only.
-# Self-hosted Mac / Coolify / Oracle Actions runners are retired.
+# Runner policy (2026-07-29, simplified 2026-08-01): GitHub-hosted `ubuntu-latest` ONLY.
+# Every self-hosted runner — the production Mac, the Coolify/Hetzner CI box, the Oracle
+# Actions runners — is retired and deleted. There is exactly one verification lane
+# (`verify-hosted`) and one gate (`verify`).
+#
+# History, so nobody re-derives it: this file used to carry a resource-aware hybrid that
+# routed the suite to the Mac when a Mac-side publisher advertised spare capacity via the
+# VERIFY_RUNNER_STATE repo variable, with Linux as the arbiter. That whole apparatus, plus
+# the `verify-self` lane it fed, was removed on 2026-08-01: the routing step had already been
+# hardcoded to `route=hosted` since the 2026-07-29 retirement, so `verify-self` was
+# unreachable — and had it ever run, it would have failed immediately, because it looked for
+# Homebrew's `/opt/homebrew/opt/node@24/bin` on a `runs-on: ubuntu-latest` runner. Dead code
+# that contradicted the policy comment above it. To bring a self-hosted lane back, add it
+# deliberately with a runner label that actually exists; do not resurrect the old routing.
 name: CI
 
 on:
@@ -54,9 +46,8 @@ on:
   #   gh workflow run ci.yml --ref <branch>
   workflow_dispatch:
   schedule:
-    # Nightly hosted full-gate canary on main: a continuous Linux baseline for the hybrid
-    # routing, and it refreshes the Linux .next cache during stretches where main pushes
-    # route to the Mac. schedule events always route hosted (see the route step below).
+    # Nightly full-gate canary on main: a continuous baseline independent of PR traffic,
+    # and it refreshes the .next build cache during quiet stretches.
     - cron: "47 7 * * *"
 
 # Keep the active verification alive when another commit reaches the same PR. GitHub
@@ -72,18 +63,14 @@ concurrency:
 
 jobs:
   classify:
-    # Cheap gate-shape job: (1) is this diff documentation-only? (2) which runner should
-    # execute the suite? Only `pull_request` gets the docs fast path; only fresh
-    # self-advertised availability on a same-repo pull_request/push event routes self.
-    # Reject fork PRs at admission so fork-controlled repository content never reaches
-    # the persistent self-hosted workspace, including through actions/checkout.
+    # Cheap gate-shape job: is this diff documentation-only? Only `pull_request` gets the
+    # docs fast path. Fork PRs are rejected at admission.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
       docs-only: ${{ steps.check.outputs.docs_only }}
-      route: ${{ steps.route.outputs.route }}
     steps:
       - name: Disable lingering sparse-checkout
         run: rm -rf ./* ./.git || true
@@ -144,133 +131,13 @@ jobs:
             echo "$non_docs"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Decide runner route (resource-aware hybrid)
-        id: route
-        shell: bash
-        env:
-          # Passed via env (not inline interpolation) so JSON quoting cannot break the script.
-          STATE: ${{ vars.VERIFY_RUNNER_STATE }}
-        run: |
-          set -euo pipefail
-          # 2026-07-29: all self-hosted / Oracle Actions runners retired.
-          # Always use GitHub-hosted ubuntu-latest (verify-hosted lane).
-          route=hosted
-          reason="self-hosted fleet retired — GitHub-hosted only"
-          echo "route=$route" >> "$GITHUB_OUTPUT"
-          echo "Runner route: $route ($reason)"
 
-  # Opportunistic self-hosted lane: free minutes when (and only when) the production Mac
-  # advertises spare capacity. May fail without consequence — verify-hosted is the arbiter.
-  verify-self:
-    needs: classify
-    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && needs.classify.outputs.route == 'self' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    permissions:
-      contents: read
-      packages: read
-    # Bound the self-lane's memory on the 16 GB production box: cap each Node process heap
-    # so a verify run cannot page-storm the live trading process even in a low-pressure
-    # window (the availability gate already requires headroom before routing here; this is
-    # defense in depth on the memory axis, which `nice` does NOT protect). If a cap makes a
-    # step OOM, the job fails and the hosted arbiter re-runs it — safe, just wasteful.
-    env:
-      NODE_OPTIONS: --max-old-space-size=3072
-    steps:
-      - name: Refuse untrusted PR source
-        if: github.event_name == 'pull_request'
-        shell: bash
-        run: |
-          # This lane runs the PR's code (test/build) on the PRODUCTION Mac, so only
-          # same-repo, human-or-trusted-bot PRs may execute here.
-          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-            echo "::error::Fork PRs cannot run on the self-hosted production runner."
-            exit 1
-          fi
-          actor="${{ github.actor }}"
-          if printf '%s' "$actor" | grep -Eq '\[bot\]$'; then
-            case "$actor" in
-              'cursor[bot]'|'dependabot[bot]')
-                echo "Trusted same-repo bot: $actor"
-                ;;
-              *)
-                echo "::error::Untrusted bot PR ($actor) cannot run on the self-hosted production runner."
-                exit 1
-                ;;
-            esac
-          fi
-      - name: Select the supported Node 24 runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          node24_bin="/opt/homebrew/opt/node@24/bin"
-          if [ ! -x "$node24_bin/node" ]; then
-            echo "::error::Node 24 is missing at $node24_bin/node; failing self-hosted lane so hosted Node 24 can arbitrate."
-            exit 1
-          fi
-          version="$("$node24_bin/node" -p 'process.versions.node')"
-          case "$version" in
-            24.*) ;;
-            *)
-              echo "::error::Expected Node 24 at $node24_bin/node, found v$version."
-              exit 1
-              ;;
-          esac
-          echo "$node24_bin" >> "$GITHUB_PATH"
-          echo "Selected Node v$version from $node24_bin."
-      - name: Fail fast if the runner box is not sane
-        shell: bash
-        run: |
-          command -v node >/dev/null 2>&1 || { echo "::error::node missing on the self-hosted runner — failing fast (hosted re-run will cover this)."; exit 1; }
-          version="$(node -p 'process.versions.node')"
-          case "$version" in
-            24.*) ;;
-            *)
-              echo "::error::verify-self requires Node 24.x, found v$version."
-              exit 1
-              ;;
-          esac
-          echo "node: v$version"
-      - name: Disable lingering sparse-checkout
-        run: rm -rf ./* ./.git || true
-      - uses: actions/checkout@v4
-      # NOTE: deliberately NO actions/setup-node here. The self-hosted Mac uses the Homebrew
-      # Node 24 installation selected above; setup-node's npm cache post-action wedges on
-      # this long-lived runner (see docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md).
-      - name: Restore Next.js build cache
-        # runner.os = macOS here, so this is a separate cache namespace from the Linux
-        # lineage — macOS restores never poison Linux builds and vice versa.
-        uses: actions/cache/restore@v4
-        with:
-          path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-
-            ${{ runner.os }}-nextjs-
-      # Everything on the self path runs under `nice -n 19` so a live trading process always
-      # outbids CI for CPU on the production box. Install is tokenless `npm install` (the shared
-      # dependency resolves over public HTTPS now — no deploy key needed, matching deploy.yml).
-      - name: Install dependencies (nice -19)
-        run: nice -n 19 npm install --no-audit --no-fund
-      - run: nice -n 19 npm run lint
-      - run: nice -n 19 npx tsc --noEmit
-      # maxWorkers=2 (below the config default of 4) to further bound peak memory on the Mac.
-      - run: nice -n 19 npm test -- --maxWorkers=2
-      - run: nice -n 19 npm run build
-      - name: Save Next.js build cache (main only)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/cache/save@v4
-        with:
-          path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
-
-  # Coolify CI lane: the deterministic Linux baseline. This keeps the historic job id
-  # `verify-hosted` for branch-protection/status continuity, but it now runs on the online
-  # Coolify Hetzner runner because GitHub-hosted `ubuntu-latest` is not assigning jobs here.
+  # The one verification lane. Keeps the historic job id `verify-hosted` for
+  # branch-protection/status continuity even though there is no longer a second lane to be
+  # "hosted" in contrast to.
   verify-hosted:
-    needs: [classify, verify-self]
-    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && (needs.classify.outputs.route != 'self' || needs.verify-self.result != 'success') }}
+    needs: [classify]
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -341,7 +208,7 @@ jobs:
         # Only main pushes and the nightly schedule canary persist a new entry — PR/
         # merge_group runs restore from the latest main entry above but never write their own,
         # so cache storage stays one rolling lineage per OS. The schedule leg keeps the Linux
-        # cache fresh during stretches where main pushes route to the Mac.
+        # cache fresh during quiet stretches with no main pushes.
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule')
         uses: actions/cache/save@v4
         with:
@@ -352,7 +219,7 @@ jobs:
   # context name the ruleset requires. Fail-closed in every ambiguous state; annotates which
   # environment produced the accepted result (the audit receipt).
   verify:
-    needs: [classify, verify-self, verify-hosted]
+    needs: [classify, verify-hosted]
     # `!cancelled()` (not `always()`) so superseded-run cancellation still cancels the gate,
     # while classify/lane failures cannot silently skip a required check (skipped required
     # checks can fail open — Codex review, PR #370).
@@ -366,15 +233,12 @@ jobs:
         env:
           CLASSIFY_RESULT: ${{ needs.classify.result }}
           DOCS_ONLY: ${{ needs.classify.outputs.docs-only }}
-          ROUTE: ${{ needs.classify.outputs.route }}
-          SELF_RESULT: ${{ needs.verify-self.result }}
           HOSTED_RESULT: ${{ needs.verify-hosted.result }}
         run: |
           set -euo pipefail
           note() { echo "$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
           note "### verify gate"
-          note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a}, route: ${ROUTE:-n/a})"
-          note "- verify-self (macOS, production Mac): ${SELF_RESULT}"
+          note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a})"
           note "- verify-hosted (GitHub-hosted ubuntu-latest): ${HOSTED_RESULT}"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
@@ -386,16 +250,11 @@ jobs:
             exit 0
           fi
           if [ "$HOSTED_RESULT" = "success" ]; then
-            if [ "$SELF_RESULT" = "failure" ]; then
-              note "- RESULT: PASS — produced by GitHub-hosted ubuntu-latest (ARBITER: alternate self lane failed, hosted lane passed)."
-            else
-              note "- RESULT: PASS — produced by GitHub-hosted ubuntu-latest."
-            fi
+            note "- RESULT: PASS — produced by GitHub-hosted ubuntu-latest."
             exit 0
           fi
-          if [ "$HOSTED_RESULT" = "skipped" ] && [ "$SELF_RESULT" = "success" ]; then
-            note "- RESULT: PASS — produced by verify-self lane (legacy path; normally skipped)."
-            exit 0
-          fi
-          note "- RESULT: FAIL — no successful lane (hosted: ${HOSTED_RESULT}, self: ${SELF_RESULT})."
+          # Anything else — failure, skipped, or a state we did not enumerate — fails the
+          # gate. A `skipped` verify-hosted on a non-docs-only diff used to be able to pass
+          # via the (unreachable) self lane; there is no second lane now, so it is a FAIL.
+          note "- RESULT: FAIL — the verification lane did not succeed (hosted: ${HOSTED_RESULT})."
           exit 1

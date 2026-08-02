@@ -159,12 +159,23 @@ history. Three contamination traps, three references:
   `policy.tuning.pitEvidenceCutoff`, default ON), so the caveat is retired for the weight path.
   Aggregate learning state (lessons/reflection) remains uncut — that is slice 2's territory.
 
-## 7. Brokerage-model order-state hardening (PLANNED — umbrella for §4 items)
+## 7. Brokerage-model order-state hardening (PARTIALLY IMPLEMENTED — slice 1 landed 2026-08-01, PR #2335)
 
 Tracked as its own effort row: conformance status tables per broker, declarative order-type
 constraint validation pre-submission, per-account broker-mutation mutex, freqtrade-style
 uniform protection receipts. Targets the exact bug classes from 2026-07-27/28 (done_for_day
 inflation, order_placement_uncertain storms, bracket-order 422s).
+
+**Slice 1 (LANDED 2026-08-01, PR #2335): per-broker order-status conformance tables.**
+`src/lib/broker-status-conformance.ts` maps every documented raw status of
+alpaca/robinhood/tradier to its canonical class across the four production lenses
+(live/active/working/decline/filled), executed against the REAL shared classifiers
+(`broker-side.ts` / `broker-held-orders.ts`) by `test/broker-status-conformance.test.ts` — a
+vocabulary or classifier edit in either direction is now a CI failure. The audit also found
+`broker-held-orders.ts` carrying a drifted local decline set (missing `failed`/`error`, zero
+importers); it now re-exports the canonical `broker-side.isRejectedOrCanceledState`, making
+the drift structurally impossible. Rollout: `docs/rollouts/2026-08-01-broker-status-conformance.md`.
+Slices 2–4 remain planned.
 
 ## 8. nofx-style consecutive-miss safety mode (IMPLEMENTED 2026-07-29, PR #2275)
 
@@ -196,7 +207,7 @@ settings-search rows; 27 tests. Rollout: `docs/rollouts/2026-07-29-accuracy-brea
 | Model tiering review | Done — no change (§3) |
 | Preview renderers for mutations | **Completed 2026-07-29 — zero-code finding: already landed bespoke on every surface (§5)** |
 | Backtest-integrity suite | **Partially implemented — slice 1 (Jesse rule significance) PR #2294 + slice 3 (qlib walk-forward window report) PR #2305, 2026-07-30**; slice 2 (PIT masking) planned (§6) |
-| Brokerage-model hardening | Planned (§7) |
+| Brokerage-model hardening | **Partially implemented — slice 1 (per-broker status conformance tables + decline-set unification) PR #2335, 2026-08-01**; slices 2–4 (order-type constraints, per-account mutex, protection receipts) planned (§7) |
 | nofx safety mode | **Implemented 2026-07-29 (§8, PR #2275)** |
 | Graph flows | Existing `TradingGraph` orchestrator (strategy.ts) is the LangGraph-lesson landing spot; extend nodes there rather than adopting LangGraph |
 
