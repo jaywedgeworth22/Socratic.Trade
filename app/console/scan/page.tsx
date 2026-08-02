@@ -49,7 +49,7 @@ export default function ScanPage() {
 
   // Validate the run-captured scan before trusting it — historical/compact
   // strategy_run audits can carry a partial shape the table can't render.
-  const runScan = asFullMarketScan(snapshot?.latestStrategyRun?.marketScan);
+  const runScan = asFullMarketScan(snapshot?.latestScan);
   const scan: MarketScan | null = newestScan(live.scan, runScan);
   const smartCount = (snapshot?.smartMoney?.congress?.length ?? 0) + (snapshot?.smartMoney?.insider?.length ?? 0);
 

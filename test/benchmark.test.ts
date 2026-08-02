@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { inferExternalCashFlows, normalizeAgainstBenchmark, FLOW_MATERIALITY_MIN_USD } from "../src/lib/benchmark";
+import { normalizeAgainstBenchmark } from "../src/lib/benchmark";
+import { inferExternalCashFlows, FLOW_MATERIALITY_MIN_USD } from "../src/lib/cash-flows";
 import type { EquityCurvePoint, FillEvent } from "../src/lib/types";
 
 function curve(points: Array<[string, number]>): EquityCurvePoint[] {

@@ -5,7 +5,7 @@
  *  events, grouped chronologically. Uses only what the snapshot actually
  *  provides — no invented data. */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { FillEvent, RecentProposal, StrategyRunRow } from "@/lib/types";
 import { OPS_AUDIT_KINDS, type UnifiedActivitySubEvent } from "@/lib/dashboard-feed";
 import type { UnifiedActivityGroup } from "../../dashboard-types";
@@ -13,6 +13,7 @@ import { activeConnectedAccount, realityForMode } from "../lib/derive";
 import { cx, dayKey, fmtDay, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { feedStatusLabel } from "../lib/labels";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
+import { nextTabId } from "../lib/tabs";
 import { useConsoleData } from "../lib/useConsoleData";
 import { AlertCenter } from "../components/alert-center";
 import { Ago, Card, Chip, Empty, SignedText, Tooltip, type ChipTone } from "../ui/primitives";
@@ -28,19 +29,51 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: "alerts", label: "Alert center" }
 ];
 
+const TAB_IDS = TABS.map((t) => t.id);
+
 export default function ActivityPage() {
   const { snapshot } = useConsoleData();
   const [tab, setTab] = useState<Tab>("all");
+  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
   if (!snapshot) return null;
+
+  const onTabsKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const next = nextTabId(TAB_IDS, tab, e.key);
+    if (!next) return;
+    e.preventDefault();
+    setTab(next);
+    tabRefs.current[next]?.focus();
+  };
 
   return (
     <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console/activity")}</h1>
-        <div className="flex gap-1 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1">
+        <div
+          role="tablist"
+          aria-label="Activity views"
+          onKeyDown={onTabsKeyDown}
+          className="flex gap-1 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1"
+        >
           {TABS.map((t) => (
             <button
               key={t.id}
+              ref={(el) => {
+                tabRefs.current[t.id] = el;
+              }}
+              id={`activity-tab-${t.id}`}
+              role="tab"
+              aria-selected={tab === t.id}
+              // aria-controls on the SELECTED tab only. One panel is mounted at a
+              // time (each of the four feeds is expensive enough that mounting all
+              // of them just to satisfy the attribute would be a real regression),
+              // so pointing the inactive tabs at ids that are not in the document
+              // would only be a dangling IDREF — worse for AT than omitting it.
+              aria-controls={tab === t.id ? `activity-tabpanel-${t.id}` : undefined}
+              // Roving tabIndex: the switcher is one tab stop and arrows/Home/End
+              // move between views, so Tab no longer walks all four buttons before
+              // reaching the feed.
+              tabIndex={tab === t.id ? 0 : -1}
               type="button"
               onClick={() => setTab(t.id)}
               className={cx(
@@ -56,18 +89,20 @@ export default function ActivityPage() {
         </div>
       </div>
 
-      {tab === "all" && <UnifiedFeed groups={snapshot.unifiedFeed ?? []} />}
-      {tab === "runs" && <RunsList runs={snapshot.strategyRuns ?? []} recentProposals={snapshot.recentProposals ?? []} />}
-      {tab === "fills" && <FillsList fills={snapshot.performance?.fills ?? []} />}
-      {tab === "alerts" && (
-        <AlertCenter
-          notifications={snapshot.notifications ?? []}
-          connectedAccounts={snapshot.connectedAccounts}
-          symbolMetaBySymbol={snapshot.symbolMetaBySymbol}
-          activeAccountId={activeConnectedAccount(snapshot)?.id}
-          maxItems={100}
-        />
-      )}
+      <div role="tabpanel" id={`activity-tabpanel-${tab}`} aria-labelledby={`activity-tab-${tab}`}>
+        {tab === "all" && <UnifiedFeed groups={snapshot.unifiedFeed ?? []} />}
+        {tab === "runs" && <RunsList runs={snapshot.strategyRuns ?? []} recentProposals={snapshot.recentProposals ?? []} />}
+        {tab === "fills" && <FillsList fills={snapshot.performance?.fills ?? []} />}
+        {tab === "alerts" && (
+          <AlertCenter
+            notifications={snapshot.notifications ?? []}
+            connectedAccounts={snapshot.connectedAccounts}
+            symbolMetaBySymbol={snapshot.symbolMetaBySymbol}
+            activeAccountId={activeConnectedAccount(snapshot)?.id}
+            maxItems={100}
+          />
+        )}
+      </div>
     </div>
   );
 }

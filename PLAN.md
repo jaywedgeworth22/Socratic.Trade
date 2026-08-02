@@ -1,5 +1,22 @@
 # Active Implementation Plan
 
+> [!WARNING]
+> **Read the blockquote entries below with suspicion; some are spliced.** This file is
+> `merge=union` in `.gitattributes` (with `STATUS.md` and `docs/EFFORT-LOG.md`) so that
+> concurrent PRs do not conflict on it. Union-merge *interleaves* both sides of a
+> concurrent edit instead of raising a conflict, so an entry can end up filed under a
+> different agent's heading. There is a live example a few lines down: the
+> **2026-07-29 — Expose portfolio errors in UI (ANTIGRAVITY)** heading is followed by text
+> about `done_for_day` order history on a `cursor/pending-orders-*` branch — a different
+> agent's entry, wearing this one's title. Trust the linked `docs/rollouts/` note over the
+> heading it appears under.
+>
+> This file has also drifted from a *plan* into an append-only log (2,000+ lines). For what
+> is actually true right now, read `STATUS.md` (snapshot: state, blockers, next action) and
+> `docs/EFFORT-LOG.md` (effort board). Flagged 2026-08-01 during the Codex-review
+> remediation; the restructure is deliberately left as an owner call, since collapsing this
+> history is not something an agent should do unilaterally.
+
 > **2026-07-29 — Adjusted Day P&L for Cash Flows (ANTIGRAVITY, branch `agent/ag-day-pnl`).**
 > Updated `deriveDayPnl` to correctly handle intraday cash deposits and withdrawals by reusing the `inferExternalCashFlows` helper. The dashboard will now compute P&L correctly by netting out any cash flows, preventing the UI from misattributing cash deposits as profit. Tests and build passed. Rollout: `docs/rollouts/2026-07-29-day-pnl-cash-flow-adjusted.md`.
 

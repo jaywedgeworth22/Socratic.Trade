@@ -12,6 +12,7 @@ import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
 import { fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
+import { recordProviderCall } from "./usage-monitor-push";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { fetchRobinhoodHistoricals } from "./robinhood";
 import { appAClosesToBars, congressReadsEnabled, getCongressTradeClient } from "./api-clients/congress";
@@ -175,6 +176,7 @@ async function fetchMassive(symbol: string, startDate: string, key?: string): Pr
   try {
     const url = `${base}/v2/aggs/ticker/${encodeURIComponent(symbol)}/range/1/day/${startDate}/${to}?adjusted=true&sort=asc&limit=50000`;
     const json = await politeFetchJson<MassiveAggResponse>(url, { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" } });
+    recordProviderCall("massive", { service: "market-data", ok: true });
     const rows = json?.results ?? [];
     const bars: OHLCBar[] = [];
     for (const r of rows) {
@@ -183,6 +185,7 @@ async function fetchMassive(symbol: string, startDate: string, key?: string): Pr
     }
     return bars.length >= 2 ? bars : null;
   } catch {
+    recordProviderCall("massive", { service: "market-data", ok: false });
     return null;
   }
 }
@@ -224,6 +227,7 @@ async function fetchTradier(symbol: string, startDate: string, key: string | und
   try {
     const url = `${baseUrl}/v1/markets/history?symbol=${encodeURIComponent(symbol)}&interval=daily&start=${startDate}`;
     const json = await politeFetchJson<TradierHistoryResponse>(url, { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" } });
+    recordProviderCall("tradier", { service: "market-data", ok: true });
     const day = json?.history?.day;
     const days = Array.isArray(day) ? day : day ? [day] : [];
     const bars: OHLCBar[] = [];
@@ -233,6 +237,7 @@ async function fetchTradier(symbol: string, startDate: string, key: string | und
     }
     return bars.length >= 2 ? bars : null;
   } catch {
+    recordProviderCall("tradier", { service: "market-data", ok: false });
     return null;
   }
 }
@@ -255,6 +260,7 @@ async function fetchMarketstack(symbol: string, key?: string): Promise<OHLCBar[]
   try {
     const url = `https://api.marketstack.com/v1/eod?access_key=${key}&symbols=${encodeURIComponent(symbol)}&limit=1500&sort=ASC`;
     const json = await politeFetchJson<MarketstackEodResponse>(url, {});
+    recordProviderCall("marketstack", { service: "market-data", ok: true });
     const rows = json?.data ?? [];
     const bars: OHLCBar[] = [];
     for (const r of rows) {
@@ -263,6 +269,7 @@ async function fetchMarketstack(symbol: string, key?: string): Promise<OHLCBar[]
     }
     return bars.length >= 2 ? bars : null;
   } catch {
+    recordProviderCall("marketstack", { service: "market-data", ok: false });
     return null;
   }
 }
