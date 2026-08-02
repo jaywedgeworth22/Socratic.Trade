@@ -23,7 +23,14 @@
 //                                      single-statement fail-fast transactions, DELIBERATELY
 //                                      taken INSIDE the lease window: acquiring the lease
 //                                      before the claim means a busy skip leaves no row
-//                                      behind and burns no cooldown)
+//                                      behind and burns no cooldown. EXCEPTION: the strategy
+//                                      loop's autonomous placement lane (strategy.ts) inserts
+//                                      its crash-recovery "placing" intent row BEFORE the lease
+//                                      window on purpose — the run ledger records every
+//                                      proposal it considered, so a busy exit there mints a
+//                                      terminal not_placed row instead of leaving no row behind.
+//                                      The approval lane (executeProposal) has no such row to
+//                                      insert ahead of the lease and follows the rule as written.)
 //   4. broker network calls
 // Never take a BLOCKING acquisition (the strategy lock, or a waitMs>0 lease) while holding
 // this lease — that is the only ordering that can deadlock.
@@ -64,7 +71,12 @@ export const LANE_WAITS = {
   /** Human click on /api/orders/replace-market. */
   manualReplace: 10_000,
   /** Scheduler + safety-maintenance stale-exit remediation (outlasts a monitor pass). */
-  staleExit: 15_000
+  staleExit: 15_000,
+  /** Human click on Approve — human-adjacent: a click may briefly wait. */
+  approvalPlacement: 30_000,
+  /** Autonomous strategy loop, one proposal — one BROKER_TIMEOUT_MS; the loop can afford
+   *  one bounded wait per proposal. */
+  strategyPlacement: 15_000
 };
 
 export type AccountMutationLane =
