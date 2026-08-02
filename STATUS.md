@@ -17,35 +17,34 @@ Last updated: 2026-08-02.
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
 | Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
 | Deploy mechanism | auto-deploy on push to `main` (Coolify `socratic-trade-prod`) |
+| `main` | `c117afb9` — includes the full 30-finding Codex remediation (#2341, AG-reviewed) and the npm `allowScripts` fix (#2345) |
+| Production (`socratictrade.com`) | `19dfd51b` verified live 2026-08-02 ~04:47Z (`scripts/verify-deploy-sha.sh` PASS); `c117afb9` should follow via the repaired webhook |
+| Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
 | Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
 
 ## Blockers
 
-1. **Production is behind `main` and auto-deploy is not closing the gap — OWNER ACTION.**
-   Live health reported `d456ca58` at 21:33Z and *still* reported `d456ca58` more than an
-   hour later, while `main` advanced from `88e614d7` to `ad1c1d5c`. That is 5 commits
-   merged and not running, and the gap is growing, so this is not a slow build. Merging is
-   currently **not** evidence that anything shipped.
+1. **RESOLVED 2026-08-02 — auto-deploy was broken by a webhook HMAC mismatch.** Every push
+   to `refs/heads/main` was answered by Coolify with
+   `[{"status":"failed","message":"Invalid signature."}]` (visible only in the GitHub hook
+   delivery RESPONSE BODY — the hook page showed green 200s throughout), so no deployment
+   was ever created; the queue sat empty and the single 2026-08-01 deploy was the owner's
+   manual click. Repair: synced the GitHub hook secret to the Coolify app's
+   `manual_webhook_secret_github`, deleted the exact-duplicate second hook, redelivered the
+   newest main push -> a real deployment was created immediately, and
+   `scripts/verify-deploy-sha.sh 19dfd51b` reported **PASS** (~04:47Z). Merge==live is
+   trustworthy again. Also fixed: AGENTS.md's stale Coolify uuid (the app is `socratic-app`
+   now). Full receipts + recurrence warning:
+   `docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md`.
 
-   Verify before believing a change is live:
-   ```bash
-   bash scripts/verify-deploy-sha.sh            # defaults to origin/main
-   ```
-   Agents must NOT hand-trigger a Coolify deploy (manual deploy claims/triggers are
-   retired). The likely causes are on the Coolify side — a wedged/zombie `in_progress`
-   deployment blocking the queue, or the GitHub webhook not being delivered — and both need
-   the owner at the dashboard.
-
-2. **Local verification is broken on npm 11.16 (all agent lanes).** `npm install` and
-   `npm ci` both fail preparing the `congress-trading-shared` git dependency:
-   `EALLOWSCRIPTS — --allow-scripts is not allowed in project-scoped installs`. npm invokes
-   its own nested install with that flag during git-dep preparation, and `package.json`'s
-   `allowScripts` field does not satisfy it. The failure leaves `node_modules` **empty**, so
-   it looks like the janitor reaped it. Workaround that works today:
-   `npx -y npm@10 ci --no-audit --no-fund`. CI is unaffected (it installs on
-   `ubuntu-latest` via `actions/setup-node`). Needs a durable fix — pinning `packageManager`
-   or vendoring the shared package are the candidates.
+2. **RESOLVED 2026-08-02 (PR #2345) — npm 11.16 `EALLOWSCRIPTS` on the shared git dep.**
+   `npm install`/`npm ci` failed preparing `congress-trading-shared` and left `node_modules`
+   EMPTY (easily misread as janitor reaping); the interim workaround was `npx -y npm@10 ci`.
+   #2345 restored the `allowScripts` entry for the current tag and regenerated the lockfile
+   for shared v2.4.1. If plain `npm ci` regresses again after a future shared-package bump,
+   check that `package.json`'s `allowScripts` key names the CURRENT `#vX.Y.Z` spec — a
+   stale tag reproduces the identical failure.
 
 3. **Two provider lanes are degraded and need an owner decision, not an agent fix.**
    FMP's plan probe returns 403 (subscription state) and Massive is history-capped to the
@@ -55,11 +54,13 @@ Last updated: 2026-08-02.
 
 ## Next action
 
-- Confirm production actually advances to `main` on the next merge, using the SHA
-  verifier rather than assuming.
-- Land the durable fix for the npm 11.16 install failure — every agent lane currently
-  needs the `npm@10` workaround to run the gates locally.
-- Owner decisions pending: FMP subscription, Massive plan tier.
+- Watch that `c117afb9` (and subsequent merges) deploy organically via the repaired
+  webhook — `bash scripts/verify-deploy-sha.sh` after merging.
+- Small follow-up in flight: fold `schedulerLease.owner` behind the ops token on
+  `/api/health` (the one residual of finding 27's minimization).
+- Owner decisions pending: FMP subscription, Massive plan tier; and whether hook-secret
+  re-sync should be added to the Coolify app-recreate recipe (see the 2026-08-02 rollout
+  note — if recreation regenerated the secret, this failure recurs on the next recreate).
 
 ## Conventions that bite (do not re-derive these)
 
