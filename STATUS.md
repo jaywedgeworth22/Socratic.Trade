@@ -7,12 +7,19 @@ of work), effort state lives in `docs/EFFORT-LOG.md`, and entries written here b
 
 Last updated: 2026-08-02.
 
+> [!NOTE]
+> **MONET session stopped 2026-08-02 ~05:40Z (owner instruction) — clean handoff.** All
+> claimed work is either merged or riding an armed auto-merge (PR #2349: npm-12-proof
+> `allowScripts` key + record corrections — lands and deploys unattended once `verify` is
+> green). Nothing uncommitted anywhere. Session handoff with the full state map:
+> `docs/rollouts/2026-08-02-monet-session-handoff.md`.
+
 ## Where things stand
 
 | | |
 |---|---|
 | `main` | `c117afb9` — includes the full 30-finding Codex remediation (#2341, AG-reviewed) and the npm `allowScripts` fix (#2345) |
-| Production (`socratictrade.com`) | `19dfd51b` verified live 2026-08-02 ~04:47Z (`scripts/verify-deploy-sha.sh` PASS); `c117afb9` should follow via the repaired webhook |
+| Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
 | Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
