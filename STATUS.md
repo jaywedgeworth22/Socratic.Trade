@@ -7,21 +7,14 @@ of work), effort state lives in `docs/EFFORT-LOG.md`, and entries written here b
 
 Last updated: 2026-08-01.
 
-> [!IMPORTANT]
-> **Work in progress on `monet/codex-review-remediation` is PAUSED (owner instruction).**
-> Wave 1 is committed locally as `e7a1b65c` — **not pushed, no PR**. Wave 2 is on disk,
-> **uncommitted and completely unreviewed** (6 agents stopped mid-flight; `tsc` is clean but
-> tests and lint have never run against it). Do not treat it as correct, and do not land it
-> without reviewing it first. Resume instructions, the file→finding map, and the
-> union-merge trap that will bite on the next `origin/main` merge:
-> `docs/rollouts/2026-08-01-codex-review-remediation-handoff.md`.
-
 ## Where things stand
 
 | | |
 |---|---|
-| `main` | `ad1c1d5c` — CI green, no known failing gate |
-| Production (`socratictrade.com`) | `d456ca58` — **5 commits behind `main`, and not advancing** |
+| `main` / PR #2341 | `ag/codex-review-remediation` — PR #2341 open, auto-merge armed, CI gates clean |
+| Production (`socratictrade.com`) | Coolify `socratic-trade-prod` (auto-deploys on `main` push) |
+| Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
+| Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
 | Deploy mechanism | auto-deploy on push to `main` (Coolify `socratic-trade-prod`) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
 | Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history |
