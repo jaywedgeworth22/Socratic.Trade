@@ -36,7 +36,7 @@ Rollout: `docs/rollouts/2026-08-02-data-provider-hardening.md`.
 | | |
 |---|---|
 | `main` | `44069368` — Codex remediation (#2341), npm `allowScripts` fixes (#2345, #2349), mobile PWA feedback round (#2351) |
-| In flight (MONET) | PR #2350 `monet/connections-route-skeleton` — /console/connections route-local skeleton (Codex finding 22 residual; usage half was #2341). All 5 checks green, marked ready + squash auto-merge armed (AG pickup); branch updated with main 2026-08-02 to satisfy the strict up-to-date rule — lands on the re-run's green. Rollout: `docs/rollouts/2026-08-02-connections-route-skeleton.md` |
+| In flight (MONET) | `monet/broker-order-constraints` — §7 slice 2: declarative per-broker order-type constraint tables at the placement choke point (also fixes the still-live 2026-07-27 Alpaca sell+bracket 422). Rollout: `docs/rollouts/2026-08-02-broker-order-constraints.md`. Prior: PR #2350 (/console/connections skeleton) MERGED 09:55Z as `5505172a`, auto-deploy verification in flight. |
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
