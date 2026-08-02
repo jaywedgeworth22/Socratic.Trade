@@ -1,6 +1,7 @@
 import { resolveApiKeyWithSource, type ApiKeySource } from "./db";
 import { apiCircuitBreakerShouldSkip } from "./api-circuit-breaker";
 import { logApiHealth } from "./db-health";
+import { expiresAtRespectingMarketClose } from "./market-hours";
 import { BROWSER_UA } from "./web-sources/http";
 
 // Minimal Yahoo Finance chart shape — only the fields we read.
@@ -226,7 +227,7 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
       fredSourced: true
     };
 
-    writeMacroCache(scope, userId, data, now + CACHE_TTL_MS);
+    writeMacroCache(scope, userId, data, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
     return data;
   } catch (error) {
     console.error("[macro] failed to fetch macroeconomic data:", error);
@@ -260,12 +261,12 @@ async function fetchVixOnlyFallback(scope: MacroCacheScope, userId: string | und
       asOf: new Date().toISOString().split("T")[0],
       fredSourced: false // only the VIX is live; every FRED field is blank
     };
-    writeMacroCache(scope, userId, lightMacro, now + CACHE_TTL_MS);
+    writeMacroCache(scope, userId, lightMacro, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
     return lightMacro;
   }
   // VIX fetch also failed — everything blank ("unavailable") so the regime stays Unknown.
   const fallback = { ...BLANK_MACRO };
-  writeMacroCache(scope, userId, fallback, now + CACHE_TTL_MS);
+  writeMacroCache(scope, userId, fallback, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
   return fallback;
 }
 

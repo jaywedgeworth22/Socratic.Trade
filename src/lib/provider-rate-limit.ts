@@ -68,7 +68,12 @@ const HARD_DEFAULTS: Record<string, { perMin?: number; minIntervalMs?: number; c
   "yh-finance-apidojo": { minIntervalMs: 1100, concurrency: 1 },
   "real-time-finance-data": { minIntervalMs: 500, concurrency: 1 },
   "seeking-alpha-rapidapi": { minIntervalMs: 1100, concurrency: 1 },
-  filingapi: { minIntervalMs: 400, concurrency: 1 }
+  filingapi: { minIntervalMs: 400, concurrency: 1 },
+  // No published rate limit, but it's the same shape of scarce paid-tier provider as filingapi
+  // above (small free daily budget, no burst tolerance documented) — pace it identically rather
+  // than leaving it fully unthrottled. The RATE_QUOTAS entry below is the real daily-budget cap;
+  // this is just burst safety.
+  roic: { minIntervalMs: 400, concurrency: 1 }
 };
 
 function envKeyFor(provider: string): string {
@@ -261,7 +266,26 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
   // the request count via callsPerSymbol("fmp", …), not the symbol count. NO day window by default
   // (no daily cap on Starter); PROVIDER_QUOTA_FMP_PER_DAY opts one in (e.g. 240 for the free 250/day
   // tier) via the generic env path in resolveProviderQuota.
-  fmp: [{ maxRequests: 290, windowMs: MINUTE }]
+  fmp: [{ maxRequests: 290, windowMs: MINUTE }],
+  // FilingAPI.dev free tier is documented as ~50 req/day (see data-providers.ts's
+  // FilingApiEnrichmentProvider doc comment); 45 leaves headroom. The provider already calls
+  // admitProviderRequests("filingapi", ...) expecting this budget to exist — with no entry here,
+  // resolveProviderQuota("filingapi") returned undefined (unlimited), so that call site's "~50/day
+  // free tier — admit at most one symbol-bundle per reservation unit" comment enforced nothing.
+  filingapi: [{ maxRequests: 45, windowMs: DAY }],
+  // ROIC.ai has no published free-tier request cap; 200/day is a conservative placeholder so the
+  // provider (which already calls admitProviderRequests("roic", ...), same as filingapi) gets SOME
+  // enforcement instead of silently unlimited. Tighten with PROVIDER_QUOTA_ROIC_PER_DAY once the
+  // real vendor limit is known.
+  roic: [{ maxRequests: 200, windowMs: DAY }],
+  // Marketstack's free tier is 100 req/MONTH, not a daily cap — this module only models rolling
+  // minute/hour/day windows, so approximate the monthly budget as a conservative perDay window
+  // (100/30 ≈ 3) rather than adding a MONTH window shape used nowhere else. NOTE: unlike
+  // filingapi/roic above, history.ts's fetchMarketstack does not yet call admitProviderRequests
+  // (it goes through politeFetchJson, which knows nothing about this module) — this entry defines
+  // the budget so the window math and any future call site are correct on day one, but wiring the
+  // actual call site is separate work.
+  marketstack: [{ maxRequests: 3, windowMs: DAY }]
 };
 
 /** Env-overridable effective windows for a provider. `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`

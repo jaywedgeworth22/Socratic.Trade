@@ -1,3 +1,4 @@
+import { previousTradingDayStart } from "./market-hours";
 import type {
   EquityPosition,
   IndexUniverse,
@@ -6,8 +7,6 @@ import type {
   ScoringWeights,
   UniverseFloor
 } from "./types";
-
-const MAX_INTERACTIVE_SEED_AGE_MS = 24 * 60 * 60_000;
 
 /**
  * Coalesce identical interactive refreshes. A page mount and a quick manual retry
@@ -108,7 +107,13 @@ export function marketScanQuotesFromAudit(
   now = Date.now()
 ): Record<string, MarketQuoteSummary> | undefined {
   const timestamp = Date.parse(createdAt ?? "");
-  if (!Number.isFinite(timestamp) || timestamp > now + 5 * 60_000 || now - timestamp > MAX_INTERACTIVE_SEED_AGE_MS) {
+  // Calendar-aware, not a flat 24h window: a seed is acceptable back through the START of the
+  // most recent trading day (same rule as isStaleBaseline in app/console/lib/derive.ts), so
+  // Friday's run stays a valid seed all weekend and expires only once Tuesday's session starts —
+  // a flat 24h cutoff would reject Friday's data by Monday afternoon even though nothing has
+  // traded since.
+  const earliestAcceptable = previousTradingDayStart(new Date(now)).getTime();
+  if (!Number.isFinite(timestamp) || timestamp > now + 5 * 60_000 || timestamp < earliestAcceptable) {
     return undefined;
   }
   if (!payload || typeof payload !== "object") return undefined;

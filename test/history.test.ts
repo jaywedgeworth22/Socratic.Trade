@@ -189,6 +189,24 @@ describe("fetchDailyOHLC", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not expire a Saturday-written cache entry before Monday's open (LANE A weekend-stable TTL)", async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      String(url).includes("query1.finance.yahoo.com") ? new Response(yahooBody(60), { status: 200 }) : new Response("nope", { status: 404 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const saturday = Date.UTC(2026, 5, 20, 12, 0, 0); // Sat 2026-06-20, noon UTC (8am EDT — still Saturday)
+    const sunday = Date.UTC(2026, 5, 21, 12, 0, 0); // Sun 2026-06-21, noon UTC — 24h later, well past the
+    // naive 30-min OHLC TTL, but still inside the same weekend closed stretch.
+
+    const first = await fetchDailyOHLC("AAPL", saturday);
+    expect(first).not.toBeNull();
+
+    const second = await fetchDailyOHLC("AAPL", sunday);
+    expect(second).toBe(first); // still cached — the market hasn't traded since Saturday
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("shares Tradier's connected-account-sourced history across users (always shared, not per-user)", async () => {
     connectTradier("env-tradier-key");
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>

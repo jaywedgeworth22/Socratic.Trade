@@ -139,6 +139,11 @@ describe("resolveProviderLimiterConfig", () => {
     process.env.PROVIDER_RATE_LIMIT_ALPHA_VANTAGE_MIN_INTERVAL_MS = "2500";
     expect(resolveProviderLimiterConfig("alpha-vantage")?.minIntervalMs).toBe(2500);
   });
+
+  it("uses roic's hard default of 400ms spacing and concurrency 1, matching filingapi", () => {
+    expect(resolveProviderLimiterConfig("roic")).toEqual({ minIntervalMs: 400, concurrency: 1 });
+    expect(resolveProviderLimiterConfig("filingapi")).toEqual({ minIntervalMs: 400, concurrency: 1 });
+  });
 });
 
 describe("ProviderRateLimiter pacing (fake clock)", () => {
@@ -464,6 +469,9 @@ const QUOTA_ENV_KEYS = [
   "PROVIDER_QUOTA_FMP_PER_HOUR",
   "PROVIDER_QUOTA_FMP_PER_DAY",
   "TWELVEDATA_CREDITS_PER_MIN",
+  "PROVIDER_QUOTA_FILINGAPI_PER_DAY",
+  "PROVIDER_QUOTA_ROIC_PER_DAY",
+  "PROVIDER_QUOTA_MARKETSTACK_PER_DAY",
 ];
 
 describe("resolveProviderQuota", () => {
@@ -510,6 +518,27 @@ describe("resolveProviderQuota", () => {
   it("PROVIDER_QUOTA_FMP_PER_DAY=0 is a no-op (no day window in the base)", () => {
     process.env.PROVIDER_QUOTA_FMP_PER_DAY = "0";
     expect(resolveProviderQuota("fmp")).toEqual([{ maxRequests: 290, windowMs: 60_000 }]);
+  });
+
+  it("returns the built-in filingapi window (45/day)", () => {
+    expect(resolveProviderQuota("filingapi")).toEqual([{ maxRequests: 45, windowMs: 86_400_000 }]);
+  });
+
+  it("returns the built-in roic window (200/day)", () => {
+    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 200, windowMs: 86_400_000 }]);
+  });
+
+  it("returns the built-in marketstack window (3/day, approximating its 100/month free tier)", () => {
+    expect(resolveProviderQuota("marketstack")).toEqual([{ maxRequests: 3, windowMs: 86_400_000 }]);
+  });
+
+  it("lets PROVIDER_QUOTA_<NAME>_PER_DAY override each of the three new defaults", () => {
+    process.env.PROVIDER_QUOTA_FILINGAPI_PER_DAY = "10";
+    expect(resolveProviderQuota("filingapi")).toEqual([{ maxRequests: 10, windowMs: 86_400_000 }]);
+    process.env.PROVIDER_QUOTA_ROIC_PER_DAY = "999";
+    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 999, windowMs: 86_400_000 }]);
+    process.env.PROVIDER_QUOTA_MARKETSTACK_PER_DAY = "1";
+    expect(resolveProviderQuota("marketstack")).toEqual([{ maxRequests: 1, windowMs: 86_400_000 }]);
   });
 
   it("is undefined for an unconfigured provider (unlimited)", () => {
@@ -603,6 +632,34 @@ describe("RequestQuota (sliding-window, fake clock)", () => {
     expect(quota.admit("fmp", "k", 1000)).toBe(240); // day cap (240) binds under the 290/min
     await clock.advance(60_000);
     expect(quota.admit("fmp", "k", 1000)).toBe(0);   // minute refreshed but the day budget is spent
+  });
+
+  it("admits up to filingapi's 45/day default and denies once the day's budget is spent", () => {
+    const quota = new RequestQuota(new FakeClock());
+    expect(quota.admit("filingapi", "k", 100)).toBe(45); // capped to the 45/day default
+    expect(quota.admit("filingapi", "k", 100)).toBe(0); // day's budget already spent
+  });
+
+  it("admits up to roic's 200/day default and denies once the day's budget is spent", () => {
+    const quota = new RequestQuota(new FakeClock());
+    expect(quota.admit("roic", "k", 500)).toBe(200);
+    expect(quota.admit("roic", "k", 500)).toBe(0);
+  });
+
+  it("admits up to marketstack's 3/day default and denies once the day's budget is spent", () => {
+    const quota = new RequestQuota(new FakeClock());
+    expect(quota.admit("marketstack", "k", 10)).toBe(3);
+    expect(quota.admit("marketstack", "k", 10)).toBe(0);
+  });
+
+  it("lets a PROVIDER_QUOTA_<NAME>_PER_DAY env override win over each new default", () => {
+    process.env.PROVIDER_QUOTA_FILINGAPI_PER_DAY = "2";
+    process.env.PROVIDER_QUOTA_ROIC_PER_DAY = "1";
+    process.env.PROVIDER_QUOTA_MARKETSTACK_PER_DAY = "5";
+    const quota = new RequestQuota(new FakeClock());
+    expect(quota.admit("filingapi", "k", 100)).toBe(2); // overridden default (45) does not apply
+    expect(quota.admit("roic", "k", 100)).toBe(1);
+    expect(quota.admit("marketstack", "k", 100)).toBe(5);
   });
 
   it("refills as older hits slide out of the window", async () => {

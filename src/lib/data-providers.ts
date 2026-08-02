@@ -38,6 +38,7 @@ import {
 } from "./db";
 import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
 import { apiCircuitBreakerShouldSkip, CircuitOpenError } from "./api-circuit-breaker";
+import { expiresAtRespectingMarketClose } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
@@ -1920,7 +1921,7 @@ export class WebullUnofficialEnrichmentProvider implements MarketEnrichmentProvi
       const payload = JSON.parse(stdout || "{}") as Record<string, unknown>;
       for (const symbol of misses) {
         const data = parseWebullUnofficialQuote(payload[symbol]);
-        cache.set(`${this.name}:${symbol}`, { expiresAt: now + ttlMs(), data });
+        cache.set(`${this.name}:${symbol}`, { expiresAt: expiresAtRespectingMarketClose(new Date(now), ttlMs()), data });
         result[symbol] = data;
       }
     } catch {
@@ -3491,7 +3492,7 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
             // empty row for the full TTL and suppress the cross-check until expiry. A 404 (no row for
             // this ticker) is a "fulfilled" empty result and DOES cache (a real, stable "no data").
             if (shortRaw.status === "fulfilled" && floatRaw.status === "fulfilled") {
-              writeEnrichmentCache("massive", symbol, this.scope, this.userId, data, now + massiveShortInterestTtlMs());
+              writeEnrichmentCache("massive", symbol, this.scope, this.userId, data, expiresAtRespectingMarketClose(new Date(now), massiveShortInterestTtlMs()));
             }
             result[symbol] = data;
           } catch {
@@ -3690,7 +3691,10 @@ export class RoicAiEnrichmentProvider implements MarketEnrichmentProvider {
 
             if (Object.keys(item).length > 0) {
               result[symbol] = item;
-              writeEnrichmentCache("roic", symbol, this.scope, this.userId, item, now + 30 * 60_000);
+              // Raised from a 30-min TTL to the fundamentals-tier 6h norm (matches ttlMs() used by
+              // the other providers on this file) — ROIC profile/ratio data moves as slowly as any
+              // other fundamentals source, so the tighter TTL was just needless quota burn.
+              writeEnrichmentCache("roic", symbol, this.scope, this.userId, item, expiresAtRespectingMarketClose(new Date(now), ttlMs()));
             }
           } catch (err) {
             console.warn(`[roic] failed enrichment for ${symbol}:`, err);

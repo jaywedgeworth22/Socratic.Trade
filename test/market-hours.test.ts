@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   currentMarketSession,
+  expiresAtRespectingMarketClose,
   isRunAllowedNow,
   isTradingDay,
   nextMarketOpenHint,
@@ -181,5 +182,48 @@ describe("nextMarketOpenHint (item 29: cheap next-open hint for the paused/marke
 
   it("skips the weekend for a Friday-evening check", () => {
     expect(nextMarketOpenHint(etDate("2026-06-12", 18, 0), false)).toBe("Mon, Jun 15, 9:30 AM ET");
+  });
+});
+
+// LANE A: weekend-stable cache TTLs. Only a genuine multi-day (weekend/holiday) closure gets
+// extended — a routine overnight gap does not, since that's not the quota-burn problem this
+// exists to fix ("stop weekend quota burn; keep Friday data served until Monday").
+describe("expiresAtRespectingMarketClose", () => {
+  const SIX_HOURS_MS = 6 * 60 * 60_000;
+
+  it("Friday afternoon write with a 6h TTL extends all the way to Monday's open", () => {
+    const now = etDate("2026-06-12", 14, 0); // Fri 2pm ET — naive expiry (8pm Fri) is past close,
+    // heading into the weekend; the market won't trade again until Monday.
+    const expiry = expiresAtRespectingMarketClose(now, SIX_HOURS_MS);
+    expect(expiry).toBe(etDate("2026-06-15", 9, 30).getTime()); // Mon 9:30 AM ET
+  });
+
+  it("a Tuesday write with the same 6h TTL is left naive (routine overnight gap, not a weekend)", () => {
+    const now = etDate("2026-06-09", 14, 0); // Tue 2pm ET
+    const expiry = expiresAtRespectingMarketClose(now, SIX_HOURS_MS);
+    expect(expiry).toBe(now.getTime() + SIX_HOURS_MS); // naive: Tue 8pm ET, unchanged
+  });
+
+  it("a write DURING Saturday also extends to Monday's open", () => {
+    const now = etDate("2026-06-13", 12, 0); // Sat noon ET
+    const expiry = expiresAtRespectingMarketClose(now, SIX_HOURS_MS);
+    expect(expiry).toBe(etDate("2026-06-15", 9, 30).getTime()); // Mon 9:30 AM ET
+  });
+
+  it("a write on a holiday Monday extends to Tuesday's open, not Monday's", () => {
+    // MLK Day 2026 (3rd Monday in Jan) — January is EST (UTC-5), unlike the June/EDT cases above,
+    // so this also exercises the DST-safe wall-clock conversion across the other offset.
+    const now = new Date("2026-01-19T15:00:00Z"); // Mon 10:00 AM EST (a full-close holiday)
+    const expiry = expiresAtRespectingMarketClose(now, SIX_HOURS_MS);
+    expect(expiry).toBe(new Date("2026-01-20T14:30:00Z").getTime()); // Tue 9:30 AM EST
+  });
+
+  it("returns the naive expiry when the TTL itself is long enough to span past the reopen", () => {
+    const now = etDate("2026-06-12", 14, 0); // Fri 2pm ET
+    const seventyTwoHoursMs = 72 * 60 * 60_000;
+    const expiry = expiresAtRespectingMarketClose(now, seventyTwoHoursMs);
+    // Naive expiry (Mon 2pm ET) is already past Monday's 9:30 AM open — a session has
+    // intervened, so no extension is needed.
+    expect(expiry).toBe(now.getTime() + seventyTwoHoursMs);
   });
 });

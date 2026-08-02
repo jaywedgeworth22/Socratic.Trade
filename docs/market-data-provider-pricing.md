@@ -109,18 +109,36 @@ authority: the same `PROVIDER_QUOTA_AUTHORITY_ID` in two separate SQLite databas
 independent ledgers. Transcript activation remains blocked until every app using the shared FMP
 credential reserves against one transactional authority.
 
-**Known gap, verified 2026-07-10:** `provider-rate-limit.ts`'s `HARD_DEFAULTS` map
-has entries for exactly four providers — `finnhub`, `alpha-vantage`,
-`yahoo-finance`, `twelvedata`. FMP is quota'd (not paced): it sits in
-`RATE_QUOTAS` at 290/min (see the FMP row below), not in `HARD_DEFAULTS`.
-**marketstack, tradier, fred, fintechstudios, and logodev have NO hard-coded
-pacing/concurrency default.** Nothing throttles these five today besides the generic `fetchWithRetry` 429
-backoff. `resolveProviderLimiterConfig` still lets an operator set one ad hoc
-via the generic `PROVIDER_RATE_LIMIT_<NAME>_{PER_MIN,MIN_INTERVAL_MS,CONCURRENCY}`
-env vars (it falls through to env even with no hard default) — but that's an
-unused escape hatch, not a documented knob. Don't describe a pacing behavior for
-these five that isn't there; if one starts 429ing in prod, wiring a
-`HARD_DEFAULTS` entry (or at minimum setting the env override) is the fix, not
+**Known gap, updated 2026-08-02** (the original 2026-07-10 version of this note
+said `HARD_DEFAULTS` had "exactly four" entries — that count went stale as
+more providers were added since and is corrected here): `provider-rate-limit.ts`'s
+`HARD_DEFAULTS` pacing map now covers 13 providers — `finnhub`, `alpha-vantage`,
+`yahoo-finance`, `nasdaq-quote`, `twelvedata`, `mboum-finance`, `yahoo-finance15`,
+`alpha-vantage-rapidapi`, `yh-finance-apidojo`, `real-time-finance-data`,
+`seeking-alpha-rapidapi`, `filingapi`, and (added 2026-08-02) `roic`. The
+SEPARATE `RATE_QUOTAS` windowed-budget map (see the RapidAPI section above for
+why the nine RapidAPI-hosted lanes use their own, third, budget mechanism
+instead) now covers six: `twelvedata`, `tiingo`, `fmp`, and (added 2026-08-02)
+`filingapi` (45/day), `roic` (200/day placeholder), `marketstack` (3/day,
+approximating its 100-req/MONTH free tier). For `filingapi`/`roic` this cap is
+ACTIVE immediately — see trap #12 above: both providers already called
+`admitProviderRequests` believing a quota existed, so defining one here closes
+a real enforcement gap. `marketstack` is different: `history.ts`'s
+`fetchMarketstack` doesn't call `admitProviderRequests` at all (it goes
+through `politeFetchJson`, unrelated to this module) — the new entry defines
+the correct budget shape for whenever that call site is wired, but does not
+by itself throttle marketstack calls today.
+
+**`tradier`, `fred`, `fintechstudios`, and `logodev` still have NEITHER a
+`HARD_DEFAULTS` pacing entry NOR a `RATE_QUOTAS` budget entry.** Nothing
+throttles these four today besides the generic `fetchWithRetry` 429 backoff.
+`resolveProviderLimiterConfig`/`resolveProviderQuota` still let an operator add
+either ad hoc via the generic `PROVIDER_RATE_LIMIT_<NAME>_{PER_MIN,MIN_INTERVAL_MS,CONCURRENCY}`
+/ `PROVIDER_QUOTA_<NAME>_PER_{MIN,HOUR,DAY}` env vars (both fall through to env
+even with no hard default) — but that's an unused escape hatch, not a
+documented knob. Don't describe a pacing/budget behavior for these four that
+isn't there; if one starts 429ing in prod, wiring a `HARD_DEFAULTS`/
+`RATE_QUOTAS` entry (or at minimum setting the env override) is the fix, not
 something already handled.
 
 ### Upgrade cheat-sheet
@@ -132,7 +150,10 @@ something already handled.
 | Twelve Data Grow | `PROVIDER_QUOTA_TWELVEDATA_PER_MIN=377`, remove/raise `_PER_DAY` |
 | Massive → free downgrade (don't) | `MASSIVE_REST_MAX_CALLS_PER_MINUTE=5` |
 | Alpaca SIP feed | `ALPACA_DATA_FEED=sip` |
-| marketstack / tradier / fred / fintechstudios / logodev upgrade | No knob exists yet — set `PROVIDER_RATE_LIMIT_<NAME>_PER_MIN` by hand if 429s show up (see gap note above) |
+| Marketstack Basic ($9.99/mo, 10,000 req/mo) | `PROVIDER_QUOTA_MARKETSTACK_PER_DAY=333` (10,000/30) — raise further on Professional/Business |
+| FilingAPI.dev higher tier (once confirmed) | `PROVIDER_QUOTA_FILINGAPI_PER_DAY=<new cap>` — the built-in 45/day assumes the ~50/day free tier |
+| ROIC.ai confirmed limit / paid tier | `PROVIDER_QUOTA_ROIC_PER_DAY=<confirmed cap>` — the built-in 200/day is a conservative placeholder, not a vendor-confirmed number |
+| tradier / fred / fintechstudios / logodev upgrade | No knob exists yet — set `PROVIDER_RATE_LIMIT_<NAME>_PER_MIN` by hand if 429s show up (see gap note above) |
 
 ## Secondary / fallback sources — keyed, integrated, lower stakes
 
@@ -144,11 +165,13 @@ of raw HTML, not just AI-summarized) plus this repo's own source.
 
 | Provider | Role in this app | Free tier reality | Cheapest paid | Annual option | What paid unlocks (for us) |
 |---|---|---|---|---|---|
-| **Marketstack** (`MARKETSTACK_API_KEY`) | 3rd (last) keyed daily-OHLC history fallback, after Massive and Tradier — `src/lib/history.ts:22,64-65,98-99,232-237` | 100 req/mo, EOD only, 1yr history, HTTPS included (see trap #7 below) | **Basic $9.99/mo** | **$8.99/mo billed yearly** (~10% off) | 10,000 req/mo, IEX intraday data, 10yr history. Professional ($49.99/mo, $43.99/mo annual) adds sub-15-min real-time + commodities; Business ($149.99/mo, $127.99/mo annual) adds financial statements/ratios + 15yr+ history |
+| **Marketstack** (`MARKETSTACK_API_KEY`) | 3rd (last) keyed daily-OHLC history fallback, after Massive and Tradier — `src/lib/history.ts:22,64-65,98-99,232-237` | 100 req/mo, EOD only, 1yr history, HTTPS included (see trap #7 below). `provider-rate-limit.ts`'s `RATE_QUOTAS` now approximates this as a 3/day budget (see trap #12/Known gap above) — the budget shape is defined but not yet wired into `fetchMarketstack`'s call site | **Basic $9.99/mo** | **$8.99/mo billed yearly** (~10% off) | 10,000 req/mo, IEX intraday data, 10yr history. Professional ($49.99/mo, $43.99/mo annual) adds sub-15-min real-time + commodities; Business ($149.99/mo, $127.99/mo annual) adds financial statements/ratios + 15yr+ history |
 | **Tradier** (connected broker account, Settings -> Accounts — NOT a separate API key as of 2026-07-16) | 2nd keyed daily-OHLC history source — code comment at `history.ts` calls it "brokerage-grade, generous rate limits. Best primary source"; credential now resolved from the connected Tradier broker account via `resolveTradierHistoryCredential`/`getActiveConnectedAccountByBroker`, not a stored key | No separate market-data pricing exists — data access is bundled with ANY brokerage account signup, including the **$0/mo Lite** trading plan | n/a — nothing to buy for data alone | n/a | Real-time equities/options/indices/hourly-Greeks — but ONLY on a **production** token from a real (even $0/mo) brokerage account. A **sandbox** token gets 15-min-delayed equities/options, no indices, no Greeks at all |
 | **Logo.dev** (`LOGO_DEV_TOKEN`, `LOGO_DEV_SECRET_KEY`) | Ticker/company logo images — `src/lib/ticker-logos.ts:37-70`, `app/api/logos/ticker/route.ts` | **500,000 req/mo free** (Community), commercial use requires a visible link-back; free-tier cap is a **hard stop** — requests fail once exceeded | **Startup $280/yr** (~$23.33/mo effective; no separate monthly price was found on the live page — may be a JS-toggle we didn't render) | Annual-only pricing as fetched | 1,000,000 req/mo, no attribution requirement. Pro ($1,260/yr) adds the Brand API + self-hosting/caching + priority support; unlike free, paid tiers are **soft-enforced** (service keeps running over cap; Logo.dev reaches out about upgrading rather than cutting access) |
 | **Fintech Studios / PowerIntell** (`FINTECH_STUDIOS_API_KEY`, alias `powerintell`) | Enrichment cascade provider — `src/lib/data-providers.ts:768,2810-2828`, `costTier: "paid"`, base `studio.fintechstudios.com/api/v1` | Free plan exists ($0/mo) on the marketing site | **Ambiguous — see trap #10 below.** Self-serve Pro tiers ($20/mo–$120/mo, 2.5K–15K credits, ~20% off annual) are published, but for the consumer **PowerIntell** app, not confirmed as the same product as the `studio.fintechstudios.com/api/v1` endpoint this app actually calls | Pro tier has an annual ~20% discount | Unclear for our integration — the endpoint we call looks institutional; Enterprise (the tier that would plausibly cover bulk API/data-feed access) is contact-sales-only, no published price |
 | **FRED** (`FRED_API_KEY`) | Macro/econ series (rates, CPI, unemployment) driving the Macro tab + market-regime signal — `src/lib/macro.ts`, `src/lib/macro-history.ts` | **Completely free** — sign up at fred.stlouisfed.org for a key, no plan tiers exist at all | n/a — no paid tier exists | n/a | n/a. Fed's own docs state a 429 rate-limit exists but do **not** publish the exact number (see traps #11-12) — the commonly-cited "120 req/min" is third-party, not FRED's own documentation |
+| **FilingAPI.dev** (`FILINGAPI`, aliases `FILINGAPI_KEY`/`FILING_API_KEY`) | Enrichment cascade, wave-C/scarce — company sector/industry, earnings-calendar `daysToEarnings`, insider-sentiment summary — `src/lib/data-providers.ts:1022-1026` (registration), `:5887-5959` (`FilingApiEnrichmentProvider`) | This app's own code comment states **~50 req/day**; not independently vendor-verified against filingapi.dev's own pricing page this pass. **Now actually enforced at 45/day** via `RATE_QUOTAS` in `provider-rate-limit.ts` (added 2026-08-02; see trap #12) | Not vendor-verified | Not vendor-verified | Not vendor-verified — no filingapi.dev pricing page fetch on record in this doc |
+| **ROIC.ai** (`ROIC_API_KEY`) | Enrichment cascade — company profile (sector/industry/dividend yield/short-%-of-float/price) plus best-effort financial ratios (peRatio/pbRatio/eps/ROE/debtToEquity — the ratios endpoint has historically 404'd on free keys, profile alone still fills the rest) — `src/lib/data-providers.ts:3531-3608` (`RoicAiEnrichmentProvider`) | **No published free-tier request cap found.** This app now applies a conservative **200/day placeholder** via `RATE_QUOTAS` (added 2026-08-02; see trap #12) — tighten with `PROVIDER_QUOTA_ROIC_PER_DAY` once the real vendor limit is confirmed | Not vendor-verified | Not vendor-verified | Not vendor-verified — no roic.ai pricing page fetch on record in this doc |
 
 Sources: marketstack.com/pricing + marketstack.com/faq (fetched 2026-07-10, raw
 HTML), tradier.com/individuals/pricing + docs.tradier.com/docs/market-data +
@@ -195,6 +218,71 @@ also fails here, it's the host, not the tool).
     returned HTTP 403 to a standard WebFetch and to plain `curl` — it only
     succeeded once forced to `--http1.1`. If FRED facts ever need re-verifying,
     expect this friction again; it's the host, not a broken link.
+12. **FilingAPI.dev and ROIC.ai were both wired to call `admitProviderRequests`
+    with NO matching `RATE_QUOTAS` entry — real code, fake enforcement.** Both
+    providers' `enrich()` methods have called `admitProviderRequests("filingapi"
+    | "roic", credKey, misses.length)` since they were added, with a doc comment
+    at the FilingAPI call site claiming "~50/day free tier — admit at most one
+    symbol-bundle per reservation unit." But `RATE_QUOTAS` in
+    `provider-rate-limit.ts` had no entry for either name, so
+    `resolveProviderQuota` returned `undefined` (unlimited) and `admit()` always
+    granted the full request — the comment described a budget that did not
+    exist. Fixed 2026-08-02 (filingapi 45/day, roic 200/day placeholder pending a
+    confirmed vendor cap). **Lesson: a call to `admitProviderRequests`/
+    `withProviderLimit` is not itself proof a provider is throttled — check
+    `RATE_QUOTAS`/`HARD_DEFAULTS` has a matching entry, don't trust the call
+    site's comment alone.**
+
+## RapidAPI-hosted lanes (shared marketplace account, combined daily budget)
+
+Nine enrichment providers ride ONE shared RapidAPI marketplace credential
+(`RAPIDAPI_KEY`) rather than their own vendor key — `alpha-vantage-rapidapi`,
+`fmp-rapidapi`, `insiders-rapidapi`, `mboum-finance`, `real-time-finance-data`,
+`seeking-alpha-rapidapi`, `twelvedata-rapidapi`, `yahoo-finance15`, and
+`yh-finance-apidojo`. Because it's one shared account, the binding quota
+mechanism for these lanes is a SEPARATE module from `provider-rate-limit.ts`'s
+`RATE_QUOTAS` — `src/lib/rapidapi-quota.ts` — which enforces TWO ceilings per
+reservation, whichever is lower: each lane's own persisted daily cap, AND one
+COMBINED daily cap shared across all nine (owner's explicit instruction: "stay
+under the 1000 calls safely like 900 max just to avoid runaway overage though
+it is cheap"). `provider-rate-limit.ts`'s `HARD_DEFAULTS` additionally paces
+most of these lanes in time (burst safety, independent of the daily budget) —
+the same pacing-vs-quota split used everywhere else in this doc.
+
+| Lane | Host | Own daily cap (code default) | Cap env override | `HARD_DEFAULTS` pacing |
+|---|---|---|---|---|
+| **mboum-finance** | mboum-finance.p.rapidapi.com | 16/day (~500/mo ÷ 30) | `PROVIDER_QUOTA_MBOUM_PER_DAY` | 1100ms interval, concurrency 1 |
+| **yahoo-finance15** | yahoo-finance15.p.rapidapi.com | 3/day (Basic ~100/mo ÷ 30 — deliberately this small) | `PROVIDER_QUOTA_YAHOO_FINANCE15_PER_DAY` | 1100ms interval, concurrency 1 |
+| **alpha-vantage-rapidapi** | alpha-vantage.p.rapidapi.com | 500/day (real, published) | `PROVIDER_QUOTA_ALPHA_VANTAGE_RAPIDAPI_PER_DAY` | 5/min, concurrency 1 — a separate credential/quota shape from the native Alpha Vantage 25/day-per-IP pool above; the two never share one budget |
+| **twelvedata-rapidapi** | twelve-data1.p.rapidapi.com | 100/day | `PROVIDER_QUOTA_TWELVEDATA_RAPIDAPI_PER_DAY` | none |
+| **fmp-rapidapi** | financial-modeling-prep.p.rapidapi.com | 50,000/day | `PROVIDER_QUOTA_FMP_RAPIDAPI_PER_DAY` | none |
+| **insiders-rapidapi** | insiders.p.rapidapi.com | 100/day | `PROVIDER_QUOTA_INSIDERS_RAPIDAPI_PER_DAY` | none |
+| **real-time-finance-data** | real-time-finance-data.p.rapidapi.com | 50/day (Basic tier, kept small until confirmed) | `PROVIDER_QUOTA_REAL_TIME_FINANCE_DATA_PER_DAY` | 500ms interval, concurrency 1 |
+| **yh-finance-apidojo** ⚠ | yh-finance.p.rapidapi.com | 16/day (Basic tier, kept small until confirmed) | `PROVIDER_QUOTA_YH_FINANCE_APIDOJO_PER_DAY` | 1100ms interval, concurrency 1 |
+| **seeking-alpha-rapidapi** ⚠ | seeking-alpha.p.rapidapi.com | 20/day (Basic tier, kept small until confirmed) | `PROVIDER_QUOTA_SEEKING_ALPHA_RAPIDAPI_PER_DAY` | 1100ms interval, concurrency 1 |
+
+Combined ceiling across all nine: **900/day** by default
+(`PROVIDER_QUOTA_RAPIDAPI_COMBINED_PER_DAY`). Both counters persist via
+`getInternalSetting`/`setInternalSetting` (`rapidapi_combined_call_budget`
+row) so a mid-day Coolify redeploy can't forget the day's usage and quietly
+re-grant an already-burned budget. Numbers per `src/lib/rapidapi-quota.ts`'s
+`DEFAULT_PER_PROVIDER_DAILY_CAP`/`DEFAULT_COMBINED_DAILY_CAP` — none of the
+nine RapidAPI hub prices/tiers were independently re-verified against the live
+RapidAPI marketplace pages for this doc pass; treat the caps above as this
+app's own conservative code defaults, not vendor-confirmed limits.
+
+**⚠ Candidates for removal (delisted marketplace hubs):** `yh-finance-apidojo`
+and `seeking-alpha-rapidapi` both carry an in-code comment ("Hub listing
+currently API-not-found (delisted); host still answers 403 if unsubscribed" —
+`data-providers.ts` right above each provider class), matching this effort's
+recon that both lanes' connections-health check currently reports `ok:false`
+(not independently re-checked for this doc pass — see the code comment for the
+part confirmed by reading source). A 403-not-404 means the
+host itself still answers, so an already-subscribed key might still work, but
+the marketplace listing being gone means a NEW subscription can't be created
+if the current one ever lapses. Per this lane's scope, flagging only — the
+provider classes and their `rapidapi-quota.ts`/`HARD_DEFAULTS` entries are
+left in place; removing the dead code is a separate decision for the owner.
 
 ## Keyless & broker-bundled sources
 

@@ -12,6 +12,7 @@ import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
 import { fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
+import { expiresAtRespectingMarketClose } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { fetchRobinhoodHistoricals } from "./robinhood";
@@ -118,7 +119,7 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
     const bars = await source.fetch();
     if (bars && bars.length >= 2) {
       const cacheKey = source.scope === "private" ? privateCacheKey : source.scope === "pool" ? poolCacheKey : sharedCacheKey;
-      cache.set(cacheKey, { expiresAt: now + historyTtlMs(), bars });
+      cache.set(cacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars });
       if (source.scope === "shared") emitHistoryDemandFilled(symbol, now);
       return bars;
     }
