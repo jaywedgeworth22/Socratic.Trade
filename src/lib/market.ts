@@ -7,6 +7,7 @@ import type { SymbolWebSignal } from "./web-sources";
 import { clearFundHoldingsCache, fetchBlackRockHoldingSymbols, isBlackRockHoldingUniverse } from "./fund-holdings";
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
 import { INDEX_UNIVERSES, isIndexMemberSymbol } from "./index-universes";
+import { expiresAtRespectingMarketClose } from "./market-hours";
 import { normalizeSymbol } from "./money";
 import {
   DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,
@@ -899,7 +900,7 @@ async function fetchNasdaqScreener(
     const payload = await response.json();
     const rows = Array.isArray(payload?.data?.table?.rows) ? (payload.data.table.rows as RawNasdaqRow[]) : [];
     const asOf = typeof payload?.data?.asof === "string" ? payload.data.asof : undefined;
-    screenerCache.set(cacheKey, { rows, asOf, expiresAt: now + ttlMs });
+    screenerCache.set(cacheKey, { rows, asOf, expiresAt: expiresAtRespectingMarketClose(new Date(now), ttlMs) });
     return { rows, asOf, cached: false };
   } finally {
     clearTimeout(timeout);

@@ -1,3 +1,4 @@
+import { previousTradingDayStart } from "./market-hours";
 import type {
   EquityPosition,
   IndexUniverse,
@@ -6,8 +7,6 @@ import type {
   ScoringWeights,
   UniverseFloor
 } from "./types";
-
-const MAX_INTERACTIVE_SEED_AGE_MS = 24 * 60 * 60_000;
 
 /**
  * Coalesce identical interactive refreshes. A page mount and a quick manual retry
@@ -99,8 +98,12 @@ export function resetScanSingleFlightForTests(): void {
 }
 
 /**
- * Read the full per-symbol quote map from a persisted strategy-run audit without
- * trusting an older compact prompt snapshot or a malformed audit payload.
+ * Read the full per-symbol quote map from a persisted market-scan-bearing audit without
+ * trusting an older compact prompt snapshot or a malformed audit payload. Accepts either
+ * payload shape in the wild: a `strategy_run` audit nests it at `.marketScan`; the scheduled/
+ * interactive `market_scan` audit kind nests it at `.scan` (see market-scan-freshness.ts and
+ * app/api/scan/route.ts) — both are the same MarketScan on disk, just written by different
+ * callers, so a caller comparing freshness across both kinds doesn't need to know which one won.
  */
 export function marketScanQuotesFromAudit(
   payload: unknown,
@@ -108,11 +111,18 @@ export function marketScanQuotesFromAudit(
   now = Date.now()
 ): Record<string, MarketQuoteSummary> | undefined {
   const timestamp = Date.parse(createdAt ?? "");
-  if (!Number.isFinite(timestamp) || timestamp > now + 5 * 60_000 || now - timestamp > MAX_INTERACTIVE_SEED_AGE_MS) {
+  // Calendar-aware, not a flat 24h window: a seed is acceptable back through the START of the
+  // most recent trading day (same rule as isStaleBaseline in app/console/lib/derive.ts), so
+  // Friday's run stays a valid seed all weekend and expires only once Tuesday's session starts —
+  // a flat 24h cutoff would reject Friday's data by Monday afternoon even though nothing has
+  // traded since.
+  const earliestAcceptable = previousTradingDayStart(new Date(now)).getTime();
+  if (!Number.isFinite(timestamp) || timestamp > now + 5 * 60_000 || timestamp < earliestAcceptable) {
     return undefined;
   }
   if (!payload || typeof payload !== "object") return undefined;
-  const marketScan = (payload as { marketScan?: unknown }).marketScan;
+  const marketScan = (payload as { marketScan?: unknown; scan?: unknown }).marketScan
+    ?? (payload as { scan?: unknown }).scan;
   if (!marketScan || typeof marketScan !== "object") return undefined;
   const quotes = (marketScan as { quotesBySymbol?: unknown }).quotesBySymbol;
   if (!quotes || typeof quotes !== "object" || Array.isArray(quotes)) return undefined;

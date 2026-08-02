@@ -6,7 +6,7 @@ import { parseCompanyFacts, secXbrlEnrichmentEnabled } from "../src/lib/data-pro
 import { parseTickerCikMap } from "../src/lib/web-sources/sec8k";
 
 /** Build a raw companyfacts blob from explicit us-gaap concept arrays (for debt-aggregation edge cases). */
-function rawFacts(usGaap: Record<string, Array<{ end: string; val: number; form?: string; filed?: string; unit?: string }>>) {
+function rawFacts(usGaap: Record<string, Array<{ start?: string; end: string; val: number; form?: string; filed?: string; unit?: string }>>) {
   const gaap: Record<string, unknown> = {};
   for (const [concept, entries] of Object.entries(usGaap)) {
     const unit = concept.startsWith("EarningsPerShare") ? "USD/shares" : "USD";
@@ -321,6 +321,70 @@ describe("parseCompanyFacts — debt aggregation edge cases", () => {
       ]
     }));
     expect(r.debtToEquity).toBe(3.0); // 900M/300M from the amended filing, not 600M/300M
+  });
+});
+
+describe("parseCompanyFacts — revenueGrowth (annual 10-K YoY)", () => {
+  it("computes YoY growth from two full-year 10-K Revenues entries", () => {
+    const r = parseCompanyFacts(rawFacts({
+      Revenues: [
+        { start: "2022-01-01", end: "2022-12-31", val: 100_000_000, form: "10-K" },
+        { start: "2023-01-01", end: "2023-12-31", val: 125_000_000, form: "10-K" }
+      ]
+    }));
+    expect(r.revenueGrowth).toBe(25); // (125-100)/100 * 100
+  });
+
+  it("falls back to RevenueFromContractWithCustomerExcludingAssessedTax when Revenues is absent", () => {
+    const r = parseCompanyFacts(rawFacts({
+      RevenueFromContractWithCustomerExcludingAssessedTax: [
+        { start: "2022-01-01", end: "2022-12-31", val: 200_000_000, form: "10-K" },
+        { start: "2023-01-01", end: "2023-12-31", val: 180_000_000, form: "10-K" }
+      ]
+    }));
+    expect(r.revenueGrowth).toBe(-10); // (180-200)/200 * 100
+  });
+
+  it("excludes quarterly/YTD durations tagged under the same concept (only true ~365-day spans count)", () => {
+    const r = parseCompanyFacts(rawFacts({
+      Revenues: [
+        { start: "2022-01-01", end: "2022-12-31", val: 100_000_000, form: "10-K" },
+        // A 10-Q quarter tagged under the same concept — must NOT be mistaken for the next fiscal year.
+        { start: "2023-10-01", end: "2023-12-31", val: 40_000_000, form: "10-Q" },
+        { start: "2023-01-01", end: "2023-12-31", val: 130_000_000, form: "10-K" }
+      ]
+    }));
+    expect(r.revenueGrowth).toBe(30); // (130-100)/100 * 100, the 10-Q quarter is ignored
+  });
+
+  it("omits revenueGrowth when only one fiscal year of data exists", () => {
+    const r = parseCompanyFacts(rawFacts({
+      Revenues: [{ start: "2023-01-01", end: "2023-12-31", val: 100_000_000, form: "10-K" }]
+    }));
+    expect(r.revenueGrowth).toBeUndefined();
+  });
+
+  it("omits revenueGrowth when the prior fiscal year revenue is zero or negative", () => {
+    const r = parseCompanyFacts(rawFacts({
+      Revenues: [
+        { start: "2022-01-01", end: "2022-12-31", val: 0, form: "10-K" },
+        { start: "2023-01-01", end: "2023-12-31", val: 100_000_000, form: "10-K" }
+      ]
+    }));
+    expect(r.revenueGrowth).toBeUndefined();
+  });
+
+  it("combines with debtToEquity when both are computable", () => {
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 300_000_000, form: "10-K" }],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }],
+      Revenues: [
+        { start: "2022-01-01", end: "2022-12-31", val: 100_000_000, form: "10-K" },
+        { start: "2023-01-01", end: "2023-12-31", val: 110_000_000, form: "10-K" }
+      ]
+    }));
+    expect(r.debtToEquity).toBe(2.0);
+    expect(r.revenueGrowth).toBe(10);
   });
 });
 

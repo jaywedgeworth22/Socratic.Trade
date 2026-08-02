@@ -190,6 +190,126 @@ function getObservedHoliday(year: number, month: number, day: number): Date {
   return date;
 }
 
+// ── Weekend/holiday-aware cache-expiry helper ───────────────────────────────────────────────
+// Distinct from previousTradingDayStart/nextTradingDayStart above: those intentionally compare
+// by the CALLER's local calendar day (display-only staleness hints — see their doc comments).
+// Cache TTL math needs exact ET session boundaries, so everything below works in
+// America/New_York wall-clock time throughout, and — to build a UTC instant back out of an ET
+// wall-clock time — uses the same DST-safe single offset-correction pass already established by
+// millisUntilNextAlphaVantageDailyReset (src/lib/alpha-vantage-key-pool.ts): treat the target
+// wall time as if it were UTC, read back what ET wall-clock that approximate instant actually
+// represents via Intl.DateTimeFormat, then correct by the observed offset. This is exact except
+// in the vanishingly rare case where the target time itself falls inside a spring-forward
+// "skipped hour" gap, which 9:30 AM ET never does.
+
+interface EtDateParts {
+  year: number;
+  month: number; // 1-12
+  day: number;
+}
+
+function etDateParts(date: Date): EtDateParts {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(date).map((p) => [p.type, p.value]));
+  return { year: parseInt(parts.year, 10), month: parseInt(parts.month, 10), day: parseInt(parts.day, 10) };
+}
+
+/** Adds `days` to an ET calendar date. Pure calendar-day bookkeeping (UTC arithmetic on Y/M/D
+ *  labels, not a timezone conversion) — mirrors adjacentTradingDayStart's day-stepping above. */
+function addEtCalendarDays(parts: EtDateParts, days: number): EtDateParts {
+  const d = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+}
+
+/** True when the given ET calendar date is a US equity trading day (weekday, not a holiday). */
+function isEtCalendarTradingDay(parts: EtDateParts): boolean {
+  const dow = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+  if (dow === 0 || dow === 6) return false;
+  const key = `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+  return !getMarketHolidays(parts.year).has(key);
+}
+
+/** UTC epoch ms for `hour:minute:00` America/New_York wall clock on the given ET calendar date. */
+function etWallClockToUtcMs(parts: EtDateParts, hour: number, minute: number): number {
+  const approxUtcMs = Date.UTC(parts.year, parts.month - 1, parts.day, hour, minute, 0);
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+  const p = Object.fromEntries(fmt.formatToParts(new Date(approxUtcMs)).map((x) => [x.type, x.value]));
+  const approxAsUtcMs = Date.UTC(
+    parseInt(p.year, 10),
+    parseInt(p.month, 10) - 1,
+    parseInt(p.day, 10),
+    parseInt(p.hour === "24" ? "0" : p.hour, 10),
+    parseInt(p.minute, 10),
+    parseInt(p.second, 10)
+  );
+  const offsetMs = approxAsUtcMs - approxUtcMs;
+  return approxUtcMs - offsetMs;
+}
+
+const MARKET_OPEN_HOUR_ET = 9;
+const MARKET_OPEN_MINUTE_ET = 30;
+
+/** The next US equity market-open instant strictly after `nowMs`, walking forward through ET
+ *  calendar days. Bounded to 10 iterations, same bound as adjacentTradingDayStart above — a real
+ *  holiday cluster never gets close to that, so a bug here can't spin into an infinite loop. */
+function nextMarketOpenStrictlyAfterMs(nowMs: number): number {
+  let parts = etDateParts(new Date(nowMs));
+  for (let i = 0; i < 10; i++) {
+    if (isEtCalendarTradingDay(parts)) {
+      const openMs = etWallClockToUtcMs(parts, MARKET_OPEN_HOUR_ET, MARKET_OPEN_MINUTE_ET);
+      if (openMs > nowMs) return openMs;
+    }
+    parts = addEtCalendarDays(parts, 1);
+  }
+  // Unreachable in practice (getMarketHolidays never clusters 10 consecutive non-trading days) —
+  // fall back to whatever calendar day the loop ended on rather than looping forever.
+  return etWallClockToUtcMs(parts, MARKET_OPEN_HOUR_ET, MARKET_OPEN_MINUTE_ET);
+}
+
+/** True when `nowMs` is already inside, or about to enter, a weekend/holiday closed stretch —
+ *  i.e. today's ET calendar day, or tomorrow's, is NOT a trading day. This is what gates the TTL
+ *  extension in expiresAtRespectingMarketClose to genuine multi-day closures: a routine overnight
+ *  gap (e.g. Tuesday evening -> Wednesday morning) does NOT qualify, since both today and tomorrow
+ *  are trading days. */
+function isWeekendOrHolidayClosureAhead(nowMs: number): boolean {
+  const today = etDateParts(new Date(nowMs));
+  if (!isEtCalendarTradingDay(today)) return true;
+  return !isEtCalendarTradingDay(addEtCalendarDays(today, 1));
+}
+
+/**
+ * Extends a naive `now + baseTtlMs` cache expiry across a weekend/holiday closed stretch, so data
+ * written before a weekend (or holiday) isn't needlessly re-fetched the moment its TTL lapses —
+ * the market hasn't traded since and won't until the next open, so a refetch just burns provider
+ * quota for identical data (LANE A: "stop weekend quota burn; keep Friday data served until
+ * Monday"). Ordinary overnight gaps (e.g. Tuesday evening -> Wednesday morning) are NOT extended —
+ * only a genuine multi-day closure qualifies. If baseTtlMs is already long enough that a real
+ * session would open before the naive expiry — either because it's a routine same-week gap, or
+ * because the TTL itself spans past the weekend into Monday — the naive expiry wins: extension
+ * only ever pushes expiry LATER than naive, never earlier.
+ */
+export function expiresAtRespectingMarketClose(now: Date, baseTtlMs: number): number {
+  const nowMs = now.getTime();
+  const naiveExpiryMs = nowMs + baseTtlMs;
+  if (!isWeekendOrHolidayClosureAhead(nowMs)) return naiveExpiryMs;
+  const nextOpenMs = nextMarketOpenStrictlyAfterMs(nowMs);
+  return naiveExpiryMs < nextOpenMs ? nextOpenMs : naiveExpiryMs;
+}
+
 function getGoodFriday(year: number): Date {
   const a = year % 19;
   const b = Math.floor(year / 100);

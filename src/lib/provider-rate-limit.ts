@@ -11,6 +11,7 @@
 // so the cascade's chunking logic can stay untouched.
 
 import { createDurableMap, hasHydratedNamespace, resetDurableStateCacheForTests } from "./durable-state";
+import { usageMonitorKnobNumber } from "./usage-monitor-knobs";
 
 export interface ProviderLimiterClock {
   now(): number;
@@ -68,7 +69,12 @@ const HARD_DEFAULTS: Record<string, { perMin?: number; minIntervalMs?: number; c
   "yh-finance-apidojo": { minIntervalMs: 1100, concurrency: 1 },
   "real-time-finance-data": { minIntervalMs: 500, concurrency: 1 },
   "seeking-alpha-rapidapi": { minIntervalMs: 1100, concurrency: 1 },
-  filingapi: { minIntervalMs: 400, concurrency: 1 }
+  filingapi: { minIntervalMs: 400, concurrency: 1 },
+  // No published rate limit, but it's the same shape of scarce paid-tier provider as filingapi
+  // above (small free daily budget, no burst tolerance documented) — pace it identically rather
+  // than leaving it fully unthrottled. The RATE_QUOTAS entry below is the real daily-budget cap;
+  // this is just burst safety.
+  roic: { minIntervalMs: 400, concurrency: 1 }
 };
 
 function envKeyFor(provider: string): string {
@@ -83,10 +89,12 @@ function finiteEnvNumber(name: string): number | undefined {
 }
 
 /**
- * Effective limiter config for a provider: env overrides win over hard defaults, and
- * `_MIN_INTERVAL_MS` wins over `_PER_MIN` when both env vars are set for the same
- * provider. Returns `undefined` when neither env nor a hard default applies — meaning
- * unlimited (callers must treat that as a passthrough, not a zero-wait limiter).
+ * Effective limiter config for a provider: `process.env` overrides win over the Usage Monitor's
+ * subscription-derived knob (see usage-monitor-knobs.ts — a synced "what plan am I actually on"
+ * value), which in turn wins over the hard default, and `_MIN_INTERVAL_MS` wins over `_PER_MIN`
+ * within EACH of those two tiers when both are set for the same provider. Returns `undefined` when
+ * none of env/UM/hard-default applies — meaning unlimited (callers must treat that as a
+ * passthrough, not a zero-wait limiter).
  */
 export function resolveProviderLimiterConfig(provider: string): ProviderLimiterConfig | undefined {
   const hard = HARD_DEFAULTS[provider];
@@ -96,14 +104,30 @@ export function resolveProviderLimiterConfig(provider: string): ProviderLimiterC
   const envMinInterval = finiteEnvNumber(`PROVIDER_RATE_LIMIT_${key}_MIN_INTERVAL_MS`);
   const envConcurrency = finiteEnvNumber(`PROVIDER_RATE_LIMIT_${key}_CONCURRENCY`);
 
+  // UM knob values share the exact PROVIDER_RATE_LIMIT_<NAME>_* names an operator would set in
+  // env (see the monitor's seeded alphavantage/finnhub knobEnv), so the same key strings resolve
+  // both tiers — only the source differs.
+  const umPerMin = usageMonitorKnobNumber(`PROVIDER_RATE_LIMIT_${key}_PER_MIN`);
+  const umMinInterval = usageMonitorKnobNumber(`PROVIDER_RATE_LIMIT_${key}_MIN_INTERVAL_MS`);
+  const umConcurrency = usageMonitorKnobNumber(`PROVIDER_RATE_LIMIT_${key}_CONCURRENCY`);
+
   const minIntervalMs =
     envMinInterval !== undefined && envMinInterval >= 0
       ? envMinInterval
       : envPerMin !== undefined && envPerMin > 0
         ? Math.ceil(60_000 / envPerMin)
-        : hard?.minIntervalMs ?? (hard?.perMin ? Math.ceil(60_000 / hard.perMin) : undefined);
+        : umMinInterval !== undefined && umMinInterval >= 0
+          ? umMinInterval
+          : umPerMin !== undefined && umPerMin > 0
+            ? Math.ceil(60_000 / umPerMin)
+            : hard?.minIntervalMs ?? (hard?.perMin ? Math.ceil(60_000 / hard.perMin) : undefined);
 
-  const concurrency = envConcurrency !== undefined && envConcurrency > 0 ? envConcurrency : hard?.concurrency;
+  const concurrency =
+    envConcurrency !== undefined && envConcurrency > 0
+      ? envConcurrency
+      : umConcurrency !== undefined && umConcurrency > 0
+        ? umConcurrency
+        : hard?.concurrency;
 
   if (minIntervalMs === undefined && concurrency === undefined) return undefined;
   return { minIntervalMs: minIntervalMs ?? 0, concurrency: concurrency ?? Infinity };
@@ -261,12 +285,33 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
   // the request count via callsPerSymbol("fmp", …), not the symbol count. NO day window by default
   // (no daily cap on Starter); PROVIDER_QUOTA_FMP_PER_DAY opts one in (e.g. 240 for the free 250/day
   // tier) via the generic env path in resolveProviderQuota.
-  fmp: [{ maxRequests: 290, windowMs: MINUTE }]
+  fmp: [{ maxRequests: 290, windowMs: MINUTE }],
+  // FilingAPI.dev free tier is documented as ~50 req/day (see data-providers.ts's
+  // FilingApiEnrichmentProvider doc comment); 45 leaves headroom. The provider already calls
+  // admitProviderRequests("filingapi", ...) expecting this budget to exist — with no entry here,
+  // resolveProviderQuota("filingapi") returned undefined (unlimited), so that call site's "~50/day
+  // free tier — admit at most one symbol-bundle per reservation unit" comment enforced nothing.
+  filingapi: [{ maxRequests: 45, windowMs: DAY }],
+  // ROIC.ai has no published free-tier request cap; 200/day is a conservative placeholder so the
+  // provider (which already calls admitProviderRequests("roic", ...), same as filingapi) gets SOME
+  // enforcement instead of silently unlimited. Tighten with PROVIDER_QUOTA_ROIC_PER_DAY once the
+  // real vendor limit is known.
+  roic: [{ maxRequests: 200, windowMs: DAY }],
+  // Marketstack's free tier is 100 req/MONTH, not a daily cap — this module only models rolling
+  // minute/hour/day windows, so approximate the monthly budget as a conservative perDay window
+  // (100/30 ≈ 3) rather than adding a MONTH window shape used nowhere else. NOTE: unlike
+  // filingapi/roic above, history.ts's fetchMarketstack does not yet call admitProviderRequests
+  // (it goes through politeFetchJson, which knows nothing about this module) — this entry defines
+  // the budget so the window math and any future call site are correct on day one, but wiring the
+  // actual call site is separate work.
+  marketstack: [{ maxRequests: 3, windowMs: DAY }]
 };
 
 /** Env-overridable effective windows for a provider. `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`
- *  overrides (or adds) the corresponding window; a value <= 0 removes that window. Returns the merged
- *  window list, or `undefined` for an unlimited provider. */
+ *  overrides (or adds) the corresponding window; a value <= 0 removes that window. `process.env` wins
+ *  over the Usage Monitor's subscription-derived knob (usage-monitor-knobs.ts, same env-var names),
+ *  which wins over the built-in RATE_QUOTAS default. Returns the merged window list, or `undefined`
+ *  for an unlimited provider. */
 // Back-compat: providers whose per-minute knob had a different name before the unified quota. The
 // new PROVIDER_QUOTA_<NAME>_PER_MIN wins; the legacy name is honored only when the new one is unset,
 // so an operator who set the old var to match a paid/retuned plan doesn't silently fall back to the
@@ -281,11 +326,12 @@ export function resolveProviderQuota(provider: string): RateWindow[] | undefined
   const legacyPerMinEnv = LEGACY_PER_MIN_ENV[provider];
   const perMin =
     finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_MIN`) ??
-    (legacyPerMinEnv ? finiteEnvNumber(legacyPerMinEnv) : undefined);
+    (legacyPerMinEnv ? finiteEnvNumber(legacyPerMinEnv) : undefined) ??
+    usageMonitorKnobNumber(`PROVIDER_QUOTA_${key}_PER_MIN`);
   const overrides: Array<[number, number]> = [
     [perMin ?? NaN, MINUTE],
-    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_HOUR`) ?? NaN, HOUR],
-    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_DAY`) ?? NaN, DAY]
+    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_HOUR`) ?? usageMonitorKnobNumber(`PROVIDER_QUOTA_${key}_PER_HOUR`) ?? NaN, HOUR],
+    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_DAY`) ?? usageMonitorKnobNumber(`PROVIDER_QUOTA_${key}_PER_DAY`) ?? NaN, DAY]
   ];
   for (const [max, windowMs] of overrides) {
     if (Number.isNaN(max)) continue;

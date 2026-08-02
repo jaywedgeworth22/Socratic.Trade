@@ -47,14 +47,18 @@ export interface MacroSourcing {
   fred: boolean;
   /** The VIX value is a live reading (full FRED fetch OR the key-free Yahoo fallback). */
   vix: boolean;
+  /** The 3M/2Y/10Y Treasury yields (and the curves derived from them) are a live reading from the
+   *  key-free Treasury.gov fallback — set even without a FRED key, mirroring how `vix` works. */
+  treasury: boolean;
 }
 
 export function macroSourcing(board: Board): MacroSourcing {
   const anyLive = board.macro.asOf !== "unavailable";
-  // `fredSourced` ships with the same build as this UI; tolerate its absence
-  // (older payload) by falling back to the legacy asOf heuristic instead of
-  // blanking data that may be real.
-  return { fred: board.macro.fredSourced ?? anyLive, vix: anyLive };
+  // `fredSourced`/`treasurySourced` ship with the same build as this UI; tolerate their absence
+  // (older payload) by falling back to the legacy asOf heuristic instead of blanking data that may
+  // be real. `treasurySourced` defaults to false (not the asOf heuristic) since older payloads never
+  // set it — asOf being live doesn't imply the keyless Treasury fallback actually ran.
+  return { fred: board.macro.fredSourced ?? anyLive, vix: anyLive, treasury: board.macro.treasurySourced ?? false };
 }
 
 // ── Parsing / formatting ─────────────────────────────────────────────────────
@@ -88,6 +92,15 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
   const mn = (s?: string): number | undefined => (sourcing.fred ? numFrom(s) : undefined);
   const dn = (v?: number): number | undefined => (sourcing.fred ? v : undefined);
 
+  // The 3M/2Y/10Y Treasury yields (and the two curves computed purely from them) have a SECOND,
+  // key-free source (Treasury.gov) beside FRED — gate those specific tiles on either, so the
+  // keyless fallback actually lights them up instead of showing EM_DASH next to real data.
+  // `curvePolicy` (10Y − Fed funds) stays FRED-only below: Fed funds has no keyless source.
+  const fredOrTreasury = sourcing.fred || sourcing.treasury;
+  const mvRate = (s?: string): string => (fredOrTreasury && s && s.length > 0 ? s : EM_DASH);
+  const dnRate = (v?: number): number | undefined => (fredOrTreasury ? v : undefined);
+  const rateAsOf = fredOrTreasury ? macro.asOf : undefined;
+
   const cpi = mn(macro.cpiInflation);
   const corePce = mn(macro.corePCE);
   const breakeven = mn(macro.inflationExpectation10y);
@@ -101,8 +114,8 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
   const claims = mn(macro.initialClaims); // thousands
   const starts = mn(macro.housingStarts); // millions
 
-  const curve3m10y = dn(derived.curve3m10y);
-  const curve2s10s = dn(derived.curve2s10s);
+  const curve3m10y = dnRate(derived.curve3m10y);
+  const curve2s10s = dnRate(derived.curve2s10s);
   const curvePolicy = dn(derived.yieldCurveSpread);
   const real10Y = dn(derived.real10Y);
   const realFF = dn(derived.realFedFunds);
@@ -138,23 +151,23 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
     {
       key: "dgs3mo",
       label: "3M T-bill",
-      value: mv(macro.dgs3moTreasury),
+      value: mvRate(macro.dgs3moTreasury),
       what: "Three-month Treasury yield — the near risk-free return on cash and the short leg of the Fed's preferred recession curve. Higher raises the bar every risky asset must clear.",
-      asOf: mAsOf
+      asOf: rateAsOf
     },
     {
       key: "dgs2",
       label: "2Y Treasury",
-      value: mv(macro.dgs2Treasury),
+      value: mvRate(macro.dgs2Treasury),
       what: "Two-year Treasury yield — the bond market's bet on where Fed policy goes over the next couple of years.",
-      asOf: mAsOf
+      asOf: rateAsOf
     },
     {
       key: "dgs10",
       label: "10Y Treasury",
-      value: mv(macro.dgs10Treasury),
+      value: mvRate(macro.dgs10Treasury),
       what: "Ten-year Treasury yield — the long-term discount rate on future profits. When it rises, expensive growth stocks feel it most.",
-      asOf: mAsOf
+      asOf: rateAsOf
     },
     {
       key: "curve3m10y",
@@ -163,7 +176,7 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
       tone: typeof curve3m10y === "number" ? (curve3m10y < 0 ? "neg" : "pos") : undefined,
       what: "10Y yield minus 3-month yield, in percentage points — the Fed's preferred recession curve. Below zero = inverted.",
       reading: curveReading(curve3m10y),
-      asOf: mAsOf
+      asOf: rateAsOf
     },
     {
       key: "curve2s10s",
@@ -172,7 +185,7 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
       tone: typeof curve2s10s === "number" ? (curve2s10s < 0 ? "neg" : "pos") : undefined,
       what: "10Y yield minus 2Y yield — the canonical “2s10s” curve traders quote. Below zero = inverted, a recession signal with a long lead.",
       reading: curveReading(curve2s10s),
-      asOf: mAsOf
+      asOf: rateAsOf
     },
     {
       key: "curvePolicy",
@@ -585,7 +598,7 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
     {
       id: "rates",
       title: "Rates & yield curve",
-      desc: "Treasury yields and curve spreads from FRED. An inverted curve (short rates above long rates) is the classic recession warning and feeds the regime label.",
+      desc: "Treasury yields and curve spreads from FRED (3M/2Y/10Y and their curves also have a key-free Treasury.gov fallback). An inverted curve (short rates above long rates) is the classic recession warning and feeds the regime label.",
       tiles: rates
     },
     {

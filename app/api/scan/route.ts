@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { audit, getPolicy, latestAuditByKind } from "@/lib/db";
+import { audit, getPolicy, latestAuditByKind, newerAuditEntry } from "@/lib/db";
 import { dynamicIndexUniversesForPolicy } from "@/lib/index-universes";
 import { mergeGroupedBarData, mergeQuoteData, scanMarket } from "@/lib/market";
 import { allowedSymbolsForPolicy } from "@/lib/policy";
@@ -32,10 +32,16 @@ export async function GET(request: Request) {
     const limited = enforceRateLimit(userId, "scan", RATE_LIMITS.scan);
     if (limited) return limited;
     const policy = getPolicy(userId);
-    const latestAccountAudit = policy.connectedAccountId
-      ? latestAuditByKind("strategy_run", userId, policy.connectedAccountId)
-      : undefined;
-    const latestGlobalAudit = latestAuditByKind("strategy_run", userId);
+    // Seed from whichever kind is newer at each scope — a scheduled market_scan_freshness
+    // audit (weekend/off-hours) can be fresher than the last strategy_run, and vice versa.
+    const latestAccountAudit = newerAuditEntry(
+      policy.connectedAccountId ? latestAuditByKind("strategy_run", userId, policy.connectedAccountId) : undefined,
+      policy.connectedAccountId ? latestAuditByKind("market_scan", userId, policy.connectedAccountId) : undefined
+    );
+    const latestGlobalAudit = newerAuditEntry(
+      latestAuditByKind("strategy_run", userId),
+      latestAuditByKind("market_scan", userId)
+    );
     const accountSeed = marketScanQuotesFromAudit(latestAccountAudit?.payload, latestAccountAudit?.createdAt);
     const globalSeed = marketScanQuotesFromAudit(latestGlobalAudit?.payload, latestGlobalAudit?.createdAt);
     const seedEnrichment = (accountSeed || globalSeed)
