@@ -29,6 +29,7 @@ import { resetApiCircuitBreaker } from "../src/lib/api-circuit-breaker";
 import { getServiceHealthLog } from "../src/lib/db-health";
 import { arbitrateFieldObservation } from "../src/lib/evidence-facts";
 import { deleteUserApiKey, migrateLocalEnvCredentials, upsertUserApiKey, LOCAL_USER } from "../src/lib/db-api-keys";
+import { __resetAlphaVantageDailyBudgetForTests, __resetKeyPoolRegistryForTests } from "../src/lib/alpha-vantage-key-pool";
 
 // Each test file gets its own isolated SQLite db so db module singleton state
 // (user API keys, consent records) does not leak between test files.
@@ -1161,13 +1162,32 @@ describe("FMP request quota — defer / refund / breaker / cache-hit / per-crede
 });
 
 describe("Alpha Vantage Warning Detection", () => {
+  // The EARNINGS_CALENDAR fallback (below) reserves from the SAME persisted daily budget/key
+  // pool as NEWS_SENTIMENT — reset both before every test in this describe block so usage never
+  // silently accumulates across tests sharing this file's one temp DB (mirrors the pattern the
+  // reset helpers themselves document — no test here previously needed this because AV had only
+  // ONE call shape; now there are two sharing one budget).
+  beforeEach(() => {
+    __resetAlphaVantageDailyBudgetForTests();
+    __resetKeyPoolRegistryForTests();
+  });
+
   it("throws error and does not cache when Alpha Vantage returns HTTP 200 with Note", async () => {
     const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
 
-    let fetchCount = 0;
-    vi.stubGlobal("fetch", async () => {
-      fetchCount++;
+    let newsSentimentCount = 0;
+    let earningsCalendarCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("function=EARNINGS_CALENDAR")) {
+        earningsCalendarCount++;
+        // Header-only CSV ("no known upcoming earnings this pull") — a benign, valid response so
+        // this test stays focused on the NEWS_SENTIMENT Note/warning path; the calendar's OWN
+        // warning-detection path has a dedicated test below.
+        return new Response("symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n");
+      }
+      newsSentimentCount++;
       return new Response(JSON.stringify({
         Note: "Thank you for using Alpha Vantage! Standard rate limit is 25 requests per day..."
       }));
@@ -1176,20 +1196,31 @@ describe("Alpha Vantage Warning Detection", () => {
     const provider = new AlphaVantageEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({});
-    expect(fetchCount).toBe(1);
+    expect(newsSentimentCount).toBe(1);
+    // First enrich() call also triggers the ONE market-wide EARNINGS_CALENDAR pull (cold cache).
+    expect(earningsCalendarCount).toBe(1);
 
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({});
-    expect(fetchCount).toBe(2);
+    expect(newsSentimentCount).toBe(2); // Note never caches — NEWS_SENTIMENT retried every call
+    // Calendar cache is still warm (positive 24h TTL on the valid header-only pull above) — no
+    // second market-wide call this run.
+    expect(earningsCalendarCount).toBe(1);
   });
 
   it("caches normally on Alpha Vantage when response has news feed", async () => {
     const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
 
-    let fetchCount = 0;
-    vi.stubGlobal("fetch", async () => {
-      fetchCount++;
+    let newsSentimentCount = 0;
+    let earningsCalendarCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("function=EARNINGS_CALENDAR")) {
+        earningsCalendarCount++;
+        return new Response("symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n");
+      }
+      newsSentimentCount++;
       return new Response(JSON.stringify({
         feed: [
           {
@@ -1203,11 +1234,13 @@ describe("Alpha Vantage Warning Detection", () => {
     const provider = new AlphaVantageEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({ headlines: ["AAPL is doing great"], sentiment: 70 });
-    expect(fetchCount).toBe(1);
+    expect(newsSentimentCount).toBe(1);
+    expect(earningsCalendarCount).toBe(1); // cold calendar cache on the first call
 
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({ headlines: ["AAPL is doing great"], sentiment: 70 });
-    expect(fetchCount).toBe(1);
+    expect(newsSentimentCount).toBe(1); // NEWS_SENTIMENT cache hit — no re-fetch
+    expect(earningsCalendarCount).toBe(1); // calendar cache still warm — no re-fetch
   });
 
   // Composite review (e): Alpha Vantage's quota/error text has been observed echoing the
@@ -1226,6 +1259,9 @@ describe("Alpha Vantage Warning Detection", () => {
     });
 
     const provider = new AlphaVantageEnrichmentProvider(secretKey);
+    // This single call also triggers the cold-cache EARNINGS_CALENDAR pull (same mock, same
+    // Note-shaped response) — both call sites independently scrub the key before logging, which
+    // this test verifies across EVERY row it produced, not just the NEWS_SENTIMENT one.
     const res = await provider.enrich(["AAPL"]);
     expect(res.AAPL).toEqual({});
 
@@ -1237,6 +1273,187 @@ describe("Alpha Vantage Warning Detection", () => {
       expect(text).not.toContain(secretKey);
     }
     expect(errorTexts.some((t) => t.includes("apikey=***"))).toBe(true);
+  });
+
+  describe("suppliesFields", () => {
+    it("declares exactly the fields it can supply (sentiment/headlines/daysToEarnings)", async () => {
+      const { AlphaVantageEnrichmentProvider } = await import("../src/lib/data-providers");
+      const provider = new AlphaVantageEnrichmentProvider("test-key");
+      expect(provider.suppliesFields).toEqual(["sentiment", "headlines", "daysToEarnings"]);
+    });
+  });
+
+  describe("parseAlphaVantageEarningsCalendar / alphaVantageDaysToEarnings — EARNINGS_CALENDAR fallback", () => {
+    // Real header + rows from a live 2026-08-02 pull of
+    // https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&horizon=3month&apikey=demo
+    // (no `symbol` param — AV's documented market-wide default). BCC's quoted, comma-containing
+    // company name is a genuine field from that response, exercising the CSV quote-handling.
+    const REAL_CSV_SAMPLE =
+      "symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n" +
+      "ABTC,AMERICAN BITCOIN CORPORATION,2026-08-03,2026-06-30,,USD,pre-market\n" +
+      "ADEA,ADEIA INCORPORATED,2026-08-03,2026-06-30,0.22,USD,post-market\n" +
+      "BCC,\"BOISE CASCADE, L.L.C.\",2026-08-03,2026-06-30,1.23,USD,post-market\n";
+
+    it("parses symbol -> reportDate from a real market-wide CSV pull, handling a quoted comma in a company name", async () => {
+      const { parseAlphaVantageEarningsCalendar } = await import("../src/lib/data-providers");
+      const bySymbol = parseAlphaVantageEarningsCalendar(REAL_CSV_SAMPLE);
+      expect(bySymbol.size).toBe(3);
+      expect(bySymbol.get("ABTC")).toBe(Date.parse("2026-08-03T00:00:00Z"));
+      expect(bySymbol.get("ADEA")).toBe(Date.parse("2026-08-03T00:00:00Z"));
+      // BCC's row survives the embedded comma inside its quoted company name — if the parser
+      // naively split on every comma, this row's columns would misalign and reportDate would
+      // parse as garbage (or the row would be dropped) instead of landing on the correct date.
+      expect(bySymbol.get("BCC")).toBe(Date.parse("2026-08-03T00:00:00Z"));
+    });
+
+    it("keeps the EARLIEST reportDate when a symbol appears more than once", async () => {
+      const { parseAlphaVantageEarningsCalendar } = await import("../src/lib/data-providers");
+      const csv =
+        "symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n" +
+        "AAPL,APPLE INC,2026-11-01,2026-09-30,1.50,USD,post-market\n" +
+        "AAPL,APPLE INC,2026-08-05,2026-06-30,1.40,USD,post-market\n";
+      const bySymbol = parseAlphaVantageEarningsCalendar(csv);
+      expect(bySymbol.get("AAPL")).toBe(Date.parse("2026-08-05T00:00:00Z"));
+    });
+
+    it("returns an empty map (never throws) for a header-only CSV", async () => {
+      const { parseAlphaVantageEarningsCalendar } = await import("../src/lib/data-providers");
+      const bySymbol = parseAlphaVantageEarningsCalendar(
+        "symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n"
+      );
+      expect(bySymbol.size).toBe(0);
+    });
+
+    it("returns an empty map (never guesses) for a non-CSV / quota-message body", async () => {
+      const { parseAlphaVantageEarningsCalendar } = await import("../src/lib/data-providers");
+      const bySymbol = parseAlphaVantageEarningsCalendar(
+        JSON.stringify({ Information: "Thank you for using Alpha Vantage! This is a premium endpoint." })
+      );
+      expect(bySymbol.size).toBe(0);
+    });
+
+    it("looksLikeAlphaVantageEarningsCalendarCsv distinguishes the documented CSV header from anything else", async () => {
+      const { looksLikeAlphaVantageEarningsCalendarCsv } = await import("../src/lib/data-providers");
+      expect(looksLikeAlphaVantageEarningsCalendarCsv(REAL_CSV_SAMPLE)).toBe(true);
+      expect(looksLikeAlphaVantageEarningsCalendarCsv("{\"Note\":\"rate limited\"}")).toBe(false);
+      expect(looksLikeAlphaVantageEarningsCalendarCsv("")).toBe(false);
+    });
+
+    it("alphaVantageDaysToEarnings computes whole UTC calendar days, clamped and never fabricated for a past date", async () => {
+      const { alphaVantageDaysToEarnings } = await import("../src/lib/data-providers");
+      const now = Date.parse("2026-08-02T15:30:00Z"); // mid-day, not midnight — must not skew day math
+      expect(alphaVantageDaysToEarnings(Date.parse("2026-08-12T00:00:00Z"), now)).toBe(10);
+      expect(alphaVantageDaysToEarnings(Date.parse("2026-08-02T00:00:00Z"), now)).toBe(0); // today
+      expect(alphaVantageDaysToEarnings(Date.parse("2026-07-30T00:00:00Z"), now)).toBeUndefined(); // past
+    });
+  });
+
+  describe("EARNINGS_CALENDAR fallback — enrich() integration", () => {
+    /** UTC calendar-date string exactly `daysFromToday` days from "now"'s UTC midnight — matches
+     *  alphaVantageDaysToEarnings' own truncation, so the expected day count is exact and
+     *  deterministic regardless of what wall-clock time the test happens to run at. */
+    function utcDateString(daysFromToday: number): string {
+      const truncatedToday = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+      return new Date(truncatedToday + daysFromToday * 86_400_000).toISOString().slice(0, 10);
+    }
+
+    it("fetches the market-wide calendar ONCE (no `symbol=` param) and fills daysToEarnings for a miss, alongside NEWS_SENTIMENT", async () => {
+      const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      const reportDate = utcDateString(10);
+      let calendarUrl: string | undefined;
+      vi.stubGlobal("fetch", async (url: string) => {
+        const u = String(url);
+        if (u.includes("function=EARNINGS_CALENDAR")) {
+          calendarUrl = u;
+          return new Response(
+            "symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n" +
+              `AAPL,APPLE INC,${reportDate},2026-06-30,1.50,USD,post-market\n`
+          );
+        }
+        return new Response(JSON.stringify({ feed: [] })); // valid, empty NEWS_SENTIMENT feed
+      });
+
+      const provider = new AlphaVantageEnrichmentProvider("test-key");
+      const res = await provider.enrich(["AAPL"]);
+      expect(res.AAPL?.daysToEarnings).toBe(10);
+      expect(calendarUrl).toBeDefined();
+      expect(calendarUrl).toContain("function=EARNINGS_CALENDAR");
+      expect(calendarUrl).toContain("horizon=3month");
+      expect(calendarUrl).not.toContain("symbol=");
+    });
+
+    it("dispatches only ONE calendar call for a multi-symbol batch, filling every matched symbol from it", async () => {
+      const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      const aaplDate = utcDateString(3);
+      const msftDate = utcDateString(7);
+      let calendarCalls = 0;
+      vi.stubGlobal("fetch", async (url: string) => {
+        const u = String(url);
+        if (u.includes("function=EARNINGS_CALENDAR")) {
+          calendarCalls++;
+          return new Response(
+            "symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n" +
+              `AAPL,APPLE INC,${aaplDate},2026-06-30,1.50,USD,post-market\n` +
+              `MSFT,MICROSOFT CORP,${msftDate},2026-06-30,2.10,USD,post-market\n`
+          );
+        }
+        return new Response(JSON.stringify({ feed: [] }));
+      });
+
+      const provider = new AlphaVantageEnrichmentProvider("test-key");
+      const res = await provider.enrich(["AAPL", "MSFT"]);
+      expect(res.AAPL?.daysToEarnings).toBe(3);
+      expect(res.MSFT?.daysToEarnings).toBe(7);
+      expect(calendarCalls).toBe(1); // ONE market-wide pull, not one per symbol
+    });
+
+    it("skips the calendar fetch entirely when the free-wave coverage hint already filled daysToEarnings", async () => {
+      const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      let calendarCalls = 0;
+      vi.stubGlobal("fetch", async (url: string) => {
+        const u = String(url);
+        if (u.includes("function=EARNINGS_CALENDAR")) {
+          calendarCalls++;
+          throw new Error("must not be called — daysToEarnings was already covered upstream");
+        }
+        return new Response(JSON.stringify({ feed: [] }));
+      });
+
+      const provider = new AlphaVantageEnrichmentProvider("test-key");
+      const context: EnrichmentContext = { coveredFields: { AAPL: new Set(["daysToEarnings"]) } };
+      const res = await provider.enrich(["AAPL"], context);
+      expect(res.AAPL?.daysToEarnings).toBeUndefined(); // AV added nothing — the hint source owns it
+      expect(calendarCalls).toBe(0);
+    });
+
+    it("a malformed/unusable EARNINGS_CALENDAR response never fabricates daysToEarnings and never crashes enrich()", async () => {
+      const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      vi.stubGlobal("fetch", async (url: string) => {
+        const u = String(url);
+        if (u.includes("function=EARNINGS_CALENDAR")) {
+          // Not the documented CSV shape at all (e.g. an unrelated JSON error page).
+          return new Response(JSON.stringify({ error: "unexpected upstream failure" }));
+        }
+        return new Response(JSON.stringify({
+          feed: [{ title: "AAPL headline", ticker_sentiment: [{ ticker: "AAPL", ticker_sentiment_score: "0.1" }] }]
+        }));
+      });
+
+      const provider = new AlphaVantageEnrichmentProvider("test-key");
+      const res = await provider.enrich(["AAPL"]);
+      expect(res.AAPL?.daysToEarnings).toBeUndefined();
+      // NEWS_SENTIMENT's own fields still came through — one field's failure doesn't blank the rest.
+      expect(res.AAPL?.sentiment).toBeDefined();
+      expect(res.AAPL?.headlines).toEqual(["AAPL headline"]);
+    });
   });
 
   describe("Fintech Studios / PowerIntell", () => {

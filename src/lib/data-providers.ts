@@ -1012,11 +1012,19 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
   if (alpacaData.apiKey) providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId), alpacaData.source));
-  // AV supplies ONLY NEWS_SENTIMENT (see AlphaVantageEnrichmentProvider.enrich). When Alpaca news
-  // is already configured (the availability check above — apiKey presence), it fully covers that
-  // field and AV would add nothing but burn its 25/day free cap. Skip registering AV in that case
-  // so it stops appearing in `source` attribution (which is derived from providers that actually
-  // ran) and stops producing a daily quota alert for a field nothing consumes.
+  // AV supplies NEWS_SENTIMENT (sentiment/headlines) plus, as of 2026-08-02, a market-wide
+  // EARNINGS_CALENDAR fallback for daysToEarnings (see AlphaVantageEnrichmentProvider.enrich).
+  // When Alpaca news is already configured (the availability check above — apiKey presence), it
+  // fully covers sentiment/headlines but NOT daysToEarnings — so this dedup, unchanged from
+  // before that addition, still means a scan with Alpaca news configured never gets AV's
+  // daysToEarnings fallback either. Left AS-IS for this pass: whether that trade is still correct
+  // is a registration-order/dedup call for the integration pass to make with full cross-provider
+  // context (e.g. whether a free calendar source, such as the Nasdaq calendar provider from the
+  // same round, already covers daysToEarnings for free) — see the round-2 rollout note.
+  //
+  // Skip registering AV in the current condition so it stops appearing in `source` attribution
+  // (which is derived from providers that actually ran) and stops producing a daily quota alert
+  // for fields nothing consumes.
   if (alphaVantage.keys.length > 0 && !alpacaData.apiKey) {
     providers.push(withHealthLane(new AlphaVantageEnrichmentProvider(alphaVantage.keys, alphaVantage.source, userId), alphaVantage.source));
   } else if (alphaVantage.keys.length > 0) {
@@ -3726,10 +3734,118 @@ export class RoicAiEnrichmentProvider implements MarketEnrichmentProvider {
 
 // ── Alpha Vantage provider ───────────────────────────────────────────────────
 
+// ── EARNINGS_CALENDAR fallback for `daysToEarnings` (corp-actions reallocation, 2026-08-02) ──
+// Live-verified against https://www.alphavantage.co/documentation/#earnings-calendar AND a real
+// call (`apikey=demo`) to the actual endpoint the same day: EARNINGS_CALENDAR is NOT premium (no
+// premium-label on its doc heading — unlike TIME_SERIES_DAILY_ADJUSTED/TIME_SERIES_INTRADAY,
+// which ARE premium-gated and stay out of scope; see docs/market-data-provider-pricing.md). It
+// returns CSV (never JSON) with header `symbol,name,reportDate,fiscalDateEnding,estimate,
+// currency,timeOfTheDay`. Critically, calling it WITHOUT a `symbol` param (AV's documented
+// default) returns the ENTIRE market's upcoming-earnings list in ONE call — a real 2026-08-02
+// pull with `horizon=3month` returned ~290KB / thousands of rows for a bare `demo` key — so this
+// fetches the whole market ONCE and matches symbols against it client-side, instead of spending
+// one of AV's ~23-25/day budget PER SYMBOL the way NEWS_SENTIMENT does. That keeps this feature's
+// incremental cost at ~1 call/day (see EARNINGS_CALENDAR_TTL_MS below), reserved out of the SAME
+// daily budget/key pool as NEWS_SENTIMENT via tryReserveAlphaVantageCalls/the pool (never a
+// second, uncounted quota).
+const EARNINGS_CALENDAR_TTL_MS = 24 * 60 * 60_000; // one authoritative market-wide pull/day is plenty
+interface AlphaVantageEarningsCalendarCache {
+  expiresAt: number;
+  bySymbol: Map<string, number>; // symbol -> earliest reportDate (epoch ms, UTC midnight)
+}
+let avEarningsCalendarCache: AlphaVantageEarningsCalendarCache | null = null;
+
+/** True when `text` starts with the documented EARNINGS_CALENDAR CSV header — the cheap way to
+ *  tell a real data pull apart from AV's quota/error text, which is NOT valid CSV in this shape
+ *  (confirmed live 2026-08-02: a demo-key call throttled by AV's own anti-abuse behavior returned
+ *  a non-CSV body for this same endpoint). Never guess-parse an unrecognized body. */
+export function looksLikeAlphaVantageEarningsCalendarCsv(text: string): boolean {
+  const firstLine = text.split(/\r?\n/, 1)[0]?.trim().toLowerCase() ?? "";
+  return firstLine.startsWith("symbol,name,reportdate");
+}
+
+/**
+ * Minimal CSV line splitter handling double-quoted fields with embedded commas — AV's company
+ * names sometimes have them (e.g. `"BOISE CASCADE, L.L.C."`, confirmed in a live 2026-08-02 pull)
+ * — and doubled-quote escapes (`""`). AV's calendar rows are always single physical lines; no
+ * embedded newlines inside a quoted field were observed.
+ */
+function splitAlphaVantageCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false;
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      fields.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  fields.push(cur);
+  return fields;
+}
+
+/**
+ * Parses AV's market-wide EARNINGS_CALENDAR CSV into symbol -> earliest reportDate (epoch ms).
+ * Returns an EMPTY map (never throws, never fabricates) for anything that doesn't match the
+ * documented header shape. When a symbol appears more than once (e.g. the horizon window spans
+ * two upcoming quarters), keeps the EARLIEST reportDate.
+ */
+export function parseAlphaVantageEarningsCalendar(csvText: string): Map<string, number> {
+  const bySymbol = new Map<string, number>();
+  if (!csvText || !looksLikeAlphaVantageEarningsCalendarCsv(csvText)) return bySymbol;
+  const lines = csvText.split(/\r?\n/).filter((l) => l.length > 0);
+  if (lines.length < 2) return bySymbol; // header only / empty
+  const header = splitAlphaVantageCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const symbolIdx = header.indexOf("symbol");
+  const dateIdx = header.indexOf("reportdate");
+  if (symbolIdx === -1 || dateIdx === -1) return bySymbol; // unexpected shape — never guess
+  for (let i = 1; i < lines.length; i++) {
+    const cols = splitAlphaVantageCsvLine(lines[i]);
+    const symbol = cols[symbolIdx]?.trim().toUpperCase();
+    const dateStr = cols[dateIdx]?.trim();
+    if (!symbol || !dateStr) continue;
+    const ts = Date.parse(`${dateStr}T00:00:00Z`);
+    if (!Number.isFinite(ts)) continue;
+    const existing = bySymbol.get(symbol);
+    if (existing === undefined || ts < existing) bySymbol.set(symbol, ts);
+  }
+  return bySymbol;
+}
+
+/** Whole calendar days from `now` to `reportDateMs` (UTC midnight-to-midnight), clamped so a
+ *  same-day report reads as 0 and a genuinely past date (stale calendar entry) returns undefined
+ *  — never a fabricated/placeholder value. Mirrors parseDaysToEarnings' day-granularity
+ *  convention (see its doc comment above) so the two sources feeding this SAME SymbolEnrichment
+ *  field can't disagree by an off-by-one rounding rule depending on which one wins first-wins. */
+export function alphaVantageDaysToEarnings(reportDateMs: number, now: number = Date.now()): number | undefined {
+  const nowMidnightUtc = Math.floor(now / 86_400_000) * 86_400_000;
+  const days = Math.round((reportDateMs - nowMidnightUtc) / 86_400_000);
+  return days >= 0 ? days : undefined;
+}
+
 export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "alpha-vantage";
   readonly costTier = "paid" as const;
   readonly configured = true;
+  // NEWS_SENTIMENT (sentiment/headlines) plus a market-wide EARNINGS_CALENDAR fallback for
+  // daysToEarnings (see enrich()/ensureEarningsCalendar below). Declaring this lets the cascade's
+  // paid (Wave B) coverage-gap targeting dispatch this scarce provider only for symbols still
+  // missing at least one of these three fields after the free wave runs (CascadingEnrichmentProvider.
+  // enrich's paidIndexes.map — see EnrichmentContext's doc comment) — the same mechanism the
+  // RapidAPI failover tier (AlphaVantageRapidApiEnrichmentProvider below) already relies on,
+  // reused here rather than inventing a second gating path.
+  readonly suppliesFields = ["sentiment", "headlines", "daysToEarnings"] as const;
   private readonly base = "https://www.alphavantage.co/query";
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;
@@ -3816,7 +3932,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
     });
   }
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
@@ -4025,7 +4141,160 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
         })
       );
     }
+
+    // ── EARNINGS_CALENDAR fallback for daysToEarnings ───────────────────────────────────────
+    // Independent of the per-symbol NEWS_SENTIMENT loop above: this is ONE market-wide call (not
+    // one per miss), backed by a shared module-level cache, and only attempted when at least one
+    // symbol in THIS batch still lacks daysToEarnings after everything above (a free upstream's
+    // coverage hint, or this run's own cache/sentiment fetch, which never sets it) — see
+    // ensureEarningsCalendar's own TTL/budget gate for why repeated enrich() calls don't
+    // re-dispatch it every time.
+    if (this.needsEarningsCalendar(normalized, context, result)) {
+      await this.ensureEarningsCalendar(now);
+      this.applyEarningsCalendar(normalized, context, now, result);
+    }
+
     return result;
+  }
+
+  /** True when at least one symbol in `symbols` is missing `daysToEarnings` AND a free upstream
+   *  hasn't already covered it (context.coveredFields) — the gate for whether it's worth even
+   *  checking/refreshing the shared calendar cache this call. */
+  private needsEarningsCalendar(
+    symbols: string[],
+    context: EnrichmentContext | undefined,
+    result: Record<string, SymbolEnrichment>
+  ): boolean {
+    return symbols.some((symbol) => this.symbolNeedsDaysToEarnings(symbol, context, result));
+  }
+
+  private symbolNeedsDaysToEarnings(
+    symbol: string,
+    context: EnrichmentContext | undefined,
+    result: Record<string, SymbolEnrichment>
+  ): boolean {
+    if (result[symbol]?.daysToEarnings !== undefined) return false;
+    if (context?.coveredFields?.[symbol]?.has("daysToEarnings")) return false;
+    return true;
+  }
+
+  /** Fills `daysToEarnings` from the shared market-wide calendar cache (never re-fetches — see
+   *  ensureEarningsCalendar) for every symbol that still needs it, without disturbing any other
+   *  field already present on `result[symbol]` (e.g. a NEWS_SENTIMENT cache hit's headlines). */
+  private applyEarningsCalendar(
+    symbols: string[],
+    context: EnrichmentContext | undefined,
+    now: number,
+    result: Record<string, SymbolEnrichment>
+  ): void {
+    const bySymbol = avEarningsCalendarCache?.bySymbol;
+    if (!bySymbol || bySymbol.size === 0) return;
+    for (const symbol of symbols) {
+      if (!this.symbolNeedsDaysToEarnings(symbol, context, result)) continue;
+      const reportDateMs = bySymbol.get(symbol);
+      if (reportDateMs === undefined) continue;
+      const daysToEarnings = alphaVantageDaysToEarnings(reportDateMs, now);
+      if (daysToEarnings === undefined) continue; // stale/past calendar entry — never fabricated
+      result[symbol] = { ...(result[symbol] ?? {}), daysToEarnings };
+    }
+  }
+
+  /**
+   * Refreshes the shared market-wide earnings calendar at most once per EARNINGS_CALENDAR_TTL_MS
+   * on success, or providerNegativeTtlMs() after a failed/unusable attempt (see the module doc
+   * comment above the cache declaration) — so a scan that calls enrich() many times per minute
+   * never dispatches more than ~1 of these per day. Reserves exactly 1 call from the SAME daily
+   * budget/key pool NEWS_SENTIMENT draws from (tryReserveAlphaVantageCalls/this.pool — never a
+   * second, uncounted quota), and shares the same genuine-daily-cap detection/rotation and
+   * secret-scrub-before-logging behavior as the NEWS_SENTIMENT path above, since both dispatch
+   * against the same AV key(s).
+   */
+  private async ensureEarningsCalendar(now: number): Promise<void> {
+    if (avEarningsCalendarCache && avEarningsCalendarCache.expiresAt > now) return;
+
+    if (this.pool.allExhausted(now)) {
+      this.logAllExhaustedOnce();
+      return;
+    }
+    const admitted = tryReserveAlphaVantageCalls(1, now);
+    if (admitted <= 0) {
+      this.logBudgetExhaustedOnce();
+      return;
+    }
+
+    let dispatchedToNetwork = false;
+    let dispatchKey: string | undefined;
+    let keyIndex = 0;
+    try {
+      const body = await withProviderLimit(this.name, async () => {
+        if (this.pool.allExhausted(Date.now())) {
+          this.logAllExhaustedOnce();
+          throw new Error("Alpha Vantage: key pool exhausted");
+        }
+        const current = this.pool.currentKey(Date.now());
+        if (!current) throw new Error("Alpha Vantage: key pool exhausted");
+        dispatchKey = current.key;
+        keyIndex = current.index;
+        // No `symbol=` param — the market-wide default (see the module doc comment above) so
+        // this ONE call covers every symbol the cascade could ever ask about, not just this batch.
+        const url = `${this.base}?function=EARNINGS_CALENDAR&horizon=3month&apikey=${dispatchKey}`;
+        const controller = new AbortController();
+        // Larger timeout than the per-symbol NEWS_SENTIMENT call (6s) — this is a market-wide
+        // pull (~hundreds of KB, live-verified 2026-08-02), not a single-symbol news feed.
+        const timeout = setTimeout(() => controller.abort(), 12_000);
+        try {
+          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, {
+            service: this.name,
+            keySource: this.keySource,
+            userId: this.userId,
+            deferSuccessLog: true,
+            apiKey: dispatchKey,
+            retries: 0,
+            durableAttempt: {
+              onDispatch: () => { dispatchedToNetwork = true; },
+              onResponse: (r) => {
+                recordProviderCall(this.name, { ok: r.ok, keySource: this.keySource, userId: this.userId });
+              },
+              onTransportError: () => {
+                recordProviderCall(this.name, { ok: false, keySource: this.keySource, userId: this.userId });
+              },
+            }
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return await response.text();
+        } finally {
+          clearTimeout(timeout);
+        }
+      });
+
+      if (looksLikeAlphaVantageEarningsCalendarCsv(body)) {
+        avEarningsCalendarCache = { expiresAt: now + EARNINGS_CALENDAR_TTL_MS, bySymbol: parseAlphaVantageEarningsCalendar(body) };
+        logApiHealth({ service: this.name, ok: true, errorText: "EARNINGS_CALENDAR refresh", keySource: this.keySource, userId: this.userId });
+      } else {
+        // Not the documented CSV shape — a quota/warning message or an unrecognized format
+        // change. Never guess-parse it. Keep whatever calendar data we already had (a transient
+        // rejection shouldn't discard yesterday's still-useful snapshot) and back off before
+        // retrying.
+        const msg = scrubProviderErrorTextForPool(body.slice(0, 500), this.pool.allKeys());
+        if (dispatchKey && isAlphaVantageDailyCapMessage(body)) {
+          this.pool.markExhausted(dispatchKey);
+        }
+        const keyTag = this.pool.size() > 1 ? ` [key ${keyIndex + 1}/${this.pool.size()}]` : "";
+        logApiHealth({
+          service: this.name,
+          ok: false,
+          errorText: `Alpha Vantage EARNINGS_CALENDAR warning/error${keyTag}: ${msg}`,
+          keySource: this.keySource,
+          userId: this.userId
+        });
+        avEarningsCalendarCache = { expiresAt: now + providerNegativeTtlMs(), bySymbol: avEarningsCalendarCache?.bySymbol ?? new Map() };
+      }
+    } catch {
+      // Same refund contract as the NEWS_SENTIMENT loop above: only give the reservation back
+      // when the call never actually reached the network.
+      if (!dispatchedToNetwork) refundAlphaVantageCalls(1);
+      avEarningsCalendarCache = { expiresAt: now + providerNegativeTtlMs(), bySymbol: avEarningsCalendarCache?.bySymbol ?? new Map() };
+    }
   }
 }
 
@@ -4692,6 +4961,7 @@ export function scoreHeadlines(headlines: string[]): number {
 export function clearEnrichmentCache(): void {
   cache.clear();
   yfCreds = null;
+  avEarningsCalendarCache = null;
 }
 
 export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvider {
