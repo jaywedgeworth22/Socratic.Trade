@@ -22,12 +22,13 @@ an Accounts section (switch broker account via `account.activate`, sign-out link
 login), per-proposal realtime approve/reject feedback (tapped button spins; card follows its queued
 command through queued/running/succeeded/failed instead of failures hiding in the Command Log), and the
 delete-account panel is collapsed behind a neutral link so it stops mimicking error banners. tsc clean,
-mobile test file 10/10, lint 0 errors. Landing to main via `scripts/land.sh`.
+mobile test file 10/10, lint 0 errors. Landed as #2351 (`44069368`).
 Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
 
 | | |
 |---|---|
-| `main` | `c117afb9` — includes the full 30-finding Codex remediation (#2341, AG-reviewed) and the npm `allowScripts` fix (#2345) |
+| `main` | `44069368` — Codex remediation (#2341), npm `allowScripts` fixes (#2345, #2349), mobile PWA feedback round (#2351) |
+| In flight (MONET) | PR #2350 `monet/connections-route-skeleton` — /console/connections route-local skeleton (Codex finding 22 residual; usage half was #2341). All 5 checks green, marked ready + squash auto-merge armed (AG pickup); branch updated with main 2026-08-02 to satisfy the strict up-to-date rule — lands on the re-run's green. Rollout: `docs/rollouts/2026-08-02-connections-route-skeleton.md` |
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
@@ -66,13 +67,8 @@ Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
    gone). #2345's lockfile regen also fixed a real silent bug: the old lockfile pinned the
    v2.3.0 commit while package.json said v2.4.x, so `npm ci` was silently shipping the old
    shared package. Verified 2026-08-02: plain `npm ci` = exit 0, 575 packages, clean shell.
-2. **RESOLVED 2026-08-02 (PR #2345) — npm 11.16 `EALLOWSCRIPTS` on the shared git dep.**
-   `npm install`/`npm ci` failed preparing `congress-trading-shared` and left `node_modules`
-   EMPTY (easily misread as janitor reaping); the interim workaround was `npx -y npm@10 ci`.
-   #2345 restored the `allowScripts` entry for the current tag and regenerated the lockfile
-   for shared v2.4.1. If plain `npm ci` regresses again after a future shared-package bump,
-   check that `package.json`'s `allowScripts` key names the CURRENT `#vX.Y.Z` spec — a
-   stale tag reproduces the identical failure.
+   (An earlier copy of this blocker blamed a stale `allowScripts` tag — corrected above;
+   the union merge briefly duplicated both versions here, de-spliced 2026-08-02.)
 
 3. **Two provider lanes are degraded and need an owner decision, not an agent fix.**
    FMP's plan probe returns 403 (subscription state) and Massive is history-capped to the
@@ -87,8 +83,6 @@ Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
 - (Retracted: the `schedulerLease.owner` "residual" flagged earlier does not exist — the
   landed code already strips the pid for unauthenticated callers; prod serves the bare
   instance uuid. Observation was made against the pre-deploy payload.)
-- Small follow-up in flight: fold `schedulerLease.owner` behind the ops token on
-  `/api/health` (the one residual of finding 27's minimization).
 - Owner decisions pending: FMP subscription, Massive plan tier; and whether hook-secret
   re-sync should be added to the Coolify app-recreate recipe (see the 2026-08-02 rollout
   note — if recreation regenerated the secret, this failure recurs on the next recreate).
