@@ -110,9 +110,55 @@ fi
 # --- phase 2: Infisical secrets are in the environment ---
 MODE="${DB_BOOTSTRAP:-fresh}"
 
+# Production exit-code contract (docs/rollouts/2026-08-02-exit0-outage-audit.md):
+# NO production code path may exit 0 spontaneously. The Coolify app runs under
+# restart=unless-stopped, which restarts ANY spontaneous exit regardless of
+# code -- but an exit 0 is always a lie in a server that must run forever: it
+# corrupts forensics and, under any future on-failure-style policy, becomes a
+# silent full outage. This supervisor gives every app exit a logged reason and
+# translates an unexplained clean exit into a non-zero code:
+#   40      = app exited 0 spontaneously (no stop signal forwarded) - always a bug
+#   41      = R2 free-tier kill-switch (src/lib/r2-usage.ts); the restart
+#             re-boots WITHOUT litestream via the marker branch below
+#   42      = R2 replication resume; the restart re-enables litestream
+#   43      = in-app exit-guard re-tagged a spontaneous process.exit(0)
+#   130/143 = graceful shutdown after a forwarded SIGINT/SIGTERM (docker stop)
+# The app is invoked as node_modules/.bin/next directly, NEVER via `npm run`:
+# in-container npm dies on SIGTERM without forwarding it to the server (proven
+# in the 2026-08-02 sandbox repro), so deploys hard-killed next-server and the
+# recorded exit codes were garbage.
+GOT_STOP_SIGNAL=""
+run_app() {
+  "$@" &
+  APP_PID=$!
+  trap 'GOT_STOP_SIGNAL=SIGTERM; log "forwarding SIGTERM to app (pid $APP_PID)"; kill -TERM "$APP_PID" 2>/dev/null || true' TERM
+  trap 'GOT_STOP_SIGNAL=SIGINT; log "forwarding SIGINT to app (pid $APP_PID)"; kill -INT "$APP_PID" 2>/dev/null || true' INT
+  set +e
+  wait "$APP_PID"
+  code=$?
+  # A trap interrupts wait with 128+N while the child is still alive (or an
+  # unreaped zombie); wait again until the real status is reaped.
+  while kill -0 "$APP_PID" 2>/dev/null; do
+    wait "$APP_PID"
+    code=$?
+  done
+  set -e
+  if [ "$code" -eq 0 ] && [ -z "$GOT_STOP_SIGNAL" ]; then
+    log "FATAL: app exited 0 spontaneously (no stop signal was forwarded)."
+    log "A clean exit is never valid in production - translating to exit 40 so every restart policy restarts us."
+    exit 40
+  fi
+  if [ -n "$GOT_STOP_SIGNAL" ]; then
+    log "app exited with code $code after forwarded $GOT_STOP_SIGNAL - propagating"
+  else
+    log "app exited with code $code - propagating"
+  fi
+  exit "$code"
+}
+
 if [ "$MODE" != "live" ]; then
   log "DB_BOOTSTRAP=$MODE - starting WITHOUT restore/replication (empty-DB safe mode)"
-  exec npm run start
+  run_app node_modules/.bin/next start
 fi
 
 if [ ! -f "$MARKER" ]; then
@@ -140,7 +186,7 @@ R2_DISABLE_MARKER="${R2_USAGE_DISABLE_MARKER:-$DATA_DIR/.litestream-r2-disabled}
 if [ -f "$R2_DISABLE_MARKER" ]; then
   log "R2 kill-switch marker present ($R2_DISABLE_MARKER) - starting WITHOUT litestream replication"
   log "marker contents: $(cat "$R2_DISABLE_MARKER" 2>/dev/null | head -c 500)"
-  exec npm run start
+  run_app node_modules/.bin/next start
 fi
 
-exec litestream replicate -config "$CONFIG" -exec "npm run start"
+run_app litestream replicate -config "$CONFIG" -exec "node_modules/.bin/next start"

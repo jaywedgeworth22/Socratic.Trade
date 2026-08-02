@@ -16,6 +16,22 @@ Last updated: 2026-08-02.
 
 ## Where things stand
 
+**2026-08-02 — Exit-0 outage root-caused + exit-code hardening (MONET, branch
+`monet/exit0-outage-audit`).** The 15:29Z "clean exit 0, stayed down" outage was an
+**unpaired docker-API stop**, with the 0 fabricated by a pid-1 signal-re-raise bug in the
+infisical wrappers plus in-container npm swallowing SIGTERM (sandbox-reproduced in the
+real image; every deploy had been hard-killing next-server). Fixed: wrappers exit 128+N,
+boot script now supervises the app (spontaneous clean exit → 40, every exit logged,
+`node_modules/.bin/next start` direct — npm banned from the exec chain), new
+production-gated `src/lib/exit-guard.ts` re-tags spontaneous in-app exit(0) → 43 with
+call-site receipts. Restart policy is already `unless-stopped` — evaluated, **no flip**
+(it restarts any spontaneous exit; the outage class is API stops, now covered by rule +
+honest codes). `docker events` forensics verified broken (~256-event ring ≈ minutes on
+this box) — journalctl is the durable source. Contract + traps codified in AGENTS.md
+("Production exit-code contract"). Rollout:
+`docs/rollouts/2026-08-02-exit0-outage-audit.md`. Next prod stop/deploy should log
+`app exited with code 143 after forwarded SIGTERM` as live confirmation.
+
 **2026-08-02 — 5-Year Local Flat-File Price History Priority (ANTIGRAVITY).** Added `fetchLocalFlatFileHistory(symbol)` as the #1 primary tier in `src/lib/history.ts` (`fetchDailyOHLC`) and `fetchGroupedBarsLocal(date)` in `src/lib/market-signals/massive.ts`. Any pre-hoarded 5-year Massive flat files (`data/history-5y/`, `data/massive-history/`) are read directly from disk without hitting external REST APIs, providing instant zero-cost history for backtests and Congress.Trade EOD price feeds (`/api/market/prices/[symbol]`, `/api/market/spx`). Rollout: `docs/rollouts/2026-08-02-local-flatfile-history-priority.md`.
 
 **2026-08-02 — Mobile PWA owner-feedback round (Monet, cloud session).** Branch
@@ -41,7 +57,7 @@ Rollout: `docs/rollouts/2026-08-02-data-provider-hardening.md`.
 | | |
 |---|---|
 | `main` | `44069368` — Codex remediation (#2341), npm `allowScripts` fixes (#2345, #2349), mobile PWA feedback round (#2351) |
-| In flight (MONET) | `monet/broker-mutation-mutex-pr2` — §7 slice 3 PR-2 (strategy/approval placement windows; COMPLETES slice 3). Its deploy is also the freshness-lane re-enable live test (first container without the stopgap). Landed today: #2350, #2352, #2354, #2360 — all deployed. Rollout: `docs/rollouts/2026-08-02-account-mutation-lease-pr2.md` |
+| In flight (MONET) | `monet/exit0-outage-audit` — exit-0 outage RCA + exit-code hardening (PR pending). `monet/broker-mutation-mutex-pr2` LANDED as #2361 (§7 slice 3 COMPLETE; corrected in place — was listed in flight); its deploy is also the freshness-lane re-enable live test. Landed today: #2350, #2352, #2354, #2360, #2361. Rollout: `docs/rollouts/2026-08-02-account-mutation-lease-pr2.md` |
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
