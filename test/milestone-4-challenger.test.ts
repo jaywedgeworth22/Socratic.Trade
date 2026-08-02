@@ -309,15 +309,18 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
     vi.stubGlobal("fetch", mockFetch);
 
     const provider = new FinnhubEnrichmentProvider("test-key");
-    const res1 = await provider.enrich(["AAPL"]);
-    
+    // coveredFields hint suppresses the /calendar/earnings daysToEarnings fallback (added
+    // 2026-08-02) so it doesn't perturb the exact fetch counts this test asserts on.
+    const skipCalendar = { coveredFields: { AAPL: new Set(["daysToEarnings"]) } };
+    const res1 = await provider.enrich(["AAPL"], skipCalendar);
+
     // We expect some fields to still map (like companyName/sector from the succeeded profile2 call)
     expect(res1.AAPL).toEqual({ companyName: "Apple Inc.", sector: "Technology", industry: "Technology" });
     // Verify that the fetch happened 6 times (5 calls plus 1 retry on HTTP 429 on recommendation)
     expect(mockFetch).toHaveBeenCalledTimes(6);
 
     // Call it a second time. If it was NOT cached, it should call fetch 6 more times.
-    const res2 = await provider.enrich(["AAPL"]);
+    const res2 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res2.AAPL).toEqual({ companyName: "Apple Inc.", sector: "Technology", industry: "Technology" });
     expect(mockFetch).toHaveBeenCalledTimes(12); // Cache was bypassed!
   });
@@ -361,12 +364,15 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
     vi.stubGlobal("fetch", mockFetch);
 
     const provider = new FinnhubEnrichmentProvider("test-key");
-    const res1 = await provider.enrich(["AAPL"]);
+    // coveredFields hint suppresses the /calendar/earnings daysToEarnings fallback (added
+    // 2026-08-02) so it doesn't perturb the exact fetch counts this test asserts on.
+    const skipCalendar = { coveredFields: { AAPL: new Set(["daysToEarnings"]) } };
+    const res1 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res1.AAPL).toEqual({ companyName: "Apple Inc.", sector: "Technology", industry: "Technology" });
     expect(mockFetch).toHaveBeenCalledTimes(5);
 
     // Call second time. It should be cached, so fetch count remains 5.
-    const res2 = await provider.enrich(["AAPL"]);
+    const res2 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res2.AAPL).toEqual({ companyName: "Apple Inc.", sector: "Technology", industry: "Technology" });
     expect(mockFetch).toHaveBeenCalledTimes(5); // Cache worked!
   });

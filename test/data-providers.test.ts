@@ -31,6 +31,16 @@ import { arbitrateFieldObservation } from "../src/lib/evidence-facts";
 import { deleteUserApiKey, migrateLocalEnvCredentials, upsertUserApiKey, LOCAL_USER } from "../src/lib/db-api-keys";
 import { __resetAlphaVantageDailyBudgetForTests, __resetKeyPoolRegistryForTests } from "../src/lib/alpha-vantage-key-pool";
 
+/** Suppresses a provider's own `/calendar/earnings`-style daysToEarnings fallback fetch (Finnhub,
+ *  Alpha Vantage) by marking the field already-covered upstream — keeps pre-existing exact
+ *  fetch-count assertions in tests that predate that fallback unperturbed by it (same idiom already
+ *  used in milestone-4-challenger.test.ts's `skipCalendar`). */
+function skipDaysToEarningsCalendar(...symbols: string[]): EnrichmentContext {
+  const coveredFields: Record<string, Set<string>> = {};
+  for (const s of symbols) coveredFields[s] = new Set(["daysToEarnings"]);
+  return { coveredFields };
+}
+
 // Each test file gets its own isolated SQLite db so db module singleton state
 // (user API keys, consent records) does not leak between test files.
 beforeAll(() => {
@@ -292,7 +302,7 @@ describe("enrichment cache consent gate", () => {
 
     // userA fetches — source is "user", no consent → scope = "private"
     const providerA = new FinnhubEnrichmentProvider("user-a-finnhub-key", "user", userA);
-    const resA = await providerA.enrich(["AAPL"]);
+    const resA = await providerA.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(resA.AAPL?.companyName).toBe("Acme Corp");
     expect(fetchCount).toBe(5); // 5 Finnhub sub-calls (news, quote, rec, profile2, metric)
 
@@ -300,7 +310,7 @@ describe("enrichment cache consent gate", () => {
     // To isolate the cache check, we make fetch throw so any cache miss would propagate as empty
     vi.stubGlobal("fetch", async () => { throw new Error("no network"); });
     const providerB = new FinnhubEnrichmentProvider("some-env-key", "env", userB);
-    const resB = await providerB.enrich(["AAPL"]);
+    const resB = await providerB.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     // env-key provider reads shared scope — userA's private entry is not visible there
     expect(resB.AAPL?.companyName).toBeUndefined();
   });
@@ -690,7 +700,7 @@ describe("enrichment cache consent gate", () => {
         return new Response(JSON.stringify({}));
       });
       const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
-      const res = await provider.enrich(["AAPL"]);
+      const res = await provider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
       return { urls, res };
     };
 
@@ -733,18 +743,18 @@ describe("enrichment cache consent gate", () => {
       // Flag ON: recommendation dropped, row cached under the flag-specific namespace.
       process.env.FINNHUB_DROP_RECOMMENDATION = "1";
       const onProvider = new FinnhubEnrichmentProvider("env-key", "env");
-      const on1 = await onProvider.enrich(["AAPL"]);
+      const on1 = await onProvider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
       expect(on1.AAPL?.analystBySource?.finnhub).toBeUndefined();
       expect(recFetches).toBe(0);
       // Same flag again → cache hit, still no recommendation fetch.
-      await onProvider.enrich(["AAPL"]);
+      await onProvider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
       expect(recFetches).toBe(0);
 
       // Flag OFF: distinct cache namespace → MISS → refetch, now including the recommendation, so the
       // blended analyst rating regains Finnhub's vote instead of serving the stale no-rec row until TTL.
       delete process.env.FINNHUB_DROP_RECOMMENDATION;
       const offProvider = new FinnhubEnrichmentProvider("env-key", "env");
-      const off1 = await offProvider.enrich(["AAPL"]);
+      const off1 = await offProvider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
       expect(recFetches).toBe(1);
       expect(off1.AAPL?.analystBySource?.finnhub?.score).toBeGreaterThan(0);
     } finally {
@@ -776,13 +786,13 @@ describe("enrichment cache consent gate", () => {
 
     // userA fetches — user-key + consent → scope = "pool"
     const providerA = new FinnhubEnrichmentProvider("user-a-finnhub-key", "user", userA);
-    const resA = await providerA.enrich(["AAPL"]);
+    const resA = await providerA.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(resA.AAPL?.companyName).toBe("Pool Corp");
     expect(fetchCount).toBe(5);
 
     // userB (consenting) reads from the pool — no fetch should be needed
     const providerB = new FinnhubEnrichmentProvider("user-b-finnhub-key", "user", userB);
-    const resB = await providerB.enrich(["AAPL"]);
+    const resB = await providerB.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(resB.AAPL?.companyName).toBe("Pool Corp");
     // Pool hit — no additional fetch calls
     expect(fetchCount).toBe(5);
@@ -806,12 +816,12 @@ describe("enrichment cache consent gate", () => {
 
     // userA uses env key — source = "env" → always shared scope
     const providerA = new FinnhubEnrichmentProvider("env-finnhub-key", "env", userA);
-    await providerA.enrich(["AAPL"]);
+    await providerA.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(fetchCount).toBe(5);
 
     // userB (no consent) uses env key — should hit the shared cache, no new fetch
     const providerB = new FinnhubEnrichmentProvider("env-finnhub-key", "env", userB);
-    const resB = await providerB.enrich(["AAPL"]);
+    const resB = await providerB.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(resB.AAPL?.companyName).toBe("Env Corp");
     expect(fetchCount).toBe(5); // shared cache hit — no additional fetches
   });
@@ -835,12 +845,12 @@ describe("enrichment cache consent gate", () => {
 
     // userA's user-key → forced to shared because of the env override
     const providerA = new FinnhubEnrichmentProvider("user-a-finnhub-key", "user", userA);
-    await providerA.enrich(["AAPL"]);
+    await providerA.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(fetchCount).toBe(5);
 
     // userB (no consent, no user key) can read from shared scope
     const providerB = new FinnhubEnrichmentProvider("user-a-finnhub-key", "user", userB);
-    const resB = await providerB.enrich(["AAPL"]);
+    const resB = await providerB.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(resB.AAPL?.companyName).toBe("Share Corp");
     expect(fetchCount).toBe(5); // shared cache hit
   });
@@ -861,11 +871,11 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     });
 
     const provider = new FinnhubEnrichmentProvider("test-key");
-    const res1 = await provider.enrich(["AAPL"]);
+    const res1 = await provider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(res1.AAPL).toEqual({});
     expect(fetchCount).toBe(6);
 
-    const res2 = await provider.enrich(["AAPL"]);
+    const res2 = await provider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(res2.AAPL).toEqual({});
     expect(fetchCount).toBe(12);
   });
@@ -884,11 +894,11 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     });
 
     const provider = new FinnhubEnrichmentProvider("test-key");
-    const res1 = await provider.enrich(["AAPL"]);
+    const res1 = await provider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(res1.AAPL).toEqual({ companyName: "Apple" });
     expect(fetchCount).toBe(5);
 
-    const res2 = await provider.enrich(["AAPL"]);
+    const res2 = await provider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
     expect(res2.AAPL).toEqual({ companyName: "Apple" });
     expect(fetchCount).toBe(5);
   });
@@ -1002,6 +1012,232 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual(res1.AAPL);
     expect(fetchCount).toBe(4);
+  });
+});
+
+describe("Finnhub /calendar/earnings — daysToEarnings fallback (2026-08-02)", () => {
+  // Real sample response shape from Finnhub's own docs schema (finnhub.io/docs/api/earnings-calendar,
+  // pulled 2026-08-02 via the page's embedded `window.docSchema` — no key needed to read the schema
+  // itself). Field names (symbol/date/hour/quarter/year/epsActual/epsEstimate/revenueActual/
+  // revenueEstimate) are Finnhub's own documented EarningRelease definition, not guessed.
+  const REAL_SAMPLE = {
+    earningsCalendar: [
+      {
+        date: "2020-01-28",
+        epsActual: 4.99,
+        epsEstimate: 4.5474,
+        hour: "amc",
+        quarter: 1,
+        revenueActual: 91819000000,
+        revenueEstimate: 88496400810,
+        symbol: "AAPL",
+        year: 2020
+      },
+      {
+        date: "2019-10-30",
+        epsActual: 3.03,
+        epsEstimate: 2.8393,
+        hour: "amc",
+        quarter: 4,
+        revenueActual: 64040000000,
+        revenueEstimate: 63032500000,
+        symbol: "AAPL",
+        year: 2019
+      }
+    ]
+  };
+
+  describe("looksLikeFinnhubEarningsCalendar / parseFinnhubEarningsCalendar", () => {
+    it("recognizes the documented { earningsCalendar: [...] } shape, including an empty array (a quiet reporting window, not an error)", async () => {
+      const { looksLikeFinnhubEarningsCalendar } = await import("../src/lib/data-providers");
+      expect(looksLikeFinnhubEarningsCalendar(REAL_SAMPLE)).toBe(true);
+      expect(looksLikeFinnhubEarningsCalendar({ earningsCalendar: [] })).toBe(true);
+      expect(looksLikeFinnhubEarningsCalendar({})).toBe(false);
+      expect(looksLikeFinnhubEarningsCalendar([])).toBe(false);
+      expect(looksLikeFinnhubEarningsCalendar(null)).toBe(false);
+      expect(looksLikeFinnhubEarningsCalendar("error")).toBe(false);
+    });
+
+    it("parses symbol -> earliest report date from a real sample response", async () => {
+      const { parseFinnhubEarningsCalendar } = await import("../src/lib/data-providers");
+      const bySymbol = parseFinnhubEarningsCalendar(REAL_SAMPLE);
+      // AAPL appears twice (two historical quarters) — keeps the EARLIEST reportDate.
+      expect(bySymbol.size).toBe(1);
+      expect(bySymbol.get("AAPL")).toBe(Date.parse("2019-10-30T00:00:00Z"));
+    });
+
+    it("keeps the EARLIEST date when a symbol appears more than once, regardless of row order", async () => {
+      const { parseFinnhubEarningsCalendar } = await import("../src/lib/data-providers");
+      const bySymbol = parseFinnhubEarningsCalendar({
+        earningsCalendar: [
+          { symbol: "MSFT", date: "2026-11-01" },
+          { symbol: "MSFT", date: "2026-08-05" }
+        ]
+      });
+      expect(bySymbol.get("MSFT")).toBe(Date.parse("2026-08-05T00:00:00Z"));
+    });
+
+    it("returns an empty map (never throws, never guesses) for malformed/unexpected shapes", async () => {
+      const { parseFinnhubEarningsCalendar } = await import("../src/lib/data-providers");
+      expect(parseFinnhubEarningsCalendar({}).size).toBe(0);
+      expect(parseFinnhubEarningsCalendar({ error: "Please use an API key." }).size).toBe(0);
+      expect(parseFinnhubEarningsCalendar(null).size).toBe(0);
+      expect(parseFinnhubEarningsCalendar({ earningsCalendar: [{ symbol: "BAD" }] }).size).toBe(0); // no date
+      expect(parseFinnhubEarningsCalendar({ earningsCalendar: [{ date: "2026-08-05" }] }).size).toBe(0); // no symbol
+    });
+  });
+
+  describe("enrich() integration", () => {
+    /** UTC calendar-date string exactly `daysFromToday` days from "now"'s UTC midnight — matches
+     *  alphaVantageDaysToEarnings' own truncation (shared by this fallback's day-math), so the
+     *  expected day count is exact regardless of what wall-clock time the test happens to run at. */
+    function utcDateString(daysFromToday: number): string {
+      const truncatedToday = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+      return new Date(truncatedToday + daysFromToday * 86_400_000).toISOString().slice(0, 10);
+    }
+
+    it("fetches the market-wide calendar ONCE (no symbol= param) and fills daysToEarnings for a miss", async () => {
+      const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      const reportDate = utcDateString(12);
+      let calendarUrl: string | undefined;
+      vi.stubGlobal("fetch", async (url: string) => {
+        const u = String(url);
+        if (u.includes("/calendar/earnings")) {
+          calendarUrl = u;
+          return new Response(JSON.stringify({ earningsCalendar: [{ symbol: "AAPL", date: reportDate }] }));
+        }
+        if (u.includes("profile2")) return new Response(JSON.stringify({ name: "Apple Inc." }));
+        return new Response(JSON.stringify({}));
+      });
+
+      const provider = new FinnhubEnrichmentProvider("test-key");
+      const res = await provider.enrich(["AAPL"]);
+      expect(res.AAPL?.daysToEarnings).toBe(12);
+      expect(res.AAPL?.companyName).toBe("Apple Inc."); // the rest of the row still populates alongside it
+      expect(calendarUrl).toBeDefined();
+      expect(calendarUrl).toContain("/calendar/earnings");
+      expect(calendarUrl).not.toContain("symbol=");
+    });
+
+    it("dispatches only ONE calendar call for a multi-symbol batch, filling every matched symbol from it", async () => {
+      const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      const aaplDate = utcDateString(3);
+      const msftDate = utcDateString(9);
+      let calendarCalls = 0;
+      vi.stubGlobal("fetch", async (url: string) => {
+        const u = String(url);
+        if (u.includes("/calendar/earnings")) {
+          calendarCalls++;
+          return new Response(JSON.stringify({
+            earningsCalendar: [
+              { symbol: "AAPL", date: aaplDate },
+              { symbol: "MSFT", date: msftDate }
+            ]
+          }));
+        }
+        return new Response(JSON.stringify({}));
+      });
+
+      const provider = new FinnhubEnrichmentProvider("test-key");
+      const res = await provider.enrich(["AAPL", "MSFT"]);
+      expect(res.AAPL?.daysToEarnings).toBe(3);
+      expect(res.MSFT?.daysToEarnings).toBe(9);
+      expect(calendarCalls).toBe(1); // ONE market-wide pull, not one per symbol
+    });
+
+    it("skips the calendar fetch entirely when the coveredFields hint already marks daysToEarnings covered", async () => {
+      const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      let calendarCalls = 0;
+      vi.stubGlobal("fetch", async (url: string) => {
+        const u = String(url);
+        if (u.includes("/calendar/earnings")) {
+          calendarCalls++;
+          throw new Error("must not be called — daysToEarnings was already covered upstream");
+        }
+        return new Response(JSON.stringify({}));
+      });
+
+      const provider = new FinnhubEnrichmentProvider("test-key");
+      const context: EnrichmentContext = { coveredFields: { AAPL: new Set(["daysToEarnings"]) } };
+      const res = await provider.enrich(["AAPL"], context);
+      expect(res.AAPL?.daysToEarnings).toBeUndefined(); // Finnhub added nothing — the hint source owns it
+      expect(calendarCalls).toBe(0);
+    });
+
+    it("a malformed/unusable calendar response never fabricates daysToEarnings and never crashes enrich()", async () => {
+      const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      vi.stubGlobal("fetch", async (url: string) => {
+        const u = String(url);
+        if (u.includes("/calendar/earnings")) {
+          // Not the documented shape at all (e.g. an unrelated error page).
+          return new Response(JSON.stringify({ error: "unexpected upstream failure" }));
+        }
+        if (u.includes("profile2")) return new Response(JSON.stringify({ name: "Apple Inc." }));
+        return new Response(JSON.stringify({}));
+      });
+
+      const provider = new FinnhubEnrichmentProvider("test-key");
+      const res = await provider.enrich(["AAPL"]);
+      expect(res.AAPL?.daysToEarnings).toBeUndefined();
+      // The rest of the row's own fields still came through — one field's failure doesn't blank the rest.
+      expect(res.AAPL?.companyName).toBe("Apple Inc.");
+    });
+
+    it("fills daysToEarnings even for a symbol served from Finnhub's OWN per-symbol row cache (decoupled from that row's TTL)", async () => {
+      const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      const reportDate = utcDateString(5);
+      let calendarCalls = 0;
+      vi.stubGlobal("fetch", async (url: string) => {
+        const u = String(url);
+        if (u.includes("/calendar/earnings")) {
+          calendarCalls++;
+          return new Response(JSON.stringify({ earningsCalendar: [{ symbol: "AAPL", date: reportDate }] }));
+        }
+        if (u.includes("profile2")) return new Response(JSON.stringify({ name: "Apple Inc." }));
+        return new Response(JSON.stringify({}));
+      });
+
+      const provider = new FinnhubEnrichmentProvider("test-key");
+      const res1 = await provider.enrich(["AAPL"]);
+      expect(res1.AAPL?.daysToEarnings).toBe(5);
+      expect(calendarCalls).toBe(1);
+
+      // Second call: the per-symbol Finnhub row (companyName etc.) is now a cache HIT — no new
+      // per-symbol network calls — but daysToEarnings still applies fresh from the still-warm
+      // shared calendar cache (no second calendar network call either, since it's within TTL).
+      const res2 = await provider.enrich(["AAPL"]);
+      expect(res2.AAPL?.companyName).toBe("Apple Inc.");
+      expect(res2.AAPL?.daysToEarnings).toBe(5);
+      expect(calendarCalls).toBe(1); // still just the one cold-cache pull
+    });
+
+    it("never fills a past/stale calendar entry (never fabricated)", async () => {
+      const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      const pastDate = utcDateString(-10);
+      vi.stubGlobal("fetch", async (url: string) => {
+        const u = String(url);
+        if (u.includes("/calendar/earnings")) {
+          return new Response(JSON.stringify({ earningsCalendar: [{ symbol: "AAPL", date: pastDate }] }));
+        }
+        return new Response(JSON.stringify({}));
+      });
+
+      const provider = new FinnhubEnrichmentProvider("test-key");
+      const res = await provider.enrich(["AAPL"]);
+      expect(res.AAPL?.daysToEarnings).toBeUndefined();
+    });
   });
 });
 

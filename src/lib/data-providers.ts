@@ -2806,6 +2806,70 @@ export function parseInstitutionOwnershipPct(
 
 // ── Finnhub provider ─────────────────────────────────────────────────────────
 
+// ── /calendar/earnings fallback for `daysToEarnings` (2026-08-02) ────────────────────────────
+// Live-verified against Finnhub's own docs (finnhub.io/docs/api/earnings-calendar, pulled
+// 2026-08-02 via the embedded `window.docSchema` OpenAPI-shaped blob the docs page ships — no key
+// needed to read the schema itself). A bare unauthenticated GET to the real endpoint confirmed it's
+// live: `curl https://finnhub.io/api/v1/calendar/earnings?...` → HTTP 401
+// `{"error":"Please use an API key."}`, i.e. the path is real and not a docs typo. The endpoint
+// takes a `from`/`to` date range and an OPTIONAL `symbol` filter — the docs show BOTH an example
+// without `symbol` (`/calendar/earnings?from=2025-08-01&to=2025-08-10`, the whole market's
+// releases in that window) and one with it (`&symbol=AAPL`, a multi-year per-company history).
+// Same reasoning as the AV EARNINGS_CALENDAR fallback above: ONE market-wide call (omit `symbol`)
+// covers every symbol the cascade could ever ask about this TTL window, instead of spending one of
+// Finnhub's per-symbol sub-calls per miss the way company-news/quote/etc. do below.
+//
+// Finnhub's docs schema tags this endpoint `"freeTier": "1 month of historical earnings and new
+// updates"` — read conservatively as: a market-wide (no `symbol`) pull on the free plan is good for
+// roughly a 30-day window, not the multi-year span the `symbol=`-filtered example implies. This
+// fetches exactly that ~30-day FORWARD window (refreshed daily, so it keeps rolling ahead) rather
+// than a longer horizon that might silently come back truncated/empty on the free tier — unlike AV
+// (paid-adjacent, scarce 25/day budget, wider 3-month horizon), Finnhub's free tier is generous
+// (60/min) so this is a genuinely useful ADDITIONAL near-term source, not a scarce-budget fallback.
+//
+// Response shape (EarningsCalendar/EarningRelease definitions, live-verified from the same schema
+// pull): `{ "earningsCalendar": [ { "date": "2020-01-28", "symbol": "AAPL", "hour": "amc",
+// "quarter": 1, "year": 2020, "epsActual": 4.99, "epsEstimate": 4.5474, "revenueActual": ...,
+// "revenueEstimate": ... }, ... ] }`.
+const FINNHUB_EARNINGS_CALENDAR_TTL_MS = 24 * 60 * 60_000; // one authoritative market-wide pull/day is plenty
+const FINNHUB_EARNINGS_CALENDAR_WINDOW_DAYS = 30; // matches Finnhub's documented free-tier window
+interface FinnhubEarningsCalendarCache {
+  expiresAt: number;
+  bySymbol: Map<string, number>; // symbol -> earliest report date (epoch ms, UTC midnight)
+}
+let finnhubEarningsCalendarCache: FinnhubEarningsCalendarCache | null = null;
+
+/** True when `json` has the documented `{ earningsCalendar: [...] }` shape — the cheap way to tell
+ *  a real data pull apart from an error page/HTML/unexpected format change. Never guess-parse
+ *  anything else (an empty `earningsCalendar` array still passes this check — a quiet reporting
+ *  window is a valid, non-error response and must cache normally, not as a failure). */
+export function looksLikeFinnhubEarningsCalendar(json: unknown): json is { earningsCalendar: unknown[] } {
+  return !!json && typeof json === "object" && Array.isArray((json as Record<string, unknown>).earningsCalendar);
+}
+
+/**
+ * Parses Finnhub's `/calendar/earnings` response into symbol -> earliest report date (epoch ms,
+ * UTC midnight). Returns an EMPTY map (never throws, never fabricates) for anything that doesn't
+ * match the documented shape. Keeps the EARLIEST date when a symbol appears more than once (e.g.
+ * the window spans two reports for the same company, or a duplicate row).
+ */
+export function parseFinnhubEarningsCalendar(json: unknown): Map<string, number> {
+  const bySymbol = new Map<string, number>();
+  if (!looksLikeFinnhubEarningsCalendar(json)) return bySymbol;
+  for (const row of json.earningsCalendar) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const symbol = typeof r.symbol === "string" ? normalizeSymbol(r.symbol) : "";
+    const dateStr = typeof r.date === "string" ? r.date : "";
+    if (!symbol || !dateStr) continue;
+    const ts = Date.parse(`${dateStr}T00:00:00Z`);
+    if (!Number.isFinite(ts)) continue;
+    const existing = bySymbol.get(symbol);
+    if (existing === undefined || ts < existing) bySymbol.set(symbol, ts);
+  }
+  return bySymbol;
+}
+
 export function isTransientError(error: unknown): boolean {
   if (!error) return false;
   const message = error instanceof Error ? error.message : String(error);
@@ -2831,7 +2895,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     this.keySource = keySource;
   }
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
@@ -2859,126 +2923,225 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     // while still covering EVERY symbol over time — scan-size-agnostic without dropping coverage. Only
     // providers with a hard windowed cap you can't space around (twelvedata batch credits, tiingo 50/hour)
     // go through admitProviderRequests(). See RATE_QUOTAS for the pacer-vs-quota rationale.
-    if (misses.length === 0) return result;
+    if (misses.length > 0) {
+      for (let i = 0; i < misses.length; i += CONCURRENCY) {
+        const chunk = misses.slice(i, i + CONCURRENCY);
+        await Promise.all(
+          chunk.map(async (symbol) => {
+            try {
+              // Run all Finnhub calls in parallel per symbol. When FINNHUB_DROP_RECOMMENDATION is on we skip
+              // issuing the `stock/recommendation` HTTP call entirely (4 calls/symbol instead of 5); recRaw
+              // resolves to null so no analyst rating is derived from Finnhub and the cascade backstops it.
+              const recCall = dropRecommendation
+                ? Promise.resolve(null)
+                : this.getJson(`${this.base}/stock/recommendation?symbol=${symbol}&token=${this.apiKey}`);
+              const [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw] = await Promise.allSettled([
+                this.getJson(`${this.base}/company-news?symbol=${symbol}&from=${fromDate}&to=${toDate}&token=${this.apiKey}`),
+                this.getJson(`${this.base}/quote?symbol=${symbol}&token=${this.apiKey}`),
+                recCall,
+                this.getJson(`${this.base}/stock/profile2?symbol=${symbol}&token=${this.apiKey}`),
+                this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`)
+              ]);
 
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
-      const chunk = misses.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async (symbol) => {
-          try {
-            // Run all Finnhub calls in parallel per symbol. When FINNHUB_DROP_RECOMMENDATION is on we skip
-            // issuing the `stock/recommendation` HTTP call entirely (4 calls/symbol instead of 5); recRaw
-            // resolves to null so no analyst rating is derived from Finnhub and the cascade backstops it.
-            const recCall = dropRecommendation
-              ? Promise.resolve(null)
-              : this.getJson(`${this.base}/stock/recommendation?symbol=${symbol}&token=${this.apiKey}`);
-            const [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw] = await Promise.allSettled([
-              this.getJson(`${this.base}/company-news?symbol=${symbol}&from=${fromDate}&to=${toDate}&token=${this.apiKey}`),
-              this.getJson(`${this.base}/quote?symbol=${symbol}&token=${this.apiKey}`),
-              recCall,
-              this.getJson(`${this.base}/stock/profile2?symbol=${symbol}&token=${this.apiKey}`),
-              this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`)
-            ]);
-
-            // News → headlines + fallback sentiment
-            let headlines: string[] = [];
-            let sentiment: number | undefined;
-            if (newsRaw.status === "fulfilled" && Array.isArray(newsRaw.value)) {
-              headlines = (newsRaw.value as Array<{ headline: string }>).slice(0, 5).map((n) => n.headline).filter(Boolean);
-              if (headlines.length > 0) sentiment = scoreHeadlines(headlines);
-            }
-
-            // Quote → volume
-            let volume: number | undefined;
-            if (quoteRaw.status === "fulfilled") {
-              const q = quoteRaw.value as Record<string, unknown>;
-              if (typeof q?.v === "number" && q.v > 0) volume = q.v;
-            }
-
-            // Analyst recommendations → 0–100 score + label + counts (blended by the cascade)
-            let analystBySource: Record<string, AnalystRatingDetail> | undefined;
-            if (recRaw.status === "fulfilled" && Array.isArray(recRaw.value) && (recRaw.value as Record<string, unknown>[]).length > 0) {
-              const latest = (recRaw.value as Record<string, unknown>[])[0];
-              const counts = {
-                strongBuy: num(latest.strongBuy),
-                buy: num(latest.buy),
-                hold: num(latest.hold),
-                sell: num(latest.sell),
-                strongSell: num(latest.strongSell)
-              };
-              const score = analystScoreFromCounts(counts);
-              if (score !== undefined) {
-                analystBySource = { [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), counts } };
+              // News → headlines + fallback sentiment
+              let headlines: string[] = [];
+              let sentiment: number | undefined;
+              if (newsRaw.status === "fulfilled" && Array.isArray(newsRaw.value)) {
+                headlines = (newsRaw.value as Array<{ headline: string }>).slice(0, 5).map((n) => n.headline).filter(Boolean);
+                if (headlines.length > 0) sentiment = scoreHeadlines(headlines);
               }
-            }
 
-            // Company profile → sector + industry + company name
-            let sector: string | undefined;
-            let industry: string | undefined;
-            let companyName: string | undefined;
-            if (profileRaw.status === "fulfilled") {
-              const profile = profileRaw.value as Record<string, unknown>;
-              if (profile?.finnhubIndustry) { sector = String(profile.finnhubIndustry); industry = String(profile.finnhubIndustry); }
-              if (profile?.sector) sector = String(profile.sector);
-              if (typeof profile?.name === "string" && profile.name.trim()) companyName = profile.name.trim();
-            }
+              // Quote → volume
+              let volume: number | undefined;
+              if (quoteRaw.status === "fulfilled") {
+                const q = quoteRaw.value as Record<string, unknown>;
+                if (typeof q?.v === "number" && q.v > 0) volume = q.v;
+              }
 
-            // Basic financials → P/E, dividend yield, EPS, average volume
-            let peRatio: number | undefined;
-            let dividendYield: number | undefined;
-            let eps: number | undefined;
-            let volumeFromMetric: number | undefined;
-            if (metricRaw.status === "fulfilled") {
-              const metric = (metricRaw.value as { metric?: Record<string, unknown> })?.metric ?? {};
-              const pe = metric.peBasicExclExtraTTM ?? metric.peTTM;
-              if (typeof pe === "number" && pe > 0) peRatio = pe;
-              const dy = metric.dividendYieldIndicatedAnnual ?? metric.dividendYieldAnnual;
-              if (typeof dy === "number" && dy >= 0) dividendYield = dy;
-              const epsVal = metric.epsBasicExclExtraItemsTTM ?? metric.epsAnnual;
-              if (typeof epsVal === "number") eps = epsVal;
-              // Average trading volume in millions (10-day avg preferred, fall back to 3-month).
-              const avgVolM = metric["10DayAverageTradingVolume"] ?? metric["3MonthAverageTradingVolume"];
-              if (typeof avgVolM === "number" && avgVolM > 0) volumeFromMetric = Math.round(avgVolM * 1_000_000);
-            }
+              // Analyst recommendations → 0–100 score + label + counts (blended by the cascade)
+              let analystBySource: Record<string, AnalystRatingDetail> | undefined;
+              if (recRaw.status === "fulfilled" && Array.isArray(recRaw.value) && (recRaw.value as Record<string, unknown>[]).length > 0) {
+                const latest = (recRaw.value as Record<string, unknown>[])[0];
+                const counts = {
+                  strongBuy: num(latest.strongBuy),
+                  buy: num(latest.buy),
+                  hold: num(latest.hold),
+                  sell: num(latest.sell),
+                  strongSell: num(latest.strongSell)
+                };
+                const score = analystScoreFromCounts(counts);
+                if (score !== undefined) {
+                  analystBySource = { [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), counts } };
+                }
+              }
 
-            // Prefer the current session volume; fall back to metric average when session volume is 0 (e.g. after hours).
-            const resolvedVolume = (volume && volume > 0 ? volume : undefined) ?? volumeFromMetric;
-            const data: SymbolEnrichment = {
-              ...(sentiment !== undefined && { sentiment }),
-              ...(headlines.length > 0 && { headlines }),
-              ...(peRatio !== undefined && { peRatio }),
-              ...(analystBySource !== undefined && { analystBySource }),
-              ...(sector !== undefined && { sector }),
-              ...(industry !== undefined && { industry }),
-              ...(companyName !== undefined && { companyName }),
-              ...(resolvedVolume !== undefined && { volume: resolvedVolume }),
-              ...(dividendYield !== undefined && { dividendYield }),
-              ...(eps !== undefined && { eps })
-            };
+              // Company profile → sector + industry + company name
+              let sector: string | undefined;
+              let industry: string | undefined;
+              let companyName: string | undefined;
+              if (profileRaw.status === "fulfilled") {
+                const profile = profileRaw.value as Record<string, unknown>;
+                if (profile?.finnhubIndustry) { sector = String(profile.finnhubIndustry); industry = String(profile.finnhubIndustry); }
+                if (profile?.sector) sector = String(profile.sector);
+                if (typeof profile?.name === "string" && profile.name.trim()) companyName = profile.name.trim();
+              }
 
-            const promises = [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw];
-            const allRejected = promises.every((p) => p.status === "rejected");
-            const hasTransientError = promises.some(
-              (p) => p.status === "rejected" && isTransientError(p.reason)
-            );
-            const isEmpty = Object.keys(data).length === 0;
+              // Basic financials → P/E, dividend yield, EPS, average volume
+              let peRatio: number | undefined;
+              let dividendYield: number | undefined;
+              let eps: number | undefined;
+              let volumeFromMetric: number | undefined;
+              if (metricRaw.status === "fulfilled") {
+                const metric = (metricRaw.value as { metric?: Record<string, unknown> })?.metric ?? {};
+                const pe = metric.peBasicExclExtraTTM ?? metric.peTTM;
+                if (typeof pe === "number" && pe > 0) peRatio = pe;
+                const dy = metric.dividendYieldIndicatedAnnual ?? metric.dividendYieldAnnual;
+                if (typeof dy === "number" && dy >= 0) dividendYield = dy;
+                const epsVal = metric.epsBasicExclExtraItemsTTM ?? metric.epsAnnual;
+                if (typeof epsVal === "number") eps = epsVal;
+                // Average trading volume in millions (10-day avg preferred, fall back to 3-month).
+                const avgVolM = metric["10DayAverageTradingVolume"] ?? metric["3MonthAverageTradingVolume"];
+                if (typeof avgVolM === "number" && avgVolM > 0) volumeFromMetric = Math.round(avgVolM * 1_000_000);
+              }
 
-            if (allRejected || hasTransientError || isEmpty) {
-              console.warn(
-                `[data-providers] Finnhub enrichment for ${symbol} skipped caching: ` +
-                `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
+              // Prefer the current session volume; fall back to metric average when session volume is 0 (e.g. after hours).
+              const resolvedVolume = (volume && volume > 0 ? volume : undefined) ?? volumeFromMetric;
+              const data: SymbolEnrichment = {
+                ...(sentiment !== undefined && { sentiment }),
+                ...(headlines.length > 0 && { headlines }),
+                ...(peRatio !== undefined && { peRatio }),
+                ...(analystBySource !== undefined && { analystBySource }),
+                ...(sector !== undefined && { sector }),
+                ...(industry !== undefined && { industry }),
+                ...(companyName !== undefined && { companyName }),
+                ...(resolvedVolume !== undefined && { volume: resolvedVolume }),
+                ...(dividendYield !== undefined && { dividendYield }),
+                ...(eps !== undefined && { eps })
+              };
+
+              const promises = [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw];
+              const allRejected = promises.every((p) => p.status === "rejected");
+              const hasTransientError = promises.some(
+                (p) => p.status === "rejected" && isTransientError(p.reason)
               );
-            } else {
-              writeEnrichmentCache(cacheKey, symbol, this.scope, this.userId, data, now + ttlMs());
+              const isEmpty = Object.keys(data).length === 0;
+
+              if (allRejected || hasTransientError || isEmpty) {
+                console.warn(
+                  `[data-providers] Finnhub enrichment for ${symbol} skipped caching: ` +
+                  `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
+                );
+              } else {
+                writeEnrichmentCache(cacheKey, symbol, this.scope, this.userId, data, now + ttlMs());
+              }
+              result[symbol] = data;
+            } catch {
+              result[symbol] = {}; // empty; later cascade tiers can still fill gaps.
             }
-            result[symbol] = data;
-          } catch {
-            result[symbol] = {}; // empty; later cascade tiers can still fill gaps.
-          }
-        })
-      );
+          })
+        );
+      }
     }
+
+    // ── /calendar/earnings fallback for daysToEarnings ──────────────────────────────────────
+    // Independent of the per-symbol loop above and of any per-symbol cache hit/miss for the REST
+    // of the Finnhub row: ONE market-wide call backed by a shared module-level cache (see the
+    // module doc comment above), applied to EVERY symbol in this batch still missing
+    // daysToEarnings — including a symbol just served from this provider's OWN per-symbol row
+    // cache, since that row predates this field and never had it written into it (mirrors the
+    // Alpha Vantage EARNINGS_CALENDAR fallback's same deliberate decoupling from its own row cache).
+    if (this.needsEarningsCalendar(normalized, context, result)) {
+      await this.ensureEarningsCalendar(now);
+      this.applyEarningsCalendar(normalized, context, now, result);
+    }
+
     return result;
+  }
+
+  /** True when at least one symbol in `symbols` is missing `daysToEarnings` AND a free upstream
+   *  hasn't already covered it (context.coveredFields) — the gate for whether it's worth even
+   *  checking/refreshing the shared calendar cache this call. */
+  private needsEarningsCalendar(
+    symbols: string[],
+    context: EnrichmentContext | undefined,
+    result: Record<string, SymbolEnrichment>
+  ): boolean {
+    return symbols.some((symbol) => this.symbolNeedsDaysToEarnings(symbol, context, result));
+  }
+
+  private symbolNeedsDaysToEarnings(
+    symbol: string,
+    context: EnrichmentContext | undefined,
+    result: Record<string, SymbolEnrichment>
+  ): boolean {
+    if (result[symbol]?.daysToEarnings !== undefined) return false;
+    if (context?.coveredFields?.[symbol]?.has("daysToEarnings")) return false;
+    return true;
+  }
+
+  /** Fills `daysToEarnings` from the shared market-wide calendar cache (never re-fetches — see
+   *  ensureEarningsCalendar) for every symbol that still needs it, without disturbing any other
+   *  field already present on `result[symbol]` (e.g. a per-symbol cache hit's companyName). */
+  private applyEarningsCalendar(
+    symbols: string[],
+    context: EnrichmentContext | undefined,
+    now: number,
+    result: Record<string, SymbolEnrichment>
+  ): void {
+    const bySymbol = finnhubEarningsCalendarCache?.bySymbol;
+    if (!bySymbol || bySymbol.size === 0) return;
+    for (const symbol of symbols) {
+      if (!this.symbolNeedsDaysToEarnings(symbol, context, result)) continue;
+      const reportDateMs = bySymbol.get(symbol);
+      if (reportDateMs === undefined) continue;
+      // Reuses alphaVantageDaysToEarnings's day-math (whole UTC calendar days, clamped, never
+      // fabricated for a past date) rather than re-implementing an equivalent — three sources now
+      // feed this SAME field (Yahoo/AV/Finnhub) and a subtly different rounding rule between them
+      // would make the countdown disagree depending on which one wins first-wins on a given day.
+      const daysToEarnings = alphaVantageDaysToEarnings(reportDateMs, now);
+      if (daysToEarnings === undefined) continue; // stale/past calendar entry — never fabricated
+      result[symbol] = { ...(result[symbol] ?? {}), daysToEarnings };
+    }
+  }
+
+  /**
+   * Refreshes the shared market-wide earnings calendar at most once per
+   * FINNHUB_EARNINGS_CALENDAR_TTL_MS on success, or providerNegativeTtlMs() after a failed/
+   * unusable attempt, so a scan that calls enrich() many times per minute never dispatches more
+   * than ~1 of these per day. Unlike the AV fallback, there's no shared daily budget/key-pool to
+   * reserve from here — Finnhub's free tier is a generous 60/min (see the module doc comment
+   * above), so this instance's own apiKey/pacer (this.getJson) is all that's needed.
+   */
+  private async ensureEarningsCalendar(now: number): Promise<void> {
+    if (finnhubEarningsCalendarCache && finnhubEarningsCalendarCache.expiresAt > now) return;
+    try {
+      const from = new Date(now).toISOString().split("T")[0];
+      const to = new Date(now + FINNHUB_EARNINGS_CALENDAR_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split("T")[0];
+      // No `symbol=` param — the market-wide mode (see the module doc comment above) so this ONE
+      // call covers every symbol the cascade could ever ask about this TTL window, not just this batch.
+      const json = await this.getJson(`${this.base}/calendar/earnings?from=${from}&to=${to}&token=${this.apiKey}`);
+      if (looksLikeFinnhubEarningsCalendar(json)) {
+        finnhubEarningsCalendarCache = {
+          expiresAt: now + FINNHUB_EARNINGS_CALENDAR_TTL_MS,
+          bySymbol: parseFinnhubEarningsCalendar(json)
+        };
+      } else {
+        // Not the documented shape — an error page/HTML/unrecognized format change. Never
+        // guess-parse it. Keep whatever calendar we already had (a transient rejection shouldn't
+        // discard a still-useful snapshot) and back off before retrying sooner than the full TTL.
+        finnhubEarningsCalendarCache = {
+          expiresAt: now + providerNegativeTtlMs(),
+          bySymbol: finnhubEarningsCalendarCache?.bySymbol ?? new Map()
+        };
+      }
+    } catch {
+      finnhubEarningsCalendarCache = {
+        expiresAt: now + providerNegativeTtlMs(),
+        bySymbol: finnhubEarningsCalendarCache?.bySymbol ?? new Map()
+      };
+    }
   }
 
   private async getJson(url: string): Promise<unknown> {
@@ -4962,6 +5125,7 @@ export function clearEnrichmentCache(): void {
   cache.clear();
   yfCreds = null;
   avEarningsCalendarCache = null;
+  finnhubEarningsCalendarCache = null;
 }
 
 export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvider {
