@@ -36,7 +36,7 @@ Rollout: `docs/rollouts/2026-08-02-data-provider-hardening.md`.
 | | |
 |---|---|
 | `main` | `44069368` — Codex remediation (#2341), npm `allowScripts` fixes (#2345, #2349), mobile PWA feedback round (#2351) |
-| In flight (MONET) | `monet/broker-mutation-mutex` — §7 slice 3 PR-1: per-account broker-mutation lease (risk lanes + advisory backstop; design by 3-designer/2-judge panel). Rollout: `docs/rollouts/2026-08-02-account-mutation-lease-pr1.md`. Landed earlier today: #2350 (connections skeleton) and #2352 (slice 2 constraint tables) — both verified LIVE in prod. |
+| In flight (MONET) | `monet/freshness-wedge-fix` — durable fix for today's prod wedge (index + stamp probes + boot grace + knob backoff; stopgap env lever staged by incident lane). Parked: `monet/broker-mutation-mutex-pr2` (spec in the PR-1 rollout). Landed today: #2350, #2352 (live), #2354 (queued). Rollout: `docs/rollouts/2026-08-02-freshness-wedge-durable-fix.md` |
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |

@@ -628,7 +628,7 @@ async function tick(): Promise<void> {
   // Deliberately does NOT pass through isRunAllowedNow/isTradingDay — this is a data-freshness
   // read, not a trading action — and never places an order or invokes the LLM. Cadence-gated on
   // the newest persisted scan's age (default 20h; MARKET_SCAN_FRESHNESS_MAX_AGE_HOURS=0 disables).
-  void journalLane("market-scan-freshness", {}, () => runMarketScanFreshnessIfDue(Date.now())).catch((err) =>
+  void journalLane("market-scan-freshness", {}, () => runMarketScanFreshnessIfDue(Date.now(), process.uptime())).catch((err) =>
     console.error("[scheduler] market-scan freshness error:", err)
   );
 
