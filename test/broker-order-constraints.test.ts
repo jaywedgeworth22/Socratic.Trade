@@ -11,6 +11,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   applyOrderConstraints,
   BROKER_ORDER_CONSTRAINTS,
+  OrderConstraintBlockedError,
   toConstraintBrokerId,
   type ConstraintBrokerId
 } from "../src/lib/broker-order-constraints";
@@ -53,9 +54,13 @@ const FIXTURES: Record<string, { violating: EquityOrderInput; passing: EquityOrd
     violating: order({ type: "limit", stopPrice: 24 }),
     passing: order({ type: "stop_limit", stopPrice: 24 })
   },
+  "alpaca:alpaca-extended-hours-exit-requeue": {
+    violating: order({ side: "sell", type: "market", limitPrice: undefined, marketHours: "extended_hours" }),
+    passing: order({ side: "sell", type: "limit", marketHours: "extended_hours" })
+  },
   "alpaca:alpaca-extended-hours-limit-only": {
-    violating: order({ type: "market", limitPrice: undefined, marketHours: "extended_hours" }),
-    passing: order({ type: "limit", marketHours: "extended_hours" })
+    violating: order({ side: "buy", type: "market", limitPrice: undefined, marketHours: "extended_hours" }),
+    passing: order({ side: "buy", type: "limit", marketHours: "extended_hours" })
   },
   "robinhood:robinhood-no-short-selling": {
     violating: order({ side: "short" }),
@@ -119,7 +124,16 @@ describe("broker-order-constraints — per-constraint behavior", () => {
 
     it(`${key} — violating fixture ${row.remedy === "block" ? "blocks" : "reshapes"}`, () => {
       if (row.remedy === "block") {
-        expect(() => applyOrderConstraints(broker, fixtures.violating)).toThrowError(OrderValidationError);
+        // OrderConstraintBlockedError extends OrderValidationError, so lanes classify it
+        // "blocked"; the subclass carries the row identity for the choke-point audit.
+        try {
+          applyOrderConstraints(broker, fixtures.violating);
+          expect.fail(`${key}: expected a block`);
+        } catch (error) {
+          expect(error, key).toBeInstanceOf(OrderValidationError);
+          expect(error, key).toBeInstanceOf(OrderConstraintBlockedError);
+          expect((error as OrderConstraintBlockedError).constraintId, key).toBe(row.id);
+        }
         return;
       }
       const { input: reshaped, reshaped: receipts } = applyOrderConstraints(broker, fixtures.violating);
@@ -174,6 +188,23 @@ describe("broker-order-constraints — the 2026-07-27 T regression (Alpaca sell 
       expect(reshaped.bracketTakeProfit, side).toBe(30);
       expect(reshaped.bracketStopLoss, side).toBe(25);
       expect(receipts.find((r) => r.constraintId === "alpaca-bracket-legs-entry-only"), side).toBeUndefined();
+    }
+  });
+
+  it("re-queues a non-limit EXTENDED-HOURS exit to regular hours instead of blocking it (review finding)", () => {
+    const exit = order({ side: "sell", type: "market", limitPrice: undefined, marketHours: "extended_hours" });
+    const { input: reshaped, reshaped: receipts } = applyOrderConstraints("alpaca", exit);
+    expect(reshaped.marketHours).toBe("regular_hours");
+    expect(reshaped.side).toBe("sell");
+    expect(receipts.map((entry) => entry.constraintId)).toContain("alpaca-extended-hours-exit-requeue");
+  });
+
+  it("still blocks a non-limit extended-hours ENTRY (both buy and short)", () => {
+    for (const side of ["buy", "short"] as const) {
+      expect(
+        () => applyOrderConstraints("alpaca", order({ side, type: "market", limitPrice: undefined, marketHours: "extended_hours" })),
+        side
+      ).toThrowError(OrderValidationError);
     }
   });
 
@@ -240,6 +271,27 @@ describe("withOrderConstraints — placement choke point", () => {
       wrapped.placeEquityOrder({ ...order({ side: "short" }), refId: randomUUID() })
     ).rejects.toBeInstanceOf(OrderValidationError);
     expect(seen).toHaveLength(0);
+  });
+
+  it("audits order_constraint_blocked with the row identity when a block fires", async () => {
+    const { withOrderConstraints } = await import("../src/lib/broker");
+    const db = await import("../src/lib/db");
+    const { seen, gateway } = stubGateway();
+    const wrapped = withOrderConstraints(gateway as never, policy(), "local");
+    const refId = randomUUID();
+    await expect(
+      wrapped.placeEquityOrder({ ...order({ side: "buy", type: "market", limitPrice: undefined, marketHours: "extended_hours" }), refId })
+    ).rejects.toBeInstanceOf(OrderConstraintBlockedError);
+    expect(seen).toHaveLength(0);
+    const receipt = db
+      .getDb()
+      .prepare("SELECT payload FROM audit_events WHERE kind = 'order_constraint_blocked'")
+      .all()
+      .map((row) => JSON.parse((row as { payload: string }).payload))
+      .find((payload) => payload.refId === refId);
+    expect(receipt).toBeDefined();
+    expect(receipt.constraintId).toBe("alpaca-extended-hours-limit-only");
+    expect(receipt.reason).toContain("extended-hours");
   });
 
   it("test broker passes any shape through untouched", async () => {

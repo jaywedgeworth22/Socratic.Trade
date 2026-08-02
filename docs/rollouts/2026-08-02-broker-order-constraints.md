@@ -78,8 +78,38 @@ could reach the adapter wearing bracket legs and be rejected by the broker.
 - `npx tsc --noEmit` clean; `npx eslint` on all three files clean (Node 24 prefix).
 - `npx vitest run test/broker-order-constraints.test.ts` — 42/42 pass.
 - Adversarial review workflow (money-path lens enumerating all 5 production placement
-  lanes against the tables; wiring lens; table-truth lens vs the real adapters; per-finding
-  refutation agents) — results recorded in the PR description before landing.
+  lanes; wiring lens; table-truth lens vs the real adapters; 13 agents, per-finding
+  refutation): **6 findings confirmed, 4 refuted, all 6 fixed before landing:**
+  1. (MEDIUM) The extended-hours row blocked LLM-producible shapes that previously
+     EXECUTED on the alpaca-mcp transport (MCP silently drops the flag; REST 422'd).
+     Fixed by splitting the row: sell/cover non-limit extended → **reshape** to
+     regular_hours with receipt (the shape's only honest encoding — and exactly what MCP
+     did); buy/short → keep **block**, deliberately fail-closed for entries
+     (**owner heads-up:** on alpaca-mcp accounts with permitExtendedHours on, a market
+     entry tagged extended_hours used to silently execute at the open; it is now blocked
+     pre-submission with an honest message — say the word and the entry row flips to the
+     same requeue-reshape).
+  2. (MEDIUM ×2, one per lens) The approval lane did NOT classify OrderValidationError as
+     "blocked" — a deterministic constraint block would loop through
+     reconcilePlacementError and read "not_placed — safe to retry" forever. Fixed:
+     `strategy-execution.ts` now short-circuits `instanceof OrderValidationError` →
+     status "blocked" + `order_blocked_validation` audit + "block" notification,
+     mirroring the autonomous lane and the lane's own protective-state-block pattern.
+  3. (LOW) Constraint blocks in the autonomous lane were audited under the misleading
+     pre-existing kind `order_blocked_live_preflight`. Fixed structurally: blocks now
+     throw `OrderConstraintBlockedError` (extends OrderValidationError, carries the row
+     id) and the choke point itself audits `order_constraint_blocked` with the row
+     identity (the lane's legacy kind still fires alongside — one accurate receipt
+     guaranteed regardless of lane).
+  4. (LOW) robinhood-no-short-selling's note overclaimed a classification upgrade
+     (review hits toMcpOrder's plain Error first in the standard lanes) — note corrected.
+  5. (LOW) Header overclaimed that the tests pin the adapters' duplicate copies —
+     corrected to state reality (table rows pinned here; adapter copies pinned by their
+     own suites; messages copy-equal by convention).
+  Refuted (with code receipts, not applied): audit-write-failure aborting reshaped exits;
+  lone bracketStopLimit miscounting; row-order block-vs-place divergence; bracket-strip
+  discarding a real protective intent on resting limit exits.
+- Post-fix: tsc clean, eslint 0 errors (1 pre-existing warning), 48/48 targeted tests.
 - Full `npm test` + `npm run build` via `scripts/land.sh` at landing.
 
 ## 5. Next Steps & Blockers

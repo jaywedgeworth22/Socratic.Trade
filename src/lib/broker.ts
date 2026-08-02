@@ -5,7 +5,7 @@ import { getTradierGateway } from "./tradier";
 import { audit, getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { deriveExecutionState } from "./execution-mode";
 import { assertLivePreflight } from "./preflight-live-guard";
-import { applyOrderConstraints, toConstraintBrokerId } from "./broker-order-constraints";
+import { applyOrderConstraints, OrderConstraintBlockedError, toConstraintBrokerId } from "./broker-order-constraints";
 
 function resolveGateway(policy: TradingPolicy, userId: string): BrokerGateway {
   if (policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp") {
@@ -97,7 +97,32 @@ export function withOrderConstraints(gateway: BrokerGateway, policy: TradingPoli
           // is unreachable in practice — but fail OPEN here (adapter's own validation still runs)
           // rather than invent a block the table doesn't document.
           if (!broker) return target.placeEquityOrder(input);
-          const { input: constrained, reshaped } = applyOrderConstraints(broker, input);
+          let applied: ReturnType<typeof applyOrderConstraints>;
+          try {
+            applied = applyOrderConstraints(broker, input);
+          } catch (error) {
+            // Audit blocks HERE, where the row identity is known — the strategy lane's own audit
+            // for this branch predates the tables and carries a preflight-flavored kind.
+            if (error instanceof OrderConstraintBlockedError) {
+              audit(
+                "order_constraint_blocked",
+                {
+                  broker,
+                  constraintId: error.constraintId,
+                  description: error.constraintDescription,
+                  symbol: input.symbol,
+                  side: input.side,
+                  type: input.type,
+                  refId: input.refId,
+                  reason: error.message
+                },
+                userId,
+                policy.connectedAccountId
+              );
+            }
+            throw error;
+          }
+          const { input: constrained, reshaped } = applied;
           for (const receipt of reshaped) {
             audit(
               "order_constraint_reshaped",

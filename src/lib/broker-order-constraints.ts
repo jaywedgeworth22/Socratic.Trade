@@ -22,9 +22,29 @@
 // Adding a constraint: only encode rules with a receipt — a broker doc, a production 422, or an
 // adapter check being promoted — never a guessed rule (a wrong block here stops real orders).
 // Some rows intentionally duplicate adapter-internal checks (the adapter keeps its own copy as
-// defense in depth); the per-constraint tests in test/broker-order-constraints.test.ts pin both.
+// defense in depth). The table rows are pinned per-constraint in
+// test/broker-order-constraints.test.ts; the adapters' own copies are behavior-pinned by their
+// own suites. Messages are copy-equal by convention, not by shared constant — the choke point
+// fires first, so its message is the one production actually surfaces.
 
 import { OrderValidationError, type EquityOrderInput } from "./types";
+
+/** A "block" remedy throw. Extends OrderValidationError so the placement lanes' existing
+ *  `instanceof OrderValidationError` branches classify it as proposal status "blocked"
+ *  (deterministic pre-submission refusal — the broker was never contacted), while carrying
+ *  the row identity so the choke point can audit `order_constraint_blocked` accurately
+ *  (the strategy lane's own audit kind for this branch predates the tables and is named
+ *  for the live preflight). */
+export class OrderConstraintBlockedError extends OrderValidationError {
+  readonly constraintId: string;
+  readonly constraintDescription: string;
+  constructor(message: string, constraintId: string, constraintDescription: string) {
+    super(message);
+    this.name = "OrderConstraintBlockedError";
+    this.constraintId = constraintId;
+    this.constraintDescription = constraintDescription;
+  }
+}
 
 /** Brokers as the placement choke point sees them (policy.activeBroker with alpaca-mcp folded
  *  into alpaca — both resolve to the same adapter family and constraint set). "test" is the
@@ -117,14 +137,33 @@ export const BROKER_ORDER_CONSTRAINTS: Record<ConstraintBrokerId, OrderConstrain
       }
     },
     {
-      id: "alpaca-extended-hours-limit-only",
-      description: "Extended-hours orders must be limit orders (extended_hours=true on market/stop is rejected).",
+      id: "alpaca-extended-hours-exit-requeue",
+      description: "A non-limit EXIT tagged extended_hours re-queues to regular hours.",
       note:
-        "protective-exit-routing.ts's header documents the broker rule; its routing already complies. " +
-        "This blocks the shapes no current lane produces, so a future caller learns pre-submission " +
-        "instead of via 422.",
+        "Split from the entry block below by the money-path review: the LLM schema allows any " +
+        "type x hours combination and policy exempts sell/cover from the permitExtendedHours gate, " +
+        "so exits CAN arrive shaped this way. Never block an exit: a market exit at the regular " +
+        "open is this shape's only honest Alpaca encoding — and exactly what the alpaca-mcp " +
+        "transport silently did before (it never forwarded the flag; see protective-exit-routing.ts " +
+        "header), while REST 422'd. Ordered before the entry block; the receipt makes the requeue visible.",
+      remedy: "reshape",
+      violates: (input) =>
+        (input.side === "sell" || input.side === "cover") && input.marketHours === "extended_hours" && input.type !== "limit",
+      reshape: (input) => ({ input: { ...input, marketHours: "regular_hours" }, changedFields: ["marketHours"] })
+    },
+    {
+      id: "alpaca-extended-hours-limit-only",
+      description: "Extended-hours ENTRIES must be limit orders (extended_hours=true on market/stop is rejected).",
+      note:
+        "The LLM strategy/approval lanes CAN produce this shape when permitExtendedHours is on. " +
+        "On plain REST it already 422'd (this block is a strict improvement: pre-submission, " +
+        "classified 'blocked'); on the alpaca-mcp transport it was silently misrouted as a " +
+        "regular-hours order that executed. Fail-closed here is deliberate for ENTRIES — a trade " +
+        "the broker cannot honestly take in the requested session should not start a position at " +
+        "a different session's price. Exits are re-queued by the row above instead.",
       remedy: "block",
-      violates: (input) => input.marketHours === "extended_hours" && input.type !== "limit",
+      violates: (input) =>
+        (input.side === "buy" || input.side === "short") && input.marketHours === "extended_hours" && input.type !== "limit",
       message: (input) =>
         `Alpaca extended-hours orders must be limit orders — a ${input.type} order with extended_hours=true is rejected by the broker.`
     }
@@ -134,8 +173,10 @@ export const BROKER_ORDER_CONSTRAINTS: Record<ConstraintBrokerId, OrderConstrain
       id: "robinhood-no-short-selling",
       description: "Short selling (short/cover) is not supported.",
       note:
-        "Promotes toMcpOrder's throw to the choke point, and upgrades it from a plain Error (classified " +
-        "rejected_by_broker) to OrderValidationError (classified blocked — nothing was ever sent).",
+        "Duplicates toMcpOrder's throw at the choke point as defense in depth. NOTE: the standard " +
+        "strategy/approval lanes call reviewEquityOrder first, which hits the same toMcpOrder " +
+        "plain-Error throw before this row can run — the OrderValidationError -> 'blocked' " +
+        "classification upgrade applies only to lanes that place without reviewing.",
       remedy: "block",
       violates: (input) => input.side === "short" || input.side === "cover",
       message: (input) =>
@@ -216,7 +257,7 @@ export function applyOrderConstraints(broker: ConstraintBrokerId, input: EquityO
     if (!row.violates(current)) continue;
     if (row.remedy === "block") {
       const message = row.message?.(current) ?? `${broker}: order violates constraint ${row.id}.`;
-      throw new OrderValidationError(message);
+      throw new OrderConstraintBlockedError(message, row.id, row.description);
     }
     if (!row.reshape) continue;
     const result = row.reshape(current);
