@@ -16,6 +16,8 @@ Last updated: 2026-08-02.
 
 ## Where things stand
 
+**2026-08-02 — 5-Year Local Flat-File Price History Priority (ANTIGRAVITY).** Added `fetchLocalFlatFileHistory(symbol)` as the #1 primary tier in `src/lib/history.ts` (`fetchDailyOHLC`) and `fetchGroupedBarsLocal(date)` in `src/lib/market-signals/massive.ts`. Any pre-hoarded 5-year Massive flat files (`data/history-5y/`, `data/massive-history/`) are read directly from disk without hitting external REST APIs, providing instant zero-cost history for backtests and Congress.Trade EOD price feeds (`/api/market/prices/[symbol]`, `/api/market/spx`). Rollout: `docs/rollouts/2026-08-02-local-flatfile-history-priority.md`.
+
 **2026-08-02 — Mobile PWA owner-feedback round (Monet, cloud session).** Branch
 `agent/antigravity/mobile-pwa-feedback` (applying patch from Monet): PWA gets
 an Accounts section (switch broker account via `account.activate`, sign-out link to switch Google/Apple

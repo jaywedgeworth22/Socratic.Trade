@@ -8,6 +8,9 @@
 // keyed provider is strongly recommended. Server-side only; cached briefly. Never fabricates
 // — no bars → returns null, callers degrade to "—".
 
+import fs from "fs";
+import path from "path";
+import zlib from "zlib";
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
 import { fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
@@ -84,6 +87,9 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
   // Keyed providers first (brokerage-grade, generous limits, reliable from datacenter IPs),
   // then the free fallbacks. Keyed sources self-skip when their env key is unset.
   const sources: Array<{ scope: CacheScope; fetch: () => Promise<OHLCBar[] | null> }> = [
+    // Local 5-year Massive flat-file history tier (data/history-5y/, data/massive-history/):
+    // Reads local pre-hoarded 5-year OHLC price datasets directly without hitting external REST APIs.
+    { scope: "shared", fetch: async () => fetchLocalFlatFileHistory(symbol) },
     // Local imported-EOD cache tier (congress.trade return-path): App A POSTs gap-fill closes to
     // /api/admin/securities/import; they land in imported_price_eod/imported_spx_eod. Reading the local
     // table first (ahead of the App A HTTP read and our keyed providers) lets an imported series displace
@@ -423,4 +429,58 @@ function fetchImportedHistory(symbol: string): OHLCBar[] | null {
   if (closes.length < importedHistoryMinBars()) return null;
   const bars = appAClosesToBars(closes);
   return bars.length >= 2 ? bars : null;
+}
+
+/**
+ * Read historical 5-year daily OHLC bars from local flat-file storage (`data/history-5y/`, `data/massive-history/`, `data/fmp-history/`).
+ * When local flat-file history exists for a symbol, it is returned directly without making external REST API calls.
+ */
+export function fetchLocalFlatFileHistory(rawSymbol: string): OHLCBar[] | null {
+  try {
+    const symbol = rawSymbol.trim().toUpperCase();
+    if (!symbol) return null;
+
+    const baseDir = path.join(process.cwd(), "data");
+    const candidates = [
+      path.join(baseDir, "history-5y", `${symbol}.json`),
+      path.join(baseDir, "history-5y", `${symbol.toLowerCase()}.json`),
+      path.join(baseDir, "fmp-history", `${symbol}.json`),
+      path.join(baseDir, "fmp-history", `${symbol.toLowerCase()}.json`)
+    ];
+
+    let filePath: string | null = null;
+    for (const cand of candidates) {
+      if (fs.existsSync(cand)) {
+        filePath = cand;
+        break;
+      }
+    }
+    if (filePath) {
+      const raw = fs.readFileSync(filePath, "utf8");
+      const json = JSON.parse(raw);
+      const rows = Array.isArray(json) ? json : Array.isArray(json?.results) ? json.results : Array.isArray(json?.bars) ? json.bars : [];
+      if (rows && rows.length >= 2) {
+        const bars: OHLCBar[] = [];
+        for (const r of rows) {
+          const c = typeof r.c === "number" ? r.c : typeof r.close === "number" ? r.close : undefined;
+          const t = r.t ?? r.time ?? r.date;
+          if (typeof c !== "number" || !Number.isFinite(c) || (typeof t !== "number" && typeof t !== "string")) continue;
+          bars.push({
+            time: t,
+            open: numOrUndef(r.o ?? r.open),
+            high: numOrUndef(r.h ?? r.high),
+            low: numOrUndef(r.l ?? r.low),
+            close: c,
+            volume: numOrUndef(r.v ?? r.volume),
+            vwap: numOrUndef(r.vw ?? r.vwap)
+          });
+        }
+        if (bars.length >= 2) return bars;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
