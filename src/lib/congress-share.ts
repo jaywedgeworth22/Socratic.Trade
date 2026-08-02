@@ -898,7 +898,7 @@ export async function runCongressDailyShare(
   }
 }
 
-async function fetchNasdaqScreenerRefs(universe: string[]): Promise<CongressRef[]> {
+async function fetchNasdaqScreenerRefs(): Promise<CongressRef[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
   try {
@@ -911,14 +911,14 @@ async function fetchNasdaqScreenerRefs(universe: string[]): Promise<CongressRef[
     const payload = await response.json();
     const rows = Array.isArray(payload?.data?.table?.rows) ? payload.data.table.rows : [];
     
-    const universeSet = new Set(universe.map(u => canonicalOutboundSymbol(u)).filter(Boolean));
+    const seen = new Set<string>();
     const refs: CongressRef[] = [];
     
     for (const row of rows) {
       const rawSymbol = String(row.symbol ?? "");
       const sym = normalizeSymbol(rawSymbol).replace(/\//g, "-");
       const ticker = canonicalOutboundSymbol(sym);
-      if (!ticker || !universeSet.has(ticker)) continue;
+      if (!ticker || seen.has(ticker)) continue;
       
       const ref: CongressRef = { ticker, assetClass: "equity" };
       
@@ -935,7 +935,7 @@ async function fetchNasdaqScreenerRefs(universe: string[]): Promise<CongressRef[
       if (Number.isFinite(marketCap) && marketCap > 0) ref.marketCap = marketCap;
       
       refs.push(ref);
-      universeSet.delete(ticker); // Avoid duplicates if screener has multiple rows mapping to same canonical ticker
+      seen.add(ticker); // Avoid duplicates if screener has multiple rows mapping to same canonical ticker
     }
     return refs;
   } catch (err) {
@@ -1074,8 +1074,8 @@ async function runCongressDailyShareUnlocked(
   const insider = advancesDailyMarker ? buildInsiderImport() : [];
   const shortVolume = advancesDailyMarker ? buildShortVolumeImport() : [];
   
-  // Push company refs for the current share universe using the public screener
-  const refs = await fetchNasdaqScreenerRefs(universe);
+  // Push company refs for the full public screener
+  const refs = await fetchNasdaqScreenerRefs();
 
   // Send each dataset as its OWN bounded POST(s) rather than one bundled megabatch: App A's per-call
   // work (upserts + per-trade perf recompute) made big combined payloads exceed the timeout, and a
