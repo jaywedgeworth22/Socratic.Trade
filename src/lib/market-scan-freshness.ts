@@ -14,7 +14,7 @@
 // refreshing). On a non-trading day, run in `enrichmentMode: "skip"` seeded from the newest
 // persisted scan's quotesBySymbol — a keyless price/breadth refresh that burns no keyed
 // provider quota, mirroring the interactive /api/scan path.
-import { audit, getPolicy, latestAuditByKind, newerAuditEntry, type AuditEventRow } from "./db";
+import { audit, getPolicy, latestAuditByKind, newerAuditEntry, type AuditEventRow, latestAuditStampByKind } from "./db";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { isTradingDay } from "./market-calendar";
 import { scanMarket } from "./market";
@@ -90,15 +90,62 @@ function freshnessScanKey(policy: ReturnType<typeof getPolicy>, symbols: string[
  * Scheduler entry point: refresh the persisted Market Scan when it has gone stale, independent
  * of trading gates. Self-guarded — never throws into the tick.
  */
-export async function runMarketScanFreshnessIfDue(now: number = Date.now()): Promise<void> {
+/** Serve HTTP before grinding: the scheduler's first tick fires at boot+ε, and this lane running
+ *  a cold full scan on that tick was the 2026-08-02 prod wedge. Enforced at the scheduler call
+ *  site (which passes process.uptime()); unit callers omit the arg and are exempt. */
+export const FRESHNESS_BOOT_GRACE_SECONDS = 300;
+/** Hard ceiling on one freshness scan — a scan that cannot finish inside this is exactly the
+ *  wedge shape this lane must never re-create. */
+export const FRESHNESS_SCAN_DEADLINE_MS = 10 * 60_000;
+
+/** Last audit row id proven to carry a usable scan — skips re-parsing a multi-MB payload every
+ *  tick while the newest row is unchanged (steady state = two index seeks, zero parses). */
+let lastUsableAuditRowId: string | undefined;
+
+/** Test-only (per-file temp DBs make cached row ids stale across tests). */
+export function resetFreshnessGateForTests(): void {
+  lastUsableAuditRowId = undefined;
+}
+
+export async function runMarketScanFreshnessIfDue(now: number = Date.now(), uptimeSeconds?: number): Promise<void> {
   try {
     const maxAgeHours = marketScanFreshnessMaxAgeHours();
     if (maxAgeHours <= 0) return; // 0 disables the lane
+    if (uptimeSeconds !== undefined && uptimeSeconds < FRESHNESS_BOOT_GRACE_SECONDS) return; // boot grace
 
     const policy = getPolicy(FRESHNESS_USER_ID);
+    const maxAgeMs = maxAgeHours * 60 * 60_000;
+
+    // FAST GATE — stamps only, no payloads. The old gate resolved BOTH kinds' full payloads
+    // (multi-MB rows) on every tick just to compare timestamps. A fresh stamp alone cannot
+    // prove freshness (a skipped strategy_run row carries no scan and must not mask an older
+    // stale-but-usable one), so usability is verified once per newest-row CHANGE and cached.
+    const stampOf = (kind: string) =>
+      latestAuditStampByKind(kind, FRESHNESS_USER_ID, policy.connectedAccountId) ??
+      latestAuditStampByKind(kind, FRESHNESS_USER_ID);
+    const scanStamp = stampOf("market_scan");
+    const runStamp = stampOf("strategy_run");
+    const newestStamp = !scanStamp
+      ? runStamp
+      : !runStamp || Date.parse(scanStamp.createdAt) >= Date.parse(runStamp.createdAt)
+        ? scanStamp
+        : runStamp;
+    if (newestStamp && now - Date.parse(newestStamp.createdAt) < maxAgeMs) {
+      if (newestStamp.id === lastUsableAuditRowId) return; // fresh + already proven usable
+      const freshCheck = newestPersistedMarketScan(FRESHNESS_USER_ID, policy.connectedAccountId);
+      if (freshCheck && now - Date.parse(freshCheck.entry.createdAt) < maxAgeMs) {
+        lastUsableAuditRowId = freshCheck.entry.id;
+        return;
+      }
+      // Fresh stamp but no fresh USABLE scan — fall through and refresh.
+    }
+
     const newest = newestPersistedMarketScan(FRESHNESS_USER_ID, policy.connectedAccountId);
     const ageMs = newest ? now - Date.parse(newest.entry.createdAt) : Number.POSITIVE_INFINITY;
-    if (Number.isFinite(ageMs) && ageMs < maxAgeHours * 60 * 60_000) return; // still fresh
+    if (Number.isFinite(ageMs) && ageMs < maxAgeHours * 60 * 60_000) {
+      lastUsableAuditRowId = newest!.entry.id;
+      return; // still fresh
+    }
 
     const symbols = allowedSymbolsForPolicy(policy);
     const dynamicUniverses = dynamicIndexUniversesForPolicy(policy);
@@ -114,7 +161,8 @@ export async function runMarketScanFreshnessIfDue(now: number = Date.now()): Pro
         outlierReserve: policy.marketScanOutlierReserve,
         universeFloor: policy.universeFloor,
         enrichmentMode: tradingDay ? undefined : "skip",
-        seedEnrichment
+        seedEnrichment,
+        signal: AbortSignal.timeout(FRESHNESS_SCAN_DEADLINE_MS)
       })
     );
 
