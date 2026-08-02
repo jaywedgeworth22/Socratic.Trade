@@ -128,9 +128,10 @@ describe("market enrichment provider", () => {
 
   it("uses Yahoo Finance provider when no API key is configured", async () => {
     const provider = getEnrichmentProvider();
-    // Keyless free-wave floor: nasdaq-quote + Yahoo Finance (no paid keys; SEC XBRL off in this suite).
+    // Keyless free-wave floor: nasdaq-quote + Yahoo Finance + the keyless Nasdaq earnings-calendar
+    // backfill (no paid keys; SEC XBRL off in this suite).
     expect(provider.configured).toBe(true);
-    expect(provider.name).toBe("nasdaq-quote+yahoo-finance");
+    expect(provider.name).toBe("nasdaq-quote+yahoo-finance+nasdaq-calendar");
   });
 
   it("keeps the unofficial Webull quote bridge disabled by default", async () => {

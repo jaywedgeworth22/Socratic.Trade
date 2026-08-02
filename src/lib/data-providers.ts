@@ -43,6 +43,10 @@ import { recordProviderCall } from "./usage-monitor-push";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
 import { QuiverEnrichmentProvider, resolveQuiverApiKey } from "./quiver-provider";
+import { NasdaqCalendarEnrichmentProvider } from "./nasdaq-calendar-provider";
+import { WisesheetsEnrichmentProvider, resolveWisesheetsApiKey } from "./wisesheets-provider";
+import { SimFinEnrichmentProvider, resolveSimFinApiKey } from "./simfin-provider";
+import { MarketauxEnrichmentProvider, resolveMarketauxApiKey } from "./marketaux-provider";
 import { getStreamedHeadlines } from "./streams/news-store";
 import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
@@ -1030,6 +1034,13 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   } else if (alphaVantage.keys.length > 0) {
     console.log("[data-providers] Alpha Vantage deregistered: Alpaca news already covers NEWS_SENTIMENT");
   }
+  // Marketaux: a genuine per-article sentiment model (not a keyword-scored proxy), so it's seated
+  // right after AV's own model-based NEWS_SENTIMENT rather than down with the keyword-proxy tiers.
+  // Key-gated on MARKETAUX_API_KEY (process.env only, mirrors QuiverEnrichmentProvider). Declares
+  // quotaScarce (its free tier is 100 req/day) + suppliesFields, so the free-first planner's wave
+  // gate only spends it on symbols still missing headlines/sentiment after the free wave resolved.
+  const marketauxKey = resolveMarketauxApiKey();
+  if (marketauxKey) providers.push(withHealthLane(new MarketauxEnrichmentProvider(marketauxKey), "env"));
   if (fmp.key) providers.push(withHealthLane(new FmpEnrichmentProvider(fmp.key, fmp.source, userId), fmp.source));
   if (roic.key) providers.push(withHealthLane(new RoicAiEnrichmentProvider(roic.key, roic.source, userId), roic.source));
   // Massive REST: REAL second short-interest source (FINRA short interest / free float) for the
@@ -1047,6 +1058,16 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (filingApi.key) {
     providers.push(withHealthLane(new FilingApiEnrichmentProvider(filingApi.key, filingApi.source, userId), filingApi.source));
   }
+  // Wisesheets + SimFin: two new (2026-08-02) free/keyed fundamentals "second opinions" layered
+  // on top of FMP/roic/SEC-XBRL above, both key-gated on their own env var (process.env only,
+  // mirror QuiverEnrichmentProvider) and both self-contained (no shared provider-rate-limit.ts
+  // budget — each paces itself). Wisesheets declares quotaScarce (launched 2026-07-24, no track
+  // record yet, 5,000 req/mo) so the free-first planner only spends it on genuine coverage gaps;
+  // SimFin does not (2 req/sec, no monthly cap) so it stays in the ordinary first-wins wave.
+  const wisesheetsKey = resolveWisesheetsApiKey();
+  if (wisesheetsKey) providers.push(withHealthLane(new WisesheetsEnrichmentProvider(wisesheetsKey), "env"));
+  const simFinKey = resolveSimFinApiKey();
+  if (simFinKey) providers.push(withHealthLane(new SimFinEnrichmentProvider(simFinKey), "env"));
   // Opt-in Robinhood option-chain tier (near-the-money IV + put/call ratio). Default OFF and inert
   // unless Robinhood MCP is connected — a long-TTL, low-frequency source with its own cache. Seated
   // late so it only fills the options-specific fields nothing else supplies.
@@ -1064,6 +1085,13 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // tiers when they filled a field.
   providers.push(new NasdaqQuoteEnrichmentProvider());
   providers.push(new YahooFinanceEnrichmentProvider());
+  // Keyless Nasdaq earnings-calendar backfill for daysToEarnings — registered after every paid
+  // per-symbol source (Yahoo/FMP/FilingApi/ROIC) that already fills this field cheaper in one call,
+  // so it only spends its own (market-wide-per-date, not per-symbol) calls on genuine gaps — the
+  // context.coveredFields short-circuit inside NasdaqCalendarEnrichmentProvider.enrich already
+  // enforces this at the per-symbol level regardless of registration order. Fully keyless/self-
+  // gating (NASDAQ_CALENDAR_ENRICHMENT_ENABLED, default ON) — see nasdaq-calendar-provider.ts.
+  providers.push(new NasdaqCalendarEnrichmentProvider());
   // Tier LAST — RapidAPI-hosted FAILOVER redundancy for the free scrape above (see the big doc
   // comment on the provider classes + rapidapi-quota.ts). Dormant unless RAPIDAPI_KEY is set.
   // Scarce providers (Mboum / YH15 / AV-RapidAPI / Insiders / TwelveData-RapidAPI) declare

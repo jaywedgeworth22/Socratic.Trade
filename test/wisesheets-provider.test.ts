@@ -49,11 +49,14 @@ describe("Wisesheets enrichment provider", () => {
     expect(resolveWisesheetsApiKey()).toBeUndefined();
   });
 
-  it("is NOT registered by the shared cascade (registration is the integration pass's job, not this file's)", async () => {
-    process.env.WISESHEETS_API_KEY = "test-key";
+  it("is registered by the shared cascade when WISESHEETS_API_KEY is set, dormant otherwise", async () => {
+    delete process.env.WISESHEETS_API_KEY;
     const { getEnrichmentProvider } = await import("../src/lib/data-providers");
-    const provider = getEnrichmentProvider();
-    expect(provider.name).not.toContain("wisesheets");
+    expect(getEnrichmentProvider().name).not.toContain("wisesheets");
+
+    process.env.WISESHEETS_API_KEY = "test-key";
+    expect(getEnrichmentProvider().name).toContain("wisesheets");
+    delete process.env.WISESHEETS_API_KEY;
   });
 
   // ── Row extraction (real observed envelope shape: { data: [...], meta: {...} }) ──────────
