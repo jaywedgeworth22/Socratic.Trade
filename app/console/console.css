@@ -1116,6 +1116,11 @@
 @media (prefers-reduced-motion: reduce) {
   .console-root * {
     animation-duration: 0.01ms !important;
+    /* Duration alone does not stop INFINITE animations (animate-pulse skeletons,
+       .con-dot-pulse): with 0.01ms duration each frame samples an arbitrary keyframe
+       phase, so they flicker per-frame instead of holding still. Clamp iterations
+       so they settle after one (instant) pass. */
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
 }
