@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -9,10 +10,14 @@ import {
   fetchR2RawUsage,
   formatR2MetricValue,
   getR2UsageSnapshots,
+  isR2AutoDisableArmed,
+  isR2ReplicationDisabled,
   isR2UsageCheckDue,
   loadR2UsageAccounts,
+  loadR2UsageMonitorConfig,
   r2AlertTransitions,
   r2MonthWindow,
+  resumeR2Replication,
   runR2UsageCheck,
   R2_FREE_TIER,
 } from "../src/lib/r2-usage";
@@ -35,6 +40,10 @@ beforeEach(() => {
   delete process.env.R2_USAGE_MONITOR_INTERVAL_HOURS;
   delete process.env.R2_USAGE_ALERT_THRESHOLD_PCT;
   delete process.env.R2_USAGE_BUCKET_FILTER;
+  delete process.env.R2_USAGE_DISABLE_MARKER;
+  delete process.env.R2_USAGE_AUTO_DISABLE;
+  delete process.env.DB_BOOTSTRAP;
+  // Existing alert tests assert exact notification counts; daily-report tests opt in explicitly.
 });
 
 // 2026-07-16T00:00:00Z — exactly mid-month-ish for July (31 days): 15/31 elapsed.
@@ -274,6 +283,107 @@ describe("runR2UsageCheck", () => {
     // runR2UsageCheck doesn't set the cadence watermark (runR2UsageCheckIfDue does),
     // so it remains due — guard against accidental coupling.
     expect(isR2UsageCheckDue(MID_JULY + 1000)).toBe(true);
+  });
+
+  it("auto-disable (armed, live boot) writes the kill-switch marker, notifies, and exits — once", async () => {
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "acct";
+    process.env.DB_BOOTSTRAP = "live";
+    const marker = join(tmpdir(), `r2-disable-${randomUUID()}`);
+    process.env.R2_USAGE_DISABLE_MARKER = marker;
+    const notifyCalls: Array<{ title: string; body: string }> = [];
+    const notifyImpl = (async (_u: string, msg: { title: string; body: string }) => {
+      notifyCalls.push(msg);
+      return [];
+    }) as never;
+    const exitCodes: number[] = [];
+    const deps = {
+      fetchImpl: graphqlStorageAndOps(8 * 1024 ** 3, 100, 100), // projected ~165% → exceeded
+      notifyImpl,
+      exitImpl: (code: number) => { exitCodes.push(code); },
+    };
+
+    await runR2UsageCheck(MID_JULY, deps);
+
+    expect(exitCodes).toEqual([41]); // container restart requested
+    expect(existsSync(marker)).toBe(true);
+    const markerPayload = JSON.parse(readFileSync(marker, "utf8"));
+    expect(markerPayload.reason).toContain("70%");
+    expect(markerPayload.exceeded.map((e: { id: string }) => e.id)).toEqual(["storage"]);
+    expect(notifyCalls.some((n) => n.title.includes("auto-disabled"))).toBe(true);
+    expect(isR2ReplicationDisabled()).toBe(true);
+
+    // Already disabled: a subsequent check must NOT write/notify/exit again.
+    notifyCalls.length = 0;
+    await runR2UsageCheck(MID_JULY + 3600_000, deps);
+    expect(exitCodes).toEqual([41]);
+    expect(notifyCalls.some((n) => n.title.includes("auto-disabled"))).toBe(false);
+
+    // Resume removes the marker and restarts the container (exit 42).
+    const resumeExits: number[] = [];
+    const resumed = await resumeR2Replication({ exitImpl: (c) => resumeExits.push(c) });
+    expect(resumed.resumed).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+    expect(resumeExits).toEqual([42]);
+    // Second resume is a no-op.
+    const again = await resumeR2Replication({ exitImpl: (c) => resumeExits.push(c) });
+    expect(again).toEqual({ resumed: false, reason: "not_disabled" });
+    expect(resumeExits).toEqual([42]);
+  });
+
+  it("auto-disable does NOT arm outside the live prod boot (no marker, no exit)", async () => {
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "acct";
+    // DB_BOOTSTRAP unset (dev/test) — exceeded metrics must only alert, never kill.
+    const marker = join(tmpdir(), `r2-disable-${randomUUID()}`);
+    process.env.R2_USAGE_DISABLE_MARKER = marker;
+    const exitCodes: number[] = [];
+    await runR2UsageCheck(MID_JULY, {
+      fetchImpl: graphqlStorageAndOps(8 * 1024 ** 3, 100, 100),
+      notifyImpl: (async () => []) as never,
+      exitImpl: (code: number) => { exitCodes.push(code); },
+    });
+    expect(exitCodes).toEqual([]);
+    expect(existsSync(marker)).toBe(false);
+    expect(isR2AutoDisableArmed(loadR2UsageMonitorConfig())).toBe(false);
+  });
+
+  it("kill-switch is st-scoped: another Cloudflare account over threshold never disables OUR litestream", async () => {
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t-st";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "acct-st";
+    process.env.CLOUDFLARE_CT_API_TOKEN = "t-ct";
+    process.env.CLOUDFLARE_CT_ACCOUNT_ID = "acct-ct";
+    process.env.DB_BOOTSTRAP = "live";
+    const marker = join(tmpdir(), `r2-disable-${randomUUID()}`);
+    process.env.R2_USAGE_DISABLE_MARKER = marker;
+    const exitCodes: number[] = [];
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      const query = String(init?.body ?? "");
+      const isSt = query.includes("acct-st");
+      const payloadSize = isSt ? 1 * 1024 ** 3 : 9 * 1024 ** 3; // ct massively over (90% absolute), st fine (10%)
+      if (query.includes("r2StorageAdaptiveGroups")) {
+        return new Response(JSON.stringify({
+          data: { viewer: { accounts: [{ r2StorageAdaptiveGroups: [
+            { max: { objectCount: 7, payloadSize }, dimensions: { bucketName: "b", datetime: "2026-07-16T00:00:00Z" } },
+          ] }] } },
+          errors: null,
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        data: { viewer: { accounts: [{ r2OperationsAdaptiveGroups: [] }] } },
+        errors: null,
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await runR2UsageCheck(MID_JULY, {
+      fetchImpl,
+      notifyImpl: (async () => []) as never,
+      exitImpl: (code: number) => { exitCodes.push(code); },
+    });
+
+    expect(exitCodes).toEqual([]); // st is under threshold — ct's overage must NOT stop our litestream
+    expect(existsSync(marker)).toBe(false);
+    expect(isR2ReplicationDisabled()).toBe(false);
   });
 });
 

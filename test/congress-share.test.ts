@@ -431,7 +431,9 @@ describe("runCongressDailyShare", () => {
     expect(res.ok).toBe(true);
     expect(res).toMatchObject({ tickers: 2, priced: 2, spxRows: 2, failedPosts: 0 });
     // spx and prices now go in their own bounded POSTs (not one bundled body).
-    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    const bodies = fetchSpy.mock.calls
+      .filter((c) => (c[1] as RequestInit)?.body)
+      .map((c) => JSON.parse((c[1] as RequestInit).body as string));
     expect(bodies.find((b) => b.spx)?.spx).toHaveLength(2);
     expect(bodies.find((b) => b.prices)?.prices.map((p: { ticker: string }) => p.ticker)).toEqual(["AAPL", "MSFT"]);
     expect(mockedFetchDailyOHLC).toHaveBeenCalledWith("^GSPC", now);
@@ -454,8 +456,11 @@ describe("runCongressDailyShare", () => {
       { time: "2026-06-15", close: 100 }
     ];
     mockedFetchDailyOHLC.mockResolvedValue(bars);
-    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => {
+    const fetchSpy = vi.fn(async (url: string, _init?: RequestInit) => {
       await new Promise(r => setTimeout(r, 50));
+      if (url.includes("nasdaq.com")) {
+        return new Response(JSON.stringify({ data: { table: { rows: [] } } }), { status: 200 });
+      }
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchSpy);
@@ -469,7 +474,7 @@ describe("runCongressDailyShare", () => {
     ]);
 
     expect(res1).toBe(res2); // Should return the exact same promise/result reference
-    expect(fetchSpy).toHaveBeenCalledTimes(2); // Should only execute one run (which POSTs SPX and prices payload separately)
+    expect(fetchSpy.mock.calls.filter((c) => (c[1] as RequestInit)?.body)).toHaveLength(2); // Should only execute one run (which POSTs SPX and prices payload separately)
   });
 });
 
@@ -554,7 +559,9 @@ describe("runCongressDailyShare — insider + short-volume on the nightly batch"
     vi.stubGlobal("fetch", fetchSpy);
     const res = await runCongressDailyShare({ now: Date.UTC(2026, 5, 22), force: true, symbols: ["AAPL"] });
     expect(res.ok).toBe(true);
-    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    const bodies = fetchSpy.mock.calls
+      .filter((c) => (c[1] as RequestInit)?.body)
+      .map((c) => JSON.parse((c[1] as RequestInit).body as string));
     const entry = bodies.find((b) => b.prices)?.prices.find((p: { ticker: string }) => p.ticker === "AAPL");
     expect(entry.closes).toHaveLength(2); // capped from 5 → most-recent 2
     expect(entry.closes.map((c: { date: string }) => c.date)).toEqual(["2026-06-15", "2026-06-16"]);
@@ -575,7 +582,9 @@ describe("runCongressDailyShare — insider + short-volume on the nightly batch"
     vi.stubGlobal("fetch", fetchSpy);
     const res = await runCongressDailyShare({ now: Date.UTC(2026, 5, 22), force: true, symbols: ["AAPL"], fullHistory: true });
     expect(res.ok).toBe(true);
-    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    const bodies = fetchSpy.mock.calls
+      .filter((c) => (c[1] as RequestInit)?.body)
+      .map((c) => JSON.parse((c[1] as RequestInit).body as string));
     const entry = bodies.find((b) => b.prices)?.prices.find((p: { ticker: string }) => p.ticker === "AAPL");
     expect(entry.closes).toHaveLength(5); // full series, not capped to 2
   });

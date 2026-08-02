@@ -63,6 +63,18 @@ describe("QuiverQuant enrichment provider", () => {
     expect(resolveQuiverApiKey()).toBeUndefined();
   });
 
+  it("resolveQuiverApiKey falls back to QUIVERQUANT_API_TOKEN (owner's secret-store spelling)", async () => {
+    const { resolveQuiverApiKey } = await import("../src/lib/quiver-provider");
+    delete process.env.QUIVER_API_KEY;
+    process.env.QUIVERQUANT_API_TOKEN = "token-spelling";
+    expect(resolveQuiverApiKey()).toBe("token-spelling");
+    // Primary spelling wins when both are set.
+    process.env.QUIVER_API_KEY = "primary";
+    expect(resolveQuiverApiKey()).toBe("primary");
+    delete process.env.QUIVER_API_KEY;
+    delete process.env.QUIVERQUANT_API_TOKEN;
+  });
+
   // ── Row extraction / parsing (fixture payloads, both schema shapes seen from QuiverQuant) ──
 
   it("extractQuiverRows accepts a bare array and tolerates a wrapped envelope", async () => {

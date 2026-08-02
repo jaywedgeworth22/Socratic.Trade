@@ -156,6 +156,46 @@ describe("Litestream runtime health", () => {
     });
   });
 
+  it("finds the control socket at the Litestream 0.5.x db-dir default when no path is configured", async () => {
+    // Prod 2026-07-30..08-01: 0.5.12 ignores the config file's `socket.path` and listens at
+    // <db-dir>/litestream.sock; the health probe only tried /var/run/litestream.sock and
+    // reported litestreamState "unknown" for days while replication was healthy. The probe
+    // must now discover the db-dir default on its own (no explicit socketPath, no env).
+    vi.stubEnv("LITESTREAM_SOCKET_PATH", "");
+    const root = mkdtempSync("/tmp/litestream-dbdir-");
+    tempRoots.push(root);
+    const dbPath = join(root, "app.db");
+    const socketPath = join(root, "litestream.sock");
+    socketPaths.push(socketPath);
+    const server = createServer((req, res) => {
+      expect(req.url).toBe("/list");
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        databases: [{
+          path: dbPath,
+          status: "replicating",
+          last_sync_at: "2026-07-11T04:59:50.000Z"
+        }]
+      }));
+    });
+    servers.push(server);
+    if (!await safeListen(server, socketPath)) return;
+
+    await expect(getLitestreamRuntimeHealth({
+      dbPath,
+      timeoutMs: 500,
+      allowFileFallback: false,
+      nowMs: Date.parse("2026-07-11T05:00:00.000Z")
+    })).resolves.toEqual({
+      state: "known",
+      source: "ipc",
+      status: "replicating",
+      lastSyncAt: "2026-07-11T04:59:50.000Z",
+      ageSeconds: 10,
+      timestampState: "valid"
+    });
+  });
+
   it("enforces a wall-clock deadline even when the socket keeps trickling bytes", async () => {
     const root = mkdtempSync(join(tmpdir(), "socratic-litestream-deadline-"));
     tempRoots.push(root);
