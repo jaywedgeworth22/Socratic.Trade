@@ -50,6 +50,13 @@ Last updated: 2026-08-02.
    gone). #2345's lockfile regen also fixed a real silent bug: the old lockfile pinned the
    v2.3.0 commit while package.json said v2.4.x, so `npm ci` was silently shipping the old
    shared package. Verified 2026-08-02: plain `npm ci` = exit 0, 575 packages, clean shell.
+2. **RESOLVED 2026-08-02 (PR #2345) — npm 11.16 `EALLOWSCRIPTS` on the shared git dep.**
+   `npm install`/`npm ci` failed preparing `congress-trading-shared` and left `node_modules`
+   EMPTY (easily misread as janitor reaping); the interim workaround was `npx -y npm@10 ci`.
+   #2345 restored the `allowScripts` entry for the current tag and regenerated the lockfile
+   for shared v2.4.1. If plain `npm ci` regresses again after a future shared-package bump,
+   check that `package.json`'s `allowScripts` key names the CURRENT `#vX.Y.Z` spec — a
+   stale tag reproduces the identical failure.
 
 3. **Two provider lanes are degraded and need an owner decision, not an agent fix.**
    FMP's plan probe returns 403 (subscription state) and Massive is history-capped to the
@@ -64,6 +71,8 @@ Last updated: 2026-08-02.
 - (Retracted: the `schedulerLease.owner` "residual" flagged earlier does not exist — the
   landed code already strips the pid for unauthenticated callers; prod serves the bare
   instance uuid. Observation was made against the pre-deploy payload.)
+- Small follow-up in flight: fold `schedulerLease.owner` behind the ops token on
+  `/api/health` (the one residual of finding 27's minimization).
 - Owner decisions pending: FMP subscription, Massive plan tier; and whether hook-secret
   re-sync should be added to the Coolify app-recreate recipe (see the 2026-08-02 rollout
   note — if recreation regenerated the secret, this failure recurs on the next recreate).
