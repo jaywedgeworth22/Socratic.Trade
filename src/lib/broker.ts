@@ -6,6 +6,7 @@ import { audit, getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { deriveExecutionState } from "./execution-mode";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { applyOrderConstraints, OrderConstraintBlockedError, toConstraintBrokerId } from "./broker-order-constraints";
+import { accountMutationSerializationEnabled, hasActiveLocalBrokerMutationClaim } from "./account-mutation";
 
 function resolveGateway(policy: TradingPolicy, userId: string): BrokerGateway {
   if (policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp") {
@@ -148,8 +149,44 @@ export function withOrderConstraints(gateway: BrokerGateway, policy: TradingPoli
   });
 }
 
+/**
+ * Advisory backstop for the per-account mutation lease (§7 slice 3): a placement arriving with
+ * NO active local mutation claim for its account is audited as `broker_mutation_unleased` and
+ * ALLOWED THROUGH — a receipt, not a cage. This converts "a wrap point was missed" (new lane,
+ * refactor, future caller) from a silent serialization hole into a greppable audit event.
+ * Cancels are deliberately never inspected here (see the cancel doctrine in account-mutation.ts).
+ */
+function withMutationLeaseReceipt(gateway: BrokerGateway, policy: TradingPolicy, userId: string): BrokerGateway {
+  return new Proxy(gateway, {
+    get(target, prop, receiver) {
+      if (prop === "placeEquityOrder") {
+        return async (input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> => {
+          if (
+            accountMutationSerializationEnabled() &&
+            !hasActiveLocalBrokerMutationClaim(userId, input.accountNumber, policy.connectedAccountId)
+          ) {
+            audit(
+              "broker_mutation_unleased",
+              { accountNumber: input.accountNumber, symbol: input.symbol, side: input.side, type: input.type, refId: input.refId },
+              userId,
+              policy.connectedAccountId
+            );
+          }
+          return target.placeEquityOrder(input);
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    }
+  });
+}
+
 export function getBrokerGateway(policy: TradingPolicy, userId: string = "local"): BrokerGateway {
   // Composition order: the live preflight (outermost) authorizes the attempt, then the
-  // constraint tables validate/reshape the order, then the adapter runs its own checks.
-  return withLivePreflight(withOrderConstraints(resolveGateway(policy, userId), policy, userId), policy, userId);
+  // constraint tables validate/reshape the order, then the mutation-lease receipt backstop
+  // observes, then the adapter runs its own checks.
+  return withLivePreflight(
+    withOrderConstraints(withMutationLeaseReceipt(resolveGateway(policy, userId), policy, userId), policy, userId),
+    policy,
+    userId
+  );
 }

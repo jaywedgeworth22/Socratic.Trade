@@ -147,8 +147,17 @@ export interface MonitorResult {
  * a stop for each open position when `policy.riskRules.trailingStopPct` is configured and none
  * exists yet.
  */
-export async function runSyntheticStopMonitor(userId: string, policy: TradingPolicy, running: boolean, now = new Date()): Promise<MonitorResult> {
+export async function runSyntheticStopMonitor(
+  userId: string,
+  policy: TradingPolicy,
+  running: boolean,
+  now = new Date(),
+  /** §7 slice 3 mutation-lease fence (AccountMutationContext.assertOwned) — checked before the
+   *  risk-CREATING exit placement. Cancels within the pass run unfenced (risk-reducing). */
+  fence?: () => void
+): Promise<MonitorResult> {
   const result: MonitorResult = { evaluated: 0, triggered: 0, exited: 0, purged: 0 };
+  const callerAccountNumber = policy.accountNumber;
   // The scheduler monitors every connected account, not just whichever account the UI currently
   // marks active. Resolve the policy's explicit account target through the ownership-scoped lookup;
   // never fall back to the mutable UI-active pointer or one account can inherit another account's
@@ -172,6 +181,22 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   };
   const accountNumber = policy.accountNumber;
   if (!accountNumber) return result;
+
+  // §7 slice 3: the caller's mutation-lease key was derived from the PRE-rebind accountNumber.
+  // If the authoritative row disagrees (stale/spoofed caller policy — the rebind exists exactly
+  // for that case), the caller's lease serializes the WRONG account. Protection must still run
+  // (the rebind-and-protect property is deliberate and test-pinned), but we must not PRETEND the
+  // wrong account's lease covers this pass: drop the fence, receipt the mismatch. Interleave
+  // exposure in this corner equals the pre-lease world, now visible in the audit trail.
+  if (callerAccountNumber && callerAccountNumber !== accountNumber) {
+    audit(
+      "synthetic_stop_monitor_account_rebind_mismatch",
+      { callerAccountNumber, rowAccountNumber: accountNumber, connectedAccountId: targetAccount.id },
+      userId,
+      targetAccount.id
+    );
+    fence = undefined;
+  }
 
   const executionState = deriveExecutionState(policy, targetAccount);
   if (!executionState.mode) return result;
@@ -871,6 +896,9 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     refId ??= brokerPortableRefId(`sstop-${stop.id}-${Math.round(evaln.triggerPrice * 100)}${generation > 0 ? `-g${generation}` : ""}`);
     recordSyntheticStopAttempt(stop.id, refId, userId);
     try {
+      // Mutation-lease fence: fail closed before the risk-CREATING exit placement if the
+      // window's lease was lost (another sequence may already be mutating this account).
+      fence?.();
       const exec = await gateway.placeEquityOrder({
         accountNumber,
         symbol: stop.symbol,
