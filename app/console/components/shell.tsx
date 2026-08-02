@@ -10,7 +10,8 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ShieldCheck } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { RefreshCw, ShieldCheck } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleFont } from "../lib/useConsoleFont";
@@ -36,6 +37,7 @@ import { HeaderLogo } from "../ui/header-logo";
 import { WORDMARK_AR } from "../ui/candle-ticker";
 import { getIntroPhase, subscribeIntroPhase, type IntroPhase } from "../ui/intro-bus";
 import { DesktopRail, MobileTabBar } from "./nav";
+import { Btn } from "../ui/primitives";
 
 export function ConsoleShell({ children }: { children: ReactNode }) {
   return (
@@ -49,11 +51,48 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
   );
 }
 
+/** Console routes that consume ZERO fields of the dashboard snapshot — they fetch their own
+ *  data — so making them wait behind it is pure dead time on a screen the user is staring at.
+ *
+ *  Deliberately an allowlist, not a heuristic. Every other route either reads the snapshot
+ *  directly or renders chrome (account scope, run state, STOP) that is derived from it, and
+ *  showing that chrome before the snapshot exists would mean showing a run state we do not
+ *  actually know yet. `/console/usage` is a server component wrapping LlmUsageClient, which
+ *  fetches `/api/llm-usage` itself.
+ *
+ *  Before adding a route here, grep it (and everything it renders) for `useConsoleData` and
+ *  confirm it does not read `snapshot`. `/console/connections` looks like a candidate and is
+ *  NOT one — BrokerAccountsCard needs connectedAccounts, policy, and per-account pending
+ *  proposal counts. */
+const SNAPSHOT_INDEPENDENT_ROUTES = new Set(["/console/usage"]);
+
 function ShellFrame({ children }: { children: ReactNode }) {
-  const { snapshot, fetchedAt, loading, error, stream } = useConsoleData();
+  const { snapshot, fetchedAt, loading, error, stream, refresh } = useConsoleData();
   const { theme, dataTheme, set: setTheme } = useConsoleTheme();
   const { dataTextBoxFont } = useConsoleTextBoxFont();
   const { dataConsoleFont } = useConsoleFont();
+  const pathname = usePathname();
+
+  // A route that needs nothing from the snapshot renders immediately, on its own data, with
+  // the shell's theming/token wrapper but without the snapshot-derived chrome. The chrome
+  // (and STOP) appear as soon as the snapshot lands and this branch stops applying — which
+  // is strictly better than today, where the same window shows a full-screen loader and no
+  // STOP either.
+  if (!snapshot && pathname && SNAPSHOT_INDEPENDENT_ROUTES.has(pathname)) {
+    return (
+      <div
+        className="console-root flex min-h-dvh flex-col"
+        data-theme={dataTheme}
+        data-textbox-font={dataTextBoxFont}
+        data-console-font={dataConsoleFont}
+        suppressHydrationWarning
+      >
+        <main className="mx-auto min-w-0 w-full max-w-[1400px] flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">
+          {children}
+        </main>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -70,6 +109,14 @@ function ShellFrame({ children }: { children: ReactNode }) {
             (returning tab / reduced motion), so those loads aren't a blank flash. */}
         <ConsoleIntro />
         <LoadingBrand />
+        {/* The visual load screen is deliberately wordless, which left screen-reader users
+            with nothing at all — no heading, no landmark, no announcement, just an empty
+            document until the snapshot arrived (which can legitimately take ~24s on a slow
+            broker chain). This is the accessible equivalent of the animation: a polite live
+            region, visually hidden so the clean backdrop is unchanged. */}
+        <p role="status" aria-live="polite" className="sr-only">
+          Loading your Socratic Trade console…
+        </p>
       </div>
     );
   }
@@ -83,12 +130,23 @@ function ShellFrame({ children }: { children: ReactNode }) {
         data-console-font={dataConsoleFont}
         suppressHydrationWarning
       >
-        <div className="con-card max-w-md p-6 text-center">
+        {/* role="alert" so the failure is announced, not just drawn. */}
+        <div className="con-card max-w-md p-6 text-center" role="alert">
           <div className="con-card-title">Socratic Trade</div>
           <p className="mt-2 font-semibold">Couldn&apos;t load the autonomy desk</p>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             {error ?? "The dashboard API did not respond."} The console retries automatically.
           </p>
+          {/* The automatic retry is real (the poll interval re-fires), but "retries
+              automatically" with no control is a dead end for anyone who does not want to
+              wait out the interval — and there was no way to tell a stuck console from a
+              slow one. refresh() is the same call the poll makes. */}
+          <div className="mt-4 flex justify-center">
+            <Btn variant="outline" size="sm" onClick={() => void refresh()}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              Retry now
+            </Btn>
+          </div>
         </div>
       </div>
     );

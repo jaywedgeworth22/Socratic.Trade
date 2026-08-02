@@ -7,10 +7,11 @@
  *  still catches a tab close; in-console unsaved-draft interception on palette jumps is a
  *  deliberate v1 gap, not a silent one. */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CornerDownLeft, Search } from "lucide-react";
 import { DESTINATIONS } from "./nav";
+import { hasBlockingFocusTrap, useFocusTrap } from "../ui/focus-trap";
 import { useConsoleTheme } from "../lib/useConsoleTheme";
 import { useNavDirtyGuard } from "../lib/useDirtyGuard";
 import { cx } from "../lib/format";
@@ -60,19 +61,30 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  const optionIdPrefix = useId();
+
+  // Focus moves to the search input (the first focusable), Tab stays inside the palette,
+  // Escape closes it, and closing returns focus to wherever the user was — a jump-anywhere
+  // affordance that dropped focus on document.body would cost keyboard users their place.
+  useFocusTrap(dialogRef, open, { onEscape: () => setOpen(false) });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
+        // A blocking surface (the consent gate) owns the screen until it is answered, and
+        // palette commands navigate — opening over it would route around it.
+        if (hasBlockingFocusTrap()) return;
         setOpen((o) => !o);
-      } else if (e.key === "Escape") {
-        setOpen(false);
       }
     };
-    const onOpen = () => setOpen(true);
+    const onOpen = () => {
+      if (hasBlockingFocusTrap()) return;
+      setOpen(true);
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener(CMDK_EVENT, onOpen);
     return () => {
@@ -116,12 +128,7 @@ export function CommandPalette() {
   }, [query, open]);
 
   useEffect(() => {
-    if (open) {
-      setQuery("");
-      // focus after the node mounts
-      const id = window.setTimeout(() => inputRef.current?.focus(), 0);
-      return () => window.clearTimeout(id);
-    }
+    if (open) setQuery("");
   }, [open]);
 
   useEffect(() => {
@@ -140,6 +147,7 @@ export function CommandPalette() {
 
   return (
     <div
+      ref={dialogRef}
       className="con-cmdk-overlay"
       role="dialog"
       aria-modal="true"
@@ -150,13 +158,20 @@ export function CommandPalette() {
         <div className="con-cmdk-search">
           <Search size={16} aria-hidden />
           <input
-            ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Jump to a screen or action…"
             aria-label="Search commands"
             autoComplete="off"
             spellCheck={false}
+            // Combobox wiring: the input keeps focus while the arrow keys move the
+            // highlight, so without aria-activedescendant a screen reader announces the
+            // input and never the option the user has landed on.
+            role="combobox"
+            aria-expanded
+            aria-controls={listId}
+            aria-autocomplete="list"
+            aria-activedescendant={filtered[active] ? `${optionIdPrefix}-${filtered[active].id}` : undefined}
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -172,13 +187,14 @@ export function CommandPalette() {
           />
           <kbd className="con-kbd">esc</kbd>
         </div>
-        <ul className="con-cmdk-list" ref={listRef} role="listbox" aria-label="Commands">
+        <ul className="con-cmdk-list" ref={listRef} id={listId} role="listbox" aria-label="Commands">
           {filtered.length === 0 ? (
             <li className="con-cmdk-empty">No matches</li>
           ) : (
             filtered.map((c, i) => (
               <li
                 key={c.id}
+                id={`${optionIdPrefix}-${c.id}`}
                 role="option"
                 aria-selected={i === active}
                 data-active={i === active}
