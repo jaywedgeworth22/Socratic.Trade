@@ -110,6 +110,7 @@ export function clearMassiveRestBudgetForTests(): void {
 export interface GroupedDailyBar { ticker: string; open?: number; high?: number; low?: number; close: number; volume?: number; vwap?: number }
 
 function fetchGroupedBarsLocal(date: string): GroupedDailyBar[] | null {
+  if ((process.env.MASSIVE_LOCAL_HISTORY_ENABLED ?? "on").toLowerCase() === "off") return null;
   try {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
     const [yyyy, mm] = date.split("-");
