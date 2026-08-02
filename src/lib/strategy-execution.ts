@@ -4,6 +4,7 @@ import { evaluateBrokerHeldExitAvailability, brokerHeldExitBlockReason } from ".
 import { describeBrokerMinimumOrderBlock, planBrokerMinimumBump, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
 import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isLiveOrderState, isRejectedOrCanceledState } from "./broker-side";
 import { audit, clearStopPlans, deriveExitContractFromOpening, getDb, recordStopPlan } from "./db";
+import { auditDeduped } from "./audit-dedupe";
 import { getActiveConnectedAccount } from "./db-api-keys";
 import { acquireStrategyLock, dailyExecutionStats, notionalInLastMinutes, countDayTradesInLastBusinessDays, releaseStrategyLock } from "./db-execution";
 import { listPendingBrokerReconciliationFills, netAccountingFillQuantity, updateFillEvent, listFillEventsByProposalId } from "./db-fills";
@@ -1563,7 +1564,9 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
         // state with an unpriced cumulative quantity larger than the already-booked partial). Keep
         // the prior accounting truth and leave this receipt eligible for another reconciliation.
         updateFillEvent(fill.id, { raw }, userId);
-        audit("fill_reconciliation_pending_price", {
+        // Steady-state per-tick spam guard (~4.5k identical rows/day in prod):
+        // first occurrence per (fillId, brokerState) logs immediately, then ≤1/6h.
+        auditDeduped("fill_reconciliation_pending_price", {
           fillId: fill.id,
           symbol: fill.symbol,
           brokerState: matched.state,
@@ -1571,7 +1574,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           knownBrokerQuantity: merged.knownQuantity,
           priorBookedQuantity: bookedExecutionTruth(fill)?.quantity,
           unresolvedGrowth: merged.unresolvedGrowth
-        }, userId, connectedAccountId);
+        }, [fill.id, matched.state], { userId, connectedAccountId });
         // A matched order still LIVE at the broker (working day limit, queued stop, ...) is
         // healthy — it simply hasn't executed yet, and stale-limit-orders.ts owns the alerting
         // for a far-from-market resting order. Only a matched order in a TERMINAL state that

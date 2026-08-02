@@ -14,6 +14,7 @@ import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
+import { runAuditPruneIfDue } from "./audit-prune";
 import { checkBrokerHealth } from "./broker-health";
 import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
@@ -447,6 +448,16 @@ async function tick(): Promise<void> {
   // Task-journal retention: 'skipped' heartbeat rows age out in 24h, ok/error in 30d
   // (db-task-journal.ts). One cheap indexed DELETE per tick; never throws.
   pruneTaskJournal();
+
+  // Daily audit_events + provider-observability retention (audit-prune.ts):
+  // observability kinds 14d, everything else 90d, bounded batches. First-ever
+  // run drains a large backlog over several daily passes.
+  void journalLane("audit-prune", {}, () => {
+    const result = runAuditPruneIfDue();
+    if (!result) return { status: "skipped" as const, summary: "not due" };
+    const total = result.auditObservability + result.auditDefault + result.providerDispatch + result.providerOutbox;
+    return { status: "ok" as const, summary: `deleted=${total}` };
+  }).catch((err) => console.error("[scheduler] audit prune error:", err));
 
   // Single-leader gate (default ON, including unset/empty). Only an explicit false/off/0/no-style
   // value disables it; otherwise only the lease holder runs the background updates and per-account tick body
