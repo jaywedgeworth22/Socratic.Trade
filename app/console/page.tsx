@@ -712,7 +712,7 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
     }
     if (rows.length > 0) return rows.slice(0, 6);
   }
-  const scan = latest?.marketScan;
+  const scan = snapshot.latestScan;
   if (scan) {
     const sources = formatSourceList(scan.source);
     rows.push({
