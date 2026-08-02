@@ -25,6 +25,13 @@ import { ohlcBarsToCloses, type CongressClose, type CongressPrice } from "./cong
 /** Injectable daily-OHLC fetcher; the routes use the app's canonical cascade, tests inject canned bars. */
 export type DailyOHLCFetcher = (symbol: string) => Promise<OHLCBar[] | null>;
 
+/** Peer-serving default: the canonical cascade minus its App A read-back tier. A request App A
+ *  itself originated must not be echoed back at App A — it asks precisely because its own series
+ *  needs topping up, so the echo can only return the stale closes App A already holds (one
+ *  guaranteed-wasted HTTP hop per cache miss, App A's route is read-only so the loop is 1-hop). */
+const peerServingFetcher: DailyOHLCFetcher = (symbol) =>
+  fetchDailyOHLC(symbol, Date.now(), undefined, { skipAppATier: true });
+
 /** Resolved inclusive YYYY-MM-DD bounds for a market read (defaults already applied). */
 export interface MarketRange {
   from: string;
@@ -68,7 +75,7 @@ export function closesInRange(closes: CongressClose[], from: string, to: string)
 export async function fetchPriceSeries(
   rawSymbol: string,
   range: MarketRange,
-  fetcher: DailyOHLCFetcher = fetchDailyOHLC
+  fetcher: DailyOHLCFetcher = peerServingFetcher
 ): Promise<CongressPrice> {
   const ticker = normalizeSymbol(rawSymbol);
   const bars = ticker ? await fetcher(ticker) : null;
@@ -89,7 +96,7 @@ export async function fetchPriceSeries(
  */
 export async function fetchSpxCloses(
   range: MarketRange,
-  fetcher: DailyOHLCFetcher = fetchDailyOHLC
+  fetcher: DailyOHLCFetcher = peerServingFetcher
 ): Promise<CongressClose[]> {
   const ascending = ohlcBarsToCloses(await fetcher("SPY"));
   return closesInRange(ascending, range.from, range.to).reverse();

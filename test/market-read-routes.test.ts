@@ -230,7 +230,11 @@ describe("GET /api/market/spx", () => {
     mockFetchDailyOHLC.mockResolvedValue([bar("2026-07-29", 635.1), bar("2026-07-30", 636.2)]);
     const res = await spxRoute(authedRequest(url, TEST_TOKEN));
     expect(res.status).toBe(200);
-    expect(mockFetchDailyOHLC).toHaveBeenCalledWith("SPY");
+    // The peer-serving default must skip the App A read-back tier: serving App A's own
+    // request through a tier that calls App A back is a guaranteed-wasted echo hop.
+    expect(mockFetchDailyOHLC).toHaveBeenCalledWith("SPY", expect.any(Number), undefined, {
+      skipAppATier: true
+    });
     expect(await res.json()).toEqual({
       closes: [
         { date: "2026-07-30", close: 636.2 },
