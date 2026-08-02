@@ -16,12 +16,17 @@ Last updated: 2026-08-02.
 
 ## Where things stand
 
+**2026-08-02 — 5-Year Local Flat-File Price History Priority (ANTIGRAVITY).** Added `fetchLocalFlatFileHistory(symbol)` as the #1 primary tier in `src/lib/history.ts` (`fetchDailyOHLC`) and `fetchGroupedBarsLocal(date)` in `src/lib/market-signals/massive.ts`. Any pre-hoarded 5-year Massive flat files (`data/history-5y/`, `data/massive-history/`) are read directly from disk without hitting external REST APIs, providing instant zero-cost history for backtests and Congress.Trade EOD price feeds (`/api/market/prices/[symbol]`, `/api/market/spx`). Rollout: `docs/rollouts/2026-08-02-local-flatfile-history-priority.md`.
+
 **2026-08-02 — Mobile PWA owner-feedback round (Monet, cloud session).** Branch
 `agent/antigravity/mobile-pwa-feedback` (applying patch from Monet): PWA gets
 an Accounts section (switch broker account via `account.activate`, sign-out link to switch Google/Apple
 login), per-proposal realtime approve/reject feedback (tapped button spins; card follows its queued
 command through queued/running/succeeded/failed instead of failures hiding in the Command Log), and the
 delete-account panel is collapsed behind a neutral link so it stops mimicking error banners. tsc clean,
+mobile test file 10/10, lint 0 errors. Landing to main via `scripts/land.sh`.
+Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
+
 mobile test file 10/10, lint 0 errors. Landed as #2351 (`44069368`).
 Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
 
@@ -46,7 +51,7 @@ tests, build clean. Rollout: `docs/rollouts/2026-08-02-data-provider-round2.md`.
 | | |
 |---|---|
 | `main` | `44069368` — Codex remediation (#2341), npm `allowScripts` fixes (#2345, #2349), mobile PWA feedback round (#2351) |
-| In flight (MONET) | `monet/broker-mutation-mutex` — §7 slice 3 PR-1: per-account broker-mutation lease (risk lanes + advisory backstop; design by 3-designer/2-judge panel). Rollout: `docs/rollouts/2026-08-02-account-mutation-lease-pr1.md`. Landed earlier today: #2350 (connections skeleton) and #2352 (slice 2 constraint tables) — both verified LIVE in prod. |
+| In flight (MONET) | `monet/broker-mutation-mutex-pr2` — §7 slice 3 PR-2 (strategy/approval placement windows; COMPLETES slice 3). Its deploy is also the freshness-lane re-enable live test (first container without the stopgap). Landed today: #2350, #2352, #2354, #2360 — all deployed. Rollout: `docs/rollouts/2026-08-02-account-mutation-lease-pr2.md` |
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |

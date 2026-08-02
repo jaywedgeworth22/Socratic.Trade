@@ -143,20 +143,33 @@ async function fetchKnobMap(fetchImpl: typeof fetch = fetch): Promise<Record<str
 interface KnobsCacheHost {
   __usageMonitorKnobsCache?: { map: Record<string, string>; fetchedAt: number };
   __usageMonitorKnobsRefreshing?: boolean;
+  __usageMonitorKnobsLastFailureAt?: number;
 }
 const cacheHost = globalThis as unknown as KnobsCacheHost;
 
+/** After a failed refresh, do not re-attempt for this long. Without it a dead/unreachable
+ *  monitor made EVERY knob read re-enter triggerRefresh — one fetch plus one sync
+ *  logApiHealth DB transaction per provider admission, thousands of times during a full scan
+ *  (an amplifier in the 2026-08-02 prod wedge). */
+export const KNOBS_FAILURE_BACKOFF_MS = 5 * 60_000;
+
 /** Fire-and-forget refresh; never throws; fail-open — a failed/null refresh leaves whatever is
- *  already cached untouched. Guarded so overlapping stale reads don't pile up parallel refreshes. */
+ *  already cached untouched (negative result stamps a failure marker for the backoff above).
+ *  Guarded so overlapping stale reads don't pile up parallel refreshes. */
 function triggerRefresh(fetchImpl?: typeof fetch): void {
   if (cacheHost.__usageMonitorKnobsRefreshing) return;
   cacheHost.__usageMonitorKnobsRefreshing = true;
   void fetchKnobMap(fetchImpl)
     .then((map) => {
-      if (map) cacheHost.__usageMonitorKnobsCache = { map, fetchedAt: Date.now() };
+      if (map) {
+        cacheHost.__usageMonitorKnobsCache = { map, fetchedAt: Date.now() };
+        cacheHost.__usageMonitorKnobsLastFailureAt = undefined;
+      } else {
+        cacheHost.__usageMonitorKnobsLastFailureAt = Date.now();
+      }
     })
     .catch(() => {
-      /* fail-open — never throw into the caller that triggered this */
+      cacheHost.__usageMonitorKnobsLastFailureAt = Date.now();
     })
     .finally(() => {
       cacheHost.__usageMonitorKnobsRefreshing = false;
@@ -177,11 +190,14 @@ export function getUsageMonitorKnobsCached(opts: { fetchImpl?: typeof fetch } = 
   if (!usageMonitorKnobsEnabled()) return {};
   const cached = cacheHost.__usageMonitorKnobsCache;
   const now = Date.now();
-  if (!cached || now - cached.fetchedAt >= ttlMs()) {
+  const failedAt = cacheHost.__usageMonitorKnobsLastFailureAt;
+  const inFailureBackoff = failedAt !== undefined && now - failedAt < KNOBS_FAILURE_BACKOFF_MS;
+  if ((!cached || now - cached.fetchedAt >= ttlMs()) && !inFailureBackoff) {
     triggerRefresh(opts.fetchImpl);
   }
   return cached?.map ?? {};
 }
+
 
 /** Look up one env-var name in the cached knob map and parse it as a finite number, mirroring how
  *  provider-rate-limit.ts's finiteEnvNumber treats process.env — undefined when absent, blank, or
@@ -199,4 +215,5 @@ export function usageMonitorKnobNumber(name: string, opts: { fetchImpl?: typeof 
 export function resetUsageMonitorKnobsCacheForTests(): void {
   delete cacheHost.__usageMonitorKnobsCache;
   delete cacheHost.__usageMonitorKnobsRefreshing;
+  delete cacheHost.__usageMonitorKnobsLastFailureAt;
 }
