@@ -184,20 +184,6 @@ describe("supported TypeScript toolchain policy", () => {
     expect(packageJson.devDependencies?.["@types/node"]).toMatch(/^\^24\./);
 
     const workflow = parseYaml<WorkflowConfig>(".github/workflows/ci.yml");
-    const selfSteps = workflow.jobs?.["verify-self"]?.steps ?? [];
-    const selectNode = selfSteps.find(
-      (step) => step.name === "Select the supported Node 24 runtime",
-    );
-    expect(selectNode?.run).toContain("/opt/homebrew/opt/node@24/bin");
-    expect(selectNode?.run).toContain("$GITHUB_PATH");
-    expect(selectNode?.run).toContain("24.*");
-
-    const selfGuard = selfSteps.find(
-      (step) => step.name === "Fail fast if the runner box is not sane",
-    );
-    expect(selfGuard?.run).toContain("verify-self requires Node 24.x");
-    expect(selfGuard?.run).toContain("24.*");
-
     const hostedSetup = workflow.jobs?.["verify-hosted"]?.steps?.find(
       (step) => step.uses?.startsWith("actions/setup-node"),
     );

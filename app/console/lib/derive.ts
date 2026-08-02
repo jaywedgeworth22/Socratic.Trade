@@ -19,7 +19,10 @@ import type {
 } from "@/lib/types";
 import { resolveDailyOpeningCap, type DailyOpeningCapMode } from "@/lib/policy-caps";
 import { isRunAllowedNow, nextMarketOpenHint, previousTradingDayStart } from "@/lib/market-hours";
-import { inferExternalCashFlows } from "@/lib/benchmark";
+// NOT from "@/lib/benchmark" — that file imports history.ts → the db barrel, and this module is
+// imported by every "use client" console component, so the whole server graph followed it into
+// the browser bundle. @/lib/cash-flows is the dependency-free extraction of the same function.
+import { inferExternalCashFlows } from "@/lib/cash-flows";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
 

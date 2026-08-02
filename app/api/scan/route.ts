@@ -99,6 +99,11 @@ export async function GET(request: Request) {
         // VWAP is additive only; keep the scan available when the grouped feed is absent.
       }
     }
+    try {
+      audit("market_scan", { scan }, userId, policy.connectedAccountId);
+    } catch {
+      /* audit is diagnostic only */
+    }
     return NextResponse.json(scan);
   } catch (error) {
     const message = error instanceof Error ? error.message : "scan failed";

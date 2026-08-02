@@ -8,6 +8,11 @@ beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `connection-health-routing-${randomUUID()}.db`)}`;
 });
 
+// The health route takes the Request so it can gate operator-only detail on `x-ops-token`
+// (see app/api/health/route.ts). Every case below exercises the ANONYMOUS view — the liveness
+// signal, degraded flags, and 200/503 status asserted here are identical in both views.
+const anonymousHealthRequest = () => new Request("http://localhost/api/health");
+
 async function load() {
   const db = await import("../src/lib/db");
   const health = await import("../src/lib/db-health");
@@ -171,7 +176,7 @@ describe("Connection Health & Failure Routing", () => {
     // Seed lastTick so scheduler is not stale
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
 
-    const response = await healthRoute.GET();
+    const response = await healthRoute.GET(anonymousHealthRequest());
     expect(response.status).toBe(200);
 
     const body = await response.json();
@@ -191,7 +196,7 @@ describe("Connection Health & Failure Routing", () => {
       db.logApiHealth({ service: "pinecone", ok: false, errorText: "Bad Key", keySource: "user", userId: "u_tenant" });
     }
 
-    let response = await healthRoute.GET();
+    let response = await healthRoute.GET(anonymousHealthRequest());
     expect(response.status).toBe(200); // Stays 200!
     let body = await response.json();
     expect(body.ok).toBe(true);
@@ -201,7 +206,7 @@ describe("Connection Health & Failure Routing", () => {
       db.logApiHealth({ service: "pinecone", ok: false, errorText: "Global Error", keySource: "env" });
     }
 
-    response = await healthRoute.GET();
+    response = await healthRoute.GET(anonymousHealthRequest());
     expect(response.status).toBe(503); // Fails!
     body = await response.json();
     expect(body.ok).toBe(false);
@@ -225,7 +230,7 @@ describe("Connection Health & Failure Routing", () => {
       db.logApiHealth({ service: "rag-rerank", ok: false, errorText: "OpenRouter down", keySource: "env" });
     }
 
-    const response = await healthRoute.GET();
+    const response = await healthRoute.GET(anonymousHealthRequest());
     expect(response.status).toBe(503); // now correctly critical regardless of which provider is active
 
     const body = await response.json();
@@ -246,7 +251,7 @@ describe("Connection Health & Failure Routing", () => {
       db.logApiHealth({ service: "rag-embed", ok: false, errorText: "Voyage down", keySource: "env" });
     }
 
-    const response = await healthRoute.GET();
+    const response = await healthRoute.GET(anonymousHealthRequest());
     expect(response.status).toBe(503);
 
     const body = await response.json();
@@ -267,7 +272,7 @@ describe("Connection Health & Failure Routing", () => {
       db.logApiHealth({ service: "voyage", ok: false, errorText: "Voyage down", keySource: "env" });
     }
 
-    const response = await healthRoute.GET();
+    const response = await healthRoute.GET(anonymousHealthRequest());
     expect(response.status).toBe(200);
 
     const body = await response.json();
@@ -288,7 +293,7 @@ describe("Connection Health & Failure Routing", () => {
       db.logApiHealth({ service: "rag-embed", ok: false, errorText: "Voyage down", keySource: "env" });
     }
 
-    const response = await healthRoute.GET();
+    const response = await healthRoute.GET(anonymousHealthRequest());
     expect(response.status).toBe(200);
 
     const body = await response.json();
@@ -306,7 +311,7 @@ describe("Connection Health & Failure Routing", () => {
       db.logApiHealth({ service: "apify", ok: false, errorText: "Global Error", keySource: "env" });
     }
 
-    const response = await healthRoute.GET();
+    const response = await healthRoute.GET(anonymousHealthRequest());
     expect(response.status).toBe(200); // Stays 200 because apify is not critical
 
     const body = await response.json();
@@ -322,7 +327,7 @@ describe("Connection Health & Failure Routing", () => {
     process.env.LITESTREAM_SOCKET_PATH = join(tmpdir(), `missing-litestream-${randomUUID()}.sock`);
     process.env.LITESTREAM_STATE_PATH = join(tmpdir(), `missing-litestream-${randomUUID()}`);
 
-    const response = await healthRoute.GET();
+    const response = await healthRoute.GET(anonymousHealthRequest());
     expect(response.status).toBe(200);
 
     const body = await response.json();

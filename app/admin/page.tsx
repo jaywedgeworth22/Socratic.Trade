@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Cpu, RefreshCw, AlertTriangle, Database } from "lucide-react";
 import { Card, Chip, Dot, Btn, Stat, Meter, type ChipTone } from "../console/ui/primitives";
 import { describeProbeStatus } from "./lib/probe-error";
+import { Markdown } from "./transcript/markdown";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -198,11 +199,19 @@ export default function OperatorDashboard() {
           ? { label: "Available", tone: "pos" as const }
           : { label: "Not checked", tone: "muted" as const };
 
-  // All five probes 403'd → this login isn't an operator. One honest notice
+  // Every operator-gated probe 403'd → this login isn't an operator. One honest notice
   // instead of five per-card probe errors (presentation of a real 403, not a gate).
-  const allForbidden =
-    Object.keys(probeErrors).length === 5 &&
-    Object.values(probeErrors).every((e) => e === 403);
+  //
+  // Enumerated rather than counted. `fetchDashboardData` fires SIX requests, but only these
+  // five are behind requireAdmin — `/api/chat-history` (the `transcript` key) is an ordinary
+  // per-user endpoint that answers 200 for a non-operator. The old test was
+  // `Object.keys(probeErrors).length === 5 && every(=== 403)`, which happened to be right only
+  // because the sixth probe usually succeeds and writes no key: any transient network failure
+  // on chat-history added a sixth key and silently suppressed this notice, and adding a seventh
+  // admin card would have broken it outright. Keyed membership has neither failure mode — a new
+  // admin probe just gets its key added here.
+  const ADMIN_PROBE_KEYS = ["connections", "llm", "rag", "server", "r2"] as const;
+  const allForbidden = ADMIN_PROBE_KEYS.every((key) => probeErrors[key] === 403);
 
   // Short, human chip/badge text for a single probe's failure — see ./lib/probe-error for the
   // "why" (this presents a real 403 from requireAdmin, it doesn't paper over it).
@@ -553,9 +562,15 @@ export default function OperatorDashboard() {
                       {new Date(t.createdAt).toLocaleString()}
                     </span>
                   </div>
-                  <p className="con-tile con-mono line-clamp-2 text-[length:var(--con-fs-xs)] italic text-[color:var(--con-muted)]">
-                    {t.text}
-                  </p>
+                  {/* The turn text is markdown SOURCE. Interpolating it as a text node made
+                      every `**bold**`, `###`, and table pipe show up literally, in a monospace
+                      italic that read as "this is code" — it isn't. Render it through the same
+                      component the full transcript uses, clamped by HEIGHT rather than
+                      `line-clamp`: `-webkit-line-clamp` clamps one inline flow, so a heading,
+                      list, or table in the reply would escape it and blow out the card. */}
+                  <div className="con-tile overflow-hidden">
+                    <Markdown className="max-h-[3.3em] overflow-hidden text-[color:var(--con-muted)]">{t.text}</Markdown>
+                  </div>
                 </div>
               ))}
               {transcript?.turns.filter((t) => t.role === "assistant").length === 0 && (

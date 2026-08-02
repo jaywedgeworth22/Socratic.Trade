@@ -422,6 +422,26 @@ async function tick(): Promise<void> {
     console.error("[scheduler] stale-run sweep error:", err);
   }
 
+  // Same repair for the mobile/PWA command queue: claimNextQueuedCommand marks a row 'running' and
+  // nothing else in the codebase ever selects that status, so a crash mid-command strands the row
+  // forever — which permanently blocks account deletion (activeMobileCommands) and permanently
+  // spins the PWA. Placed here for two reasons: before the single-leader gate (like the run sweep,
+  // so stale rows are repaired even on a follower — its liveness graces are all durable DB
+  // evidence, so a follower cannot misjudge a command the leader is running), and after the run
+  // sweep, so a strategy_runs row that sweep just left alive on this same tick still hands its
+  // grace through to the strategy.run_once command wrapping it. Dynamic import matches the
+  // mobile-command-drain lane below and keeps scheduler -> mobile-api off the static graph.
+  try {
+    await journalLane("stale-mobile-command-sweep", {}, async () => {
+      const { markStaleRunningMobileCommands } = await import("./mobile-api");
+      const repaired = markStaleRunningMobileCommands(Date.now());
+      if (repaired > 0) console.log(`[scheduler] marked ${repaired} stale running mobile command(s) as failed`);
+      return { status: repaired > 0 ? ("ok" as const) : ("skipped" as const), summary: `repaired=${repaired}` };
+    });
+  } catch (err) {
+    console.error("[scheduler] stale mobile-command sweep error:", err);
+  }
+
   // Task-journal retention: 'skipped' heartbeat rows age out in 24h, ok/error in 30d
   // (db-task-journal.ts). One cheap indexed DELETE per tick; never throws.
   pruneTaskJournal();
