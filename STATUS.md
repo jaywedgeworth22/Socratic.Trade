@@ -12,7 +12,7 @@ Last updated: 2026-08-02.
 | | |
 |---|---|
 | `main` | `c117afb9` — includes the full 30-finding Codex remediation (#2341, AG-reviewed) and the npm `allowScripts` fix (#2345) |
-| In flight (MONET) | `monet/connections-route-skeleton` — /console/connections route-local skeleton (Codex finding 22 residual; usage half was PR #2341). Rollout: `docs/rollouts/2026-08-02-connections-route-skeleton.md` |
+| Parked (MONET, owner stop-order 2026-08-02) | `monet/connections-route-skeleton` — /console/connections route-local skeleton (Codex finding 22 residual; usage half was PR #2341). Implementation + review COMPLETE, draft PR open; only `scripts/land.sh` (full test+build gate) was interrupted. Pickup: re-run `LAND_ALLOW_STALE_OVERLAP=1 bash scripts/land.sh` from `~/apps/trading-monet`, then mark the PR ready. Rollout: `docs/rollouts/2026-08-02-connections-route-skeleton.md` |
 | Production (`socratictrade.com`) | `19dfd51b` verified live 2026-08-02 ~04:47Z (`scripts/verify-deploy-sha.sh` PASS); `c117afb9` should follow via the repaired webhook |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |

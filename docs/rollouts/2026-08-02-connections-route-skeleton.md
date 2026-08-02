@@ -109,11 +109,26 @@ Connections can NOT join `SNAPSHOT_INDEPENDENT_ROUTES` (BrokerAccountsCard reads
   coverage, design-system/a11y) + per-finding refutation agents, 10 agents total —
   7 findings confirmed, 0 refuted, ALL 7 fixed before landing (see §3).
 
-## 5. Next Steps & Blockers
+## 5. Next Steps & Blockers — PARKED BY OWNER STOP-ORDER 2026-08-02
 
-- None blocking. Optional follow-ups: consider the same treatment for other
-  chrome-light routes if any emerge; consider a shared `<CardSkeleton>` primitive if a
-  second route-local skeleton appears (deliberately not abstracted at n=1).
+Work was stopped by the owner mid-landing. Exact state at park time:
+
+- **Done:** implementation, all 7 adversarial-review fixes, tsc clean, eslint 0 errors,
+  live dev-server verification (SSR skeleton + deep links + zero console errors),
+  `origin/main` merged in (`f7187a1e`) with the STATUS.md union-splice deliberately
+  de-spliced (`d78e13c0`). Branch pushed; draft PR open (number in the live board /
+  #agent-sync closeout).
+- **Interrupted:** the second `scripts/land.sh` run was killed during its gate phase, so
+  the FULL `npm test` + `npm run build` have NOT been run against the final tree
+  (first land.sh run aborted pre-gates on the board-file overlap check, by design).
+- **Pickup (any agent):** from `~/apps/trading-monet`:
+  `export PATH="/opt/homebrew/opt/node@24/bin:$PATH" && LAND_ALLOW_STALE_OVERLAP=1 bash scripts/land.sh`
+  (idempotent; the overlap bypass is justified — the STATUS/EFFORT-LOG overlap was
+  manually reviewed and de-spliced). Then mark the draft PR ready and
+  `gh pr merge <n> --squash --auto`. Merge auto-deploys to production.
+- Optional follow-ups (non-blocking): same treatment for other chrome-light routes if
+  any emerge; a shared `<CardSkeleton>` primitive if a second route-local skeleton
+  appears (deliberately not abstracted at n=1).
 
 ## 6. Zero-Code Findings
 
