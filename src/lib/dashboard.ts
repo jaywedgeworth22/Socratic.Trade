@@ -74,6 +74,7 @@ const BLANK_MACRO_FALLBACK: MacroData = {
   wtiOil: "",
   housingStarts: "",
   consumerSentiment: "",
+  nonfarmPayrollsChangeK: "",
   vix: "",
   vix3m: "",
   asOf: "unavailable",
