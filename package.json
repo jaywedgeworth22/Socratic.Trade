@@ -89,7 +89,7 @@
     "axios": "^1.18.0",
     "postcss": "^8.5.15"
   },
-  "_allowScripts": {
+  "allowScripts": {
     "@sentry/cli@2.58.6": true,
     "better-sqlite3@12.11.1": true,
     "fsevents@2.3.3": true,
