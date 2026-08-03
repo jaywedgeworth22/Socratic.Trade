@@ -70,7 +70,10 @@ export default function ScanPage() {
     }
   };
 
-  const isFresh = scan !== null && scan === live.scan;
+  // eslint-disable-next-line react-hooks/purity
+  const scanAgeMs = scan ? Date.now() - Date.parse(scan.generatedAt) : 0;
+  // A scan is considered fresh if it is less than 15 minutes old.
+  const isFresh = scan !== null && scanAgeMs < 15 * 60 * 1000;
 
   const tabDefs = [
     {
@@ -104,11 +107,11 @@ export default function ScanPage() {
             tone={isFresh ? "accent" : "muted"}
             title={
               isFresh
-                ? "This scan was run from this page just now — the freshest view available."
-                : "Captured during the latest strategy run. Hit Refresh scan for a current view."
+                ? "This scan was generated within the last 15 minutes."
+                : "Captured earlier. Hit Refresh scan for a current view."
             }
           >
-            {isFresh ? "fresh" : "last run"}
+            {isFresh ? "fresh" : <><Ago iso={scan.generatedAt} /> old</>}
             {scan.cached ? " · cached" : ""}
           </Chip>
         )}

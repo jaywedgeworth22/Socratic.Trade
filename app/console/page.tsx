@@ -350,8 +350,8 @@ export default function ConsoleHomePage() {
               <FrameworkProposalList proposals={snapshot.socratic?.frameworkProposals ?? []} refresh={refresh} />
             ) : (
               <div className="flex flex-col gap-2">
-                {frameworkRows.map((row) => (
-                  <EvidenceCard key={row.title} {...row} />
+                {frameworkRows.map((row, idx) => (
+                  <EvidenceCard key={idx} {...row} />
                 ))}
               </div>
             )}
