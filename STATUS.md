@@ -5,16 +5,18 @@ Snapshot only: what is true right now, what is blocked, what to do next. This fi
 of work), effort state lives in `docs/EFFORT-LOG.md`, and entries written here before
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-02.
-
-> [!NOTE]
-> **MONET session stopped 2026-08-02 ~05:40Z (owner instruction) — clean handoff.** All
-> claimed work is either merged or riding an armed auto-merge (PR #2349: npm-12-proof
-> `allowScripts` key + record corrections — lands and deploys unattended once `verify` is
-> green). Nothing uncommitted anywhere. Session handoff with the full state map:
-> `docs/rollouts/2026-08-02-monet-session-handoff.md`.
+Last updated: 2026-08-03.
 
 ## Where things stand
+
+**2026-08-03 — iOS/mobile account switch hangs (MONET, branch `monet/ios-account-switch-fix`).**
+Owner screenshots: Roth IRA spinner stuck, Sandbox still Active, Home stale + 2 queued · 1
+running. Root cause: `account.activate` waited on the global sequential mobile worker behind
+`strategy.run_once`, and clients also blocked switch when the snapshot was stale. Fix: run
+`account.activate` immediately (same path as stop), allow switch on stale snapshot (iOS + PWA),
+clear iOS busy spinner from the terminal POST before snapshot reload. Focused mobile tests
+16/16; full gates via land.sh. Rollout:
+`docs/rollouts/2026-08-03-ios-account-switch-immediate.md`.
 
 **2026-08-02 — Exit-0 outage root-caused + exit-code hardening (MONET, branch
 `monet/exit0-outage-audit`).** The 15:29Z "clean exit 0, stayed down" outage was an

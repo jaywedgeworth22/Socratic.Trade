@@ -1,9 +1,9 @@
 import {
   isMobileCommandType,
-  isImmediateProtectiveMobileCommandType,
+  isImmediateMobileCommandType,
   listMobileCommands,
   MobileCommandValidationError,
-  executeProtectiveMobileCommandImmediately,
+  executeMobileCommandImmediately,
   processPendingMobileCommands,
   queueMobileCommand
 } from "@/lib/mobile-api";
@@ -50,8 +50,10 @@ export async function POST(request: Request) {
       idempotencyKey,
       client: body.client
     });
-    if (isImmediateProtectiveMobileCommandType(body.commandType)) {
-      const command = await executeProtectiveMobileCommandImmediately(queued.command.id, userId);
+    // Stop/close_only/liquidating AND account.activate run in this request — never wait on the
+    // sequential worker (which may be mid strategy.run_once for minutes).
+    if (isImmediateMobileCommandType(body.commandType)) {
+      const command = await executeMobileCommandImmediately(queued.command.id, userId);
       return NextResponse.json(
         { command, deduped: queued.deduped },
         { status: command.status === "queued" || command.status === "running" ? 202 : 200 }

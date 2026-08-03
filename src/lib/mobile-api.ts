@@ -61,6 +61,19 @@ const IMMEDIATE_PROTECTIVE_COMMAND_TYPES = new Set<MobileCommandType>([
   "strategy.liquidating"
 ]);
 
+/**
+ * Commands that must not wait on the global sequential mobile worker.
+ * Protective state changes (stop/close_only/liquidating) already used this path so a long
+ * strategy.run_once cannot block a halt. account.activate is the same class of problem: it is a
+ * pure active-pointer flip with no broker I/O, but was queued behind run_once — so the iOS/PWA
+ * "Use" / account selector spinner hung for the entire in-flight strategy run (owner report:
+ * Roth IRA spinner while Sandbox stayed Active, backlog 2 queued · 1 running).
+ */
+const IMMEDIATE_MOBILE_COMMAND_TYPES = new Set<MobileCommandType>([
+  ...IMMEDIATE_PROTECTIVE_COMMAND_TYPES,
+  "account.activate"
+]);
+
 const RISK_INCREASING_QUEUED_COMMAND_TYPES = [
   "strategy.run_once",
   "strategy.start",
@@ -71,6 +84,10 @@ export function isImmediateProtectiveMobileCommandType(
   commandType: MobileCommandType
 ): boolean {
   return IMMEDIATE_PROTECTIVE_COMMAND_TYPES.has(commandType);
+}
+
+export function isImmediateMobileCommandType(commandType: MobileCommandType): boolean {
+  return IMMEDIATE_MOBILE_COMMAND_TYPES.has(commandType);
 }
 
 export interface MobileClientInfo {
@@ -838,19 +855,22 @@ export async function executeMobileCommand(command: MobileCommandRecord): Promis
 }
 
 /**
- * Applies a protective strategy state independently of the global sequential worker. This makes a
- * Stop authoritative while a long run-once command is awaiting providers. It cannot revoke a broker
- * request that crossed the submission boundary already; the strategy placement path re-reads the
- * durable state at its final synchronous pre-submit boundary to block everything after that point.
+ * Runs an immediate mobile command outside the global sequential worker so it cannot stall behind
+ * a long strategy.run_once (or any other queued command). Used for:
+ * - Protective strategy state (stop / close_only / liquidating): Stop must remain authoritative
+ *   while a run awaits providers. Cannot revoke a broker request that already crossed the
+ *   submission boundary; placement re-reads durable state at its final pre-submit boundary.
+ * - account.activate: pure active-pointer flip; must complete in the same request so mobile
+ *   clients do not leave the Use / selector control spinning for the entire run_once duration.
  */
-export async function executeProtectiveMobileCommandImmediately(
+export async function executeMobileCommandImmediately(
   commandId: string,
   userId: string
 ): Promise<PublicMobileCommand> {
   const current = getMobileCommandRecord(commandId, userId);
   if (!current) throw new MobileCommandValidationError("Command not found.");
-  if (!isImmediateProtectiveMobileCommandType(current.commandType)) {
-    throw new MobileCommandValidationError("Command is not an immediate protective state action.");
+  if (!isImmediateMobileCommandType(current.commandType)) {
+    throw new MobileCommandValidationError("Command is not an immediate action.");
   }
   if (current.status !== "queued") return toPublicMobileCommand(current);
 
@@ -867,10 +887,18 @@ export async function executeProtectiveMobileCommandImmediately(
   const running = getMobileCommandRecord(commandId, userId)!;
   emitMobileCommandEvent(running);
   const completed = await executeMobileCommand(running);
-  if (completed.status === "succeeded") {
+  if (completed.status === "succeeded" && isImmediateProtectiveMobileCommandType(running.commandType)) {
     cancelQueuedRiskIncreasingCommands(userId, commandId, running.commandType);
   }
   return completed;
+}
+
+/** @deprecated Prefer executeMobileCommandImmediately — kept for existing test import sites. */
+export async function executeProtectiveMobileCommandImmediately(
+  commandId: string,
+  userId: string
+): Promise<PublicMobileCommand> {
+  return executeMobileCommandImmediately(commandId, userId);
 }
 
 export async function processPendingMobileCommands(options: { limit?: number } = {}): Promise<{ processed: number }> {
