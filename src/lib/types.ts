@@ -1647,7 +1647,7 @@ export interface SocraticDecisionTrace {
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "pbRatio" | "shortPercentOfFloat" | "beta" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "daysToEarnings" | "institutionOwnershipPct" | "nearTheMoneyIv" | "putCallRatio" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian" | "returnOnEquity" | "returnOnAssets" | "revenueGrowth" | "freeCashFlowYield" | "grossProfitMargin" | "congressTradesQuiver" | "insiderTradesQuiver" | "govContractsQuiver" | "lobbyingQuiver" | "patentsQuiver",
+    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "pbRatio" | "shortPercentOfFloat" | "beta" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "daysToEarnings" | "institutionOwnershipPct" | "nearTheMoneyIv" | "putCallRatio" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian" | "returnOnEquity" | "returnOnAssets" | "revenueGrowth" | "freeCashFlowYield" | "grossProfitMargin" | "congressTradesQuiver" | "insiderTradesQuiver" | "govContractsQuiver" | "lobbyingQuiver" | "patentsQuiver" | "sharesOutstanding",
     string
   >
 >;
@@ -1676,6 +1676,7 @@ export interface MarketQuote {
   ask?: number;
   volume: number;
   marketCap?: number;
+  sharesOutstanding?: number;
   intradayChangePct: number;
   netChange?: number;
   sector?: string;
@@ -1684,7 +1685,6 @@ export interface MarketQuote {
   score: number;
   factorBreakdown?: MarketFactorBreakdown;
   provider?: string;
-  stale?: boolean;
   cached?: boolean;
   asOf?: string;
   sentiment?: number;
@@ -1905,6 +1905,7 @@ export interface MarketQuoteSummary {
   analystBySource?: Record<string, AnalystRatingDetail>;
   dividendYield?: number;
   eps?: number;
+  sharesOutstanding?: number;
   pbRatio?: number;
   shortPercentOfFloat?: number;
   beta?: number;

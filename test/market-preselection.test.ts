@@ -207,7 +207,6 @@ describe("two-stage market enrichment", () => {
       companyName: "Fast Industries",
       price: 91,
       volume: 50_000,
-      stale: true,
       cached: true,
       provider: "persisted-strategy-scan",
       peRatio: 15

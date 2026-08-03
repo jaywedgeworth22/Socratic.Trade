@@ -659,7 +659,6 @@ function persistedMarketQuotes(
       score: prior.score,
       factorBreakdown: prior.factorBreakdown,
       provider: "persisted-strategy-scan",
-      stale: true,
       cached: true,
       asOf: prior.asOf,
       sources: {
@@ -936,7 +935,6 @@ function toMarketQuote(row: RawNasdaqRow, positions: EquityPosition[], provider:
       positionMarketValue: position?.marketValue ?? 0,
       score: 0,
       provider,
-      stale: true,
       asOf
     }
   ];
@@ -1097,6 +1095,7 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
     volume: extra.volume && extra.volume > 0 ? extra.volume : quote.volume,
     dividendYield: extra.dividendYield ?? quote.dividendYield,
     eps: extra.eps ?? quote.eps,
+    sharesOutstanding: extra.sharesOutstanding ?? quote.sharesOutstanding,
     pbRatio: extra.pbRatio ?? quote.pbRatio,
     shortPercentOfFloat: extra.shortPercentOfFloat ?? quote.shortPercentOfFloat,
     beta: extra.beta ?? quote.beta,
@@ -1360,6 +1359,7 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         analystBySource: quote.analystBySource,
         dividendYield: quote.dividendYield,
         eps: quote.eps,
+        sharesOutstanding: quote.sharesOutstanding,
         pbRatio: quote.pbRatio,
         shortPercentOfFloat: quote.shortPercentOfFloat,
         beta: quote.beta,

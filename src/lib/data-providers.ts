@@ -148,6 +148,7 @@ export interface SymbolEnrichment {
   volume?: number;
   dividendYield?: number; // annual dividend yield %
   eps?: number;           // earnings per share (TTM)
+  sharesOutstanding?: number;
   companyName?: string;
   pbRatio?: number;
   shortPercentOfFloat?: number;
@@ -229,6 +230,7 @@ export type EnrichmentSourcedField =
   | "insiderSentiment"
   | "fcfYield"
   | "debtToEquity"
+  | "sharesOutstanding"
   | "epsGrowth"
   | "senateTrades"
   | "daysToEarnings"
@@ -1795,6 +1797,7 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   returnOnEquity: true,
   returnOnAssets: true,
   revenueGrowth: true,
+  sharesOutstanding: true,
   freeCashFlowYield: true,
   grossProfitMargin: true,
   congressTradesQuiver: true,
