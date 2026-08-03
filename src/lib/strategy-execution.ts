@@ -1,3 +1,4 @@
+import { LANE_WAITS, withAccountMutation } from "./account-mutation";
 import { repriceStoredLimitProposal } from "./approval-reprice";
 import { getBrokerGateway } from "./broker";
 import { evaluateBrokerHeldExitAvailability, brokerHeldExitBlockReason } from "./broker-held-orders";
@@ -25,6 +26,7 @@ import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { scanMarket, mergeQuoteData } from "./market";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
+import { OperationLeaseOwnershipError } from "./operation-lease";
 import { recordFillFromProposal } from "./performance";
 import { allowedSymbolsForPolicy, estimateNotional, applyOpeningOrderHeadroom, evaluateTradeProposal } from "./policy";
 import { effectiveDailyOpeningNotionalCap } from "./policy-caps";
@@ -223,7 +225,11 @@ async function commitRecoveredOpeningStopPlan(input: {
 export async function executeProposal(
   proposalId: string,
   userId: string = "local",
-  options: { liveConfirmation?: LiveApprovalConfirmation } = {}
+  // leaseWaitMs: caller-supplied override for the mutation-lease bounded wait, defaulting to
+  // LANE_WAITS.approvalPlacement. A bulk-approve batch shares one wait BUDGET across every
+  // proposal in the request (computed once before its loop) instead of paying up to
+  // LANE_WAITS.approvalPlacement per proposal serially — see app/api/proposals/bulk-approve/route.ts.
+  options: { liveConfirmation?: LiveApprovalConfirmation; leaseWaitMs?: number } = {}
 ): Promise<{
   status: string;
   orderId?: string;
@@ -235,6 +241,10 @@ export async function executeProposal(
   const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
   if (!policy.accountNumber) throw new Error("No account selected.");
+  // Captured once, narrowed: a property access (`policy.accountNumber`) loses its non-null
+  // narrowing across a closure boundary (the mutation-lease callback below), but a local const
+  // of a primitive keeps it.
+  const accountNumber = policy.accountNumber;
   // An account is an account: with none connected there is no broker to trade through, and there is
   // no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
   if (!executionState.mode) throw new Error("No connected account. Connect a broker account before approving trades.");
@@ -1117,264 +1127,310 @@ export async function executeProposal(
       createdAt: decisionCaseNow,
       updatedAt: decisionCaseNow
     };
-    let claimed = false;
-    try {
-      claimed = claimProposalForExecution(proposalId, "placing", userId, {
-        review,
-        estimatedNotional: review.estimatedNotional,
-        refId,
-        executionMode,
-        proposal,
-        decision,
-        createSocraticDecisionCase: () => {
-          upsertSocraticDecisionCase(fallbackDecisionCase);
+    // The lease is acquired BEFORE the claimProposalForExecution CAS deliberately: a busy exit
+    // leaves the proposal in "proposed" with no claim to revert (see account-mutation.ts's lock
+    // hierarchy -- row CAS claims are non-blocking and taken INSIDE the lease window on purpose).
+    // This acquisition itself sits inside the strategy lock held above, per that same hierarchy
+    // (strategy lock -> broker-mutation lease -> row CAS claims -> broker network calls).
+    const mutationOutcome = await withAccountMutation(
+      {
+        userId,
+        accountNumber: policy.accountNumber,
+        connectedAccountId: policy.connectedAccountId,
+        lane: "approval-placement",
+        waitMs: options.leaseWaitMs ?? LANE_WAITS.approvalPlacement
+      },
+      async (mutationCtx) => {
+        let claimed = false;
+        try {
+          claimed = claimProposalForExecution(proposalId, "placing", userId, {
+            review,
+            estimatedNotional: review.estimatedNotional,
+            refId,
+            executionMode,
+            proposal,
+            decision,
+            createSocraticDecisionCase: () => {
+              upsertSocraticDecisionCase(fallbackDecisionCase);
+            }
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          audit("proposal_claim_receipt_failed", { proposalId, symbol: proposal.symbol, side: proposal.side, error: message }, userId, policy.connectedAccountId);
+          return { status: "error", reasons: [`Decision receipt could not be persisted; no order was submitted: ${message}`] };
         }
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      audit("proposal_claim_receipt_failed", { proposalId, symbol: proposal.symbol, side: proposal.side, error: message }, userId, policy.connectedAccountId);
-      return { status: "error", reasons: [`Decision receipt could not be persisted; no order was submitted: ${message}`] };
-    }
-    if (!claimed) {
-      const current = getProposal(proposalId, userId)?.status ?? "removed";
-      return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
-    }
+        if (!claimed) {
+          const current = getProposal(proposalId, userId)?.status ?? "removed";
+          return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
+        }
 
-    // Stop/close-only/liquidating is authoritative even for an approval that was already in
-    // flight. Re-read durable state after the placing claim and immediately before the broker call;
-    // the claim itself must never become a bypass around the final placement fence.
-    const protectiveStateBlock = freshPlacementBlockReason({
-      userId,
-      connectedAccountId: policy.connectedAccountId,
-      side: proposal.side
-    });
-    if (protectiveStateBlock) {
-      const blockedDecision: PolicyDecision = {
-        ...decision,
-        approved: false,
-        reasons: [...decision.reasons, protectiveStateBlock]
-      };
-      updateProposalStatus(
-        proposalId,
-        "blocked",
-        undefined,
-        review,
-        review.estimatedNotional,
-        userId,
-        undefined,
-        protectiveStateBlock,
-        blockedDecision
-      );
-      audit(
-        "order_blocked_protective_state",
-        { proposalId, symbol: proposal.symbol, side: proposal.side, reason: protectiveStateBlock, path: "approval" },
-        userId,
-        policy.connectedAccountId
-      );
-      await sendNotification(
-        {
-          type: "block",
-          title: `${proposal.symbol} order blocked by protective state`,
-          payload: { proposalId, proposal, reason: protectiveStateBlock, decision: blockedDecision }
-        },
-        { policy, userId }
-      );
-      return { status: "blocked", reasons: [protectiveStateBlock] };
-    }
-
-    let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
-    try {
-      execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
-    } catch (placeError) {
-      const message = placeError instanceof Error ? placeError.message : String(placeError);
-      const sym = proposal.symbol;
-      // OrderValidationError is a DETERMINISTIC pre-submission refusal (adapter or the
-      // broker-order-constraints tables) — the broker was never contacted, so asking it what
-      // happened is pointless and, worse, concludes not_placed ("safe to retry") for an order
-      // that will be refused identically every retry. Mirror the autonomous lane's short-circuit
-      // (strategy.ts) and the protective-state block above: honest terminal "blocked".
-      if (placeError instanceof OrderValidationError) {
-        const blockedDecision: PolicyDecision = {
-          ...decision,
-          approved: false,
-          reasons: [...decision.reasons, message]
-        };
-        updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
-        audit(
-          "order_blocked_validation",
-          { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval" },
+        // Stop/close-only/liquidating is authoritative even for an approval that was already in
+        // flight. Re-read durable state after the placing claim and immediately before the broker call;
+        // the claim itself must never become a bypass around the final placement fence.
+        const protectiveStateBlock = freshPlacementBlockReason({
           userId,
-          policy.connectedAccountId
-        );
+          connectedAccountId: policy.connectedAccountId,
+          side: proposal.side
+        });
+        if (protectiveStateBlock) {
+          const blockedDecision: PolicyDecision = {
+            ...decision,
+            approved: false,
+            reasons: [...decision.reasons, protectiveStateBlock]
+          };
+          updateProposalStatus(
+            proposalId,
+            "blocked",
+            undefined,
+            review,
+            review.estimatedNotional,
+            userId,
+            undefined,
+            protectiveStateBlock,
+            blockedDecision
+          );
+          audit(
+            "order_blocked_protective_state",
+            { proposalId, symbol: proposal.symbol, side: proposal.side, reason: protectiveStateBlock, path: "approval" },
+            userId,
+            policy.connectedAccountId
+          );
+          await sendNotification(
+            {
+              type: "block",
+              title: `${proposal.symbol} order blocked by protective state`,
+              payload: { proposalId, proposal, reason: protectiveStateBlock, decision: blockedDecision }
+            },
+            { policy, userId }
+          );
+          return { status: "blocked", reasons: [protectiveStateBlock] };
+        }
+
+        let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
+        try {
+          // Mutation-lease fence: fail closed if the window lost its lease before the risk-creating call.
+          mutationCtx.assertOwned();
+          execution = await gateway.placeEquityOrder({ accountNumber, ...proposal, refId });
+        } catch (placeError) {
+          const message = placeError instanceof Error ? placeError.message : String(placeError);
+          const sym = proposal.symbol;
+          // OrderValidationError is a DETERMINISTIC pre-submission refusal (adapter or the
+          // broker-order-constraints tables) — the broker was never contacted, so asking it what
+          // happened is pointless and, worse, concludes not_placed ("safe to retry") for an order
+          // that will be refused identically every retry. Mirror the autonomous lane's short-circuit
+          // (strategy.ts) and the protective-state block above: honest terminal "blocked".
+          if (placeError instanceof OrderValidationError) {
+            const blockedDecision: PolicyDecision = {
+              ...decision,
+              approved: false,
+              reasons: [...decision.reasons, message]
+            };
+            updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
+            audit(
+              "order_blocked_validation",
+              { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval" },
+              userId,
+              policy.connectedAccountId
+            );
+            await sendNotification(
+              {
+                type: "block",
+                title: `${sym} order blocked before submission`,
+                payload: { proposalId, refId, proposal, reason: message, decision: blockedDecision }
+              },
+              { policy, userId }
+            );
+            return { status: "blocked", reasons: [message] };
+          }
+          // A lost mutation lease (mutationCtx.assertOwned() above) is ALSO a deterministic
+          // pre-submission refusal — the order provably never reached the broker — so it gets the
+          // same short-circuit as OrderValidationError instead of falling into reconcilePlacementError.
+          // Asking the broker "did this refId land?" would be a pointless round trip (it never left
+          // this process), and on a gateway whose order list isn't authoritative for recent terminal
+          // orders (e.g. Robinhood, ordersListIncludesTerminal unset) that round trip resolves
+          // "uncertain": the row gets stuck in 'placing' and audits order_placement_uncertain, which
+          // the account-mutation.ts doctrine forbids for a non-broker-fault condition (it must never
+          // feed the broker-health run suppressor). Land it as retryable not_placed instead.
+          if (placeError instanceof OperationLeaseOwnershipError) {
+            const note = "Account mutation lease lost before submission — the order was never sent to the broker. Safe to retry.";
+            updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
+            audit("order_not_placed_lease_lost", { proposalId, refId, symbol: sym, side: proposal.side, error: message, path: "approval" }, userId, policy.connectedAccountId);
+            await sendNotification(
+              { type: "run_failed", title: `${sym} order not placed — mutation lease lost (safe to retry)`, payload: { proposalId, refId, error: message } },
+              { policy, userId }
+            );
+            return { status: "not_placed", reasons: [note] };
+          }
+          // Ask the broker what actually happened (via the refId idempotency key) rather than firing a
+          // perpetual "verify with broker" alert. Mirrors the autonomous run-loop catch above.
+          const outcome = await reconcilePlacementError({
+            gateway,
+            accountNumber: row.accountNumber,
+            userId,
+            connectedAccountId: policy.connectedAccountId,
+            proposalId,
+            refId,
+            proposal,
+            review,
+            marketScan: approvalScan,
+            executionMode,
+            placeErrorMessage: message,
+            runId: row.runId
+          });
+          if (outcome.kind === "placed") {
+            const fillStatus = outcome.fillStatus;
+            updateProposalStatus(
+              proposalId,
+              fillStatus === "filled" ? "filled" : "placed",
+              outcome.orderId,
+              review,
+              fillStatus === "filled" ? outcome.fill?.notional ?? review.estimatedNotional : review.estimatedNotional,
+              userId
+            );
+            auditWashSaleProceed(decision, { proposalId, symbol: sym, side: proposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId: policy.connectedAccountId });
+            audit("order_placement_recovered_inline", { proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: proposal.side, path: "approval" }, userId, policy.connectedAccountId);
+            resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
+            await sendNotification(
+              { type: "fill", title: `${sym} order ${outcome.state} (recovered after placement error)`, payload: { proposalId, refId, fill: outcome.fill, reconcile: "recovered" } },
+              { policy, userId }
+            );
+            emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: outcome.orderId, symbol: sym } });
+            return { status: fillStatus === "filled" ? "filled" : "placed", orderId: outcome.orderId, brokerState: outcome.state, fillStatus };
+          }
+          if (outcome.kind === "declined") {
+            const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
+            updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
+            audit("order_rejected_by_broker", { proposalId, refId, symbol: sym, side: proposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, policy.connectedAccountId);
+            await sendNotification(
+              { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined" } },
+              { policy, userId }
+            );
+            return { status: "error", reasons: [declinedMsg], orderId: outcome.orderId, brokerState: outcome.state };
+          }
+          if (outcome.kind === "not_placed") {
+            const note = "Broker reachable; no order carries our idempotency key — the order never reached the broker. Safe to retry.";
+            updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
+            audit("order_confirmed_not_placed", { proposalId, refId, symbol: sym, side: proposal.side, error: message, path: "approval" }, userId, policy.connectedAccountId);
+            await sendNotification(
+              { type: "run_failed", title: `${sym} order was NOT placed — safe to retry`, payload: { proposalId, refId, error: message, reconcile: "not_placed" } },
+              { policy, userId }
+            );
+            return { status: "not_placed", reasons: [`Order not placed (safe to retry): ${message}`] };
+          }
+          // uncertain: broker unreachable — KEEP status 'placing' so flagStalePlacingIntents retries.
+          updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, outcome.error);
+          audit("order_placement_uncertain", { proposalId, refId, symbol: sym, side: proposal.side, estimatedNotional: review.estimatedNotional, error: outcome.error, brokerUnreachable: true }, userId, policy.connectedAccountId);
+          await sendNotification(
+            { type: "run_failed", title: `${sym} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: outcome.error, reconcile: "uncertain" } },
+            { policy, userId }
+          );
+          return { status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] };
+        }
+
+        // See the matching comment in the autonomous run-loop placement path above: a non-throwing
+        // broker response can still be a synchronous rejection/cancellation, and that must not be
+        // recorded as "placed".
+        if (isRejectedOrCanceledState(execution.state) && !hasBrokerReportedFill(execution)) {
+          const message = `Broker declined the order (state: ${execution.state}).`;
+          updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+          audit("order_rejected_by_broker", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, policy.connectedAccountId);
+          await sendNotification(
+            { type: "run_failed", title: `${proposal.symbol} order declined by broker (${execution.state})`, payload: { proposalId, refId, orderId: execution.orderId, state: execution.state } },
+            { policy, userId }
+          );
+          return { status: "error", reasons: [message], orderId: execution.orderId, brokerState: execution.state };
+        }
+
+        const fillStatus = reconciledFillStatus(execution);
+        const proposalStatus = fillStatus === "filled" ? "filled" : "placed";
+        if (!execution.orderId && fillStatus !== "filled") {
+          const message = `Broker returned ${execution.state} without an order id; keeping the idempotent intent pending until refId reconciliation confirms the order.`;
+          updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, message);
+          audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, brokerState: execution.state, missingOrderId: true }, userId, policy.connectedAccountId);
+          await sendNotification(
+            { type: "run_failed", title: `${proposal.symbol} order accepted without broker id — recovery pending`, payload: { proposalId, refId, state: execution.state, reconcile: "uncertain" } },
+            { policy, userId }
+          );
+          return { status: "error", reasons: [message], brokerState: execution.state };
+        }
+        const executedNotional = brokerExecutedNotional(execution);
+        const preFillPosition = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
+        let fill!: FillEvent;
+        // The broker call has already succeeded. Commit its receipt FIRST and the proposal/case status
+        // in the same transaction; if receipt persistence fails, the transaction leaves `placing` so
+        // the refId-based stale sweep can recover the real broker order instead of stranding it.
+        try {
+          getDb().transaction(() => {
+            fill = recordFillFromProposal({
+              userId,
+              connectedAccountId: policy.connectedAccountId,
+              accountNumber: row.accountNumber,
+              proposalId,
+              runId: row.runId,
+              source: executionSource,
+              executionMode,
+              proposal,
+              review,
+              execution,
+              marketScan: approvalScan,
+              status: fillStatus,
+              existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
+            });
+            updateProposalStatus(
+              proposalId,
+              proposalStatus,
+              execution.orderId,
+              review,
+              fillStatus === "filled" ? executedNotional ?? fill.notional : review.estimatedNotional,
+              userId
+            );
+          }).immediate();
+        } catch (receiptError) {
+          const detail = receiptError instanceof Error ? receiptError.message : String(receiptError);
+          const message = `Broker confirmed order ${execution.orderId}, but its local fill receipt could not be committed: ${detail}`;
+          updateProposalStatus(proposalId, "placing", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+          audit("order_placement_uncertain", { proposalId, refId, orderId: execution.orderId, symbol: proposal.symbol, side: proposal.side, brokerState: execution.state, receiptPersistenceFailed: true, error: detail }, userId, policy.connectedAccountId);
+          await sendNotification(
+            { type: "run_failed", title: `${proposal.symbol} broker order confirmed — local receipt recovery pending`, payload: { proposalId, refId, orderId: execution.orderId, state: execution.state, error: detail, reconcile: "uncertain" } },
+            { policy, userId }
+          );
+          return { status: "error", reasons: [message], orderId: execution.orderId, brokerState: execution.state };
+        }
+        audit("proposal_approved", {
+          proposalId,
+          symbol: proposal.symbol,
+          side: proposal.side,
+          action: "approval",
+          result: proposalStatus,
+          orderId: execution.orderId,
+          brokerState: execution.state,
+          fillStatus
+        }, userId, policy.connectedAccountId);
         await sendNotification(
           {
-            type: "block",
-            title: `${sym} order blocked before submission`,
-            payload: { proposalId, refId, proposal, reason: message, decision: blockedDecision }
+            type: "fill",
+            title: isRejectedOrCanceledState(execution.state) && hasBrokerReportedFill(execution)
+              ? `${proposal.symbol} partially filled, then ${execution.state}`
+              : `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} ${execution.state}`,
+            payload: { proposalId, fill }
           },
           { policy, userId }
         );
-        return { status: "blocked", reasons: [message] };
+        // Push so other open dashboards refresh immediately (the approving client refreshes via its
+        // own response).
+        emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
+        return { status: proposalStatus, orderId: execution.orderId, brokerState: execution.state, fillStatus };
       }
-      // Ask the broker what actually happened (via the refId idempotency key) rather than firing a
-      // perpetual "verify with broker" alert. Mirrors the autonomous run-loop catch above.
-      const outcome = await reconcilePlacementError({
-        gateway,
-        accountNumber: row.accountNumber,
-        userId,
-        connectedAccountId: policy.connectedAccountId,
-        proposalId,
-        refId,
-        proposal,
-        review,
-        marketScan: approvalScan,
-        executionMode,
-        placeErrorMessage: message,
-        runId: row.runId
-      });
-      if (outcome.kind === "placed") {
-        const fillStatus = outcome.fillStatus;
-        updateProposalStatus(
-          proposalId,
-          fillStatus === "filled" ? "filled" : "placed",
-          outcome.orderId,
-          review,
-          fillStatus === "filled" ? outcome.fill?.notional ?? review.estimatedNotional : review.estimatedNotional,
-          userId
-        );
-        auditWashSaleProceed(decision, { proposalId, symbol: sym, side: proposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId: policy.connectedAccountId });
-        audit("order_placement_recovered_inline", { proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: proposal.side, path: "approval" }, userId, policy.connectedAccountId);
-        resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
-        await sendNotification(
-          { type: "fill", title: `${sym} order ${outcome.state} (recovered after placement error)`, payload: { proposalId, refId, fill: outcome.fill, reconcile: "recovered" } },
-          { policy, userId }
-        );
-        emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: outcome.orderId, symbol: sym } });
-        return { status: fillStatus === "filled" ? "filled" : "placed", orderId: outcome.orderId, brokerState: outcome.state, fillStatus };
-      }
-      if (outcome.kind === "declined") {
-        const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
-        updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
-        audit("order_rejected_by_broker", { proposalId, refId, symbol: sym, side: proposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, policy.connectedAccountId);
-        await sendNotification(
-          { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined" } },
-          { policy, userId }
-        );
-        return { status: "error", reasons: [declinedMsg], orderId: outcome.orderId, brokerState: outcome.state };
-      }
-      if (outcome.kind === "not_placed") {
-        const note = "Broker reachable; no order carries our idempotency key — the order never reached the broker. Safe to retry.";
-        updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
-        audit("order_confirmed_not_placed", { proposalId, refId, symbol: sym, side: proposal.side, error: message, path: "approval" }, userId, policy.connectedAccountId);
-        await sendNotification(
-          { type: "run_failed", title: `${sym} order was NOT placed — safe to retry`, payload: { proposalId, refId, error: message, reconcile: "not_placed" } },
-          { policy, userId }
-        );
-        return { status: "not_placed", reasons: [`Order not placed (safe to retry): ${message}`] };
-      }
-      // uncertain: broker unreachable — KEEP status 'placing' so flagStalePlacingIntents retries.
-      updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, outcome.error);
-      audit("order_placement_uncertain", { proposalId, refId, symbol: sym, side: proposal.side, estimatedNotional: review.estimatedNotional, error: outcome.error, brokerUnreachable: true }, userId, policy.connectedAccountId);
-      await sendNotification(
-        { type: "run_failed", title: `${sym} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: outcome.error, reconcile: "uncertain" } },
-        { policy, userId }
-      );
-      return { status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] };
-    }
-
-    // See the matching comment in the autonomous run-loop placement path above: a non-throwing
-    // broker response can still be a synchronous rejection/cancellation, and that must not be
-    // recorded as "placed".
-    if (isRejectedOrCanceledState(execution.state) && !hasBrokerReportedFill(execution)) {
-      const message = `Broker declined the order (state: ${execution.state}).`;
-      updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
-      audit("order_rejected_by_broker", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, policy.connectedAccountId);
-      await sendNotification(
-        { type: "run_failed", title: `${proposal.symbol} order declined by broker (${execution.state})`, payload: { proposalId, refId, orderId: execution.orderId, state: execution.state } },
-        { policy, userId }
-      );
-      return { status: "error", reasons: [message], orderId: execution.orderId, brokerState: execution.state };
-    }
-
-    const fillStatus = reconciledFillStatus(execution);
-    const proposalStatus = fillStatus === "filled" ? "filled" : "placed";
-    if (!execution.orderId && fillStatus !== "filled") {
-      const message = `Broker returned ${execution.state} without an order id; keeping the idempotent intent pending until refId reconciliation confirms the order.`;
-      updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, message);
-      audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, brokerState: execution.state, missingOrderId: true }, userId, policy.connectedAccountId);
-      await sendNotification(
-        { type: "run_failed", title: `${proposal.symbol} order accepted without broker id — recovery pending`, payload: { proposalId, refId, state: execution.state, reconcile: "uncertain" } },
-        { policy, userId }
-      );
-      return { status: "error", reasons: [message], brokerState: execution.state };
-    }
-    const executedNotional = brokerExecutedNotional(execution);
-    const preFillPosition = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
-    let fill!: FillEvent;
-    // The broker call has already succeeded. Commit its receipt FIRST and the proposal/case status
-    // in the same transaction; if receipt persistence fails, the transaction leaves `placing` so
-    // the refId-based stale sweep can recover the real broker order instead of stranding it.
-    try {
-      getDb().transaction(() => {
-        fill = recordFillFromProposal({
-          userId,
-          connectedAccountId: policy.connectedAccountId,
-          accountNumber: row.accountNumber,
-          proposalId,
-          runId: row.runId,
-          source: executionSource,
-          executionMode,
-          proposal,
-          review,
-          execution,
-          marketScan: approvalScan,
-          status: fillStatus,
-          existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
-        });
-        updateProposalStatus(
-          proposalId,
-          proposalStatus,
-          execution.orderId,
-          review,
-          fillStatus === "filled" ? executedNotional ?? fill.notional : review.estimatedNotional,
-          userId
-        );
-      }).immediate();
-    } catch (receiptError) {
-      const detail = receiptError instanceof Error ? receiptError.message : String(receiptError);
-      const message = `Broker confirmed order ${execution.orderId}, but its local fill receipt could not be committed: ${detail}`;
-      updateProposalStatus(proposalId, "placing", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
-      audit("order_placement_uncertain", { proposalId, refId, orderId: execution.orderId, symbol: proposal.symbol, side: proposal.side, brokerState: execution.state, receiptPersistenceFailed: true, error: detail }, userId, policy.connectedAccountId);
-      await sendNotification(
-        { type: "run_failed", title: `${proposal.symbol} broker order confirmed — local receipt recovery pending`, payload: { proposalId, refId, orderId: execution.orderId, state: execution.state, error: detail, reconcile: "uncertain" } },
-        { policy, userId }
-      );
-      return { status: "error", reasons: [message], orderId: execution.orderId, brokerState: execution.state };
-    }
-    audit("proposal_approved", {
-      proposalId,
-      symbol: proposal.symbol,
-      side: proposal.side,
-      action: "approval",
-      result: proposalStatus,
-      orderId: execution.orderId,
-      brokerState: execution.state,
-      fillStatus
-    }, userId, policy.connectedAccountId);
-    await sendNotification(
-      {
-        type: "fill",
-        title: isRejectedOrCanceledState(execution.state) && hasBrokerReportedFill(execution)
-          ? `${proposal.symbol} partially filled, then ${execution.state}`
-          : `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} ${execution.state}`,
-        payload: { proposalId, fill }
-      },
-      { policy, userId }
     );
-    // Push so other open dashboards refresh immediately (the approving client refreshes via its
-    // own response).
-    emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
-    return { status: proposalStatus, orderId: execution.orderId, brokerState: execution.state, fillStatus };
+    if (!mutationOutcome.acquired) {
+      return {
+        status: "busy",
+        reasons: [
+          `Another broker operation (${mutationOutcome.busy.activeOperation}) is in progress for this account. Retry in ~${mutationOutcome.busy.retryAfterSeconds}s.`
+        ]
+      };
+    }
+    return mutationOutcome.value;
   } catch (error) {
     if (error instanceof StrategyLockOwnershipLostError) {
       return { status: "busy", reasons: [error.message] };

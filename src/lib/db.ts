@@ -460,6 +460,12 @@ const MIGRATIONS: Migration[] = [
       // 6. Indices for audit_events querying
       database.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_user_account_kind ON audit_events (user_id, connected_account_id, kind)");
       database.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_user_created ON audit_events (user_id, created_at DESC)");
+      // latestAuditByKind/latestAuditStampByKind: kind-equality + created_at ordering. Without
+      // this, those queries either walk user_created backwards row-by-row or drag every matching
+      // row — multi-MB market_scan payloads included — through the sorter; on the production
+      // 718MB audit_events table that was a minutes-long sync hold on the one DB connection
+      // (2026-08-02 prod wedge, every 60s tick).
+      database.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_kind_user_created ON audit_events (kind, user_id, created_at DESC)");
       
       // 7. Composite index for matured skipped counterfactuals sorting
       database.exec("CREATE INDEX IF NOT EXISTS idx_skipped_counterfactuals_user_account_status_return ON skipped_candidate_counterfactuals (user_id, connected_account_id, status, return_pct DESC, updated_at DESC)");

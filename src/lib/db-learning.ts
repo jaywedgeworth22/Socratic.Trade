@@ -51,6 +51,25 @@ export function newerAuditEntry(a: AuditEventRow | undefined, b: AuditEventRow |
   return Date.parse(b.createdAt) > Date.parse(a.createdAt) ? b : a;
 }
 
+/** Stamp-only sibling of latestAuditByKind: id + created_at, payload NEVER read. Use this for
+ *  staleness gates that run on a cadence — the payload of market_scan/strategy_run rows is
+ *  multi-MB, and reading it just to compare a timestamp was the 2026-08-02 prod wedge's every-
+ *  tick cost. Served by idx_audit_events_kind_user_created as a pure index seek. */
+export function latestAuditStampByKind(
+  kind: string,
+  userId: string = "local",
+  connectedAccountId?: string
+): { id: string; createdAt: string } | undefined {
+  const row = (connectedAccountId
+    ? getDb()
+      .prepare("SELECT id, created_at FROM audit_events WHERE kind = ? AND user_id = ? AND connected_account_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(kind, userId, connectedAccountId)
+    : getDb()
+      .prepare("SELECT id, created_at FROM audit_events WHERE kind = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(kind, userId)) as { id: string; created_at: string } | undefined;
+  return row ? { id: row.id, createdAt: row.created_at } : undefined;
+}
+
 export function latestAuditByKind(
   kind: string,
   userId: string = "local",

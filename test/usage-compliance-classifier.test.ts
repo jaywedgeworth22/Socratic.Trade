@@ -328,6 +328,7 @@ describe("WS1 gap #1: massive.ts routes through the tracked provider boundary", 
       );
     }) as unknown as typeof fetch);
 
+    process.env.MASSIVE_LOCAL_HISTORY_ENABLED = "off";
     const { fetchGroupedBarsRest, clearMassiveRestBudgetForTests } = await import("../src/lib/market-signals/massive");
     clearMassiveRestBudgetForTests();
     const bars = await fetchGroupedBarsRest("2026-07-17");

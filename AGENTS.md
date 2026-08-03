@@ -204,6 +204,27 @@ integration preview until 2026-07-07. The earlier "apps are served over http://"
 described the abandoned tunnel transport. Details:
 `docs/rollouts/2026-07-07-prod-coolify-migration.md`.
 
+**Production exit-code contract (2026-08-02 outage; binding):** NO production code path may
+exit 0 spontaneously. The container runs `restart: unless-stopped`, which restarts ANY
+spontaneous exit **regardless of exit code** — but honors docker-API stops (`docker stop`,
+Coolify stop) by staying down; the 2026-08-02 "clean exit 0, stayed down" outage was an
+**unpaired API stop**, not a policy gap, and the 0 was fabricated by a pid-1 signal
+re-raise bug (fixed) — see `docs/rollouts/2026-08-02-exit0-outage-audit.md`. Exit-code
+map: 40 = boot-supervisor re-tag of a spontaneous clean exit; 41 = R2 kill-switch
+(restart re-boots WITHOUT litestream via marker); 42 = R2 resume; 43 = in-app exit-guard
+re-tag (`src/lib/exit-guard.ts`); 130/143 = graceful SIGINT/SIGTERM shutdown. Traps that
+must never come back: (1) `process.kill(process.pid, signal)` re-raise in a wrapper —
+pid 1 ignores default-disposition signals, so the process drains to a bogus exit 0;
+always `process.exit(128 + N)` instead. (2) `npm run <script>` in the container exec
+chain — in-container npm dies on SIGTERM **without forwarding it** to the server (proven
+by sandbox repro), so the app is hard-killed on every stop; invoke
+`node_modules/.bin/next` directly. (3) `docker events --since/--until` for post-hoc
+forensics — the daemon keeps only an in-memory ring (~256 events ≈ minutes on this box
+because healthchecks churn it); use `journalctl -u docker.service` (durable; logs
+`ShouldRestart ... hasBeenManuallyStopped=...` with the true exit status) and
+`docker inspect`/`docker logs` instead. If you stop the prod container over SSH or the
+API for ANY reason, you own starting it again — docker will not.
+
 ### Preview freshness policy (RETIRED 2026-07-08 — historical; previews no longer exist)
 
 `trading-beta.jays.services` is the integration source of truth. Agent preview

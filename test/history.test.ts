@@ -395,6 +395,33 @@ describe("fetchDailyOHLC", () => {
     vi.stubGlobal("fetch", async () => new Response("nope", { status: 404 }));
     expect(await fetchDailyOHLC("ZZZ")).toBeNull();
   });
+
+  it("serves local 5-year flat-file OHLC history directly without network requests", async () => {
+    const { fetchLocalFlatFileHistory } = await import("../src/lib/history");
+    const fs = await import("fs");
+    const path = await import("path");
+    const testDir = path.join(process.cwd(), "data", "history-5y");
+    const testFile = path.join(testDir, "TESTSYM.json");
+
+    if (!fs.existsSync(testDir)) fs.mkdirSync(testDir, { recursive: true });
+    fs.writeFileSync(
+      testFile,
+      JSON.stringify([
+        { t: 1609459200000, o: 100, h: 105, l: 99, c: 104, v: 1000 },
+        { t: 1609545600000, o: 104, h: 108, l: 103, c: 107, v: 1500 }
+      ])
+    );
+
+    try {
+      const bars = fetchLocalFlatFileHistory("TESTSYM");
+      expect(bars).not.toBeNull();
+      expect(bars).toHaveLength(2);
+      expect(bars![0].close).toBe(104);
+      expect(bars![1].close).toBe(107);
+    } finally {
+      if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
+    }
+  });
 });
 
 describe("fetchDailyOHLC App A tier skip (peer-serving reads)", () => {

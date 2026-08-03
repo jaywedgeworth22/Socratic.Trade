@@ -21,10 +21,13 @@ vi.mock("../src/lib/market", async (importOriginal) => {
 
 import { audit, getDb, latestAuditByKind } from "../src/lib/db";
 import {
+  FRESHNESS_BOOT_GRACE_SECONDS,
   marketScanFreshnessMaxAgeHours,
   newestPersistedMarketScan,
+  resetFreshnessGateForTests,
   runMarketScanFreshnessIfDue
 } from "../src/lib/market-scan-freshness";
+import { latestAuditStampByKind } from "../src/lib/db";
 import { resetScanSingleFlightForTests } from "../src/lib/scan-singleflight";
 
 function makeScan(generatedAt: string): MarketScan {
@@ -65,6 +68,7 @@ beforeEach(() => {
   scanMarketMock.mockReset();
   scanMarketMock.mockResolvedValue(makeScan(new Date(MONDAY).toISOString()));
   resetScanSingleFlightForTests();
+  resetFreshnessGateForTests();
   delete process.env.MARKET_SCAN_FRESHNESS_MAX_AGE_HOURS;
   vi.useFakeTimers();
   vi.setSystemTime(MONDAY);
@@ -188,6 +192,57 @@ describe("runMarketScanFreshnessIfDue", () => {
     auditAt("market_scan", { scan: makeScan(new Date(MONDAY - 21 * 60 * 60_000).toISOString()) }, "local", MONDAY - 21 * 60 * 60_000);
     scanMarketMock.mockRejectedValueOnce(new Error("provider down"));
     await expect(runMarketScanFreshnessIfDue(MONDAY)).resolves.toBeUndefined();
+  });
+});
+
+describe("wedge fixes (2026-08-02 prod incident)", () => {
+  it("boot grace: skips entirely when uptime is below the grace window, runs once past it", async () => {
+    // Stale state that would normally trigger a refresh (empty audit table = infinitely stale).
+    await runMarketScanFreshnessIfDue(SATURDAY, FRESHNESS_BOOT_GRACE_SECONDS - 1);
+    expect(scanMarketMock).not.toHaveBeenCalled();
+    await runMarketScanFreshnessIfDue(SATURDAY, FRESHNESS_BOOT_GRACE_SECONDS + 1);
+    expect(scanMarketMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("boot grace: unit callers that omit uptime are exempt (pre-existing call shape)", async () => {
+    await runMarketScanFreshnessIfDue(SATURDAY);
+    expect(scanMarketMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fast gate falls through when the fresh newest row is a scan-less strategy_run over a stale usable scan", async () => {
+    const staleMs = SATURDAY - 30 * 60 * 60_000; // usable scan, 30h old (> 20h default)
+    auditAt("market_scan", { scan: makeScan(new Date(staleMs).toISOString()) }, "local", staleMs);
+    // Fresh-but-unusable newest row (skipped run, no marketScan payload).
+    auditAt("strategy_run", { runId: "r-skip", status: "skipped", proposals: [] }, "local", SATURDAY - 60_000);
+    vi.setSystemTime(SATURDAY);
+    await runMarketScanFreshnessIfDue(SATURDAY);
+    expect(scanMarketMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fresh usable scan short-circuits repeatedly without re-scanning (cached usability)", async () => {
+    auditAt("market_scan", { scan: makeScan(new Date(SATURDAY - 60_000).toISOString()) }, "local", SATURDAY - 60_000);
+    vi.setSystemTime(SATURDAY);
+    await runMarketScanFreshnessIfDue(SATURDAY);
+    await runMarketScanFreshnessIfDue(SATURDAY);
+    await runMarketScanFreshnessIfDue(SATURDAY);
+    expect(scanMarketMock).not.toHaveBeenCalled();
+  });
+
+  it("latestAuditStampByKind returns id+createdAt matching the full row, without payload", () => {
+    auditAt("market_scan", { scan: makeScan(new Date(MONDAY).toISOString()) }, "stamp-scope", MONDAY);
+    const stamp = latestAuditStampByKind("market_scan", "stamp-scope");
+    expect(stamp).toBeDefined();
+    expect(stamp).not.toHaveProperty("payload");
+    const full = getDb().prepare("SELECT id, created_at FROM audit_events WHERE kind = 'market_scan' AND user_id = 'stamp-scope'").get() as { id: string; created_at: string };
+    expect(stamp!.id).toBe(full.id);
+    expect(stamp!.createdAt).toBe(full.created_at);
+  });
+
+  it("the freshness scan is given an abort deadline", async () => {
+    await runMarketScanFreshnessIfDue(SATURDAY);
+    expect(scanMarketMock).toHaveBeenCalledTimes(1);
+    const options = scanMarketMock.mock.calls[0][5] as { signal?: AbortSignal };
+    expect(options.signal).toBeInstanceOf(AbortSignal);
   });
 });
 
