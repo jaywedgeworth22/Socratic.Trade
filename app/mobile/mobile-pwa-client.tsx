@@ -644,6 +644,51 @@ export function MobilePwaClient() {
             </button>
           </div>
         </div>
+
+        {connectedAccounts.length > 0 && (
+          <div className="mx-auto flex max-w-xl items-center gap-2 pb-3 pt-1">
+            <div className="relative min-w-0 flex-1">
+              <select
+                className="min-h-10 w-full appearance-none rounded-md border border-line bg-surface px-3 py-1.5 pr-8 text-sm font-medium text-fg outline-none focus:border-accent disabled:opacity-50"
+                value={connectedAccounts.find((a) => a.isActive)?.id ?? ""}
+                disabled={!commandAvailability.canSubmit || busyCommand === "account.activate"}
+                onChange={(e) => {
+                  const selectedId = e.target.value;
+                  if (selectedId) {
+                    void submitCommand("account.activate", { accountId: selectedId }, { key: `account.activate:${selectedId}` });
+                  }
+                }}
+                aria-label="Select connected account"
+              >
+                {connectedAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.label} ({account.broker} · {account.environment}
+                    {account.accountNumber ? ` · ${account.accountNumber}` : ""})
+                    {account.isActive ? " ✓ Active" : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted">
+                {busyCommand === "account.activate" ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-accent" />
+                ) : (
+                  <span className="text-xs">▼</span>
+                )}
+              </div>
+            </div>
+
+            {snapshot?.currentUser?.email && (
+              <a
+                href="/logout"
+                className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-md border border-line bg-surface px-3 text-xs font-semibold text-muted hover:text-fg active:scale-95"
+                title={`Sign out (${snapshot.currentUser.email})`}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span>Sign out</span>
+              </a>
+            )}
+          </div>
+        )}
       </header>
 
       <div className="mx-auto max-w-xl space-y-4 px-4 py-4">
@@ -742,51 +787,6 @@ export function MobilePwaClient() {
           <Metric label="Market" value={snapshot?.marketSession?.label ?? (snapshot?.marketSession?.isOpen ? "Open" : "Closed")} />
         </section>
 
-        <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Accounts</h2>
-            <span className="text-xs text-faint">{connectedAccounts.length}</span>
-          </div>
-          {connectedAccounts.length === 0 ? (
-            <Empty label="No broker accounts connected — add one in the console" />
-          ) : (
-            connectedAccounts.map((account) => (
-              <div key={account.id} className="flex min-h-11 items-center gap-3 rounded-md border border-line bg-surface px-3 py-2 text-sm">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{account.label}</p>
-                  <p className="truncate text-xs text-faint">
-                    {account.broker} · {account.environment}
-                    {account.accountNumber ? ` · ${account.accountNumber}` : ""}
-                  </p>
-                </div>
-                {account.isActive ? (
-                  <span className="rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
-                    Active
-                  </span>
-                ) : (
-                  <button
-                    className="flex min-h-9 items-center gap-1.5 rounded-md border border-line bg-bg px-3 text-xs font-semibold text-fg disabled:opacity-50"
-                    disabled={!commandAvailability.canSubmit}
-                    onClick={() =>
-                      void submitCommand("account.activate", { accountId: account.id }, { key: `account.activate:${account.id}` })
-                    }
-                  >
-                    {busyKey === `account.activate:${account.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                    Activate
-                  </button>
-                )}
-              </div>
-            ))
-          )}
-          <div className="flex min-h-11 items-center justify-between gap-3 rounded-md border border-line bg-surface px-3 text-sm">
-            <span className="min-w-0 truncate text-muted">{snapshot?.currentUser?.email ?? "Signed in"}</span>
-            <a href="/logout" className="flex shrink-0 items-center gap-1.5 font-semibold text-fg">
-              <LogOut className="h-4 w-4" />
-              Sign out
-            </a>
-          </div>
-          <p className="text-xs text-faint">Sign out to switch the Google or Apple login used for this app.</p>
-        </section>
 
         <section className="space-y-2">
           <div className="flex items-center justify-between">

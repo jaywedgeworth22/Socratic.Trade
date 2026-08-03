@@ -12,13 +12,7 @@ styled identically to the failed-command/error banners around it. This work addr
 
 High level:
 
-1. **Accounts section (new).** The snapshot already carried `connectedAccounts` and `currentUser` but the
-   PWA never rendered them. New "Accounts" section lists each connected broker account (label, broker,
-   environment, account number) with an **Active** badge or an **Activate** button that submits the
-   existing `account.activate` mobile command. Activate is gated on `canSubmit` (not
-   `canSubmitAccountCommand`) deliberately — activating an account must be possible when no account is
-   active yet. A signed-in row shows the current login email with a **Sign out** link to `/logout` so the
-   Google/Apple login itself can be switched.
+1. **Header Account Selector dropdown.** The snapshot carries `connectedAccounts` and `currentUser`. An Account Selector dropdown `<select>` is now rendered right in the sticky top header bar, allowing instant switching between connected broker accounts via `account.activate`. Selecting an account activates it while displaying an inline spinner. A Sign Out link is placed alongside it to switch logins when needed. The redundant, separate body "Accounts section" was removed per owner clarification.
 
 2. **Per-action realtime feedback.** Root cause of the "dead approve": `POST /api/mobile/commands`
    returns `202 queued` and the worker executes async; worker failures (e.g. "Proposal is already
