@@ -40,19 +40,26 @@ an Accounts section (switch broker account via `account.activate`, sign-out link
 login), per-proposal realtime approve/reject feedback (tapped button spins; card follows its queued
 command through queued/running/succeeded/failed instead of failures hiding in the Command Log), and the
 delete-account panel is collapsed behind a neutral link so it stops mimicking error banners. tsc clean,
-mobile test file 10/10, lint 0 errors. Landing to main via `scripts/land.sh`.
-Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
-
 mobile test file 10/10, lint 0 errors. Landed as #2351 (`44069368`).
 Rollout: `docs/rollouts/2026-08-02-mobile-pwa-owner-feedback.md`.
 
-**2026-08-02 — Data-provider hardening pass (MONET, `monet/data-cascade-freshness`).**
-Implemented the free-tier research doc's own recommendations: Tiingo now ALSO an
-OHLC-history source in `history.ts` (was enrichment-only — a configured key delivered
-none of the promised adjusted-history value until this landed), dead Stooq tier removed
-(confirmed PoW-bot-walled), keyless Treasury.gov yield-curve fallback (3M/2Y/10Y +
+**2026-08-02 — Data-provider hardening, Round 1 (MONET, `monet/data-cascade-freshness`,
+merged as #2353).** Implemented the free-tier research doc's own recommendations: Tiingo
+now ALSO an OHLC-history source in `history.ts` (was enrichment-only — a configured key
+delivered none of the promised adjusted-history value until this landed), dead Stooq tier
+removed (confirmed PoW-bot-walled), keyless Treasury.gov yield-curve fallback (3M/2Y/10Y +
 curves, no FRED key needed), Cboe VIX9D, SEC-XBRL `revenueGrowth`. Full gates green.
 Rollout: `docs/rollouts/2026-08-02-data-provider-hardening.md`.
+
+**2026-08-02 — Data-provider hardening, Round 2/3 (MONET, `monet/data-cascade-providers-round2`).**
+Closes out the rest of the same research doc: 3 new key-gated fundamentals/news providers
+(Wisesheets, SimFin, Marketaux — all dormant until their env key is set), 2 new keyless
+sources (BLS macro fallback wired into the Macro board, Nasdaq earnings-calendar backfill),
+an S&P 500 constituents mirror (built, not yet wired to replace the static universe list —
+see the rollout note), Yahoo 429 hardening, and Alpha Vantage/Finnhub earnings-calendar
+fallbacks. USAspending.gov investigated and correctly NOT implemented (no free
+recipient→ticker crosswalk exists). Full gates green: lint 0 errors, tsc clean, 5891/5891
+tests, build clean. Rollout: `docs/rollouts/2026-08-02-data-provider-round2.md`.
 
 | | |
 |---|---|

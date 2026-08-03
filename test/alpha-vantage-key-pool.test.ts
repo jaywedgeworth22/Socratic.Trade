@@ -369,6 +369,13 @@ describe("AlphaVantageEnrichmentProvider multi-key integration", () => {
 
     const requestedKeys: string[] = [];
     vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("function=EARNINGS_CALENDAR")) {
+        // The EARNINGS_CALENDAR fallback (2026-08-02) shares this pool/budget but is orthogonal
+        // to this test's NEWS_SENTIMENT key-rotation assertions — give it a valid, one-shot
+        // response so it neither shows up in `requestedKeys` nor re-fires on the second call.
+        return new Response("symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n");
+      }
       const key = new URL(url).searchParams.get("apikey") ?? "";
       requestedKeys.push(key);
       if (key === KEY_1) {
@@ -401,6 +408,10 @@ describe("AlphaVantageEnrichmentProvider multi-key integration", () => {
 
     const requestedKeys: string[] = [];
     vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("function=EARNINGS_CALENDAR")) {
+        return new Response("symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n");
+      }
       const key = new URL(url).searchParams.get("apikey") ?? "";
       requestedKeys.push(key);
       return new Response(JSON.stringify({
@@ -484,7 +495,10 @@ describe("AlphaVantageEnrichmentProvider multi-key integration", () => {
     // NOT wrapped in an array — mirrors every pre-existing call site (see
     // test/data-providers.test.ts's "Alpha Vantage Warning Detection" suite).
     const provider = new AlphaVantageEnrichmentProvider("bare-string-key");
-    const res = await provider.enrich(["AAPL"]);
+    // This test is specifically about the bare-string-key backward-compat path, not the
+    // EARNINGS_CALENDAR fallback (2026-08-02) — tell AV daysToEarnings is already covered
+    // upstream so that fallback's own (separately-tested) fetch never fires here.
+    const res = await provider.enrich(["AAPL"], { coveredFields: { AAPL: new Set(["daysToEarnings"]) } });
     expect(fetchCount).toBe(1);
     expect(res.AAPL.headlines).toEqual(["AAPL headline"]);
   });
@@ -570,6 +584,13 @@ describe("getPoolForKeys", () => {
     const requestedKeys: string[] = [];
 
     vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("function=EARNINGS_CALENDAR")) {
+        // Valid, empty market-wide calendar — satisfies the EARNINGS_CALENDAR fallback added
+        // alongside NEWS_SENTIMENT (2026-08-02) without perturbing this test's own key-rotation
+        // assertions below, which track ONLY the NEWS_SENTIMENT dispatch key order.
+        return new Response("symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n");
+      }
       const key = new URL(url).searchParams.get("apikey") ?? "";
       requestedKeys.push(key);
       if (key === ENV_KEY_1) {
@@ -792,7 +813,12 @@ describe("proactive daily call budget (tryReserveAlphaVantageCalls / refundAlpha
     });
 
     const provider = new AlphaVantageEnrichmentProvider([KEY], "env", undefined, pool);
-    const res = await provider.enrich(["AAA"]);
+    // The EARNINGS_CALENDAR fallback (added 2026-08-02) also draws on this SAME budget/pool — this
+    // test is specifically about the NEWS_SENTIMENT 429/reservation contract, so tell AV its
+    // daysToEarnings is already covered upstream to keep that fallback from touching the exact
+    // single-reservation math below (its own budget-sharing behavior has dedicated coverage in
+    // test/data-providers.test.ts's "EARNINGS_CALENDAR fallback" describe block).
+    const res = await provider.enrich(["AAA"], { coveredFields: { AAA: new Set(["daysToEarnings"]) } });
 
     // fetchWithRetry defaults to one internal 429 retry; the AV site must pin retries: 0 so a
     // single reservation can never turn into two real AV calls (headroom is only 25-23=2).

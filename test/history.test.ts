@@ -246,6 +246,36 @@ describe("fetchDailyOHLC", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("retries a Yahoo HTTP 429 with exponential backoff before succeeding, instead of giving up after one try", async () => {
+    let yahooCalls = 0;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (!String(url).includes("query1.finance.yahoo.com")) return new Response("unexpected source", { status: 500 });
+      yahooCalls++;
+      if (yahooCalls < 3) return new Response("Too Many Requests", { status: 429 });
+      return new Response(yahooBody(60), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("YHOO429", Date.UTC(2026, 5, 18));
+    expect(bars).not.toBeNull();
+    expect(bars!.length).toBe(60);
+    expect(yahooCalls).toBe(3); // two 429s, then a 200 on the third attempt
+  });
+
+  it("gives up and returns null (never fabricates) after exhausting Yahoo 429 retries", async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      String(url).includes("query1.finance.yahoo.com")
+        ? new Response("Too Many Requests", { status: 429 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("YHOODEAD", Date.UTC(2026, 5, 18));
+    expect(bars).toBeNull();
+    const yahooCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes("query1.finance.yahoo.com"));
+    expect(yahooCalls).toHaveLength(4); // 1 initial attempt + 3 retries, all 429 — then gives up honestly
+  });
+
   it("does not expire a Saturday-written cache entry before Monday's open (LANE A weekend-stable TTL)", async () => {
     const fetchMock = vi.fn(async (url: string) =>
       String(url).includes("query1.finance.yahoo.com") ? new Response(yahooBody(60), { status: 200 }) : new Response("nope", { status: 404 })

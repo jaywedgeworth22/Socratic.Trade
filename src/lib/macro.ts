@@ -4,6 +4,7 @@ import { logApiHealth } from "./db-health";
 import { expiresAtRespectingMarketClose } from "./market-hours";
 import { BROWSER_UA } from "./web-sources/http";
 import { fetchTreasuryYieldCurve } from "./market-signals/treasury";
+import { fetchBlsMacroSeries } from "./market-signals/bls";
 
 // Minimal Yahoo Finance chart shape — only the fields we read.
 interface VixYahooResponse {
@@ -28,6 +29,11 @@ export interface MacroData {
   wtiOil: string; // WTI crude spot
   housingStarts: string;
   consumerSentiment: string;
+  // Month-over-month change in total nonfarm payroll employment, thousands of jobs (e.g. "+57K") —
+  // the conventional "jobs report" headline. Sourced from BLS (see blsSourced); FRED's payroll
+  // series (PAYEMS) is a level, not this MoM delta, so a full FRED fetch does NOT populate this —
+  // it stays "" whenever blsSourced is not true, regardless of fredSourced.
+  nonfarmPayrollsChangeK: string;
   vix: string;
   vix3m: string; // 3-month VIX (for term structure)
   asOf: string;
@@ -52,6 +58,17 @@ export interface MacroData {
    *        fredSourced rule (blank unless a FRED key supplied them).
    */
   treasurySourced?: boolean;
+  /**
+   * Mirrors `treasurySourced`'s honesty contract, for the KEYLESS-CAPABLE BLS API v2 fallback:
+   * true = cpiInflation/unemploymentRate/nonfarmPayrollsChangeK are a real reading from BLS,
+   *        fetched WITHOUT a FRED key (BLS works keyless at a lower rate limit, or with a free
+   *        BLS_API_KEY at a higher one — either way this flag just means "BLS supplied it", not
+   *        which BLS tier). Only ever set on the no-FRED-key fallback path.
+   * false/undefined = no keyless/BLS reading this session; cpiInflation/unemploymentRate follow the
+   *        normal fredSourced rule, and nonfarmPayrollsChangeK (which FRED's own series don't cover
+   *        in this shape at all) stays blank.
+   */
+  blsSourced?: boolean;
 }
 
 /**
@@ -78,11 +95,13 @@ const BLANK_MACRO: MacroData = {
   wtiOil: "",
   housingStarts: "",
   consumerSentiment: "",
+  nonfarmPayrollsChangeK: "",
   vix: "",
   vix3m: "",
   asOf: "unavailable",
   fredSourced: false,
-  treasurySourced: false
+  treasurySourced: false,
+  blsSourced: false
 };
 
 // ── Cache-provenance scoping (mirrors src/lib/history.ts) ─────────────────────
@@ -233,6 +252,9 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
       wtiOil: oil ? `$${Number(oil).toFixed(2)}` : "",
       housingStarts: houst ? `${(Number(houst) / 1000).toFixed(2)}M` : "",
       consumerSentiment: umcsent ? `${Number(umcsent).toFixed(1)}` : "",
+      // FRED's payroll series (PAYEMS) is a level, not the MoM delta this field represents — this
+      // field is BLS-only (see blsSourced), so a full FRED fetch never populates it.
+      nonfarmPayrollsChangeK: "",
       vix: vix ? `${Number(vix).toFixed(2)}` : "",
       vix3m: vix3m ? `${Number(vix3m).toFixed(2)}` : "",
       asOf: new Date().toISOString().split("T")[0],
@@ -267,11 +289,12 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
  * env-key path resolve to "shared" via macroCacheScopeForKeySource, so their behavior is unchanged.
  */
 async function fetchVixOnlyFallback(scope: MacroCacheScope, userId: string | undefined, now: number): Promise<MacroData> {
-  const [liveVix, treasury] = await Promise.all([
+  const [liveVix, treasury, bls] = await Promise.all([
     fetchKeylessVix(),
-    fetchTreasuryYieldCurve(now).catch(() => null)
+    fetchTreasuryYieldCurve(now).catch(() => null),
+    fetchBlsMacroSeries(now).catch(() => null)
   ]);
-  const anyLive = liveVix !== null || treasury !== null;
+  const anyLive = liveVix !== null || treasury !== null || bls !== null;
   if (!anyLive) {
     // Every keyless source failed — everything blank ("unavailable") so the regime stays Unknown.
     const fallback = { ...BLANK_MACRO };
@@ -289,6 +312,14 @@ async function fetchVixOnlyFallback(scope: MacroCacheScope, userId: string | und
     if (treasury.y2 !== undefined) lightMacro.dgs2Treasury = `${treasury.y2.toFixed(2)}%`;
     if (treasury.y10 !== undefined) lightMacro.dgs10Treasury = `${treasury.y10.toFixed(2)}%`;
     lightMacro.treasurySourced = true;
+  }
+  if (bls !== null) {
+    // BLS's own cpiInflation is already a YoY %, matching FRED's pc1-transformed CPIAUCSL semantics
+    // — safe to drop straight into the same field with no re-transform.
+    if (bls.cpiInflation !== undefined) lightMacro.cpiInflation = bls.cpiInflation;
+    if (bls.unemploymentRate !== undefined) lightMacro.unemploymentRate = bls.unemploymentRate;
+    if (bls.nonfarmPayrollsChangeK !== undefined) lightMacro.nonfarmPayrollsChangeK = bls.nonfarmPayrollsChangeK;
+    lightMacro.blsSourced = true;
   }
   writeMacroCache(scope, userId, lightMacro, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
   return lightMacro;
@@ -328,6 +359,16 @@ export function clearMacroCacheForTests(): void {
 // endpoint is retried on a probe cadence, not hammered every tick. ALL sources dead -> null, and
 // the caller's honest "unavailable" path (never a fabricated reading).
 
+// Both keyless lanes below intermittently rate-limit (HTTP 429) shared/datacenter egress IPs in
+// short bursts that usually clear within a second or two (live-verified 2026-08-02 against Yahoo's
+// v8/finance/chart endpoint — same finding as history.ts's fetchYahoo). fetchVixLane retries ONLY on
+// 429 with exponential backoff before giving up; any other failure (network error, timeout, non-429
+// status, unparseable body) still fails on the first attempt so a genuinely dead lane is logged and
+// the cascade falls through to the next source promptly, not after several wasted retries.
+const VIX_LANE_TIMEOUT_MS = 6000;
+const VIX_LANE_429_MAX_ATTEMPTS = 4; // 1 initial try + 3 retries
+const VIX_LANE_429_BASE_BACKOFF_MS = 400;
+
 /** One keyless VIX fetch through the circuit-breaker + health-log machinery. Null on any failure. */
 async function fetchVixLane(
   lane: string,
@@ -341,28 +382,42 @@ async function fetchVixLane(
   const log = (ok: boolean, errorText?: string) =>
     // keySource omitted -> stored as NULL, matching the breaker's (lane, null) keyless lane.
     logApiHealth({ service: lane, ok, latencyMs: Date.now() - start, errorText });
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 6000);
   try {
-    const res = await fetch(url, {
-      cache: "no-store",
-      signal: controller.signal,
-      headers: { "user-agent": BROWSER_UA, accept }
-    });
-    if (!res.ok) {
-      log(false, `HTTP ${res.status}`);
-      return null;
+    for (let attempt = 0; attempt < VIX_LANE_429_MAX_ATTEMPTS; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), VIX_LANE_TIMEOUT_MS);
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          cache: "no-store",
+          signal: controller.signal,
+          headers: { "user-agent": BROWSER_UA, accept }
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (res.status === 429 && attempt < VIX_LANE_429_MAX_ATTEMPTS - 1) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(4000, VIX_LANE_429_BASE_BACKOFF_MS * 2 ** attempt))
+        );
+        continue;
+      }
+      if (!res.ok) {
+        log(false, `HTTP ${res.status}`);
+        return null;
+      }
+      const value = await parse(res);
+      // A 200 with no usable VIX value still counts against the lane's health: from this module's
+      // perspective the endpoint is not serving the reading we need.
+      log(value !== null, value === null ? "no usable VIX value in response" : undefined);
+      return value;
     }
-    const value = await parse(res);
-    // A 200 with no usable VIX value still counts against the lane's health: from this module's
-    // perspective the endpoint is not serving the reading we need.
-    log(value !== null, value === null ? "no usable VIX value in response" : undefined);
-    return value;
+    // Unreachable in practice — every iteration above either returns or continues, and the final
+    // attempt (whether 429 or otherwise) always returns — but TS can't prove that statically.
+    return null;
   } catch (err) {
     log(false, err instanceof Error ? err.message : String(err));
     return null;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

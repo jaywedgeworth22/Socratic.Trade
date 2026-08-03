@@ -248,3 +248,66 @@ describe("keyless VIX cascade (Cboe -> Yahoo)", () => {
     }
   });
 });
+
+describe("fetchVixLane HTTP 429 hardening (Yahoo/Cboe bot-rate-limiting)", () => {
+  beforeEach(async () => {
+    delete process.env.FRED_API_KEY;
+    const { clearMacroCacheForTests } = await import("../src/lib/macro");
+    clearMacroCacheForTests();
+    await resetVixLaneState();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("retries a Yahoo HTTP 429 with exponential backoff before succeeding, instead of failing the lane after one try", async () => {
+    let yahooCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("cdn.cboe.com")) return { ok: false, status: 500, json: async () => ({}) };
+        if (url.includes("query1.finance.yahoo.com")) {
+          yahooCalls++;
+          if (yahooCalls < 3) return { ok: false, status: 429, json: async () => ({}) };
+          return {
+            ok: true,
+            json: async () => ({ chart: { result: [{ indicators: { quote: [{ close: [24.5] }] } }] } })
+          };
+        }
+        return { ok: false, status: 404, json: async () => ({}) };
+      })
+    );
+
+    const { fetchLiveVix } = await import("../src/lib/macro");
+    const result = await fetchLiveVix();
+    expect(result.vix).toBe(24.5);
+    expect(yahooCalls).toBe(3); // two 429s, then a 200 on the third attempt
+
+    // The lane's health reflects the eventual SUCCESS, not the transient 429s along the way —
+    // a lane that recovers within its own retry budget must not look "stopped working".
+    const { getLaneHealth } = await import("../src/lib/db-health");
+    expect(getLaneHealth("vix-yahoo", null).stoppedWorking).toBe(false);
+  });
+
+  it("gives up and returns null (never fabricates) after exhausting Yahoo 429 retries", async () => {
+    let yahooCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("cdn.cboe.com")) return { ok: false, status: 500, json: async () => ({}) };
+        if (url.includes("query1.finance.yahoo.com")) {
+          yahooCalls++;
+          return { ok: false, status: 429, json: async () => ({}) };
+        }
+        return { ok: false, status: 404, json: async () => ({}) };
+      })
+    );
+
+    const { fetchLiveVix } = await import("../src/lib/macro");
+    const result = await fetchLiveVix();
+    expect(result.vix).toBeNull();
+    expect(result.asOf).toBeNull();
+    expect(yahooCalls).toBe(4); // 1 initial attempt + 3 retries, all 429 — then gives up honestly
+  });
+});

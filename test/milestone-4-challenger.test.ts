@@ -309,15 +309,18 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
     vi.stubGlobal("fetch", mockFetch);
 
     const provider = new FinnhubEnrichmentProvider("test-key");
-    const res1 = await provider.enrich(["AAPL"]);
-    
+    // coveredFields hint suppresses the /calendar/earnings daysToEarnings fallback (added
+    // 2026-08-02) so it doesn't perturb the exact fetch counts this test asserts on.
+    const skipCalendar = { coveredFields: { AAPL: new Set(["daysToEarnings"]) } };
+    const res1 = await provider.enrich(["AAPL"], skipCalendar);
+
     // We expect some fields to still map (like companyName/sector from the succeeded profile2 call)
     expect(res1.AAPL).toEqual({ companyName: "Apple Inc.", sector: "Technology", industry: "Technology" });
     // Verify that the fetch happened 6 times (5 calls plus 1 retry on HTTP 429 on recommendation)
     expect(mockFetch).toHaveBeenCalledTimes(6);
 
     // Call it a second time. If it was NOT cached, it should call fetch 6 more times.
-    const res2 = await provider.enrich(["AAPL"]);
+    const res2 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res2.AAPL).toEqual({ companyName: "Apple Inc.", sector: "Technology", industry: "Technology" });
     expect(mockFetch).toHaveBeenCalledTimes(12); // Cache was bypassed!
   });
@@ -361,12 +364,15 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
     vi.stubGlobal("fetch", mockFetch);
 
     const provider = new FinnhubEnrichmentProvider("test-key");
-    const res1 = await provider.enrich(["AAPL"]);
+    // coveredFields hint suppresses the /calendar/earnings daysToEarnings fallback (added
+    // 2026-08-02) so it doesn't perturb the exact fetch counts this test asserts on.
+    const skipCalendar = { coveredFields: { AAPL: new Set(["daysToEarnings"]) } };
+    const res1 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res1.AAPL).toEqual({ companyName: "Apple Inc.", sector: "Technology", industry: "Technology" });
     expect(mockFetch).toHaveBeenCalledTimes(5);
 
     // Call second time. It should be cached, so fetch count remains 5.
-    const res2 = await provider.enrich(["AAPL"]);
+    const res2 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res2.AAPL).toEqual({ companyName: "Apple Inc.", sector: "Technology", industry: "Technology" });
     expect(mockFetch).toHaveBeenCalledTimes(5); // Cache worked!
   });
@@ -377,6 +383,13 @@ describe("Milestone 4 Challenger: Alpha Vantage Warning Detection & Cache Bypass
     clearEnrichmentCache();
   });
 
+  // Every enrich() call below passes a coveredFields hint marking daysToEarnings already
+  // covered upstream — these tests are specifically about the NEWS_SENTIMENT warning/cache-bypass
+  // contract, not the EARNINGS_CALENDAR fallback (2026-08-02, separately covered in
+  // test/data-providers.test.ts's "EARNINGS_CALENDAR fallback" describe block), so this keeps
+  // that fallback's own fetch from firing and perturbing the exact mockFetch call counts here.
+  const skipCalendar = { coveredFields: { AAPL: new Set(["daysToEarnings"]) } };
+
   it("throws error and bypasses cache when Alpha Vantage returns Note warning", async () => {
     const mockFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       Note: "Thank you for using Alpha Vantage! Standard rate limit is 5 requests per minute..."
@@ -384,11 +397,11 @@ describe("Milestone 4 Challenger: Alpha Vantage Warning Detection & Cache Bypass
     vi.stubGlobal("fetch", mockFetch);
 
     const provider = new AlphaVantageEnrichmentProvider("test-key");
-    const res1 = await provider.enrich(["AAPL"]);
+    const res1 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res1.AAPL).toEqual({});
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
-    const res2 = await provider.enrich(["AAPL"]);
+    const res2 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res2.AAPL).toEqual({});
     expect(mockFetch).toHaveBeenCalledTimes(2); // Cache was bypassed!
   });
@@ -400,11 +413,11 @@ describe("Milestone 4 Challenger: Alpha Vantage Warning Detection & Cache Bypass
     vi.stubGlobal("fetch", mockFetch);
 
     const provider = new AlphaVantageEnrichmentProvider("test-key");
-    const res1 = await provider.enrich(["AAPL"]);
+    const res1 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res1.AAPL).toEqual({});
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
-    const res2 = await provider.enrich(["AAPL"]);
+    const res2 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res2.AAPL).toEqual({});
     expect(mockFetch).toHaveBeenCalledTimes(2); // Cache was bypassed!
   });
@@ -416,11 +429,11 @@ describe("Milestone 4 Challenger: Alpha Vantage Warning Detection & Cache Bypass
     vi.stubGlobal("fetch", mockFetch);
 
     const provider = new AlphaVantageEnrichmentProvider("test-key");
-    const res1 = await provider.enrich(["AAPL"]);
+    const res1 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res1.AAPL).toEqual({});
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
-    const res2 = await provider.enrich(["AAPL"]);
+    const res2 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res2.AAPL).toEqual({});
     expect(mockFetch).toHaveBeenCalledTimes(2); // Cache was bypassed!
   });
@@ -437,11 +450,11 @@ describe("Milestone 4 Challenger: Alpha Vantage Warning Detection & Cache Bypass
     vi.stubGlobal("fetch", mockFetch);
 
     const provider = new AlphaVantageEnrichmentProvider("test-key");
-    const res1 = await provider.enrich(["AAPL"]);
+    const res1 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res1.AAPL).toEqual({ headlines: ["Great AAPL news"], sentiment: 80 });
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
-    const res2 = await provider.enrich(["AAPL"]);
+    const res2 = await provider.enrich(["AAPL"], skipCalendar);
     expect(res2.AAPL).toEqual({ headlines: ["Great AAPL news"], sentiment: 80 });
     expect(mockFetch).toHaveBeenCalledTimes(1); // Cached!
   });
