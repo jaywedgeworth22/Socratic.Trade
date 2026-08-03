@@ -41,8 +41,8 @@ describe("Wisesheets enrichment provider", () => {
 
   it("resolveWisesheetsApiKey trims whitespace and treats blank as unset", async () => {
     const { resolveWisesheetsApiKey } = await import("../src/lib/wisesheets-provider");
-    process.env.WISESHEETS_API_KEY = "  wsh_live_abc123  ";
-    expect(resolveWisesheetsApiKey()).toBe("wsh_live_abc123");
+    process.env.WISESHEETS_API_KEY = "  test_wisesheets_key  ";
+    expect(resolveWisesheetsApiKey()).toBe("test_wisesheets_key");
     process.env.WISESHEETS_API_KEY = "   ";
     expect(resolveWisesheetsApiKey()).toBeUndefined();
     delete process.env.WISESHEETS_API_KEY;
