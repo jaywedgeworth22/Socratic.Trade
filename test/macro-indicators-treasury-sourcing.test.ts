@@ -20,6 +20,7 @@ const BLANK_MACRO: MacroData = {
   wtiOil: "",
   housingStarts: "",
   consumerSentiment: "",
+  nonfarmPayrollsChangeK: "",
   vix: "",
   vix3m: "",
   asOf: "unavailable",
@@ -95,5 +96,63 @@ describe("buildSections — 3M/2Y/10Y + curve tiles light up from the keyless Tr
     const sections = buildSections(board, macroSourcing(board));
     const rates = sections.find((s) => s.id === "rates")!.tiles;
     expect(rates.find((t) => t.key === "dgs10")!.value).toBe("—");
+  });
+});
+
+describe("macroSourcing — bls dimension", () => {
+  it("is false when blsSourced is unset/false, and does not fall back to the asOf-live heuristic", () => {
+    expect(macroSourcing(makeBoard({})).bls).toBe(false);
+    expect(macroSourcing(makeBoard({ asOf: "2026-07-31", vix: "22.50" })).bls).toBe(false);
+  });
+
+  it("is true when the keyless/lightly-keyed BLS fallback populated CPI/unemployment/payrolls", () => {
+    expect(macroSourcing(makeBoard({ blsSourced: true, asOf: "2026-07-31" })).bls).toBe(true);
+  });
+});
+
+describe("buildSections — CPI/unemployment/payrolls + misery light up from the BLS fallback", () => {
+  it("shows EM_DASH for cpi/unemployment/payrolls/misery when neither FRED nor BLS sourced anything", () => {
+    const board = makeBoard({});
+    const sections = buildSections(board, macroSourcing(board));
+    const inflation = sections.find((s) => s.id === "inflation")!.tiles;
+    const liquidity = sections.find((s) => s.id === "liquidity")!.tiles;
+    expect(inflation.find((t) => t.key === "cpi")!.value).toBe("—");
+    expect(inflation.find((t) => t.key === "misery")!.value).toBe("—");
+    expect(liquidity.find((t) => t.key === "unemployment")!.value).toBe("—");
+    expect(liquidity.find((t) => t.key === "nonfarmPayrolls")!.value).toBe("—");
+  });
+
+  it("shows real CPI/unemployment/payrolls and a computed misery index when only BLS sourced them (no FRED key)", () => {
+    const board: Board = {
+      macro: {
+        ...BLANK_MACRO,
+        asOf: "2026-07-31",
+        blsSourced: true,
+        cpiInflation: "3.53%",
+        unemploymentRate: "4.20%",
+        nonfarmPayrollsChangeK: "+57K"
+      },
+      derived: { miseryIndex: 7.73 },
+      signals: {},
+      regime: "Unknown"
+    };
+    const sourcing = macroSourcing(board);
+    expect(sourcing.fred).toBe(false);
+    expect(sourcing.bls).toBe(true);
+    const inflation = buildSections(board, sourcing).find((s) => s.id === "inflation")!.tiles;
+    const liquidity = buildSections(board, sourcing).find((s) => s.id === "liquidity")!.tiles;
+    expect(inflation.find((t) => t.key === "cpi")!.value).toBe("3.53%");
+    expect(inflation.find((t) => t.key === "misery")!.value).toBe("7.7");
+    expect(liquidity.find((t) => t.key === "unemployment")!.value).toBe("4.20%");
+    expect(liquidity.find((t) => t.key === "nonfarmPayrolls")!.value).toBe("+57K");
+    // corePCE/realGDPGrowth have no BLS/keyless equivalent — stay blank.
+    expect(inflation.find((t) => t.key === "corePce")!.value).toBe("—");
+  });
+
+  it("still blanks cpi/unemployment/payrolls when BLS sourcing failed too (both keyless lanes down)", () => {
+    const board = makeBoard({ asOf: "unavailable", blsSourced: false });
+    const sections = buildSections(board, macroSourcing(board));
+    const inflation = sections.find((s) => s.id === "inflation")!.tiles;
+    expect(inflation.find((t) => t.key === "cpi")!.value).toBe("—");
   });
 });

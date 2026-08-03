@@ -401,3 +401,70 @@ unambiguous win (Alpaca Algo Trader Plus) isn't a swap at all — it's additive
 spend on infrastructure already integrated. A future alternative needs to beat
 an incumbent by a real margin — meaningfully cheaper AND at-least-as-capable, or
 capable of something the cascade can't currently do at any price — not $5/mo.
+
+## 2026-08-02 Round 2/3 — new free sources + existing-provider hardening
+
+Continuation of the 2026-08-02 hardening pass above, implementing the free-tier research doc's
+remaining §1/§2 recommendations. Owner-directed; licensing caveats waived (sole-user, BYOK — "each
+user puts their own keys"). Verified live against each vendor on 2026-08-02 before writing code.
+
+**New enrichment providers (all standalone files, `resolve<Name>ApiKey()` reads only their own env
+var — no `db-api-keys.ts`/credential-tier involvement, mirroring `quiver-provider.ts`'s posture):**
+
+| Provider | Free tier (live-verified 2026-08-02) | Fields filled | Cascade position |
+|---|---|---|---|
+| **Wisesheets** (`WISESHEETS_API_KEY`) | 5,000 req/mo, 200/min, 5y history, ~10,412 US stocks. Launched 2026-07-24 — no track record yet. Bearer-header auth against `api.wisesheets.io/v1/` | price, peRatio, eps, companyName, volume, fiftyTwoWeekHigh/Low, intradayChangePct, asOf, dividendYield, grossProfitMargin, revenueGrowth | `quotaScarce=true`, registered behind every established source given zero track record |
+| **SimFin** (`SIMFIN_API_KEY`) | **Corrects the original research doc**: "500 credits/mo" is a separate in-app backtesting feature, NOT the REST API's real cap — the API itself is **2 req/sec, no monthly ceiling** (confirmed at simfin.readme.io/reference/rate-limits.md; docs moved off simfin.com/api/v3/documentation/, which now 404s). `Authorization: api-key <KEY>` against `backend.simfin.com/api/v3` | companyName, sector, industry, grossProfitMargin, returnOnEquity, returnOnAssets, revenueGrowth, debtToEquity (deliberately omits eps/peRatio/dividendYield/beta — those need live share-price data this provider doesn't fetch) | Not `quotaScarce`; first-wins by registration order, seated near Wisesheets |
+| **Marketaux** (`MARKETAUX_API_KEY`) | 100 req/day, capped at 3 articles/request regardless of requested limit. **ToS re-verified clean** — the original research pass 403'd on the wrong URL (marketaux.com/terms-of-service) and flagged it unverifiable; the real ToS lives at marketaux.com/tos and has no API-specific commercial restriction | headlines, sentiment (genuine per-article model score, not a keyword proxy) | `quotaScarce=true`; registered right after Alpha Vantage's model-based NEWS_SENTIMENT, ahead of the keyword-proxy tiers |
+| **Nasdaq calendar** (keyless) | No cap observed; cost scales with distinct calendar DATES scanned (not symbols), cached module-wide. `api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD` | daysToEarnings (backfill only) | Registered unconditionally (self-gates via `NASDAQ_CALENDAR_ENRICHMENT_ENABLED`, default ON), positioned after Yahoo as a free-wave backfill |
+| **BLS API v2** (`BLS_API_KEY`, optional) | **Works keyless**: 25 req/day, 25 series/query, 10y/query. Registering (free) raises it to 500/day, 50 series/query, 20y/query. Verified live against `api.bls.gov` (the `www.bls.gov` host 403s bots, but the actual data API does not) | Macro only (cpiInflation, unemploymentRate, nonfarmPayrollsChangeK) via `macro.ts`'s keyless fallback — not a `MarketEnrichmentProvider` | Same tier as Treasury.gov (see the 2026-08-02 section above): keyless macro floor, only evaluated when no FRED key/fetch succeeded |
+| **S&P 500 constituents mirror** (keyless) | github.com/datasets/s-and-p-500-companies, still PDDL/ODC-PDDL-1.0-licensed, real edits every 1-3 weeks | N/A — reference list (`{symbol,name,sector}`), not per-symbol enrichment | **No consumer wired yet.** This app's scan universe still uses the static hand-generated list in `src/lib/sp500.ts` ("Generated from Wikipedia on 2026-06-14"); this module is infrastructure for a future refresh, not a live replacement — converting `index-universes.ts` from a compile-time static array to a runtime-fetched one is a bigger, separate architectural decision |
+
+**USAspending.gov — investigated, NOT implemented (mirrors FINRA short-interest's disposition in
+Round 1).** The award-search API itself is free, keyless, real, and well-maintained (confirmed live:
+`POST api.usaspending.gov/api/v2/search/spending_by_award/` for contract totals, `GET
+.../api/v2/recipient/{id}/` for UEI/DUNS). The blocker is the OTHER side of the bridge: there is no
+free, reliable recipient-name/UEI/DUNS → ticker/CIK crosswalk anywhere. SEC's own `company_tickers.json`
+(this app's only free ticker↔CIK source) carries no DUNS/UEI field at all, so the only path left is
+fuzzy company-name matching — live-verified to be genuinely unreliable even for famous defense primes
+(e.g. Lockheed Martin's own USAspending recipient record lists "GENERAL DYNAMICS CORPORATION" as an
+alternate name; a "Boeing" search returns 15 distinctly-named entities). A narrow, hand-curated
+allowlist of ~50-150 well-known tickers would work with zero fuzzy matching, but was deliberately not
+built this round — it's a product-scope call (is a defense-primes-only field worth shipping and
+maintaining?) for the owner, not something to ship unilaterally. Also noted in passing:
+`govContractsQuiver` (the only existing gov-contracts field) has zero UI references anywhere in
+`app/` today — grepped for "govContractsQuiver"/"Gov Contracts"/"Quiver" and found nothing — so
+"repurposing" that Quiver-named field for a different source is a live option, not a hard blocker, if
+this is ever revisited.
+
+**Existing-provider hardening (edits in place, no new files):**
+- **Yahoo Finance**: live-verified the crumb+cookie requirement is real but NARROWER than assumed —
+  `v8/finance/chart` (the endpoint `history.ts`/`macro.ts` actually use) works with a browser UA alone,
+  no crumb needed; only `v7/finance/quote`/`v10/finance/quoteSummary` (used by
+  `YahooFinanceEnrichmentProvider` in `data-providers.ts`) require it, and that provider already
+  implemented the handshake correctly before this pass touched anything. What WAS missing: dedicated
+  HTTP 429 exponential backoff on the two `v8/finance/chart` call sites (`history.ts`'s `fetchYahoo`,
+  `macro.ts`'s `fetchVixLane` — the latter also covers the Cboe VIX lane incidentally, since both
+  lanes share one helper). Added, 4 new tests, zero behavior change on any non-429 failure mode.
+- **Alpha Vantage**: added a free `EARNINGS_CALENDAR` fallback for `daysToEarnings`, reusing the SAME
+  scarce 23-25/day budget as `NEWS_SENTIMENT` (no new quota). Live-verified the endpoint returns CSV
+  (not JSON, even on error) and that calling it with NO `symbol` param returns the WHOLE market's
+  upcoming earnings in one call — so this costs at most ~1 reservation per ~24h, not one per symbol.
+  Gated by the cascade's existing `EnrichmentContext.coveredFields` hint so it skips symbols a
+  cheaper free source (e.g. the new Nasdaq calendar provider) already covered.
+- **Finnhub**: added the equivalent free `/calendar/earnings` fallback (Finnhub's free tier is a
+  generous 60/min, not scarce like AV's). Same market-wide-single-call design. Finnhub's registration
+  order is unchanged — it already precedes Yahoo/AV in the cascade, so first-wins naturally prefers it
+  when it has data. **Correction to the original research doc**: its claim that Finnhub's
+  insider-transactions endpoint "has more headroom than drawn" was checked against the current
+  `FinnhubEnrichmentProvider` and found factually wrong — that class has ZERO insider-transactions
+  logic today (insiderSentiment comes from FMP/InsidersRapidApi/FilingApi only), so there is no
+  existing "draw" to add headroom to; a Finnhub insider source would be a new feature, not a bounded
+  tweak, and was correctly left out of this pass's scope.
+
+**Known gap this round did NOT close:** neither Wisesheets nor SimFin exposes `debtToEquity`/
+`returnOnEquity` confirmation without a live API key to probe their metrics catalogs (SimFin's docs
+only literally demonstrate `revenue`/`net_income`/`gross_margin` as example metric keys; Wisesheets'
+`/v1/metrics/` catalog endpoint itself requires a real key to call). Both providers ship with the
+subset of fields their PUBLIC docs pages demonstrate; extending coverage needs a real key in hand,
+which per fleet policy no agent may provision — an owner action, not a code gap.

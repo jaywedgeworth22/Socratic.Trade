@@ -42,3 +42,7 @@ f4e99900d93a8d341202a29bf6f5fa7feb5b6e81:test/api-key-preview.test.ts:generic-ap
 # Follow-up commit on PR #1829 changed the fake OPENROUTER prefix (sk-or-v1- -> sk_or_v1_)
 # so gitleaks history scan still flags line 19 under a NEW commit fingerprint. Same fake fixture.
 f4e99900d93a8d341202a29bf6f5fa7feb5b6e81:test/api-key-preview.test.ts:generic-api-key:19
+
+# Fake test key fixture in test/wisesheets-provider.test.ts on PR #2365 introducing commit.
+# Fixed in later commit to test_wisesheets_key; fingerprint suppresses original commit scan finding.
+d79d3dfa3bd26ed2414373c2f7e3f492d5c99724:test/wisesheets-provider.test.ts:generic-api-key:44
