@@ -460,6 +460,12 @@ const MIGRATIONS: Migration[] = [
       // 6. Indices for audit_events querying
       database.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_user_account_kind ON audit_events (user_id, connected_account_id, kind)");
       database.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_user_created ON audit_events (user_id, created_at DESC)");
+      // latestAuditByKind/latestAuditStampByKind: kind-equality + created_at ordering. Without
+      // this, those queries either walk user_created backwards row-by-row or drag every matching
+      // row — multi-MB market_scan payloads included — through the sorter; on the production
+      // 718MB audit_events table that was a minutes-long sync hold on the one DB connection
+      // (2026-08-02 prod wedge, every 60s tick).
+      database.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_kind_user_created ON audit_events (kind, user_id, created_at DESC)");
       
       // 7. Composite index for matured skipped counterfactuals sorting
       database.exec("CREATE INDEX IF NOT EXISTS idx_skipped_counterfactuals_user_account_status_return ON skipped_candidate_counterfactuals (user_id, connected_account_id, status, return_pct DESC, updated_at DESC)");
@@ -2515,6 +2521,23 @@ const MIGRATIONS: Migration[] = [
         }
       } catch (e) {
         // Table might not exist in isolated tests
+      }
+    }
+  },
+  {
+    version: 65,
+    name: "audit_and_provider_created_at_indexes",
+    up: (database) => {
+      // Retention pruning (audit-prune.ts) and time-window queries need these
+      // indexes: created them manually in prod 2026-08-02 after the unindexed
+      // prune pass ran minutes per batch; keeping them in schema so fresh DBs
+      // get them too. CREATE INDEX IF NOT EXISTS is idempotent.
+      try {
+        database.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at);");
+        database.exec("CREATE INDEX IF NOT EXISTS idx_pda_created_at ON provider_dispatch_attempts(created_at);");
+        database.exec("CREATE INDEX IF NOT EXISTS idx_puo_created_at ON provider_usage_outbox(created_at);");
+      } catch (e) {
+        // tables might not exist in isolated tests
       }
     }
   }

@@ -224,6 +224,8 @@ function buildFinalApplicationEnvironment(extra) {
   return env;
 }
 
+const SIGNAL_EXIT_CODES = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGKILL: 9, SIGTERM: 15 };
+
 function managedChild(child, errorMessage) {
   const forwardedSignals = ["SIGINT", "SIGTERM", "SIGHUP"];
   const signalHandlers = new Map();
@@ -243,8 +245,15 @@ function managedChild(child, errorMessage) {
   child.on("exit", (code, signal) => {
     removeSignalHandlers();
     if (signal) {
-      process.kill(process.pid, signal);
-      return;
+      // Never re-raise the signal on ourselves. This runner is container pid 1 in
+      // production, and the kernel IGNORES default-disposition signals for pid 1 --
+      // the re-raise silently no-ops, the event loop drains, and node exits 0.
+      // Docker then records a "clean" exit and production stays down (2026-08-02
+      // outage; see docs/rollouts/2026-08-02-exit0-outage-audit.md). Translate to
+      // the conventional 128+N so the exit status stays honest at every layer.
+      const exitCode = 128 + (SIGNAL_EXIT_CODES[signal] ?? 15);
+      console.error(`[infisical] child terminated by ${signal}; exiting ${exitCode}`);
+      process.exit(exitCode);
     }
     process.exit(code ?? 1);
   });
