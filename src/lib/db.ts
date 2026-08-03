@@ -2523,6 +2523,23 @@ const MIGRATIONS: Migration[] = [
         // Table might not exist in isolated tests
       }
     }
+  },
+  {
+    version: 65,
+    name: "audit_and_provider_created_at_indexes",
+    up: (database) => {
+      // Retention pruning (audit-prune.ts) and time-window queries need these
+      // indexes: created them manually in prod 2026-08-02 after the unindexed
+      // prune pass ran minutes per batch; keeping them in schema so fresh DBs
+      // get them too. CREATE INDEX IF NOT EXISTS is idempotent.
+      try {
+        database.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at);");
+        database.exec("CREATE INDEX IF NOT EXISTS idx_pda_created_at ON provider_dispatch_attempts(created_at);");
+        database.exec("CREATE INDEX IF NOT EXISTS idx_puo_created_at ON provider_usage_outbox(created_at);");
+      } catch (e) {
+        // tables might not exist in isolated tests
+      }
+    }
   }
 ];
 
