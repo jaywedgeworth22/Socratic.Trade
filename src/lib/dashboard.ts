@@ -651,6 +651,20 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       newestScan = standaloneScan;
     }
   }
+  // Audit payloads are not always a complete MarketScan (older rows, compact prompt shapes, or
+  // partial strategy_run marketScan objects). Normalize so console consumers never see a truthy
+  // scan whose topCandidates is undefined — that used to white-screen /console on .slice.
+  if (newestScan) {
+    newestScan = {
+      ...newestScan,
+      topCandidates: Array.isArray(newestScan.topCandidates) ? newestScan.topCandidates : [],
+      warnings: Array.isArray(newestScan.warnings) ? newestScan.warnings : [],
+      sectorBySymbol:
+        newestScan.sectorBySymbol && typeof newestScan.sectorBySymbol === "object" ? newestScan.sectorBySymbol : {},
+      quotesBySymbol:
+        newestScan.quotesBySymbol && typeof newestScan.quotesBySymbol === "object" ? newestScan.quotesBySymbol : {}
+    } as typeof newestScan & MarketScan;
+  }
   // Decision cases stay ACCOUNT-SCOPED: they drive the active account's Live thesis,
   // Autonomous action rows, and coach form (primaryDecision = decisions[0]), which must
   // reflect the account whose portfolio/capital is shown — not another account's latest trade.
