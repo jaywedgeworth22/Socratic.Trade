@@ -703,6 +703,7 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
       });
     }
     for (const rag of (decision.ragAttributions ?? []).slice(0, 2)) {
+      if (rows.some((r) => r.body === rag.contribution)) continue;
       const source = evidenceSourceLabel(rag.source);
       rows.push({
         title: rag.docType ? `Retrieved ${plainLabel(rag.docType)}` : "Retrieved evidence",

@@ -9,6 +9,8 @@ Last updated: 2026-08-03.
 
 ## Where things stand
 
+**2026-08-03 — Console RAG Evidence Card Deduplication (ANTIGRAVITY, branch `agent/antigravity/mobile-pwa-feedback`).** Fixed duplicate RAG evidence rendering (`sec-edgar` and `Retrieved 10 K` cards showing identical document receipt & score) in proposal drawer by deduplicating RAG attributions against `decision.evidence` in `deriveEvidenceRows` (`app/console/page.tsx`). Rollout: `docs/rollouts/2026-08-03-dedupe-evidence-cards.md`.
+
 **2026-08-03 — Console dashboard `topCandidates.slice` white-screen (GROK, branch
 `agent/grok-fix-dashboard-topcandidates`).** Owner report: main `/console` showed
 `Dashboard error` / `undefined is not an object (evaluating 'r.topCandidates.slice')`.
