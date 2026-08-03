@@ -230,7 +230,7 @@ describe("Nasdaq calendar enrichment provider", () => {
       "../src/lib/nasdaq-calendar-provider"
     );
     process.env.NASDAQ_CALENDAR_HORIZON_DAYS = "1";
-    process.env.NASDAQ_CALENDAR_NEGATIVE_CACHE_TTL_MS = "10"; // real (non-fake) timers below
+    process.env.NASDAQ_CALENDAR_NEGATIVE_CACHE_TTL_MS = "200"; // real (non-fake) timers below
 
     const now = Date.now();
     const day0 = dateKeyFromOffset(now, 0);
@@ -245,7 +245,7 @@ describe("Nasdaq calendar enrichment provider", () => {
     await provider.enrich(["TSLA"]);
     expect(fetchMock.mock.calls.length).toBe(callsAfterFirst);
 
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    await new Promise((resolve) => setTimeout(resolve, 250));
     await provider.enrich(["TSLA"]);
     expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterFirst);
   });
