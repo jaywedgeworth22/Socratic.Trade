@@ -59,11 +59,18 @@ child.on("error", () => {
   process.exit(1);
 });
 
+const SIGNAL_EXIT_CODES = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGKILL: 9, SIGTERM: 15 };
+
 child.on("exit", (code, signal) => {
   removeSignalHandlers();
   if (signal) {
-    process.kill(process.pid, signal);
-    return;
+    // Never re-raise the signal on ourselves: in a container this wrapper can sit at or
+    // near pid 1, where the kernel ignores default-disposition signals -- the re-raise
+    // no-ops and node drains to a bogus "clean" exit 0 (2026-08-02 outage; see
+    // docs/rollouts/2026-08-02-exit0-outage-audit.md). Translate to 128+N instead.
+    const exitCode = 128 + (SIGNAL_EXIT_CODES[signal] ?? 15);
+    console.error(`[infisical] application terminated by ${signal}; exiting ${exitCode}`);
+    process.exit(exitCode);
   }
   process.exit(code ?? 1);
 });
