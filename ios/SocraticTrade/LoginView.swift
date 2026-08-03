@@ -83,6 +83,7 @@ struct LoginView: View {
             )
             .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
             .frame(height: 52)
+            .frame(maxWidth: 375)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .disabled(store.isSigningIn)
             .overlay {

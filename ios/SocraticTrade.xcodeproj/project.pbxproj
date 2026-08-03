@@ -316,13 +316,18 @@
 				CODE_SIGN_ENTITLEMENTS = SocraticTrade/SocraticTrade.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CC8UTF7ATG;
 				INFOPLIST_FILE = SocraticTrade/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Socratic.Trade";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = trade.socratic.app;
+				PRODUCT_NAME = "Socratic.Trade";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -335,13 +340,18 @@
 				CODE_SIGN_ENTITLEMENTS = SocraticTrade/SocraticTrade.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CC8UTF7ATG;
 				INFOPLIST_FILE = SocraticTrade/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Socratic.Trade";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = trade.socratic.app;
+				PRODUCT_NAME = "Socratic.Trade";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
