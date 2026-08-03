@@ -5,16 +5,16 @@ Snapshot only: what is true right now, what is blocked, what to do next. This fi
 of work), effort state lives in `docs/EFFORT-LOG.md`, and entries written here before
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-02.
-
-> [!NOTE]
-> **MONET session stopped 2026-08-02 ~05:40Z (owner instruction) — clean handoff.** All
-> claimed work is either merged or riding an armed auto-merge (PR #2349: npm-12-proof
-> `allowScripts` key + record corrections — lands and deploys unattended once `verify` is
-> green). Nothing uncommitted anywhere. Session handoff with the full state map:
-> `docs/rollouts/2026-08-02-monet-session-handoff.md`.
+Last updated: 2026-08-03.
 
 ## Where things stand
+
+**2026-08-03 — Console dashboard `topCandidates.slice` white-screen (GROK, branch
+`agent/grok-fix-dashboard-topcandidates`).** Owner report: main `/console` showed
+`Dashboard error` / `undefined is not an object (evaluating 'r.topCandidates.slice')`.
+Root cause: `deriveEvidenceRows` assumed every truthy `latestScan` had array
+`topCandidates`. Fix: `safeTopCandidates` + snapshot normalization in `dashboard.ts`.
+Rollout: `docs/rollouts/2026-08-03-console-topcandidates-slice-crash.md`.
 
 **2026-08-03 — Xcode App Settings & Apple Sign-In Layout Constraint Fix (ANTIGRAVITY).** Configured Xcode App Category (`public.app-category.finance`), Display Name (`Socratic.Trade`), Marketing Version (`1.0.0`), and Build Version (`1`) across `Info.plist` and `project.pbxproj`. Fixed `ASAuthorizationAppleIDButton` layout constraint collision warning (`width == 392` vs `width <= 375`) in `LoginView.swift` by capping `SignInWithAppleButton` width to 375pt. `xcodebuild` succeeded clean. Rollout: `docs/rollouts/2026-08-03-xcode-app-settings-and-apple-signin-constraint-fix.md`.
 
