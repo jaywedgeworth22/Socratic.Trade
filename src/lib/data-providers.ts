@@ -3816,6 +3816,21 @@ export class RoicAiEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "roic";
   readonly costTier = "paid" as const;
   readonly configured = true;
+  readonly suppliesFields = [
+    "companyName",
+    "sector",
+    "industry",
+    "price",
+    "dividendYield",
+    "shortPercentOfFloat",
+    "institutionOwnershipPct",
+    "daysToEarnings",
+    "peRatio",
+    "pbRatio",
+    "eps",
+    "returnOnEquity",
+    "debtToEquity"
+  ] as const;
   private readonly base = "https://api.roic.ai/v2";
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;
