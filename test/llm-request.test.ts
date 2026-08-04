@@ -58,7 +58,7 @@ describe("llm-request — model resolution", () => {
     expect(reasoningCapabilityForModel("gpt-5.6-sol")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
     expect(reasoningCapabilityForModel("gpt-5.6-terra")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
     expect(reasoningCapabilityForModel("gpt-5.6-luna")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
-    expect(reasoningCapabilityForModel("gpt-5.4-mini")?.options.map((o) => o.value)).toEqual(["low", "medium", "high"]);
+    expect(reasoningCapabilityForModel("o1")?.options.map((o) => o.value)).toEqual(["low", "medium", "high"]);
     expect(reasoningCapabilityForModel("claude-fable-5")?.options.map((o) => o.value)).toEqual(["low", "medium", "high", "xhigh", "max"]);
     expect(reasoningCapabilityForModel("xai/grok-4.3")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high"]);
     expect(reasoningCapabilityForModel("gemini-2.5-flash")?.options.map((o) => o.value)).toEqual(["none", "minimal", "low", "medium", "high"]);
@@ -76,7 +76,7 @@ describe("llm-request — model resolution", () => {
   it("normalizes unsupported effort values to the nearest provider-supported setting", () => {
     expect(normalizeReasoningEffortForModel("gpt-5.6-sol", "max")).toBe("max");
     expect(normalizeReasoningEffortForModel("gpt-5.6-luna", "minimal")).toBe("none");
-    expect(normalizeReasoningEffortForModel("gpt-5.4-mini", "xhigh")).toBe("high");
+    expect(normalizeReasoningEffortForModel("o1", "xhigh")).toBe("high");
     expect(normalizeReasoningEffortForModel("gemini-3.1-pro-preview", "none")).toBe("minimal");
     expect(normalizeReasoningEffortForModel("anthropic/claude-opus-4-8", undefined)).toBe("medium");
     // DeepSeek high-effort thinking is OPT-IN: a sub-high request (incl. the undefined default and the
