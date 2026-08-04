@@ -127,11 +127,14 @@ describe("market enrichment provider", () => {
   });
 
   it("uses Yahoo Finance provider when no API key is configured", async () => {
+    // Keyless free-wave floor; fundamentals from multi-source cascade (no FMP/Quiver/App A by default).
     const provider = getEnrichmentProvider();
-    // Keyless free-wave floor: nasdaq-quote + Yahoo Finance + the keyless Nasdaq earnings-calendar
-    // backfill (no paid keys; SEC XBRL off in this suite).
     expect(provider.configured).toBe(true);
-    expect(provider.name).toBe("nasdaq-quote+yahoo-finance+nasdaq-calendar");
+    expect(provider.name).toContain("yahoo-finance");
+    expect(provider.name).toContain("nasdaq-quote");
+    expect(provider.name).not.toContain("congress.trade");
+    expect(provider.name).not.toMatch(/(^|\+)fmp($|\+)/);
+    expect(provider.name).not.toContain("quiverquant");
   });
 
   it("keeps the unofficial Webull quote bridge disabled by default", async () => {
@@ -904,7 +907,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     expect(fetchCount).toBe(5);
   });
 
-  it("prevents cache writes on FMP when a transient error occurs", async () => {
+  it.skip("prevents cache writes on FMP when a transient error occurs [retired: no direct FMP]", async () => {
     const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
 
@@ -928,7 +931,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     expect(fetchCount).toBe(8);
   });
 
-  it("logs core FMP failures while suppressing an unentitled optional insider endpoint", async () => {
+  it.skip("logs core FMP failures while suppressing an unentitled optional insider endpoint [retired: no direct FMP]", async () => {
     const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const { getDb } = await import("../src/lib/db");
     clearEnrichmentCache();
@@ -954,7 +957,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     expect(rows.some((row) => row.error_text === "HTTP 403")).toBe(false);
   });
 
-  it("caches normally on FMP when all queries succeed", async () => {
+  it.skip("caches normally on FMP when all queries succeed [retired: no direct FMP]", async () => {
     const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
 
@@ -1242,7 +1245,7 @@ describe("Finnhub /calendar/earnings — daysToEarnings fallback (2026-08-02)", 
   });
 });
 
-describe("callsPerSymbol('fmp', …) — per-symbol request accounting", () => {
+describe.skip("callsPerSymbol('fmp', …) — per-symbol request accounting", () => {
   it("counts 2 unconditional (profile+insider) + ratios/consensus/targets one-for-one", () => {
     // Nothing skipped, targets off → profile + insider + ratios-ttm + grades-consensus = 4.
     expect(callsPerSymbol("fmp", { skipPe: false, skipConsensus: false, wantTargets: false })).toBe(4);
@@ -1259,7 +1262,7 @@ describe("callsPerSymbol('fmp', …) — per-symbol request accounting", () => {
   });
 });
 
-describe("FMP request quota — defer / refund / breaker / cache-hit / per-credential", () => {
+describe.skip("FMP request quota — defer / refund / breaker / cache-hit / per-credential", () => {
   const QUOTA_ENV = ["PROVIDER_QUOTA_FMP_PER_MIN", "PROVIDER_QUOTA_FMP_PER_DAY", "FMP_PRICE_TARGETS_ENABLED"];
   beforeEach(() => {
     for (const k of QUOTA_ENV) delete process.env[k];
@@ -3107,3 +3110,30 @@ describe("enrichment symbol budget covers the full scan candidate set (starvatio
     expect(fetched.size).toBe(120);
   });
 });
+
+
+describe("FMP / Quiver direct access retired (owner 2026-08-04)", () => {
+  it("never registers FMP or Quiver even when keys are present", async () => {
+    process.env.FMP_API_KEY = "should-not-register";
+    process.env.QUIVER_API_KEY = "should-not-register";
+    process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED = "off"; // isolate cascade name
+    const { getEnrichmentProvider } = await import("../src/lib/data-providers");
+    const provider = getEnrichmentProvider();
+    expect(provider.name).not.toMatch(/(^|\+)fmp($|\+)/);
+    expect(provider.name).not.toContain("quiverquant");
+    expect(provider.name).not.toContain("fmp-rapidapi");
+    delete process.env.FMP_API_KEY;
+    delete process.env.QUIVER_API_KEY;
+    delete process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED;
+  });
+
+  it("FmpEnrichmentProvider.enrich is a no-op and never fetches", async () => {
+    const { FmpEnrichmentProvider } = await import("../src/lib/data-providers");
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const provider = new FmpEnrichmentProvider("test-key");
+    await expect(provider.enrich(["AAPL"])).resolves.toEqual({});
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
