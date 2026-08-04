@@ -23,9 +23,9 @@ afterEach(() => {
 });
 
 describe("api-clients/congress gating flags", () => {
-  it("defaults: price reads off; fundamentals/congress-source/analytics on (replace FMP/Quiver)", () => {
+  it("defaults: fundamentals off (multi-source cascade); congress-source/analytics on", () => {
     expect(congressReadsEnabled()).toBe(false);
-    expect(congressFundamentalsEnabled()).toBe(true);
+    expect(congressFundamentalsEnabled()).toBe(false);
     expect(congressAsCongressSourceEnabled()).toBe(true);
     expect(congressAnalyticsEnabled()).toBe(true);
   });

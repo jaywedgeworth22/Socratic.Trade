@@ -127,13 +127,13 @@ describe("market enrichment provider", () => {
   });
 
   it("uses Yahoo Finance provider when no API key is configured", async () => {
-    // Congress.Trade fundamentals default ON (replaces direct FMP); still no paid FMP/Quiver.
+    // Keyless free-wave floor; fundamentals from multi-source cascade (no FMP/Quiver/App A by default).
     const provider = getEnrichmentProvider();
     expect(provider.configured).toBe(true);
     expect(provider.name).toContain("yahoo-finance");
     expect(provider.name).toContain("nasdaq-quote");
-    expect(provider.name).toContain("congress.trade");
-    expect(provider.name).not.toContain("fmp");
+    expect(provider.name).not.toContain("congress.trade");
+    expect(provider.name).not.toMatch(/(^|\+)fmp($|\+)/);
     expect(provider.name).not.toContain("quiverquant");
   });
 

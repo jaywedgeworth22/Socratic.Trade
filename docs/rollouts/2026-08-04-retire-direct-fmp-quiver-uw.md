@@ -27,9 +27,10 @@ replaces those vendors:
 7. **Provider tier probe** — no longer probes `financialmodelingprep.com`.
 8. **`scripts/fmp-hoard.ts`** — exits 1 with retirement message.
 9. **Congress.Trade defaults** (`api-clients/congress.ts`):
-   - `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` default **ON**
-   - `CONGRESS_TRADE_AS_CONGRESS_SOURCE` default **ON**
-   - `CONGRESS_ANALYTICS_ENABLED` default **ON**
+   - `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` default **OFF** — fundamentals from the
+     multi-source cascade (Yahoo, Finnhub, ROIC, SEC XBRL, Tiingo, …), not App A
+   - `CONGRESS_TRADE_AS_CONGRESS_SOURCE` default **ON** (disclosures)
+   - `CONGRESS_ANALYTICS_ENABLED` default **ON** (composite/clusters)
    - `CONGRESS_TRADE_READS_ENABLED` (price cache-aside) stays default **OFF**
    - Explicit `off`/`0`/`false`/`no` still disables any flag
 
@@ -52,6 +53,8 @@ replaces those vendors:
 
 - **Unusual Whales** was never a production ST producer; banned so it cannot be
   reintroduced as a direct lane.
+- **Fundamentals** are filled by the existing multi-provider cascade (not FMP and
+  not Congress.Trade by default). App A fundamentals remain available as opt-in.
 - **Quiver specialty fields** (gov contracts, lobbying, patents counts) have no
   App A peer mapping today — they go empty. Congressional trades/analytics come
   from App A instead of Quiver counts.

@@ -25,11 +25,13 @@ export function congressReadsEnabled(): boolean {
 }
 
 /**
- * Fundamentals/analyst from App A. Default ON: replaces direct FMP enrichment
- * (owner 2026-08-04 — no FMP calls from this app).
+ * Fundamentals/analyst read-back from App A. Default OFF — owner 2026-08-04:
+ * Socratic fundamentals come from the multi-provider cascade (Yahoo, Finnhub,
+ * ROIC, SEC XBRL, Tiingo, SimFin, …), not from Congress.Trade or direct FMP.
+ * Opt in only if you want App A as an extra cache-aside tier.
  */
 export function congressFundamentalsEnabled(): boolean {
-  return flagOn(process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED, true);
+  return flagOn(process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED, false);
 }
 
 /**

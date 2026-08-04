@@ -1,14 +1,16 @@
 # Consuming congress.trade (App A) data — the receiving side
 
-**Status:** implemented (2026-06-22); **defaults updated 2026-08-04** — fundamentals,
-congress-as-source, and analytics are **default ON** so App B never needs direct FMP /
-Quiver for that data. Price/history cache-aside (`CONGRESS_TRADE_READS_ENABLED`) remains
-default OFF. Complements the push side (`docs/congress-trade-share.md`) and the push
-contract App A implements (`docs/push-to-app-b.md`).
+**Status:** implemented (2026-06-22); **defaults updated 2026-08-04** —
+`CONGRESS_TRADE_AS_CONGRESS_SOURCE` and `CONGRESS_ANALYTICS_ENABLED` default **ON**
+(congressional data from App A). **Fundamentals** stay on Socratic's multi-provider
+cascade (Yahoo / Finnhub / ROIC / SEC / …) — `CONGRESS_TRADE_FUNDAMENTALS_ENABLED`
+default **OFF**. Price/history cache-aside (`CONGRESS_TRADE_READS_ENABLED`) default OFF.
+Complements the push side (`docs/congress-trade-share.md`) and the push contract App A
+implements (`docs/push-to-app-b.md`).
 
 App A (congress.trade) is the system-of-record for congressional disclosures. App B
-**must not** call FMP / QuiverQuant / Unusual Whales directly (owner 2026-08-04); it
-consumes App A instead. Flag-gated paths:
+**must not** call FMP / QuiverQuant / Unusual Whales directly (owner 2026-08-04).
+Flag-gated paths:
 
 **Shared contract package (2026-06-30):** read-side App A/B types, API path constants, and runtime Zod
 schemas are imported from `@jaywedgeworth22/congress-trading-shared`. Local aliases remain only for

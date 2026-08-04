@@ -1,14 +1,12 @@
 // Market enrichment: fundamentals (P/E) + analyst-consensus sentiment layered on top of
 // the NASDAQ screener scan.
 //
-// Provider cascade (first non-null value wins per field):
-//   1. Congress.Trade    — fundamentals/analyst read-back (default ON; replaces direct FMP)
-//   2. Finnhub           — news sentiment, analyst recs, profile, basic financials (FINNHUB_API_KEY)
-//   3. Yahoo Finance     — sector, industry, P/E, EPS, div yield, analyst rating  (no key needed)
+// Fundamentals come from a COLLECTION of providers (first non-null wins per field), e.g.:
+//   Finnhub, Tiingo, ROIC.ai, SEC XBRL, Yahoo Finance, Nasdaq, SimFin, Wisesheets, …
+// Congress.Trade fundamentals/analyst read-back is opt-in only (default OFF).
 //
 // Owner 2026-08-04: FMP, QuiverQuant, and Unusual Whales are NEVER called from this app.
-// Congressional + FMP-class facts come from Congress.Trade. Each other keyed provider is only
-// instantiated when its env key is set. Yahoo Finance is always a free real tier.
+// Congressional disclosures/analytics come from Congress.Trade; fundamentals do not default there.
 //
 // A quota-scarce RapidAPI-hosted FAILOVER tier (Mboum Finance, YH Finance 15, Alpha Vantage's
 // RapidAPI transport) is registered AFTER Yahoo Finance, gated on RAPIDAPI_KEY — see the doc
@@ -974,7 +972,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const finnhub = resolveApiKeyWithSource("finnhub", userId);
   const alphaVantage = resolveAlphaVantageKeyPool(userId);
   // FMP key may still resolve from env/DB, but direct FMP is retired — never register it.
-  // Fundamentals/analyst of that class come from Congress.Trade (tier 1.5 below).
+  // Fundamentals come from the multi-provider cascade below (not FMP, not App A by default).
   const roic = resolveApiKeyWithSource("roic", userId);
   const fintech = resolveApiKeyWithSource("fintechstudios", userId);
   const tiingo = resolveApiKeyWithSource("tiingo", userId);
@@ -1001,9 +999,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // self-skips when either Alpaca key is absent — then the delayed sources fill these
   // fields in exactly the same order they would today.
   if (alpacaData.apiKey && alpacaData.secretKey) providers.push(withHealthLane(new AlpacaSnapshotEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId), alpacaData.source));
-  // Tier 1.5 — Congress.Trade cross-app cache (fundamentals/analyst only, no price).
-  // Default ON (CONGRESS_TRADE_FUNDAMENTALS_ENABLED) — replaces direct FMP. Explicit off
-  // still disables if needed. Separate from price/history CONGRESS_TRADE_READS_ENABLED.
+  // Tier 1.5 — Congress.Trade fundamentals/analyst cache-aside (opt-in, default OFF).
+  // Owner: fundamentals should come from the multi-source cascade (Finnhub/ROIC/SEC/Yahoo/…),
+  // not App A. Enable CONGRESS_TRADE_FUNDAMENTALS_ENABLED only as an extra peer tier.
+  // Separate from price/history CONGRESS_TRADE_READS_ENABLED.
   if (congressFundamentalsEnabled()) providers.push(new CongressTradeEnrichmentProvider(userId));
   // Tier 2 — DELAYED quotes + fundamentals, in availability order (unchanged relative ordering).
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
