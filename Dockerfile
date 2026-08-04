@@ -41,13 +41,14 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=4000
 
-# Copy without ownership rewrite. A recursive chown on node_modules still
-# took 12-30+ minutes on the Oracle box and hit Coolify's ~30m job budget
-# (deploy 171). Root-owned 755/644 files are readable by USER node; writable
-# state lives on the /app/data volume (Coolify mount), not the image tree.
+# Copy without ownership rewrite (recursive chown blew the 30m budget).
+# Run as root: coolify-prod-start must mkdir/write /app/data/.bin and the
+# Coolify volume mount for /app/data is the writable surface. USER node with
+# root-owned /app caused crash-loop exit 1 on deploy 173 (healthcheck never
+# passed; rolled back to 6ad913d5).
 COPY --from=build /app /app
 
-USER node
+USER root
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
   CMD curl -fsS http://127.0.0.1:4000/api/health >/dev/null || exit 1

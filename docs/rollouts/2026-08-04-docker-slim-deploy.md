@@ -91,3 +91,10 @@ again. Recursive chown on pruned node_modules is still too slow on this box.
 
 Fix: omit ownership rewrite. Image files stay root-owned 755/644 (readable by
 `USER node`); writable state is on the Coolify `/app/data` volume.
+
+## Follow-up 3: USER root (deploy 173 crash-loop)
+
+Image built cleanly (~15m, no chown hang) but the new container Restarting(1):
+Coolify "New container is not healthy, rolling back". Cause: `USER node` cannot
+write under root-owned `/app` for `coolify-prod-start` (mkdir `/app/data/.bin`,
+download litestream/infisical). Switch runtime USER to root for Coolify.
