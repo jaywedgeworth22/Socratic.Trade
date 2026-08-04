@@ -426,30 +426,40 @@ describe("fetchDailyOHLC", () => {
     expect(await fetchDailyOHLC("ZZZ")).toBeNull();
   });
 
-  it("serves local 5-year flat-file OHLC history directly without network requests", async () => {
-    const { fetchLocalFlatFileHistory } = await import("../src/lib/history");
-    const fs = await import("fs");
-    const path = await import("path");
-    const testDir = path.join(process.cwd(), "data", "history-5y");
-    const testFile = path.join(testDir, "TESTSYM.json");
+  it("serves local SQLite OHLC history directly without network requests", async () => {
+    const { fetchHistoryCacheEod, upsertHistoryCacheEod } = await import("../src/lib/history-cache");
+    const { getDb } = await import("../src/lib/db");
 
-    if (!fs.existsSync(testDir)) fs.mkdirSync(testDir, { recursive: true });
-    fs.writeFileSync(
-      testFile,
-      JSON.stringify([
-        { t: 1609459200000, o: 100, h: 105, l: 99, c: 104, v: 1000 },
-        { t: 1609545600000, o: 104, h: 108, l: 103, c: 107, v: 1500 }
-      ])
-    );
+    // Ensure the table exists for testing
+    getDb().exec(`
+      CREATE TABLE IF NOT EXISTS history_cache_eod (
+        ticker TEXT NOT NULL,
+        date TEXT NOT NULL,
+        open REAL,
+        high REAL,
+        low REAL,
+        close REAL NOT NULL,
+        volume REAL,
+        vwap REAL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (ticker, date)
+      );
+    `);
+
+    // Insert dummy bars using the real upsert function
+    upsertHistoryCacheEod("TESTSYM", [
+      { time: "2021-01-01", open: 100, high: 105, low: 99, close: 104, volume: 1000 },
+      { time: "2021-01-02", open: 104, high: 108, low: 103, close: 107, volume: 1500 }
+    ]);
 
     try {
-      const bars = fetchLocalFlatFileHistory("TESTSYM");
+      const bars = fetchHistoryCacheEod("TESTSYM");
       expect(bars).not.toBeNull();
       expect(bars).toHaveLength(2);
       expect(bars![0].close).toBe(104);
       expect(bars![1].close).toBe(107);
     } finally {
-      if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
+      getDb().prepare("DELETE FROM history_cache_eod WHERE ticker = ?").run("TESTSYM");
     }
   });
 });
