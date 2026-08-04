@@ -45,7 +45,7 @@ const sharedAuthOwn = {
 };
 
 // Capture only nonsecret selectors before credential scrubbing.
-const envName = process.env.INFISICAL_ENV || process.env.NODE_ENV || "dev";
+const envName = process.env.INFISICAL_ENV || "prod";
 const secretsPath = process.env.INFISICAL_PATH || "/";
 const appProjectId = process.env.INFISICAL_PROJECT_ID;
 const sharedProjectId = process.env.INFISICAL_SHARED_PROJECT_ID;
