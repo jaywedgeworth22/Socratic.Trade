@@ -62,6 +62,19 @@ Evidence from Coolify `application_deployment_queues`:
 - After merge: `bash scripts/verify-deploy-sha.sh` must show live SHA contains
   the merge commit; `/api/health` `ok=true`, `db=ok`, litestream replicating.
 
+## Follow-up: dockerignore hole (deploy 170)
+
+First post-merge build failed at `next build`:
+
+```
+Module not found: Can't resolve '../../../../docs/benchmarks/2026-07-10-mistral-rebench.json'
+```
+
+Cause: `.dockerignore` excluded all of `docs/`, but
+`app/api/llm-usage/model-stats/route.ts` statically imports two
+`docs/benchmarks/*.json` files. Fixed by allowing `docs/benchmarks/**` and
+only pruning non-benchmark docs after build.
+
 ## Next Steps & Blockers
 
 1. Merge this PR → auto-deploy via webhook.
