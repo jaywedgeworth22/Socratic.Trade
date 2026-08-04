@@ -218,7 +218,10 @@ function reviewFingerprint(
   reasoningEffort: LlmReasoningEffort | undefined
 ): string {
   const items = pack.items
-    .map((it) => `${it.table}|${it.id}|${it.subject}|${it.value}|${it.riskTier}|${it.confidence ?? ""}|${it.at}`)
+    .map(
+      (it) =>
+        `${it.table}|${it.id}|${it.subject}|${it.value}|${it.riskTier}|${it.confidence ?? ""}|${it.accountEnvironment ?? ""}|${it.learningScope ?? ""}|${it.at}`
+    )
     .sort();
   const notes = pack.systemHistory.rolloutNotes.map((n) => n.firstLine).sort();
   return createHash("sha256").update(JSON.stringify({ items, notes, mode, model, reasoningEffort })).digest("hex");
@@ -359,6 +362,10 @@ export interface LearningReviewItem {
   riskTier: string;
   /** learned_context rows only. */
   confidence?: number;
+  /** Paper vs live provenance of the source account (when known). First-class evidence either way. */
+  accountEnvironment?: "paper" | "live" | null;
+  /** portfolio / account / research / legacy — see learned-context scopes. */
+  learningScope?: string | null;
   /** assertedAt (learned_context) / createdAt (pending). */
   at: string;
 }
@@ -397,6 +404,8 @@ function learnedRowToItem(row: LearnedContextRow): LearningReviewItem {
     source: row.source,
     riskTier: row.riskTier,
     confidence: row.confidence,
+    accountEnvironment: row.accountEnvironment ?? null,
+    learningScope: row.learningScope ?? null,
     at: row.assertedAt
   };
 }
@@ -412,6 +421,8 @@ function pendingRowToItem(row: LearnedContextPendingRow): LearningReviewItem {
     origin: row.origin,
     source: row.source,
     riskTier: row.riskTier,
+    accountEnvironment: row.accountEnvironment ?? null,
+    learningScope: row.learningScope ?? null,
     at: row.createdAt
   };
 }
@@ -552,6 +563,25 @@ export async function buildLearningReviewContextPack(userId: string, now: number
 
 // ── Prompt ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Owner rule (2026-08-04): paper-account outcomes are first-class learning evidence —
+ * especially for model/task comparison. Exported so tests pin the contract without
+ * re-deriving the full system prompt.
+ */
+export const PAPER_ACCOUNT_LEARNING_PARITY_RULE =
+  "PAPER-ACCOUNT PARITY: an account is an account. Broker paper / sandbox trades (accountEnvironment=paper, " +
+  "broker/paper execution, or lesson text that mentions a paper account) are FIRST-CLASS evidence for " +
+  "model quality, task fitness, thesis, timing, and regime lessons — the owner runs paper accounts " +
+  "deliberately to compare which models are better at which tasks. Do NOT reject, expire, discount, " +
+  "or mark needs_more_data merely because evidence is paper-sourced, lower-confidence-because-paper, " +
+  "or 'not real money'. ONLY treat paper origin as disqualifying when there is a DEFINITE " +
+  "PAPER-EXCLUSIVE cause of the analyzed outcome that would not apply on a live broker path " +
+  "(examples: local/synthetic fill simulation that never hits a broker; a fill price artifact from " +
+  "paper-only cost models; a sandbox order lifecycle the live broker does not share; paper-only " +
+  "margin/buying-power rules that drove the outcome). When that exception applies, state the " +
+  "paper-exclusive mechanism explicitly in reasoning. Model-vs-model and task-vs-task comparisons " +
+  "from paper closed trades are intended and should normally KEEP.";
+
 const SYSTEM_PROMPT = `You are the Learning Review Board for an autonomous trading system. Once per day you audit the system's LEARNING DECISIONS — durable learned-context rows and pending risk-tier learning candidates — against the system's own operational history.
 
 Learned lessons can encode corrupted evidence: a lesson may blame a trade thesis for losses that were actually caused by an execution or infrastructure defect active at the time (for example, a stale exit order that deadlocked a position). Your job is to catch those before they compound into future decisions.
@@ -562,6 +592,7 @@ Apply THREE TESTS to every item in reviewItems:
 3. STILL TRUE — is the lesson still true after recent fixes? systemHistory.rolloutNotes lists recent code changes; a lesson caused by a since-fixed defect should be rejected or expired.
 
 RULES:
+- ${PAPER_ACCOUNT_LEARNING_PARITY_RULE}
 - Key-level quota/rate limits (provider 429s, usage caps) are OWNER SETTINGS, never evidence against a model or a thesis. Do not let them drive a verdict against either.
 - Verdicts: "keep" (sound), "reject" (corrupted or wrong — should be removed), "expire" (was true, no longer is), "needs_more_data" (plausible but under-sampled — keep watching, decide later), "defer" (you cannot confidently decide this item at all).
 - IT IS OK NOT TO KNOW: if an item is genuinely ambiguous — conflicting signals, insufficient context to apply the three tests, or any other reason you cannot confidently commit to keep/reject/expire — use "defer" rather than guessing. A "defer" leaves the item exactly as it is (a learned_context_pending row stays pending, untouched) so a human can decide it themselves. Do NOT use "defer" merely to avoid effort; use it only when you actually cannot decide.
