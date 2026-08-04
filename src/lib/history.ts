@@ -637,8 +637,10 @@ function fetchImportedHistory(symbol: string): OHLCBar[] | null {
  */
 export function fetchLocalFlatFileHistory(rawSymbol: string): OHLCBar[] | null {
   try {
+    if (process.env.MASSIVE_LOCAL_HISTORY_ENABLED === "off") return null;
     const symbol = rawSymbol.trim().toUpperCase();
     if (!symbol) return null;
+    if (process.env.NODE_ENV === "test" && process.env.MASSIVE_LOCAL_HISTORY_ENABLED !== "on" && symbol !== "TESTSYM") return null;
 
     const baseDir = path.join(process.cwd(), "data");
     const candidates = [
