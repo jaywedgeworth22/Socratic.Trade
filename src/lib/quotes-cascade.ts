@@ -39,6 +39,9 @@ export async function fetchFreshQuotesCascade(
 
   if (normalizedSymbols.length === 0) return result;
 
+  const isTest = process.env.NODE_ENV === "test";
+  const allowExternal = !isTest || process.env.TEST_ALLOW_CASCADE_EXTERNAL === "1";
+
   // Track the best (freshest by asOf timestamp) quote found for each symbol across all levels
   const bestQuotes: Record<string, BrokerQuote> = {};
   let pendingSymbols = [...normalizedSymbols];
@@ -66,10 +69,17 @@ export async function fetchFreshQuotesCascade(
       const brokerQuotes = await gateway.getEquityQuotes(activeAccountNum, pendingSymbols);
       for (const symbol of pendingSymbols) {
         const quote = brokerQuotes[symbol];
-        if (quote && typeof quote.price === "number" && quote.price > 0) {
-          updateBestQuote(symbol, quote);
-          if (isQuoteFresh(quote, nowMs)) {
-            result[symbol] = quote;
+        if (quote) {
+          const resolvedPrice = quote.price ?? (quote.bid && quote.ask ? (quote.bid + quote.ask) / 2 : undefined);
+          if (typeof resolvedPrice === "number" && resolvedPrice > 0) {
+            const normalizedQuote = {
+              ...quote,
+              price: resolvedPrice
+            };
+            updateBestQuote(symbol, normalizedQuote);
+            if (isQuoteFresh(normalizedQuote, nowMs)) {
+              result[symbol] = normalizedQuote;
+            }
           }
         }
       }
@@ -81,7 +91,7 @@ export async function fetchFreshQuotesCascade(
   }
 
   // --- LEVEL 2: Alpaca Snapshots API ---
-  if (pendingSymbols.length > 0) {
+  if (pendingSymbols.length > 0 && allowExternal) {
     try {
       const alpacaData = resolveAlpacaMarketData(userId);
       if (alpacaData.apiKey && alpacaData.secretKey) {
@@ -89,19 +99,22 @@ export async function fetchFreshQuotesCascade(
         const enrichment = await provider.enrich(pendingSymbols);
         for (const symbol of pendingSymbols) {
           const data = enrichment[symbol];
-          if (data && typeof data.price === "number" && data.price > 0) {
-            const q: BrokerQuote = {
-              symbol,
-              price: data.price,
-              bid: data.bid,
-              ask: data.ask,
-              volume: data.volume,
-              asOf: data.asOf,
-              provider: "alpaca-snapshot"
-            };
-            updateBestQuote(symbol, q);
-            if (isQuoteFresh(q, nowMs)) {
-              result[symbol] = q;
+          if (data) {
+            const resolvedPrice = data.price ?? (data.bid && data.ask ? (data.bid + data.ask) / 2 : undefined);
+            if (typeof resolvedPrice === "number" && resolvedPrice > 0) {
+              const q: BrokerQuote = {
+                symbol,
+                price: resolvedPrice,
+                bid: data.bid,
+                ask: data.ask,
+                volume: data.volume,
+                asOf: data.asOf,
+                provider: "alpaca-snapshot"
+              };
+              updateBestQuote(symbol, q);
+              if (isQuoteFresh(q, nowMs)) {
+                result[symbol] = q;
+              }
             }
           }
         }
@@ -113,27 +126,30 @@ export async function fetchFreshQuotesCascade(
   }
 
   // --- LEVEL 3: Yahoo Finance Batch API ---
-  if (pendingSymbols.length > 0) {
+  if (pendingSymbols.length > 0 && allowExternal) {
     try {
       const yahooBatch = await fetchYahooFinanceQuotesBatch(pendingSymbols);
       for (const symbol of pendingSymbols) {
         const data = yahooBatch.get(symbol);
-        if (data && typeof data.price === "number" && data.price > 0) {
-          const q: BrokerQuote = {
-            symbol,
-            price: data.price,
-            bid: data.bid,
-            ask: data.ask,
-            volume: data.volume,
-            asOf: data.asOf,
-            provider: "yahoo-finance-batch",
-            syntheticBid: data.syntheticBid,
-            syntheticAsk: data.syntheticAsk,
-            syntheticSpread: data.syntheticSpread
-          };
-          updateBestQuote(symbol, q);
-          if (isQuoteFresh(q, nowMs)) {
-            result[symbol] = q;
+        if (data) {
+          const resolvedPrice = data.price ?? (data.bid && data.ask ? (data.bid + data.ask) / 2 : undefined);
+          if (typeof resolvedPrice === "number" && resolvedPrice > 0) {
+            const q: BrokerQuote = {
+              symbol,
+              price: resolvedPrice,
+              bid: data.bid,
+              ask: data.ask,
+              volume: data.volume,
+              asOf: data.asOf,
+              provider: "yahoo-finance-batch",
+              syntheticBid: data.syntheticBid,
+              syntheticAsk: data.syntheticAsk,
+              syntheticSpread: data.syntheticSpread
+            };
+            updateBestQuote(symbol, q);
+            if (isQuoteFresh(q, nowMs)) {
+              result[symbol] = q;
+            }
           }
         }
       }
@@ -144,28 +160,31 @@ export async function fetchFreshQuotesCascade(
   }
 
   // --- LEVEL 4: Yahoo Finance Single Quote API ---
-  if (pendingSymbols.length > 0) {
+  if (pendingSymbols.length > 0 && allowExternal) {
     try {
       const singleResults = await Promise.all(
         pendingSymbols.map(async (symbol) => [symbol, await fetchYahooFinanceQuote(symbol)] as const)
       );
       for (const [symbol, quote] of singleResults) {
-        if (quote && typeof quote.price === "number" && quote.price > 0) {
-          const q: BrokerQuote = {
-            symbol,
-            price: quote.price,
-            bid: quote.bid,
-            ask: quote.ask,
-            volume: quote.volume,
-            asOf: quote.asOf,
-            provider: "yahoo-finance-single",
-            syntheticBid: quote.syntheticBid,
-            syntheticAsk: quote.syntheticAsk,
-            syntheticSpread: quote.syntheticSpread
-          };
-          updateBestQuote(symbol, q);
-          if (isQuoteFresh(q, nowMs)) {
-            result[symbol] = q;
+        if (quote) {
+          const resolvedPrice = quote.price ?? (quote.bid && quote.ask ? (quote.bid + quote.ask) / 2 : undefined);
+          if (typeof resolvedPrice === "number" && resolvedPrice > 0) {
+            const q: BrokerQuote = {
+              symbol,
+              price: resolvedPrice,
+              bid: quote.bid,
+              ask: quote.ask,
+              volume: quote.volume,
+              asOf: quote.asOf,
+              provider: "yahoo-finance-single",
+              syntheticBid: quote.syntheticBid,
+              syntheticAsk: quote.syntheticAsk,
+              syntheticSpread: quote.syntheticSpread
+            };
+            updateBestQuote(symbol, q);
+            if (isQuoteFresh(q, nowMs)) {
+              result[symbol] = q;
+            }
           }
         }
       }
