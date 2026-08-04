@@ -266,7 +266,12 @@ export function fmpTranscriptStorageRightsConfirmed(
   return flagOn(raw);
 }
 
-/** Two explicit opt-ins: endpoint use and confirmed rights to persist transcript content. */
+/**
+ * Two explicit opt-ins for the transcript *machinery* (rights + feature flags).
+ * Even when both are on, requestFmpJson is hard-blocked — Socratic.Trade never
+ * opens a socket to FMP (owner 2026-08-04). Keep the dual-opt-in so rights /
+ * inventory / purge tooling and contract tests stay meaningful.
+ */
 export function fmpTranscriptsEnabled(
   featureRaw: string | undefined = process.env.WEB_SOURCE_FMP_TRANSCRIPTS,
   rightsRaw: string | undefined = process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED
@@ -1078,200 +1083,21 @@ async function retryPause(delayMs: number, signal: AbortSignal): Promise<void> {
 }
 
 async function requestFmpJson(
-  url: string,
-  apiKey: string,
-  keySource: string,
-  userId: string,
-  budget: RequestBudget,
-  retries: number,
-  maxResponseBytes: number,
-  payloadKind: FmpEndpointPayloadKind,
-  claim: OperationLeaseClaim,
-  leaseSignal: AbortSignal
+  _url: string,
+  _apiKey: string,
+  _keySource: string,
+  _userId: string,
+  _budget: RequestBudget,
+  _retries: number,
+  _maxResponseBytes: number,
+  _payloadKind: FmpEndpointPayloadKind,
+  _claim: OperationLeaseClaim,
+  _leaseSignal: AbortSignal
 ): Promise<FmpRequestResult> {
-  const credential = await apiKeyFingerprint(apiKey);
-  for (let retry = 0; retry <= retries; retry++) {
-    throwIfOperationLeaseCancelled(leaseSignal);
-    assertOperationLeaseOwnership(claim);
-    if (budget.remaining <= 0) return { ok: false, kind: "request_budget" };
-    const reservation = reserveProviderDispatch({
-      provider: "fmp",
-      operation: `earnings-transcript-${payloadKind}`,
-      credentialRef: credential,
-      userId,
-      units: 1,
-      // FMP subscription access is flat-plan rather than per-call in this integration. A zero
-      // variable-cost fuse is therefore exact; the durable request windows and per-run cap bind.
-      estimatedCostUsd: 0,
-      maxEstimatedCostUsdPer24h: 0,
-      windows: (resolveProviderQuota("fmp") ?? []).map((window) => ({
-        maxUnits: window.maxRequests,
-        windowMs: window.windowMs
-      }))
-    });
-    if (!reservation.admitted) return { ok: false, kind: "provider_quota" };
-    const attemptId = reservation.attemptId;
-    let attemptDispatched = false;
-    let attemptSettled = false;
-
-    budget.remaining -= 1;
-    budget.used += 1;
-    let response: Response;
-    let attemptStartedAt = Date.now();
-    try {
-      response = await withProviderLimit("fmp", () => {
-        attemptStartedAt = Date.now();
-        return fetchWithRetry(
-          url,
-          {
-            method: "GET",
-            cache: "no-store",
-            headers: { accept: "application/json", apikey: apiKey },
-            signal: AbortSignal.any([leaseSignal, AbortSignal.timeout(timeoutMs())])
-          },
-          {
-            service: "fmp",
-            healthService: "fmp-transcripts",
-            keySource,
-            userId,
-            apiKey,
-            retries: 0,
-            guard: {
-              assertActive: () => assertOperationLeaseOwnership(claim),
-              signal: leaseSignal
-            },
-            // HTTP 200 is not success until the bounded JSON body validates. The caller records one
-            // health and usage outcome below. HTTP failures and transport errors stay wrapper-owned.
-            deferSuccessLog: true,
-            deferSuccessUsage: true,
-            durableAttempt: {
-              onDispatch: () => {
-                markProviderDispatchStarted(attemptId);
-                attemptDispatched = true;
-              },
-              onResponse: (received) => {
-                if (!received.ok && !attemptSettled) {
-                  settleProviderDispatch(attemptId, "failed", { outcomeCode: `http-${received.status}` });
-                  attemptSettled = true;
-                }
-              },
-              onTransportError: (error) => {
-                if (!attemptSettled) {
-                  settleProviderDispatch(attemptId, "failed", {
-                    outcomeCode: error instanceof Error ? error.name : "transport-error"
-                  });
-                  attemptSettled = true;
-                }
-              }
-            },
-            // Usage remains attributable to FMP, while transcript failures have an isolated health/
-            // circuit lane. HTTP 402 is durable entitlement state, not a transient health failure.
-            suppressHealthStatuses: [400, 401, 402, 403]
-          }
-        );
-      });
-    } catch (error) {
-      if (attemptDispatched && !attemptSettled) {
-        // A successful HTTP response whose body could not be classified before lease loss remains
-        // explicitly unknown; it must never disappear or be guessed successful.
-        settleProviderDispatch(attemptId, "unknown", { outcomeCode: "response-outcome-unclassified" });
-        attemptSettled = true;
-      }
-      throwIfOperationLeaseCancelled(leaseSignal);
-      assertOperationLeaseOwnership(claim);
-      if (error instanceof CircuitOpenError) {
-        // No upstream request left the process, so release the durable reservation.
-        cancelUndispatchedProviderReservation(attemptId, "circuit-open");
-        budget.remaining += 1;
-        budget.used -= 1;
-        return { ok: false, kind: "transient", circuitOpen: true };
-      }
-      if (retry < retries && budget.remaining > 0) {
-        await retryPause(retryDelayMs(), leaseSignal);
-        continue;
-      }
-      return { ok: false, kind: "transient" };
-    }
-
-    throwIfOperationLeaseCancelled(leaseSignal);
-    assertOperationLeaseOwnership(claim);
-    if (!response.ok) {
-      const kind: FmpRequestFailureKind = (response.status === 402 || response.status === 403)
-        ? "endpoint_not_entitled"
-        : [400, 401].includes(response.status)
-          ? "access_denied"
-        : isTransientStatus(response.status)
-          ? "transient"
-          : "permanent";
-      const delayMs = retryAfterMs(response);
-      await discardResponseBody(response);
-      // Response-body cancellation is itself async. A successor may acquire the durable lease while
-      // a terminal body is being discarded, so re-prove ownership before returning a result that the
-      // caller can turn into cursor/capability/settings writes.
-      throwIfOperationLeaseCancelled(leaseSignal);
-      assertOperationLeaseOwnership(claim);
-      if (kind === "transient" && retry < retries && budget.remaining > 0) {
-        await retryPause(delayMs, leaseSignal);
-        continue;
-      }
-      // Deliberately do not read/log the provider response body.
-      return { ok: false, kind, status: response.status };
-    }
-
-    try {
-      const payload = await readBoundedJson(response, maxResponseBytes);
-      if (!isValidFmpEndpointPayload(payload, payloadKind)) throw new InvalidEndpointPayloadError();
-      if (!attemptSettled) {
-        settleProviderDispatch(attemptId, "succeeded", { outcomeCode: "validated-http-200" });
-        attemptSettled = true;
-      }
-      throwIfOperationLeaseCancelled(leaseSignal);
-      assertOperationLeaseOwnership(claim);
-      logApiHealth({
-        service: "fmp-transcripts",
-        ok: true,
-        latencyMs: Date.now() - attemptStartedAt,
-        keySource,
-        userId
-      });
-      return { ok: true, payload, receivedAt: new Date(Date.now()).toISOString() };
-    } catch (error) {
-      if (!attemptSettled) {
-        settleProviderDispatch(attemptId, "failed", {
-          outcomeCode: error instanceof ResponseTooLargeError
-            ? "response-too-large"
-            : error instanceof InvalidEndpointPayloadError
-              ? "invalid-payload"
-              : "invalid-json"
-        });
-        attemptSettled = true;
-      }
-      throwIfOperationLeaseCancelled(leaseSignal);
-      assertOperationLeaseOwnership(claim);
-      const responseTooLarge = error instanceof ResponseTooLargeError;
-      const invalidPayload = error instanceof InvalidEndpointPayloadError;
-      logApiHealth({
-        service: "fmp-transcripts",
-        ok: false,
-        latencyMs: Date.now() - attemptStartedAt,
-        errorText: responseTooLarge
-          ? OVERSIZED_RESPONSE_ERROR
-          : invalidPayload
-            ? INVALID_PAYLOAD_RESPONSE_ERROR
-            : INVALID_JSON_RESPONSE_ERROR,
-        keySource,
-        userId
-      });
-      if (responseTooLarge) return { ok: false, kind: "response_too_large" };
-      if (retry < retries && budget.remaining > 0) {
-        await retryPause(retryDelayMs(), leaseSignal);
-        continue;
-      }
-      return { ok: false, kind: "transient" };
-    }
-  }
-  return { ok: false, kind: "transient" };
+  // Owner 2026-08-04: never open a socket to financialmodelingprep.com from this app.
+  return { ok: false, kind: "access_denied", status: 403 };
 }
+
 
 function recordIngestedTranscript(accession: string, ticker: string, chunkCount: number, indexedAt: string): void {
   // This producer is not an SEC filing, so write only the generic ingestion ledger and do not
