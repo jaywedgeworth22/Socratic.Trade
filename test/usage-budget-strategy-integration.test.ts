@@ -344,7 +344,7 @@ describe("usage-budget Phase 2: enforcement ON + skip", () => {
       "fetch",
       makeFetchStub({
         redTeamVerdict: { verdict: "approve", reason: "n/a" },
-        // gpt-4o-mini already the cheapest OpenAI tier in CHEAPER_MODEL -> skip, not downgrade.
+        // gpt-5.4-nano already the cheapest OpenAI tier in CHEAPER_MODEL -> skip, not downgrade.
         budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
         onOpenAiBody: () => {
           openAiCalled = true;
