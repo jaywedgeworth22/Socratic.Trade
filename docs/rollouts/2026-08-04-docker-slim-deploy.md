@@ -107,3 +107,15 @@ dockerignored. Incomplete/broken `.next` still packaged → crash loop.
 
 Fix: `rm -rf scripts/eval test` before `npm run build` (+ dockerignore
 `scripts/eval`).
+
+## Follow-up 5: rebuild better-sqlite3 for bookworm glibc
+
+Deploy 175 built and started but healthcheck got HTTP 500:
+
+```
+libm.so.6: version GLIBC_2.38 not found
+(required by node_modules/better-sqlite3/prebuilds/linux-arm64.node)
+```
+
+better-sqlite3@13 (PR #2371) prebuilds need glibc ≥2.38; bookworm-slim has 2.36.
+Fix: `npm rebuild better-sqlite3 --build-from-source` after `npm ci` (python3/make/g++ already in the build stage).

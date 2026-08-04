@@ -19,13 +19,16 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# better-sqlite3@13 ships prebuilds linked against GLIBC_2.38; Debian bookworm
+# only has 2.36. Rebuild from source so the .node matches the runtime image
+# (deploy 175: ERR_DLOPEN_FAILED / GLIBC_2.38 not found → health 500).
+RUN npm ci \
+  && npm rebuild better-sqlite3 --build-from-source
 
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 # scripts/eval/* imports test/fixtures (dockerignored). Next typecheck includes
-# **/*.ts and would fail the image build (deploy 174 crash-loop on incomplete
-# .next). Drop eval runners before build; they are not used in production.
+# **/*.ts and would fail the image build. Drop eval runners before build.
 RUN rm -rf scripts/eval test \
   && npm run build \
   && npm prune --omit=dev \
