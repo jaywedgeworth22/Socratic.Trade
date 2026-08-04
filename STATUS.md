@@ -22,7 +22,15 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-03.
+Last updated: 2026-08-04 (GROK: UX improvement program plan).
+
+
+## UX improvement program (2026-08-04, GROK)
+
+Sequenced PR plan for web console + PWA + iOS after a full-product review:
+`docs/design/ux-improvement-program.md`. Wave A (trust/action) slices are Planned/UNASSIGNED
+on the effort board — claim before implementing. Rollout:
+`docs/rollouts/2026-08-04-ux-improvement-program.md`.
 
 ## Where things stand
 
