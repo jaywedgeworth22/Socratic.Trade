@@ -143,5 +143,7 @@ tests, build clean. Rollout: `docs/rollouts/2026-08-02-data-provider-round2.md`.
   notes filed under another's heading (preserved as evidence in `docs/status-archive.md`).
   Keep entries to a single line where you can, and re-read your own row after a merge.
 - **Node 24 is required.** The Mac's default `node` is v26 and mass-fails the suite on a
-  `better-sqlite3` ABI mismatch. Prefix gate commands with
   `export PATH="/opt/homebrew/opt/node@24/bin:$PATH"`.
+
+**2026-08-04 — Model slug migration tests and UI mapping fixes (Antigravity).**
+Fixed `gpt-5.4-mini` regex inclusion in reasoning model capabilities which was causing test suite failures under Node 24. Also cleaned up `MODEL_DISPLAY_NAME` in `app/console/lib/models.ts` to strictly follow user-provided slugs, completely removing any legacy `-latest` suffixes. Verified tests locally.

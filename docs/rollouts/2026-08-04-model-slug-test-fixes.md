@@ -16,3 +16,8 @@ The user requested final verification of the model slug migration, ensuring the 
 
 ## Next Steps & Blockers
 - None. The migration is complete and the PR has been created via `land.sh`.
+
+## Follow-up Fixes
+- Corrected the `isGpt56Model` regex which erroneously included `gpt-5.4-mini` and `gpt-5.4-nano`, causing reasoning effort test regressions (expected low/medium/high, received none-to-max ladder).
+- Restored the EXACT display slugs requested by the user, removing `-latest` prefixes completely from display names for GPT, Anthropic, Mistral, and DeepSeek models, matching the exact user specifications (e.g. `Gemini 3.5 Flash Lite`).
+- Tests `chat-llm.test.ts`, `llm-request.test.ts` and `strategy-reasoning-control.test.ts` now pass under Node 24.
