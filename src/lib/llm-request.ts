@@ -137,7 +137,7 @@ function isDeepSeekV4Model(model: string | undefined): boolean {
 }
 
 function isGpt56Model(model: string | undefined): boolean {
-  return /^(gpt-5\.6|gpt-5\.4-nano|gpt-5\.4-mini|gpt-5\.6-luna|gpt-5\.6-terra|gpt-5\.6-sol)(?:$|[-.:_])/i.test(lowerModel(model));
+  return /^(gpt-5\.6|gpt-5\.6-luna|gpt-5\.6-terra|gpt-5\.6-sol)(?:$|[-.:_])/i.test(lowerModel(model));
 }
 
 
