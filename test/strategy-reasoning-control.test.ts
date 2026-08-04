@@ -39,14 +39,14 @@ describe("reasoningControlForModels — rotation sentinel keeps the control visi
   it("rotate + a model with NO reasoning capability still shows the rotation ladder", () => {
     // mistral-small-2603 takes no reasoning params (provider 400) — it contributes no capability,
     // so the rotating seat's full ladder is what remains.
-    const control = reasoningControlForModels([ROTATE, "mistral-small-2603"]);
+    const control = reasoningControlForModels([ROTATE, "mistral-small-latest"]);
     expect(control).not.toBeNull();
     expect(control!.options.map((o) => o.value)).toEqual([...ALL_LLM_REASONING_EFFORTS]);
   });
 
   it("models with no capability at all still yield no control (honest absence)", () => {
-    expect(reasoningControlForModels(["mistral-small-2603"])).toBeNull();
-    expect(reasoningControlForModels(["openai/gpt-4.1-mini", "mistral-small-2603"])).toBeNull();
+    expect(reasoningControlForModels(["mistral-small-latest"])).toBeNull();
+    expect(reasoningControlForModels(["openai/gpt-4.1-mini", "mistral-small-latest"])).toBeNull();
   });
 });
 
@@ -115,7 +115,7 @@ describe("seatReasoningPatch — per-seat renormalization bundled into model sav
   });
 
   it("a model with no reasoning capability yields no patch (effort is ignored at call time)", () => {
-    expect(seatReasoningPatch("llmReasoningEffort", "mistral-small-2603", "high")).toEqual({});
+    expect(seatReasoningPatch("llmReasoningEffort", "mistral-small-latest", "high")).toEqual({});
   });
 
   it("the disallowed interactive gpt-5.5+high combo saves the run-time-honest medium instead", () => {

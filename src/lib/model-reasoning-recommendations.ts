@@ -57,44 +57,44 @@ export const MODEL_REASONING_RECOMMENDATIONS: Record<string, ModelReasoningRecom
     roleEfforts: { red: "high", review: "high", chat: "medium" },
     advice: "Sol: Medium for Green/Coach; High for Red Team or one-off strategy/learning review."
   },
-  "gpt-sol-latest": {
+  "gpt-5.6-sol": {
     effort: "medium",
     roleEfforts: { red: "high", review: "high", chat: "medium" },
     advice: "Sol: Medium for Green/Coach; High for Red Team or one-off strategy/learning review."
   },
-  "gpt-terra-latest": {
+  "gpt-5.6-terra": {
     effort: "medium",
     roleEfforts: { red: "high", review: "high", chat: "medium" },
     advice: "Terra: Medium is recommended for Green Team and Coach balance."
   },
-  "gpt-luna-latest": {
+  "gpt-5.6-luna": {
     effort: "medium",
     roleEfforts: { red: "medium", review: "medium", chat: "low" },
     advice: "Luna: Low for chat/high-volume synthesis; Medium for Green."
   },
-  "gpt-nano-latest": { effort: "low", advice: "Nano at Low: best for extraction and cheap chat." },
-  "gpt-mini-latest": {
+  "gpt-5.4-nano": { effort: "low", advice: "Nano at Low: best for extraction and cheap chat." },
+  "gpt-5.4-mini": {
     effort: "medium",
     roleEfforts: { chat: "low", red: "high", review: "high" },
     advice: "Mini: Low for Coach/chat, Medium for a low-cost Green Team."
   },
-  "gpt-4o-latest": { effort: "medium" },
+  "gpt-4o": { effort: "medium" },
   // Anthropic
-  "claude-haiku-latest": { effort: "medium" },
-  "claude-sonnet-latest": { effort: "medium" },
-  "claude-opus-latest": { effort: "medium" },
-  "claude-fable-latest": { effort: "medium" },
+  "claude-haiku-4.5": { effort: "medium" },
+  "claude-sonnet-5": { effort: "medium" },
+  "claude-opus-5": { effort: "medium" },
+  "claude-fable-5": { effort: "medium" },
   // xAI
-  "grok-latest": { effort: "medium" },
+  "grok-4.5": { effort: "medium" },
   "grok-build-latest": { effort: "medium" },
   // Gemini
   "gemini-flash-lite-latest": { effort: "medium" },
   "gemini-flash-latest": { effort: "medium" },
   "gemini-pro-latest": { effort: "medium" },
   // DeepSeek
-  "deepseek-flash-latest": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
-  "deepseek-pro-latest": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
-  "deepseek-r1-latest": { effort: "high" },
+  "deepseek-v4-flash": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
+  "deepseek-v4-pro": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
+  "deepseek-reasoner": { effort: "high" },
   // Mistral
   "mistral-small-latest": { effort: "none" },
   "mistral-medium-latest": { effort: "none", advice: MISTRAL_MEDIUM_ADVICE },

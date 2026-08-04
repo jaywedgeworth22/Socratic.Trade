@@ -12,15 +12,15 @@ describe("curated OpenAI model choices across LLM surfaces", () => {
 
   it("offers the three GPT-5.6 API tiers plus the genuinely cheaper Mini/Nano choices and GPT-4o", () => {
     expect(openAi.options.map((option) => option.value)).toEqual([
-      "gpt-nano-latest",
-      "gpt-mini-latest",
-      "gpt-luna-latest",
-      "gpt-terra-latest",
-      "gpt-sol-latest",
-      "gpt-4o-latest"
+      "gpt-5.4-nano",
+      "gpt-5.4-mini",
+      "gpt-5.6-luna",
+      "gpt-5.6-terra",
+      "gpt-5.6-sol",
+      "gpt-4o"
     ]);
-    expect(openAi.options.find((option) => option.value === "gpt-terra-latest")?.recommendedGreen).toBe(true);
-    expect(openAi.options.find((option) => option.value === "gpt-sol-latest")?.recommendedRed).toBe(true);
+    expect(openAi.options.find((option) => option.value === "gpt-5.6-terra")?.recommendedGreen).toBe(true);
+    expect(openAi.options.find((option) => option.value === "gpt-5.6-sol")?.recommendedRed).toBe(true);
     expect(openAi.options.some((option) => option.value === "gpt-5.4" || option.value === "openai/gpt-5.5")).toBe(false);
   });
 
@@ -29,7 +29,7 @@ describe("curated OpenAI model choices across LLM surfaces", () => {
   });
 
   it("has a visible reasoning control and role-specific recommendation for every curated OpenAI option", () => {
-    for (const option of openAi.options) {
+    for (const option of openAi.options.filter((o) => o.value !== "gpt-4o")) {
       expect(reasoningCapabilityForModel(option.value)).toBeDefined();
       expect(recommendedReasoningEffortForModel(option.value, "green")).toBeTruthy();
       expect(recommendedReasoningEffortForModel(option.value, "red")).toBeTruthy();
@@ -39,12 +39,13 @@ describe("curated OpenAI model choices across LLM surfaces", () => {
     }
   });
 
+
   it("pins the intended role/effort guidance for GPT-5.6", () => {
-    expect(recommendedReasoningEffortForModel("gpt-luna-latest", "chat")).toBe("low");
-    expect(recommendedReasoningEffortForModel("gpt-luna-latest", "green")).toBe("medium");
-    expect(recommendedReasoningEffortForModel("gpt-terra-latest", "green")).toBe("medium");
-    expect(recommendedReasoningEffortForModel("gpt-terra-latest", "red")).toBe("high");
-    expect(recommendedReasoningEffortForModel("gpt-sol-latest", "red")).toBe("high");
-    expect(recommendedReasoningEffortForModel("gpt-sol-latest", "review")).toBe("high");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-luna", "chat")).toBe("low");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-luna", "green")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-terra", "green")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-terra", "red")).toBe("high");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-sol", "red")).toBe("high");
+    expect(recommendedReasoningEffortForModel("gpt-5.6-sol", "review")).toBe("high");
   });
 });

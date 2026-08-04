@@ -2,11 +2,16 @@
 //
 // Two consumers share this: the technical connector (`web-sources/technical.ts`, which
 // only reads closes) and the symbol-drilldown price chart (`/api/history`, which needs
-// full candles). Sources cascade keyed-first then free: Massive → Tradier → Tiingo →
-// Marketstack → Yahoo. Keyed providers are reliable from datacenter IPs; the free Yahoo
+// full candles). Sources cascade keyed-first then free:
+// local flat-files → imported/App A → Massive → ROIC.ai → Tradier → Tiingo → Marketstack → Yahoo.
+// Keyed providers are reliable from datacenter IPs; the free Yahoo
 // endpoint is frequently rate-limited (HTTP 429) or bot-challenged server-side, so a keyed
 // provider is strongly recommended. Server-side only; cached briefly. Never fabricates —
 // no bars → returns null, callers degrade to "—".
+//
+// ROIC.ai (api.roic.ai v3 stock-prices) is ST-side only: Congress.Trade (App A) reads
+// prices exclusively via ST's peer market-read routes (PRICE_PROVIDER=peer) after ST has
+// cached the series. CT never holds a ROIC key.
 //
 // Stooq was the terminal free fallback here until 2026-08: research confirmed its daily-CSV
 // endpoint now sits behind an Anubis-style JS proof-of-work wall (bot-blocked, not merely
@@ -19,8 +24,9 @@ import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 import type { OHLCBar } from "./indicators";
+export type { OHLCBar };
 import { normalizeSymbol } from "./money";
-import { fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { audit, fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, upsertImportedPrices, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
 import { expiresAtRespectingMarketClose } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
@@ -33,7 +39,7 @@ import { apiKeyFingerprint } from "./data-providers";
 import { fetchHistoryCacheEod, upsertHistoryCacheEod } from "./history-cache";
 const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
 const cache = new Map<string, { expiresAt: number; bars: OHLCBar[] }>();
-const KEYED_HISTORY_SERVICES = ["massive", "marketstack", "tiingo"] as const;
+const KEYED_HISTORY_SERVICES = ["massive", "roic", "marketstack", "tiingo"] as const;
 type CacheScope = "shared" | "private" | "pool";
 
 interface YahooChartResponse {
@@ -96,19 +102,105 @@ async function fetchYahooChartJson<T>(url: string): Promise<T> {
       clearTimeout(timeout);
     }
   }
-  // Unreachable in practice — every iteration above either returns or throws — but TS can't prove
-  // the loop always exits early, so this keeps the function's return type sound.
   throw new Error(`HTTP 429 for ${url} (exhausted retries)`);
 }
 
 /**
+ * Evaluates whether a series of daily OHLC bars is fresh (latest bar is within maxStalenessDays).
+ * Defaults to 3 calendar days to allow for weekends without false stale flags.
+ */
+export function isBarSeriesFresh(bars: OHLCBar[] | null, maxStalenessDays: number = 3, now: number = Date.now()): boolean {
+  if (!bars || bars.length < 2) return false;
+  const lastBar = bars[bars.length - 1];
+  if (!lastBar || lastBar.time == null) return false;
+  const t = lastBar.time;
+  const lastMs = typeof t === "number"
+    ? (t > 1e10 ? t : t * 1000)
+    : new Date(t).getTime();
+  if (!Number.isFinite(lastMs)) return false;
+  const ageMs = now - lastMs;
+  const maxAgeMs = maxStalenessDays * 24 * 60 * 60_000;
+  return ageMs <= maxAgeMs;
+}
+
+/**
+ * Merges historical bars with incoming fresh bars by date YYYY-MM-DD, sorting ascending.
+ */
+export function mergeOHLCBars(existing: OHLCBar[], incoming: OHLCBar[]): OHLCBar[] {
+  const map = new Map<string, OHLCBar>();
+  const toKey = (b: OHLCBar) => {
+    if (!b.time) return "";
+    if (typeof b.time === "string") return b.time.slice(0, 10);
+    const ms = typeof b.time === "number" ? (b.time < 1e10 ? b.time * 1000 : b.time) : 0;
+    const d = new Date(ms);
+    return d.toISOString().slice(0, 10);
+  };
+
+  for (const b of existing) {
+    const k = toKey(b);
+    if (k) map.set(k, b);
+  }
+  for (const b of incoming) {
+    const k = toKey(b);
+    if (k) {
+      const prev = map.get(k);
+      map.set(k, { ...prev, ...b });
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const tA = typeof a.time === "number" ? a.time : typeof a.time === "string" ? new Date(a.time).getTime() : 0;
+    const tB = typeof b.time === "number" ? b.time : typeof b.time === "string" ? new Date(b.time).getTime() : 0;
+    return tA - tB;
+  });
+}
+
+function persistEodBarsToCache(symbol: string, bars: OHLCBar[]): void {
+  try {
+    const pricesInput = [{
+      ticker: symbol,
+      closes: bars.map((b) => {
+        const dStr = typeof b.time === "string"
+          ? b.time.slice(0, 10)
+          : new Date(typeof b.time === "number" ? (b.time < 1e10 ? b.time * 1000 : b.time) : 0).toISOString().slice(0, 10);
+        return {
+          date: dStr,
+          close: b.close,
+          volume: b.volume
+        };
+      })
+    }];
+    upsertImportedPrices(pricesInput, "eod-auto-cache");
+  } catch {
+    // Non-fatal if DB write fails
+  }
+
+  try {
+    const baseDir = path.join(process.cwd(), "data", "history-5y");
+    if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
+    const targetFile = path.join(baseDir, `${symbol.toUpperCase()}.json`);
+    const formatted = bars.map((b) => ({
+      t: typeof b.time === "number" ? b.time : typeof b.time === "string" ? new Date(b.time).getTime() : 0,
+      o: b.open,
+      h: b.high,
+      l: b.low,
+      c: b.close,
+      v: b.volume
+    }));
+    fs.writeFileSync(targetFile, JSON.stringify(formatted));
+  } catch {
+    // Non-fatal if disk write fails
+  }
+}
+
+
+/**
  * Fetch ~5y of daily OHLC bars for a symbol, cached briefly. Cascades keyed providers
- * first (reliable, generous limits): Massive (Polygon-compatible) → Tradier → Tiingo →
- * Marketstack, then the free fallback Yahoo. Keyed sources are skipped when no user/env key is
- * available. Returns the first source that yields ≥2 bars, or null (never fabricated). The free
- * Yahoo endpoint is frequently rate-limited or bot-challenged from datacenter IPs, so a keyed
- * provider is strongly recommended for reliable charts + the in-house technical "computed"
- * producer.
+ * first (reliable, generous limits): Massive → ROIC.ai → Tradier → Tiingo →
+ * Marketstack, then free Yahoo. Keyed sources are skipped when no user/env key is
+ * available. Returns the first source that yields ≥2 bars, or null (never fabricated).
+ * ROIC is operator-key only (ROIC_API_KEY); CT (App A) never holds a ROIC key — it
+ * pulls via ST market-read peer routes after ST has cached the series.
  */
 export async function fetchDailyOHLC(
   rawSymbol: string,
@@ -121,6 +213,7 @@ export async function fetchDailyOHLC(
 
   const keySources: Record<(typeof KEYED_HISTORY_SERVICES)[number], { key?: string; source: ApiKeySource }> = {
     massive: resolveApiKeyWithSource("massive", userId),
+    roic: resolveApiKeyWithSource("roic", userId),
     marketstack: resolveApiKeyWithSource("marketstack", userId),
     tiingo: resolveApiKeyWithSource("tiingo", userId)
   };
@@ -128,11 +221,10 @@ export async function fetchDailyOHLC(
   const privateCacheKey = historyCacheKey(symbol, userId, "private");
   const poolCacheKey = historyCacheKey(symbol, userId, "pool");
   const sharedCacheKey = historyCacheKey(symbol, userId, "shared");
+
   const consented = hasDataPoolConsent(userId ?? "local");
   const privateHit = cache.get(privateCacheKey);
   if (privateHit && privateHit.expiresAt > now) return privateHit.bars;
-  // The reciprocal pool is read ONLY by consenting users (they also contribute their keyed pulls
-  // to it). Non-consenting users skip it entirely and fall through to the public/free shared tier.
   if (consented) {
     const poolHit = cache.get(poolCacheKey);
     if (poolHit && poolHit.expiresAt > now) return poolHit.bars;
@@ -140,9 +232,18 @@ export async function fetchDailyOHLC(
   const sharedHit = cache.get(sharedCacheKey);
   if (sharedHit && sharedHit.expiresAt > now) return sharedHit.bars;
 
+  // 1. Evaluate local flat-file history
+  const localBars = fetchLocalFlatFileHistory(symbol);
+  if (localBars && localBars.length >= 2 && isBarSeriesFresh(localBars, 3, now)) {
+    cache.set(sharedCacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars: localBars });
+    emitHistoryDemandFilled(symbol, now);
+    return localBars;
+  }
+
+  // If localBars exists but is STALE, retain for topping up with active provider data
+  const staleLocalBars = localBars && localBars.length >= 2 ? localBars : null;
+
   const startDate = new Date(now - 1825 * 24 * 60 * 60_000).toISOString().slice(0, 10);
-  // Keyed providers first (brokerage-grade, generous limits, reliable from datacenter IPs),
-  // then the free fallbacks. Keyed sources self-skip when their env key is unset.
   const sources: Array<{ scope: CacheScope; fetch: () => Promise<OHLCBar[] | null> }> = [
     // SQLite cached EOD history tier (history_cache_eod):
     // Reads pre-hoarded 5-year OHLC price datasets from the local database directly, eliminating network calls.
@@ -153,34 +254,19 @@ export async function fetchDailyOHLC(
     // a re-fetch entirely. DEFAULT OFF + density-guarded inside fetchImportedHistory so a sparse gap-fill
     // never short-circuits with an incomplete series. Close-only bars.
     { scope: "shared", fetch: async () => fetchImportedHistory(symbol) },
-    // congress.trade (App A) cache-aside tier: App A also pulls FMP, so reuse its EOD closes first
-    // to spend the shared quota once and save App B's own (keyed) history calls. Returns close-only
-    // bars (no OHLC), so an enabled price chart renders a line, not candles, on App A hits. No-op
-    // unless CONGRESS_TRADE_READS_ENABLED is on; "shared" scope (App A is a public external source).
-    // skipAppATier: the peer read routes serving App A itself must not echo the request back at App
-    // A — it asks precisely because its own series needs topping up, so the echo can only return the
-    // stale closes App A already has (one guaranteed-wasted HTTP hop per cache miss).
     ...(opts?.skipAppATier
       ? []
       : [{ scope: "shared" as const, fetch: () => fetchAppAHistory(symbol) }]),
     { scope: cacheScopeForKeySource(keySources.massive.source, userId), fetch: () => fetchMassive(symbol, startDate, keySources.massive.key) },
+    // ROIC.ai historical daily prices (v3 stock-prices). Operator-key only; seats after Massive
+    // so a healthy Massive plan still wins, but ROIC covers Massive free-tier history gaps and
+    // feeds App A via /api/market/* peer reads without CT holding a ROIC key.
+    { scope: cacheScopeForKeySource(keySources.roic.source, userId), fetch: () => fetchRoic(symbol, startDate, keySources.roic.key) },
     // Always "shared" — sourced from the owner's own connected broker account, not a per-user key
     // or consent-gated pool contribution (see resolveTradierHistoryCredential's doc comment).
     { scope: "shared", fetch: () => fetchTradier(symbol, startDate, tradierCredential.key, tradierCredential.baseUrl) },
-    // Tiingo's free tier (50/hr, 1,000/day) gives real split+dividend-adjusted EOD history — richer
-    // than Marketstack's 100/month free cap, so it's seated ahead of Marketstack. Shares the SAME
-    // account-wide "tiingo" quota bucket as TiingoEnrichmentProvider (provider-rate-limit.ts
-    // RATE_QUOTAS) via admitProviderRequests, so a scan's enrichment calls and a chart's history call
-    // can't together bust the real 50/hour cap.
     { scope: cacheScopeForKeySource(keySources.tiingo.source, userId), fetch: () => fetchTiingo(symbol, startDate, keySources.tiingo.key) },
     { scope: cacheScopeForKeySource(keySources.marketstack.source, userId), fetch: () => fetchMarketstack(symbol, keySources.marketstack.key) },
-    // First-party broker history — inert unless ROBINHOOD_ADAPTER=mcp + OAuth token present.
-    // SECURITY: the Robinhood token is per-user, so this tier is FETCHED only when an explicit
-    // userId is in scope. A shared/background pull (no userId — e.g. the computed-technicals
-    // refresh that writes a GLOBAL dataset) must not borrow the operator's ('local') broker token.
-    // The resulting BARS are public market data (not the user's private account), so — like any
-    // other user-keyed source — they are cached consent-pooled: pool tier when the user opted into
-    // the reciprocal data pool, otherwise kept private to that user (never force-shared).
     ...(userId
       ? [{ scope: cacheScopeForKeySource("user", userId), fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year", userId }) }]
       : []),
@@ -188,21 +274,37 @@ export async function fetchDailyOHLC(
   ];
 
   for (const source of sources) {
-    const bars = await source.fetch();
-    if (bars && bars.length >= 2) {
+    const liveBars = await source.fetch();
+    if (liveBars && liveBars.length >= 2) {
+      const finalBars = staleLocalBars ? mergeOHLCBars(staleLocalBars, liveBars) : liveBars;
+      persistEodBarsToCache(symbol, finalBars);
+
       const cacheKey = source.scope === "private" ? privateCacheKey : source.scope === "pool" ? poolCacheKey : sharedCacheKey;
-      cache.set(cacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars });
+      cache.set(cacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars: finalBars });
       if (source.scope === "shared") emitHistoryDemandFilled(symbol, now);
       
       // Persist to the local SQLite cache so future runs can skip the network hop entirely.
       // This handles all fetched tiers (Tradier, Massive, Tiingo, etc.).
       if (source.fetch.name !== "fetchHistoryCacheEod") {
-        upsertHistoryCacheEod(symbol, bars);
+        upsertHistoryCacheEod(symbol, finalBars);
       }
       
-      return bars;
+      return finalBars;
     }
   }
+
+  // Fallback if active providers hit errors or expired keys: audit warning and return stale local bars
+  if (staleLocalBars) {
+    const lastBar = staleLocalBars[staleLocalBars.length - 1];
+    audit(
+      "eod_cache_stale",
+      { symbol, lastBarTime: lastBar?.time, note: "All active EOD price history providers failed or expired; falling back to stale local bars." },
+      userId ?? "local"
+    );
+    cache.set(sharedCacheKey, { expiresAt: now + 5 * 60_000, bars: staleLocalBars });
+    return staleLocalBars;
+  }
+
   recordMarketDataDemand({ kind: "history", symbol, userId, now });
   return null;
 }
@@ -245,6 +347,107 @@ function emitHistoryDemandFilled(symbol: string, now: number): void {
 
 interface MassiveAggBar { t?: number; o?: number; h?: number; l?: number; c?: number; v?: number; vw?: number }
 interface MassiveAggResponse { results?: MassiveAggBar[] }
+
+interface RoicPriceRow {
+  date?: string;
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
+}
+interface RoicStockPricesResponse {
+  data?: RoicPriceRow[];
+  next_page_url?: string | null;
+}
+
+/**
+ * Pure mapper for ROIC.ai v3 stock-prices rows → OHLCBar[]. Exported for unit tests.
+ * Prefers split-adjusted closes when the caller requested adjustment=splits (the
+ * fetch path always does). Volume is always raw session volume per ROIC docs.
+ */
+export function parseRoicStockPrices(rows: unknown): OHLCBar[] {
+  const list = Array.isArray(rows) ? rows : [];
+  const bars: OHLCBar[] = [];
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as RoicPriceRow;
+    if (!r.date || typeof r.close !== "number" || !Number.isFinite(r.close)) continue;
+    bars.push({
+      time: String(r.date).slice(0, 10),
+      open: numOrUndef(r.open),
+      high: numOrUndef(r.high),
+      low: numOrUndef(r.low),
+      close: r.close,
+      volume: numOrUndef(r.volume),
+    });
+  }
+  // Ascending by date so consumers (MACD/SMA) see chronological series.
+  bars.sort((a, b) => String(a.time).localeCompare(String(b.time)));
+  return bars;
+}
+
+/**
+ * ROIC.ai historical daily prices
+ * (`GET https://api.roic.ai/v3.0.0/stock-prices/{identifier}`).
+ * Free tier: ~2y history + low rpm; paid plans deepen history. Cursor-paginated
+ * (limit ≤1000). Shares the "roic" admitProviderRequests bucket with
+ * RoicAiEnrichmentProvider so enrichment + history cannot jointly over-burn.
+ */
+async function fetchRoic(symbol: string, startDate: string, key?: string): Promise<OHLCBar[] | null> {
+  if (!key) return null;
+  if ((process.env.ROIC_HISTORY_ENABLED ?? "on").toLowerCase() === "off") return null;
+  const credKey = await apiKeyFingerprint(key);
+  // Reserve one request for the first page; further pages re-admit.
+  if (admitProviderRequests("roic", credKey, 1) < 1) return null;
+
+  const to = new Date().toISOString().slice(0, 10);
+  // Plain ticker works for US names; exchange-prefixed form is accepted by the API too.
+  const identifier = encodeURIComponent(symbol);
+  let url: string | null =
+    `https://api.roic.ai/v3.0.0/stock-prices/${identifier}` +
+    `?apikey=${encodeURIComponent(key)}` +
+    `&date.gte=${encodeURIComponent(startDate)}` +
+    `&date.lte=${encodeURIComponent(to)}` +
+    `&adjustment=splits&order=asc&limit=1000`;
+
+  const all: OHLCBar[] = [];
+  let pages = 0;
+  const MAX_PAGES = 8; // 8×1000 >> 5y of daily bars
+  try {
+    while (url && pages < MAX_PAGES) {
+      if (pages > 0 && admitProviderRequests("roic", credKey, 1) < 1) break;
+      // Explicit types break TS7022 circular inference with `url` reassignment in the loop.
+      const json: RoicStockPricesResponse = await politeFetchJson<RoicStockPricesResponse>(url, {
+        headers: { Accept: "application/json" },
+      });
+      pages += 1;
+      const pageBars = parseRoicStockPrices(json?.data);
+      for (const b of pageBars) all.push(b);
+      const next: string | null =
+        typeof json?.next_page_url === "string" && json.next_page_url.trim()
+          ? json.next_page_url.trim()
+          : null;
+      // next_page_url is absolute; ensure apikey still present (some page tokens drop query).
+      if (next && !/[?&]apikey=/.test(next)) {
+        url = next.includes("?")
+          ? `${next}&apikey=${encodeURIComponent(key)}`
+          : `${next}?apikey=${encodeURIComponent(key)}`;
+      } else {
+        url = next;
+      }
+    }
+    recordProviderCall("roic", { service: "market-data", ok: all.length >= 2 });
+    // Dedupe by date (overlap across pages) keeping last write.
+    const byDate = new Map<string, OHLCBar>();
+    for (const b of all) byDate.set(String(b.time), b);
+    const bars = [...byDate.values()].sort((a, b) => String(a.time).localeCompare(String(b.time)));
+    return bars.length >= 2 ? bars : null;
+  } catch {
+    recordProviderCall("roic", { service: "market-data", ok: false });
+    return null;
+  }
+}
 
 /** Massive daily aggregates (Polygon-compatible REST). Generous limits — the preferred primary. */
 async function fetchMassive(symbol: string, startDate: string, key?: string): Promise<OHLCBar[] | null> {
@@ -554,5 +757,6 @@ function fetchImportedHistory(symbol: string): OHLCBar[] | null {
   const bars = appAClosesToBars(closes);
   return bars.length >= 2 ? bars : null;
 }
+
 
 

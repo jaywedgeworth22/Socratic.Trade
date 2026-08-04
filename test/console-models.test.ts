@@ -8,7 +8,7 @@ import { isOpenRouterRouted, modelDisplayName, providerForModel } from "../app/c
 // as OpenAI and every routed id showed its raw vendor-qualified string instead of a display name.
 describe("providerForModel — OpenRouter vendor-routing prefixes", () => {
   it("brands bare (pre-routing) ids correctly, unaffected by the fix", () => {
-    expect(providerForModel("claude-sonnet-latest")).toBe("anthropic");
+    expect(providerForModel("claude-sonnet-5")).toBe("anthropic");
     expect(providerForModel("grok-4.3")).toBe("xai");
     expect(providerForModel("gemini-3.5-flash")).toBe("gemini");
     expect(providerForModel("mistral-medium-3-5")).toBe("mistral");
@@ -40,9 +40,9 @@ describe("providerForModel — OpenRouter vendor-routing prefixes", () => {
 
 describe("modelDisplayName — strips the OpenRouter routing prefix before the curated lookup", () => {
   it("resolves a curated model routed through OpenRouter to its curated display name, not the raw id", () => {
-    expect(modelDisplayName("x-ai/grok-4.3")).toBe("Grok Latest");
-    expect(modelDisplayName("google/gemini-3.5-flash")).toBe("Gemini Flash Latest");
-    expect(modelDisplayName("anthropic/claude-sonnet-4-6")).toBe("Claude Sonnet Latest");
+    expect(modelDisplayName("x-ai/grok-4.5")).toBe("Grok 4.5");
+    expect(modelDisplayName("google/gemini-3.5-flash")).toBe("Gemini Flash");
+    expect(modelDisplayName("anthropic/claude-sonnet-4-6")).toBe("Claude Sonnet 5");
   });
 
   it("falls back to the bare id (prefix stripped) for a routed but uncatalogued model", () => {
@@ -50,11 +50,12 @@ describe("modelDisplayName — strips the OpenRouter routing prefix before the c
   });
 
   it("is unaffected for bare ids (pre-routing / direct calls)", () => {
-    expect(modelDisplayName("grok-4.3")).toBe("Grok Latest");
+    expect(modelDisplayName("grok-4.5")).toBe("Grok 4.5");
     expect(modelDisplayName("")).toBe("");
     expect(modelDisplayName(null)).toBe("");
   });
 });
+
 
 describe("isOpenRouterRouted — transport signal, separate from vendor branding", () => {
   it("is true for any vendor-qualified id", () => {

@@ -474,6 +474,7 @@ private struct ConnectedAccountSettingsRow: View {
     let account: ConnectedAccount
 
     private var operationID: String { "account.activate:\(account.id)" }
+    private var canActivate: Bool { store.canSubmit("account.activate") }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -489,6 +490,7 @@ private struct ConnectedAccountSettingsRow: View {
                 StatusPill("Active", color: AppPalette.positive, systemImage: "checkmark")
             } else if store.isBusy(operationID) {
                 ProgressView()
+                    .accessibilityLabel("Switching to \(account.label)")
             } else {
                 Button("Use") {
                     if account.environment.lowercased() == "live" {
@@ -497,8 +499,13 @@ private struct ConnectedAccountSettingsRow: View {
                         activate()
                     }
                 }
-                .buttonStyle(.bordered)
-                .disabled(!store.canSubmit("account.activate"))
+                .buttonStyle(.borderedProminent)
+                .tint(AppPalette.accent)
+                .disabled(!canActivate)
+                .opacity(canActivate ? 1 : 0.45)
+                .accessibilityHint(canActivate
+                    ? "Switch the active account to \(account.label)"
+                    : "Unavailable until the app loads account data")
             }
         }
         .alert("Use Live Brokerage Account?", isPresented: $confirmingLiveActivation) {

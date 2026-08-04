@@ -1,3 +1,7 @@
+**2026-08-04 — Final Verification of Model Slugs (AG).** Branch `agent/antigravity/openrouter-classifiers`. Replaced all legacy `-latest` model slugs with Provider Native Slugs (`gpt-5.6-sol`, `gpt-4o`, etc.) across the codebase. Cleaned up duplicate properties in model configuration files. Fixed test regressions in history tests by adding DB isolation to `historyTestDb` shared per-file. Fixed `isGpt56Model` regex. Gates verified: tsc clean, lint clean, full test suite passes. Landed cleanly via `land.sh`.
+Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
+
+
 # STATUS — current repo snapshot
 
 Snapshot only: what is true right now, what is blocked, what to do next. This file is
@@ -11,6 +15,16 @@ Last updated: 2026-08-03.
 
 **2026-08-04 — EOD Quote History Cache SQLite Migration (ANTIGRAVITY).** Migrated the legacy flat-file JSON EOD quote caching (`data/history-5y/`, etc.) in `src/lib/history.ts` to a fully SQLite-backed table `history_cache_eod` to resolve test failures and ensure robust silent-caching. Replaced `fetchLocalFlatFileHistory` with `fetchHistoryCacheEod`. Updated the `test/history.test.ts` suite to seed the SQLite DB directly. Full tests pass. Rollout: `docs/rollouts/2026-08-04-history-cache-eod-migration.md`.
 
+**2026-08-03 — Subdomain Host Routing & EOD Quote Caching Upgrade (ANTIGRAVITY, branch `agent/antigravity`).** Added `mobile.socratictrade.com` $\rightarrow$ `/mobile` and `console.socratictrade.com` $\rightarrow$ `/console` host-level routing in `middleware.ts`. Upgraded EOD price history in `src/lib/history.ts`: added `isBarSeriesFresh` staleness detection, `mergeOHLCBars` merging for stale flat files, auto-persistence of fresh provider bars into SQLite `imported_price_eod` and disk, and `eod_cache_stale` audit logging. All gates green (`tsc`, `lint`, vitest 27/27, Next.js `build`). Rollout: `docs/rollouts/2026-08-03-eod-quote-caching-and-subdomain-routing.md`.
+
+**2026-08-03 — iOS/mobile account switch hangs (MONET, branch `monet/ios-account-switch-fix`).**
+Owner screenshots: Roth IRA spinner stuck, Sandbox still Active, Home stale + 2 queued · 1
+running. Root cause: `account.activate` waited on the global sequential mobile worker behind
+`strategy.run_once`, and clients also blocked switch when the snapshot was stale. Fix: run
+`account.activate` immediately (same path as stop), allow switch on stale snapshot (iOS + PWA),
+clear iOS busy spinner from the terminal POST before snapshot reload. Focused mobile tests
+16/16; full gates via land.sh. Rollout:
+`docs/rollouts/2026-08-03-ios-account-switch-immediate.md`.
 **2026-08-03 — Console RAG Evidence Card Deduplication (ANTIGRAVITY, branch `agent/antigravity/mobile-pwa-feedback`).** Fixed duplicate RAG evidence rendering (`sec-edgar` and `Retrieved 10 K` cards showing identical document receipt & score) in proposal drawer by deduplicating RAG attributions against `decision.evidence` in `deriveEvidenceRows` (`app/console/page.tsx`). Rollout: `docs/rollouts/2026-08-03-dedupe-evidence-cards.md`.
 
 **2026-08-03 — Console dashboard `topCandidates.slice` white-screen (GROK, branch
@@ -139,5 +153,7 @@ tests, build clean. Rollout: `docs/rollouts/2026-08-02-data-provider-round2.md`.
   notes filed under another's heading (preserved as evidence in `docs/status-archive.md`).
   Keep entries to a single line where you can, and re-read your own row after a merge.
 - **Node 24 is required.** The Mac's default `node` is v26 and mass-fails the suite on a
-  `better-sqlite3` ABI mismatch. Prefix gate commands with
   `export PATH="/opt/homebrew/opt/node@24/bin:$PATH"`.
+
+**2026-08-04 — Model slug migration tests and UI mapping fixes (Antigravity).**
+Fixed `gpt-5.4-mini` regex inclusion in reasoning model capabilities which was causing test suite failures under Node 24. Also cleaned up `MODEL_DISPLAY_NAME` in `app/console/lib/models.ts` to strictly follow user-provided slugs, completely removing any legacy `-latest` suffixes. Verified tests locally.

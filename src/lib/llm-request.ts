@@ -137,8 +137,9 @@ function isDeepSeekV4Model(model: string | undefined): boolean {
 }
 
 function isGpt56Model(model: string | undefined): boolean {
-  return /^(gpt-5\.6|gpt-(?:nano|mini|luna|terra|sol|4o)-latest)(?:$|[-.:_])/i.test(lowerModel(model));
+  return /^(gpt-5\.6|gpt-5\.6-luna|gpt-5\.6-terra|gpt-5\.6-sol)(?:$|[-.:_])/i.test(lowerModel(model));
 }
+
 
 export function reasoningCapabilityForModel(model: string | undefined): LlmReasoningCapability | undefined {
   if (isGpt56Model(model)) {

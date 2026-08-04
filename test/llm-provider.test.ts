@@ -29,7 +29,7 @@ describe("resolveLlmEndpoint", () => {
 
   it("routes to OpenRouter when user has an OpenRouter key", () => {
     setApiKey("test-user-or", "openrouter", "sk-or-test-key");
-    const endpoint = resolveLlmEndpoint({ llmModel: "claude-sonnet-latest" }, "test-user-or");
+    const endpoint = resolveLlmEndpoint({ llmModel: "claude-sonnet-5" }, "test-user-or");
     expect(endpoint.provider).toBe("openrouter");
     expect(endpoint.url).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(endpoint.key).toBe("sk-or-test-key");
@@ -39,7 +39,7 @@ describe("resolveLlmEndpoint", () => {
 
   it("falls back to native Anthropic endpoint when user has an Anthropic key but no OpenRouter key", () => {
     setApiKey("test-user-anthropic", "anthropic", "sk-ant-test-key");
-    const endpoint = resolveLlmEndpoint({ llmModel: "claude-sonnet-latest" }, "test-user-anthropic");
+    const endpoint = resolveLlmEndpoint({ llmModel: "claude-sonnet-5" }, "test-user-anthropic");
     expect(endpoint.provider).toBe("anthropic");
     expect(endpoint.url).toBe("https://api.anthropic.com/v1/messages");
     expect(endpoint.key).toBe("sk-ant-test-key");
@@ -49,7 +49,7 @@ describe("resolveLlmEndpoint", () => {
 
   it("falls back to native xAI endpoint when user has an xAI key but no OpenRouter key", () => {
     setApiKey("test-user-xai", "xai", "xai-test-key");
-    const endpoint = resolveLlmEndpoint({ llmModel: "grok-latest" }, "test-user-xai");
+    const endpoint = resolveLlmEndpoint({ llmModel: "grok-4.5" }, "test-user-xai");
     expect(endpoint.provider).toBe("xai");
     expect(endpoint.url).toBe("https://api.x.ai/v1/chat/completions");
     expect(endpoint.key).toBe("xai-test-key");
@@ -68,7 +68,7 @@ describe("resolveLlmEndpoint", () => {
   });
 
   it("fails closed (key undefined) when user has no keys at all", () => {
-    const endpoint = resolveLlmEndpoint({ llmModel: "claude-sonnet-latest" }, "user-with-no-keys");
+    const endpoint = resolveLlmEndpoint({ llmModel: "claude-sonnet-5" }, "user-with-no-keys");
     expect(endpoint.key).toBeUndefined();
   });
 });

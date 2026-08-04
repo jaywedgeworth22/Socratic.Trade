@@ -67,7 +67,7 @@ describe("llm-request — model resolution", () => {
     // capability, and only high|none. small-2603 rejects the reasoning prompt mode outright,
     // and no other family id is evidence-backed — they all get a plain chat body instead.
     expect(reasoningCapabilityForModel("mistral-medium-3-5")?.options.map((o) => o.value)).toEqual(["none", "high"]);
-    expect(reasoningCapabilityForModel("mistral-small-2603")).toBeUndefined();
+    expect(reasoningCapabilityForModel("mistral-small-latest")).toBeUndefined();
     expect(reasoningCapabilityForModel("mistral-large-2512")).toBeUndefined();
     expect(reasoningCapabilityForModel("magistral-medium-2506")).toBeUndefined();
     expect(reasoningCapabilityForModel("deepseek-v4-pro")?.options.map((o) => o.value)).toEqual(["none", "high", "max"]);
@@ -96,7 +96,7 @@ describe("llm-request — model resolution", () => {
     expect(normalizeReasoningEffortForModel("mistral-medium-3-5", "medium")).toBe("none");
     expect(normalizeReasoningEffortForModel("mistral-medium-3-5", "high")).toBe("high");
     expect(normalizeReasoningEffortForModel("mistral-medium-3-5", "xhigh")).toBe("high");
-    expect(normalizeReasoningEffortForModel("mistral-small-2603", "high")).toBeUndefined();
+    expect(normalizeReasoningEffortForModel("mistral-small-latest", "high")).toBeUndefined();
   });
 
   it("the rotation sentinel never gains a REAL capability — server paths keep failing closed on it", () => {
@@ -243,9 +243,9 @@ describe("llm-request — withLlmRequestBounds", () => {
 
     // mistral-small-2603 rejects reasoning params entirely ("Reasoning prompt mode is not
     // enabled for this model") — it must get a plain temperature body with no reasoning keys.
-    const mistralSmall = withLlmRequestBounds({ model: "mistral-small-2603" }, "chat-completions", {
+    const mistralSmall = withLlmRequestBounds({ model: "mistral-small-latest" }, "chat-completions", {
       maxOutputTokens: 1500,
-      model: "mistral-small-2603",
+      model: "mistral-small-latest",
       reasoningEffort: "high"
     });
     expect("reasoning_effort" in mistralSmall).toBe(false);
