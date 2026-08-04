@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
-   LastUpgradeVersion = "1430"
+   LastUpgradeVersion = "2630"
    version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
@@ -15,10 +15,10 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "078B07A7B61D2B682DF39746"
+               BlueprintIdentifier = "D2582043B5817BEFCDC92620"
                BuildableName = "SocraticTrade.app"
                BlueprintName = "SocraticTrade"
-               ReferencedContainer = "container:SocraticTrade.xcodeproj">
+               ReferencedContainer = "container:Socratic Trade.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
          <BuildActionEntry
@@ -29,10 +29,10 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "39726A3EA605E050462F4BF0"
+               BlueprintIdentifier = "67CB33DBCE2CA3B6C5A9F6EE"
                BuildableName = "SocraticTradeTests.xctest"
                BlueprintName = "SocraticTradeTests"
-               ReferencedContainer = "container:SocraticTrade.xcodeproj">
+               ReferencedContainer = "container:Socratic Trade.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -46,10 +46,10 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "078B07A7B61D2B682DF39746"
+            BlueprintIdentifier = "D2582043B5817BEFCDC92620"
             BuildableName = "SocraticTrade.app"
             BlueprintName = "SocraticTrade"
-            ReferencedContainer = "container:SocraticTrade.xcodeproj">
+            ReferencedContainer = "container:Socratic Trade.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <Testables>
@@ -58,10 +58,10 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "39726A3EA605E050462F4BF0"
+               BlueprintIdentifier = "67CB33DBCE2CA3B6C5A9F6EE"
                BuildableName = "SocraticTradeTests.xctest"
                BlueprintName = "SocraticTradeTests"
-               ReferencedContainer = "container:SocraticTrade.xcodeproj">
+               ReferencedContainer = "container:Socratic Trade.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -82,10 +82,10 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "078B07A7B61D2B682DF39746"
+            BlueprintIdentifier = "D2582043B5817BEFCDC92620"
             BuildableName = "SocraticTrade.app"
             BlueprintName = "SocraticTrade"
-            ReferencedContainer = "container:SocraticTrade.xcodeproj">
+            ReferencedContainer = "container:Socratic Trade.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -99,10 +99,10 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "078B07A7B61D2B682DF39746"
+            BlueprintIdentifier = "D2582043B5817BEFCDC92620"
             BuildableName = "SocraticTrade.app"
             BlueprintName = "SocraticTrade"
-            ReferencedContainer = "container:SocraticTrade.xcodeproj">
+            ReferencedContainer = "container:Socratic Trade.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
