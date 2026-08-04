@@ -3,7 +3,15 @@ import SwiftUI
 enum AppPalette {
     static let background = Color(uiColor: .systemGroupedBackground)
     static let card = Color(uiColor: .secondarySystemGroupedBackground)
-    static let accent = Color.indigo
+    /// Brand teal — matches web `--brand-accent` (#12616f light) / `--brand-accent-dark` (#58c7d3).
+    static let accent = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            // #58c7d3
+            return UIColor(red: 88 / 255, green: 199 / 255, blue: 211 / 255, alpha: 1)
+        }
+        // #12616f
+        return UIColor(red: 18 / 255, green: 97 / 255, blue: 111 / 255, alpha: 1)
+    })
     static let positive = Color.green
     static let warning = Color.orange
     static let negative = Color.red

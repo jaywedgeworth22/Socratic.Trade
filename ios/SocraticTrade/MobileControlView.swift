@@ -4,10 +4,14 @@ struct MobileControlView: View {
     @EnvironmentObject private var store: MobileStore
     @State private var selectedTab: AppTab = .home
 
+    private var pendingProposalCount: Int {
+        store.snapshot?.pendingProposals.count ?? 0
+    }
+
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                HomeView()
+                HomeView(selectedTab: $selectedTab)
             }
             .tabItem { AppTab.home.label }
             .tag(AppTab.home)
@@ -17,7 +21,7 @@ struct MobileControlView: View {
             }
             .tabItem { AppTab.proposals.label }
             .tag(AppTab.proposals)
-            .badge(store.snapshot?.pendingProposals.count ?? 0)
+            .badge(pendingProposalCount)
 
             NavigationStack {
                 MarketsView()
@@ -41,7 +45,7 @@ struct MobileControlView: View {
     }
 }
 
-private enum AppTab: String, CaseIterable, Identifiable {
+enum AppTab: String, CaseIterable, Identifiable {
     case home
     case proposals
     case markets

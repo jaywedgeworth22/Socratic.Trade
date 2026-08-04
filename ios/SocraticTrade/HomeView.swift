@@ -1,11 +1,42 @@
 import SwiftUI
 
 struct HomeView: View {
+    @Binding var selectedTab: AppTab
+    @EnvironmentObject private var store: MobileStore
     @State private var presentedSheet: HomeSheet?
 
     var body: some View {
         SnapshotScaffold { snapshot in
-            AgentOverviewCard(snapshot: snapshot)
+            let readinessComplete = snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse
+            let pendingCount = snapshot.pendingProposals.count
+
+            // Incomplete setup: checklist is the dominant hero surface.
+            if !readinessComplete {
+                HomeReadinessChecklistCard(snapshot: snapshot) {
+                    presentedSheet = .settings
+                }
+            }
+
+            // Pending proposals: top urgency CTA → Proposals tab.
+            if pendingCount > 0 {
+                HomePendingProposalsCTA(count: pendingCount) {
+                    selectedTab = .proposals
+                }
+            }
+
+            // Complete setup: equity + day P&L + agent state + primary Run once CTA.
+            // (Pending-proposal review is the dedicated top CTA above.)
+            if readinessComplete {
+                HomeReadyHeroCard(
+                    snapshot: snapshot,
+                    isRunBusy: store.isBusy("strategy.run_once"),
+                    canRun: store.canSubmit("strategy.run_once"),
+                    onRunOnce: { Task { await store.submit("strategy.run_once") } }
+                )
+            } else {
+                AgentOverviewCard(snapshot: snapshot, showInlineReadiness: false)
+            }
+
             StrategyControlsCard(snapshot: snapshot)
             PortfolioOverviewCard(snapshot: snapshot)
             PerformanceOverviewCard(snapshot: snapshot)
@@ -38,8 +69,212 @@ private enum HomeSheet: String, Identifiable {
     var id: String { rawValue }
 }
 
+// MARK: - Urgency / hero surfaces
+
+private struct HomeReadinessChecklistCard: View {
+    let snapshot: MobileSnapshot
+    let openSettings: () -> Void
+
+    var body: some View {
+        AppCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Finish setup")
+                            .font(.title2.weight(.bold))
+                        Text("A few steps before the agent can run.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    StatusPill("Needs attention", color: AppPalette.warning, systemImage: "exclamationmark.triangle.fill")
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    checklistRow(
+                        done: snapshot.readiness.hasAccount,
+                        title: "Connect & select an account",
+                        detail: snapshot.readiness.hasAccount
+                            ? (snapshot.readiness.activeConnectedAccount?.label ?? "Account ready")
+                            : "Connect a broker in Socratic.Trade, then select it here."
+                    )
+                    checklistRow(
+                        done: snapshot.readiness.hasUniverse,
+                        title: "Add a trading universe",
+                        detail: snapshot.readiness.hasUniverse
+                            ? "Index or symbols configured"
+                            : "Add an included index or symbols on the web console."
+                    )
+                }
+
+                if !snapshot.readiness.hasAccount {
+                    Button(action: openSettings) {
+                        Label("Open Account & Settings", systemImage: "person.crop.circle")
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(AppPalette.accent)
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Setup checklist")
+    }
+
+    private func checklistRow(done: Bool, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundStyle(done ? AppPalette.positive : AppPalette.warning)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title). \(done ? "Complete" : "Incomplete"). \(detail)")
+    }
+}
+
+private struct HomePendingProposalsCTA: View {
+    let count: Int
+    let onReview: () -> Void
+
+    var body: some View {
+        Button(action: onReview) {
+            AppCard {
+                HStack(spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(AppPalette.accent.opacity(0.15))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "checklist")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(AppPalette.accent)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(count == 1 ? "1 proposal needs a decision" : "\(count) proposals need a decision")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.leading)
+                        Text("Review size, rationale, and execution environment.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(AppPalette.accent)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens the Proposals tab")
+    }
+}
+
+private struct HomeReadyHeroCard: View {
+    let snapshot: MobileSnapshot
+    let isRunBusy: Bool
+    let canRun: Bool
+    let onRunOnce: () -> Void
+
+    private var usesLiveMetrics: Bool {
+        snapshot.readiness.activeConnectedAccount?.environment == "live"
+    }
+
+    private var unrealizedPnl: Double? {
+        guard let performance = snapshot.performance else { return nil }
+        return usesLiveMetrics ? performance.liveUnrealizedPnl : performance.paperUnrealizedPnl
+    }
+
+    private var stateColor: Color {
+        switch snapshot.readiness.systemState.lowercased() {
+        case "active": return AppPalette.positive
+        case "close_only", "liquidating": return AppPalette.warning
+        default: return AppPalette.negative
+        }
+    }
+
+    private var pnlTint: Color {
+        guard let unrealizedPnl else { return AppPalette.accent }
+        return unrealizedPnl >= 0 ? AppPalette.positive : AppPalette.negative
+    }
+
+    var body: some View {
+        AppCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(snapshot.readiness.activeConnectedAccount?.label ?? "Socratic agent")
+                            .font(.title2.weight(.bold))
+                        Text(snapshot.marketSession.capitalized + " · " + snapshot.readiness.strategyAuthority.capitalized)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    StatusPill(
+                        snapshot.readiness.systemState.replacingOccurrences(of: "_", with: " ").capitalized,
+                        color: stateColor,
+                        systemImage: snapshot.readiness.systemState == "active" ? "bolt.fill" : "pause.fill"
+                    )
+                }
+
+                HStack(spacing: 12) {
+                    heroMetric(
+                        title: "Equity",
+                        value: AppFormat.money(snapshot.portfolio?.totalMarketValue, compact: true),
+                        tint: AppPalette.accent
+                    )
+                    heroMetric(
+                        title: "Unrealized P&L",
+                        value: AppFormat.money(unrealizedPnl),
+                        tint: pnlTint
+                    )
+                }
+
+                CommandButton(
+                    "Run once",
+                    systemImage: "sparkles",
+                    isBusy: isRunBusy,
+                    isDisabled: !canRun,
+                    prominent: true,
+                    action: onRunOnce
+                )
+            }
+        }
+    }
+
+    private func heroMetric(title: String, value: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(tint.opacity(0.09), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct AgentOverviewCard: View {
     let snapshot: MobileSnapshot
+    var showInlineReadiness: Bool = true
 
     private var stateColor: Color {
         switch snapshot.readiness.systemState.lowercased() {
@@ -81,7 +316,7 @@ private struct AgentOverviewCard: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
 
-                if !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
+                if showInlineReadiness, !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
                     HStack(alignment: .top, spacing: 9) {
                         Image(systemName: "exclamationmark.circle.fill")
                             .foregroundStyle(AppPalette.warning)
