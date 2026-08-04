@@ -82,3 +82,12 @@ only pruning non-benchmark docs after build.
 3. `bash scripts/verify-deploy-sha.sh origin/main`.
 4. Optional follow-up: Next standalone output for sub-1 GB images; raise Coolify
    Horizon timeout only as belt-and-suspenders (root fix is image size).
+
+## Follow-up 2: drop RUN chown entirely
+
+Deploy 171 reached `next build` DONE (186s) and prune DONE (127s) then sat
+in `RUN chown -R node:node /app` for 20+ minutes and would have timed out
+again. Recursive chown on pruned node_modules is still too slow on this box.
+
+Fix: omit ownership rewrite. Image files stay root-owned 755/644 (readable by
+`USER node`); writable state is on the Coolify `/app/data` volume.
