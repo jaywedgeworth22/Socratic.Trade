@@ -33,7 +33,7 @@ dbs:
         # git-clone via receive-window clamping. 10s cuts the leak rate 10x.
         # TRADEOFF: replica RPO 1s -> 10s. NOT a fix for the leak itself — see
         # docs/rollouts/2026-07-19-deploy-wedge-diagnosis.md.
-        sync-interval: 10s
+        sync-interval: 30s
         bucket: ${AWS_S3_BUCKET_NAME}
         path: trading-live/app.db
         # Literal, not ${AWS_REGION:-auto}: litestream does its own ${VAR}
