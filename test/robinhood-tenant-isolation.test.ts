@@ -1,3 +1,5 @@
+import { getDb } from "../src/lib/db";
+
 // Regression tests for the per-user Robinhood broker-token tenant-isolation fix.
 //
 // PR #42 made the Robinhood OAuth token per-user (keyed by userId), but two read-only
