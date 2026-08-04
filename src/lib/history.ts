@@ -317,15 +317,17 @@ async function fetchRoic(symbol: string, startDate: string, key?: string): Promi
   try {
     while (url && pages < MAX_PAGES) {
       if (pages > 0 && admitProviderRequests("roic", credKey, 1) < 1) break;
-      const json = await politeFetchJson<RoicStockPricesResponse>(url, {
+      // Explicit types break TS7022 circular inference with `url` reassignment in the loop.
+      const json: RoicStockPricesResponse = await politeFetchJson<RoicStockPricesResponse>(url, {
         headers: { Accept: "application/json" },
       });
       pages += 1;
       const pageBars = parseRoicStockPrices(json?.data);
       for (const b of pageBars) all.push(b);
-      const next = typeof json?.next_page_url === "string" && json.next_page_url.trim()
-        ? json.next_page_url.trim()
-        : null;
+      const next: string | null =
+        typeof json?.next_page_url === "string" && json.next_page_url.trim()
+          ? json.next_page_url.trim()
+          : null;
       // next_page_url is absolute; ensure apikey still present (some page tokens drop query).
       if (next && !/[?&]apikey=/.test(next)) {
         url = next.includes("?")

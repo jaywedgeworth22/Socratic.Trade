@@ -44,3 +44,9 @@ npx vitest run test/history.test.ts
   dense local history without per-request ROIC calls.
 - Consider exchange-prefixed identifiers (`NASDAQ:AAPL`) if plain tickers 404 for
   dual-listed names.
+
+## Follow-up 2026-08-04 (GROK) — CI tsc fix
+
+`verify-hosted` failed on TS7022 circular inference for `json` / `next` in
+`fetchRoic` pagination loop (reassignment of `url`). Fixed with explicit type
+annotations. `npx tsc --noEmit` clean; `test/history.test.ts` 25/25.
