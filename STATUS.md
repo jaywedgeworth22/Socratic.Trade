@@ -1,8 +1,20 @@
+**2026-08-04 — GROK: retire direct FMP / QuiverQuant / Unusual Whales.** Owner:
+Socratic.Trade must not call those vendors; get congressional + FMP-class data from
+Congress.Trade. Hard ban at registration + request choke points; App A fundamentals /
+congress-source / analytics default ON. Branch `grok/no-direct-fmp-quiver-uw`.
+Rollout: `docs/rollouts/2026-08-04-retire-direct-fmp-quiver-uw.md`.
+
 **2026-08-04 — Final Verification of Model Slugs (AG).** Branch `agent/antigravity/openrouter-classifiers`. Replaced all legacy `-latest` model slugs with Provider Native Slugs (`gpt-5.6-sol`, `gpt-4o`, etc.) across the codebase. Cleaned up duplicate properties in model configuration files. Fixed test regressions in history tests by adding DB isolation to `historyTestDb` shared per-file. Fixed `isGpt56Model` regex. Gates verified: tsc clean, lint clean, full test suite passes. Landed cleanly via `land.sh`.
 Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
 
 # STATUS — current repo snapshot
+
+**2026-08-04 — GROK: retire direct FMP/Quiver/UW (use Congress.Trade).** Hard ban
+on direct FMP, QuiverQuant, and Unusual Whales sockets; cascade never registers those
+providers. Congress.Trade fundamentals, disclosure source, and analytics default ON.
+Branch `grok/no-direct-fmp-quiver-uw`. Rollout:
+`docs/rollouts/2026-08-04-retire-direct-fmp-quiver-uw.md`.
 
 **2026-08-04 — GROK: paper-account learning parity (Learning Review).** Owner: paper
 trades are first-class for model/task comparison unless a definite paper-exclusive

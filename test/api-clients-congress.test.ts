@@ -23,11 +23,11 @@ afterEach(() => {
 });
 
 describe("api-clients/congress gating flags", () => {
-  it("defaults to false", () => {
+  it("defaults: price reads off; fundamentals/congress-source/analytics on (replace FMP/Quiver)", () => {
     expect(congressReadsEnabled()).toBe(false);
-    expect(congressFundamentalsEnabled()).toBe(false);
-    expect(congressAsCongressSourceEnabled()).toBe(false);
-    expect(congressAnalyticsEnabled()).toBe(false);
+    expect(congressFundamentalsEnabled()).toBe(true);
+    expect(congressAsCongressSourceEnabled()).toBe(true);
+    expect(congressAnalyticsEnabled()).toBe(true);
   });
 
   it("parses true/1/on", () => {
@@ -40,6 +40,15 @@ describe("api-clients/congress gating flags", () => {
     expect(congressFundamentalsEnabled()).toBe(true);
     expect(congressAsCongressSourceEnabled()).toBe(true);
     expect(congressAnalyticsEnabled()).toBe(true);
+  });
+
+  it("explicit off disables default-on flags", () => {
+    process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED = "off";
+    process.env.CONGRESS_TRADE_AS_CONGRESS_SOURCE = "0";
+    process.env.CONGRESS_ANALYTICS_ENABLED = "false";
+    expect(congressFundamentalsEnabled()).toBe(false);
+    expect(congressAsCongressSourceEnabled()).toBe(false);
+    expect(congressAnalyticsEnabled()).toBe(false);
   });
 });
 
