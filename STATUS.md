@@ -15,6 +15,14 @@ Last updated: 2026-08-03.
 
 **2026-08-03 — Subdomain Host Routing & EOD Quote Caching Upgrade (ANTIGRAVITY, branch `agent/antigravity`).** Added `mobile.socratictrade.com` $\rightarrow$ `/mobile` and `console.socratictrade.com` $\rightarrow$ `/console` host-level routing in `middleware.ts`. Upgraded EOD price history in `src/lib/history.ts`: added `isBarSeriesFresh` staleness detection, `mergeOHLCBars` merging for stale flat files, auto-persistence of fresh provider bars into SQLite `imported_price_eod` and disk, and `eod_cache_stale` audit logging. All gates green (`tsc`, `lint`, vitest 27/27, Next.js `build`). Rollout: `docs/rollouts/2026-08-03-eod-quote-caching-and-subdomain-routing.md`.
 
+**2026-08-03 — iOS/mobile account switch hangs (MONET, branch `monet/ios-account-switch-fix`).**
+Owner screenshots: Roth IRA spinner stuck, Sandbox still Active, Home stale + 2 queued · 1
+running. Root cause: `account.activate` waited on the global sequential mobile worker behind
+`strategy.run_once`, and clients also blocked switch when the snapshot was stale. Fix: run
+`account.activate` immediately (same path as stop), allow switch on stale snapshot (iOS + PWA),
+clear iOS busy spinner from the terminal POST before snapshot reload. Focused mobile tests
+16/16; full gates via land.sh. Rollout:
+`docs/rollouts/2026-08-03-ios-account-switch-immediate.md`.
 **2026-08-03 — Console RAG Evidence Card Deduplication (ANTIGRAVITY, branch `agent/antigravity/mobile-pwa-feedback`).** Fixed duplicate RAG evidence rendering (`sec-edgar` and `Retrieved 10 K` cards showing identical document receipt & score) in proposal drawer by deduplicating RAG attributions against `decision.evidence` in `deriveEvidenceRows` (`app/console/page.tsx`). Rollout: `docs/rollouts/2026-08-03-dedupe-evidence-cards.md`.
 
 **2026-08-03 — Console dashboard `topCandidates.slice` white-screen (GROK, branch

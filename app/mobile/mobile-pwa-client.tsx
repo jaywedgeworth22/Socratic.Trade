@@ -212,6 +212,8 @@ export type MobileCommandAvailability = {
   canSubmitAccountCommand: boolean;
   canSubmitTrading: boolean;
   canSubmitStop: boolean;
+  /** Account switch is metadata-only and runs immediately server-side; allowed even when snapshot is stale. */
+  canSubmitAccountSwitch: boolean;
 };
 
 export type MobileSnapshotFreshness = "unknown" | "refreshing" | "fresh" | "stale";
@@ -301,6 +303,10 @@ export function getMobileCommandAvailability(
     // Halting is protective and does not depend on scan-universe or snapshot freshness. Once this
     // client has loaded one valid snapshot, keep STOP available through refreshes/stale-data errors.
     canSubmitStop: canReachServer,
+    // Account switch (account.activate) is a pure active-pointer flip and now executes immediately
+    // on the server — do not gate it on portfolio freshness. Users often switch away while data is
+    // stale or a strategy run is marked in backlog history.
+    canSubmitAccountSwitch: canReachServer,
   };
 }
 
@@ -651,12 +657,11 @@ export function MobilePwaClient() {
               <select
                 className="min-h-10 w-full appearance-none rounded-md border border-line bg-surface px-3 py-1.5 pr-8 text-sm font-medium text-fg outline-none focus:border-accent disabled:opacity-50"
                 value={connectedAccounts.find((a) => a.isActive)?.id ?? ""}
-                disabled={!commandAvailability.canSubmit || busyCommand === "account.activate"}
+                disabled={!commandAvailability.canSubmitAccountSwitch || busyCommand === "account.activate"}
                 onChange={(e) => {
                   const selectedId = e.target.value;
-                  if (selectedId) {
-                    void submitCommand("account.activate", { accountId: selectedId }, { key: `account.activate:${selectedId}` });
-                  }
+                  if (!selectedId || selectedId === connectedAccounts.find((a) => a.isActive)?.id) return;
+                  void submitCommand("account.activate", { accountId: selectedId }, { key: `account.activate:${selectedId}` });
                 }}
                 aria-label="Select connected account"
               >

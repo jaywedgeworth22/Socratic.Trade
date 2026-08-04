@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
-import { clearHistoryCache, fetchDailyOHLC, parseStooqCsv, toBusinessDay } from "../src/lib/history";
+import { clearHistoryCache, fetchDailyOHLC, parseRoicStockPrices, parseStooqCsv, toBusinessDay } from "../src/lib/history";
 import { clearMassiveRestBudgetForTests } from "../src/lib/market-signals/massive";
 import { clearMarketDataDemandsForTests, deleteUserApiKey, getDb, upsertConnectedAccount, upsertUserApiKey } from "../src/lib/db";
 import { subscribeDashboardEvents, type DashboardEvent } from "../src/lib/events";
@@ -23,8 +23,11 @@ beforeEach(() => {
   delete process.env.MASSIVE_HISTORY_ENABLED;
   delete process.env.MARKETSTACK_API_KEY;
   delete process.env.TIINGO_API_KEY;
+  delete process.env.ROIC_API_KEY;
+  delete process.env.ROIC_HISTORY_ENABLED;
   delete process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY;
   resetProviderQuotaState("tiingo");
+  resetProviderQuotaState("roic");
   // Tiingo is per-user-only tier (db-api-keys.ts) — a prior test's upsertUserApiKey("local", "tiingo", …)
   // would otherwise persist across tests sharing historyTestDb, same concern as the Tradier row below.
   deleteUserApiKey("local", "tiingo");
@@ -59,6 +62,25 @@ describe("toBusinessDay", () => {
     expect(toBusinessDay("2026-06-18T14:00:00Z")).toBe("2026-06-18");
     expect(toBusinessDay(undefined)).toBeUndefined();
     expect(toBusinessDay("garbage")).toBeUndefined();
+  });
+});
+
+describe("parseRoicStockPrices", () => {
+  it("maps ROIC v3 stock-prices rows and sorts ascending by date", () => {
+    const bars = parseRoicStockPrices([
+      { date: "2026-06-17", open: 11, high: 12, low: 10, close: 11.5, volume: 2000 },
+      { date: "2026-06-16", open: 10, high: 11, low: 9, close: 10.5, volume: 1000 },
+      { date: "bad", close: "x" },
+      null,
+    ]);
+    expect(bars).toHaveLength(2);
+    expect(bars[0]).toMatchObject({ time: "2026-06-16", close: 10.5, volume: 1000, open: 10 });
+    expect(bars[1]).toMatchObject({ time: "2026-06-17", close: 11.5, volume: 2000 });
+  });
+
+  it("returns [] for non-array payloads", () => {
+    expect(parseRoicStockPrices(null)).toEqual([]);
+    expect(parseRoicStockPrices({ data: [] })).toEqual([]);
   });
 });
 
@@ -148,6 +170,39 @@ describe("fetchDailyOHLC", () => {
     const bars = await fetchDailyOHLC("AAPL");
     expect(bars).not.toBeNull();
     expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer tradier-inactive-key" });
+  });
+
+  it("uses ROIC.ai after Massive miss and before Tradier/Tiingo when ROIC_API_KEY is set", async () => {
+    // Ensure earlier keyed tiers do not short-circuit: no Massive/Tradier keys, ROIC wins.
+    delete process.env.MASSIVE_API_KEY;
+    delete process.env.TIINGO_API_KEY;
+    delete process.env.MARKETSTACK_API_KEY;
+    process.env.ROIC_API_KEY = "roic-history-test-key";
+    process.env.ROIC_HISTORY_ENABLED = "on";
+    const roicBody = JSON.stringify({
+      data: [
+        { date: "2026-06-16", open: 40, high: 41, low: 39, close: 40.5, volume: 5000 },
+        { date: "2026-06-17", open: 40.5, high: 42, low: 40, close: 41.2, volume: 6000 },
+      ],
+      next_page_url: null,
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes("api.roic.ai/v3.0.0/stock-prices/")) {
+        return new Response(roicBody, { status: 200 });
+      }
+      return new Response("unexpected source", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL");
+    expect(bars).not.toBeNull();
+    expect(bars).toHaveLength(2);
+    expect(bars![0]).toMatchObject({ time: "2026-06-16", close: 40.5, volume: 5000 });
+    expect(bars![1]).toMatchObject({ time: "2026-06-17", close: 41.2 });
+    const roicCall = fetchMock.mock.calls.find(([url]) => String(url).includes("api.roic.ai"));
+    expect(roicCall).toBeTruthy();
+    expect(String(roicCall![0])).toContain("adjustment=splits");
+    expect(String(roicCall![0])).toContain("apikey=roic-history-test-key");
   });
 
   it("uses Tiingo ahead of Marketstack, applying adjClose-scaled O/H/L", async () => {
