@@ -43,7 +43,7 @@
     "@pinecone-database/pinecone": "^8.0.0",
     "@sentry/nextjs": "^10.69.0",
     "@xyflow/react": "^12.11.2",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.2",
     "cheerio": "^1.2.0",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
