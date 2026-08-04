@@ -352,7 +352,7 @@ describe("usage-budget Phase 2: enforcement ON + skip", () => {
       })
     );
 
-    await seedTestAccountAndPolicy({ llmModel: "openai/gpt-5.4-mini" });
+    await seedTestAccountAndPolicy({ llmModel: "openai/gpt-5.4-nano" });
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const { listAudit, listFillEvents, listNotificationEvents } = await import("../src/lib/db");
 
