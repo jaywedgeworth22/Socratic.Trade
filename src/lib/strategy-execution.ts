@@ -883,6 +883,40 @@ export async function executeProposal(
         : 0
     });
 
+    if (decision.quoteStale) {
+      const ageText = decision.quoteStale.ageSec !== undefined ? `${decision.quoteStale.ageSec}s old` : "missing/unparseable";
+      audit(
+        "quote_staleness_warn",
+        {
+          proposalId,
+          symbol: proposal.symbol,
+          side: proposal.side,
+          ageSec: decision.quoteStale.ageSec,
+          limitPrice: proposal.limitPrice,
+          referencePrice: decision.quoteStale.referencePrice,
+          originalType: decision.quoteStale.originalType,
+          originalLimitPrice: decision.quoteStale.originalLimitPrice
+        },
+        userId,
+        policy.connectedAccountId
+      );
+      await sendNotification(
+        {
+          type: "provider_degraded",
+          title: `Stale Quote Warning: ${proposal.symbol} quote was ${ageText}`,
+          payload: {
+            proposalId,
+            symbol: proposal.symbol,
+            side: proposal.side,
+            ageSec: decision.quoteStale.ageSec,
+            limitPrice: proposal.limitPrice,
+            referencePrice: decision.quoteStale.referencePrice
+          }
+        },
+        { policy, userId }
+      );
+    }
+
     // Auditable wash-sale trail on the approval path — never silent. For honored overrides the
     // token ties this execution back to the exact escalated card the owner approved; for IRA
     // disregards the record carries the verbatim note + priced provenance.

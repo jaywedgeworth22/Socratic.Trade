@@ -115,8 +115,8 @@ describe("chat draft policy bridge", () => {
     expect(response.status).toBe(201);
     const body = await response.json();
     expect(body.proposalId).toBeTruthy();
-    // Proves staleness DID fire (reason present) but we staged anyway rather than failing closed.
-    expect((body.decision?.reasons ?? []).join(" ")).toContain("staleness_gate");
+    // Proves staleness DID fire (metadata present) but we staged anyway rather than failing closed.
+    expect(body.decision?.quoteStale).toBeDefined();
     expect(listPendingProposals("TEST", DEFAULT_REQUEST_USER_ID)).toHaveLength(1);
     expect(getSocraticDecisionCase(body.proposalId, DEFAULT_REQUEST_USER_ID)).toMatchObject({ status: "proposed", proposalId: body.proposalId });
   });

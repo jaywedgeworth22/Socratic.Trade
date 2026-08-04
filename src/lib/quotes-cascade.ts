@@ -1,9 +1,25 @@
-import { getPolicy, resolveAlpacaMarketData } from "./db";
+import { getPolicy, resolveAlpacaMarketData, resolveApiKeyWithSource } from "./db";
 import { getBrokerGateway } from "./broker";
-import { AlpacaSnapshotEnrichmentProvider } from "./data-providers";
+import { AlpacaSnapshotEnrichmentProvider, fetchWithRetry } from "./data-providers";
 import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch } from "./yahoo-finance";
 import { normalizeSymbol } from "./money";
 import type { BrokerQuote } from "./types";
+
+/**
+ * Helper to extract the first valid number from fields on an object.
+ */
+function firstNumber(obj: any, keys: string[]): number | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  for (const k of keys) {
+    const val = obj[k];
+    if (typeof val === "number" && Number.isFinite(val)) return val;
+    if (typeof val === "string") {
+      const parsed = parseFloat(val);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Checks if a quote is fresh (timestamp is within 16 minutes of the current system time).
@@ -22,6 +38,7 @@ function isQuoteFresh(quote: { asOf?: string }, nowMs: number): boolean {
  * 2. Alpaca Snapshots API
  * 3. Yahoo Finance Batch API
  * 4. Yahoo Finance Single Quote API
+ * 5. ROIC.ai Profile API
  *
  * For each symbol, the cascade accepts the quote immediately if it is fresh (within 16 minutes).
  * If the quote is stale or missing, the cascade proceeds to the next level for that symbol.
@@ -191,6 +208,50 @@ export async function fetchFreshQuotesCascade(
       pendingSymbols = pendingSymbols.filter((s) => !result[s]);
     } catch (error) {
       console.warn("[quotes-cascade] Level 4 (Yahoo Finance Single Chart) fetch failed:", error instanceof Error ? error.message : error);
+    }
+  }
+
+  // --- LEVEL 5: ROIC.ai Profile API ---
+  if (pendingSymbols.length > 0 && allowExternal) {
+    try {
+      const roic = resolveApiKeyWithSource("roic", userId);
+      if (roic.key) {
+        await Promise.all(
+          pendingSymbols.map(async (symbol) => {
+            try {
+              const res = await fetchWithRetry(
+                `https://api.roic.ai/v2/company/profile/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(roic.key!)}`,
+                {},
+                { service: "roic", keySource: roic.source, userId }
+              );
+              if (res.ok) {
+                const profile = await res.json();
+                const p = Array.isArray(profile) ? profile[0] : profile;
+                if (p && typeof p === "object") {
+                  const price = firstNumber(p, ["price"]);
+                  if (typeof price === "number" && price > 0) {
+                    const q: BrokerQuote = {
+                      symbol,
+                      price,
+                      asOf: new Date().toISOString(),
+                      provider: "roic"
+                    };
+                    updateBestQuote(symbol, q);
+                    if (isQuoteFresh(q, nowMs)) {
+                      result[symbol] = q;
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn(`[quotes-cascade] Level 5 (ROIC) fetch failed for ${symbol}:`, err);
+            }
+          })
+        );
+        pendingSymbols = pendingSymbols.filter((s) => !result[s]);
+      }
+    } catch (error) {
+      console.warn("[quotes-cascade] Level 5 (ROIC) fetch failed:", error instanceof Error ? error.message : error);
     }
   }
 

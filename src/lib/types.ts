@@ -2105,6 +2105,12 @@ export interface PolicyDecision {
   adversaryUnavailableReason?: string;
   projectedSymbolExposurePct?: number;
   dailyNotionalUsed?: number;
+  quoteStale?: {
+    ageSec?: number;
+    originalType: OrderType;
+    originalLimitPrice?: number;
+    referencePrice: number;
+  };
 }
 
 export interface ReviewedOrder {

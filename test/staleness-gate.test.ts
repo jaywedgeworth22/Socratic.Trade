@@ -83,65 +83,92 @@ function ctx(policy: TradingPolicy, marketScan?: MarketScan) {
 const FRESH_GENERATED_AT = new Date(NOW.getTime() - 5_000).toISOString(); // 5s ago
 
 describe("staleness gate", () => {
-  it("blocks an opening buy whose quote is older than maxQuoteAgeSec", () => {
+  it("converts to limit order and warns on opening buy whose quote is older than maxQuoteAgeSec", () => {
     const staleAsOf = new Date(NOW.getTime() - 600_000).toISOString(); // 600s ago
     const policy: TradingPolicy = { ...basePolicy, maxQuoteAgeSec: 60 };
-    const result = evaluateTradeProposal(buyProposal, ctx(policy, scanWith(staleAsOf, FRESH_GENERATED_AT)));
-    expect(result.approved).toBe(false);
-    expect(result.reasons.some((r) => r.includes("staleness_gate") && r.includes("quote is"))).toBe(true);
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(policy, scanWith(staleAsOf, FRESH_GENERATED_AT)));
+    
+    expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("limit");
+    expect(proposal.limitPrice).toBe(10);
+    expect(result.quoteStale).toBeDefined();
+    expect(result.quoteStale?.ageSec).toBe(600);
+    expect(result.quoteStale?.referencePrice).toBe(10);
+    expect(proposal.rationale).toContain("Stale quote warning: quote timestamp is 600s old");
   });
 
   it("allows an opening buy whose quote is fresh", () => {
     const freshAsOf = new Date(NOW.getTime() - 10_000).toISOString(); // 10s ago
     const policy: TradingPolicy = { ...basePolicy, maxQuoteAgeSec: 60 };
-    const result = evaluateTradeProposal(buyProposal, ctx(policy, scanWith(freshAsOf, FRESH_GENERATED_AT)));
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(policy, scanWith(freshAsOf, FRESH_GENERATED_AT)));
     expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("market");
+    expect(result.quoteStale).toBeUndefined();
   });
 
   it("allows a quote exactly at the threshold (boundary, strictly-greater check)", () => {
     const exactAsOf = new Date(NOW.getTime() - 60_000).toISOString(); // exactly 60s ago
     const policy: TradingPolicy = { ...basePolicy, maxQuoteAgeSec: 60 };
-    const result = evaluateTradeProposal(buyProposal, ctx(policy, scanWith(exactAsOf, FRESH_GENERATED_AT)));
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(policy, scanWith(exactAsOf, FRESH_GENERATED_AT)));
     expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("market");
+    expect(result.quoteStale).toBeUndefined();
   });
 
-  it("never blocks when the gate is OFF even with very old data", () => {
+  it("does not warn or mutate when the gate is OFF even with very old data", () => {
     const veryStaleAsOf = new Date(NOW.getTime() - 86_400_000).toISOString(); // 1 day ago
     const veryStaleGeneratedAt = new Date(NOW.getTime() - 86_400_000).toISOString();
-    // maxQuoteAgeSec defaulted to 120 on 2026-07-28 (guard enablement); pin 0 to keep testing the
-    // gate-OFF path.
     const policy: TradingPolicy = { ...basePolicy, maxQuoteAgeSec: 0 };
-    const result = evaluateTradeProposal(buyProposal, ctx(policy, scanWith(veryStaleAsOf, veryStaleGeneratedAt)));
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(policy, scanWith(veryStaleAsOf, veryStaleGeneratedAt)));
     expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("market");
+    expect(result.quoteStale).toBeUndefined();
     expect(result.reasons.every((r) => !r.includes("staleness_gate"))).toBe(true);
   });
 
-  it("treats a missing quote timestamp as stale when the gate is ON", () => {
+  it("converts to limit order and warns on missing quote timestamp when the gate is ON", () => {
     const policy: TradingPolicy = { ...basePolicy, maxQuoteAgeSec: 60 };
-    const result = evaluateTradeProposal(buyProposal, ctx(policy, scanWith(undefined, FRESH_GENERATED_AT)));
-    expect(result.approved).toBe(false);
-    expect(result.reasons.some((r) => r.includes("staleness_gate") && r.includes("missing"))).toBe(true);
-  });
-
-  it("allows a missing quote timestamp when the gate is OFF", () => {
-    // maxQuoteAgeSec pinned 0 (defaults to 120 since the 2026-07-28 guard enablement).
-    const policy: TradingPolicy = { ...basePolicy, maxQuoteAgeSec: 0 };
-    const result = evaluateTradeProposal(buyProposal, ctx(policy, scanWith(undefined, FRESH_GENERATED_AT)));
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(policy, scanWith(undefined, FRESH_GENERATED_AT)));
+    
     expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("limit");
+    expect(result.quoteStale).toBeDefined();
+    expect(result.quoteStale?.ageSec).toBeUndefined();
+    expect(proposal.rationale).toContain("Stale quote warning: quote timestamp is missing/unparseable");
   });
 
-  it("treats an unparseable asOf as stale when the gate is ON", () => {
+  it("does not warn or mutate on missing quote timestamp when the gate is OFF", () => {
+    const policy: TradingPolicy = { ...basePolicy, maxQuoteAgeSec: 0 };
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(policy, scanWith(undefined, FRESH_GENERATED_AT)));
+    expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("market");
+    expect(result.quoteStale).toBeUndefined();
+  });
+
+  it("converts to limit order and warns on unparseable quote timestamp when the gate is ON", () => {
     const policy: TradingPolicy = { ...basePolicy, maxQuoteAgeSec: 60 };
-    const result = evaluateTradeProposal(buyProposal, ctx(policy, scanWith("not-a-date", FRESH_GENERATED_AT)));
-    expect(result.approved).toBe(false);
-    expect(result.reasons.some((r) => r.includes("staleness_gate") && r.includes("missing/unparseable"))).toBe(true);
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(policy, scanWith("not-a-date", FRESH_GENERATED_AT)));
+    
+    expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("limit");
+    expect(result.quoteStale).toBeDefined();
+    expect(result.quoteStale?.ageSec).toBeUndefined();
+    expect(proposal.rationale).toContain("Stale quote warning: quote timestamp is missing/unparseable");
   });
 
   it("blocks on stale fundamentals (scan generatedAt) older than maxFundamentalsAgeSec", () => {
     const freshAsOf = new Date(NOW.getTime() - 10_000).toISOString(); // quote is fresh
     const staleGeneratedAt = new Date(NOW.getTime() - 7_200_000).toISOString(); // 7200s ago
     const policy: TradingPolicy = { ...basePolicy, maxFundamentalsAgeSec: 3600 };
-    const result = evaluateTradeProposal(buyProposal, ctx(policy, scanWith(freshAsOf, staleGeneratedAt)));
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(policy, scanWith(freshAsOf, staleGeneratedAt)));
     expect(result.approved).toBe(false);
     expect(result.reasons.some((r) => r.includes("staleness_gate") && r.includes("market scan is"))).toBe(true);
   });
@@ -150,37 +177,46 @@ describe("staleness gate", () => {
     const veryStaleAsOf = new Date(NOW.getTime() - 86_400_000).toISOString();
     const veryStaleGeneratedAt = new Date(NOW.getTime() - 86_400_000).toISOString();
     const policy: TradingPolicy = { ...basePolicy, maxQuoteAgeSec: 60, maxFundamentalsAgeSec: 60 };
-    const result = evaluateTradeProposal(sellProposal, ctx(policy, scanWith(veryStaleAsOf, veryStaleGeneratedAt)));
-    // Don't assert overall approved (sell may trip unrelated checks) — assert no staleness reason
+    const proposal = { ...sellProposal };
+    const result = evaluateTradeProposal(proposal, ctx(policy, scanWith(veryStaleAsOf, veryStaleGeneratedAt)));
     expect(result.reasons.every((r) => !r.includes("staleness_gate"))).toBe(true);
+    expect(proposal.type).toBe("market"); // sell exits are never gated/mutated for quote staleness
   });
 });
 
 describe("staleness gate — DEFAULT 120s (guard enablement 2026-07-28)", () => {
-  // basePolicy spreads DEFAULT_POLICY with NO explicit maxQuoteAgeSec, so these exercise the new
-  // owner-approved default threshold (120s) exactly as a default policy would see it.
-  it("blocks an opening buy on a 300s-old quote under the default 120s gate", () => {
+  it("converts to limit order and warns on a 300s-old quote under the default 120s gate", () => {
     const staleAsOf = new Date(NOW.getTime() - 300_000).toISOString(); // 300s ago
-    const result = evaluateTradeProposal(buyProposal, ctx(basePolicy, scanWith(staleAsOf, FRESH_GENERATED_AT)));
-    expect(result.approved).toBe(false);
-    expect(result.reasons.some((r) => r.includes("staleness_gate") && r.includes("max 120"))).toBe(true);
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(basePolicy, scanWith(staleAsOf, FRESH_GENERATED_AT)));
+    
+    expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("limit");
+    expect(result.quoteStale).toBeDefined();
+    expect(result.quoteStale?.ageSec).toBe(300);
   });
 
   it("allows an opening buy on a 10s-old quote under the default 120s gate", () => {
     const freshAsOf = new Date(NOW.getTime() - 10_000).toISOString(); // 10s ago
-    const result = evaluateTradeProposal(buyProposal, ctx(basePolicy, scanWith(freshAsOf, FRESH_GENERATED_AT)));
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(basePolicy, scanWith(freshAsOf, FRESH_GENERATED_AT)));
     expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("market");
   });
 
   it("allows a quote exactly at the 120s default boundary (strictly-greater check)", () => {
     const exactAsOf = new Date(NOW.getTime() - 120_000).toISOString(); // exactly 120s ago
-    const result = evaluateTradeProposal(buyProposal, ctx(basePolicy, scanWith(exactAsOf, FRESH_GENERATED_AT)));
+    const proposal = { ...buyProposal };
+    const result = evaluateTradeProposal(proposal, ctx(basePolicy, scanWith(exactAsOf, FRESH_GENERATED_AT)));
     expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("market");
   });
 
   it("never gates a risk-reducing SELL under the default 120s gate", () => {
     const staleAsOf = new Date(NOW.getTime() - 300_000).toISOString();
-    const result = evaluateTradeProposal(sellProposal, ctx(basePolicy, scanWith(staleAsOf, FRESH_GENERATED_AT)));
+    const proposal = { ...sellProposal };
+    const result = evaluateTradeProposal(proposal, ctx(basePolicy, scanWith(staleAsOf, FRESH_GENERATED_AT)));
     expect(result.reasons.every((r) => !r.includes("staleness_gate"))).toBe(true);
+    expect(proposal.type).toBe("market");
   });
 });

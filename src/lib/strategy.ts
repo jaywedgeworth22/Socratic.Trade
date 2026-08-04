@@ -3172,6 +3172,7 @@ export async function runStrategyOnce(
       // then re-prove ownership again immediately before a broker placement below.
       lockGuard.assertOwned();
       const normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
+      let proposalId = crypto.randomUUID();
       const preparedBrokerShape = preparedBrokerShapes.get(proposal);
       let proposalTradability = preparedBrokerShape?.tradability;
       if (!proposalTradability) {
@@ -3190,7 +3191,6 @@ export async function runStrategyOnce(
           approved: false,
           reasons: [proposalTradability.reason ?? "Symbol is not tradable."]
         };
-        const proposalId = crypto.randomUUID();
         insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked" });
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
@@ -3234,7 +3234,6 @@ export async function runStrategyOnce(
       const attemptedBumpToNotional = minimumReview.attemptedBumpToNotional;
       if (brokerMinimumBlockReason) {
         const decision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
-        const proposalId = crypto.randomUUID();
         insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review });
         audit(
@@ -3280,6 +3279,42 @@ export async function runStrategyOnce(
           ? countDayTradesInLastBusinessDays(policy.accountNumber, 5, new Date(), userId)
           : 0
       });
+
+      if (decision.quoteStale) {
+        const ageText = decision.quoteStale.ageSec !== undefined ? `${decision.quoteStale.ageSec}s old` : "missing/unparseable";
+        audit(
+          "quote_staleness_warn",
+          {
+            runId,
+            proposalId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            ageSec: decision.quoteStale.ageSec,
+            limitPrice: normalizedProposal.limitPrice,
+            referencePrice: decision.quoteStale.referencePrice,
+            originalType: decision.quoteStale.originalType,
+            originalLimitPrice: decision.quoteStale.originalLimitPrice
+          },
+          userId,
+          connectedAccountId
+        );
+        await sendNotification(
+          {
+            type: "provider_degraded",
+            title: `Stale Quote Warning: ${normalizedProposal.symbol} quote was ${ageText}`,
+            payload: {
+              runId,
+              proposalId,
+              symbol: normalizedProposal.symbol,
+              side: normalizedProposal.side,
+              ageSec: decision.quoteStale.ageSec,
+              limitPrice: normalizedProposal.limitPrice,
+              referencePrice: decision.quoteStale.referencePrice
+            }
+          },
+          { policy, userId }
+        );
+      }
 
       // Pre-veto fold-in (Option 2): the two PRE-POLICY vetoes (deterministic-bear filter + approval-
       // time Red Team) no longer DROP a candidate — they TAG it with advisory `preVetoReasons`. Fold
@@ -3386,7 +3421,6 @@ export async function runStrategyOnce(
         // where only the wash-sale gate honors its stored token (time-context gates simply
         // re-evaluate against then-current caps/quotes). policy.ts stays authoritative throughout.
         if (shouldEscalateDecision(decision, policy)) {
-          const proposalId = crypto.randomUUID();
           const escalatedDecision: PolicyDecision = {
             ...decision,
             // Mint one server-side override token per escalatable failure. The token lives ONLY in
@@ -3432,7 +3466,7 @@ export async function runStrategyOnce(
           continue;
         }
 
-        const proposalId = crypto.randomUUID();
+        proposalId = crypto.randomUUID();
         lockGuard.assertOwned();
         insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
@@ -3473,7 +3507,7 @@ export async function runStrategyOnce(
       if (heldExit) {
         const heldReason = brokerHeldExitBlockReason(heldExit);
         const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
-        const proposalId = crypto.randomUUID();
+        proposalId = crypto.randomUUID();
         insertRunProposal({
           userId,
           executionMode,
@@ -3511,7 +3545,7 @@ export async function runStrategyOnce(
       // authority — raising cash by selling is the user's call. (Identified by tradeThesisTag so it's
       // robust to any reordering by the cluster gate.)
       if (sellToFundMode === "propose" && normalizedProposal.tradeThesisTag === "Sell-to-Fund") {
-        const proposalId = crypto.randomUUID();
+        proposalId = crypto.randomUUID();
         insertProposalWithSocraticDecision(
           { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
           { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
@@ -3566,7 +3600,6 @@ export async function runStrategyOnce(
       // Fail CLOSED: a high-conviction trade whose REQUIRED Red Team review could not run is
       // routed to a human instead of auto-executed with real capital.
       if (requiresHumanReview.has(proposal)) {
-        const proposalId = crypto.randomUUID();
         const primaryHumanReviewReason = activeHumanReviewReasons[0];
         const pendingReason = activeHumanReviewReasons.map((reason) => `${reason.title}: ${reason.summary}`).join(" ");
         insertProposalWithSocraticDecision(
@@ -3611,7 +3644,6 @@ export async function runStrategyOnce(
         });
       } catch (guardError) {
         const message = guardError instanceof Error ? guardError.message : String(guardError);
-        const proposalId = crypto.randomUUID();
         // Persist a REJECTED decision, not the earlier approved one — a blocked live order must not
         // leave an `approved: true` row in the decision/audit ledger.
         const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
@@ -3646,7 +3678,6 @@ export async function runStrategyOnce(
       // crash-recovery row to insert ahead of the lease and so follows the no-row-on-busy rule as
       // written.
       const refId = crypto.randomUUID();
-      const proposalId = crypto.randomUUID();
       const placingCaseInput: SocraticDecisionRecordInput = {
         proposalId,
         proposal: normalizedProposal,
