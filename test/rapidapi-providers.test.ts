@@ -437,57 +437,19 @@ describe("SteadyApiEnrichmentProvider (via getEnrichmentProvider) — combined c
 });
 
 describe("FmpRapidApiEnrichmentProvider", () => {
-  it("enriches valid symbols from profile and ratios", async () => {
+  it("is a permanent no-op (FMP direct access retired — use Congress.Trade)", async () => {
     const provider = new FmpRapidApiEnrichmentProvider("key");
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.includes("profile/AAPL")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => [{
-            companyName: "Apple Inc.",
-            sector: "Technology",
-            industry: "Consumer Electronics",
-            beta: 1.2,
-            lastDiv: 0.92,
-            price: 150,
-            range: "124.17 - 198.23"
-          }]
-        };
-      }
-      if (url.includes("ratios-ttm/AAPL")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => [{
-            priceToEarningsRatioTTM: 25.4,
-            priceToBookRatioTTM: 40.2,
-            debtEquityRatioTTM: 1.5,
-            returnOnEquityTTM: 0.654,
-            returnOnAssetsTTM: 0.123,
-            grossProfitMarginTTM: 0.432,
-            dividendYieldTTM: 0.005
-          }]
-        };
-      }
-      return { ok: true, status: 200, json: async () => [] };
-    }));
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
     const res = await provider.enrich(["AAPL"]);
-    expect(res["AAPL"]).toMatchObject({
-      companyName: "Apple Inc.",
-      sector: "Technology",
-      industry: "Consumer Electronics",
-      beta: 1.2,
-      dividendYield: 0.61,
-      fiftyTwoWeekLow: 124.17,
-      fiftyTwoWeekHigh: 198.23,
-      peRatio: 25.4,
-      pbRatio: 40.2,
-      debtToEquity: 1.5,
-      returnOnEquity: 65.4,
-      returnOnAssets: 12.3,
-      grossProfitMargin: 43.2
-    });
+    expect(res).toEqual({});
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps the provider name for cascade attribution stability", async () => {
+    const provider = new FmpRapidApiEnrichmentProvider("key");
+    expect(provider.name).toBe("fmp-rapidapi");
+    expect(provider.configured).toBe(true);
   });
 });
 
