@@ -150,6 +150,7 @@ describe("robinhood tenant isolation — fetchDailyOHLC cascade", () => {
     const { records } = installMcpFetchMock();
     await seedUserAToken();
     const { fetchDailyOHLC, clearHistoryCache } = await import("../src/lib/history");
+    const { getDb } = await import("../src/lib/db");
 
     clearHistoryCache();
     try { getDb().exec("DELETE FROM imported_price_eod"); } catch {}
