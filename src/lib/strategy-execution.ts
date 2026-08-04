@@ -1,4 +1,5 @@
 import { LANE_WAITS, withAccountMutation } from "./account-mutation";
+import { fetchFreshQuotesCascade } from "./quotes-cascade";
 import { repriceStoredLimitProposal } from "./approval-reprice";
 import { getBrokerGateway } from "./broker";
 import { evaluateBrokerHeldExitAvailability, brokerHeldExitBlockReason } from "./broker-held-orders";
@@ -309,7 +310,7 @@ export async function executeProposal(
     const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
     const approvalScan = mergeQuoteData(
       approvalScanBase,
-      await gateway.getEquityQuotes(policy.accountNumber, approvalQuoteSymbols)
+      await fetchFreshQuotesCascade(approvalQuoteSymbols, userId, policy.accountNumber)
     );
 
     // An account is an account: the approval is always evaluated against the real broker-reported

@@ -32,6 +32,8 @@ import { buildSocraticDecisionCase, socraticStatusFromProposalStatus } from "@/l
 import type { ChatDraft } from "@/lib/chat/types";
 import type { PolicyDecision, ReviewedOrder } from "@/lib/types";
 import { shouldEscalateDecision } from "@/lib/strategy-risk";
+import { fetchFreshQuotesCascade } from "@/lib/quotes-cascade";
+import { normalizeSymbol } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
@@ -172,6 +174,47 @@ export async function POST(request: Request) {
   const now = new Date();
   const daily = dailyExecutionStats(policy.accountNumber, now, userId);
   const hourly = notionalInLastMinutes(policy.accountNumber, 60, now, userId);
+
+  // Cascade quote fetch for the draft proposal's symbol
+  let marketScan;
+  try {
+    const cascadeQuotes = await fetchFreshQuotesCascade([proposal.symbol], userId, policy.accountNumber);
+    const cascadeQuote = cascadeQuotes[proposal.symbol];
+    if (cascadeQuote) {
+      const symbol = proposal.symbol;
+      const quoteSummary = {
+        symbol,
+        price: cascadeQuote.price ?? 0,
+        bid: cascadeQuote.bid ?? 0,
+        ask: cascadeQuote.ask ?? 0,
+        volume: cascadeQuote.volume ?? 0,
+        prevClose: cascadeQuote.price ?? 0,
+        intradayChangePct: 0,
+        netChange: 0,
+        asOf: cascadeQuote.asOf,
+        provider: cascadeQuote.provider ?? "unknown",
+        score: 0,
+        sector: positions.find((p: any) => normalizeSymbol(p.symbol) === symbol)?.sector,
+        syntheticBid: cascadeQuote.syntheticBid,
+        syntheticAsk: cascadeQuote.syntheticAsk,
+        syntheticSpread: cascadeQuote.syntheticSpread
+      };
+      marketScan = {
+        source: "from-draft-cascade",
+        generatedAt: now.toISOString(),
+        scannedSymbols: 1,
+        returnedQuotes: 1,
+        topCandidates: [],
+        sectorBySymbol: {},
+        quotesBySymbol: { [symbol]: quoteSummary },
+        cacheTtlMs: 300000,
+        warnings: []
+      };
+    }
+  } catch (error) {
+    console.warn("[from-draft] Cascade quote fetch failed:", error);
+  }
+
   // NB: this is a PREVIEW evaluation (no full market scan); the authoritative gate runs again inside
   // executeProposal at approve time against fresh data.
   let decision = evaluateTradeProposal(proposal, {
@@ -182,6 +225,7 @@ export async function POST(request: Request) {
     hourlyNotionalUsed: hourly.notional,
     dailyOrderCount: daily.openingOrderCount,
     estimatedNotional: review?.estimatedNotional,
+    marketScan,
     // ConnectedAccount taxationType is the SOURCE OF TRUTH for the buyer's tax regime — required
     // so the IRA-replacement wash-sale hard block (Rev. Rul. 2008-5) can never miss an IRA whose
     // capabilities are absent/"brokerage" and whose policy taxSettings lack taxationType.
