@@ -232,8 +232,8 @@ export async function fetchDailyOHLC(
   const sharedHit = cache.get(sharedCacheKey);
   if (sharedHit && sharedHit.expiresAt > now) return sharedHit.bars;
 
-  // 1. Evaluate local flat-file history
-  const localBars = fetchLocalFlatFileHistory(symbol);
+  // 1. Evaluate local SQLite history cache
+  const localBars = await fetchHistoryCacheEod(symbol);
   if (localBars && localBars.length >= 2 && isBarSeriesFresh(localBars, 3, now)) {
     cache.set(sharedCacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars: localBars });
     emitHistoryDemandFilled(symbol, now);
@@ -245,9 +245,6 @@ export async function fetchDailyOHLC(
 
   const startDate = new Date(now - 1825 * 24 * 60 * 60_000).toISOString().slice(0, 10);
   const sources: Array<{ scope: CacheScope; fetch: () => Promise<OHLCBar[] | null> }> = [
-    // SQLite cached EOD history tier (history_cache_eod):
-    // Reads pre-hoarded 5-year OHLC price datasets from the local database directly, eliminating network calls.
-    { scope: "shared", fetch: async () => fetchHistoryCacheEod(symbol) },
     // Local imported-EOD cache tier (congress.trade return-path): App A POSTs gap-fill closes to
     // /api/admin/securities/import; they land in imported_price_eod/imported_spx_eod. Reading the local
     // table first (ahead of the App A HTTP read and our keyed providers) lets an imported series displace
