@@ -1,3 +1,8 @@
+**2026-08-04 — GROK: UX PR-B1 plain nav labels (branch `grok/ux-b1-plain-nav`).** Owner D2:
+Thesis→Home, Evidence→Scan, Journal→Activity, Outcomes→Results, Regime→Macro. `desc`
+tooltips keep metaphor; home CTAs use `destinationLabel`; mobile pins already by href.
+Rollout: `docs/rollouts/2026-08-04-ux-b1-plain-nav-labels.md`.
+
 **2026-08-04 — Final Verification of Model Slugs (AG).** Branch `agent/antigravity/openrouter-classifiers`. Replaced all legacy `-latest` model slugs with Provider Native Slugs (`gpt-5.6-sol`, `gpt-4o`, etc.) across the codebase. Cleaned up duplicate properties in model configuration files. Fixed test regressions in history tests by adding DB isolation to `historyTestDb` shared per-file. Fixed `isGpt56Model` regex. Gates verified: tsc clean, lint clean, full test suite passes. Landed cleanly via `land.sh`.
 Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 

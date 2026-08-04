@@ -39,6 +39,7 @@ import { decisionActionLabel, deterministicOutcomePresentation, splitThesisRatio
 import { useConsoleData } from "./lib/useConsoleData";
 import { safeTopCandidates } from "./lib/evidence-rows";
 import { RunOnceButton } from "./components/chrome";
+import { destinationLabel } from "./components/nav";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
 import { SymbolButton } from "./ui/symbol-drilldown";
 import { isExecutedStatus, isNotPlacedStatus, sideVerb } from "./lib/action-verbs";
@@ -115,13 +116,13 @@ export default function ConsoleHomePage() {
             )}
           </span>
         )}
-        {/* Only on failure. The "Latest strategy run" card below has its own Journal link,
+        {/* Only on failure. The "Latest strategy run" card below has its own Activity link,
             but that card renders only when the run produced proposals — which a failed run
             usually did not, so on exactly the occasion you most want the record there is no
             way through to it from here. */}
         {lastRun?.failed && (
           <Link href="/console/activity" className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-            Journal
+            {destinationLabel("/console/activity")}
           </Link>
         )}
         {state.state === "active" && nextRun && (
@@ -168,7 +169,7 @@ export default function ConsoleHomePage() {
               }
               action={
                 <Link href="/console/activity" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                  Journal <ArrowRight size={12} />
+                  {destinationLabel("/console/activity")} <ArrowRight size={12} />
                 </Link>
               }
             >
@@ -200,7 +201,7 @@ export default function ConsoleHomePage() {
               }
               action={
                 <Link href="/console/activity" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                  Journal <ArrowRight size={12} />
+                  {destinationLabel("/console/activity")} <ArrowRight size={12} />
                 </Link>
               }
             >
@@ -221,7 +222,7 @@ export default function ConsoleHomePage() {
             }
             action={
               <Link href="/console/results" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                Outcomes <ArrowRight size={12} />
+                {destinationLabel("/console/results")} <ArrowRight size={12} />
               </Link>
             }
           >
