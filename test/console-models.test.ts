@@ -8,7 +8,7 @@ import { isOpenRouterRouted, modelDisplayName, providerForModel } from "../app/c
 // as OpenAI and every routed id showed its raw vendor-qualified string instead of a display name.
 describe("providerForModel — OpenRouter vendor-routing prefixes", () => {
   it("brands bare (pre-routing) ids correctly, unaffected by the fix", () => {
-    expect(providerForModel("claude-sonnet-latest")).toBe("anthropic");
+    expect(providerForModel("claude-sonnet-5")).toBe("anthropic");
     expect(providerForModel("grok-4.3")).toBe("xai");
     expect(providerForModel("gemini-3.5-flash")).toBe("gemini");
     expect(providerForModel("mistral-medium-3-5")).toBe("mistral");

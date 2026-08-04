@@ -205,7 +205,7 @@ describe("buildLlmRequestBody", () => {
     // benchmark 2026-07-08) sends a plain body with no reasoning params at all.
     const mistralPlain = buildLlmRequestBody(
       { provider: "mistral", transport: "chat-completions" },
-      { model: "mistral-small-2603", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "xhigh" }
+      { model: "mistral-small-latest", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "xhigh" }
     ) as Record<string, any>;
     expect(mistralPlain.reasoning_effort).toBeUndefined();
     expect(mistralPlain.prompt_mode).toBeUndefined();

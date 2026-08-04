@@ -126,7 +126,7 @@ export function mergeOHLCBars(existing: OHLCBar[], incoming: OHLCBar[]): OHLCBar
   const toKey = (b: OHLCBar) => {
     if (!b.time) return "";
     if (typeof b.time === "string") return b.time.slice(0, 10);
-    const ms = typeof b.time === "number" && b.time < 1e10 ? b.time * 1000 : b.time;
+    const ms = typeof b.time === "number" ? (b.time < 1e10 ? b.time * 1000 : b.time) : 0;
     const d = new Date(ms);
     return d.toISOString().slice(0, 10);
   };
@@ -144,8 +144,8 @@ export function mergeOHLCBars(existing: OHLCBar[], incoming: OHLCBar[]): OHLCBar
   }
 
   return Array.from(map.values()).sort((a, b) => {
-    const tA = typeof a.time === "number" ? a.time : new Date(a.time ?? 0).getTime();
-    const tB = typeof b.time === "number" ? b.time : new Date(b.time ?? 0).getTime();
+    const tA = typeof a.time === "number" ? a.time : typeof a.time === "string" ? new Date(a.time).getTime() : 0;
+    const tB = typeof b.time === "number" ? b.time : typeof b.time === "string" ? new Date(b.time).getTime() : 0;
     return tA - tB;
   });
 }
@@ -157,7 +157,7 @@ function persistEodBarsToCache(symbol: string, bars: OHLCBar[]): void {
       closes: bars.map((b) => {
         const dStr = typeof b.time === "string"
           ? b.time.slice(0, 10)
-          : new Date(typeof b.time === "number" && b.time < 1e10 ? b.time * 1000 : (b.time ?? 0)).toISOString().slice(0, 10);
+          : new Date(typeof b.time === "number" ? (b.time < 1e10 ? b.time * 1000 : b.time) : 0).toISOString().slice(0, 10);
         return {
           date: dStr,
           close: b.close,
@@ -175,7 +175,7 @@ function persistEodBarsToCache(symbol: string, bars: OHLCBar[]): void {
     if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
     const targetFile = path.join(baseDir, `${symbol.toUpperCase()}.json`);
     const formatted = bars.map((b) => ({
-      t: typeof b.time === "number" ? b.time : new Date(b.time ?? 0).getTime(),
+      t: typeof b.time === "number" ? b.time : typeof b.time === "string" ? new Date(b.time).getTime() : 0,
       o: b.open,
       h: b.high,
       l: b.low,
@@ -187,6 +187,7 @@ function persistEodBarsToCache(symbol: string, bars: OHLCBar[]): void {
     // Non-fatal if disk write fails
   }
 }
+
 
 /**
  * Fetch ~5y of daily OHLC bars for a symbol, cached briefly. Cascades keyed providers
