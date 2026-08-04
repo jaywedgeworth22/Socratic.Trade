@@ -150,12 +150,14 @@ describe("robinhood tenant isolation — fetchDailyOHLC cascade", () => {
     const { fetchDailyOHLC, clearHistoryCache } = await import("../src/lib/history");
 
     clearHistoryCache();
+    try { getDb().exec("DELETE FROM imported_price_eod"); } catch {}
     const barsShared = await fetchDailyOHLC("AAAA", Date.now()); // no userId → background/shared
     expect(barsShared).toBeNull(); // RH skipped; public tiers mocked to 404 → no data
     expect(records.some((r) => r.url === MCP_URL)).toBe(false); // broker never touched
 
     // Positive control: a real user in scope DOES use their OWN token for the private tier.
     clearHistoryCache();
+    try { getDb().exec("DELETE FROM imported_price_eod"); } catch {}
     const barsUserA = await fetchDailyOHLC("AAAA", Date.now(), USER_A);
     expect(barsUserA?.map((b) => b.close)).toEqual([111.11, 222.22]);
     expect(records.some((r) => r.url === MCP_URL && r.authorization === `Bearer ${TOKEN_A}`)).toBe(true);
