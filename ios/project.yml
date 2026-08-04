@@ -1,16 +1,19 @@
-name: SocraticTrade
+name: Socratic Trade
 
 options:
   bundleIdPrefix: trade.socratic
   deploymentTarget:
     iOS: "26.0"
   groupSortPosition: top
+  xcodeVersion: "26.3"
 
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "1.0"
+    MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
+    INFOPLIST_KEY_CFBundleDisplayName: "Socratic Trade"
+    INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.finance"
 
 targets:
   SocraticTrade:
@@ -29,10 +32,12 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: SocraticTrade/SocraticTrade.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_NAME: "Socratic Trade"
     info:
       path: SocraticTrade/Info.plist
       properties:
-        CFBundleDisplayName: Socratic.Trade
+        CFBundleDisplayName: Socratic Trade
+        LSApplicationCategoryType: public.app-category.finance
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

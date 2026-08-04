@@ -4,6 +4,7 @@ import * as dbModule from "./db";
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiKeySource } from "./db";
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { logApiHealth } from "./db-health";
+import { applyOpenRouterClassifierEnrichment } from "./llm-call";
 import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { EARNINGSCALLS_TRANSCRIPT_SOURCE, earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
 import { envFlagOn } from "./rag/env-flag";
@@ -2202,16 +2203,23 @@ async function embedWithRetry(
         }
 
         const url = isOpenRouter ? "https://openrouter.ai/api/v1/embeddings" : "https://api.siliconflow.cn/v1/embeddings";
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        };
+        const body: Record<string, unknown> = { model: modelName, input };
+        if (isOpenRouter) {
+          // OpenRouter attribution headers + classifier enrichment, matching the search-fusion.ts
+          // OpenRouter embed path. Enrichment never breaks the call — see
+          // applyOpenRouterClassifierEnrichment.
+          headers["HTTP-Referer"] = "https://socratictrade.com";
+          headers["X-Title"] = "Socratic.Trade";
+          applyOpenRouterClassifierEnrichment(body, { userId, service: "rag", feature: "embed" });
+        }
         const response = await fetch(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: modelName,
-            input: input
-          }),
+          headers,
+          body: JSON.stringify(body),
           signal
         });
         if (!response.ok) {
@@ -2332,18 +2340,28 @@ export async function rerankMatches(
         }
 
         const url = isOpenRouter ? "https://openrouter.ai/api/v1/rerank" : "https://api.siliconflow.cn/v1/rerank";
+        const rerankHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        };
+        const rerankBody: Record<string, unknown> = {
+          model: modelName,
+          query,
+          documents,
+          top_n: Math.min(topK, rerankableMatches.length)
+        };
+        if (isOpenRouter) {
+          // OpenRouter attribution headers + classifier enrichment for rerank, matching the
+          // embed path above. Enrichment never breaks the call — see
+          // applyOpenRouterClassifierEnrichment.
+          rerankHeaders["HTTP-Referer"] = "https://socratictrade.com";
+          rerankHeaders["X-Title"] = "Socratic.Trade";
+          applyOpenRouterClassifierEnrichment(rerankBody, { userId, service: "rag", feature: "rerank" });
+        }
         const response = await fetch(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: modelName,
-            query,
-            documents,
-            top_n: Math.min(topK, rerankableMatches.length)
-          })
+          headers: rerankHeaders,
+          body: JSON.stringify(rerankBody)
         });
         if (!response.ok) {
           throw new Error(`Rerank API failed (isOpenRouter=${isOpenRouter}): ${response.status} ${await response.text()}`);

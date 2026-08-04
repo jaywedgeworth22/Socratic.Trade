@@ -17,6 +17,16 @@ running. Root cause: `account.activate` waited on the global sequential mobile w
 clear iOS busy spinner from the terminal POST before snapshot reload. Focused mobile tests
 16/16; full gates via land.sh. Rollout:
 `docs/rollouts/2026-08-03-ios-account-switch-immediate.md`.
+**2026-08-03 — Console RAG Evidence Card Deduplication (ANTIGRAVITY, branch `agent/antigravity/mobile-pwa-feedback`).** Fixed duplicate RAG evidence rendering (`sec-edgar` and `Retrieved 10 K` cards showing identical document receipt & score) in proposal drawer by deduplicating RAG attributions against `decision.evidence` in `deriveEvidenceRows` (`app/console/page.tsx`). Rollout: `docs/rollouts/2026-08-03-dedupe-evidence-cards.md`.
+
+**2026-08-03 — Console dashboard `topCandidates.slice` white-screen (GROK, branch
+`agent/grok-fix-dashboard-topcandidates`).** Owner report: main `/console` showed
+`Dashboard error` / `undefined is not an object (evaluating 'r.topCandidates.slice')`.
+Root cause: `deriveEvidenceRows` assumed every truthy `latestScan` had array
+`topCandidates`. Fix: `safeTopCandidates` + snapshot normalization in `dashboard.ts`.
+Rollout: `docs/rollouts/2026-08-03-console-topcandidates-slice-crash.md`.
+
+**2026-08-03 — Xcode App Settings & Apple Sign-In Layout Constraint Fix (ANTIGRAVITY).** Configured Xcode App Category (`public.app-category.finance`), Display Name (`Socratic.Trade`), Marketing Version (`1.0.0`), and Build Version (`1`) across `Info.plist` and `project.pbxproj`. Fixed `ASAuthorizationAppleIDButton` layout constraint collision warning (`width == 392` vs `width <= 375`) in `LoginView.swift` by capping `SignInWithAppleButton` width to 375pt. `xcodebuild` succeeded clean. Rollout: `docs/rollouts/2026-08-03-xcode-app-settings-and-apple-signin-constraint-fix.md`.
 
 **2026-08-02 — Exit-0 outage root-caused + exit-code hardening (MONET, branch
 `monet/exit0-outage-audit`).** The 15:29Z "clean exit 0, stayed down" outage was an

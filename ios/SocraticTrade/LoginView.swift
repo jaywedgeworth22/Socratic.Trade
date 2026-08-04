@@ -42,7 +42,7 @@ struct LoginView: View {
             .shadow(color: AppPalette.accent.opacity(0.28), radius: 20, y: 10)
 
             VStack(spacing: 5) {
-                Text("Socratic.Trade")
+                Text("Socratic Trade")
                     .font(.largeTitle.weight(.bold))
                 Text("Your trading agent, built for the phone")
                     .font(.subheadline)
@@ -111,12 +111,12 @@ struct LoginView: View {
                 .background(tint, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .disabled(store.isSigningIn)
-        .accessibilityHint("Opens the secure Socratic.Trade sign-in page")
+        .accessibilityHint("Opens the secure Socratic Trade sign-in page")
     }
 
     private var privacyNote: some View {
         Label(
-            "The app stores only your Socratic.Trade session. Broker and provider secrets stay on the backend.",
+            "The app stores only your Socratic Trade session. Broker and provider secrets stay on the backend.",
             systemImage: "lock.fill"
         )
         .font(.caption)

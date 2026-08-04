@@ -22,7 +22,7 @@ dbs:
     # DB-level `snapshot:` settings (see the note in the Mac's litestream.yml).
     snapshot:
       interval: 24h
-      retention: 48h # 2 days (was 720h/30d, then 168h): measured ~3 GB/day growth (1.5G DB + WAL churn) means 168h steady-states at ~21 GB - still over the 10 GiB R2 free tier, which is how the 70% kill-switch fired on 2026-08-02. 48h is ~6 GiB steady state. Deeper PITR needs the paid tier (~$1.35/mo for 30d).
+      retention: 24h  # free-tier opt 2026-08-04 GROK (was 48h; storage ~3GB/day LTX)
     replicas:
       - type: s3
         # Throttles the R2 request rate. Litestream 0.5.x opens a NEW connection per
@@ -33,7 +33,7 @@ dbs:
         # git-clone via receive-window clamping. 10s cuts the leak rate 10x.
         # TRADEOFF: replica RPO 1s -> 10s. NOT a fix for the leak itself — see
         # docs/rollouts/2026-07-19-deploy-wedge-diagnosis.md.
-        sync-interval: 10s
+        sync-interval: 60s  # free-tier Class A opt 2026-08-04 GROK (was 10s/30s)
         bucket: ${AWS_S3_BUCKET_NAME}
         path: trading-live/app.db
         # Literal, not ${AWS_REGION:-auto}: litestream does its own ${VAR}

@@ -37,6 +37,7 @@ import {
 import { redTeamFailureMeta, redTeamVerdictLabel } from "./lib/red-team";
 import { decisionActionLabel, deterministicOutcomePresentation, splitThesisRationale } from "./lib/thesis";
 import { useConsoleData } from "./lib/useConsoleData";
+import { safeTopCandidates } from "./lib/evidence-rows";
 import { RunOnceButton } from "./components/chrome";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
 import { SymbolButton } from "./ui/symbol-drilldown";
@@ -690,7 +691,8 @@ function decisionFromPending(pending: PendingProposal): DecisionRowData {
 function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecision | undefined, decision?: SocraticDecisionCase, proposal?: any): EvidenceRow[] {
   const rows: EvidenceRow[] = [];
   if (decision) {
-    for (const item of decision.evidence.slice(0, 5)) {
+    // Persisted decision cases can predate evidence/rag arrays or arrive partial from older rows.
+    for (const item of (decision.evidence ?? []).slice(0, 5)) {
       const source = evidenceSourceLabel(item.source);
       rows.push({
         title: item.title,
@@ -700,7 +702,8 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
         tone: toneFromSocratic(item.tone)
       });
     }
-    for (const rag of decision.ragAttributions.slice(0, 2)) {
+    for (const rag of (decision.ragAttributions ?? []).slice(0, 2)) {
+      if (rows.some((r) => r.body === rag.contribution)) continue;
       const source = evidenceSourceLabel(rag.source);
       rows.push({
         title: rag.docType ? `Retrieved ${plainLabel(rag.docType)}` : "Retrieved evidence",
@@ -725,7 +728,9 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
           : "The latest thesis links to a captured scan, with source attribution preserved.",
       tone: "accent"
     });
-    for (const candidate of scan.topCandidates.slice(0, 3)) rows.push(evidenceFromCandidate(candidate));
+    // latestScan can be a truthy partial audit shape without topCandidates (strategy_run /
+    // market_scan history). Never call .slice on a missing array — that white-screened /console.
+    for (const candidate of safeTopCandidates(scan).slice(0, 3)) rows.push(evidenceFromCandidate(candidate));
   }
 
   const p = proposal ?? latest?.proposals?.[0]?.proposal ?? snapshot.pendingProposals[0]?.proposal;
@@ -763,16 +768,18 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
 function evidenceFromCandidate(candidate: MarketQuote): EvidenceRow {
   const bullet = candidate.evidenceBulletins?.[0] ?? candidate.headlines?.[0];
   const sources = sourceListFromQuote(candidate) || evidenceSourceLabel(candidate.provider);
+  const score = typeof candidate.score === "number" && Number.isFinite(candidate.score) ? candidate.score : 0;
+  const changePct = typeof candidate.intradayChangePct === "number" && Number.isFinite(candidate.intradayChangePct) ? candidate.intradayChangePct : 0;
   return {
     title: candidate.symbol,
     symbol: candidate.symbol,
     quote: candidate,
-    meta: `score ${Math.round(candidate.score)}${sources ? ` · ${sources}` : ""}`,
+    meta: `score ${Math.round(score)}${sources ? ` · ${sources}` : ""}`,
     metaTitle: sources ? `Data sources: ${sources}` : undefined,
     body:
       bullet ??
-      `${candidate.companyName ?? candidate.symbol} was in the latest candidate set with ${fmtPct(candidate.intradayChangePct, 2, true)} intraday change.`,
-    tone: candidate.intradayChangePct < 0 ? "warn" : "pos"
+      `${candidate.companyName ?? candidate.symbol} was in the latest candidate set with ${fmtPct(changePct, 2, true)} intraday change.`,
+    tone: changePct < 0 ? "warn" : "pos"
   };
 }
 
