@@ -130,11 +130,11 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     for (const model of excluded) expect(MODEL_ROTATION_POOL).not.toContain(model);
     // Keep-in-sync check: the pool is exactly the curated catalog minus the exclusions.
     expect(new Set(MODEL_ROTATION_POOL)).toEqual(new Set(CURATED_LLM_MODEL_IDS.filter((id) => !excluded.includes(id))));
-    expect(MODEL_ROTATION_POOL).toContain("gpt-mini-latest");
-    expect(MODEL_ROTATION_POOL).toContain("claude-fable-latest");
-    expect(MODEL_ROTATION_POOL).toContain("grok-latest");
-    expect(MODEL_ROTATION_POOL).toContain("mistral-small-2603");
-    expect(MODEL_ROTATION_POOL).toContain("mistral-medium-3.5");
+    expect(MODEL_ROTATION_POOL).toContain("gpt-5.4-mini");
+    expect(MODEL_ROTATION_POOL).toContain("claude-fable-5");
+    expect(MODEL_ROTATION_POOL).toContain("grok-4.5");
+    expect(MODEL_ROTATION_POOL).toContain("mistral-small-latest");
+    expect(MODEL_ROTATION_POOL).toContain("mistral-medium-latest");
     expect(MODEL_ROTATION_POOL).toContain("kimi-latest");
   });
 });
@@ -151,12 +151,12 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     expect(pool.length).toBeGreaterThan(0);
     
     // GPT and Claude models should be kept (in pool) since openai/anthropic keys are active
-    expect(pool).toContain("gpt-mini-latest");
-    expect(pool).toContain("claude-opus-latest");
+    expect(pool).toContain("gpt-5.4-mini");
+    expect(pool).toContain("claude-opus-5");
     
     // Gemini and DeepSeek models should be skipped since gemini/deepseek keys are missing
     expect(skipped).toContain("gemini-flash-latest");
-    expect(skipped).toContain("deepseek-pro-latest");
+    expect(skipped).toContain("deepseek-v4-pro");
   });
 });
 
@@ -168,7 +168,7 @@ describe("resolveModelRotationForRun", () => {
       userId: `rot-none-${randomUUID()}`,
       accountId: "acct-1",
       runId: randomUUID(),
-      policy: { llmModel: "gpt-mini-latest", redTeamLlmModel: "claude-haiku-latest" }
+      policy: { llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-haiku-4.5" }
     });
     expect(override).toEqual({});
     expect(typeof commit).toBe("function");
@@ -323,11 +323,11 @@ describe("resolveModelRotationForRun", () => {
 describe("recommendedReasoningEffortForModel (curated rotation efforts)", () => {
   it("uses role-aware GPT-5.6 efforts while preserving provider-safe defaults", async () => {
     const { recommendedReasoningEffortForModel, reasoningAdviceForModel } = await import("../src/lib/model-reasoning-recommendations");
-    expect(recommendedReasoningEffortForModel("deepseek-flash-latest")).toBe("none");
-    expect(recommendedReasoningEffortForModel("deepseek-pro-latest")).toBe("none");
-    expect(recommendedReasoningEffortForModel("gpt-mini-latest", "chat")).toBe("low");
-    expect(recommendedReasoningEffortForModel("gpt-mini-latest", "red")).toBe("high");
-    expect(recommendedReasoningEffortForModel("claude-fable-latest")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("deepseek-v4-flash")).toBe("none");
+    expect(recommendedReasoningEffortForModel("deepseek-v4-pro")).toBe("none");
+    expect(recommendedReasoningEffortForModel("gpt-5.4-mini", "chat")).toBe("low");
+    expect(recommendedReasoningEffortForModel("gpt-5.4-mini", "red")).toBe("high");
+    expect(recommendedReasoningEffortForModel("claude-fable-5")).toBe("medium");
     expect(recommendedReasoningEffortForModel("some-custom-model")).toBe("medium");
     expect(recommendedReasoningEffortForModel(undefined)).toBe("medium");
     // mistral-medium-latest's advice carries the 2026-07-10 benchmark tradeoff: None is fast/cheap
@@ -357,7 +357,7 @@ describe("sentinel handling at the edges", () => {
     const { resolveOpenAiModel, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/llm-request");
     // No-defaults: the sentinel (like any unset model) resolves to "" — fail closed, never a default.
     expect(resolveOpenAiModel({ llmModel: LLM_MODEL_ROTATION_SENTINEL })).toBe("");
-    expect(resolveOpenAiModel({ llmModel: "gpt-mini-latest" })).toBe("gpt-mini-latest");
+    expect(resolveOpenAiModel({ llmModel: "gpt-5.4-mini" })).toBe("gpt-5.4-mini");
   });
 
   it("PUT /api/policy accepts and persists the sentinel for both seats", async () => {

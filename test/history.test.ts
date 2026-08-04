@@ -14,6 +14,7 @@ const historyTestDb = `file:${join(tmpdir(), `agentic-history-cache-test-${rando
 beforeEach(() => {
   process.env.DATABASE_URL = historyTestDb;
   clearHistoryCache();
+  try { getDb().exec("DELETE FROM imported_price_eod"); } catch {}
   clearMarketDataDemandsForTests();
   clearMassiveRestBudgetForTests();
   // Keep the cascade on the (mocked) free sources — keyed providers are skipped without keys.

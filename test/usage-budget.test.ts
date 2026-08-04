@@ -59,10 +59,10 @@ function status(providers: Array<{
 
 describe("usage-budget: cheaperModel", () => {
   it("maps known models down a tier and returns undefined when none", () => {
-    expect(budget.cheaperModel("openai/gpt-4o")).toBe("openai/gpt-4o-mini");
+    expect(budget.cheaperModel("openai/gpt-4o")).toBe("openai/gpt-5.4-mini");
     expect(budget.cheaperModel("anthropic/claude-opus-4-8")).toBe("anthropic/claude-sonnet-4-6");
     expect(budget.cheaperModel("claude-haiku-4-5-20251001")).toBeUndefined(); // already cheapest (prefix)
-    expect(budget.cheaperModel("openai/gpt-4o-mini")).toBeUndefined();
+    expect(budget.cheaperModel("openai/gpt-5.4-nano")).toBeUndefined();
     expect(budget.cheaperModel(undefined)).toBeUndefined();
   });
 });
@@ -87,14 +87,14 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(true);
-    expect(decision.llmModel).toBe("openai/gpt-4o-mini");
-    expect(decision.redTeamLlmModel).toBe("openai/gpt-4o-mini");
+    expect(decision.llmModel).toBe("openai/gpt-5.4-mini");
+    expect(decision.redTeamLlmModel).toBe("openai/gpt-5.4-mini");
   });
 
   it("skips the cycle when over budget and already on the cheapest tier", async () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
-      { llmModel: "openai/gpt-4o-mini" },
+      { llmModel: "openai/gpt-5.4-nano" },
       { status: status([{ name: "openai", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(true);
@@ -104,7 +104,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
   it("still skips when green is cheapest even if the red model could be downgraded (F6)", async () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
-      { llmModel: "openai/gpt-4o-mini", redTeamLlmModel: "anthropic/claude-opus-4-8" },
+      { llmModel: "openai/gpt-5.4-nano", redTeamLlmModel: "anthropic/claude-opus-4-8" },
       { status: status([{ name: "openai", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(true);
@@ -159,7 +159,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     // After #1703 all strategy LLM spend is provider openrouter even for gpt-* model ids.
     const decision = await budget.evaluateBudgetForRun(
       "local",
-      { llmModel: "openai/gpt-4o-mini" },
+      { llmModel: "openai/gpt-5.4-nano" },
       { status: status([{ name: "openrouter", status: "exceeded" }, { name: "openai", status: "ok" }]) }
     );
     expect(decision.skip).toBe(true);
@@ -175,7 +175,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(true);
-    expect(decision.llmModel).toBe("openai/gpt-4o-mini");
+    expect(decision.llmModel).toBe("openai/gpt-5.4-mini");
   });
 });
 

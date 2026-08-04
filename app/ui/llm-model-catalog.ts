@@ -45,22 +45,22 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     provider: "openai",
     label: "OpenAI",
     options: [
-      { value: "gpt-nano-latest", label: "gpt-nano-latest - lowest cost OpenAI", tier: "$" },
-      { value: "gpt-mini-latest", label: "gpt-mini-latest - proven low-cost OpenAI", tier: "$$" },
-      { value: "gpt-luna-latest", label: "gpt-luna-latest - current cost-sensitive tier", tier: "$$" },
-      { value: "gpt-terra-latest", label: "gpt-terra-latest - balanced current-generation analysis", tier: "$$$", recommendedGreen: true },
-      { value: "gpt-sol-latest", label: "gpt-sol-latest - frontier professional reasoning", tier: "$$$", recommendedRed: true },
-      { value: "gpt-4o-latest", label: "gpt-4o-latest - flagship OpenAI GPT-4o", tier: "$$$" }
+      { value: "gpt-5.4-nano", label: "gpt-nano-latest - lowest cost OpenAI", tier: "$" },
+      { value: "gpt-5.4-mini", label: "gpt-mini-latest - proven low-cost OpenAI", tier: "$$" },
+      { value: "gpt-5.6-luna", label: "gpt-luna-latest - current cost-sensitive tier", tier: "$$" },
+      { value: "gpt-5.6-terra", label: "gpt-terra-latest - balanced current-generation analysis", tier: "$$$", recommendedGreen: true },
+      { value: "gpt-5.6-sol", label: "gpt-sol-latest - frontier professional reasoning", tier: "$$$", recommendedRed: true },
+      { value: "gpt-4o", label: "gpt-4o-latest - flagship OpenAI GPT-4o", tier: "$$$" }
     ]
   },
   {
     provider: "anthropic",
     label: "Anthropic",
     options: [
-      { value: "claude-haiku-latest", label: "claude-haiku-latest - fast low-cost Claude", tier: "$", recommendedGreen: true },
-      { value: "claude-sonnet-latest", label: "claude-sonnet-latest - balanced Claude analysis", tier: "$$", recommendedRed: true },
-      { value: "claude-opus-latest", label: "claude-opus-latest (5) - premium Claude reasoning", tier: "$$$" },
-      { value: "claude-fable-latest", label: "claude-fable-latest - most capable Claude", tier: "$$$" }
+      { value: "claude-haiku-4.5", label: "claude-haiku-latest - fast low-cost Claude", tier: "$", recommendedGreen: true },
+      { value: "claude-sonnet-5", label: "claude-sonnet-latest - balanced Claude analysis", tier: "$$", recommendedRed: true },
+      { value: "claude-opus-5", label: "claude-opus-latest (5) - premium Claude reasoning", tier: "$$$" },
+      { value: "claude-fable-5", label: "claude-fable-latest - most capable Claude", tier: "$$$" }
     ]
   },
   {
@@ -68,14 +68,14 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "xAI",
     options: [
       { value: "grok-build-0.1", label: "grok-build-0.1 - coding specialist", tier: "$" },
-      { value: "grok-latest", label: "grok-latest - default Grok analysis", tier: "$$" }
+      { value: "grok-4.5", label: "grok-latest - default Grok analysis", tier: "$$" }
     ]
   },
   {
     provider: "gemini",
     label: "Google",
     options: [
-      { value: "gemini-3.5-flash-lite", label: "gemini-3.5-flash-lite - low-cost Gemini", tier: "$" },
+      { value: "gemini-flash-lite-latest", label: "gemini-3.5-flash-lite - low-cost Gemini", tier: "$" },
       { value: "gemini-flash-latest", label: "gemini-flash-latest - stable flagship Flash", tier: "$$", recommendedGreen: true },
       { value: "gemini-pro-latest", label: "gemini-pro-latest - deepest Gemini reasoning", tier: "$$$", recommendedRed: true }
     ]
@@ -84,8 +84,8 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     provider: "mistral",
     label: "Mistral",
     options: [
-      { value: "mistral-small-2603", label: "mistral-small-2603 - low-cost Mistral Small", tier: "$" },
-      { value: "mistral-medium-3.5", label: "mistral-medium-3.5 - frontier Mistral Medium", tier: "$$" }
+      { value: "mistral-small-latest", label: "mistral-small-2603 - low-cost Mistral Small", tier: "$" },
+      { value: "mistral-medium-latest", label: "mistral-medium-3.5 - frontier Mistral Medium", tier: "$$" }
     ]
   },
   {
@@ -99,9 +99,9 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     provider: "deepseek",
     label: "DeepSeek",
     options: [
-      { value: "deepseek-flash-latest", label: "deepseek-flash-latest - fast DeepSeek Flash", tier: "$" },
-      { value: "deepseek-pro-latest", label: "deepseek-pro-latest - stronger DeepSeek Pro", tier: "$$" },
-      { value: "deepseek-r1-latest", label: "deepseek-r1-latest - reasoning DeepSeek R1", tier: "$$$" }
+      { value: "deepseek-v4-flash", label: "deepseek-flash-latest - fast DeepSeek Flash", tier: "$" },
+      { value: "deepseek-v4-pro", label: "deepseek-pro-latest - stronger DeepSeek Pro", tier: "$$" },
+      { value: "deepseek-reasoner", label: "deepseek-r1-latest - reasoning DeepSeek R1", tier: "$$$" }
     ]
   },
   {

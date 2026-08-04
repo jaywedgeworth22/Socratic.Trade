@@ -60,27 +60,27 @@ export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
  * credential filter, and so green/red (offset by the wrap-advance) pair across providers.
  */
 export const MODEL_ROTATION_POOL: readonly string[] = [
-  "gpt-terra-latest",
-  "claude-haiku-latest",
+  "gpt-5.6-terra",
+  "claude-haiku-4.5",
   "gemini-flash-latest",
-  "deepseek-flash-latest",
-  "mistral-small-2603",
-  "gpt-luna-latest",
-  "claude-sonnet-latest",
-  "gemini-3.5-flash-lite",
-  "grok-latest",
-  "gpt-mini-latest",
-  "claude-opus-latest",
+  "deepseek-v4-flash",
+  "mistral-small-latest",
+  "gpt-5.6-luna",
+  "claude-sonnet-5",
+  "gemini-flash-lite-latest",
+  "grok-4.5",
+  "gpt-5.4-mini",
+  "claude-opus-5",
   "gemini-pro-latest",
-  "deepseek-pro-latest",
-  "mistral-medium-3.5",
-  "gpt-sol-latest",
-  "gpt-nano-latest",
-  "claude-fable-latest",
+  "deepseek-v4-pro",
+  "mistral-medium-latest",
+  "gpt-5.6-sol",
+  "gpt-5.4-nano",
+  "claude-fable-5",
   "kimi-latest",
-  "gpt-4o-latest",
+  "gpt-4o",
   "llama-3.3-70b-instruct",
-  "deepseek-r1-latest"
+  "deepseek-reasoner"
 ];
 
 /** One seat's pick: the model served this run plus the pointer bookkeeping that produced it. */

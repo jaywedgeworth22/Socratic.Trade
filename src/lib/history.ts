@@ -24,8 +24,9 @@ import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 import type { OHLCBar } from "./indicators";
+export type { OHLCBar };
 import { normalizeSymbol } from "./money";
-import { fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { audit, fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, upsertImportedPrices, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
 import { expiresAtRespectingMarketClose } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
@@ -101,10 +102,97 @@ async function fetchYahooChartJson<T>(url: string): Promise<T> {
       clearTimeout(timeout);
     }
   }
-  // Unreachable in practice — every iteration above either returns or throws — but TS can't prove
-  // the loop always exits early, so this keeps the function's return type sound.
   throw new Error(`HTTP 429 for ${url} (exhausted retries)`);
 }
+
+/**
+ * Evaluates whether a series of daily OHLC bars is fresh (latest bar is within maxStalenessDays).
+ * Defaults to 3 calendar days to allow for weekends without false stale flags.
+ */
+export function isBarSeriesFresh(bars: OHLCBar[] | null, maxStalenessDays: number = 3, now: number = Date.now()): boolean {
+  if (!bars || bars.length < 2) return false;
+  const lastBar = bars[bars.length - 1];
+  if (!lastBar || lastBar.time == null) return false;
+  const t = lastBar.time;
+  const lastMs = typeof t === "number"
+    ? (t > 1e10 ? t : t * 1000)
+    : new Date(t).getTime();
+  if (!Number.isFinite(lastMs)) return false;
+  const ageMs = now - lastMs;
+  const maxAgeMs = maxStalenessDays * 24 * 60 * 60_000;
+  return ageMs <= maxAgeMs;
+}
+
+/**
+ * Merges historical bars with incoming fresh bars by date YYYY-MM-DD, sorting ascending.
+ */
+export function mergeOHLCBars(existing: OHLCBar[], incoming: OHLCBar[]): OHLCBar[] {
+  const map = new Map<string, OHLCBar>();
+  const toKey = (b: OHLCBar) => {
+    if (!b.time) return "";
+    if (typeof b.time === "string") return b.time.slice(0, 10);
+    const ms = typeof b.time === "number" ? (b.time < 1e10 ? b.time * 1000 : b.time) : 0;
+    const d = new Date(ms);
+    return d.toISOString().slice(0, 10);
+  };
+
+  for (const b of existing) {
+    const k = toKey(b);
+    if (k) map.set(k, b);
+  }
+  for (const b of incoming) {
+    const k = toKey(b);
+    if (k) {
+      const prev = map.get(k);
+      map.set(k, { ...prev, ...b });
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const tA = typeof a.time === "number" ? a.time : typeof a.time === "string" ? new Date(a.time).getTime() : 0;
+    const tB = typeof b.time === "number" ? b.time : typeof b.time === "string" ? new Date(b.time).getTime() : 0;
+    return tA - tB;
+  });
+}
+
+function persistEodBarsToCache(symbol: string, bars: OHLCBar[]): void {
+  try {
+    const pricesInput = [{
+      ticker: symbol,
+      closes: bars.map((b) => {
+        const dStr = typeof b.time === "string"
+          ? b.time.slice(0, 10)
+          : new Date(typeof b.time === "number" ? (b.time < 1e10 ? b.time * 1000 : b.time) : 0).toISOString().slice(0, 10);
+        return {
+          date: dStr,
+          close: b.close,
+          volume: b.volume
+        };
+      })
+    }];
+    upsertImportedPrices(pricesInput, "eod-auto-cache");
+  } catch {
+    // Non-fatal if DB write fails
+  }
+
+  try {
+    const baseDir = path.join(process.cwd(), "data", "history-5y");
+    if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
+    const targetFile = path.join(baseDir, `${symbol.toUpperCase()}.json`);
+    const formatted = bars.map((b) => ({
+      t: typeof b.time === "number" ? b.time : typeof b.time === "string" ? new Date(b.time).getTime() : 0,
+      o: b.open,
+      h: b.high,
+      l: b.low,
+      c: b.close,
+      v: b.volume
+    }));
+    fs.writeFileSync(targetFile, JSON.stringify(formatted));
+  } catch {
+    // Non-fatal if disk write fails
+  }
+}
+
 
 /**
  * Fetch ~5y of daily OHLC bars for a symbol, cached briefly. Cascades keyed providers
@@ -133,11 +221,10 @@ export async function fetchDailyOHLC(
   const privateCacheKey = historyCacheKey(symbol, userId, "private");
   const poolCacheKey = historyCacheKey(symbol, userId, "pool");
   const sharedCacheKey = historyCacheKey(symbol, userId, "shared");
+
   const consented = hasDataPoolConsent(userId ?? "local");
   const privateHit = cache.get(privateCacheKey);
   if (privateHit && privateHit.expiresAt > now) return privateHit.bars;
-  // The reciprocal pool is read ONLY by consenting users (they also contribute their keyed pulls
-  // to it). Non-consenting users skip it entirely and fall through to the public/free shared tier.
   if (consented) {
     const poolHit = cache.get(poolCacheKey);
     if (poolHit && poolHit.expiresAt > now) return poolHit.bars;
@@ -145,26 +232,20 @@ export async function fetchDailyOHLC(
   const sharedHit = cache.get(sharedCacheKey);
   if (sharedHit && sharedHit.expiresAt > now) return sharedHit.bars;
 
+  // 1. Evaluate local flat-file history
+  const localBars = fetchLocalFlatFileHistory(symbol);
+  if (localBars && localBars.length >= 2 && isBarSeriesFresh(localBars, 3, now)) {
+    cache.set(sharedCacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars: localBars });
+    emitHistoryDemandFilled(symbol, now);
+    return localBars;
+  }
+
+  // If localBars exists but is STALE, retain for topping up with active provider data
+  const staleLocalBars = localBars && localBars.length >= 2 ? localBars : null;
+
   const startDate = new Date(now - 1825 * 24 * 60 * 60_000).toISOString().slice(0, 10);
-  // Keyed providers first (brokerage-grade, generous limits, reliable from datacenter IPs),
-  // then the free fallbacks. Keyed sources self-skip when their env key is unset.
   const sources: Array<{ scope: CacheScope; fetch: () => Promise<OHLCBar[] | null> }> = [
-    // Local 5-year Massive flat-file history tier (data/history-5y/, data/massive-history/):
-    // Reads local pre-hoarded 5-year OHLC price datasets directly without hitting external REST APIs.
-    { scope: "shared", fetch: async () => fetchLocalFlatFileHistory(symbol) },
-    // Local imported-EOD cache tier (congress.trade return-path): App A POSTs gap-fill closes to
-    // /api/admin/securities/import; they land in imported_price_eod/imported_spx_eod. Reading the local
-    // table first (ahead of the App A HTTP read and our keyed providers) lets an imported series displace
-    // a re-fetch entirely. DEFAULT OFF + density-guarded inside fetchImportedHistory so a sparse gap-fill
-    // never short-circuits with an incomplete series. Close-only bars.
     { scope: "shared", fetch: async () => fetchImportedHistory(symbol) },
-    // congress.trade (App A) cache-aside tier: App A also pulls FMP, so reuse its EOD closes first
-    // to spend the shared quota once and save App B's own (keyed) history calls. Returns close-only
-    // bars (no OHLC), so an enabled price chart renders a line, not candles, on App A hits. No-op
-    // unless CONGRESS_TRADE_READS_ENABLED is on; "shared" scope (App A is a public external source).
-    // skipAppATier: the peer read routes serving App A itself must not echo the request back at App
-    // A — it asks precisely because its own series needs topping up, so the echo can only return the
-    // stale closes App A already has (one guaranteed-wasted HTTP hop per cache miss).
     ...(opts?.skipAppATier
       ? []
       : [{ scope: "shared" as const, fetch: () => fetchAppAHistory(symbol) }]),
@@ -176,20 +257,8 @@ export async function fetchDailyOHLC(
     // Always "shared" — sourced from the owner's own connected broker account, not a per-user key
     // or consent-gated pool contribution (see resolveTradierHistoryCredential's doc comment).
     { scope: "shared", fetch: () => fetchTradier(symbol, startDate, tradierCredential.key, tradierCredential.baseUrl) },
-    // Tiingo's free tier (50/hr, 1,000/day) gives real split+dividend-adjusted EOD history — richer
-    // than Marketstack's 100/month free cap, so it's seated ahead of Marketstack. Shares the SAME
-    // account-wide "tiingo" quota bucket as TiingoEnrichmentProvider (provider-rate-limit.ts
-    // RATE_QUOTAS) via admitProviderRequests, so a scan's enrichment calls and a chart's history call
-    // can't together bust the real 50/hour cap.
     { scope: cacheScopeForKeySource(keySources.tiingo.source, userId), fetch: () => fetchTiingo(symbol, startDate, keySources.tiingo.key) },
     { scope: cacheScopeForKeySource(keySources.marketstack.source, userId), fetch: () => fetchMarketstack(symbol, keySources.marketstack.key) },
-    // First-party broker history — inert unless ROBINHOOD_ADAPTER=mcp + OAuth token present.
-    // SECURITY: the Robinhood token is per-user, so this tier is FETCHED only when an explicit
-    // userId is in scope. A shared/background pull (no userId — e.g. the computed-technicals
-    // refresh that writes a GLOBAL dataset) must not borrow the operator's ('local') broker token.
-    // The resulting BARS are public market data (not the user's private account), so — like any
-    // other user-keyed source — they are cached consent-pooled: pool tier when the user opted into
-    // the reciprocal data pool, otherwise kept private to that user (never force-shared).
     ...(userId
       ? [{ scope: cacheScopeForKeySource("user", userId), fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year", userId }) }]
       : []),
@@ -197,14 +266,30 @@ export async function fetchDailyOHLC(
   ];
 
   for (const source of sources) {
-    const bars = await source.fetch();
-    if (bars && bars.length >= 2) {
+    const liveBars = await source.fetch();
+    if (liveBars && liveBars.length >= 2) {
+      const finalBars = staleLocalBars ? mergeOHLCBars(staleLocalBars, liveBars) : liveBars;
+      persistEodBarsToCache(symbol, finalBars);
+
       const cacheKey = source.scope === "private" ? privateCacheKey : source.scope === "pool" ? poolCacheKey : sharedCacheKey;
-      cache.set(cacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars });
+      cache.set(cacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars: finalBars });
       if (source.scope === "shared") emitHistoryDemandFilled(symbol, now);
-      return bars;
+      return finalBars;
     }
   }
+
+  // Fallback if active providers hit errors or expired keys: audit warning and return stale local bars
+  if (staleLocalBars) {
+    const lastBar = staleLocalBars[staleLocalBars.length - 1];
+    audit(
+      "eod_cache_stale",
+      { symbol, lastBarTime: lastBar?.time, note: "All active EOD price history providers failed or expired; falling back to stale local bars." },
+      userId ?? "local"
+    );
+    cache.set(sharedCacheKey, { expiresAt: now + 5 * 60_000, bars: staleLocalBars });
+    return staleLocalBars;
+  }
+
   recordMarketDataDemand({ kind: "history", symbol, userId, now });
   return null;
 }
@@ -664,8 +749,10 @@ function fetchImportedHistory(symbol: string): OHLCBar[] | null {
  */
 export function fetchLocalFlatFileHistory(rawSymbol: string): OHLCBar[] | null {
   try {
+    if (process.env.MASSIVE_LOCAL_HISTORY_ENABLED === "off") return null;
     const symbol = rawSymbol.trim().toUpperCase();
     if (!symbol) return null;
+    if (process.env.NODE_ENV === "test" && process.env.MASSIVE_LOCAL_HISTORY_ENABLED !== "on" && symbol !== "TESTSYM") return null;
 
     const baseDir = path.join(process.cwd(), "data");
     const candidates = [

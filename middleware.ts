@@ -275,7 +275,28 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // Host-level routing: mobile.socratictrade.com / mobile.socratic.trade
+  if (host === "mobile.socratictrade.com" || host === "mobile.socratic.trade") {
+    if (pathname === "/") {
+      return NextResponse.redirect(new URL("/mobile", req.url));
+    }
+    if (!pathname.startsWith("/mobile") && !pathname.startsWith("/api") && !pathname.startsWith("/_next") && !pathname.startsWith("/favicon")) {
+      return NextResponse.redirect(new URL(`/mobile${pathname}`, req.url));
+    }
+  }
+
+  // Host-level routing: console.socratictrade.com / console.socratic.trade
+  if (host === "console.socratictrade.com" || host === "console.socratic.trade") {
+    if (pathname === "/") {
+      return NextResponse.redirect(new URL("/console", req.url));
+    }
+    if (!pathname.startsWith("/console") && !pathname.startsWith("/api") && !pathname.startsWith("/_next") && !pathname.startsWith("/favicon")) {
+      return NextResponse.redirect(new URL(`/console${pathname}`, req.url));
+    }
+  }
+
   const isMobileAuthExchangePath = pathname === "/api/mobile/auth/exchange";
+
 
   if (isPublicPath(pathname)) {
     // Public (no auth) — but still strip client-supplied identity headers so a forged

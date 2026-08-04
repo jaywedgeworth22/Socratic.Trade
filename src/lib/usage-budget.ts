@@ -352,25 +352,19 @@ const CHEAPER_MODEL: Record<string, string> = {
   "gpt-5.5": "gpt-5.4-mini",
   "gpt-5.4": "gpt-5.4-mini",
   "gpt-5.4-mini": "gpt-5.4-nano",
-  "gpt-sol-latest": "gpt-terra-latest",
-  "gpt-terra-latest": "gpt-luna-latest",
-  "gpt-luna-latest": "gpt-mini-latest",
-  "gpt-mini-latest": "gpt-nano-latest",
-  "gpt-4o-latest": "gpt-mini-latest",
-  "gpt-4o": "gpt-4o-mini",
+  "gpt-4o": "gpt-5.4-mini",
   "gpt-4.1": "gpt-4.1-mini",
   "o1": "o1-mini",
   "o1-preview": "o1-mini",
   // (no o3-mini → o4-mini: identically priced in MODEL_PRICE_PER_M, so it saves nothing)
   // Anthropic
-  "claude-fable-latest": "claude-sonnet-latest",
-  "claude-opus-latest": "claude-sonnet-latest",
-  "claude-sonnet-latest": "claude-haiku-latest",
-  "claude-fable-5": "claude-sonnet-4-6",
+  "claude-fable-5": "claude-sonnet-5",
+  "claude-opus-5": "claude-sonnet-5",
+  "claude-sonnet-5": "claude-haiku-4.5",
   "claude-opus-4-8": "claude-sonnet-4-6",
   "claude-sonnet-4-6": "claude-haiku-4-5",
   // xAI
-  "grok-latest": "grok-build-latest",
+  "grok-4.5": "grok-build-latest",
   "grok-4.3": "grok-build-0.1",
   // Gemini
   "gemini-pro-latest": "gemini-flash-latest",
@@ -382,14 +376,12 @@ const CHEAPER_MODEL: Record<string, string> = {
   // Mistral
   "mistral-medium-latest": "mistral-small-latest",
   "mistral-large-2512": "mistral-medium-3-5",
-  "mistral-medium-3-5": "mistral-small-2603",
+  "mistral-medium-3-5": "mistral-small-latest",
   "mistral-large": "mistral-medium",
   "mistral-medium": "mistral-small",
   // DeepSeek
-  "deepseek-pro-latest": "deepseek-flash-latest",
-  "deepseek-r1-latest": "deepseek-flash-latest",
-  "deepseek-reasoner": "deepseek-chat",
   "deepseek-v4-pro": "deepseek-v4-flash",
+  "deepseek-reasoner": "deepseek-v4-flash",
 };
 
 /** A cheaper model in the same family, or undefined if none is known. */
