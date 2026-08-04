@@ -119,3 +119,10 @@ libm.so.6: version GLIBC_2.38 not found
 
 better-sqlite3@13 (PR #2371) prebuilds need glibc ≥2.38; bookworm-slim has 2.36.
 Fix: `npm rebuild better-sqlite3 --build-from-source` after `npm ci` (python3/make/g++ already in the build stage).
+
+## Follow-up 6: rebuild AFTER prune; delete prebuilds
+
+Deploy 177 still failed with GLIBC_2.38 — `npm prune --omit=dev` re-extracted
+the incompatible prebuild after the earlier rebuild. Fix: after prune,
+`rm -rf node_modules/better-sqlite3/prebuilds` then
+`npm rebuild better-sqlite3 --build-from-source`.
