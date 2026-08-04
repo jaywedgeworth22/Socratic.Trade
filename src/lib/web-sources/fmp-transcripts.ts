@@ -1425,7 +1425,9 @@ interface ManagedVectorSourceHelpers {
   inventoryVectorRecordsByMetadata(options: {
     userId?: string;
     prefix?: string;
+    source?: string;
     namespace?: "default" | "managed" | "private" | "fmp-transcripts";
+    batchSize?: number;
     maxScanned?: number;
     leaseGuard?: import("../vector-db").VectorStoreLeaseGuard;
   }): Promise<VectorMetadataInventoryRow[]>;
@@ -1546,6 +1548,7 @@ async function inventoryManagedFmpTranscriptVectorCandidates(
     namespace: "fmp-transcripts",
     ...(immutablePrefix ? { prefix: immutablePrefix } : {}),
     maxScanned: rightsInventoryScanMaxRecords(),
+    batchSize: 1000,
     leaseGuard
   });
   // Older v3 branch generations used the general managed namespace. The immutable prefix scopes
@@ -1555,12 +1558,15 @@ async function inventoryManagedFmpTranscriptVectorCandidates(
     namespace: "managed",
     prefix: immutablePrefix,
     maxScanned: rightsInventoryScanMaxRecords(),
+    batchSize: 1000,
     leaseGuard
   }) : [];
   const defaultProviderRows = await vectorDb.inventoryVectorRecordsByMetadata({
     userId,
     namespace: "default",
+    source: FMP_TRANSCRIPT_SOURCE,
     maxScanned: rightsInventoryScanMaxRecords(),
+    batchSize: 1000,
     leaseGuard
   });
   const derivedProviderRows = getDb().prepare(`
