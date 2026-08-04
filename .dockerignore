@@ -36,7 +36,12 @@ test-results
 
 # Dev-only / non-runtime trees
 test
-docs
+# docs/* is large and mostly non-runtime, BUT the app imports benchmark JSON
+# at build time (app/api/llm-usage/model-stats/route.ts → docs/benchmarks/*.json).
+# Keep those JSON files; drop the rest of docs.
+docs/**
+!docs/benchmarks/
+!docs/benchmarks/**
 ios
 pdf_pages
 *.PDF

@@ -26,7 +26,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build \
   && npm prune --omit=dev \
   && rm -rf .next/cache \
-  && rm -rf test docs ios pdf_pages .git .github \
+  && rm -rf test ios pdf_pages .git .github \
+  && find docs -mindepth 1 -maxdepth 1 ! -name benchmarks -exec rm -rf {} + 2>/dev/null || true \
   && rm -rf node_modules/.cache
 
 FROM node:24.14.1-bookworm-slim AS runtime
