@@ -8,25 +8,27 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: "/console",
     scope: "/",
     display: "standalone",
-    background_color: "#0a0a0a",
-    theme_color: "#0a0a0a",
+    background_color: "#ffffff",
+    theme_color: "#ffffff",
     orientation: "portrait",
     icons: [
       {
         src: "/icon.svg",
         sizes: "any",
         type: "image/svg+xml",
-        purpose: "maskable"
+        purpose: "any"
       },
       {
         src: "/icons/icon-192.png",
         sizes: "192x192",
-        type: "image/png"
+        type: "image/png",
+        purpose: "any"
       },
       {
         src: "/icons/icon-512.png",
         sizes: "512x512",
-        type: "image/png"
+        type: "image/png",
+        purpose: "any"
       }
     ]
   };

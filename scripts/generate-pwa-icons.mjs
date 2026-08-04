@@ -18,15 +18,16 @@ const SOURCE_SVG = path.join(ROOT, "public", "icon.svg");
 const OUT_DIR = path.join(ROOT, "public", "icons");
 
 const TARGETS = [
-  { file: "apple-touch-icon-180.png", size: 180 },
-  { file: "icon-192.png", size: 192 },
-  { file: "icon-512.png", size: 512 }
+  { outDir: path.join(ROOT, "public", "icons"), file: "apple-touch-icon-180.png", size: 180 },
+  { outDir: path.join(ROOT, "public", "icons"), file: "icon-192.png", size: 192 },
+  { outDir: path.join(ROOT, "public", "icons"), file: "icon-512.png", size: 512 },
+  { outDir: path.join(ROOT, "ios", "SocraticTrade", "Assets.xcassets", "AppIcon.appiconset"), file: "AppIcon-1024.png", size: 1024 }
 ];
 
 async function main() {
-  await mkdir(OUT_DIR, { recursive: true });
-  for (const { file, size } of TARGETS) {
-    const outPath = path.join(OUT_DIR, file);
+  for (const { outDir, file, size } of TARGETS) {
+    await mkdir(outDir, { recursive: true });
+    const outPath = path.join(outDir, file);
     await sharp(SOURCE_SVG, { density: 384 }).resize(size, size).png().toFile(outPath);
     console.log(`wrote ${path.relative(ROOT, outPath)} (${size}x${size})`);
   }
