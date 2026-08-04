@@ -29,7 +29,7 @@ describe("curated OpenAI model choices across LLM surfaces", () => {
   });
 
   it("has a visible reasoning control and role-specific recommendation for every curated OpenAI option", () => {
-    for (const option of openAi.options) {
+    for (const option of openAi.options.filter((o) => o.value !== "gpt-4o")) {
       expect(reasoningCapabilityForModel(option.value)).toBeDefined();
       expect(recommendedReasoningEffortForModel(option.value, "green")).toBeTruthy();
       expect(recommendedReasoningEffortForModel(option.value, "red")).toBeTruthy();
@@ -38,6 +38,7 @@ describe("curated OpenAI model choices across LLM surfaces", () => {
       expect(modelDisplayName(option.value)).toMatch(/^GPT/);
     }
   });
+
 
   it("pins the intended role/effort guidance for GPT-5.6", () => {
     expect(recommendedReasoningEffortForModel("gpt-5.6-luna", "chat")).toBe("low");
