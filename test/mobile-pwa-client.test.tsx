@@ -52,7 +52,8 @@ describe("mobile PWA command availability", () => {
       canSubmit: false,
       canSubmitAccountCommand: false,
       canSubmitTrading: false,
-      canSubmitStop: false
+      canSubmitStop: false,
+      canSubmitAccountSwitch: false
     });
     expect(getMobileCommandAvailability(mobileSnapshot(), null, false, "fresh").canSubmitStop).toBe(false);
     expect(getMobileCommandAvailability(mobileSnapshot(), "watchlist.add", true, "fresh").canSubmitStop).toBe(false);
@@ -73,19 +74,22 @@ describe("mobile PWA command availability", () => {
       canSubmit: true,
       canSubmitAccountCommand: false,
       canSubmitTrading: false,
-      canSubmitStop: true
+      canSubmitStop: true,
+      canSubmitAccountSwitch: true
     });
     expect(getMobileCommandAvailability(mobileSnapshot({ hasUniverse: false }), null, true, "fresh")).toEqual({
       canSubmit: true,
       canSubmitAccountCommand: true,
       canSubmitTrading: false,
-      canSubmitStop: true
+      canSubmitStop: true,
+      canSubmitAccountSwitch: true
     });
     expect(getMobileCommandAvailability(mobileSnapshot(), null, true, "fresh")).toEqual({
       canSubmit: true,
       canSubmitAccountCommand: true,
       canSubmitTrading: true,
-      canSubmitStop: true
+      canSubmitStop: true,
+      canSubmitAccountSwitch: true
     });
 
     for (const freshness of ["unknown", "refreshing", "stale"] as const) {
@@ -93,7 +97,9 @@ describe("mobile PWA command availability", () => {
         canSubmit: false,
         canSubmitAccountCommand: false,
         canSubmitTrading: false,
-        canSubmitStop: true
+        canSubmitStop: true,
+        // Account switch stays available when snapshot is stale (metadata-only, immediate server path).
+        canSubmitAccountSwitch: true
       });
     }
   });

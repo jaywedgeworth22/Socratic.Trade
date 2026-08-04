@@ -230,7 +230,10 @@ describe("Nasdaq calendar enrichment provider", () => {
       "../src/lib/nasdaq-calendar-provider"
     );
     process.env.NASDAQ_CALENDAR_HORIZON_DAYS = "1";
-    process.env.NASDAQ_CALENDAR_NEGATIVE_CACHE_TTL_MS = "200"; // real (non-fake) timers below
+    // Real timers: keep the negative TTL long enough that the "immediate" re-query below still
+    // lands inside the window even when the first enrich() is slow under a full suite (10ms was
+    // too tight — first enrich alone can exceed it, so the second call always refetched).
+    process.env.NASDAQ_CALENDAR_NEGATIVE_CACHE_TTL_MS = "500";
 
     const now = Date.now();
     const day0 = dateKeyFromOffset(now, 0);
@@ -245,7 +248,7 @@ describe("Nasdaq calendar enrichment provider", () => {
     await provider.enrich(["TSLA"]);
     expect(fetchMock.mock.calls.length).toBe(callsAfterFirst);
 
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 600));
     await provider.enrich(["TSLA"]);
     expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterFirst);
   });

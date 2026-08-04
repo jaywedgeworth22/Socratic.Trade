@@ -121,6 +121,13 @@ final class MobileStore: ObservableObject {
         if Self.protectiveCommands.contains(commandType) {
             return true
         }
+        // Account switch is a pure active-pointer flip on the server (now also executes
+        // immediately, outside the strategy.run_once queue). It must remain available when
+        // portfolio/snapshot data is stale — that is exactly when users try to switch away
+        // from a stuck/stale context. Requires any loaded snapshot so we still know accounts.
+        if commandType == "account.activate" {
+            return snapshot != nil
+        }
         guard let snapshot, !isSnapshotStale(at: now) else { return false }
         if Self.readinessDependentCommands.contains(commandType) {
             return snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse
@@ -220,6 +227,10 @@ final class MobileStore: ObservableObject {
                 idempotencyKey: idempotencyKey
             )
             commandAttemptTracker.track(command, operationID: operationID)
+            // Immediate commands (account.activate, stop, …) return terminal in the POST body.
+            // Clear the busy spinner before the snapshot reload so the Use button does not
+            // stay locked for the duration of a slow /api/mobile/snapshot fetch.
+            reconcileTrackedCommands([command])
             await load()
             // A deduplicated request can already be terminal even if it has fallen out of the
             // latest snapshot page. Reconcile that direct response as a final fallback.
