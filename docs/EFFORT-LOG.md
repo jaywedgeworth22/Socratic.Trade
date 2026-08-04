@@ -121,7 +121,7 @@ As of 2026-07-08 (assignment-rule update).
 - **[Socratic.Trade] UX PR-A1 honest run skip statuses in UI — PLANNED / UNASSIGNED.** Budget/market/broker skips must not look like successful decision runs; distinct Activity/Thesis chips. Program: `docs/design/ux-improvement-program.md` §PR-A1. Money-adjacent status semantics.
 - **[Socratic.Trade] UX PR-A2 approval card progressive disclosure + sticky mobile CTAs — PLANNED / UNASSIGNED.** Collapse dense receipt; Approve/Reject always reachable on phone. Keepout: `app/console/components/approval-card.tsx`. Program §PR-A2.
 - **[Socratic.Trade] UX PR-A3 first-run readiness checklist hero — PLANNED / UNASSIGNED.** Checklist when broker/universe/LLM incomplete (derive.ts substrate). Program §PR-A3.
-- **[Socratic.Trade][GROK] UX PR-A4 + PR-A5 Guardrails Advanced collapsed + PWA Proposals noun — IN PR 2026-08-04 (branch `grok/ux-a4-a5-quick`).** See top of board; Program §PR-A4/A5.
+- **[Socratic.Trade][GROK] UX PR-A4 + PR-A5 Guardrails Advanced collapsed + PWA Proposals noun — IN PR 2026-08-04 (PR #2411).** See top of board; Program §PR-A4/A5.
 - **[Socratic.Trade] UX Wave B IA (plain nav labels, Autonomy panel, Strategy/Settings structure) — PLANNED / UNASSIGNED.** Needs owner D2 for renames. Program §Wave B.
 - **[Socratic.Trade] UX Wave C perceived speed (snapshot TTL cache, P&L once, scan virtuoso, React.memo) — PLANNED / UNASSIGNED.** Program §Wave C. Hotspot: `src/lib/dashboard.ts`.
 - **[Socratic.Trade] UX Wave D mobile/iOS parity (brand teal, Home checklist, command feedback, PWA polish) — PLANNED / UNASSIGNED.** Program §Wave D. Prefer single iOS claim stream.
