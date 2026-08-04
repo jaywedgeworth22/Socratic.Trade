@@ -98,3 +98,12 @@ Image built cleanly (~15m, no chown hang) but the new container Restarting(1):
 Coolify "New container is not healthy, rolling back". Cause: `USER node` cannot
 write under root-owned `/app` for `coolify-prod-start` (mkdir `/app/data/.bin`,
 download litestream/infisical). Switch runtime USER to root for Coolify.
+
+## Follow-up 4: strip scripts/eval before next build
+
+Deploy 174 image started then Restarting(1). Build log: Next typecheck failed
+on `scripts/eval/run-faithfulness.ts` importing `test/fixtures/...` which is
+dockerignored. Incomplete/broken `.next` still packaged → crash loop.
+
+Fix: `rm -rf scripts/eval test` before `npm run build` (+ dockerignore
+`scripts/eval`).

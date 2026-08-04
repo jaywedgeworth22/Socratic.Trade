@@ -23,10 +23,14 @@ RUN npm ci
 
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build \
+# scripts/eval/* imports test/fixtures (dockerignored). Next typecheck includes
+# **/*.ts and would fail the image build (deploy 174 crash-loop on incomplete
+# .next). Drop eval runners before build; they are not used in production.
+RUN rm -rf scripts/eval test \
+  && npm run build \
   && npm prune --omit=dev \
   && rm -rf .next/cache \
-  && rm -rf test ios pdf_pages .git .github \
+  && rm -rf ios pdf_pages .git .github \
   && find docs -mindepth 1 -maxdepth 1 ! -name benchmarks -exec rm -rf {} + 2>/dev/null || true \
   && rm -rf node_modules/.cache
 
