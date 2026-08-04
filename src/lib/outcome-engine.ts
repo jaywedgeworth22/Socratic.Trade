@@ -765,36 +765,47 @@ async function generatePostMortemLessons(
     decisionCase.connectedAccountId
   );
 
-  // Route each lesson through the account-scoped learned-context boundary. A historical case without
-  // an attributable connected account may retain its embedded case/lesson, but it cannot enter a
-  // decision prompt as portfolio-wide context because its paper/live provenance is unknowable.
+  // Route each lesson as PORTFOLIO-scoped learned context so paper and live accounts both
+  // contribute to model/task comparison (owner 2026-08-04: an account is an account; paper is
+  // first-class learning evidence unless a definite paper-exclusive cause applies — that
+  // exception is enforced by the daily Learning Review, not by scoping lessons away).
+  // A historical case without a connected account may still write with unknown environment;
+  // we only refuse when we cannot identify a user at all (userId is required by ingestLearned).
   const lessonAccount = decisionCase.connectedAccountId
     ? getConnectedAccount(decisionCase.connectedAccountId, userId)
     : undefined;
-  if (!lessonAccount) {
+  const accountEnvironment = lessonAccount?.environment ?? null;
+  if (decisionCase.connectedAccountId && !lessonAccount) {
+    // Account id was stamped but the row is gone — still write the lesson, but audit so we
+    // notice orphaned provenance. Do not drop model/task evidence for missing account metadata.
     audit(
       "learned_context.account_provenance_missing",
-      { userId, decisionId: decisionCase.id, connectedAccountId: decisionCase.connectedAccountId ?? null },
+      { userId, decisionId: decisionCase.id, connectedAccountId: decisionCase.connectedAccountId, note: "wrote portfolio lesson with null environment" },
       userId,
       decisionCase.connectedAccountId
     );
-    return { written: true };
   }
 
   for (const { lesson, direction } of parsed.lessons) {
     try {
+      const envNote = accountEnvironment ? ` on a ${accountEnvironment} broker account` : "";
       await ingestLearned(
         userId,
         {
           kind: "decision",
           subject: `decision_lesson:${decisionCase.symbol ?? "portfolio"}:${decisionCase.thesisTag ?? "untagged"}`,
-          value: `${lesson} (direction: ${direction}; from the ${decisionCase.symbol ?? "portfolio"} ${decisionCase.status} decision, outcome ${outcome.status})`,
+          value: `${lesson} (direction: ${direction}; from the ${decisionCase.symbol ?? "portfolio"} ${decisionCase.status} decision${envNote}, outcome ${outcome.status})`,
           symbol: decisionCase.symbol,
           source: "inferred",
           confidence: 0.55
         },
         "autonomous",
-        { connectedAccountId: lessonAccount.id, accountEnvironment: lessonAccount.environment }
+        {
+          // No connectedAccountId → learningScope defaults to "portfolio" (cross-account).
+          // Keep paper/live on accountEnvironment for Learning Review attribution only.
+          ...(accountEnvironment ? { accountEnvironment } : {}),
+          learningScope: "portfolio"
+        }
       );
     } catch (err) {
       console.warn("[outcome-engine] ingestLearned for lesson failed:", err instanceof Error ? err.message : String(err));

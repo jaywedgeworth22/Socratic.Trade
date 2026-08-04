@@ -4,6 +4,12 @@ Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
 # STATUS — current repo snapshot
 
+**2026-08-04 — GROK: paper-account learning parity (Learning Review).** Owner: paper
+trades are first-class for model/task comparison unless a definite paper-exclusive
+cause applies. Prompt rule + portfolio-scoped decision lessons + environment on review
+items. Branch `grok/paper-learning-parity`. Rollout:
+`docs/rollouts/2026-08-04-paper-learning-parity.md`.
+
 **2026-08-04 — GROK: deploy 178 failed (missing better-sqlite3 .node); fixing native rebuild.**
 PRs drained; slim image builds (1.45GB) but healthcheck 500: `better_sqlite3.node` missing after
 `npm rebuild` no-op post-prune. Branch `grok/docker-sqlite-native`: prune --ignore-scripts,
