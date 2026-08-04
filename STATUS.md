@@ -1,6 +1,11 @@
 **2026-08-04 — Final Verification of Model Slugs (AG).** Branch `agent/antigravity/openrouter-classifiers`. Replaced all legacy `-latest` model slugs with Provider Native Slugs (`gpt-5.6-sol`, `gpt-4o`, etc.) across the codebase. Cleaned up duplicate properties in model configuration files. Fixed test regressions in history tests by adding DB isolation to `historyTestDb` shared per-file. Fixed `isGpt56Model` regex. Gates verified: tsc clean, lint clean, full test suite passes. Landed cleanly via `land.sh`.
 Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
+**2026-08-04 — GROK: UX PR-A4 + PR-A5 (guardrails Advanced collapsed + PWA Proposals noun).**
+Branch `grok/ux-a4-a5-quick`. Advanced rulebook `defaultOpen={false}`; Essentials open; PWA
+heading Approvals → Proposals. Display-only. lint+tsc clean. Rollout:
+`docs/rollouts/2026-08-04-ux-a4-a5-guardrails-nouns.md`.
+
 
 # STATUS — current repo snapshot
 
