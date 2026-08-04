@@ -15,6 +15,9 @@ Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 on direct FMP/Quiver/UW. Congress.Trade for disclosures/analytics (default ON);
 fundamentals from the multi-provider cascade (App A fundamentals default OFF). PR #2398.
 Rollout: `docs/rollouts/2026-08-04-retire-direct-fmp-quiver-uw.md`.
+**2026-08-04 — Full-Bleed Pure White App Icon Assets (ANTIGRAVITY, branch `agent/antigravity`).** Updated `public/icon.svg` canvas to 100% full-bleed white background (`#ffffff` without transparent corners), updated `app/manifest.ts` PWA `background_color`/`theme_color` to `#ffffff`, and regenerated all PNG icons (`apple-touch-icon-180.png`, `icon-192.png`, `icon-512.png`, and iOS Xcode `AppIcon-1024.png`). Verified `tsc` clean and asset rendering. Rollout: `docs/rollouts/2026-08-04-full-bleed-white-app-icon.md`.
+
+**2026-08-04 — GROK: PR drain complete; prod deploy unblocked via slim Dockerfile.** Merged open PRs #2367-#2371, #2375, #2381. Prod stuck on 6ad913d5 because Coolify timed out on multi-GB `COPY --chown`. Fix: `.dockerignore` + prune + chown-in-RUN (`grok/docker-slim-deploy`). Rollout: `docs/rollouts/2026-08-04-docker-slim-deploy.md`.
 
 **2026-08-04 — GROK: paper-account learning parity (Learning Review).** Owner: paper
 trades are first-class for model/task comparison unless a definite paper-exclusive
@@ -30,10 +33,19 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-03.
+Last updated: 2026-08-04 (GROK: UX improvement program plan).
+
+
+## UX improvement program (2026-08-04, GROK)
+
+Sequenced PR plan for web console + PWA + iOS after a full-product review:
+`docs/design/ux-improvement-program.md`. Wave A (trust/action) slices are Planned/UNASSIGNED
+on the effort board — claim before implementing. Rollout:
+`docs/rollouts/2026-08-04-ux-improvement-program.md`.
 
 ## Where things stand
 
+**2026-08-04 — Multi-Source Quote Cascade & Staleness Resolution (ANTIGRAVITY).** Implemented a 5-level redundant quote cascade resolving active broker gateway → Alpaca snapshots → Yahoo batch → Yahoo single → ROIC.ai profile. Converted the quote staleness policy check into a non-blocking gate that mutates opening orders to limit orders to defend the price (buy capped at min(limit, ref), short capped at max(limit, ref)), appends warning text to rationale, writes a `quote_staleness_warn` audit trail, and alerts the user via `provider_degraded` push. Full tests and builds check out clean. Rollouts: `docs/rollouts/2026-08-04-multi-source-quote-cascade.md`, `docs/rollouts/2026-08-04-non-blocking-quote-staleness-gate.md`.
 **2026-08-04 — Multi-Source Quote Cascade & Staleness Resolution (ANTIGRAVITY).** Added a redundant multi-source quote cascade in `src/lib/quotes-cascade.ts` checking broker quotes, Alpaca snapshots, Yahoo batch, and Yahoo single quote APIs in series. Integrated it across the strategy run loop, proposal approvals, and chat draft promotion. Added a unit test suite to verify the cascade level routing. Full type check and lints pass. Rollout: `docs/rollouts/2026-08-04-multi-source-quote-cascade.md`.
 
 **2026-08-04 — EOD Quote History Cache SQLite Migration (ANTIGRAVITY).** Migrated the legacy flat-file JSON EOD quote caching (`data/history-5y/`, etc.) in `src/lib/history.ts` to a fully SQLite-backed table `history_cache_eod` to resolve test failures and ensure robust silent-caching. Replaced `fetchLocalFlatFileHistory` with `fetchHistoryCacheEod`. Updated the `test/history.test.ts` suite to seed the SQLite DB directly. Full tests pass. Rollout: `docs/rollouts/2026-08-04-history-cache-eod-migration.md`.

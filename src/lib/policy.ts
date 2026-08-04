@@ -386,10 +386,10 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       }
     }
   }
-  // STALENESS GATE: block an OPENING proposal built on stale market data (fail-safe, DEFAULT OFF).
-  // Enabled per-class only when the threshold is set (> 0). Fail-safe direction only: data older than
-  // the threshold → block; a MISSING timestamp is treated as stale (block) ONLY because the gate is on.
-  // Exits (sell/cover) are never gated. Timestamps are read from the run's MarketScan — never fabricated.
+  // STALENESS GATE: convert an OPENING proposal built on stale market data to a limit order (fail-safe).
+  // Timestamps are read from the run's MarketScan — never fabricated.
+  let quoteStaleMetadata: { ageSec?: number; originalType: any; originalLimitPrice?: number; referencePrice: number } | undefined = undefined;
+
   if (isOpening) {
     const now = (context.now ?? new Date()).getTime();
     const maxQuoteAgeSec = context.policy.maxQuoteAgeSec;
@@ -398,19 +398,38 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
         context.marketScan?.quotesBySymbol[symbol]?.asOf ??
         context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.asOf;
       const asOfMs = quoteAsOf ? new Date(quoteAsOf).getTime() : NaN;
-      // Staleness failures are TIME-CONTEXT gates: they are escalatable (Decide mode) because a
-      // later human approval re-runs this gate against a FRESH scan, so the condition self-heals.
-      if (!quoteAsOf || Number.isNaN(asOfMs)) {
-        pushEscalatable(
-          "quote_staleness",
-          `staleness_gate: ${symbol} quote timestamp is missing/unparseable; treating as stale ` +
-            `(maxQuoteAgeSec=${maxQuoteAgeSec}).`
-        );
-      } else {
-        const ageSec = Math.round((now - asOfMs) / 1000);
-        if (ageSec > maxQuoteAgeSec) {
-          pushEscalatable("quote_staleness", `staleness_gate: ${symbol} quote is ${ageSec}s old (max ${maxQuoteAgeSec}s).`);
+      const ageSec = !Number.isNaN(asOfMs) ? Math.round((now - asOfMs) / 1000) : undefined;
+      const isStale = !quoteAsOf || Number.isNaN(asOfMs) || (ageSec !== undefined && ageSec > maxQuoteAgeSec);
+
+      if (isStale) {
+        // Mutate order to limit to protect execution price vs reference price at proposal creation
+        const originalType = proposal.type;
+        const originalLimitPrice = proposal.limitPrice;
+
+        const scanPrice = context.marketScan?.quotesBySymbol[symbol]?.price ??
+          context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.price;
+        const fallbackRefPrice = scanPrice ?? proposal.limitPrice ?? proposal.stopPrice ?? 0;
+        const referencePrice = (proposal.referencePrice != null && proposal.referencePrice > 0)
+          ? proposal.referencePrice
+          : fallbackRefPrice;
+
+        proposal.type = "limit";
+        if (proposal.side === "buy") {
+          proposal.limitPrice = proposal.limitPrice != null ? Math.min(proposal.limitPrice, referencePrice) : referencePrice;
+        } else if (proposal.side === "short") {
+          proposal.limitPrice = proposal.limitPrice != null ? Math.max(proposal.limitPrice, referencePrice) : referencePrice;
         }
+
+        const ageText = ageSec !== undefined ? `${ageSec}s old` : "missing/unparseable";
+        const warningNote = ` [Stale quote warning: quote timestamp is ${ageText}. Placed as a limit order at $${(proposal.limitPrice ?? 0).toFixed(2)} to protect execution price vs reference price $${referencePrice.toFixed(2)}.]`;
+        proposal.rationale = `${proposal.rationale}${warningNote}`;
+
+        quoteStaleMetadata = {
+          ageSec,
+          originalType,
+          originalLimitPrice,
+          referencePrice
+        };
       }
     }
     const maxFundamentalsAgeSec = context.policy.maxFundamentalsAgeSec;
@@ -870,6 +889,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     reasons,
     ...(reasons.length > 0 && escalations.length > 0 ? { escalations } : {}),
     ...(washSaleAudit ? { washSale: washSaleAudit } : {}),
+    ...(quoteStaleMetadata ? { quoteStale: quoteStaleMetadata } : {}),
     projectedSymbolExposurePct,
     // Opening sides accumulate daily notional; closing sides (sell/cover) do not (matches the
     // daily/hourly cap checks above, which are gated on isOpening). (T14)

@@ -581,20 +581,20 @@ describe("time-context gate escalations (closed allowlist)", () => {
     expect(decision.escalations?.map((e) => e.kind)).toContain("daily_order_cap");
   });
 
-  it("quote staleness failure is escalatable", () => {
+  it("fundamentals staleness failure is escalatable", () => {
     const decision = evaluateTradeProposal(
       buy,
-      ctx(policyWith({ maxQuoteAgeSec: 60 }), {
+      ctx(policyWith({ maxFundamentalsAgeSec: 60 }), {
         ...cleanLocks,
         now: new Date("2026-07-02T15:00:00.000Z"),
         marketScan: {
           source: "test",
-          generatedAt: "2026-07-02T15:00:00.000Z",
+          generatedAt: "2026-07-02T14:00:00.000Z",
           scannedSymbols: 1,
           returnedQuotes: 1,
           topCandidates: [],
           sectorBySymbol: {},
-          quotesBySymbol: { TSLA: { symbol: "TSLA", price: 100, volume: 1, intradayChangePct: 0, positionMarketValue: 0, score: 1, asOf: "2026-07-02T14:00:00.000Z" } },
+          quotesBySymbol: { TSLA: { symbol: "TSLA", price: 100, volume: 1, intradayChangePct: 0, positionMarketValue: 0, score: 1, asOf: "2026-07-02T15:00:00.000Z" } },
           warnings: []
         }
       })
