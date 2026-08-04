@@ -2,7 +2,7 @@
 Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
 **2026-08-04 — GROK: UX PR-A4 + PR-A5 (guardrails Advanced collapsed + PWA Proposals noun).**
-Branch `grok/ux-a4-a5-quick`. Advanced rulebook `defaultOpen={false}`; Essentials open; PWA
+PR #2411, branch `grok/ux-a4-a5-quick`, auto-merge armed. Advanced rulebook `defaultOpen={false}`; Essentials open; PWA
 heading Approvals → Proposals. Display-only. lint+tsc clean. Rollout:
 `docs/rollouts/2026-08-04-ux-a4-a5-guardrails-nouns.md`.
 
