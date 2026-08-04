@@ -32,6 +32,8 @@ import { buildSocraticDecisionCase, socraticStatusFromProposalStatus } from "@/l
 import type { ChatDraft } from "@/lib/chat/types";
 import type { PolicyDecision, ReviewedOrder } from "@/lib/types";
 import { shouldEscalateDecision } from "@/lib/strategy-risk";
+import { fetchFreshQuotesCascade } from "@/lib/quotes-cascade";
+import { normalizeSymbol } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
@@ -172,6 +174,7 @@ export async function POST(request: Request) {
   const now = new Date();
   const daily = dailyExecutionStats(policy.accountNumber, now, userId);
   const hourly = notionalInLastMinutes(policy.accountNumber, 60, now, userId);
+
   // NB: this is a PREVIEW evaluation (no full market scan); the authoritative gate runs again inside
   // executeProposal at approve time against fresh data.
   let decision = evaluateTradeProposal(proposal, {

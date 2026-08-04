@@ -36,7 +36,7 @@ import { appAClosesToBars, congressReadsEnabled, getCongressTradeClient } from "
 import { BROWSER_UA, politeFetchJson } from "./web-sources/http";
 import { admitProviderRequests } from "./provider-rate-limit";
 import { apiKeyFingerprint } from "./data-providers";
-
+import { fetchHistoryCacheEod, upsertHistoryCacheEod } from "./history-cache";
 const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
 const cache = new Map<string, { expiresAt: number; bars: OHLCBar[] }>();
 const KEYED_HISTORY_SERVICES = ["massive", "roic", "marketstack", "tiingo"] as const;
@@ -232,8 +232,8 @@ export async function fetchDailyOHLC(
   const sharedHit = cache.get(sharedCacheKey);
   if (sharedHit && sharedHit.expiresAt > now) return sharedHit.bars;
 
-  // 1. Evaluate local flat-file history
-  const localBars = fetchLocalFlatFileHistory(symbol);
+  // 1. Evaluate local SQLite history cache
+  const localBars = await fetchHistoryCacheEod(symbol);
   if (localBars && localBars.length >= 2 && isBarSeriesFresh(localBars, 3, now)) {
     cache.set(sharedCacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars: localBars });
     emitHistoryDemandFilled(symbol, now);
@@ -245,6 +245,11 @@ export async function fetchDailyOHLC(
 
   const startDate = new Date(now - 1825 * 24 * 60 * 60_000).toISOString().slice(0, 10);
   const sources: Array<{ scope: CacheScope; fetch: () => Promise<OHLCBar[] | null> }> = [
+    // Local imported-EOD cache tier (congress.trade return-path): App A POSTs gap-fill closes to
+    // /api/admin/securities/import; they land in imported_price_eod/imported_spx_eod. Reading the local
+    // table first (ahead of the App A HTTP read and our keyed providers) lets an imported series displace
+    // a re-fetch entirely. DEFAULT OFF + density-guarded inside fetchImportedHistory so a sparse gap-fill
+    // never short-circuits with an incomplete series. Close-only bars.
     { scope: "shared", fetch: async () => fetchImportedHistory(symbol) },
     ...(opts?.skipAppATier
       ? []
@@ -274,6 +279,13 @@ export async function fetchDailyOHLC(
       const cacheKey = source.scope === "private" ? privateCacheKey : source.scope === "pool" ? poolCacheKey : sharedCacheKey;
       cache.set(cacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars: finalBars });
       if (source.scope === "shared") emitHistoryDemandFilled(symbol, now);
+      
+      // Persist to the local SQLite cache so future runs can skip the network hop entirely.
+      // This handles all fetched tiers (Tradier, Massive, Tiingo, etc.).
+      if (source.fetch.name !== "fetchHistoryCacheEod") {
+        upsertHistoryCacheEod(symbol, finalBars);
+      }
+      
       return finalBars;
     }
   }
@@ -743,58 +755,5 @@ function fetchImportedHistory(symbol: string): OHLCBar[] | null {
   return bars.length >= 2 ? bars : null;
 }
 
-/**
- * Read historical 5-year daily OHLC bars from local flat-file storage (`data/history-5y/`, `data/massive-history/`, `data/fmp-history/`).
- * When local flat-file history exists for a symbol, it is returned directly without making external REST API calls.
- */
-export function fetchLocalFlatFileHistory(rawSymbol: string): OHLCBar[] | null {
-  try {
-    if (process.env.MASSIVE_LOCAL_HISTORY_ENABLED === "off") return null;
-    const symbol = rawSymbol.trim().toUpperCase();
-    if (!symbol) return null;
-    if (process.env.NODE_ENV === "test" && process.env.MASSIVE_LOCAL_HISTORY_ENABLED !== "on" && symbol !== "TESTSYM") return null;
 
-    const baseDir = path.join(process.cwd(), "data");
-    const candidates = [
-      path.join(baseDir, "history-5y", `${symbol}.json`),
-      path.join(baseDir, "history-5y", `${symbol.toLowerCase()}.json`),
-      path.join(baseDir, "fmp-history", `${symbol}.json`),
-      path.join(baseDir, "fmp-history", `${symbol.toLowerCase()}.json`)
-    ];
 
-    let filePath: string | null = null;
-    for (const cand of candidates) {
-      if (fs.existsSync(cand)) {
-        filePath = cand;
-        break;
-      }
-    }
-    if (filePath) {
-      const raw = fs.readFileSync(filePath, "utf8");
-      const json = JSON.parse(raw);
-      const rows = Array.isArray(json) ? json : Array.isArray(json?.results) ? json.results : Array.isArray(json?.bars) ? json.bars : [];
-      if (rows && rows.length >= 2) {
-        const bars: OHLCBar[] = [];
-        for (const r of rows) {
-          const c = typeof r.c === "number" ? r.c : typeof r.close === "number" ? r.close : undefined;
-          const t = r.t ?? r.time ?? r.date;
-          if (typeof c !== "number" || !Number.isFinite(c) || (typeof t !== "number" && typeof t !== "string")) continue;
-          bars.push({
-            time: t,
-            open: numOrUndef(r.o ?? r.open),
-            high: numOrUndef(r.h ?? r.high),
-            low: numOrUndef(r.l ?? r.low),
-            close: c,
-            volume: numOrUndef(r.v ?? r.volume),
-            vwap: numOrUndef(r.vw ?? r.vwap)
-          });
-        }
-        if (bars.length >= 2) return bars;
-      }
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}

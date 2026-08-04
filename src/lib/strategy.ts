@@ -1,5 +1,6 @@
 export * from "./strategy-execution";
 export * from "./strategy-risk";
+import { fetchFreshQuotesCascade } from "./quotes-cascade";
 import { TradingGraph, GraphContext } from "./orchestration/trading-graph";
 import { LANE_WAITS, withAccountMutation } from "./account-mutation";
 import { OperationLeaseOwnershipError } from "./operation-lease";
@@ -655,7 +656,7 @@ export async function runStrategyOnce(
       congressMultiplier
     });
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
-    const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
+    const marketScan = mergeQuoteData(baseMarketScan, await fetchFreshQuotesCascade(quoteSymbols, userId, policy.accountNumber));
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     // Full lock PROVENANCE (binding account, clear date, summed disallowed lossUsd), not just the
     // symbol set — the ask/auto wash-sale handling modes price the forfeited deduction from it.

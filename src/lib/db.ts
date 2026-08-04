@@ -3439,6 +3439,22 @@ function migrate(database: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    -- Socratic.Trade local caching for complete EOD bars (OHLCV), replacing the silent-failing flat-file cache.
+    -- Upserted continuously during live strategy runs for fast replay, avoiding expensive API network loops.
+    CREATE TABLE IF NOT EXISTS history_cache_eod (
+      ticker TEXT NOT NULL,
+      date TEXT NOT NULL,
+      open REAL,
+      high REAL,
+      low REAL,
+      close REAL NOT NULL,
+      volume REAL,
+      vwap REAL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (ticker, date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_history_cache_eod_ticker ON history_cache_eod (ticker, date);
+
     -- Server-side persistence for a POST /api/strategy/tune review (the paid LLM
     -- proposeStrategyTuning output): previously lived only in client React state, so a closed
     -- browser (or a disconnect before Apply) silently lost it. 'result' is the FULL response JSON

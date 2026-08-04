@@ -29,11 +29,11 @@ describe("reasoningControlForModels — rotation sentinel keeps the control visi
   });
 
   it("rotate + concrete model intersects down to the concrete model's own ladder", () => {
-    const control = reasoningControlForModels([ROTATE, "gpt-5.4-mini"]);
+    const control = reasoningControlForModels([ROTATE, "o1"]);
     expect(control).not.toBeNull();
     expect(control!.options.map((o) => o.value)).toEqual(["low", "medium", "high"]);
     expect(control!.label).toBe("Shared Reasoning / Thinking");
-    expect(normalizeReasoningValueForControl([ROTATE, "gpt-5.4-mini"], control, "medium")).toBe("medium");
+    expect(normalizeReasoningValueForControl([ROTATE, "o1"], control, "medium")).toBe("medium");
   });
 
   it("rotate + a model with NO reasoning capability still shows the rotation ladder", () => {
@@ -95,9 +95,9 @@ describe("normalizeReasoningValueForControl — high-tier-only pairings (no sile
 
 describe("seatReasoningPatch — per-seat renormalization bundled into model saves", () => {
   it("clamps the seat's stored effort to the new model's own ladder", () => {
-    // gpt-5.4-mini's ladder is {low, medium, high}: "xhigh" clamps to "high" for the save.
-    expect(seatReasoningPatch("llmReasoningEffort", "gpt-5.4-mini", "xhigh")).toEqual({ llmReasoningEffort: "high" });
-    expect(seatReasoningPatch("llmReasoningEffort", "gpt-5.4-mini", "medium")).toEqual({ llmReasoningEffort: "medium" });
+    // o1's ladder is {low, medium, high}: "xhigh" clamps to "high" for the save.
+    expect(seatReasoningPatch("llmReasoningEffort", "o1", "xhigh")).toEqual({ llmReasoningEffort: "high" });
+    expect(seatReasoningPatch("llmReasoningEffort", "o1", "medium")).toEqual({ llmReasoningEffort: "medium" });
     // Writes the reviewer's own per-team field when asked to.
     expect(seatReasoningPatch("redTeamReasoningEffort", "claude-sonnet-5", "xhigh")).toEqual({ redTeamReasoningEffort: "xhigh" });
   });
