@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   isProviderTierCheckDue,
   probeFmpTier,
@@ -71,29 +71,20 @@ describe("probeMassiveTier", () => {
 });
 
 describe("probeFmpTier", () => {
-  it("classifies paid when ratios-ttm returns data", async () => {
-    const fetcher = (async () => jsonRes([{ priceToEarningsRatioTTM: 30 }])) as unknown as typeof fetch;
-    const r = await probeFmpTier("k", fetcher);
-    expect(r.tier).toBe("paid");
-    expect(r.signal).toBe("data_returned");
-  });
-  it("classifies free on a premium/upgrade error envelope", async () => {
-    const fetcher = (async () => jsonRes({ "Error Message": "Exclusive Endpoint: upgrade your plan." })) as unknown as typeof fetch;
-    const r = await probeFmpTier("k", fetcher);
-    expect(r.tier).toBe("free");
-    expect(r.signal).toBe("premium_gated_error");
-  });
-  it("classifies free on 429 (daily cap)", async () => {
-    const fetcher = (async () => jsonRes("limit", 429)) as unknown as typeof fetch;
-    const r = await probeFmpTier("k", fetcher);
-    expect(r.tier).toBe("free");
-    expect(r.signal).toBe("rate_limited_429");
-  });
-  it("stays unknown on an ambiguous/empty response", async () => {
-    const fetcher = (async () => jsonRes([])) as unknown as typeof fetch;
+  it("never issues a network probe (FMP direct access retired)", async () => {
+    const fetcher = vi.fn(async () => jsonRes([{ priceToEarningsRatioTTM: 30 }])) as unknown as typeof fetch;
     const r = await probeFmpTier("k", fetcher);
     expect(r.tier).toBe("unknown");
-    expect(r.signal).toBe("ambiguous");
+    expect(r.signal).toBe("no_key");
+    expect(r.reason).toMatch(/retired/i);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("stays unknown with no key", async () => {
+    const fetcher = vi.fn() as unknown as typeof fetch;
+    const r = await probeFmpTier(undefined, fetcher);
+    expect(r.tier).toBe("unknown");
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
 
@@ -126,37 +117,41 @@ describe("runProviderTierCheck", () => {
     delete process.env.FMP_API_KEY;
   });
 
-  it("persists detected tiers and records a provider_degraded alert on a lapse", async () => {
+  it("persists Massive tier and records a provider_degraded alert on a lapse (FMP probe retired)", async () => {
     const { listNotificationEvents } = await import("../src/lib/db");
-    // Massive → free (old window empty), FMP → paid (array data).
+    // Massive → free (old window empty). FMP is never probed from this app.
     const fetcher = (async (u: string) => {
-      if (u.includes("financialmodelingprep.com")) return jsonRes([{ pe: 30 }]);
+      if (u.includes("financialmodelingprep.com")) {
+        throw new Error("FMP must not be probed from Socratic.Trade");
+      }
       return jsonRes({ results: isOld(u) ? [] : [{ c: 9 }] });
     }) as unknown as typeof fetch;
 
     await runProviderTierCheck({ userId: "local", fetcher });
     const status = getProviderTierStatus("local");
     expect(status.massive?.tier).toBe("free");
-    expect(status.fmp?.tier).toBe("paid");
+    expect(status.fmp).toBeUndefined();
     // Item 24: the structured probe-evidence signal is persisted alongside tier/reason so health
     // consumers can distinguish capability probes from freshness without parsing prose.
     expect(status.massive?.signal).toBe("history_cap_empty");
-    expect(status.fmp?.signal).toBe("data_returned");
 
     const events = listNotificationEvents("local", 50).filter((e) => e.type === "provider_degraded");
     expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events.some((e) => e.title.toLowerCase().includes("lapsed"))).toBe(true);
   });
 
-  it("alerts again when a key is restored to paid (change in either direction)", async () => {
+  it("alerts again when a Massive key is restored to paid (change in either direction)", async () => {
     const { listNotificationEvents } = await import("../src/lib/db");
     const fetcher = (async (u: string) => {
-      if (u.includes("financialmodelingprep.com")) return jsonRes([{ pe: 30 }]);
+      if (u.includes("financialmodelingprep.com")) {
+        throw new Error("FMP must not be probed from Socratic.Trade");
+      }
       return jsonRes({ results: [{ c: 9 }] }); // both windows return data → paid
     }) as unknown as typeof fetch;
 
     await runProviderTierCheck({ userId: "local", fetcher });
     expect(getProviderTierStatus("local").massive?.tier).toBe("paid");
+    expect(getProviderTierStatus("local").fmp).toBeUndefined();
     const restored = listNotificationEvents("local", 50).filter((e) => e.type === "provider_degraded" && e.title.includes("PAID"));
     expect(restored.length).toBeGreaterThanOrEqual(1);
   });
