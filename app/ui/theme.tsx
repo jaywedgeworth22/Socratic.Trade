@@ -4,19 +4,19 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 
 type Theme = "light" | "dark";
 const ThemeContext = createContext<{ theme: Theme; toggle: () => void; set: (t: Theme) => void }>({
-  theme: "dark",
+  theme: "light",
   toggle: () => {},
   set: () => {}
 });
 
 /** Inline script (run before paint) that applies the saved/system theme to <html> to avoid a flash. */
-export const themeInitScript = `(function(){try{var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.classList.toggle('dark',t==='dark');document.documentElement.dataset.theme=t;}catch(e){document.documentElement.classList.add('dark');}})();`;
+export const themeInitScript = `(function(){try{var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.classList.toggle('dark',t==='dark');document.documentElement.dataset.theme=t;}catch(e){document.documentElement.classList.remove('dark');}})();`;
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("dark");
+  const [theme, setThemeState] = useState<Theme>("light");
 
   useEffect(() => {
-    const current = (document.documentElement.dataset.theme as Theme) || "dark";
+    const current = (document.documentElement.dataset.theme as Theme) || "light";
     setThemeState(current);
   }, []);
 
