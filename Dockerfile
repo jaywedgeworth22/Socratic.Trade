@@ -20,10 +20,9 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json package-lock.json ./
 # better-sqlite3@13 ships prebuilds linked against GLIBC_2.38; Debian bookworm
-# only has 2.36. Rebuild from source so the .node matches the runtime image
-# (deploy 175: ERR_DLOPEN_FAILED / GLIBC_2.38 not found → health 500).
-RUN npm ci \
-  && npm rebuild better-sqlite3 --build-from-source
+# only has 2.36 (deploy 175/177: ERR_DLOPEN_FAILED). npm prune re-extracts
+# prebuilds, so we rebuild AGAIN after prune and delete prebuilds/.
+RUN npm ci
 
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -32,6 +31,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN rm -rf scripts/eval test \
   && npm run build \
   && npm prune --omit=dev \
+  && rm -rf node_modules/better-sqlite3/prebuilds \
+  && npm rebuild better-sqlite3 --build-from-source \
   && rm -rf .next/cache \
   && rm -rf ios pdf_pages .git .github \
   && find docs -mindepth 1 -maxdepth 1 ! -name benchmarks -exec rm -rf {} + 2>/dev/null || true \
