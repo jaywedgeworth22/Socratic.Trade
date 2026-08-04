@@ -1,3 +1,5 @@
+**2026-08-04 — UX PR-A2 approval density (GROK, branch `grok/ux-a2-approval-density`).** Approval cards default collapsed (side/symbol/size, Live/Paper, AI-critic chip, 2–3 line thesis); "Show full reasoning" restores full receipt; sticky mobile Approve/Reject above tab bar. No approve-API changes. Rollout: `docs/rollouts/2026-08-04-ux-a2-approval-density.md`.
+
 **2026-08-04 — Final Verification of Model Slugs (AG).** Branch `agent/antigravity/openrouter-classifiers`. Replaced all legacy `-latest` model slugs with Provider Native Slugs (`gpt-5.6-sol`, `gpt-4o`, etc.) across the codebase. Cleaned up duplicate properties in model configuration files. Fixed test regressions in history tests by adding DB isolation to `historyTestDb` shared per-file. Fixed `isGpt56Model` regex. Gates verified: tsc clean, lint clean, full test suite passes. Landed cleanly via `land.sh`.
 Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
