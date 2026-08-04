@@ -1,0 +1,71 @@
+# 2026-08-04 — Slim Docker image so Coolify deploys stop timing out [GROK]
+
+## Context & Objective
+
+After merging the full open-PR drain (#2367–#2371, #2375, #2381) to `main`,
+production stayed frozen on `6ad913d5` (#2378). Coolify webhooks queued
+correctly (`Deployment queued`), but every subsequent build **failed** during
+the final inter-stage copy.
+
+## Root cause
+
+Coolify's Horizon job aborts the remote `docker build` at ~30 minutes
+(`DeploymentException` / exit 255 from `docker exec … bash /artifacts/build.sh`).
+
+The production Dockerfile was:
+
+```dockerfile
+COPY --from=build --chown=node:node /app /app
+```
+
+That copies the **entire** build tree (full `npm ci` node_modules including
+devDependencies, `.next` including cache, tests, docs, …) and rewrites
+ownership file-by-file. Resulting images were ~3.96 GB. Under concurrent
+load on the Oracle box (congress-trade + usage-monitor builds), the COPY
+layer alone ran long enough to hit the 30-minute kill — even after
+`next build` had already succeeded (~7–8 min).
+
+Evidence from Coolify `application_deployment_queues`:
+
+- Last finished: id 137, commit `6ad913d5`, 2026-08-03 23:57Z
+- Failed: 140/144/147 (timeout or COPY hang), 156 (killed stuck COPY), 162
+  (HEAD `8a50fd51` — next build DONE 452s, then exit 255 at ~30 min wall clock)
+
+## Changes Made
+
+- Added `.dockerignore` so build context excludes `node_modules`, `.next`,
+  `test`, `docs`, `ios`, agent state, local data hoards, env files.
+- Slimmed `Dockerfile`:
+  - `npm prune --omit=dev` + drop `.next/cache` after build
+  - Drop non-runtime trees before the runtime stage
+  - Replace `COPY --chown=… /app /app` with `COPY` + single `RUN chown -R`
+  - Install `tar`/`gzip` in runtime (start script unpacks litestream/infisical)
+- Touched files:
+  - `Dockerfile`
+  - `.dockerignore` (new)
+  - `docs/rollouts/2026-08-04-docker-slim-deploy.md` (this file)
+  - `docs/EFFORT-LOG.md` / live board (PR drain → deploy unblock)
+
+## Decisions & Trade-offs
+
+- Did **not** switch to Next `output: 'standalone'` in this PR — that changes
+  the start command and needs a separate verification pass. Prune + no
+  `--chown` on the inter-stage copy is the minimal fix for the timeout class.
+- Cancelled intermediate Coolify queue entries (dependabot intermediate SHAs)
+  during the incident so only HEAD re-deploys after this lands; no manual
+  Coolify API deploy trigger (ANNOUNCE-THEN-DEPLOY is retired).
+
+## Verification State
+
+- Local: Dockerfile + dockerignore authoring only; full image build left to
+  Coolify (box is the production build host).
+- After merge: `bash scripts/verify-deploy-sha.sh` must show live SHA contains
+  the merge commit; `/api/health` `ok=true`, `db=ok`, litestream replicating.
+
+## Next Steps & Blockers
+
+1. Merge this PR → auto-deploy via webhook.
+2. Watch Coolify deployment for HEAD until `finished` (target wall clock ≪30m).
+3. `bash scripts/verify-deploy-sha.sh origin/main`.
+4. Optional follow-up: Next standalone output for sub-1 GB images; raise Coolify
+   Horizon timeout only as belt-and-suspenders (root fix is image size).
