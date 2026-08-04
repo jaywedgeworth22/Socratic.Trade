@@ -4,11 +4,12 @@ Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
 # STATUS — current repo snapshot
 
-**2026-08-04 — GROK: PR drain complete; prod deploy unblocked via slim Dockerfile.** Merged open PRs #2367-#2371, #2375, #2381. Prod stuck on 6ad913d5 because Coolify timed out on multi-GB `COPY --chown`. Fix: `.dockerignore` + prune + chown-in-RUN (`grok/docker-slim-deploy`). Rollout: `docs/rollouts/2026-08-04-docker-slim-deploy.md`.
+**2026-08-04 — GROK: deploy 178 failed (missing better-sqlite3 .node); fixing native rebuild.**
+PRs drained; slim image builds (1.45GB) but healthcheck 500: `better_sqlite3.node` missing after
+`npm rebuild` no-op post-prune. Branch `grok/docker-sqlite-native`: prune --ignore-scripts,
+global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). Rollout:
+`docs/rollouts/2026-08-04-docker-sqlite-native.md`.
 
-Snapshot only: what is true right now, what is blocked, what to do next. This file is
-**not** a changelog. Chronological history lives in `docs/rollouts/` (one note per piece
-of work), effort state lives in `docs/EFFORT-LOG.md`, and entries written here before
 2026-08-01 were moved to `docs/status-archive.md`.
 
 Last updated: 2026-08-03.
