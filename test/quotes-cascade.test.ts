@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchFreshQuotesCascade } from "../src/lib/quotes-cascade";
 import type { BrokerQuote } from "../src/lib/types";
 
@@ -35,6 +35,14 @@ vi.mock("../src/lib/yahoo-finance", () => ({
 }));
 
 describe("fetchFreshQuotesCascade", () => {
+  beforeAll(() => {
+    vi.stubEnv("TEST_ALLOW_CASCADE_EXTERNAL", "1");
+  });
+
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
 
