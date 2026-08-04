@@ -19,8 +19,9 @@ import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 import type { OHLCBar } from "./indicators";
+export type { OHLCBar };
 import { normalizeSymbol } from "./money";
-import { fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { audit, fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, upsertImportedPrices, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
 import { expiresAtRespectingMarketClose } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
@@ -96,7 +97,6 @@ async function fetchYahooChartJson<T>(url: string): Promise<T> {
       clearTimeout(timeout);
     }
   }
-  // The loop always exits early, so this keeps the function's return type sound.
   throw new Error(`HTTP 429 for ${url} (exhausted retries)`);
 }
 
@@ -108,9 +108,10 @@ export function isBarSeriesFresh(bars: OHLCBar[] | null, maxStalenessDays: numbe
   if (!bars || bars.length < 2) return false;
   const lastBar = bars[bars.length - 1];
   if (!lastBar || lastBar.time == null) return false;
-  const lastMs = typeof lastBar.time === "number"
-    ? (lastBar.time > 1e10 ? lastBar.time : lastBar.time * 1000)
-    : new Date(lastBar.time).getTime();
+  const t = lastBar.time;
+  const lastMs = typeof t === "number"
+    ? (t > 1e10 ? t : t * 1000)
+    : new Date(t).getTime();
   if (!Number.isFinite(lastMs)) return false;
   const ageMs = now - lastMs;
   const maxAgeMs = maxStalenessDays * 24 * 60 * 60_000;
@@ -123,8 +124,10 @@ export function isBarSeriesFresh(bars: OHLCBar[] | null, maxStalenessDays: numbe
 export function mergeOHLCBars(existing: OHLCBar[], incoming: OHLCBar[]): OHLCBar[] {
   const map = new Map<string, OHLCBar>();
   const toKey = (b: OHLCBar) => {
+    if (!b.time) return "";
     if (typeof b.time === "string") return b.time.slice(0, 10);
-    const d = new Date(typeof b.time === "number" && b.time < 1e10 ? b.time * 1000 : b.time);
+    const ms = typeof b.time === "number" && b.time < 1e10 ? b.time * 1000 : b.time;
+    const d = new Date(ms);
     return d.toISOString().slice(0, 10);
   };
 
@@ -134,14 +137,15 @@ export function mergeOHLCBars(existing: OHLCBar[], incoming: OHLCBar[]): OHLCBar
   }
   for (const b of incoming) {
     const k = toKey(b);
-    const existing = map.get(k);
-    // If we have an existing bar, trust its full detail, but overwrite with incoming fresh data.
-    map.set(k, { ...existing, ...b });
+    if (k) {
+      const prev = map.get(k);
+      map.set(k, { ...prev, ...b });
+    }
   }
 
   return Array.from(map.values()).sort((a, b) => {
-    const tA = typeof a.time === "number" ? a.time : new Date(a.time).getTime();
-    const tB = typeof b.time === "number" ? b.time : new Date(b.time).getTime();
+    const tA = typeof a.time === "number" ? a.time : new Date(a.time ?? 0).getTime();
+    const tB = typeof b.time === "number" ? b.time : new Date(b.time ?? 0).getTime();
     return tA - tB;
   });
 }
@@ -150,11 +154,16 @@ function persistEodBarsToCache(symbol: string, bars: OHLCBar[]): void {
   try {
     const pricesInput = [{
       ticker: symbol,
-      closes: bars.map((b) => ({
-        date: typeof b.time === "string" ? b.time.slice(0, 10) : new Date(typeof b.time === "number" && b.time < 1e10 ? b.time * 1000 : b.time).toISOString().slice(0, 10),
-        close: b.close,
-        volume: b.volume
-      }))
+      closes: bars.map((b) => {
+        const dStr = typeof b.time === "string"
+          ? b.time.slice(0, 10)
+          : new Date(typeof b.time === "number" && b.time < 1e10 ? b.time * 1000 : (b.time ?? 0)).toISOString().slice(0, 10);
+        return {
+          date: dStr,
+          close: b.close,
+          volume: b.volume
+        };
+      })
     }];
     upsertImportedPrices(pricesInput, "eod-auto-cache");
   } catch {
@@ -166,7 +175,7 @@ function persistEodBarsToCache(symbol: string, bars: OHLCBar[]): void {
     if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
     const targetFile = path.join(baseDir, `${symbol.toUpperCase()}.json`);
     const formatted = bars.map((b) => ({
-      t: typeof b.time === "number" ? b.time : new Date(b.time).getTime(),
+      t: typeof b.time === "number" ? b.time : new Date(b.time ?? 0).getTime(),
       o: b.open,
       h: b.high,
       l: b.low,
@@ -241,7 +250,7 @@ export async function fetchDailyOHLC(
     ...(userId
       ? [{ scope: cacheScopeForKeySource("user", userId), fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year", userId }) }]
       : []),
-    { scope: "shared", fetch: () => fetchYahoo(symbol, startDate) }
+    { scope: "shared", fetch: () => fetchYahoo(symbol) }
   ];
 
   for (const source of sources) {
