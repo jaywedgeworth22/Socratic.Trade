@@ -116,6 +116,8 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
+- **[Socratic.Trade][GROK] UX program RESTART implementer blitz — IN PROGRESS 2026-08-04 (orchestrator `~/apps/trading-grok`, 10 parallel worktree agents).** PR-0 already on main (#2400). Claiming exclusive: A1 honest-skips, A2 approval-density, A3 checklist, A4+A5 guardrails+nouns, B1 plain-nav, B4 settings-TOC, C1+C2 snapshot/PnL, C3 scan-virtuoso, D1+D2 iOS brand/home, D4 PWA polish. Program: `docs/design/ux-improvement-program.md`. Peers: do not touch keepouts.
+
 - **[Socratic.Trade][GROK] UX improvement program (web + PWA + iOS) — IN PROGRESS 2026-08-04 (PR-0 docs, branch `grok/ux-improvement-program`).** Sequenced PR plan: Waves A–F for trust, IA, speed, mobile parity, polish. Source: owner top-to-bottom review. Canonical: `docs/design/ux-improvement-program.md`. Rollout: `docs/rollouts/2026-08-04-ux-improvement-program.md`. Slices A1–A5 / B / C / D reserved below as UNASSIGNED until claimed; do not pre-assign agents.
 - **[Socratic.Trade] UX PR-A1 honest run skip statuses in UI — PLANNED / UNASSIGNED.** Budget/market/broker skips must not look like successful decision runs; distinct Activity/Thesis chips. Program: `docs/design/ux-improvement-program.md` §PR-A1. Money-adjacent status semantics.
 - **[Socratic.Trade] UX PR-A2 approval card progressive disclosure + sticky mobile CTAs — PLANNED / UNASSIGNED.** Collapse dense receipt; Approve/Reject always reachable on phone. Keepout: `app/console/components/approval-card.tsx`. Program §PR-A2.
