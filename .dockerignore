@@ -61,3 +61,6 @@ Picsew_*
 data/history-5y
 data/massive-history
 data/fmp-*
+
+# Eval runners import test fixtures; not needed in prod image
+scripts/eval

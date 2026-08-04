@@ -189,16 +189,21 @@ describe("outcome engine — the outcome writer", () => {
     expect(storeContextsCalls.some((call) => call.options?.dedupKeyPrefix === "socratic-decision")).toBe(true);
     expect(storeContextsCalls.every((call) => call.options?.scope === "private")).toBe(true);
 
-    // Lesson routed through ingestLearned (origin 'autonomous'): lands as a live fact row or,
-    // if the fail-closed classifier escalates, as a pending approval row — never silently dropped.
+    // Lesson routed through ingestLearned (origin 'autonomous'): portfolio-scoped so paper
+    // model/task evidence is available on every account, with paper provenance retained.
+    // If the fail-closed classifier escalates, it may land as a pending row instead.
     const { listLearnedContext, listPendingLearnedContext } = await import("../src/lib/db");
-    const learned = listLearnedContext(userId).some(
-      (row) => row.subject.startsWith("decision_lesson:AAPL") &&
-        row.connectedAccountId === connectedAccountId &&
-        row.learningScope === "account"
-    );
-    const pending = listPendingLearnedContext(userId).length > 0;
-    expect(learned || pending).toBe(true);
+    const learnedRow = listLearnedContext(userId).find((row) => row.subject.startsWith("decision_lesson:AAPL"));
+    const pending = listPendingLearnedContext(userId);
+    if (learnedRow) {
+      expect(learnedRow.learningScope).toBe("portfolio");
+      expect(learnedRow.connectedAccountId).toBeNull();
+      expect(learnedRow.accountEnvironment).toBe("paper");
+    } else {
+      expect(pending.length).toBeGreaterThan(0);
+      expect(pending[0]?.learningScope).toBe("portfolio");
+      expect(pending[0]?.accountEnvironment).toBe("paper");
+    }
 
     // Idempotent: a terminal case is not re-measured on the next cadence run.
     const second = await matureSocraticDecisionOutcomes(userId, {

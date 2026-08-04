@@ -82,3 +82,47 @@ only pruning non-benchmark docs after build.
 3. `bash scripts/verify-deploy-sha.sh origin/main`.
 4. Optional follow-up: Next standalone output for sub-1 GB images; raise Coolify
    Horizon timeout only as belt-and-suspenders (root fix is image size).
+
+## Follow-up 2: drop RUN chown entirely
+
+Deploy 171 reached `next build` DONE (186s) and prune DONE (127s) then sat
+in `RUN chown -R node:node /app` for 20+ minutes and would have timed out
+again. Recursive chown on pruned node_modules is still too slow on this box.
+
+Fix: omit ownership rewrite. Image files stay root-owned 755/644 (readable by
+`USER node`); writable state is on the Coolify `/app/data` volume.
+
+## Follow-up 3: USER root (deploy 173 crash-loop)
+
+Image built cleanly (~15m, no chown hang) but the new container Restarting(1):
+Coolify "New container is not healthy, rolling back". Cause: `USER node` cannot
+write under root-owned `/app` for `coolify-prod-start` (mkdir `/app/data/.bin`,
+download litestream/infisical). Switch runtime USER to root for Coolify.
+
+## Follow-up 4: strip scripts/eval before next build
+
+Deploy 174 image started then Restarting(1). Build log: Next typecheck failed
+on `scripts/eval/run-faithfulness.ts` importing `test/fixtures/...` which is
+dockerignored. Incomplete/broken `.next` still packaged → crash loop.
+
+Fix: `rm -rf scripts/eval test` before `npm run build` (+ dockerignore
+`scripts/eval`).
+
+## Follow-up 5: rebuild better-sqlite3 for bookworm glibc
+
+Deploy 175 built and started but healthcheck got HTTP 500:
+
+```
+libm.so.6: version GLIBC_2.38 not found
+(required by node_modules/better-sqlite3/prebuilds/linux-arm64.node)
+```
+
+better-sqlite3@13 (PR #2371) prebuilds need glibc ≥2.38; bookworm-slim has 2.36.
+Fix: `npm rebuild better-sqlite3 --build-from-source` after `npm ci` (python3/make/g++ already in the build stage).
+
+## Follow-up 6: rebuild AFTER prune; delete prebuilds
+
+Deploy 177 still failed with GLIBC_2.38 — `npm prune --omit=dev` re-extracted
+the incompatible prebuild after the earlier rebuild. Fix: after prune,
+`rm -rf node_modules/better-sqlite3/prebuilds` then
+`npm rebuild better-sqlite3 --build-from-source`.

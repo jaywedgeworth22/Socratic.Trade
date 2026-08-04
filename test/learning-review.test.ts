@@ -40,6 +40,7 @@ import {
   buildLearningReviewContextPack,
   evaluateLearningReviewTrigger,
   isLearningReviewDue,
+  PAPER_ACCOUNT_LEARNING_PARITY_RULE,
   parseLearningReviewVerdicts,
   runDailyLearningReview,
   runDailyLearningReviewIfDue,
@@ -1157,5 +1158,60 @@ describe("multi-day drain vs. the 7-day pack window (deferred finding #2/#3 hard
     for (const r of rows.slice(MAX_REVIEW_ITEMS)) expect(shownDay1.has(r.id)).toBe(true);
 
     expect(evaluateLearningReviewTrigger(userId, day1Now + 3_600_000, getPolicy(userId)).reason).toBe("no-new-items");
+  });
+
+  it("surfaces accountEnvironment on review items and pins paper-parity in the system prompt", async () => {
+    const userId = `lr-paper-parity-${randomUUID()}`;
+    const paperLesson = seedLearnedRow(userId, {
+      subject: "decision_lesson:MSFT:Momentum",
+      value: "DeepSeek outperformed Grok on earnings-catalyst entries (paper account closed lots).",
+      accountEnvironment: "paper",
+      learningScope: "portfolio",
+      assertedAt: new Date(NOW - 3_600_000).toISOString()
+    });
+    seedPendingRow(userId, {
+      subject: "model_task:red_team",
+      value: "Claude-as-reviewer had higher veto value-add on paper A/B runs.",
+      accountEnvironment: "paper",
+      learningScope: "portfolio"
+    });
+
+    // Contract the Learning Review Board must honor (owner 2026-08-04).
+    expect(PAPER_ACCOUNT_LEARNING_PARITY_RULE).toMatch(/FIRST-CLASS/i);
+    expect(PAPER_ACCOUNT_LEARNING_PARITY_RULE).toMatch(/PAPER-EXCLUSIVE/i);
+    expect(PAPER_ACCOUNT_LEARNING_PARITY_RULE).toMatch(/model/i);
+
+    const pack = await buildLearningReviewContextPack(userId, NOW);
+    const paperItem = pack.items.find((it) => it.id === paperLesson.id);
+    expect(paperItem).toMatchObject({
+      accountEnvironment: "paper",
+      learningScope: "portfolio"
+    });
+    expect(pack.items.some((it) => it.accountEnvironment === "paper" && it.table === "learned_context_pending")).toBe(true);
+
+    // The system prompt (not just a unit-test constant) must carry the rule into the LLM call.
+    let systemPromptSeen = "";
+    await runDailyLearningReview(userId, {
+      now: NOW,
+      llm: async (spec) => {
+        systemPromptSeen = spec.systemPrompt;
+        const items = (JSON.parse(spec.userContent) as { reviewItems: Array<{ id: string; table: LearningReviewVerdict["table"]; accountEnvironment?: string | null }> })
+          .reviewItems;
+        expect(items.some((it) => it.accountEnvironment === "paper")).toBe(true);
+        return JSON.stringify({
+          reviews: items.map((it) => ({
+            id: it.id,
+            table: it.table,
+            verdict: "keep",
+            confidence: 85,
+            reasoning: "Sample/attribution/still-true all pass; paper origin is first-class model evidence, not a defect."
+          })),
+          summary: "Kept paper-sourced model lessons."
+        });
+      }
+    });
+    expect(systemPromptSeen).toContain("PAPER-ACCOUNT PARITY");
+    expect(systemPromptSeen).toContain("FIRST-CLASS");
+    expect(systemPromptSeen).toMatch(/PAPER-EXCLUSIVE/i);
   });
 });
