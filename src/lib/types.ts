@@ -90,7 +90,10 @@ export const NOTIFICATION_EVENT_TYPES = [
   // threshold was crossed but NOTHING halted or was blocked — the agent is still in control.
   // Deliberately NOT "kill_switch" (nothing flipped state) so owners don't learn to ignore
   // kill-switch alerts.
-  "risk_advisory"
+  "risk_advisory",
+  // P2.8: synthetic protective exit is retrying after a persistent broker decline / placement
+  // failure. Coalesced to one owner-visible alert per (stop, fingerprint) failure streak.
+  "protective_exit_failing"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
