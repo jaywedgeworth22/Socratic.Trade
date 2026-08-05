@@ -22,6 +22,7 @@ import { formatSourceList, friendlySource } from "@/lib/dashboard-ui";
 import type { MarketQuote, PendingProposal, SocraticDecisionCase, SocraticFrameworkProposal, TradeProposal } from "@/lib/types";
 import { EquityChart } from "./components/equity-chart";
 import { PositionsCard } from "./components/positions";
+import { ReadinessChecklistHero } from "./components/readiness-checklist";
 import { deriveDayPnl, deriveMarkToMarket, deriveReality, deriveRiskUtilization, deriveSpend, deriveStateInfo, selectEquityWindow } from "./lib/derive";
 import { cx, EM_DASH, fmtDay, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
 import { describeLastRun } from "./lib/last-run";
@@ -132,6 +133,10 @@ export default function ConsoleHomePage() {
   // floor. See docs/rollouts/2026-07-08-console-page-width-parity.md.
   return (
     <div className="flex flex-col gap-4">
+      {/* First-run checklist (PR-A3): when incomplete it dominates Thesis above the
+          strategy bar + two-column desk; when ready it collapses to "You're set". */}
+      <ReadinessChecklistHero snapshot={snapshot} />
+
       <section className="con-strategy-bar">
         <span className="con-card-title flex items-center gap-1.5">
           <Brain size={13} /> Strategy
