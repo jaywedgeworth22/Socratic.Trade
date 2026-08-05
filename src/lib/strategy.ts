@@ -112,6 +112,7 @@ import { avgReturnCorrelation, correlationProfile } from "./correlation";
 import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { startStrategyLockGuard, StrategyLockOwnershipLostError } from "./strategy-lock-guard";
+import type { StrategyRunFinishStatus } from "./strategy-run-status";
 import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 import {
   assertFmpTranscriptRightsGeneration,
@@ -266,8 +267,8 @@ export interface StrategyLlmStep {
 
 export interface StrategyResult {
   runId: string;
-  /** completed = decision cycle ran; skipped = pre-decision gate (budget/market/broker); failed = hard error */
-  status: "completed" | "failed" | "skipped";
+  /** completed = decision cycle ran; skipped_* = pre-decision gate; failed = hard error */
+  status: StrategyRunFinishStatus;
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
@@ -441,8 +442,8 @@ export async function runStrategyOnce(
       const reason = "Market is closed (holiday or weekend). Skipping strategy run.";
       console.log(`[Strategy] ${reason}`);
       audit("run_skipped_market_closed", { runId, userId, reason }, userId, connectedAccountId);
-      result = { runId, status: "skipped", summary: reason, proposals: [] };
-      finishStrategyRun(runId, "skipped", reason, userId);
+      result = { runId, status: "skipped_market_closed", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "skipped_market_closed", reason, userId);
       return result;
     }
 
@@ -537,16 +538,16 @@ export async function runStrategyOnce(
         const reason = `Broker cannot place orders — autonomous strategy auto-paused: ${pauseResult.reason}`;
         console.warn(`[Strategy] ${reason}`);
         audit("run_skipped_broker_unhealthy", { runId, userId, reason, autoHalted: true }, userId, connectedAccountId);
-        result = { runId, status: "skipped", summary: reason, proposals: [] };
-        finishStrategyRun(runId, "skipped", reason, userId);
+        result = { runId, status: "skipped_broker_unhealthy", summary: reason, proposals: [] };
+        finishStrategyRun(runId, "skipped_broker_unhealthy", reason, userId);
         return result;
       }
       if (!healthSignals.isHealthy) {
         const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
         console.warn(`[Strategy] ${reason}`);
         audit("run_skipped_broker_unhealthy", { runId, userId, reason, pauseAction: pauseResult.action }, userId, connectedAccountId);
-        result = { runId, status: "skipped", summary: reason, proposals: [] };
-        finishStrategyRun(runId, "skipped", reason, userId);
+        result = { runId, status: "skipped_broker_unhealthy", summary: reason, proposals: [] };
+        finishStrategyRun(runId, "skipped_broker_unhealthy", reason, userId);
         return result;
       }
     }
@@ -590,8 +591,8 @@ export async function runStrategyOnce(
         await notifyBudgetSkip(userId, policy, runId, reason);
         lockGuard.assertOwned();
         const summary = `Strategy run skipped — over usage budget. ${reason}`;
-        result = { runId, status: "skipped", summary, proposals: [] };
-        finishStrategyRun(runId, "skipped", summary, userId);
+        result = { runId, status: "skipped_budget", summary, proposals: [] };
+        finishStrategyRun(runId, "skipped_budget", summary, userId);
         return result;
       }
       // Carry early downgrade into later runLlmOverride merge (re-evaluated below for TOCTOU).
@@ -649,8 +650,8 @@ export async function runStrategyOnce(
       }
       if (earlySkip) {
         const summary = `Strategy run skipped — ${earlySkipReason} Risk maintenance still ran; market scan and LLM were not started.`;
-        result = { runId, status: "skipped", summary, proposals: [] };
-        finishStrategyRun(runId, "skipped", summary, userId);
+        result = { runId, status: "skipped_budget", summary, proposals: [] };
+        finishStrategyRun(runId, "skipped_budget", summary, userId);
         return result;
       }
     }
@@ -978,8 +979,8 @@ export async function runStrategyOnce(
       await notifyBudgetSkip(userId, policy, runId, reason);
       lockGuard.assertOwned();
       const summary = `Strategy run skipped — over usage budget. ${reason}`;
-      result = { runId, status: "skipped", summary, proposals: [] };
-      finishStrategyRun(runId, "skipped", summary, userId);
+      result = { runId, status: "skipped_budget", summary, proposals: [] };
+      finishStrategyRun(runId, "skipped_budget", summary, userId);
       return result;
     }
     // Run-scoped model override: carried SEPARATELY from `policy` so nothing that persists (setPolicy,
@@ -4128,9 +4129,9 @@ export async function runStrategyOnce(
     const tradeCount = placed + filled + proposed;
     // If LLM was suppressed mid-run (budget TOCTOU after scan) and nothing was proposed/placed
     // by the decision path, this is a skip — not a successful "evaluated 0 proposals" completion.
-    const finishStatus: "completed" | "skipped" =
-      skipLlmDueToBudget && tradeCount === 0 && results.length === 0 ? "skipped" : "completed";
-    const summary = skipLlmDueToBudget && finishStatus === "skipped"
+    const finishStatus: StrategyRunFinishStatus =
+      skipLlmDueToBudget && tradeCount === 0 && results.length === 0 ? "skipped_budget" : "completed";
+    const summary = skipLlmDueToBudget && finishStatus === "skipped_budget"
       ? [
           "Strategy run skipped — LLM/RAG budget or reservation blocked reasoning after risk maintenance.",
           expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",

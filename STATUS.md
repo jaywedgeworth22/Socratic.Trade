@@ -1,4 +1,7 @@
 **2026-08-04 — GROK: auto-pause strategy when broker cannot place orders (branch `grok/auto-pause-unplaceable-broker`).** If order path is down (Tradier OMS 500s, Alpaca trading_blocked, infra place failures, unfunded), flip `systemState` to `halted` with auto-resume marker so cadence stops burning LLM on unplaceable proposals; recover when probe healthy. Rollout: `docs/rollouts/2026-08-04-auto-pause-unplaceable-broker.md`.
+## Current (2026-08-04 GROK)
+
+- iOS TestFlight agent ship: `bash scripts/ios-ship-testflight.sh` (fleet README `/Users/jay/apps/ios-fleet/README.md`).
 
 **2026-08-04 — GROK: UX Wave B IA (B1/B2/B4) — PR #2425.** Branch `grok/ux-wave-b-ia`.
 Plain nav labels Home/Scan/Activity/Results/Macro via `DESTINATIONS` + `destinationLabel`;
@@ -28,6 +31,11 @@ heading Approvals → Proposals. Display-only. lint+tsc clean. Rollout:
 
 # STATUS — current repo snapshot
 
+**2026-08-04 — GROK: Congress filing-date member skill → ST.** Prefer CT `filingDate`
+copy-trade skill (shared package v2.5.0 dual performance); restore `memberSkill` weight
+0.2; persist raw avgExcess/winRate/scoredCount on quotes + signal_snapshot. Branch
+`grok/congress-filing-skill`. Rollout:
+`docs/rollouts/2026-08-04-congress-filing-member-skill.md`.
 **2026-08-04 — GROK: quote cascade freshness + never block on stale.** Cascade accept = maxQuoteAgeSec (120s) so ~15m delayed feeds no longer stop the cascade; if still stale, convert opening to limit at proposal.referencePrice (never block/escalate). Branch `grok/fix-quote-freshness`.
 
 **2026-08-04 — GROK: UX B3+E2+E3 polish (branch `grok/ux-b3-e-polish`).** Strategy page collapsible sections (Models + Instructions open; Scoring weights collapsed; Presets open). Login page three value bullets matching iOS. Command palette trigger always visible on mobile chrome (icon-only below sm). Healthy mobile freshness collapses to one line. No policy changes. Rollout: `docs/rollouts/2026-08-04-ux-b3-e-polish.md`.
@@ -55,6 +63,8 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 
 2026-08-01 were moved to `docs/status-archive.md`.
 
+Last updated: 2026-08-05 (GROK: UX program Waves A–E complete).
+Last updated: 2026-08-04 (GROK: UX Wave C speed C1–C4).
 Last updated: 2026-08-04 (GROK: UX Wave B IA landing).
 Last updated: 2026-08-04 (GROK: UX PR-A3 first-run readiness checklist — PR #2417).
 Last updated: 2026-08-04 (GROK: UX Wave D mobile/iOS/PWA).
@@ -66,13 +76,29 @@ PWA card strip); D4 humanized command labels, Ask-first/Autopilot, Proposals sec
 control-remote framing. Rollout: `docs/rollouts/2026-08-04-ux-wave-d-mobile.md`.
 
 
+## UX Wave C speed (2026-08-04, GROK)
+
+**IN PR** branch `grok/ux-wave-c-speed`. C1 snapshot TTL cache (userId×accountNumber, 10s,
+invalidate on policy/approve/reject); C2 FIFO `calculatePnl` once + PrefetchedPnl to
+scorecards/tax; C3 scan `TableVirtuoso`; C4 `React.memo` leaves + home `useMemo` derives.
+Rollout: `docs/rollouts/2026-08-04-ux-wave-c-speed.md`. Program:
+`docs/design/ux-improvement-program.md` §Wave C.
+
 ## UX improvement program (2026-08-04, GROK)
 
+Sequenced PR plan: `docs/design/ux-improvement-program.md`.
+**PR-A1 honest skip statuses** — IN PR #2418 (`grok/ux-a1-honest-skips`): granular
+`skipped_budget` / `skipped_market_closed` / `skipped_broker_unhealthy`; Thesis/Activity
+chips; liveness/auto-tune honesty. Rollout: `docs/rollouts/2026-08-04-ux-a1-honest-skips.md`.
+PR-0: `docs/rollouts/2026-08-04-ux-improvement-program.md`.
 Sequenced PR plan: `docs/design/ux-improvement-program.md`. **Wave B IA** (B1 plain labels,
 B2 Autonomy panel, B4 Settings TOC) on branch `grok/ux-wave-b-ia` — rollout
 `docs/rollouts/2026-08-04-ux-wave-b-ia.md`. Wave A slices remain claimable. Program rollout:
 `docs/rollouts/2026-08-04-ux-improvement-program.md`.
 Sequenced PR plan for web console + PWA + iOS after a full-product review:
+`docs/design/ux-improvement-program.md`. Wave A/B/C/D slices claimed by implementer
+fleet — coordinate via effort board. Rollout:
+`docs/rollouts/2026-08-04-ux-improvement-program.md`.
 `docs/design/ux-improvement-program.md`. **PR-A3 first-run checklist IN PR**
 (`grok/ux-a3-checklist` / #2417 — `deriveReadinessChecklist` + Thesis hero).
 Program rollout: `docs/rollouts/2026-08-04-ux-improvement-program.md`. A3 rollout:
@@ -81,6 +107,11 @@ Program rollout: `docs/rollouts/2026-08-04-ux-improvement-program.md`. A3 rollou
 `grok/ux-wave-d-mobile`. Remaining A/B/C slices stay Planned/UNASSIGNED until claimed.
 Rollouts: `docs/rollouts/2026-08-04-ux-improvement-program.md`,
 `docs/rollouts/2026-08-04-ux-wave-d-mobile.md`.
+
+
+## UX program complete (2026-08-05, GROK)
+
+All sequenced UX waves A–E from `docs/design/ux-improvement-program.md` are **merged to main** (auto-deploy). Key PRs: #2411 A4+A5, #2413 B1, #2414 A2, #2417 A3, #2418 A1, #2423 C, #2424/#2431 D, #2425 B2/B4, #2426 B3+E. Rollout: `docs/rollouts/2026-08-05-ux-program-complete.md`. Deferred: E1 empty-state system, unauth apex→welcome.
 
 ## Where things stand
 

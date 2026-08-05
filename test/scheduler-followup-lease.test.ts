@@ -58,6 +58,22 @@ describe("scheduled auto-tune follow-up", () => {
     expect(followupMocks.maybeAutoTuneWeights).not.toHaveBeenCalled();
   });
 
+  it("does not tune after pure pre-decision skips (UX PR-A1)", async () => {
+    for (const status of ["skipped", "skipped_budget", "skipped_market_closed", "skipped_broker_unhealthy"] as const) {
+      followupMocks.runStrategyOnce.mockReset();
+      followupMocks.maybeAutoTuneWeights.mockReset();
+      followupMocks.runStrategyOnce.mockResolvedValue({
+        runId: `skip-${status}`,
+        status,
+        summary: status,
+        proposals: []
+      });
+      const result = await runScheduledStrategyAndMaybeTune("user-skip", "account-skip", 99);
+      expect(shouldAutoTuneAfterStrategyRun(result)).toBe(false);
+      expect(followupMocks.maybeAutoTuneWeights).not.toHaveBeenCalled();
+    }
+  });
+
   it("passes the scheduled account id into tuning after a completed run", async () => {
     followupMocks.runStrategyOnce.mockResolvedValue({
       runId: "completed-run",

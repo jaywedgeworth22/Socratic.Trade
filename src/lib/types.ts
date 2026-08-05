@@ -1752,6 +1752,19 @@ export interface MarketQuote {
   congressCompositeVersion?: string;
   congressCompositeWeights?: Record<string, number>;
   preCongressScore?: number;
+  /** Best cluster member skill rank 0–100 (App A; filing-date preferred). */
+  congressMemberSkillScore?: number;
+  congressMemberSkillSource?: string;
+  congressMemberFilerId?: string;
+  /** Raw excess return vs S&P since disclosure (copy-trade) for that member. */
+  congressMemberFilingAvgExcess?: number;
+  congressMemberFilingWinRate?: number;
+  congressMemberFilingScoredCount?: number;
+  congressMemberFilingAvgAnnualizedExcess?: number;
+  /** Opposite-anchor context: excess since the politician's trade date. */
+  congressMemberTradeAvgExcess?: number;
+  congressMemberTradeWinRate?: number;
+  congressMemberTradeScoredCount?: number;
   evidenceBulletins?: string[]; // 1-line backend web-source bulletins (congress, insider, etc.)
   sources?: EnrichmentSources;
   fieldObservations?: EnrichmentFieldObservations;
@@ -1832,6 +1845,16 @@ export interface CandidateEvidence {
   congressCompositeVersion?: string;
   congressCompositeWeights?: Record<string, number>;
   preCongressScore?: number;
+  congressMemberSkillScore?: number;
+  congressMemberSkillSource?: string;
+  congressMemberFilerId?: string;
+  congressMemberFilingAvgExcess?: number;
+  congressMemberFilingWinRate?: number;
+  congressMemberFilingScoredCount?: number;
+  congressMemberFilingAvgAnnualizedExcess?: number;
+  congressMemberTradeAvgExcess?: number;
+  congressMemberTradeWinRate?: number;
+  congressMemberTradeScoredCount?: number;
   asOf?: string; // candidate data freshness (most-recent enrichment timestamp)
   provider?: string; // primary provider
   sources?: EnrichmentSources; // per-field provenance (source attribution)
@@ -2213,12 +2236,22 @@ export interface BrokerGateway {
   probeOrderCapability?(accountNumber: string): Promise<{ ok: boolean; reason?: string }>;
 }
 
+/** Strategy run status — see `src/lib/strategy-run-status.ts` for skip taxonomy (UX PR-A1). */
+export type StrategyRunStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped"
+  | "skipped_budget"
+  | "skipped_market_closed"
+  | "skipped_broker_unhealthy";
+
 export interface StrategyRun {
   id: string;
   startedAt: string;
   finishedAt?: string;
-  /** skipped = pre-decision gate (budget/market/broker); not a successful evaluation */
-  status: "running" | "completed" | "failed" | "skipped";
+  /** skipped_* = pre-decision gate; not a successful evaluation */
+  status: StrategyRunStatus;
   summary?: string;
 }
 
@@ -2226,7 +2259,7 @@ export interface StrategyRunRow {
   id: string;
   startedAt: string;
   finishedAt?: string;
-  status: "running" | "completed" | "failed" | "skipped";
+  status: StrategyRunStatus;
   summary?: string;
   connectedAccountId?: string;
   placedCount: number;
