@@ -90,7 +90,10 @@ export const NOTIFICATION_EVENT_TYPES = [
   // threshold was crossed but NOTHING halted or was blocked — the agent is still in control.
   // Deliberately NOT "kill_switch" (nothing flipped state) so owners don't learn to ignore
   // kill-switch alerts.
-  "risk_advisory"
+  "risk_advisory",
+  // P2.8: synthetic protective exit is retrying after a persistent broker decline / placement
+  // failure. Coalesced to one owner-visible alert per (stop, fingerprint) failure streak.
+  "protective_exit_failing"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
@@ -1752,6 +1755,19 @@ export interface MarketQuote {
   congressCompositeVersion?: string;
   congressCompositeWeights?: Record<string, number>;
   preCongressScore?: number;
+  /** Best cluster member skill rank 0–100 (App A; filing-date preferred). */
+  congressMemberSkillScore?: number;
+  congressMemberSkillSource?: string;
+  congressMemberFilerId?: string;
+  /** Raw excess return vs S&P since disclosure (copy-trade) for that member. */
+  congressMemberFilingAvgExcess?: number;
+  congressMemberFilingWinRate?: number;
+  congressMemberFilingScoredCount?: number;
+  congressMemberFilingAvgAnnualizedExcess?: number;
+  /** Opposite-anchor context: excess since the politician's trade date. */
+  congressMemberTradeAvgExcess?: number;
+  congressMemberTradeWinRate?: number;
+  congressMemberTradeScoredCount?: number;
   evidenceBulletins?: string[]; // 1-line backend web-source bulletins (congress, insider, etc.)
   sources?: EnrichmentSources;
   fieldObservations?: EnrichmentFieldObservations;
@@ -1832,6 +1848,16 @@ export interface CandidateEvidence {
   congressCompositeVersion?: string;
   congressCompositeWeights?: Record<string, number>;
   preCongressScore?: number;
+  congressMemberSkillScore?: number;
+  congressMemberSkillSource?: string;
+  congressMemberFilerId?: string;
+  congressMemberFilingAvgExcess?: number;
+  congressMemberFilingWinRate?: number;
+  congressMemberFilingScoredCount?: number;
+  congressMemberFilingAvgAnnualizedExcess?: number;
+  congressMemberTradeAvgExcess?: number;
+  congressMemberTradeWinRate?: number;
+  congressMemberTradeScoredCount?: number;
   asOf?: string; // candidate data freshness (most-recent enrichment timestamp)
   provider?: string; // primary provider
   sources?: EnrichmentSources; // per-field provenance (source attribution)
@@ -2204,14 +2230,31 @@ export interface BrokerGateway {
    * Optional — undefined on a broker/adapter with no bracket support (e.g. Robinhood).
    */
   cancelBracketSiblingLegs?(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }>;
+  /**
+   * Lightweight "can this account place orders right now?" probe used by broker-health to auto-pause
+   * strategy runs when the order path is down (e.g. Tradier sandbox OMS 500s) without spending an
+   * LLM run. Must be cheap, side-effect free (preview / account flags only — never a real order),
+   * and may throttle internally. Optional — gateways without a probe skip this check.
+   */
+  probeOrderCapability?(accountNumber: string): Promise<{ ok: boolean; reason?: string }>;
 }
+
+/** Strategy run status — see `src/lib/strategy-run-status.ts` for skip taxonomy (UX PR-A1). */
+export type StrategyRunStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped"
+  | "skipped_budget"
+  | "skipped_market_closed"
+  | "skipped_broker_unhealthy";
 
 export interface StrategyRun {
   id: string;
   startedAt: string;
   finishedAt?: string;
-  /** skipped = pre-decision gate (budget/market/broker); not a successful evaluation */
-  status: "running" | "completed" | "failed" | "skipped";
+  /** skipped_* = pre-decision gate; not a successful evaluation */
+  status: StrategyRunStatus;
   summary?: string;
 }
 
@@ -2219,7 +2262,7 @@ export interface StrategyRunRow {
   id: string;
   startedAt: string;
   finishedAt?: string;
-  status: "running" | "completed" | "failed" | "skipped";
+  status: StrategyRunStatus;
   summary?: string;
   connectedAccountId?: string;
   placedCount: number;

@@ -2540,6 +2540,27 @@ const MIGRATIONS: Migration[] = [
         // tables might not exist in isolated tests
       }
     }
+  },
+  {
+    version: 66,
+    name: "headline_first_seen",
+    up: (database) => {
+      // Issue #837: persist first-seen times for news headlines so evidence-age
+      // receipts can cover the highest-volume untrusted Bull-prompt input
+      // (provider titles previously carried no timestamp).
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS headline_first_seen (
+          user_id TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          first_seen TEXT NOT NULL,
+          last_seen TEXT NOT NULL,
+          PRIMARY KEY (user_id, fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS idx_headline_first_seen_last_seen
+          ON headline_first_seen(last_seen);
+      `);
+    }
   }
 ];
 

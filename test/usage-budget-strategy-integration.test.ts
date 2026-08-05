@@ -357,7 +357,7 @@ describe("usage-budget Phase 2: enforcement ON + skip", () => {
     const { listAudit, listFillEvents, listNotificationEvents } = await import("../src/lib/db");
 
     const result = await runStrategyOnce();
-    expect(result.status).toBe("skipped");
+    expect(result.status).toBe("skipped_budget");
     expect(openAiCalled).toBe(false);
 
     const enforcedAudits = listAudit(500).filter((e) => e.kind === "usage_budget_enforced");

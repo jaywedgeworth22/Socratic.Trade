@@ -51,7 +51,7 @@ import { createEvidencePack, createEvidenceRef } from "./evidence-pack";
 import { derivePromptRagConsumption, type PromptRagCandidate, type PromptRagConsumptionResult } from "./rag/evidence-consumption";
 import { summarizeSourceCoverage } from "./source-value";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { checkBrokerHealth } from "./broker-health";
+import { applyBrokerOrderPlacementPause, checkBrokerHealth, isOrderPlacementInfrastructureFailure } from "./broker-health";
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
@@ -112,6 +112,7 @@ import { avgReturnCorrelation, correlationProfile } from "./correlation";
 import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { startStrategyLockGuard, StrategyLockOwnershipLostError } from "./strategy-lock-guard";
+import type { StrategyRunFinishStatus } from "./strategy-run-status";
 import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 import {
   assertFmpTranscriptRightsGeneration,
@@ -161,6 +162,7 @@ import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-t
 import { isEscalationRegime } from "./regime-watch";
 import { getUpcomingEconomicEventsForPrompt } from "./economic-calendar";
 import { compactHeadlinesForPrompt } from "./prompt-headlines";
+import { getOrRecordHeadlineFirstSeen, headlineFingerprint } from "./headline-first-seen";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
 import { computeMultiSignalSeverity } from "./regime-severity";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
@@ -266,8 +268,8 @@ export interface StrategyLlmStep {
 
 export interface StrategyResult {
   runId: string;
-  /** completed = decision cycle ran; skipped = pre-decision gate (budget/market/broker); failed = hard error */
-  status: "completed" | "failed" | "skipped";
+  /** completed = decision cycle ran; skipped_* = pre-decision gate; failed = hard error */
+  status: StrategyRunFinishStatus;
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
@@ -441,8 +443,8 @@ export async function runStrategyOnce(
       const reason = "Market is closed (holiday or weekend). Skipping strategy run.";
       console.log(`[Strategy] ${reason}`);
       audit("run_skipped_market_closed", { runId, userId, reason }, userId, connectedAccountId);
-      result = { runId, status: "skipped", summary: reason, proposals: [] };
-      finishStrategyRun(runId, "skipped", reason, userId);
+      result = { runId, status: "skipped_market_closed", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "skipped_market_closed", reason, userId);
       return result;
     }
 
@@ -518,16 +520,37 @@ export async function runStrategyOnce(
     await runSafetyMaintenance(userId, policy as RunnablePolicy, activeAccount!, gateway);
     lockGuard.assertOwned();
 
-    // Check broker health before making LLM calls.
+    // Check broker health before making LLM calls. When the account cannot place orders
+    // (OMS down, trading blocked, elevated place failures, …), auto-halt autonomous trading
+    // so future cadence ticks do not burn LLM budget on unplaceable proposals.
     const healthSignals = activeAccount ? await checkBrokerHealth(userId, activeAccount, gateway) : undefined;
     lockGuard.assertOwned();
-    if (healthSignals && !healthSignals.isHealthy) {
-      const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
-      console.warn(`[Strategy] ${reason}`);
-      audit("run_skipped_broker_unhealthy", { runId, userId, reason }, userId, connectedAccountId);
-      result = { runId, status: "skipped", summary: reason, proposals: [] };
-      finishStrategyRun(runId, "skipped", reason, userId);
-      return result;
+    if (healthSignals) {
+      const accountScope = connectedAccountId ?? `${policy.accountNumber}:${activeAccount?.broker ?? "unknown"}`;
+      const pauseResult = await applyBrokerOrderPlacementPause({
+        userId,
+        connectedAccountId,
+        accountScope,
+        health: healthSignals,
+        policy
+      });
+      lockGuard.assertOwned();
+      if (pauseResult.action === "halted") {
+        const reason = `Broker cannot place orders — autonomous strategy auto-paused: ${pauseResult.reason}`;
+        console.warn(`[Strategy] ${reason}`);
+        audit("run_skipped_broker_unhealthy", { runId, userId, reason, autoHalted: true }, userId, connectedAccountId);
+        result = { runId, status: "skipped_broker_unhealthy", summary: reason, proposals: [] };
+        finishStrategyRun(runId, "skipped_broker_unhealthy", reason, userId);
+        return result;
+      }
+      if (!healthSignals.isHealthy) {
+        const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
+        console.warn(`[Strategy] ${reason}`);
+        audit("run_skipped_broker_unhealthy", { runId, userId, reason, pauseAction: pauseResult.action }, userId, connectedAccountId);
+        result = { runId, status: "skipped_broker_unhealthy", summary: reason, proposals: [] };
+        finishStrategyRun(runId, "skipped_broker_unhealthy", reason, userId);
+        return result;
+      }
     }
 
     const [accounts, portfolio, positions, orders] = await Promise.all([
@@ -569,8 +592,8 @@ export async function runStrategyOnce(
         await notifyBudgetSkip(userId, policy, runId, reason);
         lockGuard.assertOwned();
         const summary = `Strategy run skipped — over usage budget. ${reason}`;
-        result = { runId, status: "skipped", summary, proposals: [] };
-        finishStrategyRun(runId, "skipped", summary, userId);
+        result = { runId, status: "skipped_budget", summary, proposals: [] };
+        finishStrategyRun(runId, "skipped_budget", summary, userId);
         return result;
       }
       // Carry early downgrade into later runLlmOverride merge (re-evaluated below for TOCTOU).
@@ -628,8 +651,8 @@ export async function runStrategyOnce(
       }
       if (earlySkip) {
         const summary = `Strategy run skipped — ${earlySkipReason} Risk maintenance still ran; market scan and LLM were not started.`;
-        result = { runId, status: "skipped", summary, proposals: [] };
-        finishStrategyRun(runId, "skipped", summary, userId);
+        result = { runId, status: "skipped_budget", summary, proposals: [] };
+        finishStrategyRun(runId, "skipped_budget", summary, userId);
         return result;
       }
     }
@@ -957,8 +980,8 @@ export async function runStrategyOnce(
       await notifyBudgetSkip(userId, policy, runId, reason);
       lockGuard.assertOwned();
       const summary = `Strategy run skipped — over usage budget. ${reason}`;
-      result = { runId, status: "skipped", summary, proposals: [] };
-      finishStrategyRun(runId, "skipped", summary, userId);
+      result = { runId, status: "skipped_budget", summary, proposals: [] };
+      finishStrategyRun(runId, "skipped_budget", summary, userId);
       return result;
     }
     // Run-scoped model override: carried SEPARATELY from `policy` so nothing that persists (setPolicy,
@@ -1457,6 +1480,31 @@ export async function runStrategyOnce(
       }
     } catch (e) {
       console.warn("[Strategy] Skipping learned-context, store unavailable.");
+    }
+
+    // ── Headline first-seen (#837) ──────────────────────────────────────────
+    // Provider headlines are bare titles with no timestamps. Persist first
+    // observation so same-day news can join the evidence-age receipt (previously
+    // deferred). Uses the same compacted sample that enters the Bull prompt.
+    if (marketScan?.topCandidates?.length) {
+      try {
+        for (const candidate of marketScan.topCandidates) {
+          const sym = normalizeSymbol(candidate.symbol);
+          for (const headline of compactHeadlinesForPrompt(candidate.headlines)) {
+            const firstSeen = getOrRecordHeadlineFirstSeen({ userId, symbol: sym, text: headline });
+            if (!firstSeen) continue;
+            const fp = headlineFingerprint(headline);
+            evidenceAgeInputs.push({
+              kind: "headline",
+              id: `headline:${sym}:${fp}`,
+              label: `${sym} news: ${headline.slice(0, 72)}`,
+              timestamp: firstSeen
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("[Strategy] Skipping headline first-seen tracking:", e instanceof Error ? e.message : e);
+      }
     }
 
     // ── Evidence-age anomaly receipt (advisory only) ───────────────────────
@@ -3769,6 +3817,17 @@ export async function runStrategyOnce(
             const message = placeError instanceof Error ? placeError.message : String(placeError);
             const sym = normalizedProposal.symbol;
 
+            // Infrastructure/OMS failures (5xx, backend unreachable) feed the broker-health
+            // auto-pause gate so the next run halts instead of burning another LLM cycle.
+            if (isOrderPlacementInfrastructureFailure(message) && connectedAccountId) {
+              audit(
+                "order_place_infrastructure_failed",
+                { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message.slice(0, 400) },
+                userId,
+                connectedAccountId
+              );
+            }
+
             // P2.6: Explicitly intercept pre-flight validation throws and broker 4xx rejections.
             // A 4xx (e.g. 403 Forbidden, 400 Bad Request) means the broker definitively received and rejected it.
             // OrderValidationError means the adapter blocked it before sending.
@@ -4096,9 +4155,9 @@ export async function runStrategyOnce(
     const tradeCount = placed + filled + proposed;
     // If LLM was suppressed mid-run (budget TOCTOU after scan) and nothing was proposed/placed
     // by the decision path, this is a skip — not a successful "evaluated 0 proposals" completion.
-    const finishStatus: "completed" | "skipped" =
-      skipLlmDueToBudget && tradeCount === 0 && results.length === 0 ? "skipped" : "completed";
-    const summary = skipLlmDueToBudget && finishStatus === "skipped"
+    const finishStatus: StrategyRunFinishStatus =
+      skipLlmDueToBudget && tradeCount === 0 && results.length === 0 ? "skipped_budget" : "completed";
+    const summary = skipLlmDueToBudget && finishStatus === "skipped_budget"
       ? [
           "Strategy run skipped — LLM/RAG budget or reservation blocked reasoning after risk maintenance.",
           expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",

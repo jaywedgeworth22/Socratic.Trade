@@ -15,7 +15,7 @@ import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
 import { runAuditPruneIfDue } from "./audit-prune";
-import { checkBrokerHealth } from "./broker-health";
+import { applyBrokerOrderPlacementPause, checkBrokerHealth } from "./broker-health";
 import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { markStaleRunningRuns } from "./db-execution";
@@ -157,7 +157,8 @@ export function shouldReleaseSchedulerLeaseOnShutdown(event: "SIGTERM" | "SIGINT
   return (SCHEDULER_LEASE_RELEASE_EVENTS as readonly string[]).includes(event);
 }
 
-/** Auto-tuning is follow-on work for a successfully completed account run only. */
+/** Auto-tuning is follow-on work for a successfully completed decision cycle only.
+ *  Pure pre-decision skips (budget / market / broker) must not trigger tuning (UX PR-A1). */
 export function shouldAutoTuneAfterStrategyRun(result: Pick<StrategyResult, "status">): boolean {
   return result.status === "completed";
 }
@@ -852,16 +853,29 @@ async function tick(): Promise<void> {
         }
 
         // Fast pre-proposal broker health gate.
-        // E.g., skips queuing an LLM strategy run if the broker is unreachable, account is suspended, 
-        // or there's an elevated order_placement_uncertain error rate.
+        // E.g., skips queuing an LLM strategy run if the broker is unreachable, account is suspended,
+        // order path is down (Tradier OMS 500s, Alpaca trading_blocked), or elevated place failures.
+        // Unhealthy + active → auto-halt systemState so future ticks stay paused until recovery.
         const healthSignals = await checkBrokerHealth(userId, account, brokerGateway);
+        const pauseResult = await applyBrokerOrderPlacementPause({
+          userId,
+          connectedAccountId: accountId,
+          accountScope: accountId,
+          health: healthSignals,
+          policy
+        });
+        if (pauseResult.action === "halted" || pauseResult.action === "resumed") {
+          // Policy may have flipped; re-read so the rest of this tick sees durable state.
+          const refreshed = getPolicy(userId, accountId);
+          policy.systemState = refreshed.systemState;
+        }
         if (!healthSignals.isHealthy) {
-          console.warn(`[scheduler] Skipping account ${accountId}: ${healthSignals.reason}`);
+          console.warn(`[scheduler] Skipping account ${accountId}: ${healthSignals.reason}${pauseResult.action === "halted" ? " (auto-halted)" : ""}`);
           // Journal the suppression itself: an unhealthy gate is exactly the event an operator
           // later asks "why didn't this account trade?" about.
           void journalLane("broker-health-gate", { userId, connectedAccountId: accountId }, () => ({
             status: "ok" as const,
-            summary: `suppressed: ${healthSignals.reason ?? "unhealthy"}`
+            summary: `suppressed: ${healthSignals.reason ?? "unhealthy"}${pauseResult.action === "halted" ? "; auto-halted" : pauseResult.action === "still_paused" ? "; still paused" : ""}`
           })).catch(() => undefined);
           schedule.nextRunAt = null; // Re-evaluate on next tick without advancing the cadence
           continue;

@@ -1,22 +1,24 @@
 import SwiftUI
 
-struct CoachView: View {
+/// Snapshot-derived status brief and prioritized attention items.
+/// Not the web console Coach chat — rename keeps that product distinction clear.
+struct InsightsView: View {
     @EnvironmentObject private var store: MobileStore
 
     var body: some View {
         SnapshotScaffold { snapshot in
-            CoachBriefCard(snapshot: snapshot)
+            InsightsBriefCard(snapshot: snapshot)
             ForEach(insights(for: snapshot)) { insight in
-                CoachInsightCard(insight: insight)
+                InsightCard(insight: insight)
             }
-            CoachActionCard(snapshot: snapshot)
-            CoachAuthorityCard()
+            InsightsActionCard(snapshot: snapshot)
+            InsightsAuthorityCard()
         }
-        .navigationTitle("Coach")
+        .navigationTitle("Insights")
     }
 
-    private func insights(for snapshot: MobileSnapshot) -> [CoachInsight] {
-        var insights: [CoachInsight] = []
+    private func insights(for snapshot: MobileSnapshot) -> [StatusInsight] {
+        var insights: [StatusInsight] = []
 
         if !snapshot.readiness.hasAccount {
             insights.append(.init(
@@ -93,14 +95,14 @@ struct CoachView: View {
     }
 }
 
-private struct CoachBriefCard: View {
+private struct InsightsBriefCard: View {
     let snapshot: MobileSnapshot
 
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                    Image(systemName: "lightbulb.fill")
                         .font(.title2)
                         .foregroundStyle(AppPalette.accent)
                     VStack(alignment: .leading, spacing: 2) {
@@ -127,7 +129,7 @@ private struct CoachBriefCard: View {
     }
 }
 
-private struct CoachInsight: Identifiable {
+private struct StatusInsight: Identifiable {
     enum Tone {
         case neutral
         case positive
@@ -151,8 +153,8 @@ private struct CoachInsight: Identifiable {
     }
 }
 
-private struct CoachInsightCard: View {
-    let insight: CoachInsight
+private struct InsightCard: View {
+    let insight: StatusInsight
 
     var body: some View {
         AppCard {
@@ -176,35 +178,31 @@ private struct CoachInsightCard: View {
     }
 }
 
-private struct CoachActionCard: View {
-    @EnvironmentObject private var store: MobileStore
-
+/// Insights is a brief — not a third home for Run once (Home owns that primary CTA).
+private struct InsightsActionCard: View {
     let snapshot: MobileSnapshot
 
     var body: some View {
         AppCard {
-            VStack(alignment: .leading, spacing: 13) {
-                SectionHeading("Ask for a fresh analysis", subtitle: "Queues a normal strategy run; it does not execute client-side inference.")
-                CommandButton(
-                    "Run Strategy Once",
-                    systemImage: "sparkles",
-                    isBusy: store.isBusy("strategy.run_once"),
-                    isDisabled: !store.canSubmit("strategy.run_once"),
-                    prominent: true
-                ) {
-                    Task { await store.submit("strategy.run_once") }
-                }
-                if !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
-                    Text("Complete the readiness items above first. The backend will enforce the same requirements.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeading(
+                    "Want a fresh cycle?",
+                    subtitle: "Run once lives on Home so there is a single primary control — not a second copy here."
+                )
+                Text(
+                    snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse
+                        ? "Open the Home tab and tap Run once (or Review proposals when the queue is waiting)."
+                        : "Finish account + universe setup on Home first; then use Run once there."
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 }
 
-private struct CoachAuthorityCard: View {
+private struct InsightsAuthorityCard: View {
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 8) {

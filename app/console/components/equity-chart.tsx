@@ -4,7 +4,7 @@
  *  No interpolation, no fabricated baselines — fewer than two points renders
  *  a sentence instead of a chart. Buckets are never overlaid on one axis. */
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { EquityCurvePoint } from "@/lib/types";
 import { fmtExact, fmtMoney, fmtPct, fmtSignedMoney } from "../lib/format";
 
@@ -12,7 +12,7 @@ const W = 640;
 const H = 140;
 const PAD = 6;
 
-export function EquityChart({ points, label }: { points: EquityCurvePoint[]; label: string }) {
+export const EquityChart = memo(function EquityChart({ points, label }: { points: EquityCurvePoint[]; label: string }) {
   const data = useMemo(
     () =>
       points
@@ -85,4 +85,4 @@ export function EquityChart({ points, label }: { points: EquityCurvePoint[]; lab
       </figcaption>
     </figure>
   );
-}
+});

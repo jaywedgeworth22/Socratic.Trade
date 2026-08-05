@@ -18,9 +18,9 @@ enum AppPalette {
 enum AppFormat {
     /// Humanized mobile command types — mirrors PWA `commandLabel`. API ids stay dotted.
     private static let commandLabels: [String: String] = [
-        "strategy.run_once": "Strategy run",
-        "strategy.start": "Start strategy",
-        "strategy.stop": "Stop",
+        "strategy.run_once": "Run once",
+        "strategy.start": "Start agent",
+        "strategy.stop": "Stop agent",
         "strategy.close_only": "Close only",
         "strategy.liquidating": "Wind down",
         "proposal.approve": "Approve proposal",

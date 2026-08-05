@@ -9,7 +9,11 @@ import { listStaleLimitOrders } from "./stale-limit-orders";
 import { normalizeSymbol } from "./money";
 import type { BrokerGateway, ConnectedAccount, EquityOrder, EquityOrderInput, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
 
-const CANCEL_SETTLE_MS = 750;
+// P2.7: a single 750ms wait was too short for Alpaca cancel settlement — cancel accepted but
+// order still active → abort left the exit canceled-but-never-replaced. Default poll interval
+// 2s, multi-poll up to CANCEL_SETTLE_MAX_MS (~10s) before deferring to the next tick's pump.
+const CANCEL_SETTLE_MS = 2_000;
+const CANCEL_SETTLE_MAX_MS = 10_000;
 const MARKET_REPLACE_TYPES = new Set(["limit", "stop_limit"]);
 const POST_CANCEL_ACTIVE_STATES = new Set(["done_for_day", "stopped", "calculated"]);
 const POSITION_EPSILON = 1e-6;
@@ -369,12 +373,10 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       if (String(originalOrder.state ?? "").trim().toLowerCase() === "canceled") {
         db.prepare(`UPDATE order_replacements SET cancel_result = '{}', status = 'cancel_confirmed', updated_at = ? WHERE id = ?`)
           .run(new Date().toISOString(), row.id);
-        await delay(input.cancelSettleMs ?? CANCEL_SETTLE_MS);
       } else {
         const cancelResult = await input.gateway.cancelEquityOrder(input.policy.accountNumber, originalOrder.id);
         db.prepare(`UPDATE order_replacements SET cancel_result = ?, status = 'cancel_confirmed', updated_at = ? WHERE id = ?`)
           .run(JSON.stringify(cancelResult), new Date().toISOString(), row.id);
-        await delay(input.cancelSettleMs ?? CANCEL_SETTLE_MS);
       }
     }
     
@@ -382,16 +384,32 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
     row = getReplacementRecord(row.id)!;
     
     if (row.status === 'cancel_confirmed') {
-      const afterCancelOrders = await input.gateway.getEquityOrders(input.policy.accountNumber);
-      const afterCancel = afterCancelOrders.find((order) => order.id === originalOrder.id);
-      
-      const staleOrders = listStaleLimitOrders(afterCancelOrders, input.policy);
+      // P2.7: poll cancel settlement up to ~10s (or cancelSettleMs when tests set it to 0).
+      // Row stays `cancel_confirmed` (the durable "replacement_pending_cancel" state) if the
+      // original is still active after the window — the next pump tick continues the machine.
+      const settleMs = input.cancelSettleMs ?? CANCEL_SETTLE_MS;
+      const { afterCancel, afterCancelOrders, stillActive } = await pollCancelSettlement({
+        gateway: input.gateway,
+        accountNumber: input.policy.accountNumber,
+        orderId: originalOrder.id,
+        settleMs,
+        maxWaitMs: settleMs <= 0 ? 0 : CANCEL_SETTLE_MAX_MS
+      });
+
       const remainingQuantity = remainingAfterCancel(originalOrder, afterCancel);
 
-      if (afterCancel && isPostCancelActiveState(afterCancel.state)) {
+      if (stillActive && afterCancel) {
         audit(
           "order_replace_market_deferred_pending_cancel",
-          { orderId: originalOrder.id, symbol, state: afterCancel.state, reason: "original_order_still_active_after_cancel", cancelResult: row.cancel_result },
+          {
+            orderId: originalOrder.id,
+            symbol,
+            state: afterCancel.state,
+            reason: "original_order_still_active_after_cancel",
+            cancelResult: row.cancel_result,
+            settleMs,
+            maxWaitMs: settleMs <= 0 ? 0 : CANCEL_SETTLE_MAX_MS
+          },
           userId,
           input.policy.connectedAccountId
         );
@@ -890,6 +908,52 @@ function remainingAfterCancel(original: EquityOrder, afterCancel?: EquityOrder):
 function delay(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * P2.7 — poll the broker after a cancel request until the original is no longer
+ * active, or until maxWaitMs elapses. When settleMs is 0 (tests), one immediate
+ * list is enough. The row remains `cancel_confirmed` if still active so a later
+ * pump tick can finish the replacement (no abort-and-forget).
+ */
+async function pollCancelSettlement(input: {
+  gateway: BrokerGateway;
+  accountNumber: string;
+  orderId: string;
+  settleMs: number;
+  maxWaitMs: number;
+}): Promise<{
+  afterCancel: EquityOrder | undefined;
+  afterCancelOrders: EquityOrder[];
+  stillActive: boolean;
+}> {
+  const { gateway, accountNumber, orderId, settleMs, maxWaitMs } = input;
+  if (settleMs <= 0 || maxWaitMs <= 0) {
+    const afterCancelOrders = await gateway.getEquityOrders(accountNumber);
+    const afterCancel = afterCancelOrders.find((order) => order.id === orderId);
+    return {
+      afterCancel,
+      afterCancelOrders,
+      stillActive: Boolean(afterCancel && isPostCancelActiveState(afterCancel.state))
+    };
+  }
+
+  const deadline = Date.now() + maxWaitMs;
+  let afterCancelOrders: EquityOrder[] = [];
+  let afterCancel: EquityOrder | undefined;
+  while (Date.now() < deadline) {
+    await delay(settleMs);
+    afterCancelOrders = await gateway.getEquityOrders(accountNumber);
+    afterCancel = afterCancelOrders.find((order) => order.id === orderId);
+    if (!afterCancel || !isPostCancelActiveState(afterCancel.state)) {
+      return { afterCancel, afterCancelOrders, stillActive: false };
+    }
+  }
+  return {
+    afterCancel,
+    afterCancelOrders,
+    stillActive: Boolean(afterCancel && isPostCancelActiveState(afterCancel.state))
+  };
 }
 
 function replacementFillStatus(order: { state: string; filledQuantity?: number | null; averagePrice?: number | null }): "filled" | "partially_filled" | "pending_reconciliation" {

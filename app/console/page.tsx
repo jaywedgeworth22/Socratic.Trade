@@ -3,7 +3,7 @@
 /** Autonomy Desk — "what does Socratic Trade believe, what did it do,
  *  what evidence moved it, and how should the framework improve?" */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -13,6 +13,7 @@ import {
   Database,
   GitBranch,
   MessageSquare,
+  RotateCcw,
   TrendingUp,
   X,
   Zap
@@ -39,7 +40,6 @@ import { redTeamFailureMeta, redTeamVerdictLabel } from "./lib/red-team";
 import { decisionActionLabel, deterministicOutcomePresentation, splitThesisRationale } from "./lib/thesis";
 import { useConsoleData } from "./lib/useConsoleData";
 import { safeTopCandidates } from "./lib/evidence-rows";
-import { RunOnceButton } from "./components/chrome";
 import { destinationLabel } from "./components/nav";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
 import { SymbolButton } from "./ui/symbol-drilldown";
@@ -50,35 +50,81 @@ import { useToast } from "./ui/toast";
 
 export default function ConsoleHomePage() {
   const { snapshot, refresh } = useConsoleData();
-  if (!snapshot) return null;
 
-  const reality = deriveReality(snapshot);
-  const state = deriveStateInfo(snapshot.policy);
-  const spend = deriveSpend(snapshot);
-  const portfolio = snapshot.portfolio;
-  const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio);
-  const markToMarket = deriveMarkToMarket(snapshot);
-  const risk = deriveRiskUtilization(snapshot);
-  const equityWindow = selectEquityWindow(
-    reality.mode === "broker/live"
-      ? snapshot.performance?.liveEquityCurve ?? []
-      : snapshot.performance?.paperEquityCurve ?? []
-  );
-  const latest = snapshot.latestStrategyRun;
-  const latestRow = snapshot.strategyRuns?.[0];
-  const lastRun = latestRow ? describeLastRun(latestRow) : null;
-  const nextRun = snapshot.scheduler?.nextRunAt;
-  const primaryDecision = snapshot.socratic?.decisions?.[0];
-  const primaryTrace = latest?.proposals?.[0];
-  const primaryProposal = primaryTrace?.proposal ?? snapshot.pendingProposals[0]?.proposal;
-  const latestProposals =
-    latest?.proposals?.slice(0, 5).map((item) =>
-      decisionFromProposal(`${latest?.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
-    ) ?? snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
+  // C4: memoize pure derives so a parent re-render with a stable snapshot object
+  // does not re-walk equity curves / risk meters / framework rows.
+  const derived = useMemo(() => {
+    if (!snapshot) return null;
+    const reality = deriveReality(snapshot);
+    const state = deriveStateInfo(snapshot.policy);
+    const spend = deriveSpend(snapshot);
+    const portfolio = snapshot.portfolio;
+    const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio);
+    const markToMarket = deriveMarkToMarket(snapshot);
+    const risk = deriveRiskUtilization(snapshot);
+    const equityWindow = selectEquityWindow(
+      reality.mode === "broker/live"
+        ? snapshot.performance?.liveEquityCurve ?? []
+        : snapshot.performance?.paperEquityCurve ?? []
+    );
+    const latest = snapshot.latestStrategyRun;
+    const latestRow = snapshot.strategyRuns?.[0];
+    const lastRun = latestRow ? describeLastRun(latestRow) : null;
+    const nextRun = snapshot.scheduler?.nextRunAt;
+    const primaryDecision = snapshot.socratic?.decisions?.[0];
+    const primaryTrace = latest?.proposals?.[0];
+    const primaryProposal = primaryTrace?.proposal ?? snapshot.pendingProposals[0]?.proposal;
+    const latestProposals =
+      latest?.proposals?.slice(0, 5).map((item) =>
+        decisionFromProposal(`${latest?.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
+      ) ?? snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
+    const previousTrades = snapshot.socratic?.decisions?.slice(0, 5).map(decisionFromSocratic) ?? [];
+    const frameworkRows = deriveFrameworkRows(snapshot);
+    const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
+    return {
+      reality,
+      state,
+      spend,
+      portfolio,
+      dayPnl,
+      markToMarket,
+      risk,
+      equityWindow,
+      latest,
+      latestRow,
+      lastRun,
+      nextRun,
+      primaryDecision,
+      primaryProposal,
+      latestProposals,
+      previousTrades,
+      frameworkRows,
+      hasFrameworkProposals
+    };
+  }, [snapshot]);
 
-  const previousTrades = snapshot.socratic?.decisions?.slice(0, 5).map(decisionFromSocratic) ?? [];
-  const frameworkRows = deriveFrameworkRows(snapshot);
-  const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
+  if (!snapshot || !derived) return null;
+
+  const {
+    reality,
+    state,
+    spend,
+    portfolio,
+    dayPnl,
+    markToMarket,
+    risk,
+    equityWindow,
+    latest,
+    latestRow,
+    lastRun,
+    nextRun,
+    primaryDecision,
+    primaryProposal,
+    latestProposals,
+    previousTrades,
+    frameworkRows,
+    hasFrameworkProposals
+  } = derived;
 
   // Intentionally full-bleed (no CONSOLE_PAGE_WIDTH cap, see ./lib/page-width.ts):
   // this is a two-column dashboard (main column + aside, aside floored at
@@ -109,11 +155,15 @@ export default function ConsoleHomePage() {
           <span
             className={cx(
               "text-[length:var(--con-fs-xs)]",
-              lastRun.failed ? "text-[color:var(--con-neg)]" : "text-[color:var(--con-muted)]"
+              lastRun.failed
+                ? "text-[color:var(--con-neg)]"
+                : lastRun.skipped
+                  ? "text-[color:var(--con-warn)]"
+                  : "text-[color:var(--con-muted)]"
             )}
             title={lastRun.title}
           >
-            Last run {latestRow.status} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
+            Last run {lastRun.statusLabel} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
             {lastRun.cause && (
               <>
                 {" "}
@@ -366,14 +416,19 @@ export default function ConsoleHomePage() {
           </Card>
 
           <Card title="Run cadence">
+            {/* Run once lives only in the chrome bar (labeled desktop / icon-only phone).
+                A second button here stacked under the sticky header on mobile — two "Run once"
+                controls within ~1 inch (owner report). Cadence status chips stay local. */}
             <div className="flex flex-wrap items-center gap-2">
-              <div className="sm:hidden">
-                <RunOnceButton snapshot={snapshot} size="sm" />
-              </div>
               <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"}>{state.label}</Chip>
-              {latestRow && (
-                <Chip tone={latestRow.status === "failed" ? "neg" : "muted"}>
-                  latest {latestRow.status} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
+              {latestRow && lastRun && (
+                <Chip
+                  tone={
+                    lastRun.failed ? "neg" : lastRun.skipped ? "warn" : "muted"
+                  }
+                  title={lastRun.title}
+                >
+                  latest {lastRun.statusLabel} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
                 </Chip>
               )}
             </div>
@@ -530,6 +585,9 @@ function deriveThesisHeadline(latest: StrategyDecision | undefined, proposal: Tr
   }
   if (proposal?.tradeThesisTag) {
     return `Market thesis: ${formatMarketThesis(proposal.tradeThesisTag, proposal.symbol)}`;
+  }
+  if (latest?.status && /skipped/.test(latest.status)) {
+    return "Latest run was skipped before a decision — not a successful evaluation.";
   }
   if (latest?.summary) return "Latest run completed; Socratic Trade is holding its current posture.";
   return "Waiting for the next market thesis.";
@@ -1121,7 +1179,7 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
 
   const update = async (
     proposal: SocraticFrameworkProposal,
-    status: "accepted" | "rejected" | "applied",
+    status: "pending" | "accepted" | "rejected" | "applied",
     ownerVerb?: "accept" | "reject" | "rewrite"
   ) => {
     setBusyId(proposal.id);
@@ -1165,7 +1223,16 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
           <Brain size={14} /> {reviewing ? "Reviewing…" : "AI review pending"}
         </button>
       </div>
-      {proposals.slice(0, 5).map((proposal) => (
+      <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+        <strong>Accept</strong> = agree this change should be made (intent only — nothing auto-implements).{" "}
+        <strong>Applied</strong> = you already put that change into policy/prompt/code.{" "}
+        <strong>Rewrite</strong> = accept your edited text.{" "}
+        <strong>Reject</strong> = discard. Decisions can be changed anytime.
+      </p>
+      {proposals.slice(0, 5).map((proposal) => {
+        const responseText = (responses[proposal.id] ?? proposal.ownerResponse ?? "").trim();
+        const busy = busyId === proposal.id;
+        return (
         <article key={proposal.id} className="con-evidence-card con-evidence-accent">
           <div className="flex items-start justify-between gap-3">
             <strong>{proposal.title}</strong>
@@ -1184,7 +1251,7 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
                   <button
                     type="button"
                     className="con-btn con-btn-outline con-btn-sm mt-2"
-                    disabled={proposal.status !== "pending"}
+                    disabled={busy}
                     onClick={() => setResponses((current) => ({ ...current, [proposal.id]: proposal.aiReview!.rewrittenChange ?? "" }))}
                   >
                     <MessageSquare size={13} /> Use suggested rewrite
@@ -1210,7 +1277,8 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
             <button
               type="button"
               className="con-btn con-btn-pos con-btn-sm"
-              disabled={busyId === proposal.id || proposal.status !== "pending"}
+              disabled={busy}
+              title="Agree this proposed change should be made. Does not auto-edit policy or prompts."
               onClick={() => void update(proposal, "accepted", "accept")}
             >
               <Check size={14} /> Accept
@@ -1218,7 +1286,8 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
             <button
               type="button"
               className="con-btn con-btn-outline con-btn-sm"
-              disabled={busyId === proposal.id || proposal.status !== "pending" || !(responses[proposal.id] ?? proposal.ownerResponse ?? "").trim()}
+              disabled={busy || !responseText}
+              title="Accept using the text in Owner response as the rewritten proposed change."
               onClick={() => void update(proposal, "accepted", "rewrite")}
             >
               <MessageSquare size={14} /> Rewrite
@@ -1226,7 +1295,8 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
             <button
               type="button"
               className="con-btn con-btn-outline con-btn-sm"
-              disabled={busyId === proposal.id || proposal.status !== "accepted"}
+              disabled={busy || (proposal.status !== "accepted" && proposal.status !== "applied")}
+              title="Mark that you already implemented the accepted change (policy, prompt, or code)."
               onClick={() => void update(proposal, "applied")}
             >
               <GitBranch size={14} /> Applied
@@ -1234,14 +1304,27 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
             <button
               type="button"
               className="con-btn con-btn-danger-outline con-btn-sm"
-              disabled={busyId === proposal.id || proposal.status !== "pending"}
+              disabled={busy}
+              title="Discard this proposal. You can change your mind later."
               onClick={() => void update(proposal, "rejected", "reject")}
             >
               <X size={14} /> Reject
             </button>
+            {proposal.status !== "pending" && (
+              <button
+                type="button"
+                className="con-btn con-btn-outline con-btn-sm"
+                disabled={busy}
+                title="Return this proposal to Pending so it can be re-reviewed."
+                onClick={() => void update(proposal, "pending")}
+              >
+                <RotateCcw size={14} /> Reopen
+              </button>
+            )}
           </div>
         </article>
-      ))}
+        );
+      })}
       {message && <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{message}</span>}
     </div>
   );

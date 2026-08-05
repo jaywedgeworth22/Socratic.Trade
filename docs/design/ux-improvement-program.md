@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-04  
 **Author:** GROK (session review → implementation program)  
-**Status:** Planned — PR-0 (this plan) landing as docs only  
+**Status:** Waves A–E **COMPLETE on main** (2026-08-05, closeout #2448). Wave F remains owner-gated optional.  
 **Source review:** Owner-requested top-to-bottom web + iOS + PWA review (2026-08-04 session)  
 **Related priors:**  
 - `docs/reviews/2026-07-05-ui-audit-and-design-system-unification.md`  
@@ -164,6 +164,22 @@ Claiming agents should stop and ask only when blocked on these:
 | **Touches** | `app/mobile/mobile-pwa-client.tsx`, any user-facing strings “Approvals” for trade proposals; docs/mobile that are user-facing |
 | **Acceptance** | User-visible strings aligned; routes can keep `/console/approvals` path (redirect alias optional later) |
 | **Verify** | grep user-facing “Approvals” for trade-proposal context → only legacy path or intentional |
+
+---
+
+### PR-A6 — Run once single primary (owner complaint)
+
+**Problem:** Two+ filled **Run once** controls within ~1 inch (iOS hero + Agent controls; web chrome + readiness + Home cadence + Guardrails Autonomy). Expert panel 2026-08-04.
+
+| | |
+|--|--|
+| **Effort** | S |
+| **Status** | **Shipping** on `grok/ux-expert-review-dup-run-once` |
+| **Touches** | `ios/.../HomeView.swift`, `InsightsView.swift`, `app/console/page.tsx`, `readiness-checklist.tsx`, `guardrails/page.tsx`, `chrome.tsx` (Zap icon), `approval-card.tsx` (live label), `console.css` (focus), derive run-once step |
+| **Rule** | Web chrome owns Run once; iOS Home hero owns it when ready+empty queue; nowhere else mounts a second filled primary |
+| **Acceptance** | Ready iOS Home shows exactly one Run once; web phone Home does not stack cadence button under chrome; Guardrails Autonomy has no RunOnceButton |
+| **Review** | `docs/reviews/2026-08-04-expert-panel-web-ios-ux.md` |
+| **Follow-on** | PR-A7 target-stamp `Run once · alias · LIVE\|PAPER` |
 
 ---
 
@@ -440,3 +456,20 @@ Visual: desktop Thesis + Proposals; phone 390 width; iOS simulator Home + Propos
 | Date | Note |
 |------|------|
 | 2026-08-04 | Initial program from full-app review; PR-0 docs land. |
+
+
+---
+
+## Closeout receipt (2026-08-05)
+
+| Wave | Status | Key PRs |
+|------|--------|---------|
+| 0 Plan | Done | #2400 |
+| A Trust | Done | #2418 A1, #2414 A2, #2417 A3, #2411 A4+A5 |
+| B IA | Done | #2413 B1, #2425 Autonomy+TOC, #2426 B3 |
+| C Speed | Done | #2423 C1–C4 |
+| D Mobile | Done | #2424, #2435 Insights rename |
+| E Polish | Done | #2426 |
+| F Optional | Not started | Owner-gated |
+
+Also: congress filing skill #2429. Rollout: `docs/rollouts/2026-08-05-ux-program-complete.md`.

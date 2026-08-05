@@ -316,6 +316,10 @@ const FEED_STATUS_LABELS: Record<string, string> = {
   paper: "Paper trade",
   completed: "Completed",
   skipped: "Skipped",
+  // Strategy-run pre-decision skips (UX PR-A1) — never success-ish "Completed".
+  skipped_budget: "Skipped — LLM budget",
+  skipped_market_closed: "Skipped — market closed",
+  skipped_broker_unhealthy: "Skipped — broker unhealthy",
   placing_failed: "Placement failed",
   not_placed: "Not placed - safe to retry",
   running: "Running"
@@ -351,7 +355,8 @@ export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, strin
   autonomy_halted_on_boot: "Autonomy halted on boot",
   option_alert: "Option alert",
   earningscalls_entitlement_blocked: "EarningsCalls plan entitlement blocked",
-  risk_advisory: "Risk advisory"
+  risk_advisory: "Risk advisory",
+  protective_exit_failing: "Protective exit failing"
 };
 
 export function notificationTypeLabel(type?: string | null): string {
