@@ -280,9 +280,9 @@ describe("strategy LLM budget ceiling — choke point AFTER risk breakers", () =
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const result = await runStrategyOnce();
 
-    // Wave A (PR #1847): pre-decision budget gate ends the run as "skipped" (not a green completed
-    // cycle). Non-LLM safety maintenance still ran before the gate; only LLM/scan generation stopped.
-    expect(result.status).toBe("skipped");
+    // Wave A / UX PR-A1: pre-decision budget gate ends as skipped_budget (not green completed).
+    // Non-LLM safety maintenance still ran before the gate; only LLM/scan generation stopped.
+    expect(result.status).toBe("skipped_budget");
     expect(listAudit(500).filter((e) => e.kind === "strategy_run_suppressed_budget").length).toBeGreaterThanOrEqual(1);
     // The Bull/Bear model call never fired.
     expect(openAiCalled).toBe(false);

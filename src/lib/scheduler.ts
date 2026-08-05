@@ -157,7 +157,8 @@ export function shouldReleaseSchedulerLeaseOnShutdown(event: "SIGTERM" | "SIGINT
   return (SCHEDULER_LEASE_RELEASE_EVENTS as readonly string[]).includes(event);
 }
 
-/** Auto-tuning is follow-on work for a successfully completed account run only. */
+/** Auto-tuning is follow-on work for a successfully completed decision cycle only.
+ *  Pure pre-decision skips (budget / market / broker) must not trigger tuning (UX PR-A1). */
 export function shouldAutoTuneAfterStrategyRun(result: Pick<StrategyResult, "status">): boolean {
   return result.status === "completed";
 }

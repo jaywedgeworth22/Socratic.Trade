@@ -1,7 +1,10 @@
 // db-execution.ts — DAILY_RESET_TIME_ZONE, daily stats, day-trade counting,
 // run lock (acquireStrategyLock / releaseStrategyLock), strategy runs.
 import { audit, getDb } from "./db";
+import type { StrategyRunFinishStatus } from "./strategy-run-status";
 import type { StrategyRunRow } from "./types";
+
+export type { StrategyRunFinishStatus } from "./strategy-run-status";
 
 /**
  * IANA timezone whose civil midnight defines the daily-notional reset boundary. Made explicit so the
@@ -291,11 +294,9 @@ export function insertStrategyRun(id: string, userId: string = "local", connecte
 
 /** Terminal statuses for strategy_runs.
  *  - completed: a decision cycle ran (LLM evaluated candidates, even if it proposed nothing)
- *  - skipped: pre-decision gate (market closed, broker unhealthy, budget) — no LLM reasoning
+ *  - skipped_* / skipped: pre-decision gate — no successful evaluation (UX PR-A1)
  *  - failed: hard error
- * Skipped must NOT feed trading-liveness "healthy" or auto-tune. */
-export type StrategyRunFinishStatus = "completed" | "failed" | "skipped";
-
+ * Skips must NOT feed trading-liveness "healthy" or auto-tune. */
 export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, summary: string, userId: string = "local"): void {
   getDb()
     .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ? AND user_id = ?")

@@ -102,11 +102,15 @@ export default function ConsoleHomePage() {
           <span
             className={cx(
               "text-[length:var(--con-fs-xs)]",
-              lastRun.failed ? "text-[color:var(--con-neg)]" : "text-[color:var(--con-muted)]"
+              lastRun.failed
+                ? "text-[color:var(--con-neg)]"
+                : lastRun.skipped
+                  ? "text-[color:var(--con-warn)]"
+                  : "text-[color:var(--con-muted)]"
             )}
             title={lastRun.title}
           >
-            Last run {latestRow.status} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
+            Last run {lastRun.statusLabel} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
             {lastRun.cause && (
               <>
                 {" "}
@@ -364,9 +368,14 @@ export default function ConsoleHomePage() {
                 <RunOnceButton snapshot={snapshot} size="sm" />
               </div>
               <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"}>{state.label}</Chip>
-              {latestRow && (
-                <Chip tone={latestRow.status === "failed" ? "neg" : "muted"}>
-                  latest {latestRow.status} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
+              {latestRow && lastRun && (
+                <Chip
+                  tone={
+                    lastRun.failed ? "neg" : lastRun.skipped ? "warn" : "muted"
+                  }
+                  title={lastRun.title}
+                >
+                  latest {lastRun.statusLabel} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
                 </Chip>
               )}
             </div>
@@ -523,6 +532,9 @@ function deriveThesisHeadline(latest: StrategyDecision | undefined, proposal: Tr
   }
   if (proposal?.tradeThesisTag) {
     return `Market thesis: ${formatMarketThesis(proposal.tradeThesisTag, proposal.symbol)}`;
+  }
+  if (latest?.status && /skipped/.test(latest.status)) {
+    return "Latest run was skipped before a decision — not a successful evaluation.";
   }
   if (latest?.summary) return "Latest run completed; Socratic Trade is holding its current posture.";
   return "Waiting for the next market thesis.";
