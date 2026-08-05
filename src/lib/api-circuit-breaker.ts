@@ -2,13 +2,16 @@
 //
 // Providers record health per (service, keySource) lane but nothing GATED calls on it — a dead
 // credential got hammered every scan. This breaker sits in front of the network chokepoint
-// (fetchWithRetry): when a lane's health says "stopped working" (last 5 calls all failed, per
-// getLaneHealth), it short-circuits that specific lane for a cool-down window instead of the whole
-// service, then allows ONE half-open probe. A user's own bad key trips only ("finnhub","user"); the
-// shared operator lane ("finnhub","env") keeps serving. Default ON; disable with
-// API_CIRCUIT_BREAKER_DISABLED=1 (or 0-out API_CIRCUIT_BREAKER_BACKOFF_MS to effectively disable the hold).
+// (fetchWithRetry): when a lane's health says HARD "stopped working" (last 5 non-soft calls all
+// failed, per getLaneHealth + HEALTH_REASON_CONSECUTIVE_FAILURES), it short-circuits that specific
+// lane for a cool-down window instead of the whole service, then allows ONE half-open probe.
+// Soft yellow heuristics ("active this hour but no success") and expected-limit failures (429,
+// daily caps) do NOT trip this breaker — matching applyCircuitBreaker in data-providers.ts.
+// A user's own bad key trips only ("finnhub","user"); the shared operator lane ("finnhub","env")
+// keeps serving. Default ON; disable with API_CIRCUIT_BREAKER_DISABLED=1 (or 0-out
+// API_CIRCUIT_BREAKER_BACKOFF_MS to effectively disable the hold).
 
-import { getLaneHealth } from "./db-health";
+import { getLaneHealth, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
 
 /** Thrown by fetchWithRetry when a lane's breaker is open. A distinct type so callers can tell a
  *  short-circuit from a real network error (they degrade to the next tier either way). */
@@ -61,7 +64,10 @@ export function apiCircuitBreakerShouldSkip(
     return { skip: false };
   }
   const lane = getLaneHealth(service, keySource);
-  if (lane.stoppedWorking) {
+  // Only the hard 5-consecutive-HARD-failure reason trips the transport breaker. Soft yellow
+  // "no success this hour" and expected-limit (429 / daily-cap) streaks must not black out a
+  // secondary source (vix-yahoo, nasdaq, RapidAPI) for a full backoff window after one cold fail.
+  if (lane.stoppedWorking && lane.reason === HEALTH_REASON_CONSECUTIVE_FAILURES) {
     trippedUntil.set(key, now + backoffMs());
     return { skip: true, reason: lane.reason };
   }

@@ -8,6 +8,36 @@ import { getDb } from "./db";
 export const HEALTH_REASON_CONSECUTIVE_FAILURES = "Last 5 consecutive calls all failed";
 
 /**
+ * Prefix written into `error_text` when a failure is an *expected limit* (HTTP 429, daily quota
+ * cap, proactive budget exhaustion) rather than a broken integration. No schema column is needed:
+ * consecutive-failure STOPPED and the enrichment circuit breaker ignore these rows so a free-tier
+ * 25/day provider (or a Yahoo 429 burst) cannot paint the lane red "STOPPED" forever until a
+ * success sneaks through. Soft yellow "active this hour, no success" may still apply.
+ */
+export const HEALTH_SOFT_FAILURE_PREFIX = "[expected-limit] ";
+
+/**
+ * True when an api_health_log failure row is a soft/expected limit (rate limit, daily cap, …).
+ * Matches both the explicit prefix logApiHealth stamps for `soft: true`, and common free-text
+ * shapes from older rows / call sites that forget the flag but still say "HTTP 429".
+ */
+export function isSoftHealthFailure(errorText: string | null | undefined): boolean {
+  if (!errorText) return false;
+  if (errorText.startsWith(HEALTH_SOFT_FAILURE_PREFIX)) return true;
+  // Legacy / free-text shapes that should never hard-STOP a lane on their own.
+  return (
+    /\bHTTP 429\b/i.test(errorText) ||
+    /\brate limit(?:ed|ing)?\b/i.test(errorText) ||
+    /\btoo many requests\b/i.test(errorText) ||
+    /\bdaily (?:call )?budget exhausted\b/i.test(errorText) ||
+    /\bkey pool exhausted\b/i.test(errorText) ||
+    /\b25\/day cap\b/i.test(errorText) ||
+    /\b25 requests per day\b/i.test(errorText) ||
+    /\bproactive daily call budget\b/i.test(errorText)
+  );
+}
+
+/**
  * FIFO retention for api_health_log: only the newest N rows per (service, key_source) lane survive
  * (enforced on every insert in logApiHealth). Exported because it is NOT just a storage detail — the
  * `callsLastHour`/`callsLast24h` window counts below are computed over this same capped table, so on
@@ -30,7 +60,6 @@ export const HEALTH_LOG_LANE_CAP = 500;
  * connections page is "use client") discriminates on the kind instead of string-matching the prose.
  */
 export type HealthStoppedReasonKind = "consecutive-failures" | "no-success-ever" | "no-success-this-hour";
-
 // RAG services (Pinecone, embed, rerank) already get their OWN explicit, operation-scoped alert
 // from vector-db.ts's withRagApiHealth -> alertRagConnectionFailure (richer message: which
 // operation failed, usage-limit escalation via alertUsageLimitHit, its own 1h cooldown). Without
@@ -70,9 +99,13 @@ export function getLaneHealth(
     const scopeUser = keySource === "user" && userId != null;
     const userClause = scopeUser ? " AND user_id IS ?" : "";
     const withUser = (params: unknown[]): unknown[] => (scopeUser ? [...params, userId] : params);
+    // Pull error_text so expected-limit (soft) failures can be excluded from the HARD consecutive
+    // streak — five 429s or a daily-cap row must not trip the enrichment circuit breaker.
     const last5 = db
-      .prepare(`SELECT ok FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} ORDER BY ts DESC, rowid DESC LIMIT 5`)
-      .all(...withUser([service, keySource])) as Array<{ ok: number }>;
+      .prepare(
+        `SELECT ok, error_text FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} ORDER BY ts DESC, rowid DESC LIMIT 5`
+      )
+      .all(...withUser([service, keySource])) as Array<{ ok: number; error_text: string | null }>;
     const lastSuccess = db
       .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ok = 1 ORDER BY ts DESC, rowid DESC LIMIT 1`)
       .get(...withUser([service, keySource])) as { ts: string } | undefined;
@@ -85,7 +118,14 @@ export function getLaneHealth(
 
     let stoppedWorking = false;
     let reason: string | null = null;
-    if (last5.length >= 5 && last5.every((r) => r.ok === 0)) {
+    // HARD consecutive-failures: every one of the last 5 rows is a non-soft failure. Soft/expected
+    // limits (429, daily cap) alone never set this reason — they may still surface as the softer
+    // "no success this hour" heuristics below (yellow DEGRADED, not red STOPPED for circuit trips
+    // that only key off HEALTH_REASON_CONSECUTIVE_FAILURES in the enrichment breaker).
+    if (
+      last5.length >= 5 &&
+      last5.every((r) => r.ok === 0 && !isSoftHealthFailure(r.error_text))
+    ) {
       stoppedWorking = true;
       reason = HEALTH_REASON_CONSECUTIVE_FAILURES;
     } else if (callsLastHour > 0 && !lastSuccess) {
@@ -100,7 +140,6 @@ export function getLaneHealth(
     return { stoppedWorking: false, reason: null, lastFailureTs: null };
   }
 }
-
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ServiceHealthSummary {
@@ -124,6 +163,12 @@ export interface ServiceHealthSummary {
    *  saturated case honestly ("500+") without importing this module. Optional for the same
    *  placeholder-lane reason; a lane with no rows cannot be saturated. */
   laneLogCap?: number;
+  /**
+   * Product-retired vendor lane (FMP / Quiver / UW). Admin Connections must render these as
+   * muted OFF — not red STOPPED — and exclude them from the "N stopped" header. Set by the
+   * connections-health route from `retired-direct-vendors`; not computed from the log.
+   */
+  intentionalOff?: boolean;
 }
 
 export interface HealthLogRow {
@@ -164,6 +209,13 @@ export function logApiHealth(opts: {
   // through to alertConnectionFailure's cooldown. Omit for ordinary transient failures, which
   // keep the generic fixed-duration cooldown.
   quotaResetAt?: string;
+  /**
+   * Mark a failure as an *expected limit* (rate limit, daily cap, proactive budget). Soft
+   * failures are still stored as ok=0 for forensics, but do not count toward the hard
+   * consecutive-failure STOPPED / enrichment circuit trip. Prefer this over inventing a success
+   * row for a call that did not succeed.
+   */
+  soft?: boolean;
 }): void {
   try {
     const db = getDb();
@@ -171,14 +223,22 @@ export function logApiHealth(opts: {
     const id = randomUUID();
     const keySource = opts.keySource ?? null;
     const userId = opts.userId ?? null;
+    // Stamp soft failures with a stable prefix so getLaneHealth / summaries can discriminate
+    // without a schema column. Do not double-prefix if the caller already used the marker or
+    // if auto-classification would match the free-text shape either way.
+    let errorText = opts.errorText ?? null;
+    if (!opts.ok && errorText && (opts.soft || isSoftHealthFailure(errorText))) {
+      if (!errorText.startsWith(HEALTH_SOFT_FAILURE_PREFIX)) {
+        errorText = `${HEALTH_SOFT_FAILURE_PREFIX}${errorText}`;
+      }
+    }
 
     db.transaction(() => {
       // Insert log row
       db.prepare(
         `INSERT INTO api_health_log (id, service, ts, ok, latency_ms, error_text, key_source, user_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(id, opts.service, now, opts.ok ? 1 : 0, opts.latencyMs ?? null, opts.errorText ?? null, keySource, userId);
-
+      ).run(id, opts.service, now, opts.ok ? 1 : 0, opts.latencyMs ?? null, errorText, keySource, userId);
       // Enforce the FIFO cap of HEALTH_LOG_LANE_CAP rows per (service, key_source) credential lane.
       // The cap has NO user_id predicate, but getLaneHealth scopes its counts to one user on
       // keySource === "user" lanes — so on a multi-tenant user lane one tenant's traffic can evict
@@ -200,8 +260,8 @@ export function logApiHealth(opts: {
       // Update error pattern if this is a failure.
       // Use "" (not NULL) as the key_source sentinel so UNIQUE(service,fingerprint,key_source)
       // deduplicates correctly — SQLite NULL values never collide in UNIQUE constraints.
-      if (!opts.ok && opts.errorText) {
-        const normalized = opts.errorText.trim().toLowerCase().replace(/\s+/g, " ");
+      if (!opts.ok && errorText) {
+        const normalized = errorText.trim().toLowerCase().replace(/\s+/g, " ");
         const fingerprint = createHash("sha256").update(normalized).digest("hex").slice(0, 12);
         const patternId = randomUUID();
         const patternKeySource = keySource ?? "";
@@ -213,28 +273,39 @@ export function logApiHealth(opts: {
            ON CONFLICT(service, fingerprint, key_source) DO UPDATE SET
              last_seen = excluded.last_seen,
              count = count + 1`
-        ).run(patternId, opts.service, fingerprint, opts.errorText, now, now, patternKeySource);
+        ).run(patternId, opts.service, fingerprint, errorText, now, now, patternKeySource);
       }
     })();
 
-    if (!opts.ok && opts.errorText && !RAG_SERVICES_WITH_OWN_ALERTING.has(opts.service)) {
+    if (!opts.ok && errorText && !RAG_SERVICES_WITH_OWN_ALERTING.has(opts.service)) {
       const keySource = opts.keySource ?? null;
-      // Scope the streak that gates the alert to this user's own history for user-key lanes, so
-      // tenant A's failures don't fire a provider-degraded alert to tenant B on the shared lane.
-      const lane = getLaneHealth(opts.service, keySource, opts.userId ?? null);
-      const isRateLimit = /429|rate limit/i.test(opts.errorText);
-      if (lane.stoppedWorking) {
-        void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, opts.errorText, {
-          skipSentry: isRateLimit,
-          cooldownUntil: opts.quotaResetAt
-        });
+      // Soft/expected-limit failures (429 bursts, free-tier caps) normally do not page — they are
+      // budget/rate behavior, not a broken integration. Exception: a caller that passes
+      // `quotaResetAt` (Alpha Vantage daily-cap exhaustion) wants ONE operator heads-up pinned to
+      // the known reset instant, so allow that path through even when the row is soft-stamped.
+      // Hard failures still gate on lane health (consecutive hard STOPPED or soft yellow heuristics).
+      const isSoft = isSoftHealthFailure(errorText);
+      if (isSoft && !opts.quotaResetAt) {
+        // pure expected-limit with no known reset: no automatic alert
+      } else {
+        // Scope the streak that gates the alert to this user's own history for user-key lanes, so
+        // tenant A's failures don't fire a provider-degraded alert to tenant B on the shared lane.
+        const lane = getLaneHealth(opts.service, keySource, opts.userId ?? null);
+        // quotaResetAt path: alert once even before a 5-hard streak (the single "pool exhausted"
+        // row is enough signal). Otherwise require the lane already stoppedWorking.
+        if (opts.quotaResetAt || lane.stoppedWorking) {
+          void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, errorText, {
+            // Soft/rate-limit-shaped text: skip Sentry (noise); hard outages still capture.
+            skipSentry: isSoft || /429|rate limit/i.test(errorText),
+            cooldownUntil: opts.quotaResetAt
+          });
+        }
       }
     }
   } catch {
     // Health logging must never throw — swallow all errors
   }
 }
-
 // ── Read ───────────────────────────────────────────────────────────────────────
 
 interface ServiceKeyLane { service: string; key_source: string | null }
@@ -305,20 +376,24 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
           .get(service, ks, dayAgo) as { cnt: number }
       ).cnt;
 
-      // "Stopped working" detection — scoped per credential lane
+      // "Stopped working" detection — scoped per credential lane. Soft/expected-limit failures
+      // (429, daily caps) do NOT count toward the hard consecutive-failures kind.
       const last5 = db
         .prepare(
-          `SELECT ok FROM api_health_log
+          `SELECT ok, error_text FROM api_health_log
            WHERE service = ? AND key_source IS ?
            ORDER BY ts DESC, rowid DESC LIMIT 5`
         )
-        .all(service, ks) as Array<{ ok: number }>;
+        .all(service, ks) as Array<{ ok: number; error_text: string | null }>;
 
       let stoppedWorking = false;
       let stoppedReason: string | null = null;
       let stoppedReasonKind: HealthStoppedReasonKind | null = null;
 
-      if (last5.length >= 5 && last5.every((r) => r.ok === 0)) {
+      if (
+        last5.length >= 5 &&
+        last5.every((r) => r.ok === 0 && !isSoftHealthFailure(r.error_text))
+      ) {
         stoppedWorking = true;
         stoppedReason = HEALTH_REASON_CONSECUTIVE_FAILURES;
         stoppedReasonKind = "consecutive-failures";

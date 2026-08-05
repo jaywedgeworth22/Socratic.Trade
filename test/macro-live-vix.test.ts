@@ -223,29 +223,42 @@ describe("keyless VIX cascade (Cboe -> Yahoo)", () => {
     expect(live.asOf).toBeNull();
   });
 
-  it("trips the per-lane circuit breaker after lane failures, so a dead endpoint is probed, not hammered every tick", async () => {
+  it("trips the per-lane circuit breaker after 5 hard consecutive failures (not soft yellow alone)", async () => {
     stubFetch({ yahooVix: null, cboeVix: null });
     const { fetchLiveVix } = await import("../src/lib/macro");
+    const { getLaneHealth, HEALTH_REASON_CONSECUTIVE_FAILURES } = await import("../src/lib/db-health");
     const mock = fetch as unknown as ReturnType<typeof vi.fn>;
 
-    // First full cascade round (cache bypassed by advancing past the 10-min TTL): both lanes
-    // are attempted and their failures are recorded in api_health_log.
+    // Soft yellow ("active this hour, no success") after a single cold failure must NOT open the
+    // transport breaker — that matches applyCircuitBreaker / expected-limit soft classification.
+    // Hard consecutive-failures (5 non-soft fails) still do, so a truly dead endpoint is probed
+    // on a backoff cadence rather than hammered every tick.
     const base = Date.now();
     await fetchLiveVix(base);
     expect(mock.mock.calls.length).toBe(2);
-
-    // The lanes' health now reads "stopped working" (active this hour, zero successes), so the
-    // shared circuit breaker holds each lane open for its backoff window: the next two "ticks"
-    // short-circuit WITHOUT any upstream call — probe cadence, not per-tick hammering.
-    await fetchLiveVix(base + 11 * 60_000);
-    await fetchLiveVix(base + 22 * 60_000);
-    expect(mock.mock.calls.length).toBe(2);
-
-    // And the failures really did land on the per-lane health ledger the breaker consults.
-    const { getLaneHealth } = await import("../src/lib/db-health");
+    // One fail each lane → soft yellow possible, but no hard consecutive-failures yet.
     for (const lane of ["vix-yahoo", "vix-cboe"]) {
-      expect(getLaneHealth(lane, null).stoppedWorking).toBe(true);
+      const h = getLaneHealth(lane, null);
+      expect(h.stoppedWorking).toBe(true);
+      expect(h.reason).not.toBe(HEALTH_REASON_CONSECUTIVE_FAILURES);
     }
+    // Still allowed through (no circuit skip on soft yellow alone).
+    await fetchLiveVix(base + 11 * 60_000);
+    expect(mock.mock.calls.length).toBe(4);
+
+    // Seed 5 hard failures so the transport breaker trips.
+    const { logApiHealth } = await import("../src/lib/db-health");
+    for (const lane of ["vix-yahoo", "vix-cboe"]) {
+      for (let i = 0; i < 5; i++) {
+        logApiHealth({ service: lane, ok: false, errorText: "HTTP 500" });
+      }
+      expect(getLaneHealth(lane, null).reason).toBe(HEALTH_REASON_CONSECUTIVE_FAILURES);
+    }
+    const before = mock.mock.calls.length;
+    await fetchLiveVix(base + 22 * 60_000);
+    await fetchLiveVix(base + 33 * 60_000);
+    // Both ticks short-circuit — no additional upstream calls while the hard circuit is open.
+    expect(mock.mock.calls.length).toBe(before);
   });
 });
 
