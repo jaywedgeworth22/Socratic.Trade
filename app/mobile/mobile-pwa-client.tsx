@@ -20,6 +20,7 @@ import {
   X
 } from "lucide-react";
 import { estimatedClosingPnl, isClosingOrder, positionMarkPrice } from "../console/lib/derive";
+import { authorityLabel } from "../console/lib/labels";
 import { requestedExitQuantity } from "@/lib/broker-held-orders";
 import { modelDisplayName } from "../console/lib/models";
 import { redTeamFailureMeta, redTeamVerdictLabel } from "../console/lib/red-team";
@@ -122,8 +123,35 @@ function statusTone(status: CommandStatus): string {
   return "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200";
 }
 
-function commandLabel(value: string): string {
-  return value.replaceAll(".", " / ").replaceAll("_", " ");
+/** Human labels for mobile command types (Command Log + active-command chip).
+ *  Never show raw `strategy.run_once` / `proposal.approve` wire names in the UI. */
+const COMMAND_TYPE_LABELS: Record<string, string> = {
+  "strategy.run_once": "Run once",
+  "strategy.start": "Start strategy",
+  "strategy.stop": "Stop",
+  "strategy.close_only": "Close only",
+  "strategy.liquidating": "Wind down",
+  "proposal.approve": "Approve proposal",
+  "proposal.reject": "Reject proposal",
+  "account.activate": "Switch account",
+  "watchlist.add": "Add to watchlist",
+  "watchlist.remove": "Remove from watchlist",
+  "alert.create": "Create alert",
+  "alert.delete": "Delete alert"
+};
+
+export function commandLabel(value: string): string {
+  if (COMMAND_TYPE_LABELS[value]) return COMMAND_TYPE_LABELS[value];
+  // Defensive fallback: "foo.bar_baz" → "Foo · Bar baz" (never raw snake/dots)
+  return value
+    .split(".")
+    .map((part) =>
+      part
+        .replaceAll("_", " ")
+        .trim()
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+    )
+    .join(" · ");
 }
 
 /** Compact one-line model attribution for a proposal card: which model proposed it, and which
@@ -294,18 +322,20 @@ export function getMobileCommandAvailability(
   // `recentCommands` is durable history and can contain a stale queued/running row after a process
   // crash. It is useful status evidence, not a client lock: only this tab's active POST blocks a new
   // submission, while the server remains authoritative for real command conflicts.
+  //
+  // Once a valid snapshot has loaded, keep controls usable through refresh/stale cycles (banner
+  // warns). Only offline / no-snapshot / in-flight POST blocks submission. Gating on
+  // freshness === "fresh" used to disable Run/Approve on every poll — bad for a remote control.
+  void freshness;
   const canReachServer = snapshot !== null && isOnline && busyCommand === null;
-  const canSubmit = canReachServer && freshness === "fresh";
+  const canSubmit = canReachServer;
   return {
     canSubmit,
-    canSubmitAccountCommand: canSubmit && snapshot.readiness.hasAccount,
-    canSubmitTrading: canSubmit && snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse,
-    // Halting is protective and does not depend on scan-universe or snapshot freshness. Once this
-    // client has loaded one valid snapshot, keep STOP available through refreshes/stale-data errors.
+    canSubmitAccountCommand: canSubmit && !!snapshot?.readiness.hasAccount,
+    canSubmitTrading: canSubmit && !!snapshot?.readiness.hasAccount && !!snapshot?.readiness.hasUniverse,
+    // Halting is protective. Once this client has loaded one valid snapshot, keep STOP available.
     canSubmitStop: canReachServer,
-    // Account switch (account.activate) is a pure active-pointer flip and now executes immediately
-    // on the server — do not gate it on portfolio freshness. Users often switch away while data is
-    // stale or a strategy run is marked in backlog history.
+    // Account switch (account.activate) is a pure active-pointer flip (immediate server path).
     canSubmitAccountSwitch: canReachServer,
   };
 }
@@ -619,6 +649,8 @@ export function MobilePwaClient() {
     );
   }
 
+  const strategyAuthority = authorityLabel(snapshot.readiness.strategyAuthority);
+
   return (
     <main className="min-h-dvh bg-bg pb-[calc(env(safe-area-inset-bottom)+24px)] text-fg">
       <header className="sticky top-0 z-20 border-b border-line bg-bg/95 px-4 pt-[calc(env(safe-area-inset-top)+12px)] backdrop-blur">
@@ -629,6 +661,7 @@ export function MobilePwaClient() {
               Mobile control
             </div>
             <h1 className="truncate text-lg font-semibold">Socratic Trade</h1>
+            <p className="mt-0.5 text-xs text-muted">Control remote — full desk on desktop</p>
           </div>
           <div className="flex items-center gap-2">
             <Link
@@ -700,22 +733,22 @@ export function MobilePwaClient() {
         {!isOnline && (
           <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
             <WifiOff className="h-4 w-4 shrink-0" />
-            Offline — data may be stale
+            Offline — reconnect to send commands. On-screen data may be stale.
           </div>
         )}
-        {snapshotFreshness === "refreshing" && (
+        {isOnline && snapshotFreshness === "refreshing" && (
           <div
             className="flex items-center gap-2 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100"
             role="status"
           >
             <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-            Refreshing current data — new commands are paused; Stop remains available.
+            Refreshing… controls stay usable while the latest snapshot loads.
           </div>
         )}
-        {snapshotFreshness === "stale" && (
+        {isOnline && snapshotFreshness === "stale" && (
           <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
             <ShieldAlert className="h-4 w-4 shrink-0" />
-            Current data could not be verified. New commands are paused; Stop remains available.
+            Latest snapshot could not be verified — data may be stale. Controls remain usable; Stop always available when online.
           </div>
         )}
         {error && (
@@ -735,7 +768,9 @@ export function MobilePwaClient() {
             </div>
             <div className="rounded-md border border-line bg-surface px-3 py-2 text-right">
               <p className="text-xs text-faint">Authority</p>
-              <p className="text-sm font-medium capitalize">{snapshot?.readiness.strategyAuthority ?? "-"}</p>
+              <p className="text-sm font-medium" title={strategyAuthority.title || undefined}>
+                {strategyAuthority.label || "—"}
+              </p>
             </div>
           </div>
 
@@ -778,7 +813,7 @@ export function MobilePwaClient() {
             <div className={`rounded-md border px-3 py-2 text-sm ${statusTone(activeCommand.status)}`}>
               <div className="flex items-center gap-2">
                 <Activity className="h-4 w-4" />
-                <span className="capitalize">{commandLabel(activeCommand.commandType)}</span>
+                <span>{commandLabel(activeCommand.commandType)}</span>
                 <span className="ml-auto capitalize">{activeCommand.status}</span>
               </div>
             </div>
@@ -795,7 +830,7 @@ export function MobilePwaClient() {
 
         <section className="space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Approvals</h2>
+            <h2 className="text-sm font-semibold">Proposals</h2>
             <span className="text-xs text-faint">{pendingProposals.length}</span>
           </div>
           {pendingProposals.length === 0 ? (
@@ -1067,7 +1102,7 @@ export function MobilePwaClient() {
                   {command.status === "failed" ? <ShieldAlert className="h-4 w-4" /> : null}
                   {command.status === "succeeded" ? <Check className="h-4 w-4" /> : null}
                   {command.status === "cancelled" ? <CircleStop className="h-4 w-4" /> : null}
-                  <span className="capitalize">{commandLabel(command.commandType)}</span>
+                  <span>{commandLabel(command.commandType)}</span>
                   <span className="ml-auto">{shortTime(command.updatedAt)}</span>
                 </div>
                 {command.error && <p className="mt-1 line-clamp-3 text-xs" title={command.error}>{command.error}</p>}

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  commandLabel,
   createCoalescedMobileSnapshotLoader,
   getMobileCommandAvailability,
   MobileSnapshotUnavailable,
@@ -92,16 +93,28 @@ describe("mobile PWA command availability", () => {
       canSubmitAccountSwitch: true
     });
 
+    // Once a snapshot is loaded, keep controls usable through refresh/stale (banner warns).
+    // Offline / no-snapshot / busy still block. Freshness no longer freezes Run/Approve.
     for (const freshness of ["unknown", "refreshing", "stale"] as const) {
       expect(getMobileCommandAvailability(mobileSnapshot(), null, true, freshness)).toEqual({
-        canSubmit: false,
-        canSubmitAccountCommand: false,
-        canSubmitTrading: false,
+        canSubmit: true,
+        canSubmitAccountCommand: true,
+        canSubmitTrading: true,
         canSubmitStop: true,
-        // Account switch stays available when snapshot is stale (metadata-only, immediate server path).
         canSubmitAccountSwitch: true
       });
     }
+  });
+});
+
+describe("mobile PWA command labels", () => {
+  it("humanizes known command types and falls back without raw wire strings", () => {
+    expect(commandLabel("strategy.run_once")).toBe("Run once");
+    expect(commandLabel("proposal.approve")).toBe("Approve proposal");
+    expect(commandLabel("account.activate")).toBe("Switch account");
+    expect(commandLabel("watchlist.add")).toBe("Add to watchlist");
+    // Unknown types: title-case segments, never "foo / bar_baz"
+    expect(commandLabel("future.command_type")).toBe("Future · Command Type");
   });
 });
 
