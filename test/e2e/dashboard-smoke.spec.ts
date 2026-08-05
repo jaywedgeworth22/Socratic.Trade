@@ -11,7 +11,7 @@ test("dashboard loads the core trading workspace", async ({ page }) => {
   await expect(page.getByText("Socratic Trade").first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Portfolio").first()).toBeVisible();
   await expect(page.getByText("Decision").first()).toBeVisible();
-  await expect(page.getByText("Evidence").first()).toBeVisible();
+  await expect(page.getByText("Scan").first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Run/i }).first()).toBeVisible();
   // Header kill switch: "Stop" while the system is active, "Start" while halted.
   await expect(page.getByRole("button", { name: /Start|Stop/i }).first()).toBeVisible();
