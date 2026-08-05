@@ -1,3 +1,9 @@
+**2026-08-04 — GROK: UX Wave B IA (B1/B2/B4).** Branch `grok/ux-wave-b-ia`. Plain nav labels
+Home/Scan/Activity/Results/Macro via `DESTINATIONS` + `destinationLabel`; Guardrails Autonomy
+panel (`#autonomy`) with run state/authority/cadence/readiness + chrome Run controls; Settings
+sticky TOC jump chips. B3 skipped; no policy defaults; A4 Advanced defaultOpen untouched.
+Rollout: `docs/rollouts/2026-08-04-ux-wave-b-ia.md`.
+
 **2026-08-04 — Final Verification of Model Slugs (AG).** Branch `agent/antigravity/openrouter-classifiers`. Replaced all legacy `-latest` model slugs with Provider Native Slugs (`gpt-5.6-sol`, `gpt-4o`, etc.) across the codebase. Cleaned up duplicate properties in model configuration files. Fixed test regressions in history tests by adding DB isolation to `historyTestDb` shared per-file. Fixed `isGpt56Model` regex. Gates verified: tsc clean, lint clean, full test suite passes. Landed cleanly via `land.sh`.
 Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
@@ -22,14 +28,14 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-04 (GROK: UX improvement program plan).
+Last updated: 2026-08-04 (GROK: UX Wave B IA landing).
 
 
 ## UX improvement program (2026-08-04, GROK)
 
-Sequenced PR plan for web console + PWA + iOS after a full-product review:
-`docs/design/ux-improvement-program.md`. Wave A (trust/action) slices are Planned/UNASSIGNED
-on the effort board — claim before implementing. Rollout:
+Sequenced PR plan: `docs/design/ux-improvement-program.md`. **Wave B IA** (B1 plain labels,
+B2 Autonomy panel, B4 Settings TOC) on branch `grok/ux-wave-b-ia` — rollout
+`docs/rollouts/2026-08-04-ux-wave-b-ia.md`. Wave A slices remain claimable. Program rollout:
 `docs/rollouts/2026-08-04-ux-improvement-program.md`.
 
 ## Where things stand

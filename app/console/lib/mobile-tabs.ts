@@ -18,7 +18,7 @@ const STORAGE_KEY = "console.mobileTabs.v1";
 export const MOBILE_TABS_MIN = 2;
 export const MOBILE_TABS_MAX = 4;
 
-/** Owner-decided default: Thesis, Proposals, Journal, Orders. */
+/** Owner-decided default: Home, Proposals, Activity, Orders (href-keyed pins). */
 export const DEFAULT_MOBILE_TAB_HREFS: readonly string[] = [
   "/console",
   "/console/approvals",

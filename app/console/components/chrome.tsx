@@ -575,8 +575,10 @@ interface RunBlock {
   fixLabel?: string;
 }
 
-/** Pre-flight blocks the snapshot already knows about, before any request. */
-function deriveRunBlock(snapshot: DashboardSnapshot): RunBlock | null {
+/** Pre-flight blocks the snapshot already knows about, before any request.
+ *  Exported so the Guardrails Autonomy surface can show the same “why can’t I run?”
+ *  copy without inventing a second readiness path. */
+export function deriveRunBlock(snapshot: DashboardSnapshot): RunBlock | null {
   if (snapshot.llmConfigured === false) {
     return {
       title: "No LLM key is configured",
