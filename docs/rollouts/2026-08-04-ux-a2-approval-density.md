@@ -24,8 +24,10 @@ confirmation (phrase, paste disabled).
 
 ### Touched files
 
-- `app/console/components/approval-card.tsx`
+- `app/console/components/approval-card.tsx` (also: export `redTeamSummaryChip` /
+  `redTeamCollapsedChip`; drop card `overflow-hidden` so sticky CTAs are not contained)
 - `app/console/console.css`
+- `test/approvals-triage-model.test.ts` (chip helper unit tests)
 - `docs/EFFORT-LOG.md`
 - `STATUS.md`
 - `docs/rollouts/2026-08-04-ux-a2-approval-density.md` (this note)
@@ -37,17 +39,17 @@ confirmation (phrase, paste disabled).
   uncommitted sticky strip (`policy-form` `bottom-16`).
 - Collapsed adds a one-line Est. P/L for exits (decision-critical); full Est. P/L block
   remains in expanded view.
+- Removed `overflow-hidden` on the card root: overflow containment breaks viewport
+  sticky for the action footer.
 - No new dependencies; pure CSS + existing lucide chevrons.
 
 ## Verification State
 
 ```bash
 export PATH=/opt/homebrew/opt/node@24/bin:$PATH
-# Host load was extremely high (~250+) during implementer blitz; full local suite
-# deferred to GitHub verify CI + land path when capacity allows.
-./node_modules/.bin/eslint app/console/components/approval-card.tsx  # 0 errors (1 pre-existing warn)
-./node_modules/.bin/esbuild app/console/components/approval-card.tsx --bundle ... # EXIT 0
-./node_modules/.bin/vitest run test/approvals-triage-model.test.ts   # 4/4 pass
+./node_modules/.bin/vitest run test/approvals-triage-model.test.ts --pool=forks --maxWorkers=1
+# 8/8 pass (triage + redTeamSummaryChip)
+# Full tsc/test/build: verify CI on PR #2414 / land.sh
 ```
 
 ## Next Steps & Blockers

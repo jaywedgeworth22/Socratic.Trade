@@ -144,12 +144,28 @@ function expiryIso(p: PendingProposal, policy: TradingPolicy): string | null {
 }
 
 /** Compact red-team chip for the default collapsed card (PR-A2). Full verdict text
- *  stays in the expanded "Show full reasoning" body. */
-function redTeamCollapsedChip(
+ *  stays in the expanded "Show full reasoning" body. Exported for unit tests. */
+export type RedTeamSummaryChip = {
+  tone: "pos" | "neg" | "warn" | "muted" | "accent";
+  label: string;
+  title: string;
+};
+
+export function redTeamCollapsedChip(
   redCard: ReturnType<typeof redTeamCardState>,
   verdict: TradeProposal["redTeamVerdict"] | undefined,
   overrideApplied?: boolean
-): { tone: "pos" | "neg" | "warn" | "muted" | "accent"; label: string; title: string } {
+): RedTeamSummaryChip {
+  // Alias used by tests / call sites that prefer the program name.
+  return redTeamSummaryChip(redCard, verdict, overrideApplied);
+}
+
+/** Program name for the collapsed-card AI-critic chip (PR-A2). */
+export function redTeamSummaryChip(
+  redCard: ReturnType<typeof redTeamCardState>,
+  verdict: TradeProposal["redTeamVerdict"] | undefined,
+  overrideApplied?: boolean
+): RedTeamSummaryChip {
   if (redCard === "verdict-panel" && verdict) {
     if (!verdict.available) {
       return {
@@ -345,7 +361,8 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   };
 
   return (
-    <article className={cx("con-card overflow-hidden", live && "border-[color:var(--con-live-border)]")}>
+    // No overflow-hidden: it creates a containing block that breaks sticky CTAs (PR-A2).
+    <article className={cx("con-card", live && "border-[color:var(--con-live-border)]")}>
       {/* Header: verb + company logo + symbol + size + reality word — always visible (PR-A2). */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[color:var(--con-line)] px-4 py-3">
         <span className={cx("inline-flex items-center gap-2 text-[length:var(--con-fs-md)] font-bold", isExit(p.side) ? "text-[color:var(--con-warn)]" : undefined)}>
