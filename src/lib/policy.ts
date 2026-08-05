@@ -21,6 +21,7 @@ import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
 import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./market-regime";
 import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap } from "./policy-caps";
+import { quoteAgeSecForStalenessGate } from "./quotes-cascade";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -388,6 +389,8 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   }
   // STALENESS GATE (OPENINGS only) — NEVER blocks and NEVER escalates to a pending card.
   // Primary path: the quote cascade must supply a trade-time within maxQuoteAgeSec (default 120s).
+  // Venue-authoritative delayed feeds (Tradier sandbox): age the FETCH snapshot (`fetchedAt`), not
+  // trade-time `asOf` — the ~15m delay is the venue's fill world, not a broken cascade.
   // Backup if data is still old/missing (should be rare once cascade is healthy): convert the order
   // to a LIMIT at the proposal's intended entry (referencePrice / existing limit), so the price the
   // strategy identified as worth buying/shorting is honored instead of chasing a stale market print.
@@ -398,12 +401,11 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     const now = (context.now ?? new Date()).getTime();
     const maxQuoteAgeSec = context.policy.maxQuoteAgeSec;
     if (maxQuoteAgeSec != null && maxQuoteAgeSec > 0) {
-      const quoteAsOf =
-        context.marketScan?.quotesBySymbol[symbol]?.asOf ??
-        context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.asOf;
-      const asOfMs = quoteAsOf ? new Date(quoteAsOf).getTime() : NaN;
-      const ageSec = !Number.isNaN(asOfMs) ? Math.round((now - asOfMs) / 1000) : undefined;
-      const isStale = !quoteAsOf || Number.isNaN(asOfMs) || (ageSec !== undefined && ageSec > maxQuoteAgeSec);
+      const scanQuote =
+        context.marketScan?.quotesBySymbol[symbol] ??
+        context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+      const { ageSec, missing, venueDelayed } = quoteAgeSecForStalenessGate(scanQuote, now);
+      const isStale = missing || (ageSec !== undefined && ageSec > maxQuoteAgeSec);
 
       if (isStale) {
         const originalType = proposal.type;
@@ -449,8 +451,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
           }
 
           const ageText = ageSec !== undefined ? `${ageSec}s old` : "missing/unparseable";
+          const venueNote = venueDelayed ? " venue-delayed snapshot" : "";
           const warningNote =
-            ` [Stale quote backup: quote timestamp is ${ageText} (max ${maxQuoteAgeSec}s). ` +
+            ` [Stale quote backup: quote${venueNote} timestamp is ${ageText} (max ${maxQuoteAgeSec}s). ` +
             `Converted to a limit at $${(proposal.limitPrice ?? 0).toFixed(2)} so the proposal's ` +
             `intended entry $${referencePrice.toFixed(2)} is honored — not blocked.]`;
           proposal.rationale = `${proposal.rationale}${warningNote}`;
