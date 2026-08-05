@@ -116,7 +116,10 @@ export async function buildMemberSkillScores(filerIds: string[]): Promise<Map<st
   const perf = await Promise.all(distinct.map((id) => client.getMemberPerformance(id).catch(() => null)));
   const scored: Array<{ id: string; alpha: number }> = [];
   distinct.forEach((id, i) => {
-    const p = perf[i];
+    const dual = perf[i];
+    // Shared client returns MemberDualPerformance (tradeDate / filingDate / legacy performance).
+    // Prefer trade-date skill; fall back to legacy alias.
+    const p = dual?.tradeDate ?? dual?.performance ?? null;
     if (!p || typeof p.scoredCount !== "number" || p.scoredCount <= 0) return;
     const alpha = [p.avgExcess, p.medianExcess, p.avgReturn].find(
       (v): v is number => typeof v === "number" && Number.isFinite(v)
