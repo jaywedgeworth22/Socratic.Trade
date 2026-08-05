@@ -3,7 +3,7 @@
 /** Autonomy Desk — "what does Socratic Trade believe, what did it do,
  *  what evidence moved it, and how should the framework improve?" */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -50,35 +50,81 @@ import { useToast } from "./ui/toast";
 
 export default function ConsoleHomePage() {
   const { snapshot, refresh } = useConsoleData();
-  if (!snapshot) return null;
 
-  const reality = deriveReality(snapshot);
-  const state = deriveStateInfo(snapshot.policy);
-  const spend = deriveSpend(snapshot);
-  const portfolio = snapshot.portfolio;
-  const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio);
-  const markToMarket = deriveMarkToMarket(snapshot);
-  const risk = deriveRiskUtilization(snapshot);
-  const equityWindow = selectEquityWindow(
-    reality.mode === "broker/live"
-      ? snapshot.performance?.liveEquityCurve ?? []
-      : snapshot.performance?.paperEquityCurve ?? []
-  );
-  const latest = snapshot.latestStrategyRun;
-  const latestRow = snapshot.strategyRuns?.[0];
-  const lastRun = latestRow ? describeLastRun(latestRow) : null;
-  const nextRun = snapshot.scheduler?.nextRunAt;
-  const primaryDecision = snapshot.socratic?.decisions?.[0];
-  const primaryTrace = latest?.proposals?.[0];
-  const primaryProposal = primaryTrace?.proposal ?? snapshot.pendingProposals[0]?.proposal;
-  const latestProposals =
-    latest?.proposals?.slice(0, 5).map((item) =>
-      decisionFromProposal(`${latest?.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
-    ) ?? snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
+  // C4: memoize pure derives so a parent re-render with a stable snapshot object
+  // does not re-walk equity curves / risk meters / framework rows.
+  const derived = useMemo(() => {
+    if (!snapshot) return null;
+    const reality = deriveReality(snapshot);
+    const state = deriveStateInfo(snapshot.policy);
+    const spend = deriveSpend(snapshot);
+    const portfolio = snapshot.portfolio;
+    const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio);
+    const markToMarket = deriveMarkToMarket(snapshot);
+    const risk = deriveRiskUtilization(snapshot);
+    const equityWindow = selectEquityWindow(
+      reality.mode === "broker/live"
+        ? snapshot.performance?.liveEquityCurve ?? []
+        : snapshot.performance?.paperEquityCurve ?? []
+    );
+    const latest = snapshot.latestStrategyRun;
+    const latestRow = snapshot.strategyRuns?.[0];
+    const lastRun = latestRow ? describeLastRun(latestRow) : null;
+    const nextRun = snapshot.scheduler?.nextRunAt;
+    const primaryDecision = snapshot.socratic?.decisions?.[0];
+    const primaryTrace = latest?.proposals?.[0];
+    const primaryProposal = primaryTrace?.proposal ?? snapshot.pendingProposals[0]?.proposal;
+    const latestProposals =
+      latest?.proposals?.slice(0, 5).map((item) =>
+        decisionFromProposal(`${latest?.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
+      ) ?? snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
+    const previousTrades = snapshot.socratic?.decisions?.slice(0, 5).map(decisionFromSocratic) ?? [];
+    const frameworkRows = deriveFrameworkRows(snapshot);
+    const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
+    return {
+      reality,
+      state,
+      spend,
+      portfolio,
+      dayPnl,
+      markToMarket,
+      risk,
+      equityWindow,
+      latest,
+      latestRow,
+      lastRun,
+      nextRun,
+      primaryDecision,
+      primaryProposal,
+      latestProposals,
+      previousTrades,
+      frameworkRows,
+      hasFrameworkProposals
+    };
+  }, [snapshot]);
 
-  const previousTrades = snapshot.socratic?.decisions?.slice(0, 5).map(decisionFromSocratic) ?? [];
-  const frameworkRows = deriveFrameworkRows(snapshot);
-  const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
+  if (!snapshot || !derived) return null;
+
+  const {
+    reality,
+    state,
+    spend,
+    portfolio,
+    dayPnl,
+    markToMarket,
+    risk,
+    equityWindow,
+    latest,
+    latestRow,
+    lastRun,
+    nextRun,
+    primaryDecision,
+    primaryProposal,
+    latestProposals,
+    previousTrades,
+    frameworkRows,
+    hasFrameworkProposals
+  } = derived;
 
   // Intentionally full-bleed (no CONSOLE_PAGE_WIDTH cap, see ./lib/page-width.ts):
   // this is a two-column dashboard (main column + aside, aside floored at
@@ -88,6 +134,7 @@ export default function ConsoleHomePage() {
   // floor. See docs/rollouts/2026-07-08-console-page-width-parity.md.
   return (
     <div className="flex flex-col gap-4">
+      <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console")}</h1>
       {/* First-run checklist (PR-A3): when incomplete it dominates Thesis above the
           strategy bar + two-column desk; when ready it collapses to "You're set". */}
       <ReadinessChecklistHero snapshot={snapshot} />

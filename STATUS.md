@@ -1,3 +1,12 @@
+## Current (2026-08-04 GROK)
+
+- iOS TestFlight agent ship: `bash scripts/ios-ship-testflight.sh` (fleet README `/Users/jay/apps/ios-fleet/README.md`).
+
+**2026-08-04 — GROK: UX Wave B IA (B1/B2/B4) — PR #2425.** Branch `grok/ux-wave-b-ia`.
+Plain nav labels Home/Scan/Activity/Results/Macro via `DESTINATIONS` + `destinationLabel`;
+Guardrails Autonomy panel (`#autonomy`) with run state/authority/cadence/readiness + chrome Run
+controls; Settings sticky TOC. B3 via #2426 on main; no policy defaults; A4 `defaultOpen={false}`
+preserved. Supersedes #2413/#2419. Rollout: `docs/rollouts/2026-08-04-ux-wave-b-ia.md`.
 **2026-08-04 — UX PR-A2 approval density (GROK, branch `grok/ux-a2-approval-density`).** Approval cards default collapsed (side/symbol/size, Live/Paper, AI-critic chip, 2–3 line thesis); "Show full reasoning" restores full receipt; sticky mobile Approve/Reject above tab bar. No approve-API changes. Rollout: `docs/rollouts/2026-08-04-ux-a2-approval-density.md`.
 **2026-08-04 — GROK: UX PR-B1 plain nav labels (branch `grok/ux-b1-plain-nav`).** Owner D2:
 Thesis→Home, Evidence→Scan, Journal→Activity, Outcomes→Results, Regime→Macro. `desc`
@@ -53,6 +62,8 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 
 2026-08-01 were moved to `docs/status-archive.md`.
 
+Last updated: 2026-08-04 (GROK: UX Wave C speed C1–C4).
+Last updated: 2026-08-04 (GROK: UX Wave B IA landing).
 Last updated: 2026-08-04 (GROK: UX PR-A3 first-run readiness checklist — PR #2417).
 Last updated: 2026-08-04 (GROK: UX Wave D mobile/iOS/PWA).
 
@@ -63,9 +74,24 @@ PWA card strip); D4 humanized command labels, Ask-first/Autopilot, Proposals sec
 control-remote framing. Rollout: `docs/rollouts/2026-08-04-ux-wave-d-mobile.md`.
 
 
+## UX Wave C speed (2026-08-04, GROK)
+
+**IN PR** branch `grok/ux-wave-c-speed`. C1 snapshot TTL cache (userId×accountNumber, 10s,
+invalidate on policy/approve/reject); C2 FIFO `calculatePnl` once + PrefetchedPnl to
+scorecards/tax; C3 scan `TableVirtuoso`; C4 `React.memo` leaves + home `useMemo` derives.
+Rollout: `docs/rollouts/2026-08-04-ux-wave-c-speed.md`. Program:
+`docs/design/ux-improvement-program.md` §Wave C.
+
 ## UX improvement program (2026-08-04, GROK)
 
+Sequenced PR plan: `docs/design/ux-improvement-program.md`. **Wave B IA** (B1 plain labels,
+B2 Autonomy panel, B4 Settings TOC) on branch `grok/ux-wave-b-ia` — rollout
+`docs/rollouts/2026-08-04-ux-wave-b-ia.md`. Wave A slices remain claimable. Program rollout:
+`docs/rollouts/2026-08-04-ux-improvement-program.md`.
 Sequenced PR plan for web console + PWA + iOS after a full-product review:
+`docs/design/ux-improvement-program.md`. Wave A/B/C/D slices claimed by implementer
+fleet — coordinate via effort board. Rollout:
+`docs/rollouts/2026-08-04-ux-improvement-program.md`.
 `docs/design/ux-improvement-program.md`. **PR-A3 first-run checklist IN PR**
 (`grok/ux-a3-checklist` / #2417 — `deriveReadinessChecklist` + Thesis hero).
 Program rollout: `docs/rollouts/2026-08-04-ux-improvement-program.md`. A3 rollout:

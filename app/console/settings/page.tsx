@@ -97,6 +97,38 @@ export default function SettingsPage() {
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-6`}>
       <h1 className="text-[length:var(--con-fs-lg)] font-bold">Settings</h1>
 
+      {/* Wave B sticky jump chips — Notifications / Display / Sharing / Danger */}
+      <nav
+        aria-label="Settings sections"
+        className="sticky top-0 z-20 -mx-1 flex flex-wrap gap-1.5 border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]/95 px-1 py-2 backdrop-blur-sm"
+      >
+        {(
+          [
+            { id: "notifications", label: "Notifications" },
+            { id: "display", label: "Display" },
+            { id: "sharing", label: "Sharing" },
+            { id: "danger", label: "Danger" }
+          ] as const
+        ).map((item) => (
+          <a
+            key={item.id}
+            href={`#${item.id}`}
+            className="rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-2.5 py-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
+            onClick={(e) => {
+              e.preventDefault();
+              const el = document.getElementById(item.id);
+              if (!el) return;
+              el.scrollIntoView({ behavior: "smooth", block: "start" });
+              if (typeof window !== "undefined") {
+                window.history.replaceState(null, "", `#${item.id}`);
+              }
+            }}
+          >
+            {item.label}
+          </a>
+        ))}
+      </nav>
+
       {/* Account-scoped config (models, prompt, weights) lives on Strategy
           (/console/strategy); Guardrails (/console/guardrails) carries the caps,
           protective stops, tax treatment, and rulebook — Settings is global-only. */}
@@ -117,7 +149,9 @@ export default function SettingsPage() {
         {/* notificationSettings is a USER-level policy field (USER_LEVEL_POLICY_FIELDS
             in db-profiles): one event list + webhook overlaid on every account —
             so the card lives under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
-        <EventNotificationsCard />
+        <div id="notifications" className="scroll-mt-28">
+          <EventNotificationsCard />
+        </div>
         <DeliveryChannelsCard />
         <div id="sharing" className="scroll-mt-28">
           <DataSharingCard />
@@ -145,7 +179,7 @@ export default function SettingsPage() {
       </section>
 
       {/* ── THIS BROWSER ── */}
-      <section className="flex flex-col gap-4">
+      <section id="display" className="flex scroll-mt-28 flex-col gap-4">
         <div className="flex items-center gap-2">
           <Chip tone="muted" title="Settings tagged THIS BROWSER are stored in this browser only. They change how the console looks here, not how the strategy trades.">
             THIS BROWSER
