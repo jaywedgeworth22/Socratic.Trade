@@ -345,6 +345,14 @@ export function listFillEventsByProposalId(proposalId: string, userId: string = 
   return rows.map(toFillEvent);
 }
 
+/** True when a broker_order_id cannot be matched against any real broker order (literal
+ *  JS "undefined" string from a historical String(undefined) bug, empty string, or missing). */
+export function isUnusableBrokerOrderId(brokerOrderId: string | null | undefined): boolean {
+  if (brokerOrderId == null) return true;
+  const trimmed = String(brokerOrderId).trim();
+  return trimmed === "" || trimmed === "undefined";
+}
+
 export function listPendingBrokerReconciliationFills(accountNumber: string, userId: string = "local"): FillEvent[] {
   const rows = getDb()
     .prepare(
@@ -352,12 +360,43 @@ export function listPendingBrokerReconciliationFills(accountNumber: string, user
        WHERE account_number = ?
          AND user_id = ?
          AND status IN ('pending_reconciliation', 'partially_filled')
+         AND status != 'unreconcilable'
          AND broker_order_id IS NOT NULL
+         AND broker_order_id != ''
+         AND broker_order_id != 'undefined'
          AND (source = 'live' OR execution_mode IN ('broker/paper', 'broker/live'))
        ORDER BY filled_at ASC`
     )
     .all(accountNumber, userId) as RawFillEvent[];
   return rows.map(toFillEvent);
+}
+
+/**
+ * Forward-looking guard: any still-pending fill whose broker_order_id is unusable (empty or
+ * literal "undefined") can never match a broker order. Flip to terminal `unreconcilable` and
+ * return the flipped rows so the caller can audit. Idempotent when none match.
+ */
+export function markUnreconcilableUnusableBrokerOrderFills(
+  accountNumber: string,
+  userId: string = "local"
+): FillEvent[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM fill_events
+       WHERE account_number = ?
+         AND user_id = ?
+         AND status IN ('pending_reconciliation', 'partially_filled', 'pending')
+         AND (broker_order_id IS NULL OR broker_order_id = '' OR broker_order_id = 'undefined')`
+    )
+    .all(accountNumber, userId) as RawFillEvent[];
+  if (rows.length === 0) return [];
+  const update = getDb().prepare(
+    "UPDATE fill_events SET status = 'unreconcilable' WHERE id = ? AND user_id = ?"
+  );
+  for (const row of rows) {
+    update.run(row.id, userId);
+  }
+  return rows.map((row) => toFillEvent({ ...row, status: "unreconcilable" }));
 }
 
 /** Signed net position quantity implied by ACCOUNTING fills (filled/partially_filled) for one

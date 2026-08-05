@@ -300,6 +300,8 @@ const FEED_STATUS_LABELS: Record<string, string> = {
   partially_filled: "Partially filled",
   pending_order: "Order pending",
   pending_reconciliation: "Awaiting reconciliation",
+  // Terminal: broker_order_id was unusable (empty / literal "undefined") — cannot reconcile.
+  unreconcilable: "Unreconcilable",
   pending_approval: "Awaiting approval",
   approved: "Approved",
   blocked: "Blocked",

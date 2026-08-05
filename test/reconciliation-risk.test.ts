@@ -13,6 +13,11 @@ import {
   recordStopPlan,
   upsertSocraticDecisionCase
 } from "../src/lib/db";
+import {
+  isUnusableBrokerOrderId,
+  listPendingBrokerReconciliationFills,
+  markUnreconcilableUnusableBrokerOrderFills
+} from "../src/lib/db-fills";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { BrokerGateway } from "../src/lib/types";
 import type { EquityOrder, TradingPolicy } from "../src/lib/types";
@@ -560,6 +565,137 @@ describe("reconcilePendingFills", () => {
       price: 151,
       notional: 604
     });
+  });
+
+  it("excludes unusable broker_order_id and unreconcilable fills from the pending reconcile list", () => {
+    const accountNumber = `UNRECON-LIST-${randomUUID()}`;
+    const goodId = randomUUID();
+    const badUndefinedId = randomUUID();
+    const badEmptyId = randomUUID();
+    const alreadyUnreconcilableId = randomUUID();
+
+    insertFillEvent({
+      id: goodId,
+      accountNumber,
+      source: "live",
+      executionMode: "broker/live",
+      symbol: "AAPL",
+      side: "buy",
+      quantity: 1,
+      price: 100,
+      notional: 100,
+      status: "pending_reconciliation",
+      brokerOrderId: "real-broker-order-1"
+    });
+    insertFillEvent({
+      id: badUndefinedId,
+      accountNumber,
+      source: "live",
+      executionMode: "broker/live",
+      symbol: "MSFT",
+      side: "buy",
+      quantity: 1,
+      price: 100,
+      notional: 100,
+      status: "pending_reconciliation",
+      brokerOrderId: "undefined"
+    });
+    insertFillEvent({
+      id: badEmptyId,
+      accountNumber,
+      source: "live",
+      executionMode: "broker/live",
+      symbol: "GOOG",
+      side: "buy",
+      quantity: 1,
+      price: 100,
+      notional: 100,
+      status: "pending_reconciliation",
+      brokerOrderId: ""
+    });
+    insertFillEvent({
+      id: alreadyUnreconcilableId,
+      accountNumber,
+      source: "live",
+      executionMode: "broker/live",
+      symbol: "TSLA",
+      side: "buy",
+      quantity: 1,
+      price: 100,
+      notional: 100,
+      status: "unreconcilable",
+      brokerOrderId: "undefined"
+    });
+
+    expect(isUnusableBrokerOrderId("undefined")).toBe(true);
+    expect(isUnusableBrokerOrderId("")).toBe(true);
+    expect(isUnusableBrokerOrderId(null)).toBe(true);
+    expect(isUnusableBrokerOrderId("real-broker-order-1")).toBe(false);
+
+    const pending = listPendingBrokerReconciliationFills(accountNumber);
+    expect(pending.map((f) => f.id)).toEqual([goodId]);
+    expect(pending.some((f) => f.brokerOrderId === "undefined")).toBe(false);
+    expect(pending.some((f) => f.status === "unreconcilable")).toBe(false);
+  });
+
+  it("flips pending fills with unusable broker_order_id to unreconcilable (forward guard + list exclusion)", async () => {
+    const accountNumber = `UNRECON-FLIP-${randomUUID()}`;
+    const badId = randomUUID();
+    const goodId = randomUUID();
+    const goodBrokerOrderId = `broker-${randomUUID()}`;
+
+    insertFillEvent({
+      id: badId,
+      accountNumber,
+      source: "live",
+      executionMode: "broker/live",
+      symbol: "AAPL",
+      side: "buy",
+      quantity: 1,
+      price: 10,
+      notional: 10,
+      status: "pending_reconciliation",
+      brokerOrderId: "undefined"
+    });
+    insertFillEvent({
+      id: goodId,
+      accountNumber,
+      source: "live",
+      executionMode: "broker/live",
+      symbol: "MSFT",
+      side: "buy",
+      quantity: 2,
+      price: 50,
+      notional: 100,
+      status: "pending_reconciliation",
+      brokerOrderId: goodBrokerOrderId
+    });
+
+    const getEquityOrders = vi.fn(async () => [
+      {
+        id: goodBrokerOrderId,
+        symbol: "MSFT",
+        side: "buy",
+        type: "market",
+        state: "filled",
+        filledQuantity: 2,
+        averagePrice: 51,
+        createdAt: new Date().toISOString(),
+        updatedAt: "2026-06-15T12:00:00.000Z"
+      } as EquityOrder
+    ]);
+    await reconcilePendingFills(createMockGateway({ getEquityOrders }), accountNumber);
+
+    const bad = listFillEvents(accountNumber, "live").find((f) => f.id === badId);
+    const good = listFillEvents(accountNumber, "live").find((f) => f.id === goodId);
+    expect(bad?.status).toBe("unreconcilable");
+    expect(good?.status).toBe("filled");
+    expect(good?.price).toBe(51);
+    // Quarantined bad id never reaches the broker listing path as a match target.
+    expect(listPendingBrokerReconciliationFills(accountNumber)).toHaveLength(0);
+
+    // Idempotent second pass: mark helper finds nothing once flipped.
+    expect(markUnreconcilableUnusableBrokerOrderFills(accountNumber)).toHaveLength(0);
   });
 
   it("reconciles broker-paper pending fills even after many older paper fills", async () => {
