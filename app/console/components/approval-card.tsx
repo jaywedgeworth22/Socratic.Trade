@@ -7,7 +7,7 @@
  *  server's typed-confirmation contract (LIVE_CONFIRMATION_REQUIRED). */
 
 import { useMemo, useState } from "react";
-import { CircleAlert, Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
+import { ChevronDown, ChevronUp, CircleAlert, Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
 import { requestedExitQuantity } from "@/lib/broker-held-orders";
 import { isModelRotationSentinel } from "@/lib/llm-request";
 import { normalizeSymbol } from "@/lib/money";
@@ -143,11 +143,78 @@ function expiryIso(p: PendingProposal, policy: TradingPolicy): string | null {
   return new Date(t + minutes * 60_000).toISOString();
 }
 
+/** Compact red-team chip for the default collapsed card (PR-A2). Full verdict text
+ *  stays in the expanded "Show full reasoning" body. Exported for unit tests. */
+export type RedTeamSummaryChip = {
+  tone: "pos" | "neg" | "warn" | "muted" | "accent";
+  label: string;
+  title: string;
+};
+
+export function redTeamCollapsedChip(
+  redCard: ReturnType<typeof redTeamCardState>,
+  verdict: TradeProposal["redTeamVerdict"] | undefined,
+  overrideApplied?: boolean
+): RedTeamSummaryChip {
+  // Alias used by tests / call sites that prefer the program name.
+  return redTeamSummaryChip(redCard, verdict, overrideApplied);
+}
+
+/** Program name for the collapsed-card AI-critic chip (PR-A2). */
+export function redTeamSummaryChip(
+  redCard: ReturnType<typeof redTeamCardState>,
+  verdict: TradeProposal["redTeamVerdict"] | undefined,
+  overrideApplied?: boolean
+): RedTeamSummaryChip {
+  if (redCard === "verdict-panel" && verdict) {
+    if (!verdict.available) {
+      return {
+        tone: "warn",
+        label: "AI critic: failed",
+        title: redTeamFailureMeta(verdict.failureKind).title
+      };
+    }
+    if (verdict.rejected || verdict.verdict === "reject") {
+      return {
+        tone: "neg",
+        label: "AI critic: reject",
+        title: redTeamVerdictLabel(verdict, overrideApplied)
+      };
+    }
+    if (verdict.verdict === "approve-at-half") {
+      return {
+        tone: "warn",
+        label: "AI critic: half size",
+        title: redTeamVerdictLabel(verdict, overrideApplied)
+      };
+    }
+    return {
+      tone: "pos",
+      label: "AI critic: approve",
+      title: redTeamVerdictLabel(verdict, overrideApplied)
+    };
+  }
+  if (redCard === "legacy-unavailable") {
+    return {
+      tone: "warn",
+      label: "AI critic: unavailable",
+      title: "The adversarial review was required but could not run — you are the sole reviewer."
+    };
+  }
+  return {
+    tone: "muted",
+    label: "No AI critic",
+    title: "No adversarial review ran for this proposal — below every dissent trigger."
+  };
+}
+
 export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const [liveOpen, setLiveOpen] = useState(false);
+  // PR-A2: default collapsed so Approve/Reject stay reachable; expand for the full receipt.
+  const [expanded, setExpanded] = useState(false);
 
   const p = pending.proposal;
   const reality = realityForMode(pending.executionMode);
@@ -233,6 +300,8 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   // exclusive so a failed review can never render as both the panel and the callout (dedup).
   const redCard = redTeamCardState(Boolean(p.redTeamVerdict), pending.decision.adversaryUnavailable === true);
   const humanReviewReasons = proposalHumanReviewReasons(p);
+  const greenRationale = proposalGreenRationale(p);
+  const redCollapsed = redTeamCollapsedChip(redCard, p.redTeamVerdict, pending.decision.socraticOverride?.applied);
   const sizeText =
     typeof p.dollarAmount === "number"
       ? `~${fmtMoney(p.dollarAmount)}`
@@ -292,8 +361,9 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   };
 
   return (
-    <article className={cx("con-card overflow-hidden", live && "border-[color:var(--con-live-border)]")}>
-      {/* Header: verb + company logo + symbol + reality word */}
+    // No overflow-hidden: it creates a containing block that breaks sticky CTAs (PR-A2).
+    <article className={cx("con-card", live && "border-[color:var(--con-live-border)]")}>
+      {/* Header: verb + company logo + symbol + size + reality word — always visible (PR-A2). */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[color:var(--con-line)] px-4 py-3">
         <span className={cx("inline-flex items-center gap-2 text-[length:var(--con-fs-md)] font-bold", isExit(p.side) ? "text-[color:var(--con-warn)]" : undefined)}>
           {SIDE_LABEL[p.side] ?? p.side.toUpperCase()}
@@ -314,6 +384,66 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       </header>
 
       <div className="flex flex-col gap-3 px-4 py-3 text-[length:var(--con-fs-sm)]">
+        {/* Collapsed summary (PR-A2): AI-critic chip + 2–3 line thesis. Full receipt below when expanded. */}
+        {!expanded && (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip tone={redCollapsed.tone} title={redCollapsed.title}>
+                <Swords size={11} /> {redCollapsed.label}
+              </Chip>
+              {typeof p.confidenceScore === "number" && (
+                <Chip
+                  tone="muted"
+                  title="The proposing model's stated conviction in this trade, on a 0–100 scale."
+                >
+                  conf {p.confidenceScore}/100
+                </Chip>
+              )}
+              <Chip tone="accent" title="The thesis tag this idea is filed under — its long-run hit rate is tracked on the Results screen.">
+                {thesisTagLabel(p.tradeThesisTag)}
+              </Chip>
+              <span className="text-[color:var(--con-faint)]">
+                Proposed <Ago iso={pending.createdAt} />
+              </span>
+            </div>
+            {greenRationale ? (
+              <p className="line-clamp-3 leading-relaxed text-[color:var(--con-muted)]">{greenRationale}</p>
+            ) : (
+              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">No thesis text on this proposal.</p>
+            )}
+            {estPnl && (
+              <p
+                className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"
+                title="Estimated at approval-card render time. The server re-prices at the moment you actually approve."
+              >
+                Est. P/L if filled:{" "}
+                <SignedText value={estPnl.pnl}>
+                  {fmtSignedMoney(estPnl.pnl)} ({fmtPct(estPnl.pnlPct, 1, true)})
+                </SignedText>
+              </p>
+            )}
+          </>
+        )}
+
+        <button
+          type="button"
+          className="ac-expand-toggle inline-flex items-center gap-1.5 self-start text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] hover:underline"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? (
+            <>
+              <ChevronUp size={14} aria-hidden /> Hide full reasoning
+            </>
+          ) : (
+            <>
+              <ChevronDown size={14} aria-hidden /> Show full reasoning
+            </>
+          )}
+        </button>
+
+        {expanded && (
+          <>
         {/* Estimated closing P/L: only for exits with a matching held position and a fresh
             price. Omitted entirely (no dashes-on-card noise) when either is missing. */}
         {estPnl && (
@@ -690,10 +820,12 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             )}
           </p>
         </div>
+          </>
+        )}
       </div>
 
-      {/* Actions */}
-      <footer className="flex items-center justify-end gap-2 border-t border-[color:var(--con-line)] px-4 py-3">
+      {/* Actions — sticky above mobile tab bar (PR-A2); static on desktop. API/confirm unchanged. */}
+      <footer className="ac-actions flex items-center justify-end gap-2 border-t border-[color:var(--con-line)] px-4 py-3">
         <Btn variant="ghost" disabled={busy !== null} onClick={() => void reject()}>
           {busy === "reject" ? "Rejecting…" : "Reject"}
         </Btn>
@@ -785,8 +917,8 @@ function LiveApproveSheet({
   };
 
   return (
-    <Sheet open={open} onClose={onClose} title="Broker order approval">
-      <div className="mb-3 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
+    <Sheet open={open} onClose={onClose} title="Broker order approval" tone="live">
+      <div className="mb-3 rounded-control border border-[color:var(--con-live-border)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
         <div className="font-bold">Brokerage account</div>
         <p className="con-num mt-1">
           {SIDE_LABEL[pending.proposal.side] ?? pending.proposal.side.toUpperCase()} {pending.proposal.symbol} — estimated{" "}
