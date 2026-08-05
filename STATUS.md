@@ -1,3 +1,8 @@
+**2026-08-04 — GROK: Tradier Sandbox venue-aligned quotes (branch `grok/tradier-sandbox-venue-quotes`).**
+Paper Tradier keeps ~15m delayed sandbox quotes as execution-authoritative (no fresher Alpaca/Yahoo
+overlay); staleness ages `fetchedAt` not trade-time delay. Alpaca paper stays real-time cascade.
+Rollout: `docs/rollouts/2026-08-04-tradier-sandbox-venue-quotes.md`.
+
 **2026-08-04 — GROK: UX Wave B IA (B1/B2/B4) — PR #2425.** Branch `grok/ux-wave-b-ia`.
 Plain nav labels Home/Scan/Activity/Results/Macro via `DESTINATIONS` + `destinationLabel`;
 Guardrails Autonomy panel (`#autonomy`) with run state/authority/cadence/readiness + chrome Run

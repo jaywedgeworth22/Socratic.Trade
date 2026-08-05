@@ -310,7 +310,7 @@ export async function executeProposal(
     const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
     const approvalScan = mergeQuoteData(
       approvalScanBase,
-      await fetchFreshQuotesCascade(approvalQuoteSymbols, userId, policy.accountNumber)
+      await fetchFreshQuotesCascade(approvalQuoteSymbols, userId, policy.accountNumber, policy.connectedAccountId)
     );
 
     // An account is an account: the approval is always evaluated against the real broker-reported

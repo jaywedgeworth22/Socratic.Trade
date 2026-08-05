@@ -656,7 +656,10 @@ export async function runStrategyOnce(
       congressMultiplier
     });
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
-    const marketScan = mergeQuoteData(baseMarketScan, await fetchFreshQuotesCascade(quoteSymbols, userId, policy.accountNumber));
+    const marketScan = mergeQuoteData(
+      baseMarketScan,
+      await fetchFreshQuotesCascade(quoteSymbols, userId, policy.accountNumber, connectedAccountId)
+    );
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     // Full lock PROVENANCE (binding account, clear date, summed disallowed lossUsd), not just the
     // symbol set — the ask/auto wash-sale handling modes price the forfeited deduction from it.

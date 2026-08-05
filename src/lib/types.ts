@@ -849,6 +849,15 @@ export interface BrokerQuote {
   volume?: number;
   asOf?: string;
   provider?: string;
+  /**
+   * When true, this quote's price is the execution-venue tape (e.g. Tradier sandbox paper, which
+   * only trades against its ~15-minute delayed feed). Do NOT replace with a fresher external
+   * quote, and do NOT treat the expected feed delay as "stale live data" — age the snapshot via
+   * `fetchedAt` instead of trade-time `asOf`.
+   */
+  venuePriceAuthoritative?: boolean;
+  /** Wall-clock ISO when we fetched this quote from the venue (staleness of the snapshot). */
+  fetchedAt?: string;
   /** True when bid/ask were synthesized from price (no real quoted spread) — e.g. a Yahoo batch quote
    *  used by the Test-mode gateway. Consumers (mergeQuoteData provenance, hasRealAsk) must not treat a
    *  synthetic spread as a real quoted one. `syntheticSpread` stays true only when BOTH sides were
@@ -1687,6 +1696,10 @@ export interface MarketQuote {
   provider?: string;
   cached?: boolean;
   asOf?: string;
+  /** See BrokerQuote.venuePriceAuthoritative — carried through mergeQuoteData for policy gates. */
+  venuePriceAuthoritative?: boolean;
+  /** See BrokerQuote.fetchedAt. */
+  fetchedAt?: string;
   sentiment?: number;
   peRatio?: number;
   headlines?: string[];
@@ -1898,6 +1911,10 @@ export interface MarketQuoteSummary {
   score: number;
   provider?: string;
   asOf?: string;
+  /** See BrokerQuote.venuePriceAuthoritative — carried through mergeQuoteData for policy gates. */
+  venuePriceAuthoritative?: boolean;
+  /** See BrokerQuote.fetchedAt. */
+  fetchedAt?: string;
   sentiment?: number;
   peRatio?: number;
   analystRating?: string;
