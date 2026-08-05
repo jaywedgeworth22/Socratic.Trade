@@ -623,3 +623,16 @@ with the Hetzner servers it monitored.
 
 The script calls `GET /api/ops/snapshot` (token via `x-ops-token`). See
 `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`. Rule: `.cursor/rules/ops-diagnostics.mdc`.
+
+## iOS native ship (TestFlight, no Xcode UI)
+
+Agents ship the native app without opening Xcode:
+
+```bash
+bash scripts/ios-ship-testflight.sh
+```
+
+Fleet driver + all three apps (Socratic / Congress / Usage Monitor):
+`/Users/jay/apps/ios-fleet/README.md`. Bundle ID `trade.socratic.app`, team
+`CC8UTF7ATG`. Upload needs App Store Connect app record + either Xcode session
+or `~/.secrets/appstore-connect.env` (never print secrets).

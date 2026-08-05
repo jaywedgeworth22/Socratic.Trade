@@ -3,7 +3,7 @@
 /** Autonomy Desk — "what does Socratic Trade believe, what did it do,
  *  what evidence moved it, and how should the framework improve?" */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -50,35 +50,81 @@ import { useToast } from "./ui/toast";
 
 export default function ConsoleHomePage() {
   const { snapshot, refresh } = useConsoleData();
-  if (!snapshot) return null;
 
-  const reality = deriveReality(snapshot);
-  const state = deriveStateInfo(snapshot.policy);
-  const spend = deriveSpend(snapshot);
-  const portfolio = snapshot.portfolio;
-  const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio);
-  const markToMarket = deriveMarkToMarket(snapshot);
-  const risk = deriveRiskUtilization(snapshot);
-  const equityWindow = selectEquityWindow(
-    reality.mode === "broker/live"
-      ? snapshot.performance?.liveEquityCurve ?? []
-      : snapshot.performance?.paperEquityCurve ?? []
-  );
-  const latest = snapshot.latestStrategyRun;
-  const latestRow = snapshot.strategyRuns?.[0];
-  const lastRun = latestRow ? describeLastRun(latestRow) : null;
-  const nextRun = snapshot.scheduler?.nextRunAt;
-  const primaryDecision = snapshot.socratic?.decisions?.[0];
-  const primaryTrace = latest?.proposals?.[0];
-  const primaryProposal = primaryTrace?.proposal ?? snapshot.pendingProposals[0]?.proposal;
-  const latestProposals =
-    latest?.proposals?.slice(0, 5).map((item) =>
-      decisionFromProposal(`${latest?.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
-    ) ?? snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
+  // C4: memoize pure derives so a parent re-render with a stable snapshot object
+  // does not re-walk equity curves / risk meters / framework rows.
+  const derived = useMemo(() => {
+    if (!snapshot) return null;
+    const reality = deriveReality(snapshot);
+    const state = deriveStateInfo(snapshot.policy);
+    const spend = deriveSpend(snapshot);
+    const portfolio = snapshot.portfolio;
+    const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio);
+    const markToMarket = deriveMarkToMarket(snapshot);
+    const risk = deriveRiskUtilization(snapshot);
+    const equityWindow = selectEquityWindow(
+      reality.mode === "broker/live"
+        ? snapshot.performance?.liveEquityCurve ?? []
+        : snapshot.performance?.paperEquityCurve ?? []
+    );
+    const latest = snapshot.latestStrategyRun;
+    const latestRow = snapshot.strategyRuns?.[0];
+    const lastRun = latestRow ? describeLastRun(latestRow) : null;
+    const nextRun = snapshot.scheduler?.nextRunAt;
+    const primaryDecision = snapshot.socratic?.decisions?.[0];
+    const primaryTrace = latest?.proposals?.[0];
+    const primaryProposal = primaryTrace?.proposal ?? snapshot.pendingProposals[0]?.proposal;
+    const latestProposals =
+      latest?.proposals?.slice(0, 5).map((item) =>
+        decisionFromProposal(`${latest?.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
+      ) ?? snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
+    const previousTrades = snapshot.socratic?.decisions?.slice(0, 5).map(decisionFromSocratic) ?? [];
+    const frameworkRows = deriveFrameworkRows(snapshot);
+    const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
+    return {
+      reality,
+      state,
+      spend,
+      portfolio,
+      dayPnl,
+      markToMarket,
+      risk,
+      equityWindow,
+      latest,
+      latestRow,
+      lastRun,
+      nextRun,
+      primaryDecision,
+      primaryProposal,
+      latestProposals,
+      previousTrades,
+      frameworkRows,
+      hasFrameworkProposals
+    };
+  }, [snapshot]);
 
-  const previousTrades = snapshot.socratic?.decisions?.slice(0, 5).map(decisionFromSocratic) ?? [];
-  const frameworkRows = deriveFrameworkRows(snapshot);
-  const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
+  if (!snapshot || !derived) return null;
+
+  const {
+    reality,
+    state,
+    spend,
+    portfolio,
+    dayPnl,
+    markToMarket,
+    risk,
+    equityWindow,
+    latest,
+    latestRow,
+    lastRun,
+    nextRun,
+    primaryDecision,
+    primaryProposal,
+    latestProposals,
+    previousTrades,
+    frameworkRows,
+    hasFrameworkProposals
+  } = derived;
 
   // Intentionally full-bleed (no CONSOLE_PAGE_WIDTH cap, see ./lib/page-width.ts):
   // this is a two-column dashboard (main column + aside, aside floored at
@@ -109,11 +155,15 @@ export default function ConsoleHomePage() {
           <span
             className={cx(
               "text-[length:var(--con-fs-xs)]",
-              lastRun.failed ? "text-[color:var(--con-neg)]" : "text-[color:var(--con-muted)]"
+              lastRun.failed
+                ? "text-[color:var(--con-neg)]"
+                : lastRun.skipped
+                  ? "text-[color:var(--con-warn)]"
+                  : "text-[color:var(--con-muted)]"
             )}
             title={lastRun.title}
           >
-            Last run {latestRow.status} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
+            Last run {lastRun.statusLabel} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
             {lastRun.cause && (
               <>
                 {" "}
@@ -371,9 +421,14 @@ export default function ConsoleHomePage() {
                 <RunOnceButton snapshot={snapshot} size="sm" />
               </div>
               <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"}>{state.label}</Chip>
-              {latestRow && (
-                <Chip tone={latestRow.status === "failed" ? "neg" : "muted"}>
-                  latest {latestRow.status} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
+              {latestRow && lastRun && (
+                <Chip
+                  tone={
+                    lastRun.failed ? "neg" : lastRun.skipped ? "warn" : "muted"
+                  }
+                  title={lastRun.title}
+                >
+                  latest {lastRun.statusLabel} · <Ago iso={latestRow.finishedAt ?? latestRow.startedAt} />
                 </Chip>
               )}
             </div>
@@ -530,6 +585,9 @@ function deriveThesisHeadline(latest: StrategyDecision | undefined, proposal: Tr
   }
   if (proposal?.tradeThesisTag) {
     return `Market thesis: ${formatMarketThesis(proposal.tradeThesisTag, proposal.symbol)}`;
+  }
+  if (latest?.status && /skipped/.test(latest.status)) {
+    return "Latest run was skipped before a decision — not a successful evaluation.";
   }
   if (latest?.summary) return "Latest run completed; Socratic Trade is holding its current posture.";
   return "Waiting for the next market thesis.";
