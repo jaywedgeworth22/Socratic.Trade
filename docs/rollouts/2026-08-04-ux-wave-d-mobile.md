@@ -44,6 +44,7 @@ from sibling `grok/ux-d4-pwa-polish` and tab-switch Review CTA from `grok/ux-d-i
 - `ios/SocraticTrade/LoginView.swift`
 - `app/mobile/mobile-pwa-client.tsx`
 - `test/mobile-pwa-client.test.tsx`
+- `src/lib/web-sources/congress-analytics.ts` (tsc unblock: dual performance shape)
 - `docs/rollouts/2026-08-04-ux-wave-d-mobile.md`
 - `STATUS.md`, `docs/EFFORT-LOG.md` (+ live board `/Users/jay/apps/TRADING-EFFORT-LOG.md`)
 
@@ -54,29 +55,32 @@ from sibling `grok/ux-d4-pwa-polish` and tab-switch Review CTA from `grok/ux-d-i
 - Review CTA switches tabs rather than deep-linking into a single proposal (no deep-link API).
 - PWA on-card feedback strip was missing failed/success text despite tracking notices — added
   for true parity with iOS D3 acceptance.
+- Unrelated tsc fix: `buildMemberSkillScores` now reads `MemberDualPerformance.tradeDate ??
+  .performance` (shared package dual-anchor shape) instead of flat fields that no longer typecheck.
+- Main Wave D body landed as PR #2424; follow-up on this branch carries the dual-perf tsc fix
+  + verified gate receipts after merge with main.
 
 ## Verification State
 
 ```bash
 export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
-npm run lint
-npx tsc --noEmit
-npx vitest run test/mobile-pwa-client.test.tsx
-npm test
-npm run build
-# if Xcode available:
+npm run lint          # 0 errors (671 grandfathered warnings)
+npx tsc --noEmit      # TSC_EXIT:0
+npx vitest run test/mobile-pwa-client.test.tsx test/congress-analytics.test.ts
+                      # 26 passed
+npm test              # 508 files / 5936 tests passed
+npm run build         # BUILD_EXIT:0 (compiled with warnings)
 xcodebuild -project "ios/Socratic Trade.xcodeproj" -scheme SocraticTrade \
-  -destination 'generic/platform=iOS' -quiet build CODE_SIGNING_ALLOWED=NO
+  -destination 'generic/platform=iOS' build CODE_SIGNING_ALLOWED=NO
+                      # ** BUILD SUCCEEDED **
 ```
-
-(Results filled after local gate run.)
 
 ## Next Steps & Blockers
 
-1. Land via `scripts/land.sh`; auto-merge when verify green.
+1. Land dual-perf follow-up via `scripts/land.sh`; auto-merge when verify green.
 2. Optional follow-ups: Live Activities / push (Wave F2), full Coach chat on iOS (F3).
-3. Sibling worktrees `grok/ux-d4-pwa-polish` and `grok/ux-d-ios-brand-home` can discard once this
-   lands (changes absorbed).
+3. Sibling worktrees `grok/ux-d4-pwa-polish` and `grok/ux-d-ios-brand-home` can discard once
+   main has absorbed Wave D (#2424).
 
 ## Zero-Code Findings
 
