@@ -1,7 +1,8 @@
 # Socratic.Trade iOS
 
 Native, phone-first control surface for Socratic.Trade. The app presents five
-stable areas: Home, Proposals, Markets, Activity, and Coach.
+stable areas: Home, Proposals, Markets, Activity, and Insights
+(snapshot brief + attention items — not the web console Coach chat).
 
 The backend remains authoritative. The app reads `/api/mobile/snapshot`, submits
 audited work through `/api/mobile/commands`, and listens to
