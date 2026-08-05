@@ -88,10 +88,10 @@ describe("versioned ciphertext envelope (v1:) + backward compatibility", () => {
     expect(decryptValue(legacyEnvelope)).toBe("legacy-plaintext-before-versioning");
   });
 
-  it("decryptValue returns genuine plaintext unchanged (pre-encryption rows)", async () => {
+  it("decryptValue rejects genuine plaintext (P0-5 fail-closed; migrate first)", async () => {
     vi.stubEnv("ENCRYPTION_KEY", "d".repeat(64));
     const { decryptValue } = await import("../src/lib/db-api-keys");
-    expect(decryptValue("sk-plain-not-encrypted-at-all")).toBe("sk-plain-not-encrypted-at-all");
+    expect(decryptValue("sk-plain-not-encrypted-at-all")).toBe("");
   });
 });
 

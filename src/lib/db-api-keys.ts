@@ -130,22 +130,42 @@ export function encryptValue(text: string): string {
 }
 
 /**
- * Decrypt a value produced by `encryptValue`. Handles THREE shapes, oldest-compatible-first:
+ * Strict detector for "is this value already one of our AES-GCM envelopes" — versioned or
+ * legacy-bare. Used by the migration sweep AND by `decryptValue` (P0-5: reject plaintext).
+ * Validates each part's exact hex shape (12-byte iv, 16-byte authTag, hex ciphertext) rather
+ * than just counting colons, so a plaintext secret that happens to contain two colons is never
+ * mistaken for ciphertext.
+ */
+export function isEncryptedValue(value: string): boolean {
+  if (!value) return false;
+  const body = value.startsWith(CIPHERTEXT_VERSION_PREFIX) ? value.slice(CIPHERTEXT_VERSION_PREFIX.length) : value;
+  const parts = body.split(":");
+  return (
+    parts.length === 3 &&
+    /^[0-9a-f]{24}$/i.test(parts[0]) &&
+    /^[0-9a-f]{32}$/i.test(parts[1]) &&
+    /^[0-9a-f]+$/i.test(parts[2])
+  );
+}
+
+/**
+ * Decrypt a value produced by `encryptValue`. Handles TWO encrypted shapes:
  *   1. Current `v1:iv:tag:ct` envelope (the CIPHERTEXT_VERSION_PREFIX above).
- *   2. The PRE-VERSIONING bare `iv:tag:ct` envelope (no prefix) — every row encrypted before this
- *      change used this exact shape. MUST keep decrypting unchanged: same algorithm/key
- *      derivation, same 3-part split, so the owner's existing prod ENCRYPTION_KEY keeps reading
- *      every already-encrypted row with zero re-encryption required.
- *   3. Anything else (no version prefix AND not a 3-part hex envelope) → legacy PLAINTEXT
- *      fallback, returned unchanged (pre-encryption rows).
+ *   2. The PRE-VERSIONING bare `iv:tag:ct` envelope (no prefix).
+ *
+ * P0-5 (2026-08-05): legacy PLAINTEXT is NO LONGER returned. Non-envelope input yields `""`
+ * (fail closed for credential consumers). Boot-time `migrateLegacyPlaintextCredentials` re-encrypts
+ * leftover plaintext rows via `isEncryptedValue` + `encryptValue` and never needs this fallback.
  * Exported for reuse by other at-rest secret stores (see encryptValue).
  */
 export function decryptValue(encryptedText: string): string {
+  if (!encryptedText || !isEncryptedValue(encryptedText)) {
+    return "";
+  }
   try {
     const versioned = encryptedText.startsWith(CIPHERTEXT_VERSION_PREFIX);
     const body = versioned ? encryptedText.slice(CIPHERTEXT_VERSION_PREFIX.length) : encryptedText;
     const parts = body.split(":");
-    if (parts.length !== 3) return encryptedText; // Legacy unencrypted fallback
     const iv = Buffer.from(parts[0], "hex");
     const authTag = Buffer.from(parts[1], "hex");
     const encrypted = parts[2];
@@ -158,25 +178,6 @@ export function decryptValue(encryptedText: string): string {
     console.error("Failed to decrypt field:", e);
     return "";
   }
-}
-
-/**
- * Strict (unlike decryptValue's lenient 3-part-split heuristic) detector for "is this value already
- * one of our AES-GCM envelopes" — versioned or legacy-bare — used ONLY to decide whether the
- * plaintext migration sweep below should re-encrypt a row. Validates each part's exact hex shape
- * (12-byte iv, 16-byte authTag, hex ciphertext) rather than just counting colons, so a plaintext
- * secret that happens to contain two colons is never mistaken for already-encrypted and left
- * unmigrated.
- */
-export function isEncryptedValue(value: string): boolean {
-  const body = value.startsWith(CIPHERTEXT_VERSION_PREFIX) ? value.slice(CIPHERTEXT_VERSION_PREFIX.length) : value;
-  const parts = body.split(":");
-  return (
-    parts.length === 3 &&
-    /^[0-9a-f]{24}$/i.test(parts[0]) &&
-    /^[0-9a-f]{32}$/i.test(parts[1]) &&
-    /^[0-9a-f]+$/i.test(parts[2])
-  );
 }
 
 export interface CredentialEncryptionMigrationResult {

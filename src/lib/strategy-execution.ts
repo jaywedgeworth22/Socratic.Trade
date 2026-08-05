@@ -9,7 +9,13 @@ import { audit, clearStopPlans, deriveExitContractFromOpening, getDb, recordStop
 import { auditDeduped } from "./audit-dedupe";
 import { getActiveConnectedAccount } from "./db-api-keys";
 import { acquireStrategyLock, dailyExecutionStats, notionalInLastMinutes, countDayTradesInLastBusinessDays, releaseStrategyLock } from "./db-execution";
-import { listPendingBrokerReconciliationFills, netAccountingFillQuantity, updateFillEvent, listFillEventsByProposalId } from "./db-fills";
+import {
+  listPendingBrokerReconciliationFills,
+  markUnreconcilableUnusableBrokerOrderFills,
+  netAccountingFillQuantity,
+  updateFillEvent,
+  listFillEventsByProposalId
+} from "./db-fills";
 import { resolveBrokerVerificationNotifications } from "./db-notifications";
 import { getPolicy } from "./db-profiles";
 import { getProposal, updatePendingProposalReprice, updateProposalStatus, transitionProposalIfPending, claimProposalForExecution, listStalePlacingProposals } from "./db-proposals";
@@ -311,7 +317,7 @@ export async function executeProposal(
     const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
     const approvalScan = mergeQuoteData(
       approvalScanBase,
-      await fetchFreshQuotesCascade(approvalQuoteSymbols, userId, policy.accountNumber)
+      await fetchFreshQuotesCascade(approvalQuoteSymbols, userId, policy.accountNumber, policy.connectedAccountId)
     );
 
     // An account is an account: the approval is always evaluated against the real broker-reported
@@ -1263,28 +1269,51 @@ export async function executeProposal(
           // happened is pointless and, worse, concludes not_placed ("safe to retry") for an order
           // that will be refused identically every retry. Mirror the autonomous lane's short-circuit
           // (strategy.ts) and the protective-state block above: honest terminal "blocked".
-          if (placeError instanceof OrderValidationError) {
-            const blockedDecision: PolicyDecision = {
-              ...decision,
-              approved: false,
-              reasons: [...decision.reasons, message]
-            };
-            updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
+          // P2.6 / #1319: pre-flight validation AND definitive broker HTTP 4xx are never
+          // "uncertain". Mirror the autonomous lane (strategy.ts): OrderValidationError → blocked;
+          // broker 4xx (order never accepted) → rejected_by_broker. Reserve uncertain for
+          // timeouts / 5xx / undecodable broker state.
+          if (placeError instanceof OrderValidationError || /\bHTTP 4\d\d\b/i.test(message)) {
+            const isValidation = placeError instanceof OrderValidationError;
+            if (isValidation) {
+              const blockedDecision: PolicyDecision = {
+                ...decision,
+                approved: false,
+                reasons: [...decision.reasons, message]
+              };
+              updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
+              audit(
+                "order_blocked_validation",
+                { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval" },
+                userId,
+                policy.connectedAccountId
+              );
+              await sendNotification(
+                {
+                  type: "block",
+                  title: `${sym} order blocked before submission`,
+                  payload: { proposalId, refId, proposal, reason: message, decision: blockedDecision }
+                },
+                { policy, userId }
+              );
+              return { status: "blocked", reasons: [message] };
+            }
+            updateProposalStatus(proposalId, "rejected_by_broker", undefined, review, review.estimatedNotional, userId, undefined, message);
             audit(
-              "order_blocked_validation",
-              { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval" },
+              "order_rejected_by_broker",
+              { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval", via: "http_4xx" },
               userId,
               policy.connectedAccountId
             );
             await sendNotification(
               {
-                type: "block",
-                title: `${sym} order blocked before submission`,
-                payload: { proposalId, refId, proposal, reason: message, decision: blockedDecision }
+                type: "run_failed",
+                title: `${sym} order rejected by broker`,
+                payload: { proposalId, refId, reason: message, reconcile: "rejected_by_broker" }
               },
               { policy, userId }
             );
-            return { status: "blocked", reasons: [message] };
+            return { status: "error", reasons: [message] };
           }
           // A lost mutation lease (mutationCtx.assertOwned() above) is ALSO a deterministic
           // pre-submission refusal — the order provably never reached the broker — so it gets the
@@ -1486,6 +1515,24 @@ export async function executeProposal(
   }
 }
 export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local", connectedAccountId?: string): Promise<void> {
+  // Forward guard: fills with empty/literal-"undefined" broker_order_id can never match a broker
+  // order (historical String(undefined) bug; insertion path fixed in PR #284). Flip to terminal
+  // unreconcilable so they leave the pending list and stop forcing reconcile work every run.
+  const quarantined = markUnreconcilableUnusableBrokerOrderFills(accountNumber, userId);
+  for (const fill of quarantined) {
+    audit(
+      "fill_unreconcilable",
+      {
+        fillId: fill.id,
+        symbol: fill.symbol,
+        brokerOrderId: fill.brokerOrderId ?? null,
+        reason: "broker_order_id_unusable"
+      },
+      userId,
+      connectedAccountId
+    );
+  }
+
   const pending = listPendingBrokerReconciliationFills(accountNumber, userId);
   if (pending.length === 0) return;
 

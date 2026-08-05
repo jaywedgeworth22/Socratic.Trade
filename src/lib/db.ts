@@ -2540,6 +2540,96 @@ const MIGRATIONS: Migration[] = [
         // tables might not exist in isolated tests
       }
     }
+  },
+  {
+    version: 66,
+    name: "headline_first_seen",
+    up: (database) => {
+      // Issue #837: persist first-seen times for news headlines so evidence-age
+      // receipts can cover the highest-volume untrusted Bull-prompt input
+      // (provider titles previously carried no timestamp).
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS headline_first_seen (
+          user_id TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          first_seen TEXT NOT NULL,
+          last_seen TEXT NOT NULL,
+          PRIMARY KEY (user_id, fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS idx_headline_first_seen_last_seen
+          ON headline_first_seen(last_seen);
+      `);
+    }
+  },
+  {
+    version: 67,
+    name: "audit_events_chain_hash",
+    up: (database) => {
+      // P0-4: tamper-evident per-user audit chain. Legacy rows keep NULL chain_hash;
+      // new audit() inserts link prev→self. verifyAuditChain checks continuity.
+      try {
+        database.exec("ALTER TABLE audit_events ADD COLUMN chain_hash TEXT;");
+      } catch {
+        /* column may already exist */
+      }
+      try {
+        database.exec("ALTER TABLE audit_events ADD COLUMN prev_chain_hash TEXT;");
+      } catch {
+        /* column may already exist */
+      }
+      try {
+        database.exec(
+          "CREATE INDEX IF NOT EXISTS idx_audit_events_user_chain ON audit_events (user_id, created_at DESC, id DESC);"
+        );
+      } catch {
+        /* table might not exist in isolated tests */
+      }
+    }
+  },
+  {
+    // Activity-audit P3: historical fill_events with broker_order_id = literal 'undefined'
+    // (or empty string) stayed pending forever and forced a no-op reconcile every run.
+    // Insertion root cause was already fixed (PR #284); this is a one-time flip to terminal
+    // status `unreconcilable`. Idempotent via user_version — re-runs are no-ops.
+    // Numbered 68: main already claimed 67 for audit_events_chain_hash.
+    version: 68,
+    name: "fill_events_unreconcilable_bad_broker_order_id",
+    up: (database) => {
+      const table = database
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'fill_events'`)
+        .get() as { name: string } | undefined;
+      if (!table) return;
+      const info = database
+        .prepare(
+          `UPDATE fill_events
+           SET status = 'unreconcilable'
+           WHERE status IN ('pending_reconciliation', 'partially_filled', 'pending')
+             AND (broker_order_id = 'undefined' OR broker_order_id = '')`
+        )
+        .run();
+      if (info.changes > 0) {
+        database
+          .prepare(
+            "INSERT INTO audit_events (id, user_id, connected_account_id, created_at, kind, payload) VALUES (?, ?, ?, ?, ?, ?)"
+          )
+          .run(
+            crypto.randomUUID(),
+            "local",
+            null,
+            new Date().toISOString(),
+            "fill_unreconcilable_backfill",
+            JSON.stringify({
+              count: info.changes,
+              reason: "broker_order_id_unusable",
+              note: "One-time flip of pending fills with broker_order_id literal 'undefined' or empty"
+            })
+          );
+        console.log(
+          `[db] migration 68: flipped ${info.changes} fill_events row(s) with unusable broker_order_id to unreconcilable`
+        );
+      }
+    }
   }
 ];
 
@@ -2721,10 +2811,142 @@ export function assertEncryptionKeyAvailable(
   }
 }
 
+/**
+ * Per-user hash chain material for a single audit row (P0-4). Stable canonical
+ * string — do not change field order without a chain version bump.
+ */
+export function auditChainMaterial(input: {
+  prevHash: string;
+  id: string;
+  createdAt: string;
+  kind: string;
+  payloadJson: string;
+  userId: string;
+  connectedAccountId: string | null;
+}): string {
+  return [
+    input.prevHash,
+    input.id,
+    input.createdAt,
+    input.kind,
+    input.payloadJson,
+    input.userId,
+    input.connectedAccountId ?? ""
+  ].join("\n");
+}
+
+export function hashAuditChainMaterial(material: string): string {
+  return crypto.createHash("sha256").update(material, "utf8").digest("hex");
+}
+
+/**
+ * Verify the per-user audit hash chain for chained rows (chain_hash NOT NULL).
+ * Legacy pre-migration rows (NULL chain_hash) are skipped.
+ */
+export function verifyAuditChain(
+  userId: string = "local",
+  limit: number = 5000
+): { ok: boolean; checked: number; brokenId?: string; reason?: string } {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, created_at, kind, payload, user_id, connected_account_id, chain_hash, prev_chain_hash
+       FROM audit_events
+       WHERE user_id = ? AND chain_hash IS NOT NULL
+       ORDER BY rowid ASC
+       LIMIT ?`
+    )
+    .all(userId, Math.max(1, Math.min(limit, 50_000))) as Array<{
+    id: string;
+    created_at: string;
+    kind: string;
+    payload: string;
+    user_id: string;
+    connected_account_id: string | null;
+    chain_hash: string;
+    prev_chain_hash: string | null;
+  }>;
+
+  let expectedPrev: string | null = null;
+  let checked = 0;
+  for (const row of rows) {
+    const prev = row.prev_chain_hash ?? "GENESIS";
+    if (expectedPrev !== null && prev !== expectedPrev && prev !== "GENESIS") {
+      return {
+        ok: false,
+        checked,
+        brokenId: row.id,
+        reason: `prev_chain_hash mismatch: expected ${expectedPrev.slice(0, 12)}… got ${(row.prev_chain_hash ?? "null").slice(0, 12)}…`
+      };
+    }
+    const material = auditChainMaterial({
+      prevHash: prev,
+      id: row.id,
+      createdAt: row.created_at,
+      kind: row.kind,
+      payloadJson: row.payload,
+      userId: row.user_id,
+      connectedAccountId: row.connected_account_id
+    });
+    const expected = hashAuditChainMaterial(material);
+    if (expected !== row.chain_hash) {
+      return {
+        ok: false,
+        checked,
+        brokenId: row.id,
+        reason: "chain_hash does not recompute from row material (payload/kind/timestamp tamper?)"
+      };
+    }
+    expectedPrev = row.chain_hash;
+    checked++;
+  }
+  return { ok: true, checked };
+}
+
 export function audit(kind: string, payload: unknown, userId: string = "local", connectedAccountId?: string): void {
-  getDb()
-    .prepare("INSERT INTO audit_events (id, user_id, connected_account_id, created_at, kind, payload) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(crypto.randomUUID(), userId, connectedAccountId ?? null, new Date().toISOString(), kind, JSON.stringify(payload));
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const payloadJson = JSON.stringify(payload);
+  const accountId = connectedAccountId ?? null;
+
+  let prevHash = "GENESIS";
+  try {
+    const tip = db
+      .prepare(
+        `SELECT chain_hash FROM audit_events
+         WHERE user_id = ? AND chain_hash IS NOT NULL
+         ORDER BY rowid DESC LIMIT 1`
+      )
+      .get(userId) as { chain_hash: string } | undefined;
+    if (tip?.chain_hash) prevHash = tip.chain_hash;
+  } catch {
+    // Pre-migration / minimal schema in unit tests without chain columns.
+  }
+
+  const chainHash = hashAuditChainMaterial(
+    auditChainMaterial({
+      prevHash,
+      id,
+      createdAt,
+      kind,
+      payloadJson,
+      userId,
+      connectedAccountId: accountId
+    })
+  );
+
+  try {
+    db.prepare(
+      `INSERT INTO audit_events
+        (id, user_id, connected_account_id, created_at, kind, payload, chain_hash, prev_chain_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, userId, accountId, createdAt, kind, payloadJson, chainHash, prevHash === "GENESIS" ? null : prevHash);
+  } catch {
+    // Fallback when chain columns are absent (tests that skipped migrations).
+    db.prepare(
+      "INSERT INTO audit_events (id, user_id, connected_account_id, created_at, kind, payload) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(id, userId, accountId, createdAt, kind, payloadJson);
+  }
 }
 
 function migrate(database: Database.Database): void {

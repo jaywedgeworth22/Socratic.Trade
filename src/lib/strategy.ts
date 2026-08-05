@@ -162,6 +162,7 @@ import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-t
 import { isEscalationRegime } from "./regime-watch";
 import { getUpcomingEconomicEventsForPrompt } from "./economic-calendar";
 import { compactHeadlinesForPrompt } from "./prompt-headlines";
+import { getOrRecordHeadlineFirstSeen, headlineFingerprint } from "./headline-first-seen";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
 import { computeMultiSignalSeverity } from "./regime-severity";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
@@ -369,9 +370,41 @@ export function preVetoTaggedOpeningWillPlace(
     !!p.autonomyOverride.thesis?.trim()
   );
 }
-// LRU deduplication cache for evidence_age_anomaly emissions.
-// Prevents flooding the DB with identical audits on every run cycle.
-const evidenceAgeAnomalyDedup = new Map<string, number>();
+// First-sight LRU for evidence_age_anomaly *audit* emissions only (not prompt-safety receipts).
+// Key includes assertedAt so a re-asserted fact (new timestamp) can emit once; same (id, assertedAt)
+// never re-fires until the key is LRU-evicted. Map insertion order = approximate LRU age.
+const EVIDENCE_AGE_ANOMALY_DEDUP_MAX = 1000;
+const evidenceAgeAnomalyDedup = new Map<string, true>();
+
+/** Dedup key: first sight per (user, account, fact id, assertedAt). Pure; exported for unit tests. */
+export function evidenceAgeAnomalyDedupKey(
+  userId: string,
+  connectedAccountId: string | null | undefined,
+  id: string,
+  assertedAt: string | undefined
+): string {
+  return `${userId}:${connectedAccountId ?? "global"}:${id}:${assertedAt ?? ""}`;
+}
+
+/**
+ * Remember a first-sight key. Evicts oldest Map entries (insertion order) when size would
+ * exceed maxSize — never bulk-clears. Returns true if newly inserted, false if already present.
+ * Pure w.r.t. callers' cache instance; exported for unit tests.
+ */
+export function rememberEvidenceAgeAnomalyDedupKey(
+  cache: Map<string, true>,
+  key: string,
+  maxSize: number = EVIDENCE_AGE_ANOMALY_DEDUP_MAX
+): boolean {
+  if (cache.has(key)) return false;
+  while (cache.size >= maxSize) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  cache.set(key, true);
+  return true;
+}
 
 export async function runStrategyOnce(
   userId: string = "local",
@@ -678,7 +711,10 @@ export async function runStrategyOnce(
       congressMultiplier
     });
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
-    const marketScan = mergeQuoteData(baseMarketScan, await fetchFreshQuotesCascade(quoteSymbols, userId, policy.accountNumber));
+    const marketScan = mergeQuoteData(
+      baseMarketScan,
+      await fetchFreshQuotesCascade(quoteSymbols, userId, policy.accountNumber, connectedAccountId)
+    );
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     // Full lock PROVENANCE (binding account, clear date, summed disallowed lossUsd), not just the
     // symbol set — the ask/auto wash-sale handling modes price the forfeited deduction from it.
@@ -1481,29 +1517,57 @@ export async function runStrategyOnce(
       console.warn("[Strategy] Skipping learned-context, store unavailable.");
     }
 
+    // ── Headline first-seen (#837) ──────────────────────────────────────────
+    // Provider headlines are bare titles with no timestamps. Persist first
+    // observation so same-day news can join the evidence-age receipt (previously
+    // deferred). Uses the same compacted sample that enters the Bull prompt.
+    if (marketScan?.topCandidates?.length) {
+      try {
+        for (const candidate of marketScan.topCandidates) {
+          const sym = normalizeSymbol(candidate.symbol);
+          for (const headline of compactHeadlinesForPrompt(candidate.headlines)) {
+            const firstSeen = getOrRecordHeadlineFirstSeen({ userId, symbol: sym, text: headline });
+            if (!firstSeen) continue;
+            const fp = headlineFingerprint(headline);
+            evidenceAgeInputs.push({
+              kind: "headline",
+              id: `headline:${sym}:${fp}`,
+              label: `${sym} news: ${headline.slice(0, 72)}`,
+              timestamp: firstSeen
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("[Strategy] Skipping headline first-seen tracking:", e instanceof Error ? e.message : e);
+      }
+    }
+
     // ── Evidence-age anomaly receipt (advisory only) ───────────────────────
     // Collect ALL anomalies for the prompt safety receipt first — no dedup
     // filter, so every piece of same-day evidence that entered this run's
     // prompts is recorded regardless of recent audit history.
     const allAnomalies = collectEvidenceAgeAnomalies(evidenceAgeInputs);
 
-    // Audit emission: apply the LRU dedup cache BEFORE the 12-item cap so
-    // already-audited items don't consume slots, then cache only the items
-    // actually emitted (items beyond index 12 are NOT cached, so they can be
-    // picked up on the next run).
+    // Audit emission: first-sight per (fact id, assertedAt) BEFORE the 12-item cap so
+    // already-audited items don't consume slots. Cache only items actually emitted
+    // (items beyond index 12 are NOT cached, so they can be picked up on the next run).
+    // Prompt-safety `allAnomalies` above stays undeduped for complete run receipts.
     const uncachedInputs = evidenceAgeInputs.filter((input) => {
-      if (evidenceAgeAnomalyDedup.size > 1000) evidenceAgeAnomalyDedup.clear();
-      const key = `${userId}:${connectedAccountId ?? "global"}:${input.id}`;
-      const now = Date.now();
-      const last = evidenceAgeAnomalyDedup.get(key);
-      return !(last && now - last < 6 * 60 * 60 * 1000);
+      const key = evidenceAgeAnomalyDedupKey(userId, connectedAccountId, input.id, input.timestamp);
+      return !evidenceAgeAnomalyDedup.has(key);
     });
     const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(uncachedInputs);
-    // Cache only items the cap allowed through, so capped-off items can
-    // still reach the audit on the next run.
+    // Remember only items the cap allowed through; key must include assertedAt so a later
+    // re-assertion of the same fact id can emit once under the new timestamp.
+    const assertedAtById = new Map(uncachedInputs.map((input) => [input.id, input.timestamp]));
     for (const item of evidenceAgeAnomalies) {
-      const key = `${userId}:${connectedAccountId ?? "global"}:${item.id}`;
-      evidenceAgeAnomalyDedup.set(key, Date.now());
+      const key = evidenceAgeAnomalyDedupKey(
+        userId,
+        connectedAccountId,
+        item.id,
+        assertedAtById.get(item.id)
+      );
+      rememberEvidenceAgeAnomalyDedupKey(evidenceAgeAnomalyDedup, key);
     }
 
     if (evidenceAgeAnomalies.length > 0) {

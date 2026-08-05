@@ -1,3 +1,8 @@
+# Project Format: Xcode 26.3-compatible (objectVersion / preferredProjectObjectVersion = 100).
+# XcodeGen 2.46 still emits objectVersion 77 for xcodeVersion 26.3; after `xcodegen generate`
+# re-apply objectVersion=100 and preferredProjectObjectVersion=100 in project.pbxproj
+# (matches Congress.Trade + Usage-Monitor). Do not leave 77 (UI shows Xcode 16).
+
 name: Socratic Trade
 
 options:

@@ -119,7 +119,7 @@ struct MobileAPIClient {
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
-            (bytes, response) = try await session.bytes(for: request(path: "/api/mobile/events"))
+            (bytes, response) = try await session.bytes(for: eventsRequest())
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -140,6 +140,20 @@ struct MobileAPIClient {
         } catch {
             throw MobileAPIError.network(error)
         }
+    }
+
+    /// Long-lived SSE request. Must not reuse the JSON helper defaults:
+    /// - `Accept: application/json` confuses some edge/proxy paths for `text/event-stream`
+    /// - `timeoutInterval = 30` is only ~5s above the server's 25s heartbeat, so jitter or
+    ///   buffering yields NSURLErrorCannotParseResponse (-1017) / connection-reset noise
+    func eventsRequest() -> URLRequest {
+        var request = URLRequest(url: baseURL.appending(path: "/api/mobile/events"))
+        request.httpMethod = "GET"
+        // Idle timeout between packets. Server heartbeats every 25s; keep generous slack.
+        request.timeoutInterval = 120
+        request.setValue("text/event-stream", forHTTPHeaderField: "accept")
+        request.setValue("no-cache", forHTTPHeaderField: "cache-control")
+        return request
     }
 
     func resolvedURL(_ pathOrURL: String) -> URL? {

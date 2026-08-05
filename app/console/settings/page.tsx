@@ -65,7 +65,8 @@ const EVENT_HINT: Record<NotificationEventType, string> = {
   autonomy_halted_on_boot: "a restart halted trading autonomy until you re-arm it",
   option_alert: "an option contract changed status or expired",
   earningscalls_entitlement_blocked: "the EarningsCalls transcript program paused on a plan-entitlement problem",
-  risk_advisory: "a risk guardrail was breached but the agent is still in control (advisory)"
+  risk_advisory: "a risk guardrail was breached but the agent is still in control (advisory)",
+  protective_exit_failing: "a synthetic protective exit keeps failing and is still retrying"
 };
 
 export default function SettingsPage() {

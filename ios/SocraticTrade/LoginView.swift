@@ -83,6 +83,11 @@ struct LoginView: View {
             )
             .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
             .frame(height: 52)
+            // Apple's ASAuthorizationAppleIDButton hard-caps width at 375pt. Stretching the
+            // UIKit host wider (e.g. 392pt after horizontal padding) trips unsatisfiable
+            // NSAutoresizingMaskLayoutConstraints in the console. Do not follow this with
+            // another maxWidth:.infinity — that re-expands the UIKit host and revives the conflict.
+            .frame(maxWidth: 375)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .disabled(store.isSigningIn)
             .overlay {
