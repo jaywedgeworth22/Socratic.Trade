@@ -234,6 +234,23 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
         `Congress.Trade conviction input/pre-cap: ${a.convictionDirection} ${a.convictionScore}/100${a.convictionFallback ? " (proxy inputs)" : ""}`
       );
     }
+    if (typeof a.topMemberScore === "number" && a.topMemberScore > 0) {
+      const src = a.topMemberScoreSource ?? "unknown";
+      const parts: string[] = [`Congress member skill: ${a.topMemberScore}/100 (${src})`];
+      if (typeof a.topMemberFilingAvgExcess === "number") {
+        parts.push(`filing avgExcess ${(a.topMemberFilingAvgExcess * 100).toFixed(1)}% vs SPX`);
+      }
+      if (typeof a.topMemberFilingWinRate === "number") {
+        parts.push(`filing winRate ${(a.topMemberFilingWinRate * 100).toFixed(0)}%`);
+      }
+      if (typeof a.topMemberFilingScoredCount === "number") {
+        parts.push(`n=${a.topMemberFilingScoredCount}`);
+      }
+      if (typeof a.topMemberTradeAvgExcess === "number") {
+        parts.push(`trade-date avgExcess ${(a.topMemberTradeAvgExcess * 100).toFixed(1)}% (context)`);
+      }
+      entry.bulletins.push(parts.join(", "));
+    }
     if ((a.conflictCount ?? 0) > 0) {
       entry.bulletins.push(`Congress committee-sector overlap context: ${a.conflictCount} disclosure${a.conflictCount === 1 ? "" : "s"}, legalConclusion:false`);
     }

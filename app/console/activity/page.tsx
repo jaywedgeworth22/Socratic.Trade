@@ -12,6 +12,7 @@ import type { UnifiedActivityGroup } from "../../dashboard-types";
 import { activeConnectedAccount, realityForMode } from "../lib/derive";
 import { cx, dayKey, fmtDay, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { feedStatusLabel } from "../lib/labels";
+import { isStrategyRunSkipStatus, strategyRunStatusLabel } from "@/lib/strategy-run-status";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { nextTabId } from "../lib/tabs";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -125,7 +126,11 @@ const STATUS_TONE: Record<string, ChipTone> = {
   pending_reconciliation: "warn",
   failed: "neg",
   sent: "pos",
-  skipped: "muted"
+  // Strategy-run skips are non-success (warn), not muted success-adjacent (UX PR-A1).
+  skipped: "warn",
+  skipped_budget: "warn",
+  skipped_market_closed: "warn",
+  skipped_broker_unhealthy: "warn"
 };
 
 function statusTone(status: string | undefined): ChipTone {
@@ -366,12 +371,12 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                     ? "neg"
                     : run.status === "running"
                       ? "accent"
-                      : run.status === "skipped"
+                      : isStrategyRunSkipStatus(run.status)
                         ? "warn"
                         : "pos"
                 }
               >
-                {feedStatusLabel(run.status)}
+                {strategyRunStatusLabel(run.status, run.summary)}
               </Chip>
             </summary>
             <div className="border-t border-[color:var(--con-line)] py-2">
@@ -381,9 +386,9 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                   No candidate cleared the bar this run — deliberate hold after a full evaluation.
                 </p>
               )}
-              {run.status === "skipped" && (
+              {isStrategyRunSkipStatus(run.status) && (
                 <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
-                  Pre-decision skip (budget, market closed, or broker health) — not a successful evaluation.
+                  Pre-decision skip — not a successful evaluation. {strategyRunStatusLabel(run.status, run.summary)}.
                 </p>
               )}
               {proposals.length > 0 ? (

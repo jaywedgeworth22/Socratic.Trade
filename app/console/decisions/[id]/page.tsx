@@ -334,7 +334,7 @@ export default function DecisionTracePage() {
           >
             {run ? (
               <div className="mb-3 rounded-control border border-[color:var(--con-line)] bg-[color:color-mix(in_srgb,var(--con-bg-elev)_80%,transparent)] p-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-                Source run {timeAgo(run.startedAt)} · {run.status} · {run.totalCount} proposal{run.totalCount === 1 ? "" : "s"}
+                Source run {timeAgo(run.startedAt)} · {feedStatusLabel(run.status)} · {run.totalCount} proposal{run.totalCount === 1 ? "" : "s"}
                 {run.summary ? ` · ${run.summary}` : ""}
               </div>
             ) : null}

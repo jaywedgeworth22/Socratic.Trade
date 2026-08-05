@@ -81,7 +81,10 @@ function notableCongressAnalyticsScore(sig?: SymbolWebSignal): number {
     (analytics.memberCount ?? analytics.clusterMemberCount ?? 0) >= 2 ||
     (analytics.tradeCount ?? 0) >= 3 ||
     (analytics.netFlowUsd ?? 0) >= 100_000 ||
-    (analytics.topMemberScoreSource === "realized_skill" && (analytics.topMemberScore ?? 0) >= 60);
+    ((analytics.topMemberScoreSource === "realized_skill_filing" ||
+      analytics.topMemberScoreSource === "realized_skill_trade" ||
+      analytics.topMemberScoreSource === "realized_skill") &&
+      (analytics.topMemberScore ?? 0) >= 60);
   return hasSupport ? composite.score : 0;
 }
 
@@ -499,6 +502,23 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
               congressCompositeProvenance: { ...congressComposite.provenance },
               congressCompositeVersion: congressComposite.version,
               congressCompositeWeights: { ...congressComposite.weights }
+            }
+          : {}),
+        // Member skill context (App A dual performance) even when composite is low/neutral —
+        // strategist + signal_snapshot need raw filing-date excess, not only rank.
+        ...(sig.congressAnalytics?.topMemberScore != null
+          ? {
+              congressMemberSkillScore: sig.congressAnalytics.topMemberScore,
+              congressMemberSkillSource: sig.congressAnalytics.topMemberScoreSource,
+              congressMemberFilerId: sig.congressAnalytics.topMemberFilerId,
+              congressMemberFilingAvgExcess: sig.congressAnalytics.topMemberFilingAvgExcess ?? undefined,
+              congressMemberFilingWinRate: sig.congressAnalytics.topMemberFilingWinRate ?? undefined,
+              congressMemberFilingScoredCount: sig.congressAnalytics.topMemberFilingScoredCount,
+              congressMemberFilingAvgAnnualizedExcess:
+                sig.congressAnalytics.topMemberFilingAvgAnnualizedExcess ?? undefined,
+              congressMemberTradeAvgExcess: sig.congressAnalytics.topMemberTradeAvgExcess ?? undefined,
+              congressMemberTradeWinRate: sig.congressAnalytics.topMemberTradeWinRate ?? undefined,
+              congressMemberTradeScoredCount: sig.congressAnalytics.topMemberTradeScoredCount
             }
           : {}),
         // MERGE (deduped) rather than replace — otherwise a disagreement bulletin already on the quote
