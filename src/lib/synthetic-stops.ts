@@ -29,6 +29,7 @@ import { evaluateTradeProposal } from "./policy";
 import { STOP_PLAN_FALLBACK_STOP_PCT } from "./types";
 import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, StopPlanStyle, TradeProposal, TradingPolicy } from "./types";
 import type { PositionStopPlan } from "./db-api-keys";
+import { sendNotification } from "./notifications";
 
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
 
@@ -64,10 +65,12 @@ const QTY_EPSILON = 0.000001;
 
 
 // P2.8: Per-(stopId, fingerprint) emission cooldown for synthetic-stop failures.
+// Keep 60s placement retry; only coalesce audit/notify noise. Never touch fire_generation here.
 const SYNTHETIC_ERROR_COOLDOWN_MS = 60 * 60_000;
-const errorCooldownHost = globalThis as unknown as { __syntheticStopErrors?: Map<string, number> };
-const recentlyEmittedSyntheticErrors: Map<string, number> =
-  errorCooldownHost.__syntheticStopErrors ?? (errorCooldownHost.__syntheticStopErrors = new Map<string, number>());
+type SyntheticErrorEmit = { lastEmittedAt: number; firstFailedAt: number };
+const errorCooldownHost = globalThis as unknown as { __syntheticStopErrors?: Map<string, SyntheticErrorEmit> };
+const recentlyEmittedSyntheticErrors: Map<string, SyntheticErrorEmit> =
+  errorCooldownHost.__syntheticStopErrors ?? (errorCooldownHost.__syntheticStopErrors = new Map<string, SyntheticErrorEmit>());
 
 function hashString(str: string): string {
   let hash = 0;
@@ -78,23 +81,61 @@ function hashString(str: string): string {
   return (hash >>> 0).toString(16);
 }
 
-function auditSyntheticStopError(stopId: string, symbol: string, errorMsg: string, userId: string, connectedAccountId: string | undefined, extra: Record<string, unknown> = {}) {
+function auditSyntheticStopError(
+  stopId: string,
+  symbol: string,
+  errorMsg: string,
+  userId: string,
+  policy: TradingPolicy,
+  extra: Record<string, unknown> = {}
+) {
   const fingerprint = hashString(errorMsg);
   const key = `${stopId}:${fingerprint}`;
   const now = Date.now();
-  const lastEmitted = recentlyEmittedSyntheticErrors.get(key);
-  
+  const prior = recentlyEmittedSyntheticErrors.get(key);
+
   // Prune expired entries to prevent unbounded growth
-  for (const [k, t] of recentlyEmittedSyntheticErrors) {
-    if (now - t > SYNTHETIC_ERROR_COOLDOWN_MS) recentlyEmittedSyntheticErrors.delete(k);
+  for (const [k, entry] of recentlyEmittedSyntheticErrors) {
+    if (now - entry.lastEmittedAt > SYNTHETIC_ERROR_COOLDOWN_MS) recentlyEmittedSyntheticErrors.delete(k);
   }
 
-  if (lastEmitted != null && now - lastEmitted < SYNTHETIC_ERROR_COOLDOWN_MS) {
+  if (prior != null && now - prior.lastEmittedAt < SYNTHETIC_ERROR_COOLDOWN_MS) {
     return; // Cooldown active, suppress duplicate emission
   }
-  
-  recentlyEmittedSyntheticErrors.set(key, now);
-  audit("synthetic_stop_error", { symbol, error: errorMsg, ...extra }, userId, connectedAccountId);
+
+  const firstFailedAt = prior?.firstFailedAt ?? now;
+  recentlyEmittedSyntheticErrors.set(key, { lastEmittedAt: now, firstFailedAt });
+  const sinceIso = new Date(firstFailedAt).toISOString();
+  const connectedAccountId = policy.connectedAccountId;
+  audit(
+    "synthetic_stop_error",
+    { symbol, error: errorMsg, fingerprint, firstFailedAt: sinceIso, ...extra },
+    userId,
+    connectedAccountId
+  );
+
+  // Persistent owner-facing alert (once per cooldown window per fingerprint).
+  const sinceLabel = new Date(firstFailedAt).toLocaleString("en-US", { timeZone: "America/New_York", hour12: false });
+  void sendNotification(
+    {
+      type: "protective_exit_failing",
+      title: `Protective exit failing for ${normalizeSymbol(symbol)}`,
+      payload: {
+        summary:
+          `Protective exit for ${normalizeSymbol(symbol)} has been failing since ${sinceLabel} ET. ` +
+          `Retry continues every ~60s; fire_generation is unchanged. Last error: ${errorMsg}`,
+        symbol: normalizeSymbol(symbol),
+        stopId,
+        fingerprint,
+        firstFailedAt: sinceIso,
+        error: errorMsg,
+        ...extra
+      }
+    },
+    { policy, userId }
+  ).catch(() => {
+    /* notification is best-effort; audit already landed */
+  });
 }
 export interface StopEvaluation {
   newExtreme: number;
@@ -915,7 +956,7 @@ export async function runSyntheticStopMonitor(
       // and re-arm the stop so the position isn't left unprotected behind a stuck 'triggered' row.
       if (isRejectedOrCanceledState(exec.state)) {
         revertSyntheticStopClaim(stop.id, userId);
-        auditSyntheticStopError(stop.id, stop.symbol, `Broker declined the protective exit (state: ${exec.state}).`, userId, policy.connectedAccountId, { orderId: exec.orderId });
+        auditSyntheticStopError(stop.id, stop.symbol, `Broker declined the protective exit (state: ${exec.state}).`, userId, policy, { orderId: exec.orderId });
         continue;
       }
       // The fill is FINAL only when the broker confirms it filled synchronously (same rule as the
@@ -969,7 +1010,7 @@ export async function runSyntheticStopMonitor(
       // this order before the call threw, and remembering its client_order_id is what lets the
       // retry reuse the same id (422-safe) until that order is positively confirmed dead.
       revertSyntheticStopClaim(stop.id, userId);
-      auditSyntheticStopError(stop.id, stop.symbol, err instanceof Error ? err.message : String(err), userId, policy.connectedAccountId);
+      auditSyntheticStopError(stop.id, stop.symbol, err instanceof Error ? err.message : String(err), userId, policy);
     }
   }
 
