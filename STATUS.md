@@ -1,3 +1,5 @@
+**2026-08-04 — GROK: UX PR-C3 scan table virtualization.** Branch `grok/ux-c3-scan-virtuoso`. `app/console/scan/scan-table.tsx` desktop body uses `react-virtuoso` `TableVirtuoso` (overscan/initialItemCount, sticky symbol, sort/columns preserved). Rollout: `docs/rollouts/2026-08-04-ux-c3-scan-virtuoso.md`.
+
 **2026-08-04 — Final Verification of Model Slugs (AG).** Branch `agent/antigravity/openrouter-classifiers`. Replaced all legacy `-latest` model slugs with Provider Native Slugs (`gpt-5.6-sol`, `gpt-4o`, etc.) across the codebase. Cleaned up duplicate properties in model configuration files. Fixed test regressions in history tests by adding DB isolation to `historyTestDb` shared per-file. Fixed `isGpt56Model` regex. Gates verified: tsc clean, lint clean, full test suite passes. Landed cleanly via `land.sh`.
 Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
@@ -22,7 +24,7 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-04 (GROK: UX improvement program plan).
+Last updated: 2026-08-04 (GROK: UX PR-C3 scan TableVirtuoso).
 
 
 ## UX improvement program (2026-08-04, GROK)

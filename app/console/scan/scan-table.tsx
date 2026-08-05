@@ -1,15 +1,25 @@
 "use client";
 
-/** Sortable Market Scan table. Row hover/focus highlight comes free from
- *  `.con-table`; the symbol column is sticky so the table can scroll
- *  horizontally on small screens without losing the identity column (the
- *  sticky cell repaints the row-hover wash itself via group-hover, since its
- *  opaque background sits above the row's). Every header and cell carries a
- *  tooltip; cell tooltips get the scan-level "Received …" stamp when the
- *  field's own tooltip doesn't already carry one. */
+/** Sortable Market Scan table. Desktop body is virtualized via react-virtuoso
+ *  `TableVirtuoso` (PR-C3) so 100+ candidate rows stay smooth; mobile uses a
+ *  compact card list. Row hover/focus highlight comes free from `.con-table`;
+ *  the symbol column is sticky so the table can scroll horizontally without
+ *  losing the identity column (the sticky cell repaints the row-hover wash
+ *  itself via group-hover, since its opaque background sits above the row's).
+ *  Every header and cell carries a tooltip; cell tooltips get the scan-level
+ *  "Received …" stamp when the field's own tooltip doesn't already carry one. */
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type HTMLAttributes,
+  type ReactNode
+} from "react";
 import { ArrowDown, ArrowUp, Columns3, Star } from "lucide-react";
+import { TableVirtuoso, type ItemProps, type ScrollerProps, type TableComponents } from "react-virtuoso";
 import type { MarketQuote, MarketScan } from "@/lib/types";
 import { receivedLabel } from "@/lib/dashboard-ui";
 import { cx } from "../lib/format";
@@ -41,6 +51,60 @@ function compareValues(a: unknown, b: unknown, dir: SortDir): number {
 const STICKY_CELL = "sticky left-0 z-[1] bg-[color:var(--con-surface)]";
 const STICKY_CELL_HOVER =
   "group-hover:bg-[color:color-mix(in_oklab,var(--con-fg)_6%,var(--con-surface))] group-focus-within:bg-[color:color-mix(in_oklab,var(--con-fg)_6%,var(--con-surface))]";
+
+/** Module-stable virtuoso parts so TableVirtuoso does not remount the scroller
+ *  on every parent re-render (sort/watchlist/column picker). Pattern follows the
+ *  former dashboard MarketScanView TableVirtuoso (react-virtuoso dep; SCN-2
+ *  overscan/initialItemCount lessons). */
+const ScanVirtuosoScroller = forwardRef<HTMLDivElement, ScrollerProps>(function ScanVirtuosoScroller(
+  { style, ...props },
+  ref
+) {
+  return (
+    <div
+      {...props}
+      ref={ref}
+      // Both axes: vertical virtualization + horizontal column overflow so the
+      // sticky symbol column still pins under wide column sets.
+      style={{ ...style, overflow: "auto" }}
+    />
+  );
+});
+
+const ScanVirtuosoTable = ({ style, children }: { style?: CSSProperties; children?: ReactNode }) => (
+  <table style={style} className="con-table min-w-full">
+    {children}
+  </table>
+);
+
+const ScanVirtuosoTableHead = forwardRef<HTMLTableSectionElement, { style?: CSSProperties; children?: ReactNode }>(
+  function ScanVirtuosoTableHead({ style, children }, ref) {
+
+    return (
+      <thead ref={ref} style={style}>
+        {children}
+      </thead>
+    );
+  }
+);
+
+const ScanVirtuosoTableRow = (props: ItemProps<MarketQuote>) => {
+  // Drop virtuoso's data payload so it never lands on the DOM node.
+  // ItemProps is typed against div; TableVirtuoso still mounts a <tr>.
+  const { item: _omitItem, ...rest } = props;
+  void _omitItem;
+  return <tr {...(rest as HTMLAttributes<HTMLTableRowElement>)} className="group" />;
+};
+
+// Cast: virtuoso attaches optional `context` to component props; our parts only
+// consume the documented Scroller/Table/Head/Row surface (matches historical
+// MarketScanView components={{...}} usage).
+const SCAN_VIRTUOSO_COMPONENTS = {
+  Scroller: ScanVirtuosoScroller,
+  Table: ScanVirtuosoTable,
+  TableHead: ScanVirtuosoTableHead,
+  TableRow: ScanVirtuosoTableRow
+} as TableComponents<MarketQuote>;
 
 function defaultSortForVisible(visible: string[]): { col: string; dir: SortDir } {
   return visible.includes(SCORE_COLUMN_ID) ? { col: SCORE_COLUMN_ID, dir: "desc" } : { col: SYMBOL_COLUMN_ID, dir: "asc" };
@@ -391,62 +455,69 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
           )}
         </div>
       </div>
-      <div className="hidden overflow-x-auto lg:block">
-        <table className="con-table min-w-full">
-        <thead>
-          <tr>
-            {visibleColumns.map((c, i) => {
-              const active = activeSort.col === c.id;
-              return (
-                <th
-                  key={c.id}
-                  scope="col"
-                  aria-sort={active ? (activeSort.dir === "asc" ? "ascending" : "descending") : undefined}
-                  className={cx(
-                    "!text-center text-center",
-                    c.id === "score" && "w-16 px-2",
-                    i === 0 && STICKY_CELL
-                  )}
-                >
-                  <Tooltip
-                    content={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}>
-                    <button
-                      type="button"
-                      onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
-                      className={cx(
-                        "inline-flex cursor-pointer select-none items-center justify-center gap-1 font-semibold uppercase tracking-[0.07em] transition-colors mx-auto",
-                        active ? "text-[color:var(--con-fg)]" : "hover:text-[color:var(--con-fg)]"
-                      )}>
-                      {c.label}
-                      <span aria-hidden className={cx("text-[length:var(--con-fs-2xs)]", !active && "opacity-0")}>
-                        {active && activeSort.dir === "asc" ? "▲" : "▼"}
-                      </span>
-                    </button>
-                  </Tooltip>
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((q) => {
+      {/* Desktop: virtualized table (PR-C3). Fixed-height scroller so TableVirtuoso
+          only mounts visible rows; mobile keeps the non-virtual card list below. */}
+      <div className="hidden h-[min(600px,65vh)] lg:block">
+        <TableVirtuoso
+          style={{ height: "100%" }}
+          data={rows}
+          overscan={600}
+          initialItemCount={Math.min(rows.length, 20)}
+          computeItemKey={(_index, q) => q.symbol}
+          components={SCAN_VIRTUOSO_COMPONENTS}
+          fixedHeaderContent={() => (
+            <tr>
+              {visibleColumns.map((c, i) => {
+                const active = activeSort.col === c.id;
+                return (
+                  <th
+                    key={c.id}
+                    scope="col"
+                    aria-sort={active ? (activeSort.dir === "asc" ? "ascending" : "descending") : undefined}
+                    className={cx(
+                      "!text-center text-center",
+                      c.id === "score" && "w-16 px-2",
+                      i === 0 && STICKY_CELL
+                    )}
+                  >
+                    <Tooltip
+                      content={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}>
+                      <button
+                        type="button"
+                        onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
+                        className={cx(
+                          "inline-flex cursor-pointer select-none items-center justify-center gap-1 font-semibold uppercase tracking-[0.07em] transition-colors mx-auto",
+                          active ? "text-[color:var(--con-fg)]" : "hover:text-[color:var(--con-fg)]"
+                        )}>
+                        {c.label}
+                        <span aria-hidden className={cx("text-[length:var(--con-fs-2xs)]", !active && "opacity-0")}>
+                          {active && activeSort.dir === "asc" ? "▲" : "▼"}
+                        </span>
+                      </button>
+                    </Tooltip>
+                  </th>
+                );
+              })}
+            </tr>
+          )}
+          itemContent={(_index, q) => {
             const symbolKey = q.symbol.trim().toUpperCase();
             return (
-              <tr key={q.symbol} className="group">
+              <>
                 {visibleColumns.map((c, i) => {
                   const isSymbolCol = c.id === SYMBOL_COLUMN_ID;
                   const alignmentClass =
                     c.align === "left"
                       ? "!text-left text-left"
                       : c.align === "right"
-                      ? "!text-right text-right"
-                      : "!text-center text-center";
+                        ? "!text-right text-right"
+                        : "!text-center text-center";
                   const flexAlignClass =
                     c.align === "left"
                       ? "justify-start"
                       : c.align === "right"
-                      ? "justify-end"
-                      : "justify-center";
+                        ? "justify-end"
+                        : "justify-center";
                   return (
                     <td
                       key={c.id}
@@ -457,9 +528,10 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                         c.id === "score" && "w-16 px-2",
                         c.num && "con-num",
                         i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER)
-                      )}>
+                      )}
+                    >
                       {isSymbolCol ? (
-                        <div className="inline-flex items-center gap-1.5 justify-start w-full">
+                        <div className="inline-flex w-full items-center justify-start gap-1.5">
                           <WatchButton
                             symbol={q.symbol}
                             watched={watched.has(symbolKey)}
@@ -469,18 +541,17 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                           {c.render(q)}
                         </div>
                       ) : (
-                        <div className={cx("inline-flex items-center w-full", flexAlignClass)}>
+                        <div className={cx("inline-flex w-full items-center", flexAlignClass)}>
                           {c.render(q)}
                         </div>
                       )}
                     </td>
                   );
                 })}
-              </tr>
+              </>
             );
-          })}
-        </tbody>
-        </table>
+          }}
+        />
       </div>
       <div className="flex flex-col gap-2 p-2 lg:hidden">
         {rows.map((q) => {
