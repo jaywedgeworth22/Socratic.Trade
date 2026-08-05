@@ -1,7 +1,15 @@
 # Financial Modeling Prep (FMP) capability and routing map
 
-This is the source of truth for what Socratic.Trade actually calls, what the
-shared FMP dashboard represents, and how broader FMP data should enter the app.
+> **RETIRED for direct use in Socratic.Trade (owner 2026-08-04).** This app must
+> **never** call `financialmodelingprep.com`. **Fundamentals** come from the
+> multi-provider cascade (Yahoo, Finnhub, ROIC, SEC XBRL, Tiingo, …). **Congressional**
+> disclosures/analytics come from **Congress.Trade**. Choke points:
+> `src/lib/retired-direct-vendors.ts`, `requestFmp`, enrichment registration.
+> The historical endpoint map below is retained for archaeology and for operators
+> looking at the **shared** FMP dashboard (which may still show Congress.Trade
+> latency/probe traffic).
+
+This was the source of truth for what Socratic.Trade used to call.
 
 ## Dashboard attribution
 

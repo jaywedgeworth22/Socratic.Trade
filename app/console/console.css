@@ -862,6 +862,43 @@
   border-color: var(--con-accent-border);
 }
 
+/* ── Approval card sticky CTAs (PR-A2) ──
+ * Mobile: stick Approve/Reject above the fixed .con-tabbar so primary actions stay
+ * reachable while scrolling a dense (or expanded) receipt. Tab bar is ~3.25–3.75rem
+ * of content; in standalone/PWA it also pads env(safe-area-inset-bottom). Desktop
+ * (lg+) keeps a normal static footer at the card bottom.
+ * Shell already reserves pb-24 under the tab bar for page content clearance. */
+.ac-actions {
+  background: color-mix(in oklab, var(--con-surface) 94%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+@media (max-width: 1023px) {
+  .ac-actions {
+    position: sticky;
+    /* Clear fixed .con-tabbar (content ~3.25rem + optional home-indicator inset). */
+    bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
+    z-index: 30;
+    box-shadow: 0 -10px 24px -14px rgba(23, 32, 46, 0.28);
+  }
+}
+@media (min-width: 1024px) {
+  .ac-actions {
+    position: static;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: transparent;
+  }
+}
+.ac-expand-toggle {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
 /* ── Symbol drawer ── */
 .con-drawer-scrim {
   position: fixed;
@@ -1226,9 +1263,12 @@
 .con-cmdk-trigger {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  /* Square icon hit target on phones (kbd hidden); expands when kbd shows at sm+. */
+  min-width: 32px;
   height: 32px;
-  padding: 0 10px;
+  padding: 0 8px;
   border: 1px solid var(--con-line-strong);
   border-radius: var(--con-radius-sm);
   background: var(--con-surface-2);
@@ -1236,6 +1276,12 @@
   font-size: var(--con-fs-xs);
   cursor: pointer;
   transition: border-color 120ms ease, color 120ms ease;
+  flex-shrink: 0;
+}
+@media (min-width: 640px) {
+  .con-cmdk-trigger {
+    padding: 0 10px;
+  }
 }
 .con-cmdk-trigger:hover {
   border-color: var(--con-accent);

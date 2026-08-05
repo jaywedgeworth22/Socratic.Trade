@@ -22,6 +22,7 @@ import { formatSourceList, friendlySource } from "@/lib/dashboard-ui";
 import type { MarketQuote, PendingProposal, SocraticDecisionCase, SocraticFrameworkProposal, TradeProposal } from "@/lib/types";
 import { EquityChart } from "./components/equity-chart";
 import { PositionsCard } from "./components/positions";
+import { ReadinessChecklistHero } from "./components/readiness-checklist";
 import { deriveDayPnl, deriveMarkToMarket, deriveReality, deriveRiskUtilization, deriveSpend, deriveStateInfo, selectEquityWindow } from "./lib/derive";
 import { cx, EM_DASH, fmtDay, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
 import { describeLastRun } from "./lib/last-run";
@@ -39,6 +40,7 @@ import { decisionActionLabel, deterministicOutcomePresentation, splitThesisRatio
 import { useConsoleData } from "./lib/useConsoleData";
 import { safeTopCandidates } from "./lib/evidence-rows";
 import { RunOnceButton } from "./components/chrome";
+import { destinationLabel } from "./components/nav";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
 import { SymbolButton } from "./ui/symbol-drilldown";
 import { isExecutedStatus, isNotPlacedStatus, sideVerb } from "./lib/action-verbs";
@@ -86,6 +88,11 @@ export default function ConsoleHomePage() {
   // floor. See docs/rollouts/2026-07-08-console-page-width-parity.md.
   return (
     <div className="flex flex-col gap-4">
+      <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console")}</h1>
+      {/* First-run checklist (PR-A3): when incomplete it dominates Thesis above the
+          strategy bar + two-column desk; when ready it collapses to "You're set". */}
+      <ReadinessChecklistHero snapshot={snapshot} />
+
       <section className="con-strategy-bar">
         <span className="con-card-title flex items-center gap-1.5">
           <Brain size={13} /> Strategy
@@ -115,13 +122,13 @@ export default function ConsoleHomePage() {
             )}
           </span>
         )}
-        {/* Only on failure. The "Latest strategy run" card below has its own Journal link,
+        {/* Only on failure. The "Latest strategy run" card below has its own Activity link,
             but that card renders only when the run produced proposals — which a failed run
             usually did not, so on exactly the occasion you most want the record there is no
             way through to it from here. */}
         {lastRun?.failed && (
           <Link href="/console/activity" className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-            Journal
+            {destinationLabel("/console/activity")}
           </Link>
         )}
         {state.state === "active" && nextRun && (
@@ -168,7 +175,7 @@ export default function ConsoleHomePage() {
               }
               action={
                 <Link href="/console/activity" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                  Journal <ArrowRight size={12} />
+                  {destinationLabel("/console/activity")} <ArrowRight size={12} />
                 </Link>
               }
             >
@@ -200,7 +207,7 @@ export default function ConsoleHomePage() {
               }
               action={
                 <Link href="/console/activity" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                  Journal <ArrowRight size={12} />
+                  {destinationLabel("/console/activity")} <ArrowRight size={12} />
                 </Link>
               }
             >
@@ -221,7 +228,7 @@ export default function ConsoleHomePage() {
             }
             action={
               <Link href="/console/results" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                Outcomes <ArrowRight size={12} />
+                {destinationLabel("/console/results")} <ArrowRight size={12} />
               </Link>
             }
           >

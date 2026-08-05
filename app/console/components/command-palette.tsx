@@ -37,7 +37,10 @@ function useIsApple(): boolean {
   return apple;
 }
 
-/** Compact chrome button that advertises and opens the palette. */
+/** Compact chrome button that advertises and opens the palette.
+ *  Always mounted in the chrome bar (PR-E3) — including mobile — so touch
+ *  users can discover it without a keyboard. The ⌘/Ctrl kbd badge is hidden
+ *  below `sm` so the phone bar stays dense (icon-only). */
 export function CommandPaletteTrigger() {
   const apple = useIsApple();
   return (
@@ -48,8 +51,8 @@ export function CommandPaletteTrigger() {
       aria-label="Open command palette"
       onClick={() => window.dispatchEvent(new Event(CMDK_EVENT))}
     >
-      <Search size={14} />
-      <kbd>{apple ? "⌘K" : "Ctrl K"}</kbd>
+      <Search size={14} aria-hidden />
+      <kbd className="hidden sm:inline">{apple ? "⌘K" : "Ctrl K"}</kbd>
     </button>
   );
 }

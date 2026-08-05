@@ -11,19 +11,26 @@
  *  brokerage-account authority requires typing CONFIRM. Autonomy has its own
  *  ritual: Autopilot costs a typed word, going back to Ask-first is one tap. */
 
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { toggleIncludedIndex } from "@/lib/index-universes";
 import type { IndexUniverse, OrderType, TaxationType, TradingPolicy } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
-import { activeConnectedAccount, deriveReality, deriveRiskUtilization, type UtilizationMeter } from "../lib/derive";
-import { fmtMoney, fmtMoneyWhole, fmtNum, fmtPct } from "../lib/format";
+import {
+  activeConnectedAccount,
+  deriveReality,
+  deriveRiskUtilization,
+  deriveStateInfo,
+  type UtilizationMeter
+} from "../lib/derive";
+import { fmtExact, fmtMoney, fmtMoneyWhole, fmtNum, fmtPct, timeUntil } from "../lib/format";
 import { isBlank } from "../lib/policy-diff";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Chip, Dash, Field, Meter, Select, TextInput } from "../ui/primitives";
-import { TypedConfirm } from "../components/chrome";
+import { deriveRunBlock, RunOnceButton, RunStateButton, TypedConfirm } from "../components/chrome";
 import { orderTypeLabel } from "../orders/lib";
 import {
   AdvancedGroup,
@@ -236,7 +243,10 @@ function AccountScopedGuardrailsPage() {
         </span>
       </div>
 
-      <AutonomyCard />
+      {/* Wave B: single Autonomy surface — deep-link #autonomy or ?focus=autonomy */}
+      <div id="autonomy" className="scroll-mt-28">
+        <AutonomyCard />
+      </div>
 
       <Card title="Essentials" collapsible defaultOpen>
         <div className="divide-y divide-[color:var(--con-line)]">
@@ -311,7 +321,7 @@ function AccountScopedGuardrailsPage() {
         <TaxSettingsCard />
       </div>
 
-      <Card title="Advanced rulebook" padded={false} collapsible defaultOpen>
+      <Card title="Advanced rulebook" padded={false} collapsible defaultOpen={false}>
         <div className="px-4 pb-2">
           <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             Everything below ships with safe defaults — you never have to touch it. One rule everywhere: a cap that
@@ -508,8 +518,10 @@ function AccountScopedGuardrailsPage() {
   );
 }
 
-/** Autonomy is not a slider in the save-bar — it gets its own asymmetric
- *  ritual. Ask-first is one tap; Autopilot costs typing the word. */
+/** Single Autonomy surface (Wave B): run state, authority, cadence, Run once /
+ *  Start·Stop, and readiness — one place to answer “is the agent on and why not?”
+ *  Authority still uses the asymmetric ritual (Ask-first one tap; Autopilot typed).
+ *  Deep-link: /console/guardrails#autonomy or ?focus=autonomy. */
 function AutonomyCard() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
@@ -517,9 +529,25 @@ function AutonomyCard() {
   const [arming, setArming] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Snapshot loads after first paint, so native hash scroll misses — mirror Settings.
+  useEffect(() => {
+    if (!snapshot || typeof window === "undefined") return;
+    const hash = window.location.hash.slice(1);
+    const focus = new URLSearchParams(window.location.search).get("focus");
+    if (hash !== "autonomy" && focus !== "autonomy") return;
+    const timer = setTimeout(() => {
+      document.getElementById("autonomy")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [snapshot]);
+
   if (!snapshot) return null;
   const reality = deriveReality(snapshot);
+  const stateInfo = deriveStateInfo(snapshot.policy);
   const decide = snapshot.policy.strategyAuthority === "decide";
+  const cadenceMin = snapshot.policy.runCadenceMinutes;
+  const nextRun = snapshot.scheduler?.nextRunAt;
+  const runBlock = deriveRunBlock(snapshot);
 
   const setAuthority = async (authority: "propose" | "decide") => {
     setBusy(true);
@@ -544,9 +572,92 @@ function AutonomyCard() {
 
   return (
     <Card title="Autonomy">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+        Is the agent on, on what cadence, and can you run it now? Start/Stop and Run once use the same controls as the
+        top bar — nothing new under the hood.
+      </p>
+
+      {/* Status grid: systemState · authority · cadence */}
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+          <div className="con-card-title">Run state</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <Chip tone={stateInfo.tone === "warn" ? "warn" : stateInfo.tone === "neg" ? "neg" : stateInfo.tone === "muted" ? "muted" : "pos"} title={stateInfo.detail}>
+              {stateInfo.label}
+            </Chip>
+          </div>
+          <p className="mt-1.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">{stateInfo.detail}</p>
+        </div>
+        <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+          <div className="con-card-title">Authority</div>
+          <div className="mt-1 text-[length:var(--con-fs-md)] font-semibold">{decide ? "Autopilot" : "Ask-first"}</div>
+          <p className="mt-1.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+            {decide
+              ? "May place orders itself inside guardrails."
+              : "Suggests and waits — every trade needs approval."}
+          </p>
+        </div>
+        <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+          <div className="con-card-title">Cadence</div>
+          <div className="mt-1 text-[length:var(--con-fs-md)] font-semibold">
+            {typeof cadenceMin === "number" ? `Every ${cadenceMin} min` : "—"}
+          </div>
+          <p className="mt-1.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+            {snapshot.policy.systemState === "active" && nextRun ? (
+              <span title={fmtExact(nextRun)}>Next scheduled run {timeUntil(nextRun)}</span>
+            ) : snapshot.policy.systemState === "active" ? (
+              "Running; next run time not in this snapshot."
+            ) : (
+              "Scheduled runs only while Running. Edit interval under Essentials → Schedule."
+            )}
+          </p>
+        </div>
+      </div>
+
+      {/* Actions: same chrome helpers as the top bar */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <RunOnceButton snapshot={snapshot} />
+        <RunStateButton snapshot={snapshot} />
+        <Link
+          href="/console/guardrails#autonomy"
+          className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] underline-offset-2 hover:underline"
+          title="Deep link to this Autonomy panel"
+        >
+          #autonomy
+        </Link>
+      </div>
+
+      {/* Why can’t I run? — same preflight as Run once */}
+      {runBlock ? (
+        <div className="mb-4 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip tone="warn">why can&apos;t I run?</Chip>
+            <span className="text-[length:var(--con-fs-sm)] font-semibold">{runBlock.title}</span>
+          </div>
+          <p className="mt-1.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">{runBlock.detail}</p>
+          {runBlock.note && (
+            <p className="mt-1.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">{runBlock.note}</p>
+          )}
+          {runBlock.fixHref && (
+            <Link
+              href={runBlock.fixHref}
+              className="mt-2 inline-flex text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]"
+            >
+              {runBlock.fixLabel ?? "Go to the fix"}
+            </Link>
+          )}
+        </div>
+      ) : (
+        <p className="mb-4 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Preflight looks clear for a manual Run once (LLM key + account readiness). Scheduled autonomy still depends
+          on run state above.
+        </p>
+      )}
+
+      {/* Authority ritual (unchanged) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--con-line)] pt-3">
         <div>
-          <div className="text-[length:var(--con-fs-md)] font-semibold">{decide ? "Autopilot" : "Ask-first"}</div>
+          <div className="text-[length:var(--con-fs-sm)] font-semibold">Placement authority</div>
           <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
             {decide
               ? "The strategy may place orders itself. Socratic overrides can challenge owner-preference gates when the agent gives a structured thesis; broker, account, tax-hard, and integrity refusals still block. Provider failures and unavailable adversarial review still route to you."
