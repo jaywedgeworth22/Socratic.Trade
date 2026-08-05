@@ -380,37 +380,62 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     // Enrich a wider, bounded first-stage pool before the final top-N cut. This lets fundamentals,
     // sentiment, and quality data promote a name that missed the initial screener-only cutoff. It is
     // deliberately one batched provider call: widening selection must not introduce another waterfall.
+    //
+    // Durable baseline: ALWAYS load the shared symbol_field_latest store (per-field as_of +
+    // fetched_at) for the preselection pool, then layer caller seedEnrichment (audit payloads)
+    // on top field-by-field. Live cascade overwrites when it returns values. This is what keeps
+    // PE/EPS/div visible after strategy_run audits omit the full MarketScan, and keeps yesterday's
+    // symbols' last known fields available even if they are not in today's ranked set.
     const provider = options?.enrichmentMode === "skip"
       ? undefined
       : getEnrichmentProvider(options?.userId);
     let rescoredRanked: MarketQuote[] = ranked;
     const preselectionPool = buildEnrichmentPreselectionPool(ranked, eventExtra, heldSymbols, candidateLimit);
+    const seedBySymbol = await loadDurableEnrichmentSeed(
+      preselectionPool.map((q) => q.symbol),
+      options?.seedEnrichment
+    );
+    const applySeedBaseline = (quote: MarketQuote): MarketQuote => {
+      const prior = seedBySymbol[quote.symbol] ?? seedBySymbol[normalizeSymbol(quote.symbol)];
+      if (!prior) return quote;
+      return applyEnrichment(quote, persistedSlowEnrichment(prior));
+    };
+
     if (preselectionPool.length > 0 && provider) {
       try {
-        const enrichment = await provider.enrich(preselectionPool.map((quote) => quote.symbol));
+        // Seed first so cascade gaps never blank a field we already know.
+        const baselinePool = preselectionPool.map(applySeedBaseline);
+        const enrichment = await provider.enrich(baselinePool.map((quote) => quote.symbol));
         const rescoredBySymbol = new Map(
-          preselectionPool.map((quote) => {
-            const enriched = enrichment[quote.symbol] ? applyEnrichment(quote, enrichment[quote.symbol]) : quote;
+          baselinePool.map((quote) => {
+            const live = enrichment[quote.symbol];
+            const enriched = live ? applyEnrichment(quote, live) : quote;
             const factorBreakdown = scoreFactors(enriched, weights);
             return [quote.symbol, { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal }] as const;
           })
         );
         rescoredRanked = ranked
-          .map((quote) => rescoredBySymbol.get(quote.symbol) ?? quote)
+          .map((quote) => rescoredBySymbol.get(quote.symbol) ?? applySeedBaseline(quote))
           .sort(compareMarketQuotes);
       } catch (error) {
         warnings.push(error instanceof Error ? `Enrichment failed: ${error.message}` : "Enrichment failed.");
+        // Fall back to durable seed so a cascade throw never blanks the table.
+        const seededBySymbol = new Map(
+          preselectionPool.map((quote) => {
+            const enriched = applySeedBaseline(quote);
+            const factorBreakdown = scoreFactors(enriched, weights);
+            return [quote.symbol, { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal }] as const;
+          })
+        );
+        rescoredRanked = ranked
+          .map((quote) => seededBySymbol.get(quote.symbol) ?? quote)
+          .sort(compareMarketQuotes);
       }
-    } else if (preselectionPool.length > 0 && options?.seedEnrichment) {
-      // Keep slow facts from the last completed strategy scan while the interactive
-      // screener replaces current price/change/volume. This gives the table useful
-      // fundamentals without any provider fan-out on the HTTP request path.
+    } else if (preselectionPool.length > 0) {
+      // Skip mode (interactive) or no provider: still surface last-known per-field data.
       const seededBySymbol = new Map(
         preselectionPool.map((quote) => {
-          const prior = options.seedEnrichment?.[quote.symbol];
-          const enriched = prior
-            ? applyEnrichment(quote, persistedSlowEnrichment(prior))
-            : quote;
+          const enriched = applySeedBaseline(quote);
           const factorBreakdown = scoreFactors(enriched, weights);
           return [quote.symbol, { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal }] as const;
         })
@@ -418,13 +443,18 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       rescoredRanked = ranked
         .map((quote) => seededBySymbol.get(quote.symbol) ?? quote)
         .sort(compareMarketQuotes);
-      warnings.push(
-        "Slow fundamentals reuse the latest completed strategy scan; current price data was refreshed without starting the deep provider cascade."
-      );
-    } else if (preselectionPool.length > 0) {
-      warnings.push(
-        "Deep fundamentals refresh is deferred for this interactive scan; open a ticker for on-demand data or use the latest strategy scan for the fully enriched snapshot."
-      );
+      const seedHits = preselectionPool.filter(
+        (q) => seedBySymbol[q.symbol] || seedBySymbol[normalizeSymbol(q.symbol)]
+      ).length;
+      if (seedHits > 0) {
+        warnings.push(
+          `Slow fundamentals reuse the durable field store (${seedHits} names with last-known values; each field keeps its own as_of/fetched_at).`
+        );
+      } else if (options?.enrichmentMode === "skip") {
+        warnings.push(
+          "Deep fundamentals refresh is deferred for this interactive scan and no durable field-store rows were found yet; open a ticker for on-demand data or wait for a full enrichment run."
+        );
+      }
     }
 
     // Stage two: select the re-scored top-N, then append the original event reserve and every held
@@ -582,7 +612,19 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       [...universeSources]
     );
 
-    return {
+    // Loud shortfall report — never leave blank PE/EPS/news as silent dashes only.
+    let dataCoverage: MarketScan["dataCoverage"];
+    try {
+      const { buildScanDataCoverage } = await import("./enrichment-coverage");
+      dataCoverage = buildScanDataCoverage(topCandidates);
+      if (dataCoverage.missingFields.length > 0 || dataCoverage.partialFields.length > 0) {
+        warnings.push(dataCoverage.shortfallSummary);
+      }
+    } catch {
+      dataCoverage = undefined;
+    }
+
+    const result: MarketScan = {
       source,
       generatedAt: new Date().toISOString(),
       scannedSymbols: new Set([...allowed, ...quotes.map((quote) => quote.symbol)]).size,
@@ -597,10 +639,185 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       quotesBySymbol: quotesBySymbol(mergedRanked),
       cacheTtlMs: options?.ttlMs ?? marketCacheTtlMs(),
       cached,
-      warnings
+      warnings,
+      dataCoverage
     };
+
+    // Persist every filled field on every candidate (and the ranked merge set) into the
+    // shared symbol_field_latest store — each field keeps its own as_of + fetched_at.
+    // Fire-and-forget; never block or fail a scan on store write.
+    void persistScanFieldsToStore(topCandidates, result.generatedAt);
+
+    return result;
   }
 };
+
+/** Load durable per-field latest values, then layer optional audit seeds field-by-field. */
+async function loadDurableEnrichmentSeed(
+  symbols: string[],
+  auditSeed?: Record<string, MarketQuoteSummary>
+): Promise<Record<string, MarketQuoteSummary>> {
+  let storeSeed: Record<string, MarketQuoteSummary> = {};
+  try {
+    const mod = await import("./db-fundamentals");
+    storeSeed = mod.marketQuoteSummariesFromFieldStore(symbols) as Record<string, MarketQuoteSummary>;
+  } catch {
+    storeSeed = {};
+  }
+  if (!auditSeed || Object.keys(auditSeed).length === 0) return storeSeed;
+  return mergeQuoteSeedsFieldLevel(storeSeed, auditSeed);
+}
+
+/**
+ * Field-level merge of quote seeds. For each symbol/field, keep a non-empty value;
+ * when both have values, prefer the one with the newer per-field fetchedAt (or asOf).
+ * Later seeds without a per-field stamp (caller/audit seedEnrichment) win over earlier
+ * durable-store rows so interactive intent is not blanked by a prior scan's companyName.
+ * Never whole-object overwrite a rich seed with a blank audit shell.
+ */
+export function mergeQuoteSeedsFieldLevel(
+  ...seeds: Array<Record<string, MarketQuoteSummary> | undefined>
+): Record<string, MarketQuoteSummary> {
+  const out: Record<string, MarketQuoteSummary> = {};
+  for (const seed of seeds) {
+    if (!seed) continue;
+    for (const [symbol, quote] of Object.entries(seed)) {
+      const key = normalizeSymbol(symbol) || symbol;
+      const existing = out[key];
+      if (!existing) {
+        out[key] = { ...quote, symbol: key, sources: { ...(quote.sources ?? {}) } };
+        continue;
+      }
+      out[key] = mergeOneQuoteSeed(existing, quote);
+    }
+  }
+  return out;
+}
+
+function fieldFetchedMs(quote: MarketQuoteSummary, field: string): number {
+  const obs = quote.fieldObservations?.[field as keyof NonNullable<MarketQuoteSummary["fieldObservations"]>];
+  const stamp = obs?.fetchedAt ?? obs?.asOf ?? quote.asOf;
+  const ms = stamp ? Date.parse(stamp) : NaN;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function isFilledSeedValue(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "number") return Number.isFinite(value);
+  return true;
+}
+
+function mergeOneQuoteSeed(a: MarketQuoteSummary, b: MarketQuoteSummary): MarketQuoteSummary {
+  const merged: MarketQuoteSummary = {
+    ...a,
+    sources: { ...(a.sources ?? {}) },
+    fieldObservations: { ...(a.fieldObservations ?? {}) }
+  };
+  const skip = new Set(["symbol", "sources", "fieldObservations", "providerFailures", "factorBreakdown"]);
+  const aRec = a as unknown as Record<string, unknown>;
+  const bRec = b as unknown as Record<string, unknown>;
+  const mergedRec = merged as unknown as Record<string, unknown>;
+  for (const [field, value] of Object.entries(bRec)) {
+    if (skip.has(field)) continue;
+    const cur = aRec[field] !== undefined ? aRec[field] : mergedRec[field];
+    const bFilled = isFilledSeedValue(value);
+    const aFilled = isFilledSeedValue(cur);
+    if (!bFilled) continue;
+    // Prefer later seed when: (1) earlier empty, (2) later has no per-field
+    // fieldObservations entry (caller seedEnrichment is intentional override and
+    // rarely carries per-field stamps — quote.asOf is NOT a field stamp), or
+    // (3) later is newer by field observation. Without (2), durable store rows
+    // with fetchedAt always blank interactive companyName / PE from audit seeds.
+    const bHasFieldObs = Boolean(
+      b.fieldObservations?.[field as keyof NonNullable<MarketQuoteSummary["fieldObservations"]>]
+    );
+    const aHasFieldObs = Boolean(
+      a.fieldObservations?.[field as keyof NonNullable<MarketQuoteSummary["fieldObservations"]>]
+    );
+    const preferB =
+      !aFilled ||
+      !bHasFieldObs ||
+      !aHasFieldObs ||
+      fieldFetchedMs(b, field) >= fieldFetchedMs(a, field);
+    if (preferB) {
+      mergedRec[field] = value;
+      const bSrc = b.sources?.[field as keyof EnrichmentSources];
+      if (bSrc) merged.sources = { ...merged.sources, [field]: bSrc };
+      const bObs = b.fieldObservations?.[field as keyof NonNullable<MarketQuoteSummary["fieldObservations"]>];
+      if (bObs) {
+        merged.fieldObservations = { ...merged.fieldObservations, [field]: bObs };
+      }
+    }
+  }
+  // Prefer a real price for seed validation when one side has it.
+  if (!(merged.price > 0) && b.price > 0) merged.price = b.price;
+  if (!(typeof merged.score === "number" && Number.isFinite(merged.score)) && typeof b.score === "number") {
+    merged.score = b.score;
+  }
+  return merged;
+}
+
+function persistScanFieldsToStore(candidates: MarketQuote[], fetchedAt: string): void {
+  void import("./db-fundamentals")
+    .then((mod) => {
+      if (typeof mod.upsertSymbolFieldLatest !== "function" || typeof mod.encodeFieldValue !== "function") {
+        return;
+      }
+      const records: import("./db-fundamentals").SymbolFieldLatestRecord[] = [];
+      const META = new Set([
+        "symbol",
+        "sources",
+        "fieldObservations",
+        "providerFailures",
+        "factorBreakdown",
+        "evidenceBulletins",
+        "technicalSignals",
+        "cached",
+        "provider",
+        "syntheticBid",
+        "syntheticAsk",
+        "positionMarketValue",
+        "preCongressScore",
+        "score"
+      ]);
+      for (const quote of candidates) {
+        const symbol = normalizeSymbol(quote.symbol);
+        if (!symbol) continue;
+        const sources = quote.sources ?? {};
+        const observations = quote.fieldObservations ?? {};
+        for (const [field, value] of Object.entries(quote as unknown as Record<string, unknown>)) {
+          if (META.has(field)) continue;
+          if (typeof value === "function") continue;
+          const valueJson = mod.encodeFieldValue(value);
+          if (!valueJson) continue;
+          const obs = observations[field as keyof typeof observations];
+          const asOf =
+            (obs && typeof obs === "object" && ("asOf" in obs ? (obs as { asOf?: string }).asOf : undefined)) ||
+            (obs && typeof obs === "object" && ("fetchedAt" in obs ? (obs as { fetchedAt?: string }).fetchedAt : undefined)) ||
+            (field === "asOf" && typeof value === "string" ? value : undefined) ||
+            quote.asOf ||
+            fetchedAt;
+          const fieldFetched =
+            (obs && typeof obs === "object" && ("fetchedAt" in obs ? (obs as { fetchedAt?: string }).fetchedAt : undefined)) ||
+            fetchedAt;
+          records.push({
+            symbol,
+            field,
+            valueJson,
+            source: sources[field as keyof EnrichmentSources] ?? quote.provider ?? "scan",
+            asOf: asOf ?? fetchedAt,
+            fetchedAt: fieldFetched ?? fetchedAt
+          });
+        }
+      }
+      if (records.length > 0) mod.upsertSymbolFieldLatest(records);
+    })
+    .catch(() => {
+      /* store is best-effort */
+    });
+}
 
 export function rankMarketQuotes(quotes: MarketQuote[], weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS): MarketQuote[] {
   return quotes
@@ -613,8 +830,12 @@ export function rankMarketQuotes(quotes: MarketQuote[], weights: ScoringWeights 
 
 /** Select only fields that remain useful across a short-lived interactive refresh.
  * Price, spread, change, volume, VWAP, and timestamps must always come from the
- * fresh scan/broker path, never from the persisted strategy snapshot. */
+ * fresh scan/broker path, never from the persisted strategy snapshot.
+ * fieldObservations are carried so each cell keeps its own as_of / fetched_at. */
 export function persistedSlowEnrichment(quote: MarketQuoteSummary): SymbolEnrichment {
+  // True slow fundamentals only — do NOT pull sentiment/headlines/insider/earnings from a
+  // prior scan or durable store on the interactive path (those are volatile / context-specific).
+  // fieldObservations are still carried for the fields we do reuse so each cell keeps as_of.
   const slowSourceFields = new Set([
     "companyName", "peRatio", "analystRating", "sector", "industry",
     "dividendYield", "eps", "pbRatio", "shortPercentOfFloat", "beta",
@@ -626,6 +847,11 @@ export function persistedSlowEnrichment(quote: MarketQuoteSummary): SymbolEnrich
   const sources = Object.fromEntries(
     Object.entries(quote.sources ?? {}).filter(([field]) => slowSourceFields.has(field))
   ) as SymbolEnrichment["sources"];
+  const fieldObservations = quote.fieldObservations
+    ? Object.fromEntries(
+        Object.entries(quote.fieldObservations).filter(([field]) => slowSourceFields.has(field))
+      )
+    : undefined;
   return {
     companyName: quote.companyName,
     peRatio: quote.peRatio,
@@ -654,7 +880,10 @@ export function persistedSlowEnrichment(quote: MarketQuoteSummary): SymbolEnrich
     revenueGrowth: quote.revenueGrowth,
     freeCashFlowYield: quote.freeCashFlowYield,
     grossProfitMargin: quote.grossProfitMargin,
-    sources
+    sources,
+    ...(fieldObservations && Object.keys(fieldObservations).length > 0
+      ? { fieldObservations: fieldObservations as SymbolEnrichment["fieldObservations"] }
+      : {})
   };
 }
 
@@ -1173,7 +1402,12 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
     sources: mergeSources(quote, extra),
     // Keep cascade receipts on the quote so admin/ops/coverage reporting (and drilldowns) can see
     // which providers failed and the per-field observation status — not only the winning scalar.
-    fieldObservations: extra.fieldObservations ?? quote.fieldObservations,
+    // MERGE observations field-by-field so a live enrich layer does not wipe per-field as_of/
+    // fetched_at stamps from the durable seed baseline for fields the live pass left empty.
+    fieldObservations: {
+      ...(quote.fieldObservations ?? {}),
+      ...(extra.fieldObservations ?? {})
+    },
     providerFailures: extra.providerFailures
       ? { ...(quote.providerFailures ?? {}), ...extra.providerFailures }
       : quote.providerFailures
@@ -1437,7 +1671,10 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         intradayChangePct: quote.intradayChangePct,
         volume: quote.volume > 0 ? quote.volume : undefined,
         sectorRelStrength: quote.sectorRelStrength,
-        sources: quote.sources
+        sources: quote.sources,
+        // Per-field as_of / fetched_at — required for durable store re-seed and UI staleness chips.
+        fieldObservations: quote.fieldObservations,
+        providerFailures: quote.providerFailures
       }
     ])
   );

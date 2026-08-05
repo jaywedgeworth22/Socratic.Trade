@@ -323,6 +323,40 @@ function MarketScanTab({
           {error} Showing the last good scan from {fmtExact(scan.generatedAt)}.
         </p>
       )}
+      {/* Loud data shortfall — never leave blank PE/EPS/news as silent dashes. */}
+      {scan.dataCoverage &&
+        (scan.dataCoverage.missingFields.length > 0 || scan.dataCoverage.partialFields.length > 0) && (
+        <div
+          role="status"
+          className="rounded-control border border-[color:var(--con-neg-border,var(--con-warn-border))] bg-[color:var(--con-neg-soft,var(--con-warn-soft))] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-neg,var(--con-warn))]"
+          title={
+            [
+              scan.dataCoverage.shortfallSummary,
+              scan.dataCoverage.topGaps
+                .map((g) => `${g.field}: ${Math.round(g.fillRate * 100)}% filled, ${g.missingCount} blank`)
+                .join("\n"),
+              scan.dataCoverage.contributingSources.length
+                ? `Sources seen: ${scan.dataCoverage.contributingSources.join(", ")}`
+                : "No field sources stamped on candidates."
+            ].join("\n\n")
+          }
+        >
+          <div className="font-semibold">Data coverage shortfall</div>
+          <div className="mt-0.5 opacity-95">{scan.dataCoverage.shortfallSummary}</div>
+          {scan.dataCoverage.topGaps.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {scan.dataCoverage.topGaps.slice(0, 6).map((g) => (
+                <span
+                  key={g.field}
+                  className="rounded-control border border-current/20 px-1.5 py-0.5 font-mono text-[10px] opacity-90"
+                >
+                  {g.field} {Math.round(g.fillRate * 100)}%
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {scan.warnings.length > 0 && (
         <p
           className="cursor-default rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"

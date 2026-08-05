@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { clearHistoryCache, fetchDailyOHLC, parseRoicStockPrices, parseStooqCsv, toBusinessDay } from "../src/lib/history";
 import { clearMassiveRestBudgetForTests } from "../src/lib/market-signals/massive";
-import { clearMarketDataDemandsForTests, deleteUserApiKey, getDb, upsertConnectedAccount, upsertUserApiKey } from "../src/lib/db";
+import { clearMarketDataDemandsForTests, deleteUserApiKey, getDb, setDataPoolConsent, upsertConnectedAccount, upsertUserApiKey } from "../src/lib/db";
 import { subscribeDashboardEvents, type DashboardEvent } from "../src/lib/events";
 import { admitProviderRequests, resetProviderQuotaState } from "../src/lib/provider-rate-limit";
 import { apiKeyFingerprint } from "../src/lib/data-providers";
@@ -368,9 +368,12 @@ describe("fetchDailyOHLC", () => {
     expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer env-tradier-key" });
   });
 
-  it("keeps user-keyed history cache entries private by default", async () => {
+  it("keeps user-keyed history cache entries private when both users decline the data pool", async () => {
     const userA = `history-user-a-${randomUUID()}`;
     const userB = `history-user-b-${randomUUID()}`;
+    // Pool consent defaults ON — explicit decline required for private user-key isolation.
+    setDataPoolConsent(userA, false);
+    setDataPoolConsent(userB, false);
     upsertUserApiKey(userA, "marketstack", "user-a-marketstack-key");
     upsertUserApiKey(userB, "marketstack", "user-b-marketstack-key");
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>

@@ -18,7 +18,9 @@ vi.mock("../src/lib/db", () => ({
   resolveAlpacaMarketData: () => mockResolveAlpacaMarketData(),
   resolveApiKeyWithSource: () => ({ key: undefined, source: "none" }),
   getConnectedAccount: (...args: unknown[]) => mockGetConnectedAccount(...args),
-  getActiveConnectedAccount: (...args: unknown[]) => mockGetActiveConnectedAccount(...args)
+  getActiveConnectedAccount: (...args: unknown[]) => mockGetActiveConnectedAccount(...args),
+  // Multi-broker Level 1b: empty by default so existing tests stay on active-only path.
+  listConnectedAccounts: () => []
 }));
 
 const mockGetEquityQuotes = vi.fn();

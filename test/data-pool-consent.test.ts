@@ -8,27 +8,30 @@ beforeAll(() => {
 });
 
 describe("data-pool consent", () => {
-  it("defaults to no consent and accepts/declines per user", async () => {
+  it("defaults to shared pooling ON and accepts/declines per user", async () => {
     const { getDataPoolConsent, setDataPoolConsent, hasDataPoolConsent, DATA_POOL_CONSENT_VERSION } = await import("../src/lib/db");
     const userA = `u-${randomUUID()}`;
     const userB = `u-${randomUUID()}`;
 
-    // Default: not consented.
-    expect(hasDataPoolConsent(userA)).toBe(false);
-    expect(getDataPoolConsent(userA).accepted).toBe(false);
+    // Default (unset): share market data (owner 2026-08-05); gate may still re-prompt via version 0.
+    expect(hasDataPoolConsent(userA)).toBe(true);
+    expect(getDataPoolConsent(userA).accepted).toBe(true);
+    expect(getDataPoolConsent(userA).version).toBe(0);
 
-    // Accept for A only — per-user isolation.
+    // Explicit accept for A — current version stamp.
     const rec = setDataPoolConsent(userA, true);
     expect(rec.accepted).toBe(true);
     expect(rec.version).toBe(DATA_POOL_CONSENT_VERSION);
     expect(rec.acceptedAt).toBeTruthy();
     expect(hasDataPoolConsent(userA)).toBe(true);
-    expect(hasDataPoolConsent(userB)).toBe(false);
+    // B still unset → also pools by default (not isolated-off).
+    expect(hasDataPoolConsent(userB)).toBe(true);
 
-    // Decline revokes.
+    // Decline revokes pooling for A only.
     setDataPoolConsent(userA, false);
     expect(hasDataPoolConsent(userA)).toBe(false);
     expect(getDataPoolConsent(userA).acceptedAt).toBeNull();
+    expect(hasDataPoolConsent(userB)).toBe(true);
   });
 
   it("requires the CURRENT consent version (a stale acceptance does not count)", async () => {

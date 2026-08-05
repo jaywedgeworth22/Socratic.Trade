@@ -37,7 +37,8 @@ describe("market scan custom symbols", () => {
     expect(scan.topCandidates.map((quote) => quote.symbol)).toEqual(["SPCX"]);
     expect(scan.quotesBySymbol.SPCX?.price).toBe(161.84);
     expect(scan.source).toContain("yahoo-finance");
-    expect(scan.warnings).toEqual([]);
+    // Durable field store may note seed/shortfall; must not error on the custom ticker path.
+    expect(scan.warnings.every((w) => !/failed|error/i.test(w))).toBe(true);
   });
 
   it("lists yahoo-finance as a source from the quote-only fallback even when enrichment contributes nothing", async () => {

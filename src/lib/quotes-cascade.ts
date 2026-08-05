@@ -2,6 +2,7 @@ import {
   getPolicy,
   getConnectedAccount,
   getActiveConnectedAccount,
+  listConnectedAccounts,
   resolveAlpacaMarketData,
   resolveApiKeyWithSource
 } from "./db";
@@ -10,7 +11,7 @@ import { DEFAULT_POLICY } from "./defaults";
 import { AlpacaSnapshotEnrichmentProvider, fetchWithRetry } from "./data-providers";
 import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch } from "./yahoo-finance";
 import { normalizeSymbol } from "./money";
-import type { BrokerQuote, TradingPolicy } from "./types";
+import type { BrokerQuote, ConnectedAccount, TradingPolicy } from "./types";
 
 /**
  * Helper to extract the first valid number from fields on an object.
@@ -116,17 +117,34 @@ function stampVenueAuthoritative(quote: BrokerQuote, fetchedAtIso: string): Brok
 }
 
 /**
+ * Minimal policy stub so getBrokerGateway can resolve ANY of the user's connected
+ * accounts for market-data reads — not only the active trading account.
+ */
+export function policyStubForConnectedAccount(account: ConnectedAccount): TradingPolicy {
+  return {
+    ...DEFAULT_POLICY,
+    activeBroker: account.broker,
+    connectedAccountId: account.id,
+    accountNumber: account.accountNumber ?? undefined
+  };
+}
+
+/**
  * Robust, redundant cascading quote resolver. Checks quote sources in series:
- * 1. Active Broker Gateway (Alpaca, Robinhood, Tradier, depending on active account)
- * 2. Alpaca Snapshots API
+ * 1a. Active Broker Gateway (account the user is operating)
+ * 1b. EVERY other connected broker for this user (market data only — not fill venue)
+ * 2. Alpaca Snapshots API (any Alpaca key on the user)
  * 3. Yahoo Finance Batch API
  * 4. Yahoo Finance Single Quote API
  * 5. ROIC.ai Profile API
  *
  * Real-time venues: accept when trade-time is within `policy.maxQuoteAgeSec` (default 120s).
- * Venue-delayed (Tradier sandbox paper): accept the broker quote as authoritative whenever it
- * has a price — do NOT continue to fresher external providers (those prices are not what the
- * paper venue can fill at). Missing symbols may still fall through for a last-resort mark.
+ * Venue-delayed (Tradier sandbox paper): accept the *active* broker quote as authoritative
+ * whenever it has a price — do NOT overlay fresher externals for those symbols. Other
+ * connected brokers only fill symbols the active venue could not price.
+ *
+ * Market data is USER-scoped (all connected brokers share one cascade), not duplicated
+ * per trading account.
  */
 export async function fetchFreshQuotesCascade(
   symbols: string[],
@@ -168,45 +186,83 @@ export async function fetchFreshQuotesCascade(
     }
   };
 
-  // --- LEVEL 1: Active Broker Gateway ---
   let maxAgeMs = cascadeFreshMaxAgeMs();
+
+  const ingestBrokerQuotes = (
+    brokerQuotes: Record<string, BrokerQuote>,
+    opts: { venueDelayed: boolean; providerTag: string }
+  ) => {
+    for (const symbol of [...pendingSymbols]) {
+      const quote = brokerQuotes[symbol] ?? brokerQuotes[normalizeSymbol(symbol)];
+      if (!quote) continue;
+      const resolvedPrice = quote.price ?? (quote.bid && quote.ask ? (quote.bid + quote.ask) / 2 : undefined);
+      if (!(typeof resolvedPrice === "number" && resolvedPrice > 0)) continue;
+      let normalizedQuote: BrokerQuote = {
+        ...quote,
+        price: resolvedPrice,
+        provider: quote.provider ?? opts.providerTag
+      };
+      if (opts.venueDelayed) {
+        normalizedQuote = stampVenueAuthoritative(normalizedQuote, fetchedAtIso);
+        updateBestQuote(symbol, normalizedQuote);
+        result[symbol] = normalizedQuote;
+      } else {
+        updateBestQuote(symbol, normalizedQuote);
+        if (isQuoteFresh(normalizedQuote, nowMs, maxAgeMs)) {
+          result[symbol] = normalizedQuote;
+        }
+      }
+    }
+    pendingSymbols = pendingSymbols.filter((s) => !result[s]);
+  };
+
+  // --- LEVEL 1a: Active Broker Gateway ---
   let venueMode: VenueQuoteMode = "realtime";
+  let activeConnectedId: string | undefined;
   try {
     const policy = getPolicy(userId, connectedAccountId);
     maxAgeMs = cascadeFreshMaxAgeMs(policy.maxQuoteAgeSec);
     venueMode = resolveVenueQuoteMode(policy, userId);
+    activeConnectedId = policy.connectedAccountId;
     const activeAccountNum = accountNumber ?? policy.accountNumber;
     if (activeAccountNum && policy.activeBroker) {
       const gateway = getBrokerGateway(policy, userId);
       const brokerQuotes = await gateway.getEquityQuotes(activeAccountNum, pendingSymbols);
-      for (const symbol of pendingSymbols) {
-        const quote = brokerQuotes[symbol];
-        if (quote) {
-          const resolvedPrice = quote.price ?? (quote.bid && quote.ask ? (quote.bid + quote.ask) / 2 : undefined);
-          if (typeof resolvedPrice === "number" && resolvedPrice > 0) {
-            let normalizedQuote: BrokerQuote = {
-              ...quote,
-              price: resolvedPrice
-            };
-            if (venueMode === "venue_delayed") {
-              // Tradier sandbox: this IS the fill world. Stop the cascade for this symbol.
-              normalizedQuote = stampVenueAuthoritative(normalizedQuote, fetchedAtIso);
-              updateBestQuote(symbol, normalizedQuote);
-              result[symbol] = normalizedQuote;
-            } else {
-              updateBestQuote(symbol, normalizedQuote);
-              if (isQuoteFresh(normalizedQuote, nowMs, maxAgeMs)) {
-                result[symbol] = normalizedQuote;
-              }
-            }
-          }
-        }
-      }
-      // Update pending symbols
-      pendingSymbols = pendingSymbols.filter((s) => !result[s]);
+      ingestBrokerQuotes(brokerQuotes, {
+        venueDelayed: venueMode === "venue_delayed",
+        providerTag: String(policy.activeBroker)
+      });
     }
   } catch (error) {
-    console.warn("[quotes-cascade] Level 1 (Broker) fetch failed or skipped:", error instanceof Error ? error.message : error);
+    console.warn("[quotes-cascade] Level 1a (active broker) failed:", error instanceof Error ? error.message : error);
+  }
+
+  // --- LEVEL 1b: ALL other connected brokers for this user (market-data only) ---
+  if (pendingSymbols.length > 0) {
+    try {
+      for (const account of listConnectedAccounts(userId)) {
+        if (pendingSymbols.length === 0) break;
+        if (activeConnectedId && account.id === activeConnectedId) continue;
+        if (accountNumber && account.accountNumber && account.accountNumber === accountNumber) continue;
+        if (!account.accountNumber) continue;
+        try {
+          const stub = policyStubForConnectedAccount(account);
+          const gateway = getBrokerGateway(stub, userId);
+          const brokerQuotes = await gateway.getEquityQuotes(account.accountNumber, pendingSymbols);
+          ingestBrokerQuotes(brokerQuotes, {
+            venueDelayed: false,
+            providerTag: `${account.broker}-connected`
+          });
+        } catch (err) {
+          console.warn(
+            `[quotes-cascade] Level 1b (${account.broker} ${account.id}) failed:`,
+            err instanceof Error ? err.message : err
+          );
+        }
+      }
+    } catch (error) {
+      console.warn("[quotes-cascade] Level 1b multi-broker list failed:", error instanceof Error ? error.message : error);
+    }
   }
 
   // On venue-delayed mode we only cascade for symbols the broker could not price at all.
