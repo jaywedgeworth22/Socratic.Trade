@@ -30,7 +30,7 @@ import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Chip, Dash, Field, Meter, Select, TextInput } from "../ui/primitives";
-import { deriveRunBlock, RunOnceButton, RunStateButton, TypedConfirm } from "../components/chrome";
+import { deriveRunBlock, RunStateButton, TypedConfirm } from "../components/chrome";
 import { orderTypeLabel } from "../orders/lib";
 import {
   AdvancedGroup,
@@ -573,8 +573,9 @@ function AutonomyCard() {
   return (
     <Card title="Autonomy">
       <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
-        Is the agent on, on what cadence, and can you run it now? Start/Stop and Run once use the same controls as the
-        top bar — nothing new under the hood.
+        Is the agent on, on what cadence, and can you run it now?{" "}
+        <strong className="font-semibold text-[color:var(--con-fg)]">Run once</strong> and Start/Stop live in the top
+        bar only (one control each — this panel explains state and blockers, it does not duplicate those buttons).
       </p>
 
       {/* Status grid: systemState · authority · cadence */}
@@ -614,9 +615,10 @@ function AutonomyCard() {
         </div>
       </div>
 
-      {/* Actions: same chrome helpers as the top bar */}
+      {/* Run once / Start / Stop stay in chrome only (owner: no stacked duplicate CTAs).
+          This panel still shows Start/Stop for Autonomy deep-links where the question is
+          “is the agent on?” — Run once is deliberately chrome-only. */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <RunOnceButton snapshot={snapshot} />
         <RunStateButton snapshot={snapshot} />
         <Link
           href="/console/guardrails#autonomy"
@@ -627,7 +629,7 @@ function AutonomyCard() {
         </Link>
       </div>
 
-      {/* Why can’t I run? — same preflight as Run once */}
+      {/* Why can’t I run? — same preflight as chrome Run once */}
       {runBlock ? (
         <div className="mb-4 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2.5">
           <div className="flex flex-wrap items-center gap-2">

@@ -404,6 +404,18 @@ export default function ApprovalsPage() {
                   <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
                     When a run stages a trade that needs your approval, it shows up here.
                   </p>
+                  <p className="mt-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                    Need a cycle now? Use <strong className="font-semibold text-[color:var(--con-fg)]">Run once</strong>{" "}
+                    in the top bar
+                    {stopped ? (
+                      <>
+                        {" "}
+                        (works while stopped). To approve later, start the agent from the same bar first.
+                      </>
+                    ) : (
+                      <> — then return here to decide.</>
+                    )}
+                  </p>
                 </>
               ) : (
                 <>
