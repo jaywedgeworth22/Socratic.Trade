@@ -62,7 +62,7 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-04 (GROK: UX PR-A1 honest run skip statuses — PR #2418).
+Last updated: 2026-08-05 (GROK: UX program Waves A–E complete).
 Last updated: 2026-08-04 (GROK: UX Wave C speed C1–C4).
 Last updated: 2026-08-04 (GROK: UX Wave B IA landing).
 Last updated: 2026-08-04 (GROK: UX PR-A3 first-run readiness checklist — PR #2417).
@@ -106,6 +106,11 @@ Program rollout: `docs/rollouts/2026-08-04-ux-improvement-program.md`. A3 rollou
 `grok/ux-wave-d-mobile`. Remaining A/B/C slices stay Planned/UNASSIGNED until claimed.
 Rollouts: `docs/rollouts/2026-08-04-ux-improvement-program.md`,
 `docs/rollouts/2026-08-04-ux-wave-d-mobile.md`.
+
+
+## UX program complete (2026-08-05, GROK)
+
+All sequenced UX waves A–E from `docs/design/ux-improvement-program.md` are **merged to main** (auto-deploy). Key PRs: #2411 A4+A5, #2413 B1, #2414 A2, #2417 A3, #2418 A1, #2423 C, #2424/#2431 D, #2425 B2/B4, #2426 B3+E. Rollout: `docs/rollouts/2026-08-05-ux-program-complete.md`. Deferred: E1 empty-state system, unauth apex→welcome.
 
 ## Where things stand
 
