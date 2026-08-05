@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 import { getDb, audit } from "./db";
 import { normalizeSymbol } from "./money";
+import { registerPlanTierLookup } from "./provider-tier-plan";
 import type {
   AccountCapabilities,
   ChatTurn,
@@ -253,6 +254,8 @@ export interface UserApiKey {
   service: string;
   apiKey: string;
   label?: string;
+  /** Declared vendor plan tier (free/power/starter/…). Null/undefined = unknown → free-safe defaults. */
+  planTier?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -293,7 +296,10 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   tiingo: "TIINGO_API_KEY",
   twelvedata: "TWELVEDATA_API_KEY",
   logodev: "LOGO_DEV_TOKEN",
-  logodev_secret: "LOGO_DEV_SECRET_KEY"
+  logodev_secret: "LOGO_DEV_SECRET_KEY",
+  marketaux: "MARKETAUX_API_KEY",
+  earningscalls: "EARNINGSCALLS_API_KEY",
+  rapidapi: "RAPIDAPI_KEY"
 };
 
 const API_KEY_SERVICE_ALIASES: Record<string, string> = {
@@ -351,7 +357,12 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   logodev_token: "logodev",
   logo_dev_secret: "logodev_secret",
   logo_dev_secret_key: "logodev_secret",
-  logodev_secret_key: "logodev_secret"
+  logodev_secret_key: "logodev_secret",
+  marketaux_api_key: "marketaux",
+  earnings_calls: "earningscalls",
+  earningscalls_api_key: "earningscalls",
+  rapid_api: "rapidapi",
+  rapidapi_key: "rapidapi"
 };
 
 function keyRowToApiKey(row: {
@@ -360,6 +371,7 @@ function keyRowToApiKey(row: {
   service: string;
   api_key: string;
   label: string | null;
+  plan_tier?: string | null;
   created_at: string;
   updated_at: string;
 }): UserApiKey {
@@ -369,6 +381,7 @@ function keyRowToApiKey(row: {
     service: row.service,
     apiKey: decryptValue(row.api_key),
     label: row.label ?? undefined,
+    planTier: row.plan_tier ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -397,37 +410,63 @@ export function listSupportedApiKeyServices(): string[] {
   return Object.keys(API_KEY_ENV_MAP);
 }
 
+type UserApiKeyRow = {
+  id: string;
+  user_id: string;
+  service: string;
+  api_key: string;
+  label: string | null;
+  plan_tier: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const USER_API_KEY_SELECT =
+  "SELECT id, user_id, service, api_key, label, plan_tier, created_at, updated_at FROM user_api_keys";
+
 export function getUserApiKey(userId: string, service: string): UserApiKey | undefined {
   const canonical = normalizeApiKeyService(service);
-  const statement = getDb().prepare("SELECT id, user_id, service, api_key, label, created_at, updated_at FROM user_api_keys WHERE user_id = ? AND service = ?");
+  const statement = getDb().prepare(`${USER_API_KEY_SELECT} WHERE user_id = ? AND service = ?`);
   const row =
-    (statement.get(userId, canonical) as { id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string } | undefined) ??
-    (canonical !== service
-      ? (statement.get(userId, service) as { id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string } | undefined)
-      : undefined);
+    (statement.get(userId, canonical) as UserApiKeyRow | undefined) ??
+    (canonical !== service ? (statement.get(userId, service) as UserApiKeyRow | undefined) : undefined);
   if (!row) return undefined;
   return keyRowToApiKey(row);
 }
 
 export function listUserApiKeys(userId: string): UserApiKey[] {
   const rows = getDb()
-    .prepare("SELECT id, user_id, service, api_key, label, created_at, updated_at FROM user_api_keys WHERE user_id = ? ORDER BY service")
-    .all(userId) as Array<{ id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string }>;
+    .prepare(`${USER_API_KEY_SELECT} WHERE user_id = ? ORDER BY service`)
+    .all(userId) as UserApiKeyRow[];
   return rows.map(keyRowToApiKey).filter((k) => k.apiKey !== DELETED_KEY_TOMBSTONE);
 }
 
-export function upsertUserApiKey(userId: string, service: string, apiKey: string, label?: string): UserApiKey {
+export function upsertUserApiKey(
+  userId: string,
+  service: string,
+  apiKey: string,
+  label?: string,
+  planTier?: string | null
+): UserApiKey {
   const canonical = normalizeApiKeyService(service);
   const now = new Date().toISOString();
   const id = `${userId}_${canonical}`;
   const encryptedKey = encryptValue(apiKey);
+  const existing = getUserApiKey(userId, canonical);
+  // Preserve prior plan_tier when the caller omits it (key replace without re-picking tier).
+  const nextTier =
+    planTier === undefined ? (existing?.planTier ?? null) : planTier === null || planTier === "" ? null : planTier;
   getDb()
     .prepare(
-      `INSERT INTO user_api_keys (id, user_id, service, api_key, label, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
+      `INSERT INTO user_api_keys (id, user_id, service, api_key, label, plan_tier, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, service) DO UPDATE SET
+         api_key = excluded.api_key,
+         label = excluded.label,
+         plan_tier = excluded.plan_tier,
+         updated_at = excluded.updated_at`
     )
-    .run(id, userId, canonical, encryptedKey, label ?? null, now, now);
+    .run(id, userId, canonical, encryptedKey, label ?? null, nextTier, now, now);
   if (userId === LOCAL_USER && credTierForService(canonical) === "per-user-only") {
     const vars = ALL_SERVICE_ENV_VARS[canonical] ?? (API_KEY_ENV_MAP[canonical] ? [API_KEY_ENV_MAP[canonical]] : []);
     for (const envVar of vars) {
@@ -436,7 +475,38 @@ export function upsertUserApiKey(userId: string, service: string, apiKey: string
       }
     }
   }
-  return { id, userId, service: canonical, apiKey, label, createdAt: now, updatedAt: now };
+  return {
+    id,
+    userId,
+    service: canonical,
+    apiKey,
+    label,
+    planTier: nextTier ?? undefined,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+/**
+ * Update only the declared plan tier for an existing key (no re-paste of the secret).
+ * Returns undefined when no non-tombstone key row exists for the service.
+ */
+export function setUserApiKeyPlanTier(
+  userId: string,
+  service: string,
+  planTier: string | null
+): UserApiKey | undefined {
+  const canonical = normalizeApiKeyService(service);
+  const existing = getUserApiKey(userId, canonical);
+  if (!existing || existing.apiKey === DELETED_KEY_TOMBSTONE) return undefined;
+  const now = new Date().toISOString();
+  const nextTier = planTier === null || planTier === "" ? null : planTier;
+  getDb()
+    .prepare(
+      `UPDATE user_api_keys SET plan_tier = ?, updated_at = ? WHERE user_id = ? AND service = ?`
+    )
+    .run(nextTier, now, userId, canonical);
+  return { ...existing, planTier: nextTier ?? undefined, updatedAt: now };
 }
 
 export const DELETED_KEY_TOMBSTONE = "__DISABLED__";
@@ -506,6 +576,18 @@ export type CredTier = "per-user-only" | "shared-operator-infra";
 
 export const LOCAL_USER = "local";
 
+// Wire operator plan-tier → quota resolver (provider-rate-limit.resolveProviderQuota).
+// Side-effect on module load after LOCAL_USER + DELETED_KEY_TOMBSTONE + getUserApiKey exist.
+registerPlanTierLookup((service) => {
+  try {
+    const row = getUserApiKey(LOCAL_USER, service);
+    if (!row || row.apiKey === DELETED_KEY_TOMBSTONE) return null;
+    return row.planTier ?? null;
+  } catch {
+    return null;
+  }
+});
+
 // Per-user-only (env = `local` operator only): the LLM keys (openai, anthropic, xai, gemini,
 // mistral), alpaca_paper_api_key, alpaca_paper_secret_key — and any UNLISTED service (the
 // fail-closed default). Everything below is operator-funded shared infrastructure where env is a
@@ -528,7 +610,10 @@ const API_KEY_TIER: Record<string, CredTier> = {
   voyage: "shared-operator-infra",
   siliconflow: "shared-operator-infra",
   logodev: "shared-operator-infra",
-  logodev_secret: "shared-operator-infra"
+  logodev_secret: "shared-operator-infra",
+  marketaux: "shared-operator-infra",
+  earningscalls: "shared-operator-infra",
+  rapidapi: "shared-operator-infra"
 };
 
 export function credTierForService(service: string): CredTier {
@@ -887,7 +972,10 @@ const ALL_SERVICE_ENV_VARS: Record<string, string[]> = {
   twelvedata: ["TWELVEDATA_API_KEY", "TWELVE_DATA_API_KEY"],
   filingapi: ["FILINGAPI", "FILINGAPI_KEY", "FILING_API_KEY"],
   logodev: ["LOGO_DEV_TOKEN", "LOGO_DEV_API_KEY"],
-  logodev_secret: ["LOGO_DEV_SECRET_KEY", "LOGO_DEV_SECRET"]
+  logodev_secret: ["LOGO_DEV_SECRET_KEY", "LOGO_DEV_SECRET"],
+  marketaux: ["MARKETAUX_API_KEY"],
+  earningscalls: ["EARNINGSCALLS_API_KEY", "EARNINGSCALLS_RAPIDAPI_KEY"],
+  rapidapi: ["RAPIDAPI_KEY"]
 };
 
 /** Purge all LLM and user-providable interface keys from process.env so process.env stays clean. */

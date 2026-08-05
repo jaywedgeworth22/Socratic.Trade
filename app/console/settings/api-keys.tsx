@@ -6,13 +6,22 @@
  *  WHICH of several keys for one provider is serving you. A key is still
  *  written once and never shown in full again. "Server key" means the
  *  operator's env credential is serving you — you can still store your own,
- *  which always wins. */
+ *  which always wins.
+ *
+ *  Optional market-data keys also carry a declared plan tier (free / power / …)
+ *  so quotas and endpoint expectations match what you actually pay for. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleApiError } from "../lib/api";
 import { useToast } from "../ui/toast";
-import { Ago, Btn, Card, Chip, Field, TextInput } from "../ui/primitives";
-import { deleteApiKey, listApiKeys, saveApiKey, type ApiKeyEntry } from "./lib";
+import { Ago, Btn, Card, Chip, Field, Select, TextInput } from "../ui/primitives";
+import {
+  deleteApiKey,
+  listApiKeys,
+  saveApiKey,
+  saveApiKeyPlanTier,
+  type ApiKeyEntry
+} from "./lib";
 
 const getSourceCopy = (source: ApiKeyEntry["source"], credName: string) => {
   switch (source) {
@@ -84,6 +93,19 @@ export function ApiKeysCard() {
     }
   };
 
+  const onPlanTierChange = async (entry: ApiKeyEntry, planTier: string) => {
+    setBusy(entry.service);
+    try {
+      await saveApiKeyPlanTier(entry.service, planTier);
+      await load();
+      toast.push("pos", `${entry.label} plan updated`, `Quotas will treat this key as ${planTier} when env knobs are unset.`);
+    } catch (error) {
+      toast.push("neg", "Could not save plan tier", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <Card title="API keys">
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
@@ -91,9 +113,13 @@ export function ApiKeysCard() {
         again — only whether one is set, where it came from, and the first and last few characters of the key that
         actually resolves. <strong className="font-semibold text-[color:var(--con-muted)]">Required for strategy runs:</strong>{" "}
         an LLM key (OpenRouter is the production path) so Green/Red team models can propose and debate.{" "}
-        <strong className="font-semibold text-[color:var(--con-muted)]">Optional enrichment:</strong> Finnhub, FMP, FRED,
-        and similar data providers deepen the scan — without them the app still uses free floors (e.g. Yahoo). Market
-        data, positions, and guardrails work without optional keys; autonomous proposals do not.
+        <strong className="font-semibold text-[color:var(--con-muted)]">Optional enrichment:</strong> Finnhub, Tiingo, FRED,
+        and similar data providers deepen the scan — without them the app still uses free floors (e.g. Yahoo).{" "}
+        <strong className="font-semibold text-[color:var(--con-muted)]">Direct FMP and QuiverQuant are retired</strong>{" "}
+        here (Congress.Trade owns that class of data). Market data, positions, and guardrails work without optional
+        keys; autonomous proposals do not. For market-data keys, pick your{" "}
+        <strong className="font-semibold text-[color:var(--con-muted)]">plan tier</strong> so free vs paid quotas match
+        what you pay for.
       </p>
 
       {loadError && (
@@ -121,6 +147,8 @@ export function ApiKeysCard() {
                 const source = getSourceCopy(entry.source, credName);
                 const isEditing = editing === entry.service;
                 const isConfirmingDelete = confirmingDelete === entry.service;
+                const showTier = Boolean(entry.planTierOptions && entry.planTierOptions.length > 0);
+                const retired = Boolean(entry.retired);
                 return (
                   <div
                     key={entry.service}
@@ -128,10 +156,18 @@ export function ApiKeysCard() {
                     className="px-3 py-2.5 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <span className="font-semibold" title={entry.unlocks}>
                           {entry.label}
                         </span>
+                        {retired && (
+                          <Chip
+                            tone="muted"
+                            title={entry.retiredNote ?? "Retired on Socratic.Trade — Congress.Trade only."}
+                          >
+                            Retired · CT-only
+                          </Chip>
+                        )}
                         <Chip tone={source.tone} title={source.title}>
                           {source.chip}
                         </Chip>
@@ -151,34 +187,78 @@ export function ApiKeysCard() {
                             saved <Ago iso={entry.updatedAt} />
                           </span>
                         )}
+                        {showTier && (
+                          <label
+                            className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"
+                            title="Vendor plan for this key. Free-tier quotas apply when env knobs are unset."
+                          >
+                            <span className="whitespace-nowrap">Plan</span>
+                            <Select
+                              className="min-w-[8.5rem] py-0.5 text-[length:var(--con-fs-xs)]"
+                              value={entry.planTier ?? "unknown"}
+                              disabled={busy !== null || retired || entry.source === "none"}
+                              onChange={(e) => {
+                                const next = e.target.value;
+                                if (entry.source === "user" || entry.source === "env") {
+                                  // Env-only keys still need a stored row to hold plan_tier —
+                                  // tier-only POST requires a user key. When source is env with no
+                                  // user row, prompt add-key path.
+                                  if (entry.source === "env" && !entry.updatedAt) {
+                                    toast.push(
+                                      "warn",
+                                      "Add your own key first",
+                                      "Plan tier is stored next to your key. Paste a key, then set the plan — or replace with the same server key value if you want a local row."
+                                    );
+                                    setEditing(entry.service);
+                                    return;
+                                  }
+                                  void onPlanTierChange(entry, next);
+                                } else {
+                                  setEditing(entry.service);
+                                }
+                              }}
+                              aria-label={`${entry.label} plan tier`}
+                            >
+                              {(entry.planTierOptions ?? []).map((opt) => (
+                                <option key={opt.id} value={opt.id} title={opt.hint}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </Select>
+                          </label>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <a
-                          href={entry.docsUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] hover:underline"
-                          title={`Opens ${entry.label}'s own site, where keys are created. (new tab)`}
-                        >
-                          get a key ↗
-                        </a>
-                        <Btn
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy !== null}
-                          onClick={() => {
-                            setEditing(isEditing ? null : entry.service);
-                            setConfirmingDelete(null);
-                          }}
-                          title={
-                            entry.source === "user"
-                              ? `Replace your stored ${credName} with a new value. The old one is overwritten server-side.`
-                              : `Store your own ${credName} for this service.`
-                          }
-                        >
-                          {isEditing ? "Close" : entry.source === "user" ? "Replace" : `Add ${credName}`}
-                        </Btn>
-                        {entry.source === "user" && (
+                        {!retired && (
+                          <a
+                            href={entry.docsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] hover:underline"
+                            title={`Opens ${entry.label}'s own site, where keys are created. (new tab)`}
+                          >
+                            get a key ↗
+                          </a>
+                        )}
+                        {!retired && (
+                          <Btn
+                            size="sm"
+                            variant="ghost"
+                            disabled={busy !== null}
+                            onClick={() => {
+                              setEditing(isEditing ? null : entry.service);
+                              setConfirmingDelete(null);
+                            }}
+                            title={
+                              entry.source === "user"
+                                ? `Replace your stored ${credName} with a new value. The old one is overwritten server-side.`
+                                : `Store your own ${credName} for this service.`
+                            }
+                          >
+                            {isEditing ? "Close" : entry.source === "user" ? "Replace" : `Add ${credName}`}
+                          </Btn>
+                        )}
+                        {entry.source === "user" && !retired && (
                           <Btn
                             size="sm"
                             variant="dangerOutline"
@@ -218,15 +298,15 @@ export function ApiKeysCard() {
                         </div>
                       </div>
                     )}
-                    {isEditing && (
+                    {isEditing && !retired && (
                       <KeyEditor
                         entry={entry}
                         busy={busy === entry.service}
                         onCancel={() => setEditing(null)}
-                        onSave={async (value, label) => {
+                        onSave={async (value, label, planTier) => {
                           setBusy(entry.service);
                           try {
-                            await saveApiKey(entry.service, value, label);
+                            await saveApiKey(entry.service, value, label, planTier);
                             await load();
                             setEditing(null);
                             toast.push("pos", `${entry.label} ${credName} saved`, "Stored server-side. It won't be shown again.");
@@ -258,10 +338,12 @@ function KeyEditor({
   entry: ApiKeyEntry;
   busy: boolean;
   onCancel: () => void;
-  onSave: (value: string, label?: string) => Promise<void>;
+  onSave: (value: string, label?: string, planTier?: string) => Promise<void>;
 }) {
   const [value, setValue] = useState("");
   const [label, setLabel] = useState(entry.savedLabel ?? "");
+  const [planTier, setPlanTier] = useState(entry.planTier ?? "free");
+  const showTier = Boolean(entry.planTierOptions && entry.planTierOptions.length > 0);
 
   const credName = entry.credentialName ?? "key";
 
@@ -293,6 +375,27 @@ function KeyEditor({
               title="A non-secret note to remember which key this is."
             />
           </Field>
+          {showTier && (
+            <Field
+              label="Plan tier"
+              htmlFor={`key-tier-${entry.service}`}
+              hint="Free-tier quotas apply until you declare a paid plan."
+            >
+              <Select
+                id={`key-tier-${entry.service}`}
+                value={planTier}
+                onChange={(e) => setPlanTier(e.target.value)}
+                title="Vendor subscription tier for this key."
+              >
+                {(entry.planTierOptions ?? []).map((opt) => (
+                  <option key={opt.id} value={opt.id} title={opt.hint}>
+                    {opt.label}
+                    {opt.hint ? ` — ${opt.hint}` : ""}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
         </div>
         <div className="flex items-end gap-2">
           <Btn size="sm" variant="ghost" onClick={onCancel} title="Discard without saving.">
@@ -302,7 +405,7 @@ function KeyEditor({
             size="sm"
             variant="primary"
             disabled={busy || value.trim().length === 0}
-            onClick={() => void onSave(value.trim(), label)}
+            onClick={() => void onSave(value.trim(), label, showTier ? planTier : undefined)}
             title={`Store this ${credName} server-side for your user.`}
           >
             {busy ? "Saving…" : `Save ${credName}`}

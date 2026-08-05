@@ -127,6 +127,12 @@ export function renameAccount(id: string, label: string): Promise<{ ok: boolean 
 
 /** One catalog entry from GET /api/keys. The key VALUE is never returned by
  *  the server — only whether one resolves and where it came from. */
+export interface ApiKeyPlanTierOption {
+  id: string;
+  label: string;
+  hint?: string;
+}
+
 export interface ApiKeyEntry {
   service: string;
   label: string;
@@ -147,6 +153,12 @@ export interface ApiKeyEntry {
   savedLabel?: string;
   /** UI text override (default is "key", e.g., "contact" for SEC) */
   credentialName?: string;
+  /** Declared vendor plan tier (free/power/starter/…). Present for optional market-data keys. */
+  planTier?: string;
+  planTierOptions?: ApiKeyPlanTierOption[];
+  /** ST product retired (e.g. FMP) — show badge, disable add when CT-only. */
+  retired?: boolean;
+  retiredNote?: string;
 }
 
 export function listApiKeys(): Promise<{ keys: ApiKeyEntry[] }> {
@@ -155,10 +167,28 @@ export function listApiKeys(): Promise<{ keys: ApiKeyEntry[] }> {
 
 /** POST /api/keys — add or replace your key for a service. The value is sent
  *  once and stored server-side; it is never echoed back. */
-export function saveApiKey(service: string, apiKey: string, label?: string): Promise<{ success: boolean }> {
+export function saveApiKey(
+  service: string,
+  apiKey: string,
+  label?: string,
+  planTier?: string
+): Promise<{ success: boolean }> {
   return request<{ success: boolean }>("/api/keys", {
     method: "POST",
-    body: JSON.stringify({ service, apiKey, ...(label?.trim() ? { label: label.trim() } : {}) })
+    body: JSON.stringify({
+      service,
+      apiKey,
+      ...(label?.trim() ? { label: label.trim() } : {}),
+      ...(planTier ? { planTier } : {})
+    })
+  });
+}
+
+/** POST /api/keys with planTier only — update declared plan without re-pasting the secret. */
+export function saveApiKeyPlanTier(service: string, planTier: string): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>("/api/keys", {
+    method: "POST",
+    body: JSON.stringify({ service, planTier })
   });
 }
 

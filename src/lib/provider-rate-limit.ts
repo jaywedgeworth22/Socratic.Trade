@@ -11,6 +11,7 @@
 // so the cascade's chunking logic can stay untouched.
 
 import { createDurableMap, hasHydratedNamespace, resetDurableStateCacheForTests } from "./durable-state";
+import { lookupRegisteredPlanTier, quotaWindowsForPlan } from "./provider-tier-plan";
 import { usageMonitorKnobNumber } from "./usage-monitor-knobs";
 
 export interface ProviderLimiterClock {
@@ -307,7 +308,8 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
 /** Env-overridable effective windows for a provider. `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`
  *  overrides (or adds) the corresponding window; a value <= 0 removes that window. `process.env` wins
  *  over the Usage Monitor's subscription-derived knob (usage-monitor-knobs.ts, same env-var names),
- *  which wins over the built-in RATE_QUOTAS default. Returns the merged window list, or `undefined`
+ *  which wins over a user-declared plan tier (Connections dropdown → provider-tier-plan.ts), which
+ *  wins over the built-in RATE_QUOTAS default. Returns the merged window list, or `undefined`
  *  for an unlimited provider. */
 // Back-compat: providers whose per-minute knob had a different name before the unified quota. The
 // new PROVIDER_QUOTA_<NAME>_PER_MIN wins; the legacy name is honored only when the new one is unset,
@@ -317,9 +319,29 @@ const LEGACY_PER_MIN_ENV: Record<string, string> = {
   twelvedata: "TWELVEDATA_CREDITS_PER_MIN"
 };
 
-export function resolveProviderQuota(provider: string): RateWindow[] | undefined {
+/**
+ * Optional plan-tier override for resolveProviderQuota. When omitted, the resolver looks up the
+ * operator (`local`) user's stored plan_tier for the matching API-key service (lazy require so this
+ * module stays free of a hard cycle with db-api-keys at import time).
+ */
+export function resolveProviderQuota(provider: string, planTier?: string | null): RateWindow[] | undefined {
   const key = envKeyFor(provider);
-  const base = RATE_QUOTAS[provider] ? RATE_QUOTAS[provider].map((w) => ({ ...w })) : [];
+  // Explicit arg wins; otherwise consult the DB-backed lookup registered by db-api-keys.
+  const effectiveTier = planTier === undefined ? lookupRegisteredPlanTier(provider) : planTier;
+  const serviceForTier =
+    provider === "alpha-vantage" ? "alphavantage" : provider;
+  const tierWindows =
+    effectiveTier && effectiveTier.length > 0
+      ? quotaWindowsForPlan(serviceForTier, effectiveTier)
+      : undefined;
+  // Tier map hit (including empty = unlimited tier) replaces RATE_QUOTAS hard default as the base.
+  // Tier map miss (undefined) falls through to RATE_QUOTAS.
+  const base: RateWindow[] =
+    tierWindows !== undefined
+      ? tierWindows.map((w) => ({ ...w }))
+      : RATE_QUOTAS[provider]
+        ? RATE_QUOTAS[provider].map((w) => ({ ...w }))
+        : [];
   const legacyPerMinEnv = LEGACY_PER_MIN_ENV[provider];
   const perMin =
     finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_MIN`) ??
