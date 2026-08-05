@@ -974,19 +974,38 @@ export function MobileFreshnessBar({
 }) {
   const spend = deriveSpend(snapshot);
   const freshnessLabel = deriveFreshnessLabel(fetchedAt, error, stream);
+  // PR-E3: when healthy, collapse to one short line (Fresh · Today) instead of
+  // repeating clock + label + spend + delayed chip. Unhealthy keeps the detail.
+  const healthy = !error && freshnessLabel === "fresh" && fetchedAt != null;
   return (
     <div className="flex items-center gap-3 border-t border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-4 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] lg:hidden">
-      <span title="When this console last fetched data. It refreshes about every 15 seconds.">
-        Data as of {fetchedAt ? fmtClock(fetchedAt) : EM_DASH} · {freshnessLabel}
-      </span>
-      <span className="con-num ml-auto flex items-center gap-1.5" title="Opening orders only. Exits never consume the daily cap.">
-        <ShieldCheck size={12} />
-        Today: {fmtMoney(spend.usedNotional)}
-      </span>
-      {error && (
-        <span className="shrink-0 font-semibold text-[color:var(--con-warn)]" title={error}>
-          delayed
+      {healthy ? (
+        <span
+          className="flex min-w-0 flex-1 items-center gap-2 truncate"
+          title={`Data as of ${fmtClock(fetchedAt)}. Refreshes about every 15 seconds. Opening orders only for the daily cap.`}
+        >
+          <span>Fresh</span>
+          <span aria-hidden>·</span>
+          <span className="con-num inline-flex items-center gap-1.5">
+            <ShieldCheck size={12} />
+            Today: {fmtMoney(spend.usedNotional)}
+          </span>
         </span>
+      ) : (
+        <>
+          <span title="When this console last fetched data. It refreshes about every 15 seconds.">
+            Data as of {fetchedAt ? fmtClock(fetchedAt) : EM_DASH} · {freshnessLabel}
+          </span>
+          <span className="con-num ml-auto flex items-center gap-1.5" title="Opening orders only. Exits never consume the daily cap.">
+            <ShieldCheck size={12} />
+            Today: {fmtMoney(spend.usedNotional)}
+          </span>
+          {error && (
+            <span className="shrink-0 font-semibold text-[color:var(--con-warn)]" title={error}>
+              delayed
+            </span>
+          )}
+        </>
       )}
     </div>
   );

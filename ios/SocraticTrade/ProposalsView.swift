@@ -19,6 +19,7 @@ struct ProposalsView: View {
                 ForEach(snapshot.pendingProposals) { proposal in
                     ProposalCard(
                         proposal: proposal,
+                        feedback: store.proposalActionFeedback(proposalId: proposal.id),
                         approveBusy: store.isBusy(approveOperationID(proposal)),
                         rejectBusy: store.isBusy(rejectOperationID(proposal)),
                         approveDisabled: !store.canSubmit("proposal.approve"),
@@ -144,7 +145,7 @@ private struct ProposalQueueSummary: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(snapshot.pendingProposals.count) awaiting review")
                         .font(.headline)
-                    Text("\(snapshot.readiness.strategyAuthority.capitalized) authority · backend validation remains final")
+                    Text("\(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority)) · backend validation remains final")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -155,6 +156,7 @@ private struct ProposalQueueSummary: View {
 
 private struct ProposalCard: View {
     let proposal: PendingProposal
+    let feedback: ProposalActionFeedback?
     let approveBusy: Bool
     let rejectBusy: Bool
     let approveDisabled: Bool
@@ -168,6 +170,14 @@ private struct ProposalCard: View {
         case "buy", "cover": return AppPalette.positive
         default: return AppPalette.negative
         }
+    }
+
+    private var actionInFlight: Bool {
+        feedback?.isInFlight == true
+    }
+
+    private var actionSettled: Bool {
+        feedback?.isSettledSuccess == true
     }
 
     var body: some View {
@@ -239,6 +249,10 @@ private struct ProposalCard: View {
                         .foregroundStyle(AppPalette.warning)
                 }
 
+                if let feedback {
+                    ProposalActionFeedbackBanner(feedback: feedback)
+                }
+
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
                         rejectButton
@@ -283,12 +297,26 @@ private struct ProposalCard: View {
         return pieces.joined(separator: " · ")
     }
 
+    private var rejectTitle: String {
+        if feedback?.action == .reject, actionInFlight {
+            return "Rejecting…"
+        }
+        return "Reject"
+    }
+
+    private var approveTitle: String {
+        if feedback?.action == .approve, actionInFlight {
+            return "Approving…"
+        }
+        return requiresTypedConfirmation ? "Review & Approve" : "Approve"
+    }
+
     private var rejectButton: some View {
         CommandButton(
-            "Reject",
+            rejectTitle,
             systemImage: "xmark",
-            isBusy: rejectBusy,
-            isDisabled: rejectDisabled,
+            isBusy: rejectBusy || (feedback?.action == .reject && actionInFlight),
+            isDisabled: rejectDisabled || actionInFlight || actionSettled,
             role: .destructive,
             action: reject
         )
@@ -296,13 +324,75 @@ private struct ProposalCard: View {
 
     private var approveButton: some View {
         CommandButton(
-            requiresTypedConfirmation ? "Review & Approve" : "Approve",
+            approveTitle,
             systemImage: "checkmark",
-            isBusy: approveBusy,
-            isDisabled: approveDisabled,
+            isBusy: approveBusy || (feedback?.action == .approve && actionInFlight),
+            isDisabled: approveDisabled || actionInFlight || actionSettled,
             prominent: true,
             action: approve
         )
+    }
+}
+
+/// On-card strip for approve/reject lifecycle (sending → queued/running → success/fail).
+private struct ProposalActionFeedbackBanner: View {
+    let feedback: ProposalActionFeedback
+
+    var body: some View {
+        Label {
+            Text(message)
+                .font(.caption.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            if showsSpinner {
+                ProgressView()
+                    .controlSize(.mini)
+            } else {
+                Image(systemName: systemImage)
+            }
+        }
+        .foregroundStyle(color)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var showsSpinner: Bool {
+        switch feedback {
+        case .sending, .pending: return true
+        case .failed, .succeeded: return false
+        }
+    }
+
+    private var message: String {
+        switch feedback {
+        case .sending(let action):
+            return action == .approve ? "Sending approve…" : "Sending reject…"
+        case .pending(let action, let status):
+            let verb = action == .approve ? "Approve" : "Reject"
+            return "\(verb) \(status)…"
+        case .failed(_, let message):
+            return message
+        case .succeeded(let action):
+            return action == .approve ? "Approved — waiting for desk refresh." : "Rejected — waiting for desk refresh."
+        }
+    }
+
+    private var systemImage: String {
+        switch feedback {
+        case .sending, .pending: return "arrow.triangle.2.circlepath"
+        case .failed: return "exclamationmark.triangle.fill"
+        case .succeeded: return "checkmark.circle.fill"
+        }
+    }
+
+    private var color: Color {
+        switch feedback {
+        case .sending, .pending: return AppPalette.accent
+        case .failed: return AppPalette.negative
+        case .succeeded: return AppPalette.positive
+        }
     }
 }
 
