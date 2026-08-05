@@ -1,6 +1,12 @@
 ## Current (2026-08-05 GROK symbol-field-store)
 
 **Durable shared `symbol_field_latest` (branch `grok/symbol-field-store`).** Per-field `as_of` + `fetched_at` for every market field on every symbol ever seen; cascade and scan write; interactive scan seeds from store so strategy_run audit bounding no longer blanks PE/EPS/div. Rollout: `docs/rollouts/2026-08-05-symbol-field-latest-store.md`.
+## 2026-08-05 GROK — P0 security residual tranche
+
+- **P0-5** decryptValue rejects plaintext; OAuth legacy path gated by isEncryptedValue.
+- **P0-4** audit hash chain schema v67 + verifyAuditChain.
+- Confirmed already on main: P0-1/2/3, P1-1..7 mechanical.
+- Branch `grok/p0-security-p1-mechanical`.
 
 **2026-08-04 — GROK: Tradier Sandbox venue-aligned quotes (branch `grok/tradier-sandbox-venue-quotes`).**
 Paper Tradier keeps ~15m delayed sandbox quotes as execution-authoritative (no fresher Alpaca/Yahoo

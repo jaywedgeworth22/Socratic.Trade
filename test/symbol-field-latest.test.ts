@@ -41,7 +41,7 @@ describe("symbol_field_latest", () => {
     } = await import("../src/lib/db-fundamentals");
     const { getDb, getSchemaVersion } = await import("../src/lib/db");
     const db = getDb();
-    expect(getSchemaVersion(db)).toBeGreaterThanOrEqual(67);
+    expect(getSchemaVersion(db)).toBeGreaterThanOrEqual(68);
 
     expect(encodeFieldValue(28.5)).toBe("28.5");
     expect(encodeFieldValue("Technology")).toBe(JSON.stringify("Technology"));

@@ -17,7 +17,7 @@ Root cause of “no stale data”:
 
 ## Changes Made
 
-- **v67 `symbol_field_latest` table** (shared, no user_id):
+- **v68 `symbol_field_latest` table** (shared, no user_id):
   - `PRIMARY KEY (symbol, field)`
   - `value_json`, `source`, **`as_of`**, **`fetched_at`** — **per field**, never scan-level only
   - Upsert only when incoming `fetched_at >=` stored (never clobber newer with older)
@@ -34,7 +34,7 @@ Root cause of “no stale data”:
 
 ### Files touched
 
-- `src/lib/db.ts` (migration v67 + baseline CREATE)
+- `src/lib/db.ts` (migration v68 + baseline CREATE)
 - `src/lib/db-fundamentals.ts`
 - `src/lib/data-providers.ts`
 - `src/lib/market.ts`

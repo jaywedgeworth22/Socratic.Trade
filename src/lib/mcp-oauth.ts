@@ -4,6 +4,7 @@ import {
   encryptValue,
   getDb,
   getInternalSetting,
+  isEncryptedValue,
   isValidEncryptionKeyHex,
   setInternalSetting
 } from "./db";
@@ -282,9 +283,8 @@ export function migrateLocalRobinhoodToken(): boolean {
  * Encrypt-on-write / decrypt-on-read helpers for the Robinhood OAuth token blob. Only the SECRET
  * fields (`accessToken`, `refreshToken`) are run through the shared AES-256-GCM field encryption
  * (encryptValue/decryptValue from db-api-keys) — the non-secret metadata (tokenType/scope/expiresAt)
- * stays plaintext for debuggability. `decryptValue` tolerates legacy plaintext (its 3-part
- * `iv:tag:ct` check returns non-envelope values unchanged), so tokens stored before this change still
- * load without a migration.
+ * stays plaintext for debuggability. `decryptStoredTokens` keeps legacy / no-key PLAINTEXT rows
+ * loadable (isEncryptedValue gate); `decryptValue` itself rejects non-envelope input (P0-5).
  *
  * Encryption is applied ONLY when a stable `ENCRYPTION_KEY` is configured. Without it, db-api-keys
  * falls back to a random in-memory key that is lost on restart — encrypting with it would give no
@@ -311,10 +311,17 @@ function encryptStoredTokens(tokens: McpOAuthTokens): McpOAuthTokens {
 }
 
 function decryptStoredTokens(tokens: McpOAuthTokens): McpOAuthTokens {
+  // Ciphertext → decryptValue. Legacy plaintext (pre-encryption or no ENCRYPTION_KEY) passes
+  // through unchanged — decryptValue itself rejects plaintext (P0-5 fail-closed for API keys).
+  const open = (value: string | undefined): string | undefined => {
+    if (!value) return value;
+    if (isEncryptedValue(value)) return decryptValue(value);
+    return value;
+  };
   return {
     ...tokens,
-    accessToken: tokens.accessToken ? decryptValue(tokens.accessToken) : tokens.accessToken,
-    refreshToken: tokens.refreshToken ? decryptValue(tokens.refreshToken) : tokens.refreshToken
+    accessToken: open(tokens.accessToken) ?? "",
+    refreshToken: open(tokens.refreshToken)
   };
 }
 
