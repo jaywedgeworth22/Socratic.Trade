@@ -1,3 +1,10 @@
+## 2026-08-05 GROK — P0 security residual tranche
+
+- **P0-5** decryptValue rejects plaintext; OAuth legacy path gated by isEncryptedValue.
+- **P0-4** audit hash chain schema v67 + verifyAuditChain.
+- Confirmed already on main: P0-1/2/3, P1-1..7 mechanical.
+- Branch `grok/p0-security-p1-mechanical`.
+
 **2026-08-04 — GROK: Tradier Sandbox venue-aligned quotes (branch `grok/tradier-sandbox-venue-quotes`).**
 Paper Tradier keeps ~15m delayed sandbox quotes as execution-authoritative (no fresher Alpaca/Yahoo
 overlay); staleness ages `fetchedAt` not trade-time delay. Alpaca paper stays real-time cascade.
@@ -71,6 +78,8 @@ copy-trade skill (shared package v2.5.0 dual performance); restore `memberSkill`
 **2026-08-04 — GROK: retire direct FMP/Quiver/UW; fundamentals multi-source.** Hard ban
 on direct FMP/Quiver/UW. Congress.Trade for disclosures/analytics (default ON);
 fundamentals from the multi-provider cascade (App A fundamentals default OFF). PR #2398.
+**2026-08-05 — iOS Light App Icon Sync (ANTIGRAVITY, branch `agent/antigravity`).** Replaced the canvas-drawn `icon.svg` with the iOS App Icon (PNG) across `public/icon.png`, `public/icons/icon-192.png`, `public/icons/icon-512.png`, and `public/icons/apple-touch-icon-180.png`. Updated `app/manifest.ts` and `app/layout.tsx` to serve the static PNGs instead of the SVG to fix visual glitches/inconsistencies. Rollout: `docs/rollouts/2026-08-05-ios-light-app-icon-sync.md`.
+
 Rollout: `docs/rollouts/2026-08-04-retire-direct-fmp-quiver-uw.md`.
 **2026-08-04 — Full-Bleed Pure White App Icon Assets (ANTIGRAVITY, branch `agent/antigravity`).** Updated `public/icon.svg` canvas to 100% full-bleed white background (`#ffffff` without transparent corners), updated `app/manifest.ts` PWA `background_color`/`theme_color` to `#ffffff`, and regenerated all PNG icons (`apple-touch-icon-180.png`, `icon-192.png`, `icon-512.png`, and iOS Xcode `AppIcon-1024.png`). Verified `tsc` clean and asset rendering. Rollout: `docs/rollouts/2026-08-04-full-bleed-white-app-icon.md`.
 

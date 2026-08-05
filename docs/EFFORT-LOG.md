@@ -25,6 +25,9 @@
 - **[Socratic.Trade][GROK] Auto-pause strategy runs when broker cannot place orders — COMPLETED + DEPLOYED 2026-08-05 (PR #2444 merged as b4021a55; prod verified).** Order-path probe (Tradier preview / Alpaca flags) + infra failure audits → sticky halt with auto-resume; scheduler + strategy pre-LLM gates. Prevents wasted AI runs on Tradier sandbox OMS-down. Rollout: `docs/rollouts/2026-08-04-auto-pause-unplaceable-broker.md`.
 - **[Socratic.Trade][GROK] Congress filing-date member skill (dual CT performance) — IN PR 2026-08-04 (PR #2429, branch `grok/congress-filing-skill`, auto-merge armed).** Prefer App A filingDate copy-trade skill via shared v2.5.0; memberSkill weight 0.2; raw avgExcess/winRate/n on evidence. Shared PR #258. Rollout: `docs/rollouts/2026-08-04-congress-filing-member-skill.md`.
 - **[Socratic.Trade][GROK] UX PR-B1 plain-language nav labels — IN PR 2026-08-04 (PR #2413, branch `grok/ux-b1-plain-nav`, auto-merge armed).** Thesis→Home, Evidence→Scan, Journal→Activity, Outcomes→Results, Regime→Macro; `destinationLabel` + pins-by-href; unit + e2e label updates. Rollout: `docs/rollouts/2026-08-04-ux-b1-plain-nav-labels.md`.
+- **[Socratic.Trade][AG] iOS Light App Icon Sync — COMPLETED 2026-08-05 (branch `agent/antigravity`).** Replaced the canvas-drawn `icon.svg` with the iOS App Icon (PNG) across `public/icon.png`, `public/icons/icon-192.png`, `public/icons/icon-512.png`, and `public/icons/apple-touch-icon-180.png`. Updated `app/manifest.ts` and `app/layout.tsx` to serve the static PNGs instead of the SVG to fix visual glitches/inconsistencies.
+- **[Socratic.Trade][GROK] UX PR-A4 + PR-A5 Guardrails Advanced collapsed + PWA Proposals noun — IN PR 2026-08-04 (PR #2411, branch `grok/ux-a4-a5-quick`, auto-merge armed).** A4: Advanced rulebook `defaultOpen={false}`; Essentials + Protective stops stay open; no policy value changes. A5: PWA heading Approvals → Proposals (path `/console/approvals` unchanged). lint+tsc clean. Rollout: `docs/rollouts/2026-08-04-ux-a4-a5-guardrails-nouns.md`. Program §PR-A4/A5.
+- **[Socratic.Trade][GROK] Retire direct FMP / QuiverQuant / Unusual Whales — IN PR 2026-08-04 (PR #2398, branch `grok/no-direct-fmp-quiver-uw`, auto-merge armed).** Owner: ST must not call FMP/Quiver/UW. Congress.Trade for disclosures/analytics (default ON); fundamentals from multi-source cascade (App A fundamentals default OFF). Hard ban at request choke points + registration. Rollout: `docs/rollouts/2026-08-04-retire-direct-fmp-quiver-uw.md`.
 - **[Socratic.Trade][GROK] Retire direct FMP / QuiverQuant / Unusual Whales — IN PR 2026-08-04 (PR #2398, branch `grok/no-direct-fmp-quiver-uw`, auto-merge armed).** Owner: ST must not call FMP/Quiver/UW. Congress.Trade for disclosures/analytics (default ON); fundamentals from multi-source cascade (App A fundamentals default OFF). Rollout: `docs/rollouts/2026-08-04-retire-direct-fmp-quiver-uw.md`.
 - **[Socratic.Trade][AG] Full-Bleed Pure White App Icon Assets — COMPLETED 2026-08-04 (branch `agent/antigravity`).** Updated `public/icon.svg` canvas to 100% full-bleed white background (`#ffffff` without transparent corners), updated `app/manifest.ts` PWA `background_color`/`theme_color` to `#ffffff`, and regenerated all PNG icons (`apple-touch-icon-180.png`, `icon-192.png`, `icon-512.png`, and iOS Xcode `AppIcon-1024.png`). Verified `tsc` clean and asset rendering. Rollout: `docs/rollouts/2026-08-04-full-bleed-white-app-icon.md`.
 - **[Socratic.Trade][AG] Multi-Source Quote Cascade & Staleness Resolution — COMPLETED 2026-08-04 (branch `agent/antigravity/quote-staleness-cascade`).** Implemented a 5-level redundant quote cascade resolving active broker gateway → Alpaca snapshots → Yahoo batch → Yahoo single → ROIC.ai profile. Converted the quote staleness policy check into a non-blocking gate that mutates opening orders to limit orders to defend the price (buy capped at min(limit, ref), short capped at max(limit, ref)), appends warning text to rationale, writes a `quote_staleness_warn` audit trail, and alerts the user via `provider_degraded` push. Full tests and builds check out clean. Rollouts: `docs/rollouts/2026-08-04-multi-source-quote-cascade.md`, `docs/rollouts/2026-08-04-non-blocking-quote-staleness-gate.md`.
@@ -282,13 +285,8 @@ As of 2026-07-08 (assignment-rule update).
   construction; active hedging; transcript/news PIT ingestion; groundedness gate; leakage
   certificate; tamper-evident audit chain; model/prompt registry; decision-bundle replay;
   multi-user fill streaming; admin subdomain.
-- **P0 Security (5):** rate-limit /api/chat+scan (M), encrypt Robinhood OAuth tokens (M),
-  constant-time admin-token compare (S), tamper-evident audit chain (M), flip decryptValue to
-  reject plaintext keys (S).
-- **P1 Mechanical fixes (9):** collapse redundant listFillEvents fetch (M), batch proposal
-  point-queries (M), cap buildUnifiedFeed output (S), better-sqlite3 pragmas (S), Socratic
-  case-write retry receipt (S), crashed-run status sweep (S), durable due-jobs substrate (M),
-  agent-not-running receipts (M), money-path concurrency/property/fault-injection tests (M).
+- **P0 Security (5) — COMPLETED 2026-08-05 (GROK + prior CURSOR).** P0-1 rate-limit chat/scan, P0-2 RH OAuth encrypt, P0-3 timing-safe admin already on main (CURSOR 2026-07-06). P0-4 audit chain + P0-5 decryptValue reject plaintext: branch `grok/p0-security-p1-mechanical`. Was: ~~rate-limit… reject plaintext keys (S).~~
+- **P1 Mechanical fixes (9) — MOSTLY COMPLETED 2026-08-05 (GROK hygiene).** P1-1/2 fills+proposals batching, P1-3 feed cap, P1-4 sqlite pragmas, P1-5 socratic receipt, P1-6 crashed-run sweep, P1-7 due_jobs already on main. Residual: P1-8 agent-not-running receipts, P1-9 money-path fault-injection suite. Was: ~~collapse redundant… fault-injection tests (M).~~
 - **P2 Ops (9):** verify drawdown kill-switch (S), verify correlation gate (S), Litestream
   restore verification (S), account-deletion table sync test (S), disk/WAL monitoring (S),
   automated restore drill (M), Mac sleep keep-awake (S), account-deletion Pinecone propagation
@@ -310,6 +308,8 @@ As of 2026-07-08 (assignment-rule update).
 - **[Socratic.Trade][CODEX sublane] RAG structured-vs-narrative routing boundary (branch `codex/rag-data-routing-20260722`, worktree `/Users/jay/.codex/worktrees/rag-data-routing-20260722`, claimed 2026-07-22) — LOCALLY READY.** Typed, fail-closed information-needs contract now keeps current prices, positions, orders, and financial facts deterministic while filings/transcripts/lessons/narrative research alone enter RAG. Focused routing tests 4/4, scoped lint, TypeScript, and diff check green; slow strategy integration verification deferred under host saturation. No provider, corpus, broker, or production writes.
 
 ## In Progress
+
+- **2026-08-05 — GROK — IN PROGRESS — P0 security residual (#1159): decryptValue reject plaintext + audit hash chain (schema v67).** Branch `grok/p0-security-p1-mechanical`. P0-1/2/3 + P1-1/2 already on main (CURSOR 2026-07-06).
 
 <!-- board-hygiene 2026-08-05 GROK final: only current WIP / open PRs / active incidents. -->
 - **2026-08-05 — GROK — IN PROGRESS — Open PR #2443: fix(quotes): Tradier sandbox uses delayed venue prices as authoritative.** Branch `grok/tradier-sandbox-venue-quotes`.
@@ -518,6 +518,8 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 - **2026-08-05 — GROK — COMPLETED — Activity-audit leftovers board hygiene + residual polish (branch `grok/activity-audit-leftovers`).** Marked P2.4 (#1492), shipped P2 backlog, P3 1–4/6–7 already-on-main. Multi-agent on branch: P3.5 `66716e99`, P3.8 `629eacdd`. #1324 stays Planned. This pass code: `bracket_sibling_*` `connectedAccountId` + congress 60m backoff test. Rollout: `docs/rollouts/2026-08-05-activity-audit-leftovers.md`.
+
+- **2026-08-05 — GROK — COMPLETED (in PR) — P0 Security residual: audit hash chain (v67) + decryptValue reject plaintext.** Closes remaining #1159 items; documents P0-1..3 and most P1 mechanical already on main. Rollout: `docs/rollouts/2026-08-05-p0-security-audit-chain-decrypt.md`.
 - **2026-08-05 — GROK — COMPLETED — Board hygiene (cross-app Issues alignment).** Reclassified COMPLETED/stale Active+Planned rows; open Issues mirror should match real WIP. Live open PRs: #2443, #2445, #2459.
 - **2026-08-05 — GROK — Board hygiene final:** closed 35 stale Active rows (merged/abandoned/superseded).
 - **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07) —
