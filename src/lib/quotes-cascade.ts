@@ -1,5 +1,6 @@
 import { getPolicy, resolveAlpacaMarketData, resolveApiKeyWithSource } from "./db";
 import { getBrokerGateway } from "./broker";
+import { DEFAULT_POLICY } from "./defaults";
 import { AlpacaSnapshotEnrichmentProvider, fetchWithRetry } from "./data-providers";
 import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch } from "./yahoo-finance";
 import { normalizeSymbol } from "./money";
@@ -22,14 +23,36 @@ function firstNumber(obj: any, keys: string[]): number | undefined {
 }
 
 /**
- * Checks if a quote is fresh (timestamp is within 16 minutes of the current system time).
+ * Default max quote age for the cascade "accept and stop" threshold.
+ *
+ * MUST stay aligned with `DEFAULT_POLICY.maxQuoteAgeSec` (120s). A previous hard-coded
+ * 16-minute window matched free delayed feeds (Tradier sandbox / Yahoo delayed ≈ 15 min),
+ * so Level 1 accepted delayed quotes as "fresh" and never tried Alpaca/Yahoo real-time —
+ * every strategy run then hit the 120s policy staleness gate and blocked/soft-blocked.
  */
-function isQuoteFresh(quote: { asOf?: string }, nowMs: number): boolean {
+export function cascadeFreshMaxAgeMs(maxQuoteAgeSec?: number | null): number {
+  const fromPolicy =
+    typeof maxQuoteAgeSec === "number" && Number.isFinite(maxQuoteAgeSec) && maxQuoteAgeSec > 0
+      ? maxQuoteAgeSec
+      : (DEFAULT_POLICY.maxQuoteAgeSec ?? 120);
+  return Math.max(1, fromPolicy) * 1000;
+}
+
+/**
+ * True when the quote's trade/asOf timestamp is within the cascade accept window.
+ * Missing/unparseable asOf is NEVER treated as fresh — continue the cascade.
+ */
+export function isQuoteFresh(
+  quote: { asOf?: string },
+  nowMs: number,
+  maxAgeMs: number = cascadeFreshMaxAgeMs()
+): boolean {
   if (!quote.asOf) return false;
   const asOfMs = new Date(quote.asOf).getTime();
   if (Number.isNaN(asOfMs)) return false;
-  // 16 minutes = 960,000 milliseconds
-  return nowMs - asOfMs <= 16 * 60 * 1000;
+  const ageMs = nowMs - asOfMs;
+  if (ageMs < 0) return true; // clock skew / future stamp — accept
+  return ageMs <= maxAgeMs;
 }
 
 /**
@@ -40,10 +63,11 @@ function isQuoteFresh(quote: { asOf?: string }, nowMs: number): boolean {
  * 4. Yahoo Finance Single Quote API
  * 5. ROIC.ai Profile API
  *
- * For each symbol, the cascade accepts the quote immediately if it is fresh (within 16 minutes).
- * If the quote is stale or missing, the cascade proceeds to the next level for that symbol.
- * If all levels are exhausted without finding a quote under 16 minutes old (e.g., when the market
- * is closed or the stock is halted), it returns the freshest quote found for each symbol.
+ * For each symbol, the cascade accepts the quote immediately if it is fresh (within
+ * `policy.maxQuoteAgeSec`, default 120s — same bar as the policy staleness gate).
+ * Delayed feeds (~15 min Tradier/Yahoo free) do NOT stop the cascade.
+ * If all levels are exhausted without a quote under the freshness bar (market closed,
+ * halt, etc.), returns the freshest quote found for each symbol.
  */
 export async function fetchFreshQuotesCascade(
   symbols: string[],
@@ -69,7 +93,7 @@ export async function fetchFreshQuotesCascade(
       bestQuotes[symbol] = quote;
       return;
     }
-    // Compare timestamps to find the newer one
+    // Prefer newer asOf; if equal timestamps, prefer a provider that is not an explicit delayed tag
     const existingTime = existing.asOf ? new Date(existing.asOf).getTime() : 0;
     const newTime = quote.asOf ? new Date(quote.asOf).getTime() : 0;
     if (newTime > existingTime) {
@@ -78,8 +102,10 @@ export async function fetchFreshQuotesCascade(
   };
 
   // --- LEVEL 1: Active Broker Gateway ---
+  let maxAgeMs = cascadeFreshMaxAgeMs();
   try {
     const policy = getPolicy(userId);
+    maxAgeMs = cascadeFreshMaxAgeMs(policy.maxQuoteAgeSec);
     const activeAccountNum = accountNumber ?? policy.accountNumber;
     if (activeAccountNum && policy.activeBroker) {
       const gateway = getBrokerGateway(policy, userId);
@@ -94,7 +120,7 @@ export async function fetchFreshQuotesCascade(
               price: resolvedPrice
             };
             updateBestQuote(symbol, normalizedQuote);
-            if (isQuoteFresh(normalizedQuote, nowMs)) {
+            if (isQuoteFresh(normalizedQuote, nowMs, maxAgeMs)) {
               result[symbol] = normalizedQuote;
             }
           }
@@ -129,7 +155,7 @@ export async function fetchFreshQuotesCascade(
                 provider: "alpaca-snapshot"
               };
               updateBestQuote(symbol, q);
-              if (isQuoteFresh(q, nowMs)) {
+              if (isQuoteFresh(q, nowMs, maxAgeMs)) {
                 result[symbol] = q;
               }
             }
@@ -164,7 +190,7 @@ export async function fetchFreshQuotesCascade(
               syntheticSpread: data.syntheticSpread
             };
             updateBestQuote(symbol, q);
-            if (isQuoteFresh(q, nowMs)) {
+            if (isQuoteFresh(q, nowMs, maxAgeMs)) {
               result[symbol] = q;
             }
           }
@@ -199,7 +225,7 @@ export async function fetchFreshQuotesCascade(
               syntheticSpread: quote.syntheticSpread
             };
             updateBestQuote(symbol, q);
-            if (isQuoteFresh(q, nowMs)) {
+            if (isQuoteFresh(q, nowMs, maxAgeMs)) {
               result[symbol] = q;
             }
           }
@@ -237,7 +263,7 @@ export async function fetchFreshQuotesCascade(
                       provider: "roic"
                     };
                     updateBestQuote(symbol, q);
-                    if (isQuoteFresh(q, nowMs)) {
+                    if (isQuoteFresh(q, nowMs, maxAgeMs)) {
                       result[symbol] = q;
                     }
                   }
@@ -257,7 +283,7 @@ export async function fetchFreshQuotesCascade(
 
   // --- FALLBACK ---
   // For any symbols that could not be resolved to a fresh quote (e.g. during market close / weekend),
-  // fall back to the freshest quote found across any level (even if older than 16 minutes).
+  // fall back to the freshest quote found across any level (even if older than the freshness bar).
   for (const symbol of normalizedSymbols) {
     if (!result[symbol]) {
       const best = bestQuotes[symbol];

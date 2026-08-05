@@ -116,7 +116,32 @@ export async function buildMemberSkillScores(filerIds: string[]): Promise<Map<st
   const perf = await Promise.all(distinct.map((id) => client.getMemberPerformance(id).catch(() => null)));
   const scored: Array<{ id: string; alpha: number }> = [];
   distinct.forEach((id, i) => {
-    const p = perf[i];
+    const dual = perf[i] as
+      | {
+          tradeDate?: {
+            scoredCount?: number;
+            avgExcess?: number | null;
+            medianExcess?: number | null;
+            avgReturn?: number | null;
+          } | null;
+          performance?: {
+            scoredCount?: number;
+            avgExcess?: number | null;
+            medianExcess?: number | null;
+            avgReturn?: number | null;
+          } | null;
+          scoredCount?: number;
+          avgExcess?: number | null;
+          medianExcess?: number | null;
+          avgReturn?: number | null;
+        }
+      | null;
+    // Shared client may return MemberDualPerformance (tradeDate/performance) or a flat
+    // MemberPerformance leg depending on package/client version. Prefer trade-date skill.
+    const p =
+      dual && (dual.tradeDate != null || dual.performance != null)
+        ? (dual.tradeDate ?? dual.performance ?? null)
+        : dual;
     if (!p || typeof p.scoredCount !== "number" || p.scoredCount <= 0) return;
     const alpha = [p.avgExcess, p.medianExcess, p.avgReturn].find(
       (v): v is number => typeof v === "number" && Number.isFinite(v)
