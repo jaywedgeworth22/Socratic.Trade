@@ -1,12 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  commandLabel,
   createCoalescedMobileSnapshotLoader,
   getMobileCommandAvailability,
   MobileSnapshotUnavailable,
   nextDraftAfterCommandAcceptance,
   proposalActionFeedback,
   requestMobileSnapshot,
+  strategyAuthorityLabel,
   type MobileSnapshot
 } from "../app/mobile/mobile-pwa-client";
 
@@ -172,6 +174,22 @@ describe("mobile PWA command drafts", () => {
 
     const editedWhileSubmitting = { ...submitted, price: "205" };
     expect(nextDraftAfterCommandAcceptance(editedWhileSubmitting, submitted, true, empty)).toBe(editedWhileSubmitting);
+  });
+});
+
+describe("mobile PWA command and authority labels", () => {
+  it("humanizes known command types and title-cases unknown ones", () => {
+    expect(commandLabel("strategy.run_once")).toBe("Strategy run");
+    expect(commandLabel("proposal.approve")).toBe("Approve proposal");
+    expect(commandLabel("strategy.stop")).toBe("Stop");
+    expect(commandLabel("custom.snake_case")).toBe("Custom Snake Case");
+  });
+
+  it("maps strategy authority to Ask-first / Autopilot", () => {
+    expect(strategyAuthorityLabel("propose")).toBe("Ask-first");
+    expect(strategyAuthorityLabel("decide")).toBe("Autopilot");
+    expect(strategyAuthorityLabel(null)).toBe("-");
+    expect(strategyAuthorityLabel(undefined)).toBe("-");
   });
 });
 
