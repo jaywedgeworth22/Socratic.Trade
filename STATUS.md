@@ -1,3 +1,7 @@
+## Current (2026-08-04 GROK)
+
+- iOS TestFlight agent ship: `bash scripts/ios-ship-testflight.sh` (fleet README `/Users/jay/apps/ios-fleet/README.md`).
+
 **2026-08-04 — GROK: UX Wave B IA (B1/B2/B4) — PR #2425.** Branch `grok/ux-wave-b-ia`.
 Plain nav labels Home/Scan/Activity/Results/Macro via `DESTINATIONS` + `destinationLabel`;
 Guardrails Autonomy panel (`#autonomy`) with run state/authority/cadence/readiness + chrome Run
