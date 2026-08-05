@@ -2586,6 +2586,50 @@ const MIGRATIONS: Migration[] = [
         /* table might not exist in isolated tests */
       }
     }
+  },
+  {
+    // Activity-audit P3: historical fill_events with broker_order_id = literal 'undefined'
+    // (or empty string) stayed pending forever and forced a no-op reconcile every run.
+    // Insertion root cause was already fixed (PR #284); this is a one-time flip to terminal
+    // status `unreconcilable`. Idempotent via user_version — re-runs are no-ops.
+    // Numbered 68: main already claimed 67 for audit_events_chain_hash.
+    version: 68,
+    name: "fill_events_unreconcilable_bad_broker_order_id",
+    up: (database) => {
+      const table = database
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'fill_events'`)
+        .get() as { name: string } | undefined;
+      if (!table) return;
+      const info = database
+        .prepare(
+          `UPDATE fill_events
+           SET status = 'unreconcilable'
+           WHERE status IN ('pending_reconciliation', 'partially_filled', 'pending')
+             AND (broker_order_id = 'undefined' OR broker_order_id = '')`
+        )
+        .run();
+      if (info.changes > 0) {
+        database
+          .prepare(
+            "INSERT INTO audit_events (id, user_id, connected_account_id, created_at, kind, payload) VALUES (?, ?, ?, ?, ?, ?)"
+          )
+          .run(
+            crypto.randomUUID(),
+            "local",
+            null,
+            new Date().toISOString(),
+            "fill_unreconcilable_backfill",
+            JSON.stringify({
+              count: info.changes,
+              reason: "broker_order_id_unusable",
+              note: "One-time flip of pending fills with broker_order_id literal 'undefined' or empty"
+            })
+          );
+        console.log(
+          `[db] migration 68: flipped ${info.changes} fill_events row(s) with unusable broker_order_id to unreconcilable`
+        );
+      }
+    }
   }
 ];
 

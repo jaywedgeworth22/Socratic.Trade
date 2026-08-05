@@ -428,7 +428,7 @@ export async function runSyntheticStopMonitor(
     // needs the running/positions/orders context above, just the account + gateway, so this can't
     // be blocked by (or block) the broker-protective-stops reconciliation below.
     try {
-      await reconcilePendingBracketTeardowns(gateway, accountNumber, userId);
+      await reconcilePendingBracketTeardowns(gateway, accountNumber, userId, policy.connectedAccountId);
     } catch {
       // never let a bracket-teardown sweep failure block the rest of this monitor's tick
     }
