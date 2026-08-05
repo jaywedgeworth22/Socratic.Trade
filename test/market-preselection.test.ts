@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetDbForTesting } from "../src/lib/db";
 import { buildEnrichmentPreselectionPool, clearMarketCache, scanMarket } from "../src/lib/market";
 import type { MarketQuote, ScoringWeights } from "../src/lib/types";
 
@@ -34,8 +38,15 @@ const promotionWeights: ScoringWeights = {
   diversification: 0
 };
 
+
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-market-preselection-${randomUUID()}.db`)}`;
+  resetDbForTesting();
+});
+
 beforeEach(() => {
   clearMarketCache();
+  resetDbForTesting();
   mocks.enrich.mockReset().mockResolvedValue({});
   mocks.signals = {};
   delete process.env.MARKET_SCAN_ENRICHMENT_POOL_MULTIPLIER;
@@ -123,7 +134,9 @@ describe("two-stage market enrichment", () => {
 
     expect(mocks.enrich).not.toHaveBeenCalled();
     expect(scan.topCandidates.map((quote) => quote.symbol)).toEqual(["FAST"]);
-    expect(scan.warnings.join(" ")).toContain("Deep fundamentals refresh is deferred");
+    expect(scan.warnings.join(" ")).toMatch(
+      /Deep fundamentals refresh is deferred|Slow fundamentals reuse the durable field store/
+    );
   });
 
   it("reuses persisted slow facts while preserving fresh interactive price data", async () => {
@@ -176,7 +189,7 @@ describe("two-stage market enrichment", () => {
     expect(refreshed.insiderSentiment).toBeUndefined();
     expect(refreshed.daysToEarnings).toBeUndefined();
     expect(refreshed.factorBreakdown?.weightedTotal).toBeGreaterThan(0);
-    expect(scan.warnings.join(" ")).toContain("latest completed strategy scan");
+    expect(scan.warnings.join(" ")).toMatch(/durable field store|latest completed strategy scan/);
   });
 
   it("returns a clearly stale persisted scan when the live Nasdaq screener is unavailable", async () => {

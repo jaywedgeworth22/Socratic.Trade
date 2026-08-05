@@ -727,16 +727,22 @@ function mergeOneQuoteSeed(a: MarketQuoteSummary, b: MarketQuoteSummary): Market
     const bFilled = isFilledSeedValue(value);
     const aFilled = isFilledSeedValue(cur);
     if (!bFilled) continue;
-    // Prefer later seed when: (1) earlier empty, (2) later is newer by stamp, or
-    // (3) later has no per-field stamp (caller/audit seed is intentional override).
-    // Without (3), durable store rows with fetchedAt always beat undated audit seeds
-    // (e.g. seedEnrichment companyName), which blanks interactive intent.
-    const aMs = fieldFetchedMs(a, field);
-    const bMs = fieldFetchedMs(b, field);
+    // Prefer later seed when: (1) earlier empty, (2) later has no per-field
+    // fieldObservations entry (caller seedEnrichment is intentional override and
+    // rarely carries per-field stamps — quote.asOf is NOT a field stamp), or
+    // (3) later is newer by field observation. Without (2), durable store rows
+    // with fetchedAt always blank interactive companyName / PE from audit seeds.
+    const bHasFieldObs = Boolean(
+      b.fieldObservations?.[field as keyof NonNullable<MarketQuoteSummary["fieldObservations"]>]
+    );
+    const aHasFieldObs = Boolean(
+      a.fieldObservations?.[field as keyof NonNullable<MarketQuoteSummary["fieldObservations"]>]
+    );
     const preferB =
       !aFilled ||
-      !Number.isFinite(aMs) ||
-      (Number.isFinite(bMs) ? bMs >= aMs : true);
+      !bHasFieldObs ||
+      !aHasFieldObs ||
+      fieldFetchedMs(b, field) >= fieldFetchedMs(a, field);
     if (preferB) {
       mergedRec[field] = value;
       const bSrc = b.sources?.[field as keyof EnrichmentSources];
@@ -829,15 +835,16 @@ export function rankMarketQuotes(quotes: MarketQuote[], weights: ScoringWeights 
  * fresh scan/broker path, never from the persisted strategy snapshot.
  * fieldObservations are carried so each cell keeps its own as_of / fetched_at. */
 export function persistedSlowEnrichment(quote: MarketQuoteSummary): SymbolEnrichment {
+  // True slow fundamentals only — do NOT pull sentiment/headlines/insider/earnings from a
+  // prior scan or durable store on the interactive path (those are volatile / context-specific).
+  // fieldObservations are still carried for the fields we do reuse so each cell keeps as_of.
   const slowSourceFields = new Set([
     "companyName", "peRatio", "analystRating", "sector", "industry",
     "dividendYield", "eps", "pbRatio", "shortPercentOfFloat", "beta",
     "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "fcfYield", "debtToEquity",
     "epsGrowth", "institutionOwnershipPct", "targetMean", "targetHigh",
     "targetLow", "targetMedian", "returnOnEquity", "returnOnAssets",
-    "revenueGrowth", "freeCashFlowYield", "grossProfitMargin",
-    "sentiment", "headlines", "insiderSentiment", "daysToEarnings",
-    "sharesOutstanding", "senateTrades"
+    "revenueGrowth", "freeCashFlowYield", "grossProfitMargin"
   ]);
   const sources = Object.fromEntries(
     Object.entries(quote.sources ?? {}).filter(([field]) => slowSourceFields.has(field))
@@ -875,12 +882,6 @@ export function persistedSlowEnrichment(quote: MarketQuoteSummary): SymbolEnrich
     revenueGrowth: quote.revenueGrowth,
     freeCashFlowYield: quote.freeCashFlowYield,
     grossProfitMargin: quote.grossProfitMargin,
-    sentiment: quote.sentiment,
-    headlines: quote.headlines,
-    insiderSentiment: quote.insiderSentiment,
-    daysToEarnings: quote.daysToEarnings,
-    sharesOutstanding: quote.sharesOutstanding,
-    senateTrades: quote.senateTrades,
     sources,
     ...(fieldObservations && Object.keys(fieldObservations).length > 0
       ? { fieldObservations: fieldObservations as SymbolEnrichment["fieldObservations"] }
