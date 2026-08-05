@@ -605,11 +605,21 @@
   width: 100%;
   transition: border-color 120ms ease;
 }
+/* Keep a visible focus ring (WCAG 2.4.7) — border accent alone is easy to miss on
+   dark surfaces and money-critical typed-confirm fields. Prefer :focus-visible so
+   mouse clicks stay clean. */
 .con-input:focus,
 .con-select:focus,
 .con-textarea:focus {
   border-color: var(--con-accent);
   outline: none;
+}
+.con-input:focus-visible,
+.con-select:focus-visible,
+.con-textarea:focus-visible {
+  border-color: var(--con-accent);
+  outline: 2px solid var(--con-accent);
+  outline-offset: 2px;
 }
 .con-input::placeholder,
 .con-textarea::placeholder {

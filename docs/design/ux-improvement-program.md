@@ -167,6 +167,22 @@ Claiming agents should stop and ask only when blocked on these:
 
 ---
 
+### PR-A6 — Run once single primary (owner complaint)
+
+**Problem:** Two+ filled **Run once** controls within ~1 inch (iOS hero + Agent controls; web chrome + readiness + Home cadence + Guardrails Autonomy). Expert panel 2026-08-04.
+
+| | |
+|--|--|
+| **Effort** | S |
+| **Status** | **Shipping** on `grok/ux-expert-review-dup-run-once` |
+| **Touches** | `ios/.../HomeView.swift`, `InsightsView.swift`, `app/console/page.tsx`, `readiness-checklist.tsx`, `guardrails/page.tsx`, `chrome.tsx` (Zap icon), `approval-card.tsx` (live label), `console.css` (focus), derive run-once step |
+| **Rule** | Web chrome owns Run once; iOS Home hero owns it when ready+empty queue; nowhere else mounts a second filled primary |
+| **Acceptance** | Ready iOS Home shows exactly one Run once; web phone Home does not stack cadence button under chrome; Guardrails Autonomy has no RunOnceButton |
+| **Review** | `docs/reviews/2026-08-04-expert-panel-web-ios-ux.md` |
+| **Follow-on** | PR-A7 target-stamp `Run once · alias · LIVE\|PAPER` |
+
+---
+
 ## Wave B — Intuition & information architecture (P1)
 
 ### PR-B1 — Plain-language destination labels
