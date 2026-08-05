@@ -462,7 +462,19 @@ export async function runStrategyOnce(
       audit("run_state_override", { runId, userId, override: options.runStateOverride, storedSystemState: savedPolicy.systemState }, userId, connectedAccountId);
     }
     const activeAccount = connectedAccountId ? getConnectedAccount(connectedAccountId, userId) : undefined;
-    
+    // Owner ruling 2026-08-05: TestBroker is vitest infrastructure, never a production autonomy
+    // target. Scheduler already skips broker==="test"; this refuse is belt-and-suspenders for
+    // prod/manual runs. Vitest still uses TestBroker (VITEST / NODE_ENV=test).
+    if (
+      activeAccount?.broker === "test" &&
+      process.env.VITEST !== "true" &&
+      process.env.NODE_ENV !== "test"
+    ) {
+      throw new Error(
+        "Internal test broker accounts cannot run strategy autonomy. Use a paper or live broker account."
+      );
+    }
+
     const executionState = deriveExecutionState(policy, activeAccount);
     // An account is an account: with none connected there is no broker to trade through, and there
     // is no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
