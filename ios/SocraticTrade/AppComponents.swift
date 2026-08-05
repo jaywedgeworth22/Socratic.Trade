@@ -3,13 +3,35 @@ import SwiftUI
 enum AppPalette {
     static let background = Color(uiColor: .systemGroupedBackground)
     static let card = Color(uiColor: .secondarySystemGroupedBackground)
-    static let accent = Color.indigo
+    /// Brand teal — matches web `--brand-accent` (#12616f) and dark `--brand-accent-dark` (#58c7d3).
+    static let accent = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 0x58 / 255, green: 0xC7 / 255, blue: 0xD3 / 255, alpha: 1) // #58c7d3
+        }
+        return UIColor(red: 0x12 / 255, green: 0x61 / 255, blue: 0x6F / 255, alpha: 1) // #12616f
+    })
     static let positive = Color.green
     static let warning = Color.orange
     static let negative = Color.red
 }
 
 enum AppFormat {
+    /// Humanized mobile command types — mirrors PWA `commandLabel`. API ids stay dotted.
+    private static let commandLabels: [String: String] = [
+        "strategy.run_once": "Strategy run",
+        "strategy.start": "Start strategy",
+        "strategy.stop": "Stop",
+        "strategy.close_only": "Close only",
+        "strategy.liquidating": "Wind down",
+        "proposal.approve": "Approve proposal",
+        "proposal.reject": "Reject proposal",
+        "account.activate": "Switch account",
+        "watchlist.add": "Add to watchlist",
+        "watchlist.remove": "Remove from watchlist",
+        "alert.create": "Create alert",
+        "alert.delete": "Delete alert"
+    ]
+
     static func money(_ value: Double?, compact: Bool = false) -> String {
         guard let value else { return "—" }
         if compact, abs(value) >= 1_000 {
@@ -59,6 +81,27 @@ enum AppFormat {
     static func relative(_ date: Date?) -> String {
         guard let date else { return "Never" }
         return date.formatted(.relative(presentation: .named))
+    }
+
+    /// Authority glossary: never show raw propose/decide — Ask-first / Autopilot (console parity).
+    static func strategyAuthorityLabel(_ value: String?) -> String {
+        switch value?.lowercased() {
+        case "propose": return "Ask-first"
+        case "decide": return "Autopilot"
+        case .none, .some(""): return "—"
+        case .some(let raw): return raw.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    /// Humanized command type for Activity / busy strips.
+    static func commandLabel(_ commandType: String) -> String {
+        if let known = commandLabels[commandType] { return known }
+        return commandType
+            .replacingOccurrences(of: ".", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { $0.capitalized }
+            .joined(separator: " ")
     }
 
     private static func date(_ value: String?) -> Date? {
