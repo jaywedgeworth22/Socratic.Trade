@@ -19,12 +19,12 @@ Close out the activity-feed audit leftovers claim (`grok/activity-audit-leftover
 | **P3.6** storage_warning mislabel | **On main** | `storage_warning` in `types.ts` + notify/audit path in `db-health.ts`. |
 | **P3.7** KNOWN_GLOBAL footer | **On main** | `KNOWN_GLOBAL_AUDIT_KINDS` → "System-wide" in `dashboard-feed.ts`. |
 
-### Residual (sibling agents — do not touch here)
+### Residual / follow-on
 
 | Item | Notes |
 |------|--------|
-| **P3.5** stuck `'undefined'` `fill_events` → `unreconcilable` | One-time audited flip; lives in fill persistence (`db-fills`). Sibling-owned. |
-| **P3.8** `evidence_age_anomaly` first-sight per `(id, assertedAt)` | LRU exists in `strategy.ts` but key is currently `userId:account:id` only (no `assertedAt`). Sibling-owned; leave `strategy.ts` alone on this branch. |
+| **P3.5** stuck `'undefined'` `fill_events` → `unreconcilable` | One-time audited flip; lives in fill persistence (`db-fills`). Sibling-owned if still open. |
+| **P3.8** `evidence_age_anomaly` first-sight per `(id, assertedAt)` | **DONE this pass** (see section below). |
 | **#1324** owner decisions (4) | Stay **PLANNED / needs owner** (test-local autonomy, RAG 10-K pacing, `llmFallbackModels` seed vs UI, learned_context isolation). |
 
 ### Code polish this branch
@@ -64,3 +64,50 @@ Board/doc edits only for the bulk of the claim; code delta is two audit args + o
 ## Zero-Code Findings
 
 Most of the "leftovers" claim was **already shipped** on `main`; the primary work was accurate board hygiene so parallel agents stop re-implementing closed audit items.
+
+---
+
+# P3 item 8 — evidence_age_anomaly first-sight dedupe (GROK subagent)
+
+## Context & Objective
+
+`evidence_age_anomaly` echoed the same facts across runs (audit: 120 rows / 214 flagged items over
+only 10 distinct evidence ids). Dedupe was id-only with a **6h TTL** and bulk `Map.clear()` at
+size >1000. Re-asserted track_record facts refreshed `assertedAt` but never aged out of the
+id-only window, so they re-fired every cooldown. Goal: first-sight per **(fact id, assertedAt)**;
+true-ish LRU eviction; prompt-safety receipts stay undeduped.
+
+## Changes Made
+
+- Dedup key: `` `${userId}:${connectedAccountId ?? "global"}:${id}:${assertedAt ?? ""}` ``
+- Once seen for that key, never re-emit until LRU eviction (removed 6h TTL re-fire).
+- When cache size would exceed 1000, delete oldest Map keys (insertion order) instead of `clear()`.
+- Prompt-safety `allAnomalies` path remains fully undeduped for complete run receipts.
+- Still mark only items that pass the 12-item audit cap so capped-off items can emit next run.
+- Pure helpers exported for unit tests: `evidenceAgeAnomalyDedupKey`, `rememberEvidenceAgeAnomalyDedupKey`.
+
+### Files
+
+- `src/lib/strategy.ts`
+- `test/evidence-age-anomaly-dedup.test.ts`
+- this rollout (appended)
+- `docs/EFFORT-LOG.md` + live board note for residual P3.8 → done
+
+## Decisions & Trade-offs
+
+- Extracted pure helpers rather than refactoring the whole evidence-age path out of `runStrategyOnce`.
+- Value type is `Map<string, true>` (presence only); timestamps live in the key, not the value.
+- Re-assertion with a new `assertedAt` correctly emits once (desired — new provenance).
+- Commit scope is strategy + test + docs only; do not scoop sibling WIP on the same branch.
+
+## Verification State
+
+```bash
+npx vitest run test/evidence-age-anomaly-dedup.test.ts test/strategy-prompt-safety.test.ts test/prompt-safety.test.ts
+# 8 + 4 + 39 passed
+```
+
+## Next Steps & Blockers
+
+- Local `fix(strategy):` commit only; **do not push/PR** — parent merges.
+- Sibling: P3.5 fill flip if still open.
