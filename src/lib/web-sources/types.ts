@@ -73,6 +73,7 @@ export interface CongressAnalytics {
   topMemberFilingAvgExcess?: number | null;
   topMemberFilingWinRate?: number | null;
   topMemberFilingScoredCount?: number;
+  topMemberFilingAvgAnnualizedExcess?: number | null;
   topMemberTradeAvgExcess?: number | null;
   topMemberTradeWinRate?: number | null;
   topMemberTradeScoredCount?: number;
