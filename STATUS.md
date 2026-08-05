@@ -3,13 +3,28 @@ Home/Scan/Activity/Results/Macro via `DESTINATIONS` + `destinationLabel`; Guardr
 panel (`#autonomy`) with run state/authority/cadence/readiness + chrome Run controls; Settings
 sticky TOC jump chips. B3 skipped; no policy defaults; A4 Advanced defaultOpen untouched.
 Rollout: `docs/rollouts/2026-08-04-ux-wave-b-ia.md`.
+**2026-08-04 — GROK: retire direct FMP / QuiverQuant / Unusual Whales.** Owner:
+Socratic.Trade must not call those vendors. Congressional disclosures/analytics from
+Congress.Trade (default ON); **fundamentals from multi-source cascade** (Yahoo/Finnhub/
+ROIC/SEC/… — App A fundamentals default OFF). Hard ban at registration + request choke
+points. Branch `grok/no-direct-fmp-quiver-uw` (PR #2398).
+Rollout: `docs/rollouts/2026-08-04-retire-direct-fmp-quiver-uw.md`.
 
 **2026-08-04 — Final Verification of Model Slugs (AG).** Branch `agent/antigravity/openrouter-classifiers`. Replaced all legacy `-latest` model slugs with Provider Native Slugs (`gpt-5.6-sol`, `gpt-4o`, etc.) across the codebase. Cleaned up duplicate properties in model configuration files. Fixed test regressions in history tests by adding DB isolation to `historyTestDb` shared per-file. Fixed `isGpt56Model` regex. Gates verified: tsc clean, lint clean, full test suite passes. Landed cleanly via `land.sh`.
 Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
+**2026-08-04 — GROK: UX PR-A4 + PR-A5 (guardrails Advanced collapsed + PWA Proposals noun).**
+PR #2411, branch `grok/ux-a4-a5-quick`, auto-merge armed. Advanced rulebook `defaultOpen={false}`; Essentials open; PWA
+heading Approvals → Proposals. Display-only. lint+tsc clean. Rollout:
+`docs/rollouts/2026-08-04-ux-a4-a5-guardrails-nouns.md`.
+
 
 # STATUS — current repo snapshot
 
+**2026-08-04 — GROK: retire direct FMP/Quiver/UW; fundamentals multi-source.** Hard ban
+on direct FMP/Quiver/UW. Congress.Trade for disclosures/analytics (default ON);
+fundamentals from the multi-provider cascade (App A fundamentals default OFF). PR #2398.
+Rollout: `docs/rollouts/2026-08-04-retire-direct-fmp-quiver-uw.md`.
 **2026-08-04 — Full-Bleed Pure White App Icon Assets (ANTIGRAVITY, branch `agent/antigravity`).** Updated `public/icon.svg` canvas to 100% full-bleed white background (`#ffffff` without transparent corners), updated `app/manifest.ts` PWA `background_color`/`theme_color` to `#ffffff`, and regenerated all PNG icons (`apple-touch-icon-180.png`, `icon-192.png`, `icon-512.png`, and iOS Xcode `AppIcon-1024.png`). Verified `tsc` clean and asset rendering. Rollout: `docs/rollouts/2026-08-04-full-bleed-white-app-icon.md`.
 
 **2026-08-04 — GROK: PR drain complete; prod deploy unblocked via slim Dockerfile.** Merged open PRs #2367-#2371, #2375, #2381. Prod stuck on 6ad913d5 because Coolify timed out on multi-GB `COPY --chown`. Fix: `.dockerignore` + prune + chown-in-RUN (`grok/docker-slim-deploy`). Rollout: `docs/rollouts/2026-08-04-docker-slim-deploy.md`.

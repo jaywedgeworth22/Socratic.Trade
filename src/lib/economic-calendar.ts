@@ -97,9 +97,13 @@ function eventTimestampUtcMs(eventDate: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-/** Key-gated: the ingest only runs when the operator configured an FMP key. */
+/**
+ * Economic-calendar ingest previously used FMP. Direct FMP is retired
+ * (owner 2026-08-04), so this path is permanently off until a non-FMP source
+ * is wired. Existing rows in economic_events remain readable for the prompt.
+ */
 export function economicCalendarConfigured(): boolean {
-  return Boolean(process.env.FMP_API_KEY);
+  return false;
 }
 
 /**

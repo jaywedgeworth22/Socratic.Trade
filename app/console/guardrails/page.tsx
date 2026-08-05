@@ -321,7 +321,7 @@ function AccountScopedGuardrailsPage() {
         <TaxSettingsCard />
       </div>
 
-      <Card title="Advanced rulebook" padded={false} collapsible defaultOpen>
+      <Card title="Advanced rulebook" padded={false} collapsible defaultOpen={false}>
         <div className="px-4 pb-2">
           <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             Everything below ships with safe defaults — you never have to touch it. One rule everywhere: a cap that
