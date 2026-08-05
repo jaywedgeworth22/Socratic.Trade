@@ -347,30 +347,108 @@ function TabsSheet({
   );
 }
 
+/** Measure the empty band between a bottom:0 tab bar and mobile Safari's
+ *  floating URL chrome (or the home-indicator inset). Used to shift the bar
+ *  down by 80% of that gap and paint a matching surface underlay for the rest
+ *  so the page's colder --con-bg grey never flashes around the URL bar. */
+function measureBottomChromeGap(): number {
+  if (typeof window === "undefined") return 0;
+  // Installed PWA / fullscreen: .con-tabbar already pads safe-area; no browser
+  // chrome gap to reclaim.
+  if (window.matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches) {
+    return 0;
+  }
+
+  // Probe env(safe-area-inset-bottom) — with viewport-fit=cover this is often
+  // the home-indicator band that shows as a grey strip under a bottom:0 bar.
+  const probe = document.createElement("div");
+  probe.setAttribute("aria-hidden", "true");
+  probe.style.cssText =
+    "position:fixed;left:0;bottom:0;width:0;height:0;padding-bottom:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden";
+  document.body.appendChild(probe);
+  const safe = probe.offsetHeight;
+  document.body.removeChild(probe);
+
+  const vv = window.visualViewport;
+  const vvGap = vv ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
+  const gap = Math.max(safe, vvGap);
+
+  // iOS Safari can still leave a ~16–24px gutter of page background above its
+  // floating toolbar even when both signals read 0. Floor only on coarse
+  // touch viewports so desktop is untouched.
+  if (gap === 0 && window.matchMedia("(max-width: 1023px) and (hover: none)").matches) {
+    return 20;
+  }
+  return gap;
+}
+
 export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname() ?? "";
   const [tabsOpen, setTabsOpen] = useState(false);
   const guardNav = useNavDirtyGuard();
   const tabsState = useMobileTabs(DESTINATIONS.map((d) => d.href));
   const navRef = useRef<HTMLElement>(null);
-  const [barHeight, setBarHeight] = useState(0);
+  /** Distance from layout-viewport bottom to the bar's top edge — TabsSheet
+   *  stops here. Accounts for the negative-bottom chrome shift below. */
+  const [barOffset, setBarOffset] = useState(0);
+  /** Pixels to shift the bar down (80% of measured gap). */
+  const [chromeShift, setChromeShift] = useState(0);
+  /** Extra surface paint below the bar (remaining 20% gap + under-URL chrome). */
+  const [underlayPx, setUnderlayPx] = useState(0);
 
-  // Real measured height (incl. the bar's own safe-area padding) so the
-  // TabsSheet can stop exactly above it on any device/font-scale, rather
-  // than guessing a fixed px offset.
+  // Measure the Safari/browser chrome gap once mounted and on viewport
+  // changes; apply 80% as a downward shift and paint the rest with the same
+  // surface as the tab bar so the colder page grey never shows around the URL.
+  useEffect(() => {
+    const applyGap = () => {
+      const gap = measureBottomChromeGap();
+      const shift = Math.round(gap * 0.8);
+      // Remaining 20% of gap + enough solid surface to sit under Safari's
+      // translucent bottom chrome (~home indicator + toolbar footprint).
+      const underlay = Math.round(gap * 0.2 + Math.max(gap, 48));
+      setChromeShift(shift);
+      setUnderlayPx(underlay);
+    };
+    applyGap();
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", applyGap);
+    vv?.addEventListener("scroll", applyGap);
+    window.addEventListener("resize", applyGap);
+    const mq = window.matchMedia("(display-mode: standalone), (display-mode: fullscreen)");
+    mq.addEventListener?.("change", applyGap);
+    return () => {
+      vv?.removeEventListener("resize", applyGap);
+      vv?.removeEventListener("scroll", applyGap);
+      window.removeEventListener("resize", applyGap);
+      mq.removeEventListener?.("change", applyGap);
+    };
+  }, []);
+
+  // Real measured offset (bar top → layout bottom) so the TabsSheet can stop
+  // exactly above the bar on any device/font-scale/chrome-shift, rather than
+  // guessing a fixed px offset from height alone.
   useEffect(() => {
     const el = navRef.current;
     if (!el) return;
-    const measure = () => setBarHeight(el.getBoundingClientRect().height);
+    const measure = () => {
+      const top = el.getBoundingClientRect().top;
+      setBarOffset(Math.max(0, Math.round(window.innerHeight - top)));
+    };
     measure();
     if (typeof ResizeObserver !== "undefined") {
       const ro = new ResizeObserver(measure);
       ro.observe(el);
-      return () => ro.disconnect();
+      window.addEventListener("resize", measure);
+      window.visualViewport?.addEventListener("resize", measure);
+      return () => {
+        ro.disconnect();
+        window.removeEventListener("resize", measure);
+        window.visualViewport?.removeEventListener("resize", measure);
+      };
     }
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
-  }, []);
+  }, [chromeShift]);
 
   // SSR-safe: before mount, tabHrefs is already DEFAULT_MOBILE_TAB_HREFS (the
   // hook's initial state), so this matches the server render exactly.
@@ -382,8 +460,14 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
     <>
       <nav
         ref={navRef}
-        className="con-tabbar fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]/85 backdrop-blur-xl supports-[backdrop-filter]:bg-[color:var(--con-surface)]/70 lg:hidden"
+        className="con-tabbar fixed inset-x-0 z-50 border-t border-[color:var(--con-line-strong)] lg:hidden"
         aria-label="Console navigation"
+        style={{
+          // Shift down by 80% of the measured chrome gap (0 in standalone/PWA).
+          bottom: chromeShift > 0 ? -chromeShift : 0,
+          // ::after underlay height — remaining gap + paint under the URL chrome.
+          ["--con-tabbar-underlay" as string]: `${underlayPx}px`
+        }}
       >
         <div className="flex">
           {tabs.map((d) => {
@@ -448,7 +532,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
         guardNav={guardNav}
         tabs={tabsState}
         pendingCount={pendingCount}
-        barHeight={barHeight}
+        barHeight={barOffset}
       />
     </>
   );
