@@ -20,6 +20,7 @@ import {
   X
 } from "lucide-react";
 import { estimatedClosingPnl, isClosingOrder, positionMarkPrice } from "../console/lib/derive";
+import { authorityLabel } from "../console/lib/labels";
 import { requestedExitQuantity } from "@/lib/broker-held-orders";
 import { modelDisplayName } from "../console/lib/models";
 import { redTeamFailureMeta, redTeamVerdictLabel } from "../console/lib/red-team";
@@ -122,8 +123,37 @@ function statusTone(status: CommandStatus): string {
   return "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200";
 }
 
-function commandLabel(value: string): string {
-  return value.replaceAll(".", " / ").replaceAll("_", " ");
+/** Humanized labels for mobile command types (command log + busy strip). API types stay
+ *  dotted machine ids; only the user-facing surface is rewritten. Unknown types fall back
+ *  to a plain title-case de-underscore so raw `snake.case` never reaches the operator. */
+const COMMAND_LABELS: Record<string, string> = {
+  "strategy.run_once": "Strategy run",
+  "strategy.start": "Start strategy",
+  "strategy.stop": "Stop",
+  "strategy.close_only": "Close only",
+  "strategy.liquidating": "Wind down",
+  "proposal.approve": "Approve proposal",
+  "proposal.reject": "Reject proposal",
+  "account.activate": "Switch account",
+  "watchlist.add": "Add to watchlist",
+  "watchlist.remove": "Remove from watchlist",
+  "alert.create": "Create alert",
+  "alert.delete": "Delete alert"
+};
+
+export function commandLabel(value: string): string {
+  if (value in COMMAND_LABELS) return COMMAND_LABELS[value];
+  return value
+    .replaceAll(".", " ")
+    .replaceAll("_", " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+/** Authority glossary: raw propose/decide never shown — matches console Ask-first / Autopilot. */
+export function strategyAuthorityLabel(value?: string | null): string {
+  return authorityLabel(value).label || "-";
 }
 
 /** Compact one-line model attribution for a proposal card: which model proposed it, and which
@@ -629,6 +659,7 @@ export function MobilePwaClient() {
               Mobile control
             </div>
             <h1 className="truncate text-lg font-semibold">Socratic Trade</h1>
+            <p className="truncate text-xs text-muted">Control remote — full desk on desktop/console</p>
           </div>
           <div className="flex items-center gap-2">
             <Link
@@ -698,12 +729,15 @@ export function MobilePwaClient() {
 
       <div className="mx-auto max-w-xl space-y-4 px-4 py-4">
         {!isOnline && (
-          <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+          <div
+            className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+            role="status"
+          >
             <WifiOff className="h-4 w-4 shrink-0" />
-            Offline — data may be stale
+            Offline — last snapshot still shown. Reconnect to send commands (including Stop).
           </div>
         )}
-        {snapshotFreshness === "refreshing" && (
+        {isOnline && snapshotFreshness === "refreshing" && (
           <div
             className="flex items-center gap-2 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100"
             role="status"
@@ -712,10 +746,13 @@ export function MobilePwaClient() {
             Refreshing current data — new commands are paused; Stop remains available.
           </div>
         )}
-        {snapshotFreshness === "stale" && (
-          <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+        {isOnline && snapshotFreshness === "stale" && (
+          <div
+            className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+            role="status"
+          >
             <ShieldAlert className="h-4 w-4 shrink-0" />
-            Current data could not be verified. New commands are paused; Stop remains available.
+            Snapshot may be stale — controls stay up. New commands are paused; Stop remains available.
           </div>
         )}
         {error && (
@@ -735,7 +772,12 @@ export function MobilePwaClient() {
             </div>
             <div className="rounded-md border border-line bg-surface px-3 py-2 text-right">
               <p className="text-xs text-faint">Authority</p>
-              <p className="text-sm font-medium capitalize">{snapshot?.readiness.strategyAuthority ?? "-"}</p>
+              <p
+                className="text-sm font-medium"
+                title={authorityLabel(snapshot?.readiness.strategyAuthority).title || undefined}
+              >
+                {strategyAuthorityLabel(snapshot?.readiness.strategyAuthority)}
+              </p>
             </div>
           </div>
 
@@ -778,7 +820,7 @@ export function MobilePwaClient() {
             <div className={`rounded-md border px-3 py-2 text-sm ${statusTone(activeCommand.status)}`}>
               <div className="flex items-center gap-2">
                 <Activity className="h-4 w-4" />
-                <span className="capitalize">{commandLabel(activeCommand.commandType)}</span>
+                <span>{commandLabel(activeCommand.commandType)}</span>
                 <span className="ml-auto capitalize">{activeCommand.status}</span>
               </div>
             </div>
@@ -867,6 +909,28 @@ export function MobilePwaClient() {
                       <p className="mt-1 text-xs text-faint">
                         Paste is disabled; mobile approvals use the same broker check as console.
                       </p>
+                    </div>
+                  )}
+                  {feedback && (
+                    <div
+                      className={`mt-3 rounded-md border px-3 py-2 text-xs font-medium ${
+                        feedback.phase === "failed"
+                          ? "border-red-300 bg-red-50 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200"
+                          : feedback.phase === "succeeded"
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+                            : "border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200"
+                      }`}
+                      role="status"
+                    >
+                      {feedback.phase === "sending" &&
+                        (feedback.action === "approve" ? "Sending approve…" : "Sending reject…")}
+                      {feedback.phase === "pending" &&
+                        `${feedback.action === "approve" ? "Approve" : "Reject"} ${feedback.status}…`}
+                      {feedback.phase === "failed" && feedback.message}
+                      {feedback.phase === "succeeded" &&
+                        (feedback.action === "approve"
+                          ? "Approved — waiting for desk refresh."
+                          : "Rejected — waiting for desk refresh.")}
                     </div>
                   )}
                   <div className="mt-3 grid grid-cols-2 gap-2">
@@ -1067,7 +1131,7 @@ export function MobilePwaClient() {
                   {command.status === "failed" ? <ShieldAlert className="h-4 w-4" /> : null}
                   {command.status === "succeeded" ? <Check className="h-4 w-4" /> : null}
                   {command.status === "cancelled" ? <CircleStop className="h-4 w-4" /> : null}
-                  <span className="capitalize">{commandLabel(command.commandType)}</span>
+                  <span>{commandLabel(command.commandType)}</span>
                   <span className="ml-auto">{shortTime(command.updatedAt)}</span>
                 </div>
                 {command.error && <p className="mt-1 line-clamp-3 text-xs" title={command.error}>{command.error}</p>}
