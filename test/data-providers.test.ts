@@ -286,11 +286,15 @@ describe("enrichment cache consent gate", () => {
 
   it("user-keyed data is private: invisible to a non-consenting second user", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
-    const { upsertUserApiKey } = await import("../src/lib/db");
+    const { upsertUserApiKey, setDataPoolConsent } = await import("../src/lib/db");
     clearEnrichmentCache();
 
     const userA = `cg-priv-a-${randomUUID()}`;
     const userB = `cg-priv-b-${randomUUID()}`;
+    // Explicit decline required: pool consent defaults ON (owner 2026-08-05). Without this,
+    // user-keyed writes go to pool and any default-consent reader can see them.
+    setDataPoolConsent(userA, false);
+    setDataPoolConsent(userB, false);
     // userA has their own API key; userB does NOT have an API key
     upsertUserApiKey(userA, "finnhub", "user-a-finnhub-key");
 
