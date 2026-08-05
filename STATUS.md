@@ -21,6 +21,9 @@ heading Approvals → Proposals. Display-only. lint+tsc clean. Rollout:
 
 # STATUS — current repo snapshot
 
+**2026-08-04 — GROK: UX B3+E2+E3 polish (branch `grok/ux-b3-e-polish`).** Strategy page collapsible sections (Models + Instructions open; Scoring weights collapsed; Presets open). Login page three value bullets matching iOS. Command palette trigger always visible on mobile chrome (icon-only below sm). Healthy mobile freshness collapses to one line. No policy changes. Rollout: `docs/rollouts/2026-08-04-ux-b3-e-polish.md`.
+
+
 **2026-08-04 — GROK: retire direct FMP/Quiver/UW; fundamentals multi-source.** Hard ban
 on direct FMP/Quiver/UW. Congress.Trade for disclosures/analytics (default ON);
 fundamentals from the multi-provider cascade (App A fundamentals default OFF). PR #2398.
@@ -44,6 +47,13 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 2026-08-01 were moved to `docs/status-archive.md`.
 
 Last updated: 2026-08-04 (GROK: UX Wave B IA landing).
+Last updated: 2026-08-04 (GROK: UX Wave D mobile/iOS/PWA).
+
+**2026-08-04 — GROK: UX Wave D mobile/iOS/PWA parity (branch `grok/ux-wave-d-mobile`).**
+D1 brand teal `#12616f` / dark `#58c7d3`; D2 Home readiness checklist + ready hero with
+Review→Proposals tab switch; D3 per-proposal command feedback (iOS MobileStore + ProposalsView,
+PWA card strip); D4 humanized command labels, Ask-first/Autopilot, Proposals section title,
+control-remote framing. Rollout: `docs/rollouts/2026-08-04-ux-wave-d-mobile.md`.
 
 
 ## UX improvement program (2026-08-04, GROK)
@@ -52,6 +62,11 @@ Sequenced PR plan: `docs/design/ux-improvement-program.md`. **Wave B IA** (B1 pl
 B2 Autonomy panel, B4 Settings TOC) on branch `grok/ux-wave-b-ia` — rollout
 `docs/rollouts/2026-08-04-ux-wave-b-ia.md`. Wave A slices remain claimable. Program rollout:
 `docs/rollouts/2026-08-04-ux-improvement-program.md`.
+Sequenced PR plan for web console + PWA + iOS after a full-product review:
+`docs/design/ux-improvement-program.md`. Wave D (mobile/iOS/PWA) implemented on
+`grok/ux-wave-d-mobile`. Remaining A/B/C slices stay Planned/UNASSIGNED until claimed.
+Rollouts: `docs/rollouts/2026-08-04-ux-improvement-program.md`,
+`docs/rollouts/2026-08-04-ux-wave-d-mobile.md`.
 
 ## Where things stand
 
