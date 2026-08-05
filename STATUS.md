@@ -26,6 +26,8 @@ copy-trade skill (shared package v2.5.0 dual performance); restore `memberSkill`
 0.2; persist raw avgExcess/winRate/scoredCount on quotes + signal_snapshot. Branch
 `grok/congress-filing-skill`. Rollout:
 `docs/rollouts/2026-08-04-congress-filing-member-skill.md`.
+**2026-08-04 — GROK: quote cascade freshness + never block on stale.** Cascade accept = maxQuoteAgeSec (120s) so ~15m delayed feeds no longer stop the cascade; if still stale, convert opening to limit at proposal.referencePrice (never block/escalate). Branch `grok/fix-quote-freshness`.
+
 **2026-08-04 — GROK: UX B3+E2+E3 polish (branch `grok/ux-b3-e-polish`).** Strategy page collapsible sections (Models + Instructions open; Scoring weights collapsed; Presets open). Login page three value bullets matching iOS. Command palette trigger always visible on mobile chrome (icon-only below sm). Healthy mobile freshness collapses to one line. No policy changes. Rollout: `docs/rollouts/2026-08-04-ux-b3-e-polish.md`.
 
 
