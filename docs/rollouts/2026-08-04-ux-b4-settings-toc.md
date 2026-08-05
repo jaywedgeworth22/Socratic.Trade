@@ -65,11 +65,12 @@ redirect to `/console/connections`.
 
 ```bash
 export PATH=/opt/homebrew/opt/node@24/bin:$PATH
-npm run lint
-npx tsc --noEmit
+./node_modules/.bin/eslint app/console/settings/page.tsx   # clean (0 errors)
+npx tsc --noEmit   # deferred to CI verify: host load avg ~100+ SIGTERM'd local tsc
 ```
 
-(Commands run on branch `grok/ux-b4-settings-toc` before land.)
+Local eslint on the touched file is clean. Full-project `tsc` was repeatedly
+SIGTERM'd under host load (multi-agent blitz); CI `verify` is the type gate.
 
 ## Next Steps & Blockers
 
