@@ -1,6 +1,12 @@
 ## Current (2026-08-05 GROK symbol-field-store)
 
 **Durable shared `symbol_field_latest` (branch `grok/symbol-field-store`).** Per-field `as_of` + `fetched_at` for every market field on every symbol ever seen; cascade and scan write; interactive scan seeds from store so strategy_run audit bounding no longer blanks PE/EPS/div. Rollout: `docs/rollouts/2026-08-05-symbol-field-latest-store.md`.
+
+## 2026-08-05 GROK — issues/effort sweep
+- Open PRs armed: #2489 (P2.7/P2.8), #2445 (iOS SSE), #2443 (Tradier quotes).
+- Residual branch `grok/issues-activity-audit-residual`: B4 Settings TOC + congress-share IfDue single-flight + evidence_age (id,timestamp) dedup + board hygiene.
+- Confirmed already on main: #2459 batch, Coach→Insights, safeTopCandidates, most activity-audit P2/P3.
+
 ## 2026-08-05 GROK — P0 security residual tranche
 
 - **P0-5** decryptValue rejects plaintext; OAuth legacy path gated by isEncryptedValue.

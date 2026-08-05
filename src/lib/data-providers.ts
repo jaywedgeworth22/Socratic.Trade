@@ -1012,6 +1012,14 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // (This is delayed/averaged fundamentals — e.g. average_volume — not a real-time quote,
   // so it stays in the delayed tier rather than next to the Alpaca snapshot.)
   if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider(userId));
+  // Keyless Nasdaq quote/summary/holdings — free-wave redundancy beside Yahoo (no crumb handshake).
+  // Seated just before Yahoo so both participate in wave A; first-wins still prefers earlier paid
+  // tiers when they filled a field.
+  providers.push(new NasdaqQuoteEnrichmentProvider());
+  providers.push(new YahooFinanceEnrichmentProvider());
+  // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
+  // Finnhub/AV so it supplies headlines/sentiment quickly and prevents rate limit exhaustion.
+  if (alpacaData.apiKey && alpacaData.secretKey) providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId), alpacaData.source));
   if (tiingo.key) providers.push(withHealthLane(new TiingoEnrichmentProvider(tiingo.key, tiingo.source, userId), tiingo.source));
   if (fintech.key) providers.push(withHealthLane(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId), fintech.source));
   if (finnhub.key) providers.push(withHealthLane(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId), finnhub.source));
@@ -1085,11 +1093,6 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (quiverKey) {
     console.warn("[data-providers] QuiverQuant key present but direct access is retired; not registering quiverquant");
   }
-  // Keyless Nasdaq quote/summary/holdings — free-wave redundancy beside Yahoo (no crumb handshake).
-  // Seated just before Yahoo so both participate in wave A; first-wins still prefers earlier paid
-  // tiers when they filled a field.
-  providers.push(new NasdaqQuoteEnrichmentProvider());
-  providers.push(new YahooFinanceEnrichmentProvider());
   // Keyless Nasdaq earnings-calendar backfill for daysToEarnings — registered after every paid
   // per-symbol source (Yahoo/FMP/FilingApi/ROIC) that already fills this field cheaper in one call,
   // so it only spends its own (market-wide-per-date, not per-symbol) calls on genuine gaps — the
@@ -2923,6 +2926,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "finnhub";
   readonly costTier = "paid" as const;
   readonly configured = true;
+  readonly suppliesFields = ["sentiment", "headlines", "peRatio", "analystBySource", "sector", "industry", "companyName", "volume", "dividendYield", "eps"] as const;
   private readonly base = "https://finnhub.io/api/v1";
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;

@@ -60,6 +60,16 @@ const DEFAULT_TIMEOUT_MS = 30_000; // App A upserts + recomputes per-trade perf 
 const LAST_DAILY_RUN_KEY = "congress-share:lastDailyRunDate";
 
 /**
+ * Module-level single-flight for the nightly batch (P2.4 / activity-feed audit §1.4).
+ * Without this, a long run can still be re-entered from the 60s scheduler tick even when the
+ * failure backoff has not yet stamped (or while the prior promise is still posting).
+ * Survives hot-reload via globalThis; cleared when the in-flight promise settles.
+ */
+const congressDailyShareInFlightHost = globalThis as unknown as {
+  __congressDailyShareInFlight?: Promise<OperationLeaseAware<CongressDailyShareSummary> | null>;
+};
+
+/**
  * Origin tag stamped on every outbound payload so the counterpart's receiver can recognize App B's
  * own rows and never echo them back into our store (the no-echo-loop guard). Our OWN inbound receiver
  * (POST /api/admin/securities/import) skips any payload carrying this origin. See docs/congress-trade-app-b-reply.md §1.3.
@@ -1164,6 +1174,7 @@ async function runCongressDailyShareUnlocked(
 /**
  * Scheduler entry point: run the nightly batch at most once per UTC day, only when automatic
  * sharing is enabled. Self-guarded; returns null when disabled/not due so the tick stays clean.
+ * Single-flight + 60-minute failure backoff (see isCongressDailyShareDue) prevent retry storms.
  */
 export async function runCongressDailyShareIfDue(
   now: number = Date.now()
@@ -1171,7 +1182,20 @@ export async function runCongressDailyShareIfDue(
   try {
     if (!isCongressShareAutoEnabled()) return null;
     if (!isCongressDailyShareDue(now)) return null;
-    return await runCongressDailyShare({ now });
+    const existing = congressDailyShareInFlightHost.__congressDailyShareInFlight;
+    if (existing) return existing;
+    const runPromise = runCongressDailyShare({ now })
+      .catch((err) => {
+        console.error("[congress-share] daily batch error:", err);
+        return null;
+      })
+      .finally(() => {
+        if (congressDailyShareInFlightHost.__congressDailyShareInFlight === runPromise) {
+          delete congressDailyShareInFlightHost.__congressDailyShareInFlight;
+        }
+      });
+    congressDailyShareInFlightHost.__congressDailyShareInFlight = runPromise;
+    return runPromise;
   } catch (err) {
     console.error("[congress-share] daily batch error:", err);
     return null;
