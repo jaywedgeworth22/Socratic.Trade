@@ -38,15 +38,16 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-04 (GROK: UX improvement program plan).
+Last updated: 2026-08-04 (GROK: UX PR-A1 honest run skip statuses — PR #2418).
 
 
 ## UX improvement program (2026-08-04, GROK)
 
-Sequenced PR plan for web console + PWA + iOS after a full-product review:
-`docs/design/ux-improvement-program.md`. Wave A (trust/action) slices are Planned/UNASSIGNED
-on the effort board — claim before implementing. Rollout:
-`docs/rollouts/2026-08-04-ux-improvement-program.md`.
+Sequenced PR plan: `docs/design/ux-improvement-program.md`.
+**PR-A1 honest skip statuses** — IN PR #2418 (`grok/ux-a1-honest-skips`): granular
+`skipped_budget` / `skipped_market_closed` / `skipped_broker_unhealthy`; Thesis/Activity
+chips; liveness/auto-tune honesty. Rollout: `docs/rollouts/2026-08-04-ux-a1-honest-skips.md`.
+PR-0: `docs/rollouts/2026-08-04-ux-improvement-program.md`.
 
 ## Where things stand
 
