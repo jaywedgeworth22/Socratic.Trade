@@ -720,6 +720,14 @@ async function tick(): Promise<void> {
       for (const account of listConnectedAccounts(userId)) {
         const accountId = account.id;
         const key = scheduleKey(userId, accountId);
+        // Owner ruling 2026-08-05: the internal TestBroker adapter (`broker: "test"`) is test
+        // infrastructure only. Never schedule LLM strategy autonomy for it — historical "test-local"
+        // armed accounts burned shared LLM budget and 429'd live accounts. Protective/reconcile
+        // paths below also skip; there is no product execution mode here.
+        if (account.broker === "test") {
+          if (accountSchedules[key]) accountSchedules[key].nextRunAt = null;
+          continue;
+        }
         if (!accountSchedules[key]) {
           // Rehydrate this account's cadence clock from its last real run so a restart/HMR/deploy
           // doesn't fire an immediate run regardless of cadence (in-memory state starts empty).
