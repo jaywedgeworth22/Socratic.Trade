@@ -46,26 +46,28 @@ interface Destination {
 }
 
 export const DESTINATIONS: Destination[] = [
-  { href: "/console", label: "Thesis", icon: LayoutDashboard, desc: "Live thesis, actions, evidence, dissent, and framework learning." },
+  // PR-B1 (UX program Wave B): plain-language rail labels. Hover `desc` keeps the
+  // sophisticated Socratic metaphor (thesis / evidence / journal / regime / outcomes).
+  { href: "/console", label: "Home", icon: LayoutDashboard, desc: "Live thesis, actions, evidence, dissent, and framework learning." },
   { href: "/console/approvals", label: "Proposals", icon: Inbox, desc: "Trade proposals awaiting your judgment." },
   { href: "/console/lessons", label: "Lessons", icon: GraduationCap, desc: "Pending learning and past learning." },
-  { href: "/console/activity", label: "Journal", icon: ActivityIcon, desc: "Decision journal: everything the agent did, newest first." },
-  { href: "/console/scan", label: "Evidence", icon: Radar, desc: "The market scan: screened and scored symbols from the latest run." },
+  { href: "/console/activity", label: "Activity", icon: ActivityIcon, desc: "Decision journal: everything the agent did, newest first." },
+  { href: "/console/scan", label: "Scan", icon: Radar, desc: "The market scan: screened and scored symbols from the latest run." },
   { href: "/console/watchlist", label: "Watchlist", icon: Eye, desc: "Symbols the agent monitors, with price alerts that notify you when a level is crossed." },
-  { href: "/console/macro", label: "Regime", icon: Globe, desc: "Macro and market-regime board: rates, credit, volatility, breadth." },
+  { href: "/console/macro", label: "Macro", icon: Globe, desc: "Macro and market-regime board: rates, credit, volatility, breadth." },
   { href: "/console/orders", label: "Orders", icon: ListChecks, desc: "Order history and open orders at the broker." },
   { href: "/console/assistant", label: "Coach", icon: MessageSquare, desc: "Coach Socratic Trade about its reasoning, accounts, and market focus." },
   { href: "/console/strategy", label: "Strategy", icon: Brain, desc: "The agent's brain: instructions, models, scoring weights, presets." },
   { href: "/console/guardrails", label: "Guardrails", icon: Shield, desc: "Autonomy, spending caps, protective stops, schedule, and the trading rulebook." },
   { href: "/console/connections", label: "Connections", icon: Plug, desc: "Broker accounts and provider API keys." },
-  { href: "/console/results", label: "Outcomes", icon: BarChart3, desc: "Realized performance, equity curve, thesis scorecards, and learning evidence." },
+  { href: "/console/results", label: "Results", icon: BarChart3, desc: "Realized performance, equity curve, thesis scorecards, and learning evidence." },
   { href: "/console/usage", label: "Usage", icon: ReceiptText, desc: "Your LLM usage and estimated model cost by key, model, and workflow." },
   { href: "/console/settings", label: "Settings", icon: SettingsIcon, desc: "Notifications, sharing, confirmations, and console preferences." }
 ];
 
 /** Canonical destination name for page titles. Every page h1 renders through this
  *  (h1 === rail label, the 2026-07-16 naming canon) so nav and titles can't drift
- *  apart again — 9 of 13 surfaces had diverged (click "Outcomes", land on "Results"). */
+ *  apart again. PR-B1 plain labels: Home / Scan / Activity / Results / Macro. */
 export function destinationLabel(href: string): string {
   return DESTINATIONS.find((d) => d.href === href)?.label ?? href;
 }
