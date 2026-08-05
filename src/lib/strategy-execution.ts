@@ -15,6 +15,7 @@ import { getPolicy } from "./db-profiles";
 import { getProposal, updatePendingProposalReprice, updateProposalStatus, transitionProposalIfPending, claimProposalForExecution, listStalePlacingProposals } from "./db-proposals";
 import { upsertSocraticDecisionCase } from "./db-socratic";
 import { emitDashboardEvent } from "./events";
+import { isOrderPlacementInfrastructureFailure } from "./broker-health";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import {
   assessFinalSizeConsentDrift,
@@ -1249,6 +1250,14 @@ export async function executeProposal(
         } catch (placeError) {
           const message = placeError instanceof Error ? placeError.message : String(placeError);
           const sym = proposal.symbol;
+          if (isOrderPlacementInfrastructureFailure(message) && policy.connectedAccountId) {
+            audit(
+              "order_place_infrastructure_failed",
+              { proposalId, refId, symbol: sym, side: proposal.side, error: message.slice(0, 400), path: "approval" },
+              userId,
+              policy.connectedAccountId
+            );
+          }
           // OrderValidationError is a DETERMINISTIC pre-submission refusal (adapter or the
           // broker-order-constraints tables) — the broker was never contacted, so asking it what
           // happened is pointless and, worse, concludes not_placed ("safe to retry") for an order
