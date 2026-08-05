@@ -16,7 +16,7 @@ heading Approvals → Proposals. Display-only. lint+tsc clean. Rollout:
 
 # STATUS — current repo snapshot
 
-**2026-08-04 — GROK: quote cascade was stopping on ~15m delayed feeds.** Fixed: cascade accept window = policy maxQuoteAgeSec (120s), not 16m. Branch `grok/fix-quote-freshness`.
+**2026-08-04 — GROK: quote cascade freshness + never block on stale.** Cascade accept = maxQuoteAgeSec (120s) so ~15m delayed feeds no longer stop the cascade; if still stale, convert opening to limit at proposal.referencePrice (never block/escalate). Branch `grok/fix-quote-freshness`.
 
 **2026-08-04 — GROK: UX B3+E2+E3 polish (branch `grok/ux-b3-e-polish`).** Strategy page collapsible sections (Models + Instructions open; Scoring weights collapsed; Presets open). Login page three value bullets matching iOS. Command palette trigger always visible on mobile chrome (icon-only below sm). Healthy mobile freshness collapses to one line. No policy changes. Rollout: `docs/rollouts/2026-08-04-ux-b3-e-polish.md`.
 
