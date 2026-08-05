@@ -178,29 +178,25 @@ private struct InsightCard: View {
     }
 }
 
+/// Insights is a brief — not a third home for Run once (Home owns that primary CTA).
 private struct InsightsActionCard: View {
-    @EnvironmentObject private var store: MobileStore
-
     let snapshot: MobileSnapshot
 
     var body: some View {
         AppCard {
-            VStack(alignment: .leading, spacing: 13) {
-                SectionHeading("Ask for a fresh analysis", subtitle: "Queues a normal strategy run; it does not execute client-side inference.")
-                CommandButton(
-                    "Run Strategy Once",
-                    systemImage: "sparkles",
-                    isBusy: store.isBusy("strategy.run_once"),
-                    isDisabled: !store.canSubmit("strategy.run_once"),
-                    prominent: true
-                ) {
-                    Task { await store.submit("strategy.run_once") }
-                }
-                if !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
-                    Text("Complete the readiness items above first. The backend will enforce the same requirements.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeading(
+                    "Want a fresh cycle?",
+                    subtitle: "Run once lives on Home so there is a single primary control — not a second copy here."
+                )
+                Text(
+                    snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse
+                        ? "Open the Home tab and tap Run once (or Review proposals when the queue is waiting)."
+                        : "Finish account + universe setup on Home first; then use Run once there."
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

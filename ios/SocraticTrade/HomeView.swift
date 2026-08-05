@@ -12,17 +12,19 @@ struct HomeView: View {
                     snapshot: snapshot,
                     openSettings: { presentedSheet = .settings }
                 )
+                // Agent overview only during setup — once ready, ReadyHomeHero already
+                // shows account, state, and authority (duplicate card was pure noise).
+                AgentOverviewCard(snapshot: snapshot, showInlineReadiness: true)
             } else {
                 ReadyHomeHero(snapshot: snapshot) {
                     selectedTab = .proposals
                 }
             }
-            AgentOverviewCard(snapshot: snapshot, showInlineReadiness: !readinessIncomplete)
             StrategyControlsCard(snapshot: snapshot)
             PortfolioOverviewCard(snapshot: snapshot)
             PerformanceOverviewCard(snapshot: snapshot)
             ScheduleOverviewCard(snapshot: snapshot)
-            HomeAttentionCard(snapshot: snapshot)
+            HomeAttentionCard(snapshot: snapshot, selectedTab: $selectedTab)
         }
         .navigationTitle("Home")
         .toolbar {
@@ -166,9 +168,20 @@ private struct ReadyHomeHero: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(snapshot.readiness.activeConnectedAccount?.label ?? "Ready")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 6) {
+                            // Word-first money reality (matches web; Live must not be color-only red).
+                            if let env = snapshot.readiness.activeConnectedAccount?.environment {
+                                StatusPill(
+                                    env == "live" ? "LIVE" : "PAPER",
+                                    color: env == "live" ? AppPalette.accent : AppPalette.accent.opacity(0.85),
+                                    systemImage: env == "live" ? "bolt.horizontal.fill" : "doc.text"
+                                )
+                            }
+                            Text(snapshot.readiness.activeConnectedAccount?.label ?? "Ready")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                         Text(AppFormat.money(snapshot.portfolio?.totalMarketValue, compact: true))
                             .font(.largeTitle.weight(.bold))
                             .foregroundStyle(AppPalette.accent)
@@ -324,19 +337,37 @@ private struct StrategyControlsCard: View {
 
     let snapshot: MobileSnapshot
 
+    /// ReadyHomeHero already owns the primary "Run once" CTA when setup is complete
+    /// and nothing is pending review. Duplicating it here put two identical buttons
+    /// within ~1 inch (owner report). Keep Run once here only when the hero does not:
+    /// incomplete setup (checklist hero) or pending proposals (hero says "Review N").
+    private var heroOwnsRunOnce: Bool {
+        let ready = snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse
+        return ready && snapshot.pendingProposals.isEmpty
+    }
+
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 14) {
-                SectionHeading("Agent controls", subtitle: "Every action is validated and executed by the backend.")
+                SectionHeading(
+                    "Agent controls",
+                    subtitle: heroOwnsRunOnce
+                        ? "Start scheduled autonomy or stop broker submissions. Run once is the primary button above."
+                        : "Every action is validated and executed by the backend."
+                )
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        runOnceButton
-                        startButton
-                    }
-                    VStack(spacing: 10) {
-                        runOnceButton
-                        startButton
+                if heroOwnsRunOnce {
+                    startButton
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) {
+                            runOnceButton
+                            startButton
+                        }
+                        VStack(spacing: 10) {
+                            runOnceButton
+                            startButton
+                        }
                     }
                 }
 
@@ -382,7 +413,7 @@ private struct StrategyControlsCard: View {
 
     private var startButton: some View {
         CommandButton(
-            "Start",
+            "Start agent",
             systemImage: "play.fill",
             isBusy: store.isBusy("strategy.start"),
             isDisabled: !store.canSubmit("strategy.start")
@@ -530,21 +561,78 @@ private struct ScheduleOverviewCard: View {
 
 private struct HomeAttentionCard: View {
     let snapshot: MobileSnapshot
+    @Binding var selectedTab: AppTab
 
     private var armedAlerts: Int {
         snapshot.alerts.filter { $0.status == "armed" }.count
     }
 
+    private var commandsInFlight: Int {
+        snapshot.readiness.commandBacklog.queued + snapshot.readiness.commandBacklog.running
+    }
+
     var body: some View {
         AppCard {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
                 SectionHeading("Needs attention")
-                LabeledContent("Pending proposals", value: "\(snapshot.pendingProposals.count)")
-                LabeledContent("Armed price alerts", value: "\(armedAlerts)")
-                LabeledContent("Open orders", value: "\(snapshot.orders.count)")
-                LabeledContent("Commands in flight", value: "\(snapshot.readiness.commandBacklog.queued + snapshot.readiness.commandBacklog.running)")
+                    .padding(.bottom, 8)
+                AttentionRow(
+                    title: "Pending proposals",
+                    value: "\(snapshot.pendingProposals.count)",
+                    emphasize: snapshot.pendingProposals.count > 0
+                ) {
+                    selectedTab = .proposals
+                }
+                AttentionRow(
+                    title: "Armed price alerts",
+                    value: "\(armedAlerts)",
+                    emphasize: armedAlerts > 0
+                ) {
+                    selectedTab = .markets
+                }
+                AttentionRow(
+                    title: "Open orders",
+                    value: "\(snapshot.orders.count)",
+                    emphasize: snapshot.orders.count > 0
+                ) {
+                    selectedTab = .markets
+                }
+                AttentionRow(
+                    title: "Commands in flight",
+                    value: "\(commandsInFlight)",
+                    emphasize: commandsInFlight > 0
+                ) {
+                    selectedTab = .activity
+                }
             }
         }
+    }
+}
+
+private struct AttentionRow: View {
+    let title: String
+    let value: String
+    var emphasize: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                    .foregroundStyle(.primary)
+                Spacer()
+                Text(value)
+                    .fontWeight(emphasize ? .semibold : .regular)
+                    .foregroundStyle(emphasize ? AppPalette.accent : .secondary)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens the related tab")
     }
 }
 
