@@ -8,7 +8,8 @@ import {
   summarizePendingProposals,
   triagePendingProposals
 } from "../app/console/approvals/triage";
-import { normalizeModelId } from "../app/console/components/approval-card";
+import { normalizeModelId, redTeamSummaryChip } from "../app/console/components/approval-card";
+import type { RedTeamCardState } from "../app/console/lib/red-team";
 
 type PendingInput = Omit<Partial<PendingProposal>, "proposal" | "decision" | "id" | "createdAt"> & {
   id: string;
@@ -138,6 +139,48 @@ describe("approvals triage helpers", () => {
       expect(normalizeModelId("gpt-4o")).toBe("gpt-4o");
       expect(normalizeModelId("openrouter/~anthropic/claude-sonnet-latest")).toBe("claude-sonnet-latest");
       expect(normalizeModelId("~anthropic/claude-sonnet-latest")).toBe("claude-sonnet-latest");
+    });
+  });
+
+  describe("redTeamSummaryChip (PR-A2 collapsed receipt)", () => {
+    const baseVerdict = {
+      available: true,
+      rejected: false,
+      verdict: "approve" as const,
+      reason: "Looks fine",
+      model: "openai/gpt-4o"
+    };
+
+    it("maps approve verdict to pos chip", () => {
+      const chip = redTeamSummaryChip("verdict-panel" satisfies RedTeamCardState, baseVerdict);
+      expect(chip.label).toBe("AI critic: approve");
+      expect(chip.tone).toBe("pos");
+    });
+
+    it("maps reject / rejected flag to neg chip", () => {
+      expect(redTeamSummaryChip("verdict-panel", { ...baseVerdict, rejected: true }).label).toBe("AI critic: reject");
+      expect(redTeamSummaryChip("verdict-panel", { ...baseVerdict, verdict: "reject", rejected: false }).tone).toBe("neg");
+    });
+
+    it("maps approve-at-half and failed review", () => {
+      expect(redTeamSummaryChip("verdict-panel", { ...baseVerdict, verdict: "approve-at-half" }).label).toBe(
+        "AI critic: half size"
+      );
+      expect(
+        redTeamSummaryChip("verdict-panel", {
+          ...baseVerdict,
+          available: false,
+          reason: "provider error",
+          failureKind: "provider_error"
+        }).label
+      ).toBe("AI critic: failed");
+    });
+
+    it("maps legacy-unavailable and no-review", () => {
+      expect(redTeamSummaryChip("legacy-unavailable", undefined).label).toBe("AI critic: unavailable");
+      const none = redTeamSummaryChip("no-review", undefined);
+      expect(none.label).toBe("No AI critic");
+      expect(none.tone).toBe("muted");
     });
   });
 });
