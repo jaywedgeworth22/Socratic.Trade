@@ -1,8 +1,8 @@
-**2026-08-04 — GROK: UX Wave B IA (B1/B2/B4).** Branch `grok/ux-wave-b-ia`. Plain nav labels
-Home/Scan/Activity/Results/Macro via `DESTINATIONS` + `destinationLabel`; Guardrails Autonomy
-panel (`#autonomy`) with run state/authority/cadence/readiness + chrome Run controls; Settings
-sticky TOC jump chips. B3 skipped; no policy defaults; A4 Advanced defaultOpen untouched.
-Rollout: `docs/rollouts/2026-08-04-ux-wave-b-ia.md`.
+**2026-08-04 — GROK: UX Wave B IA (B1/B2/B4) — PR #2425.** Branch `grok/ux-wave-b-ia`.
+Plain nav labels Home/Scan/Activity/Results/Macro via `DESTINATIONS` + `destinationLabel`;
+Guardrails Autonomy panel (`#autonomy`) with run state/authority/cadence/readiness + chrome Run
+controls; Settings sticky TOC. B3 via #2426 on main; no policy defaults; A4 `defaultOpen={false}`
+preserved. Supersedes #2413/#2419. Rollout: `docs/rollouts/2026-08-04-ux-wave-b-ia.md`.
 **2026-08-04 — GROK: retire direct FMP / QuiverQuant / Unusual Whales.** Owner:
 Socratic.Trade must not call those vendors. Congressional disclosures/analytics from
 Congress.Trade (default ON); **fundamentals from multi-source cascade** (Yahoo/Finnhub/
