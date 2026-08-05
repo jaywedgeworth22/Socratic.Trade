@@ -424,6 +424,15 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
                   ? proposal.stopPrice
                   : 0;
 
+        // Always stamp quoteStale for audit/UI even when we cannot form a limit (no price
+        // available yet). Never block or escalate either way.
+        quoteStaleMetadata = {
+          ageSec,
+          originalType,
+          originalLimitPrice,
+          referencePrice
+        };
+
         if (referencePrice > 0) {
           proposal.type = "limit";
           // Buy: never pay MORE than the decided entry. Short: never sell short BELOW the decided entry.
@@ -445,16 +454,12 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
             `Converted to a limit at $${(proposal.limitPrice ?? 0).toFixed(2)} so the proposal's ` +
             `intended entry $${referencePrice.toFixed(2)} is honored — not blocked.]`;
           proposal.rationale = `${proposal.rationale}${warningNote}`;
-
-          quoteStaleMetadata = {
-            ageSec,
-            originalType,
-            originalLimitPrice,
-            referencePrice
-          };
+        } else {
+          const ageText = ageSec !== undefined ? `${ageSec}s old` : "missing/unparseable";
+          proposal.rationale =
+            `${proposal.rationale} [Stale quote backup: quote timestamp is ${ageText} ` +
+            `(max ${maxQuoteAgeSec}s); no usable entry price to pin a limit — not blocked.]`;
         }
-        // If we have no usable price at all, do NOT invent a limit and do NOT block — leave the
-        // order as-is and let broker review / later placement paths handle missing price.
       }
     }
     // Stale market-scan fundamentals age used to pushEscalatable("quote_staleness") which soft-

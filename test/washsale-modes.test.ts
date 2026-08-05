@@ -581,7 +581,7 @@ describe("time-context gate escalations (closed allowlist)", () => {
     expect(decision.escalations?.map((e) => e.kind)).toContain("daily_order_cap");
   });
 
-  it("fundamentals staleness failure is escalatable", () => {
+  it("fundamentals/scan-age staleness is NOT escalatable (owner: never block on staleness)", () => {
     const decision = evaluateTradeProposal(
       buy,
       ctx(policyWith({ maxFundamentalsAgeSec: 60 }), {
@@ -599,8 +599,10 @@ describe("time-context gate escalations (closed allowlist)", () => {
         }
       })
     );
-    expect(decision.approved).toBe(false);
-    expect(decision.escalations?.map((e) => e.kind)).toContain("quote_staleness");
+    // Annotate only — no reasons, no escalations, still approved.
+    expect(decision.approved).toBe(true);
+    expect(decision.escalations?.map((e) => e.kind) ?? []).not.toContain("quote_staleness");
+    expect(decision.reasons.every((r) => !r.includes("staleness_gate"))).toBe(true);
   });
 
   it("PER-ORDER caps are never escalatable (hard class)", () => {
