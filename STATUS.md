@@ -1,3 +1,5 @@
+**2026-08-04 — GROK: UX PR-C1+C2 snapshot TTL + P&L once (branch `grok/ux-c-snapshot-pnl`).** In-memory ~10s TTL cache for `getDashboardSnapshot` keyed by userId+accountNumber+connectedAccountId; singleflight; invalidate on policy/mobile command. `calculatePnl` once per source threaded via `PrefetchedFills.livePnl/paperPnl`. Rollout: `docs/rollouts/2026-08-04-ux-c-snapshot-cache-pnl.md`.
+
 **2026-08-04 — GROK: retire direct FMP / QuiverQuant / Unusual Whales.** Owner:
 Socratic.Trade must not call those vendors. Congressional disclosures/analytics from
 Congress.Trade (default ON); **fundamentals from multi-source cascade** (Yahoo/Finnhub/

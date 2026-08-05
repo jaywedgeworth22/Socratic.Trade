@@ -67,7 +67,6 @@ afterEach(() => {
 });
 
 function seedAccount(userId: string, accountNumber: string, connectedAccountId?: string) {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return import("../src/lib/db").then((db) => {
     const id = connectedAccountId ?? `acct-${userId}-${accountNumber}`;
     db.upsertConnectedAccount({
