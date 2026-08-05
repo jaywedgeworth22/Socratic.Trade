@@ -1089,6 +1089,18 @@
   content: "COLLAPSE \02C5";
 }
 
+/* Collapsed collapsible cards are summary-only. The open-state header uses
+ * asymmetric pt-3.5 / pb-1 (tight bottom toward body content). When closed,
+ * that leaves "You're set" and similar one-line titles top-weighted and short.
+ * Balance vertical padding + a modest min-height so title/actions sit centered
+ * like other single-row card content. Open state unchanged. */
+.con-disclosure.con-card:not([open]) > summary > div {
+  padding-top: 0.875rem;
+  padding-bottom: 0.875rem;
+  min-height: 3.25rem;
+  box-sizing: border-box;
+}
+
 .con-hr {
   border: none;
   border-top: 1px solid var(--con-line);
