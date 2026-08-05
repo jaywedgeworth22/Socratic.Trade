@@ -47,9 +47,19 @@ npx vitest run --run test/quotes-cascade.test.ts test/staleness-gate.test.ts
 # 21/21 passed
 ```
 
+## Follow-up (same effort): never block/escalate on staleness — limit backup
+
+Owner: quotes should usually be much fresher than 15–16m, **and** if a print is still stale
+it is wrong to kill the proposal. Convert to a **limit at the proposal's intended entry**
+(`referencePrice` / existing limit) so the price Green identified as worth buying/shorting
+is honored.
+
+- `policy.ts`: quote-stale path only mutates → limit + rationale note; **no** `reasons` /
+  `pushEscalatable`. Fundamentals/scan-age path no longer escalates (annotate only).
+- Limit anchor order: `proposal.referencePrice` → existing `limitPrice` → scan print → stop.
+- Buy: `limit = min(existingLimit, intended)`; short: `max(...)` so we never worsen the entry.
+
 ## Next Steps
 
-- Land + auto-deploy; next strategy tick should show cascade continuing past delayed Tradier
-  and attaching fresher Alpaca/Yahoo `asOf` when those sources answer.
-- Optional follow-up: tag delayed providers explicitly and never stop on them even if asOf is
-  within 120s by clock skew; not required if trade_date is honest ~15m lag.
+- Land + auto-deploy; next strategy tick should (1) attach fresher Alpaca/Yahoo when available
+  and (2) never soft-block solely because a delayed feed stamped ~15m-old asOf.

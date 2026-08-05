@@ -386,8 +386,12 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       }
     }
   }
-  // STALENESS GATE: convert an OPENING proposal built on stale market data to a limit order (fail-safe).
-  // Timestamps are read from the run's MarketScan — never fabricated.
+  // STALENESS GATE (OPENINGS only) — NEVER blocks and NEVER escalates to a pending card.
+  // Primary path: the quote cascade must supply a trade-time within maxQuoteAgeSec (default 120s).
+  // Backup if data is still old/missing (should be rare once cascade is healthy): convert the order
+  // to a LIMIT at the proposal's intended entry (referencePrice / existing limit), so the price the
+  // strategy identified as worth buying/shorting is honored instead of chasing a stale market print.
+  // Timestamps are read from the run's MarketScan — never fabricated. Exits (sell/cover) are ungated.
   let quoteStaleMetadata: { ageSec?: number; originalType: any; originalLimitPrice?: number; referencePrice: number } | undefined = undefined;
 
   if (isOpening) {
@@ -402,50 +406,74 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       const isStale = !quoteAsOf || Number.isNaN(asOfMs) || (ageSec !== undefined && ageSec > maxQuoteAgeSec);
 
       if (isStale) {
-        // Mutate order to limit to protect execution price vs reference price at proposal creation
         const originalType = proposal.type;
         const originalLimitPrice = proposal.limitPrice;
 
+        // Prefer the proposal's own entry anchor (what Green decided is worth paying/receiving),
+        // then any existing limit, then the scan last print — never invent a price from thin air.
         const scanPrice = context.marketScan?.quotesBySymbol[symbol]?.price ??
           context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.price;
-        const fallbackRefPrice = scanPrice ?? proposal.limitPrice ?? proposal.stopPrice ?? 0;
-        const referencePrice = (proposal.referencePrice != null && proposal.referencePrice > 0)
-          ? proposal.referencePrice
-          : fallbackRefPrice;
+        const referencePrice =
+          (proposal.referencePrice != null && proposal.referencePrice > 0)
+            ? proposal.referencePrice
+            : (proposal.limitPrice != null && proposal.limitPrice > 0)
+              ? proposal.limitPrice
+              : (scanPrice != null && scanPrice > 0)
+                ? scanPrice
+                : (proposal.stopPrice != null && proposal.stopPrice > 0)
+                  ? proposal.stopPrice
+                  : 0;
 
-        proposal.type = "limit";
-        if (proposal.side === "buy") {
-          proposal.limitPrice = proposal.limitPrice != null ? Math.min(proposal.limitPrice, referencePrice) : referencePrice;
-        } else if (proposal.side === "short") {
-          proposal.limitPrice = proposal.limitPrice != null ? Math.max(proposal.limitPrice, referencePrice) : referencePrice;
+        if (referencePrice > 0) {
+          proposal.type = "limit";
+          // Buy: never pay MORE than the decided entry. Short: never sell short BELOW the decided entry.
+          if (proposal.side === "buy") {
+            proposal.limitPrice =
+              proposal.limitPrice != null && proposal.limitPrice > 0
+                ? Math.min(proposal.limitPrice, referencePrice)
+                : referencePrice;
+          } else if (proposal.side === "short") {
+            proposal.limitPrice =
+              proposal.limitPrice != null && proposal.limitPrice > 0
+                ? Math.max(proposal.limitPrice, referencePrice)
+                : referencePrice;
+          }
+
+          const ageText = ageSec !== undefined ? `${ageSec}s old` : "missing/unparseable";
+          const warningNote =
+            ` [Stale quote backup: quote timestamp is ${ageText} (max ${maxQuoteAgeSec}s). ` +
+            `Converted to a limit at $${(proposal.limitPrice ?? 0).toFixed(2)} so the proposal's ` +
+            `intended entry $${referencePrice.toFixed(2)} is honored — not blocked.]`;
+          proposal.rationale = `${proposal.rationale}${warningNote}`;
+
+          quoteStaleMetadata = {
+            ageSec,
+            originalType,
+            originalLimitPrice,
+            referencePrice
+          };
         }
-
-        const ageText = ageSec !== undefined ? `${ageSec}s old` : "missing/unparseable";
-        const warningNote = ` [Stale quote warning: quote timestamp is ${ageText}. Placed as a limit order at $${(proposal.limitPrice ?? 0).toFixed(2)} to protect execution price vs reference price $${referencePrice.toFixed(2)}.]`;
-        proposal.rationale = `${proposal.rationale}${warningNote}`;
-
-        quoteStaleMetadata = {
-          ageSec,
-          originalType,
-          originalLimitPrice,
-          referencePrice
-        };
+        // If we have no usable price at all, do NOT invent a limit and do NOT block — leave the
+        // order as-is and let broker review / later placement paths handle missing price.
       }
     }
+    // Stale market-scan fundamentals age used to pushEscalatable("quote_staleness") which soft-
+    // blocked Decide-mode proposals into pending cards. Owner (2026-08-04): never block/escalate
+    // on staleness — annotate only. Quote-level backup above already protects the entry price.
     const maxFundamentalsAgeSec = context.policy.maxFundamentalsAgeSec;
     if (maxFundamentalsAgeSec != null && maxFundamentalsAgeSec > 0) {
       const scanGeneratedAt = context.marketScan?.generatedAt;
       const genMs = scanGeneratedAt ? new Date(scanGeneratedAt).getTime() : NaN;
       if (!scanGeneratedAt || Number.isNaN(genMs)) {
-        pushEscalatable(
-          "quote_staleness",
-          `staleness_gate: market-scan timestamp is missing/unparseable; treating fundamentals as stale ` +
-            `(maxFundamentalsAgeSec=${maxFundamentalsAgeSec}).`
-        );
+        proposal.rationale =
+          `${proposal.rationale} [Scan-age note: market-scan timestamp missing/unparseable ` +
+          `(maxFundamentalsAgeSec=${maxFundamentalsAgeSec}); not blocking.]`;
       } else {
-        const ageSec = Math.round((now - genMs) / 1000);
-        if (ageSec > maxFundamentalsAgeSec) {
-          pushEscalatable("quote_staleness", `staleness_gate: market scan is ${ageSec}s old (max ${maxFundamentalsAgeSec}s).`);
+        const scanAgeSec = Math.round((now - genMs) / 1000);
+        if (scanAgeSec > maxFundamentalsAgeSec) {
+          proposal.rationale =
+            `${proposal.rationale} [Scan-age note: market scan is ${scanAgeSec}s old ` +
+            `(max ${maxFundamentalsAgeSec}s); not blocking — entry protected by quote-stale limit backup if needed.]`;
         }
       }
     }
