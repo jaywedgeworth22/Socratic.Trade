@@ -6,7 +6,6 @@
 // secrets injected after build (e.g. via Infisical at start:secrets) are reflected
 // immediately without a rebuild.
 
-import type { ReactNode } from "react";
 import { signIn } from "../../src/lib/auth/auth";
 import { HeaderLogo } from "../console/ui/header-logo";
 
@@ -18,13 +17,32 @@ const githubConfigured = !!(process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHU
 const appleConfigured = !!(process.env.AUTH_APPLE_ID && process.env.AUTH_APPLE_SECRET);
 const anyProviderConfigured = googleConfigured || githubConfigured || appleConfigured;
 
+/** Value props — keep in sync with iOS LoginView feature bullets. */
+const LOGIN_VALUE_BULLETS = [
+  "Review and approve proposals",
+  "Track positions, orders, and performance",
+  "Control the backend agent without moving credentials onto the device"
+] as const;
+
 export default function LoginPage() {
   return (
     <main className="grid min-h-screen place-items-center bg-bg px-6 text-center">
       <div className="w-full max-w-md space-y-6">
-        <div className="flex justify-center mb-8 px-4 overflow-hidden">
+        <div className="flex justify-center mb-2 px-4 overflow-hidden">
           <HeaderLogo height={20} />
         </div>
+
+        <ul className="mx-auto max-w-sm space-y-2.5 rounded-md border border-line bg-surface px-4 py-3.5 text-left">
+          {LOGIN_VALUE_BULLETS.map((text) => (
+            <li key={text} className="flex items-start gap-2.5 text-sm text-fg">
+              <span
+                className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                aria-hidden
+              />
+              <span className="leading-snug">{text}</span>
+            </li>
+          ))}
+        </ul>
 
         {anyProviderConfigured ? (
           <div className="flex flex-col gap-3">

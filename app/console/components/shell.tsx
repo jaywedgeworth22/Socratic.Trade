@@ -365,9 +365,9 @@ function ChromeBar({
             Admin
           </Link>
         )}
-        <div className="hidden md:block">
-          <CommandPaletteTrigger />
-        </div>
+        {/* Always visible (PR-E3): touch users have no ⌘K chord; icon-only on
+            phones (kbd hidden below sm) so the bar still prioritizes scope + STOP. */}
+        <CommandPaletteTrigger />
         <UserMenu snapshot={snapshot} theme={theme} setTheme={setTheme} />
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />
