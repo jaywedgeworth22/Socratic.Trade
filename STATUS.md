@@ -22,14 +22,22 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 
 2026-08-01 were moved to `docs/status-archive.md`.
 
-Last updated: 2026-08-04 (GROK: UX improvement program plan).
+Last updated: 2026-08-04 (GROK: UX Wave C speed C1–C4).
 
+
+## UX Wave C speed (2026-08-04, GROK)
+
+**IN PR** branch `grok/ux-wave-c-speed`. C1 snapshot TTL cache (userId×accountNumber, 10s,
+invalidate on policy/approve/reject); C2 FIFO `calculatePnl` once + PrefetchedPnl to
+scorecards/tax; C3 scan `TableVirtuoso`; C4 `React.memo` leaves + home `useMemo` derives.
+Rollout: `docs/rollouts/2026-08-04-ux-wave-c-speed.md`. Program:
+`docs/design/ux-improvement-program.md` §Wave C.
 
 ## UX improvement program (2026-08-04, GROK)
 
 Sequenced PR plan for web console + PWA + iOS after a full-product review:
-`docs/design/ux-improvement-program.md`. Wave A (trust/action) slices are Planned/UNASSIGNED
-on the effort board — claim before implementing. Rollout:
+`docs/design/ux-improvement-program.md`. Wave A/B/C/D slices claimed by implementer
+fleet — coordinate via effort board. Rollout:
 `docs/rollouts/2026-08-04-ux-improvement-program.md`.
 
 ## Where things stand
