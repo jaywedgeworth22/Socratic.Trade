@@ -1,3 +1,7 @@
+**2026-08-04 — GROK: UX PR-B1 plain nav labels (branch `grok/ux-b1-plain-nav`).** Owner D2:
+Thesis→Home, Evidence→Scan, Journal→Activity, Outcomes→Results, Regime→Macro. `desc`
+tooltips keep metaphor; home CTAs use `destinationLabel`; mobile pins already by href.
+Rollout: `docs/rollouts/2026-08-04-ux-b1-plain-nav-labels.md`.
 **2026-08-04 — GROK: retire direct FMP / QuiverQuant / Unusual Whales.** Owner:
 Socratic.Trade must not call those vendors. Congressional disclosures/analytics from
 Congress.Trade (default ON); **fundamentals from multi-source cascade** (Yahoo/Finnhub/
