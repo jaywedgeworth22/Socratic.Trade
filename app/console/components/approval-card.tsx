@@ -6,7 +6,7 @@
  *  and an honest three-outcomes block. Brokerage approvals go through the
  *  server's typed-confirmation contract (LIVE_CONFIRMATION_REQUIRED). */
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, CircleAlert, Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
 import { requestedExitQuantity } from "@/lib/broker-held-orders";
 import { isModelRotationSentinel } from "@/lib/llm-request";
@@ -208,7 +208,8 @@ export function redTeamSummaryChip(
   };
 }
 
-export function ApprovalCard({ pending }: { pending: PendingProposal }) {
+/** Wave C: memo so parent dashboard re-renders do not rebuild every card. */
+export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
@@ -853,7 +854,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       )}
     </article>
   );
-}
+});
 
 /** The typed real-money confirmation. The server contract
  *  (assertLiveApprovalConfirmation) verifies: proposal id, account number,

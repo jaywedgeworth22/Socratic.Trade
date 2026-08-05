@@ -59,8 +59,12 @@ beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-dashboard-batch-${randomUUID()}.db`)}`;
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
+  // C1 snapshot TTL would otherwise collapse a second getDashboardSnapshot into a cache hit
+  // and under-count fill/proposal calls in call-count assertions.
+  const { resetDashboardSnapshotCacheForTests } = await import("../src/lib/dashboard-snapshot-cache");
+  resetDashboardSnapshotCacheForTests();
 });
 
 describe("getDashboardSnapshot fill/proposal batching", () => {

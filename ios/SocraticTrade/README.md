@@ -62,3 +62,21 @@ Account & Settings is available from the Home toolbar. Deletion uses the
 backend's request/confirm flow, requires both identity and exact phrase, clears
 the local cookie session after success, and opens the server-provided logout
 URL. Provider-side OAuth revocation remains a separate user action.
+
+## TestFlight ship (no Xcode UI)
+
+Agents (and humans) ship device builds to TestFlight from the CLI:
+
+```bash
+# From repo root (agent worktree)
+bash scripts/ios-ship-testflight.sh
+
+# IPA only
+bash scripts/ios-ship-testflight.sh --export-only
+```
+
+Fleet driver (all three apps): `/Users/jay/apps/ios-fleet/README.md`.
+
+Requires team `CC8UTF7ATG` signing on the Mac, an App Store Connect app for
+`trade.socratic.app`, and either an Xcode-signed-in session or
+`~/.secrets/appstore-connect.env` (App Store Connect API key).
