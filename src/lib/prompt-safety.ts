@@ -386,11 +386,12 @@ export const EVIDENCE_AGE_HIGH_RELEVANCE_MARGIN = 0.2;
 const MAX_AGE_ANOMALIES = 12;
 
 export interface EvidenceAgeInput {
-  kind: "rag_chunk" | "learned_fact";
+  /** rag_chunk / learned_fact as of #816; headline first-seen added #837. */
+  kind: "rag_chunk" | "learned_fact" | "headline";
   id: string;
   /** Compact human label for the receipt, e.g. "AAPL 8-K 2026-07-05" or "NVDA fact:NVDA". */
   label: string;
-  /** ISO timestamp: chunk.as_of for RAG, row.assertedAt for learned facts. */
+  /** ISO timestamp: chunk.as_of for RAG, row.assertedAt for learned facts, first-seen for headlines. */
   timestamp?: string;
   /** RAG only: post-rerank relevance (falls back to cosine score at the call site). */
   relevanceScore?: number;
@@ -399,7 +400,7 @@ export interface EvidenceAgeInput {
 }
 
 export interface EvidenceAgeAnomaly {
-  kind: "rag_chunk" | "learned_fact";
+  kind: "rag_chunk" | "learned_fact" | "headline";
   id: string;
   label: string;
   ageHours: number;
