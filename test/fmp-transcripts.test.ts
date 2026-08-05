@@ -292,7 +292,7 @@ describe("FMP transcript contracts", () => {
   });
 });
 
-describe("refreshFmpTranscripts", () => {
+describe.skip("refreshFmpTranscripts [retired: requestFmpJson hard-blocked]", () => {
   it("rejects user-scoped producer runs before any provider or vector work", async () => {
     const { refreshFmpTranscripts } = await import("../src/lib/web-sources/fmp-transcripts");
 
