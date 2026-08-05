@@ -162,6 +162,7 @@ import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-t
 import { isEscalationRegime } from "./regime-watch";
 import { getUpcomingEconomicEventsForPrompt } from "./economic-calendar";
 import { compactHeadlinesForPrompt } from "./prompt-headlines";
+import { getOrRecordHeadlineFirstSeen, headlineFingerprint } from "./headline-first-seen";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
 import { computeMultiSignalSeverity } from "./regime-severity";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
@@ -1482,6 +1483,31 @@ export async function runStrategyOnce(
       }
     } catch (e) {
       console.warn("[Strategy] Skipping learned-context, store unavailable.");
+    }
+
+    // ── Headline first-seen (#837) ──────────────────────────────────────────
+    // Provider headlines are bare titles with no timestamps. Persist first
+    // observation so same-day news can join the evidence-age receipt (previously
+    // deferred). Uses the same compacted sample that enters the Bull prompt.
+    if (marketScan?.topCandidates?.length) {
+      try {
+        for (const candidate of marketScan.topCandidates) {
+          const sym = normalizeSymbol(candidate.symbol);
+          for (const headline of compactHeadlinesForPrompt(candidate.headlines)) {
+            const firstSeen = getOrRecordHeadlineFirstSeen({ userId, symbol: sym, text: headline });
+            if (!firstSeen) continue;
+            const fp = headlineFingerprint(headline);
+            evidenceAgeInputs.push({
+              kind: "headline",
+              id: `headline:${sym}:${fp}`,
+              label: `${sym} news: ${headline.slice(0, 72)}`,
+              timestamp: firstSeen
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("[Strategy] Skipping headline first-seen tracking:", e instanceof Error ? e.message : e);
+      }
     }
 
     // ── Evidence-age anomaly receipt (advisory only) ───────────────────────

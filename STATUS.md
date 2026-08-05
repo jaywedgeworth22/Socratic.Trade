@@ -2,6 +2,13 @@
 Paper Tradier keeps ~15m delayed sandbox quotes as execution-authoritative (no fresher Alpaca/Yahoo
 overlay); staleness ages `fetchedAt` not trade-time delay. Alpaca paper stays real-time cascade.
 Rollout: `docs/rollouts/2026-08-04-tradier-sandbox-venue-quotes.md`.
+## Current (2026-08-05 GROK)
+
+**2026-08-05 — GROK: issue batch #838/#837/#1319 (branch `grok/issues-batch-prompt-evidence`).**
+Prompt fencing on outcome post-mortem + reflection LLM; headline first-seen v66 for
+evidence-age receipts; approval-path HTTP 4xx → rejected_by_broker. Also unstuck PRs
+#2443/#2444/#2445. Rollout: `docs/rollouts/2026-08-05-issues-prompt-safety-headline-placement.md`.
+
 **2026-08-04 — GROK: auto-pause strategy when broker cannot place orders (branch `grok/auto-pause-unplaceable-broker`).** If order path is down (Tradier OMS 500s, Alpaca trading_blocked, infra place failures, unfunded), flip `systemState` to `halted` with auto-resume marker so cadence stops burning LLM on unplaceable proposals; recover when probe healthy. Rollout: `docs/rollouts/2026-08-04-auto-pause-unplaceable-broker.md`.
 **2026-08-04 — GROK: expert panel UX — Run once single primary (PR-A6).** Branch `grok/ux-expert-review-dup-run-once`. Owner: two Run once within ~1 inch. Four-expert review of web+iOS; chrome/home owns one primary; removed cadence/readiness/Guardrails/Insights duplicates; Zap icon; Approve live always labeled; iOS LIVE/PAPER + tappable attention. Review: `docs/reviews/2026-08-04-expert-panel-web-ios-ux.md`. Rollout: `docs/rollouts/2026-08-04-ux-run-once-single-primary.md`.
 

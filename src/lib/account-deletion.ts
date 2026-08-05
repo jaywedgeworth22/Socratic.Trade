@@ -101,7 +101,10 @@ const DELETE_TABLES_BY_USER_ID = [
   // Added 2026-07-29: task_journal (src/lib/db.ts, migration 62) — cron/task run journal rows are
   // user-scoped when attributed (nullable user_id — system-wide runs have none, matching the
   // generic loop's `WHERE user_id = ?` no-op for those rows, same as due_jobs).
-  "task_journal"
+  "task_journal",
+  // Added 2026-08-05: headline_first_seen (src/lib/db.ts, migration 66) — per-user first
+  // observation timestamps for news headlines used by evidence-age receipts (#837).
+  "headline_first_seen"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];
