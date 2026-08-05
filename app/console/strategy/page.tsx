@@ -3,6 +3,8 @@
 /** Strategy — how this account trades: the models, the strategist's written
  *  instructions (prompt), the eight scoring-factor weights, AI review, and
  *  the preset library. Always account-scoped; the header repeats the scope.
+ *  Progressive structure (PR-B3): Models + Instructions open by default;
+ *  Scoring weights collapsed; Presets collapsible open. No policy value changes.
  *  Presets are copy-not-link and can never arm or disarm anything
  *  (server-enforced). Tax treatment lives on Guardrails, not here (moved
  *  there in the 2026-07-16 IA restructure — it sits next to the Tax rules
@@ -639,10 +641,13 @@ function AccountScopedStrategyPage() {
       </div>
 
       {/* Models — id anchor is a deep-link target (old Settings "#models" links
-          retargeted here in the 2026-07-10 Settings IA restructure). */}
+          retargeted here in the 2026-07-10 Settings IA restructure).
+          Progressive structure (PR-B3): open by default with Instructions. */}
       <div id="models" className="scroll-mt-28">
       <Card
         title="Models"
+        collapsible
+        defaultOpen
         action={
           <div className="flex items-center gap-3">
             <Link
@@ -832,8 +837,14 @@ function AccountScopedStrategyPage() {
       </Card>
       </div>
 
-      {/* Prompt */}
-      <Card title="The strategist's written instructions" action={<SaveStatus status={autoSavePrompt.status} />}>
+      {/* Instructions — primary brief; open on first paint (PR-B3). */}
+      <div id="instructions" className="scroll-mt-28">
+      <Card
+        title="Instructions"
+        collapsible
+        defaultOpen
+        action={<SaveStatus status={autoSavePrompt.status} />}
+      >
         <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Free-text brief the proposer LLM runs under: objective, selection logic, sell rules, sizing guidance, output
           contract. The deterministic policy gate still constrains everything it proposes.
@@ -847,9 +858,16 @@ function AccountScopedStrategyPage() {
           title="Saves when you click away."
         />
       </Card>
+      </div>
 
-      {/* Scoring weights */}
-      <Card title="Scoring-factor weights" action={<SaveStatus status={autoSaveWeights.status} />}>
+      {/* Scoring weights — advanced; collapsed on first paint (PR-B3). No policy value changes. */}
+      <div id="scoring" className="scroll-mt-28">
+      <Card
+        title="Scoring"
+        collapsible
+        defaultOpen={false}
+        action={<SaveStatus status={autoSaveWeights.status} />}
+      >
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           The market scan ranks candidates by these eight factors before the strategist ever sees them. Defaults shown
           under each field. Weights are relative — raising one factor increases its share of the score and lowers the
@@ -892,12 +910,15 @@ function AccountScopedStrategyPage() {
           })}
         </div>
       </Card>
+      </div>
 
       {/* AI review */}
       <AiReviewPanel policy={policy} strategyPrompt={snapshot.strategyPrompt} reality={reality} />
 
-      {/* Presets */}
-      <Card title="Preset library">
+      {/* Presets — collapsible; open so the library remains discoverable without scrolling past
+          advanced weights (PR-B3). */}
+      <div id="presets" className="scroll-mt-28">
+      <Card title="Presets" collapsible defaultOpen>
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Applying a preset copies its policy, prompt, and weights onto the active account — copy, not link: later edits
           to the preset never follow. A preset can never start or stop the strategy; your run state is always preserved.
@@ -958,6 +979,7 @@ function AccountScopedStrategyPage() {
           </div>
         )}
       </Card>
+      </div>
     </div>
   );
 }

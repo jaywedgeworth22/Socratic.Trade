@@ -1,11 +1,23 @@
 import SwiftUI
 
 struct HomeView: View {
+    @Binding var selectedTab: AppTab
     @State private var presentedSheet: HomeSheet?
 
     var body: some View {
         SnapshotScaffold { snapshot in
-            AgentOverviewCard(snapshot: snapshot)
+            let readinessIncomplete = !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse
+            if readinessIncomplete {
+                ReadinessChecklistHero(
+                    snapshot: snapshot,
+                    openSettings: { presentedSheet = .settings }
+                )
+            } else {
+                ReadyHomeHero(snapshot: snapshot) {
+                    selectedTab = .proposals
+                }
+            }
+            AgentOverviewCard(snapshot: snapshot, showInlineReadiness: !readinessIncomplete)
             StrategyControlsCard(snapshot: snapshot)
             PortfolioOverviewCard(snapshot: snapshot)
             PerformanceOverviewCard(snapshot: snapshot)
@@ -32,6 +44,205 @@ struct HomeView: View {
     }
 }
 
+/// Incomplete setup: checklist hero with CTAs (Account & Settings / universe instructions).
+private struct ReadinessChecklistHero: View {
+    let snapshot: MobileSnapshot
+    let openSettings: () -> Void
+
+    private var needsAccount: Bool { !snapshot.readiness.hasAccount }
+    private var needsUniverse: Bool { !snapshot.readiness.hasUniverse }
+
+    var body: some View {
+        AppCard {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(AppPalette.accent.opacity(0.14))
+                        Image(systemName: "checklist")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(AppPalette.accent)
+                    }
+                    .frame(width: 44, height: 44)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Finish setup to trade")
+                            .font(.title3.weight(.bold))
+                        Text("Phone is a control remote — connect an account and symbol universe, then Run once.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    ChecklistRow(
+                        done: !needsAccount,
+                        title: "Connect a broker account",
+                        detail: needsAccount
+                            ? "Link Alpaca or Robinhood in the full desk, then select it here."
+                            : (snapshot.readiness.activeConnectedAccount?.label ?? "Account ready")
+                    )
+                    ChecklistRow(
+                        done: !needsUniverse,
+                        title: "Add a symbol universe",
+                        detail: needsUniverse
+                            ? "In Socratic.Trade console → Strategy, include an index or symbols."
+                            : "Universe ready for strategy runs"
+                    )
+                }
+
+                if needsAccount {
+                    Button(action: openSettings) {
+                        Label("Account & Settings", systemImage: "person.crop.circle")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(AppPalette.accent)
+                } else if needsUniverse {
+                    Text("Open the desktop console to edit Strategy universe (indices + extra symbols), then pull to refresh here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+
+private struct ChecklistRow: View {
+    let done: Bool
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(done ? AppPalette.positive : AppPalette.warning)
+                .font(.body.weight(.semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Ready state: equity + open P&L + agent state + primary CTA (Run once or Review N proposals).
+private struct ReadyHomeHero: View {
+    @EnvironmentObject private var store: MobileStore
+    let snapshot: MobileSnapshot
+    let onReviewProposals: () -> Void
+
+    private var usesLiveMetrics: Bool {
+        snapshot.readiness.activeConnectedAccount?.environment == "live"
+    }
+
+    private var openPnl: Double? {
+        guard let performance = snapshot.performance else { return nil }
+        return usesLiveMetrics ? performance.liveUnrealizedPnl : performance.paperUnrealizedPnl
+    }
+
+    private var pendingCount: Int { snapshot.pendingProposals.count }
+
+    private var stateColor: Color {
+        switch snapshot.readiness.systemState.lowercased() {
+        case "active": return AppPalette.positive
+        case "close_only", "liquidating": return AppPalette.warning
+        default: return AppPalette.negative
+        }
+    }
+
+    var body: some View {
+        AppCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(snapshot.readiness.activeConnectedAccount?.label ?? "Ready")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(AppFormat.money(snapshot.portfolio?.totalMarketValue, compact: true))
+                            .font(.largeTitle.weight(.bold))
+                            .foregroundStyle(AppPalette.accent)
+                        Text("Equity")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 6) {
+                        StatusPill(
+                            snapshot.readiness.systemState.replacingOccurrences(of: "_", with: " ").capitalized,
+                            color: stateColor,
+                            systemImage: snapshot.readiness.systemState == "active" ? "bolt.fill" : "pause.fill"
+                        )
+                        Text(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority))
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    MetricTile(
+                        title: "Open P&L",
+                        value: AppFormat.money(openPnl),
+                        detail: usesLiveMetrics ? "Live account" : "Paper account",
+                        tint: pnlColor(openPnl)
+                    )
+                    MetricTile(
+                        title: "Proposals",
+                        value: "\(pendingCount)",
+                        detail: pendingCount == 0 ? "None waiting" : "Awaiting review",
+                        tint: pendingCount > 0 ? AppPalette.warning : AppPalette.accent
+                    )
+                }
+
+                primaryCTA
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var primaryCTA: some View {
+        if pendingCount > 0 {
+            Button(action: onReviewProposals) {
+                Label(
+                    pendingCount == 1 ? "Review 1 proposal" : "Review \(pendingCount) proposals",
+                    systemImage: "checklist"
+                )
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppPalette.accent)
+            .accessibilityHint("Opens the Proposals tab to approve or reject")
+        } else {
+            CommandButton(
+                "Run once",
+                systemImage: "sparkles",
+                isBusy: store.isBusy("strategy.run_once"),
+                isDisabled: !store.canSubmit("strategy.run_once"),
+                prominent: true
+            ) {
+                Task { await store.submit("strategy.run_once") }
+            }
+        }
+    }
+
+    private func pnlColor(_ value: Double?) -> Color {
+        guard let value else { return AppPalette.accent }
+        return value >= 0 ? AppPalette.positive : AppPalette.negative
+    }
+}
+
 private enum HomeSheet: String, Identifiable {
     case settings
 
@@ -40,6 +251,7 @@ private enum HomeSheet: String, Identifiable {
 
 private struct AgentOverviewCard: View {
     let snapshot: MobileSnapshot
+    var showInlineReadiness: Bool = true
 
     private var stateColor: Color {
         switch snapshot.readiness.systemState.lowercased() {
@@ -81,7 +293,7 @@ private struct AgentOverviewCard: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
 
-                if !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
+                if showInlineReadiness, !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
                     HStack(alignment: .top, spacing: 9) {
                         Image(systemName: "exclamationmark.circle.fill")
                             .foregroundStyle(AppPalette.warning)
@@ -102,7 +314,7 @@ private struct AgentOverviewCard: View {
 
     @ViewBuilder
     private var statusLabels: some View {
-        Label(snapshot.readiness.strategyAuthority.capitalized, systemImage: "person.badge.shield.checkmark")
+        Label(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority), systemImage: "person.badge.shield.checkmark")
         Label(snapshot.marketSession.capitalized, systemImage: "chart.line.uptrend.xyaxis")
     }
 }
@@ -389,7 +601,7 @@ private struct AccountSettingsView: View {
     @ViewBuilder
     private var policySection: some View {
         Section("Current policy") {
-            LabeledContent("Authority", value: store.snapshot?.policy.strategyAuthority.capitalized ?? "—")
+            LabeledContent("Authority", value: AppFormat.strategyAuthorityLabel(store.snapshot?.policy.strategyAuthority))
             LabeledContent("Horizon", value: store.snapshot?.policy.holdingHorizon?.capitalized ?? "—")
             LabeledContent("Max order", value: AppFormat.money(store.snapshot?.policy.maxOrderNotional))
             LabeledContent("Daily cap", value: AppFormat.money(store.snapshot?.policy.maxDailyNotional))
