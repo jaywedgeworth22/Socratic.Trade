@@ -2561,6 +2561,32 @@ const MIGRATIONS: Migration[] = [
           ON headline_first_seen(last_seen);
       `);
     }
+  },
+  {
+    // Shared, durable latest-value store: every market field for every symbol ever
+    // seen, each row carrying its OWN as_of + fetched_at (not a scan-level stamp).
+    // Strategy audits strip full MarketScan for size; this table is the recovery
+    // path so interactive scans / other users still see last-known PE, EPS, etc.
+    // Symbols that leave the universe keep their last rows until a newer write.
+    version: 67,
+    name: "symbol_field_latest",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS symbol_field_latest (
+          symbol TEXT NOT NULL,
+          field TEXT NOT NULL,
+          value_json TEXT NOT NULL,
+          source TEXT NOT NULL,
+          as_of TEXT NOT NULL,
+          fetched_at TEXT NOT NULL,
+          PRIMARY KEY (symbol, field)
+        );
+        CREATE INDEX IF NOT EXISTS idx_symbol_field_latest_fetched
+          ON symbol_field_latest (fetched_at);
+        CREATE INDEX IF NOT EXISTS idx_symbol_field_latest_as_of
+          ON symbol_field_latest (as_of);
+      `);
+    }
   }
 ];
 
@@ -2913,6 +2939,21 @@ function migrate(database: Database.Database): void {
       fetched_at TEXT NOT NULL,
       PRIMARY KEY (symbol, field, provider, effective_at)
     );
+
+    -- Shared latest market fields (per-field as_of + fetched_at). See migration v67.
+    CREATE TABLE IF NOT EXISTS symbol_field_latest (
+      symbol TEXT NOT NULL,
+      field TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      source TEXT NOT NULL,
+      as_of TEXT NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (symbol, field)
+    );
+    CREATE INDEX IF NOT EXISTS idx_symbol_field_latest_fetched
+      ON symbol_field_latest (fetched_at);
+    CREATE INDEX IF NOT EXISTS idx_symbol_field_latest_as_of
+      ON symbol_field_latest (as_of);
 
     CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_account ON portfolio_snapshots (account_number, created_at);
     CREATE INDEX IF NOT EXISTS idx_fill_events_account ON fill_events (account_number, filled_at);

@@ -44,9 +44,13 @@ export async function GET(request: Request) {
     );
     const accountSeed = marketScanQuotesFromAudit(latestAccountAudit?.payload, latestAccountAudit?.createdAt);
     const globalSeed = marketScanQuotesFromAudit(latestGlobalAudit?.payload, latestGlobalAudit?.createdAt);
-    const seedEnrichment = (accountSeed || globalSeed)
-      ? { ...globalSeed, ...accountSeed }
-      : undefined;
+    // Prefer the durable shared symbol_field_latest store (per-field as_of + fetched_at) over
+    // audit payloads. strategy_run audits deliberately omit the full MarketScan; whole-object
+    // `{...global, ...account}` would also wipe rich seeds with blank interactive scans.
+    // scanMarket always reloads the store for the preselection pool; pass audit seeds only as
+    // an extra field-level layer when they still carry quotesBySymbol.
+    const { mergeQuoteSeedsFieldLevel } = await import("@/lib/market");
+    const seedEnrichment = mergeQuoteSeedsFieldLevel(globalSeed, accountSeed);
     const symbols = allowedSymbolsForPolicy(policy);
     const gateway = getBrokerGateway(policy, userId);
     let positions: EquityPosition[] = [];

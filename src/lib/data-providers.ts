@@ -1717,6 +1717,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       merged[symbol] = base;
     }
 
+    const fetchedAtNow = new Date().toISOString();
     const recordsToSave: import("./db-fundamentals").HistoricalFundamentalRecord[] = [];
     for (const [symbol, enrichment] of Object.entries(merged)) {
       if (!enrichment.fieldObservations) continue;
@@ -1730,19 +1731,26 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
               value: obs.value,
               provider: obs.source,
               effectiveAt: effectiveTs,
-              fetchedAt: obs.fetchedAt ?? new Date().toISOString()
+              fetchedAt: obs.fetchedAt ?? fetchedAtNow
             });
           }
         }
       }
     }
-    
+
     // Dynamic import (not require) so eslint no-require-imports stays clean and unit
     // tests that only partially mock db modules can still no-op when the module is absent.
+    // Persist BOTH: append-only numeric history AND shared per-field latest (with its own
+    // as_of + fetched_at on every field). The latest store is what interactive scans and
+    // other users read when strategy_run audits omit the full MarketScan.
     void import("./db-fundamentals")
       .then((mod) => {
-        if (typeof mod.recordHistoricalFundamentals === "function") {
+        if (typeof mod.recordHistoricalFundamentals === "function" && recordsToSave.length > 0) {
           mod.recordHistoricalFundamentals(recordsToSave);
+        }
+        if (typeof mod.recordsFromEnrichmentMap === "function" && typeof mod.upsertSymbolFieldLatest === "function") {
+          const latest = mod.recordsFromEnrichmentMap(merged, fetchedAtNow);
+          if (latest.length > 0) mod.upsertSymbolFieldLatest(latest);
         }
       })
       .catch(() => {
