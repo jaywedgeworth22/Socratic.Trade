@@ -1561,7 +1561,12 @@ const MAX_BRACKET_TEARDOWN_ATTEMPTS = 10;
  * removed once cancellation is attempted (successfully or not) unless the broker call itself threw,
  * in which case attempts is bumped and the row is retried next tick up to MAX_BRACKET_TEARDOWN_ATTEMPTS.
  */
-export async function reconcilePendingBracketTeardowns(gateway: BrokerGateway, accountNumber: string, userId: string = "local"): Promise<void> {
+export async function reconcilePendingBracketTeardowns(
+  gateway: BrokerGateway,
+  accountNumber: string,
+  userId: string = "local",
+  connectedAccountId?: string
+): Promise<void> {
   let pending: ReturnType<typeof listPendingBracketTeardowns>;
   try {
     pending = listPendingBracketTeardowns(accountNumber, userId);
@@ -1580,11 +1585,11 @@ export async function reconcilePendingBracketTeardowns(gateway: BrokerGateway, a
   for (const row of pending) {
     try {
       const { cancelledOrderIds } = await gateway.cancelBracketSiblingLegs(accountNumber, row.orderId);
-      audit("bracket_sibling_legs_torn_down", { symbol: row.symbol, orderId: row.orderId, cancelledOrderIds }, userId);
+      audit("bracket_sibling_legs_torn_down", { symbol: row.symbol, orderId: row.orderId, cancelledOrderIds }, userId, connectedAccountId);
       removePendingBracketTeardown(row.id);
     } catch (err) {
       if (row.attempts + 1 >= MAX_BRACKET_TEARDOWN_ATTEMPTS) {
-        audit("bracket_sibling_teardown_abandoned", { symbol: row.symbol, orderId: row.orderId, attempts: row.attempts + 1, error: errMsg(err) }, userId);
+        audit("bracket_sibling_teardown_abandoned", { symbol: row.symbol, orderId: row.orderId, attempts: row.attempts + 1, error: errMsg(err) }, userId, connectedAccountId);
         removePendingBracketTeardown(row.id);
       } else {
         bumpPendingBracketTeardownAttempts(row.id);

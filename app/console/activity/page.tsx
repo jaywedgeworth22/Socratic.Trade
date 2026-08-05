@@ -124,6 +124,7 @@ const STATUS_TONE: Record<string, ChipTone> = {
   rejected_by_broker: "neg",
   placing_failed: "neg",
   pending_reconciliation: "warn",
+  unreconcilable: "muted",
   failed: "neg",
   sent: "pos",
   // Strategy-run skips are non-success (warn), not muted success-adjacent (UX PR-A1).

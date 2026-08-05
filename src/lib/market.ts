@@ -673,6 +673,8 @@ async function loadDurableEnrichmentSeed(
 /**
  * Field-level merge of quote seeds. For each symbol/field, keep a non-empty value;
  * when both have values, prefer the one with the newer per-field fetchedAt (or asOf).
+ * Later seeds without a per-field stamp (caller/audit seedEnrichment) win over earlier
+ * durable-store rows so interactive intent is not blanked by a prior scan's companyName.
  * Never whole-object overwrite a rich seed with a blank audit shell.
  */
 export function mergeQuoteSeedsFieldLevel(
@@ -725,7 +727,17 @@ function mergeOneQuoteSeed(a: MarketQuoteSummary, b: MarketQuoteSummary): Market
     const bFilled = isFilledSeedValue(value);
     const aFilled = isFilledSeedValue(cur);
     if (!bFilled) continue;
-    if (!aFilled || fieldFetchedMs(b, field) >= fieldFetchedMs(a, field)) {
+    // Prefer later seed when: (1) earlier empty, (2) later is newer by stamp, or
+    // (3) later has no per-field stamp (caller/audit seed is intentional override).
+    // Without (3), durable store rows with fetchedAt always beat undated audit seeds
+    // (e.g. seedEnrichment companyName), which blanks interactive intent.
+    const aMs = fieldFetchedMs(a, field);
+    const bMs = fieldFetchedMs(b, field);
+    const preferB =
+      !aFilled ||
+      !Number.isFinite(aMs) ||
+      (Number.isFinite(bMs) ? bMs >= aMs : true);
+    if (preferB) {
       mergedRec[field] = value;
       const bSrc = b.sources?.[field as keyof EnrichmentSources];
       if (bSrc) merged.sources = { ...merged.sources, [field]: bSrc };
