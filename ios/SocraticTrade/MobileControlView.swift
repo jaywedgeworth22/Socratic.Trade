@@ -5,7 +5,8 @@ enum AppTab: String, CaseIterable, Identifiable {
     case proposals
     case markets
     case activity
-    case coach
+    /// Snapshot brief + rule-based attention items — not the web console Coach chat.
+    case insights
 
     var id: String { rawValue }
 
@@ -20,8 +21,8 @@ enum AppTab: String, CaseIterable, Identifiable {
             Label("Markets", systemImage: "chart.line.uptrend.xyaxis")
         case .activity:
             Label("Activity", systemImage: "clock.arrow.circlepath")
-        case .coach:
-            Label("Coach", systemImage: "bubble.left.and.text.bubble.right.fill")
+        case .insights:
+            Label("Insights", systemImage: "lightbulb.fill")
         }
     }
 }
@@ -62,10 +63,10 @@ struct MobileControlView: View {
             .tag(AppTab.activity)
 
             NavigationStack {
-                CoachView()
+                InsightsView()
             }
-            .tabItem { AppTab.coach.label }
-            .tag(AppTab.coach)
+            .tabItem { AppTab.insights.label }
+            .tag(AppTab.insights)
         }
         .tint(AppPalette.accent)
     }

@@ -121,6 +121,8 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
+- **[Socratic.Trade][GROK] iOS tab rename Coach → Insights — IN PROGRESS 2026-08-04 (branch `grok/ios-rename-coach-to-insights`).** User-visible rename only: snapshot brief tab is not web Coach chat. Rollout: `docs/rollouts/2026-08-04-ios-rename-coach-to-insights.md`.
+
 - **[Socratic.Trade][GROK] UX B3+E2+E3 polish — IN PROGRESS 2026-08-04 (branch `grok/ux-b3-e-polish`, landing).** Strategy progressive structure (Models·Instructions open; Scoring collapsed; Presets open); login 3 value bullets (iOS parity); CommandPaletteTrigger always on mobile (icon-only); healthy MobileFreshnessBar one-line. E1/welcome out of scope. Rollout: `docs/rollouts/2026-08-04-ux-b3-e-polish.md`. Program §PR-B3 / §PR-E2 / §PR-E3.
 - **[Socratic.Trade][GROK] UX program RESTART implementer blitz — IN PROGRESS 2026-08-04 (orchestrator `~/apps/trading-grok`, 10 parallel worktree agents).** PR-0 already on main (#2400). Claiming exclusive: A1 honest-skips, A2 approval-density, A3 checklist, A4+A5 guardrails+nouns, B1 plain-nav, B4 settings-TOC, C1+C2 snapshot/PnL, C3 scan-virtuoso, D1+D2 iOS brand/home, D4 PWA polish. Program: `docs/design/ux-improvement-program.md`. Peers: do not touch keepouts.
 
