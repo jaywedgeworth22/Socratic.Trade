@@ -43,6 +43,7 @@ global node-gyp, clean rebuild, assert load. Prod still on 6ad913d5 (healthy). R
 
 2026-08-01 were moved to `docs/status-archive.md`.
 
+Last updated: 2026-08-04 (GROK: UX PR-A3 first-run readiness checklist — PR #2417).
 Last updated: 2026-08-04 (GROK: UX Wave D mobile/iOS/PWA).
 
 **2026-08-04 — GROK: UX Wave D mobile/iOS/PWA parity (branch `grok/ux-wave-d-mobile`).**
@@ -55,6 +56,10 @@ control-remote framing. Rollout: `docs/rollouts/2026-08-04-ux-wave-d-mobile.md`.
 ## UX improvement program (2026-08-04, GROK)
 
 Sequenced PR plan for web console + PWA + iOS after a full-product review:
+`docs/design/ux-improvement-program.md`. **PR-A3 first-run checklist IN PR**
+(`grok/ux-a3-checklist` / #2417 — `deriveReadinessChecklist` + Thesis hero).
+Program rollout: `docs/rollouts/2026-08-04-ux-improvement-program.md`. A3 rollout:
+`docs/rollouts/2026-08-04-ux-a3-first-run-checklist.md`.
 `docs/design/ux-improvement-program.md`. Wave D (mobile/iOS/PWA) implemented on
 `grok/ux-wave-d-mobile`. Remaining A/B/C slices stay Planned/UNASSIGNED until claimed.
 Rollouts: `docs/rollouts/2026-08-04-ux-improvement-program.md`,
