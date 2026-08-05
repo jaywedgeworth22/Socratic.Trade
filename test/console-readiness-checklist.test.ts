@@ -223,9 +223,12 @@ describe("deriveReadinessChecklist", () => {
         })
       ).steps.find((s) => s.id === "run-once")?.href
     ).toBeUndefined();
-    expect(
-      deriveReadinessChecklist(snapshotWith({})).steps.find((s) => s.id === "run-once")?.href
-    ).toBe("/console/approvals");
+    // Incomplete run-once step points at chrome (no href) — not empty Proposals.
+    const incompleteRunOnce = deriveReadinessChecklist(snapshotWith({})).steps.find(
+      (s) => s.id === "run-once"
+    );
+    expect(incompleteRunOnce?.href).toBeUndefined();
+    expect(incompleteRunOnce?.ctaLabel).toMatch(/top bar/i);
   });
 
   it("is ready only when all five flags are true", () => {
