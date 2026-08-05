@@ -37,6 +37,28 @@ import { HelpGlossaryCard } from "./help";
 import { LearningReviewCard } from "./learning-review";
 import { DataSharingCard } from "./sharing";
 
+/** Sticky jump-chip targets for the long Settings page (UX PR-B4).
+ *  Ids are also hash deep-link anchors — keep in sync with the wrappers below
+ *  and with external links (e.g. Approvals → #learning-review). Labels are
+ *  short for horizontal-scroll chips on mobile. */
+const SETTINGS_TOC: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "notifications", label: "Notifications" },
+  { id: "delivery", label: "Delivery" },
+  { id: "sharing", label: "Sharing" },
+  { id: "learning-review", label: "Learning review" },
+  { id: "scan-shape", label: "Scan shape" },
+  { id: "fmp-features", label: "FMP" },
+  { id: "confirmation", label: "Confirmation" },
+  { id: "boot", label: "Boot" },
+  { id: "you", label: "You" },
+  { id: "appearance", label: "Display" },
+  { id: "glossary", label: "Glossary" },
+  { id: "danger", label: "Danger" }
+];
+
+/** Shared scroll offset class: clears sticky console chrome + the sticky TOC bar. */
+const SECTION_SCROLL_MT = "scroll-mt-36";
+
 /** One-line meaning for every notification event, completing the sentence
  *  "you get a notification whenever ...". VISIBLE LABELS come from the shared
  *  NOTIFICATION_EVENT_TYPE_LABELS map in src/lib/dashboard-ui.ts, so this page
@@ -68,13 +90,108 @@ const EVENT_HINT: Record<NotificationEventType, string> = {
   risk_advisory: "a risk guardrail was breached but the agent is still in control (advisory)"
 };
 
+/** Sticky horizontal jump chips for the long Settings page (UX PR-B4).
+ *  Sticks under the console topbar (measured) so chips stay reachable while
+ *  scrolling; mobile overflow-x scrolls the chip row. No policy writes. */
+function SettingsToc() {
+  // Seed from hash on first client paint so deep links highlight without an effect.
+  const [activeId, setActiveId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const hash = window.location.hash.slice(1);
+    return SETTINGS_TOC.some((s) => s.id === hash) ? hash : null;
+  });
+  const [topOffset, setTopOffset] = useState(0);
+
+  // Stick just below the console topbar (RealityBanner + ChromeBar + mobile
+  // freshness). Measure live so desktop/mobile chrome heights both work.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const topbar = document.querySelector<HTMLElement>(".con-topbar");
+    if (!topbar) return;
+    const apply = () => setTopOffset(Math.ceil(topbar.getBoundingClientRect().height));
+    apply();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(apply) : null;
+    ro?.observe(topbar);
+    window.addEventListener("resize", apply);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", apply);
+    };
+  }, []);
+
+  // Highlight the section currently in view (top of viewport + sticky chrome).
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") return;
+    const nodes = SETTINGS_TOC.map((s) => document.getElementById(s.id)).filter(
+      (el): el is HTMLElement => el !== null
+    );
+    if (nodes.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // Prefer the topmost intersecting section.
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]?.target?.id) setActiveId(visible[0].target.id);
+      },
+      {
+        // Account for sticky chrome + TOC strip so "active" matches what the user sees.
+        rootMargin: `-${Math.max(topOffset + 48, 96)}px 0px -55% 0px`,
+        threshold: [0, 0.1, 0.25]
+      }
+    );
+    for (const node of nodes) observer.observe(node);
+    return () => observer.disconnect();
+  }, [topOffset]);
+
+  const jump = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    setActiveId(id);
+    // Keep URL shareable / back-button friendly without a full navigation.
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `#${id}`);
+    }
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  return (
+    <nav
+      aria-label="Settings sections"
+      className="sticky z-30 -mx-4 border-b border-[color:var(--con-line)] bg-[color:var(--con-bg)]/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-[color:var(--con-bg)]/85 lg:-mx-6 lg:px-6"
+      style={{ top: topOffset }}
+    >
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {SETTINGS_TOC.map((item) => {
+          const isActive = activeId === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => jump(item.id)}
+              aria-current={isActive ? "true" : undefined}
+              className={`shrink-0 rounded-full border px-2.5 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors ${
+                isActive
+                  ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]"
+                  : "border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] text-[color:var(--con-muted)] hover:border-[color:var(--con-accent-border)] hover:text-[color:var(--con-fg)]"
+              }`}
+            >
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
 export default function SettingsPage() {
   const { snapshot } = useConsoleData();
   const ready = snapshot !== null;
 
   const router = useRouter();
 
-  // Deep links (e.g. #sharing, #learning-review, #confirmation, #admin, #danger):
+  // Deep links (e.g. #sharing, #learning-review, #confirmation, #danger, #appearance):
   // the page renders only after the snapshot arrives, so the native anchor jump
   // misses — scroll once the target section actually exists. Safety net: #brokers
   // and #api-keys moved to /console/connections in the 2026-07-16 IA restructure —
@@ -97,6 +214,9 @@ export default function SettingsPage() {
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-6`}>
       <h1 className="text-[length:var(--con-fs-lg)] font-bold">Settings</h1>
 
+      {/* Sticky jump chips — long page, no policy behavior change (UX PR-B4). */}
+      <SettingsToc />
+
       {/* Account-scoped config (models, prompt, weights) lives on Strategy
           (/console/strategy); Guardrails (/console/guardrails) carries the caps,
           protective stops, tax treatment, and rulebook — Settings is global-only. */}
@@ -117,9 +237,13 @@ export default function SettingsPage() {
         {/* notificationSettings is a USER-level policy field (USER_LEVEL_POLICY_FIELDS
             in db-profiles): one event list + webhook overlaid on every account —
             so the card lives under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
-        <EventNotificationsCard />
-        <DeliveryChannelsCard />
-        <div id="sharing" className="scroll-mt-28">
+        <div id="notifications" className={SECTION_SCROLL_MT}>
+          <EventNotificationsCard />
+        </div>
+        <div id="delivery" className={SECTION_SCROLL_MT}>
+          <DeliveryChannelsCard />
+        </div>
+        <div id="sharing" className={SECTION_SCROLL_MT}>
           <DataSharingCard />
         </div>
         {/* learningReviewEnabled/Mode/Model are USER-level policy fields
@@ -128,20 +252,28 @@ export default function SettingsPage() {
             every account — it belongs under ALL YOUR ACCOUNTS, not THIS ACCOUNT.
             The anchor id is a deep-link target (the Learning Review blocks on
             /console/approvals link here as "Model settings"). */}
-        <div id="learning-review" className="scroll-mt-28">
+        <div id="learning-review" className={SECTION_SCROLL_MT}>
           <LearningReviewCard />
         </div>
-        <ScanShapeCard />
-        <FmpFeaturesCard />
+        <div id="scan-shape" className={SECTION_SCROLL_MT}>
+          <ScanShapeCard />
+        </div>
+        <div id="fmp-features" className={SECTION_SCROLL_MT}>
+          <FmpFeaturesCard />
+        </div>
         {/* requireTypedConfirmation is a USER-level policy field
             (USER_LEVEL_POLICY_FIELDS in db-profiles, promoted 2026-07-10): the
             phrase ceremony is an owner preference, not a per-account guardrail,
             so one switch applies across every account. */}
-        <div id="confirmation" className="scroll-mt-28">
+        <div id="confirmation" className={SECTION_SCROLL_MT}>
           <AdvancedActionConfirmationCard />
         </div>
-        <BootBehaviorCard />
-        <YouCard />
+        <div id="boot" className={SECTION_SCROLL_MT}>
+          <BootBehaviorCard />
+        </div>
+        <div id="you" className={SECTION_SCROLL_MT}>
+          <YouCard />
+        </div>
       </section>
 
       {/* ── THIS BROWSER ── */}
@@ -154,7 +286,9 @@ export default function SettingsPage() {
             local display preferences
           </span>
         </div>
-        <AppearanceCard />
+        <div id="appearance" className={SECTION_SCROLL_MT}>
+          <AppearanceCard />
+        </div>
       </section>
 
       {/* ── REFERENCE ── */}
@@ -167,11 +301,13 @@ export default function SettingsPage() {
             nothing here changes any setting — it&apos;s the app&apos;s vocabulary, searchable
           </span>
         </div>
-        <HelpGlossaryCard />
+        <div id="glossary" className={SECTION_SCROLL_MT}>
+          <HelpGlossaryCard />
+        </div>
       </section>
 
       {/* ── DANGER ── */}
-      <section id="danger" className="flex scroll-mt-28 flex-col gap-4">
+      <section id="danger" className={`flex ${SECTION_SCROLL_MT} flex-col gap-4`}>
         <div className="flex items-center gap-2">
           <Chip tone="neg" title="Irreversible actions live here, behind typed confirmations — nothing in this section happens by accident.">
             DANGER

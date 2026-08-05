@@ -4,6 +4,8 @@ Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
 # STATUS — current repo snapshot
 
+**2026-08-04 — GROK: UX PR-B4 Settings sticky TOC.** Sticky jump chips on `/console/settings` for major sections (Notifications → Danger) with hash deep links; no policy changes. Branch `grok/ux-b4-settings-toc`. Rollout: `docs/rollouts/2026-08-04-ux-b4-settings-toc.md`.
+
 **2026-08-04 — Full-Bleed Pure White App Icon Assets (ANTIGRAVITY, branch `agent/antigravity`).** Updated `public/icon.svg` canvas to 100% full-bleed white background (`#ffffff` without transparent corners), updated `app/manifest.ts` PWA `background_color`/`theme_color` to `#ffffff`, and regenerated all PNG icons (`apple-touch-icon-180.png`, `icon-192.png`, `icon-512.png`, and iOS Xcode `AppIcon-1024.png`). Verified `tsc` clean and asset rendering. Rollout: `docs/rollouts/2026-08-04-full-bleed-white-app-icon.md`.
 
 **2026-08-04 — GROK: PR drain complete; prod deploy unblocked via slim Dockerfile.** Merged open PRs #2367-#2371, #2375, #2381. Prod stuck on 6ad913d5 because Coolify timed out on multi-GB `COPY --chown`. Fix: `.dockerignore` + prune + chown-in-RUN (`grok/docker-slim-deploy`). Rollout: `docs/rollouts/2026-08-04-docker-slim-deploy.md`.
