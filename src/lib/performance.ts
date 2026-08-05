@@ -124,14 +124,6 @@ export interface OpenLot {
   entryAt?: string;
 }
 
-interface PnlResult {
-  realized: number;
-  unrealized: number;
-  closedLots: ClosedLot[];
-  openLots: OpenLot[];
-  attribution: RunAttribution[];
-}
-
 export function recordPortfolioSnapshot(input: {
   userId?: string;
   runId?: string;
@@ -404,6 +396,24 @@ export interface PrefetchedFills {
   paperFills?: FillEvent[];
 }
 
+/**
+ * Precomputed FIFO P&L for a request (C2). Compute once from the same fill arrays
+ * as PrefetchedFills and pass into scorecards / tax / performance so each consumer
+ * does not re-run O(fills) lot matching.
+ */
+export interface PrefetchedPnl {
+  live?: PnlResult;
+  paper?: PnlResult;
+}
+
+export interface PnlResult {
+  realized: number;
+  unrealized: number;
+  closedLots: ClosedLot[];
+  openLots: OpenLot[];
+  attribution: RunAttribution[];
+}
+
 /** Resolve the fills for a single `FillSource`, preferring pre-fetched arrays when supplied. */
 function fillsForSource(
   accountNumber: string,
@@ -423,17 +433,32 @@ function fillsForSource(
   return listFillEvents(accountNumber, source, 500, userId);
 }
 
+/** Prefer precomputed P&L for a single fill source; fall back to calculatePnl on fills. */
+function pnlForSource(
+  accountNumber: string,
+  source: FillSource | undefined,
+  currentPrices: Record<string, number>,
+  userId: string,
+  prefetched?: PrefetchedFills,
+  prefetchedPnl?: PrefetchedPnl
+): PnlResult {
+  if (source === "live" && prefetchedPnl?.live) return prefetchedPnl.live;
+  if (source === "paper" && prefetchedPnl?.paper) return prefetchedPnl.paper;
+  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+}
+
 export function getPerformanceSummary(
   accountNumber: string,
   currentPrices: Record<string, number> = {},
   userId: string = "local",
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  prefetchedPnl?: PrefetchedPnl
 ): PerformanceSummary {
   const liveFills = prefetched?.liveFills ?? listFillEvents(accountNumber, "live", 500, userId);
   const paperFills = prefetched?.paperFills ?? listFillEvents(accountNumber, "paper", 500, userId);
   const allFills = [...liveFills, ...paperFills].sort((a, b) => a.filledAt.localeCompare(b.filledAt));
-  const livePnl = calculatePnl(liveFills, currentPrices);
-  const paperPnl = calculatePnl(paperFills, currentPrices);
+  const livePnl = prefetchedPnl?.live ?? calculatePnl(liveFills, currentPrices);
+  const paperPnl = prefetchedPnl?.paper ?? calculatePnl(paperFills, currentPrices);
   const liveSnapshots = listPortfolioSnapshots(accountNumber, "live", 100, userId);
   const paperSnapshots = listPortfolioSnapshots(accountNumber, "paper", 100, userId);
 
@@ -471,7 +496,17 @@ export function getPerformanceSummary(
   };
 }
 
+/** Test-only counter: FIFO is the hot path; C2 asserts scorecards reuse PrefetchedPnl. */
+let calculatePnlCallCountForTests = 0;
+export function getCalculatePnlCallCountForTests(): number {
+  return calculatePnlCallCountForTests;
+}
+export function resetCalculatePnlCallCountForTests(): void {
+  calculatePnlCallCountForTests = 0;
+}
+
 export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, number> = {}): PnlResult {
+  calculatePnlCallCountForTests += 1;
   const lots = new Map<
     string,
     Array<{
@@ -609,9 +644,10 @@ export function getThesisScorecard(
   source?: FillSource,
   currentPrices: Record<string, number> = {},
   userId: string = "local",
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  prefetchedPnl?: PrefetchedPnl
 ): ThesisStat[] {
-  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots } = pnlForSource(accountNumber, source, currentPrices, userId, prefetched, prefetchedPnl);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.thesisTag && lot.thesisTag.trim() ? lot.thesisTag.trim() : "Untagged"),
@@ -624,9 +660,10 @@ export function getRegimeScorecard(
   source?: FillSource,
   currentPrices: Record<string, number> = {},
   userId: string = "local",
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  prefetchedPnl?: PrefetchedPnl
 ): RegimeStat[] {
-  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots } = pnlForSource(accountNumber, source, currentPrices, userId, prefetched, prefetchedPnl);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.regime && lot.regime.trim() ? lot.regime.trim() : "Unspecified"),
@@ -652,9 +689,10 @@ export function getSectorScorecard(
   source?: FillSource,
   currentPrices: Record<string, number> = {},
   userId: string = "local",
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  prefetchedPnl?: PrefetchedPnl
 ): SectorStat[] {
-  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots } = pnlForSource(accountNumber, source, currentPrices, userId, prefetched, prefetchedPnl);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.sector && lot.sector.trim() ? lot.sector.trim() : "Unknown"),
@@ -667,9 +705,10 @@ export function getClosedLotsDetailed(
   accountNumber: string,
   source?: FillSource,
   userId: string = "local",
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  prefetchedPnl?: PrefetchedPnl
 ): ClosedLot[] {
-  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).closedLots;
+  return pnlForSource(accountNumber, source, {}, userId, prefetched, prefetchedPnl).closedLots;
 }
 
 /**
@@ -1393,9 +1432,10 @@ export function getOpenLots(
   accountNumber: string,
   source?: FillSource,
   userId: string = "local",
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  prefetchedPnl?: PrefetchedPnl
 ): OpenLot[] {
-  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).openLots;
+  return pnlForSource(accountNumber, source, {}, userId, prefetched, prefetchedPnl).openLots;
 }
 
 /**

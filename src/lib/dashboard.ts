@@ -28,7 +28,16 @@ import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./das
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
-import { getPerformanceSummary, getRedTeamEfficacy, getRegimeScorecard, getThesisScorecard, returnSinceProposalPct } from "./performance";
+import {
+  calculatePnl,
+  getPerformanceSummary,
+  getRedTeamEfficacy,
+  getRegimeScorecard,
+  getThesisScorecard,
+  returnSinceProposalPct,
+  type PrefetchedFills,
+  type PrefetchedPnl
+} from "./performance";
 import { computeSpyBenchmark } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
@@ -44,11 +53,21 @@ import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
-import type { PrefetchedFills } from "./performance";
 import type { BrokerageAccount, BrokerQuote, ConnectedAccount, EquityOrder, EquityPosition, OptionPosition, FillEvent, MarketQuote, MarketScan, NotificationEvent, NotificationEventType, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 import { checkAndDispatchOptionAlerts } from "./notifications";
+import {
+  DASHBOARD_SNAPSHOT_TTL_MS,
+  dashboardSnapshotCacheKey,
+  getOrComputeDashboardSnapshot
+} from "./dashboard-snapshot-cache";
+
+export {
+  DASHBOARD_SNAPSHOT_TTL_MS,
+  dashboardSnapshotCacheKey,
+  invalidateDashboardSnapshotCache
+} from "./dashboard-snapshot-cache";
 
 const PROPOSAL_PERFORMANCE_MIN_AGE_MS = 15 * 60_000;
 const RED_TEAM_EFFICACY_AUDIT_LIMIT = 500;
@@ -261,7 +280,26 @@ export interface CurrentUserDisplay {
   loginProvider?: string;
 }
 
+/**
+ * Full dashboard snapshot for the console / mobile API.
+ *
+ * C1: short per-(userId, accountNumber) in-memory TTL cache (~10s) so multi-tab
+ * polls and SSE-driven refreshes share work. Cross-account isolation is the
+ * hard correctness rule — never key by userId alone. Writes that change
+ * snapshot material call `invalidateDashboardSnapshotCache`.
+ */
 export async function getDashboardSnapshot(userId: string = "local", currentUser?: string | CurrentUserDisplay) {
+  // Resolve the cache key from policy/active account WITHOUT building the snapshot.
+  // Account number is part of the key so two concurrent accounts never share state.
+  const policyForKey = getPolicy(userId);
+  const activeForKey = getActiveConnectedAccount(userId);
+  const accountNumberForKey = policyForKey.accountNumber ?? activeForKey?.accountNumber ?? "";
+  const cacheKey = dashboardSnapshotCacheKey(userId, accountNumberForKey);
+
+  return getOrComputeDashboardSnapshot(cacheKey, () => computeDashboardSnapshot(userId, currentUser), DASHBOARD_SNAPSHOT_TTL_MS);
+}
+
+async function computeDashboardSnapshot(userId: string = "local", currentUser?: string | CurrentUserDisplay) {
   const snapshotStartedAt = Date.now();
   const timedOutSections: string[] = [];
   const currentUserDisplay: CurrentUserDisplay =
@@ -563,12 +601,20 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     ? dailyExecutionStats(accountNumber, new Date(), userId)
     : { orderCount: 0, openingOrderCount: 0, notional: 0 };
 
-  // Fetch live + paper fills ONCE per request (each is a 500-row SELECT + JSON.parse + FIFO replay)
+  // Fetch live + paper fills ONCE per request (each is a 500-row SELECT + JSON.parse)
   // and thread the parsed arrays into every downstream consumer — performance summary, scorecards,
   // tax, and the unified feed — instead of each re-issuing its own query.
+  // C2: also run FIFO P&L ONCE per fill source and thread closed/open lots into scorecards/tax
+  // so we do not re-walk up to 1000 fills 4–5× per snapshot.
   const liveFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "live", 500, userId) : [];
   const paperFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "paper", 500, userId) : [];
   const prefetchedFills: PrefetchedFills = { liveFills, paperFills };
+  const prefetchedPnl: PrefetchedPnl | undefined = accountNumber
+    ? {
+        live: calculatePnl(liveFills, currentPrices),
+        paper: calculatePnl(paperFills, currentPrices)
+      }
+    : undefined;
 
   // currentPrices (broker quotes for held symbols, falling back to the live position's mark) was
   // already computed inside the broker chain above, in parallel with the independent groups.
@@ -577,7 +623,9 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
 
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
   const recentProposals = accountNumber ? listRecentProposals(accountNumber, 100, userId) : [];
-  const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices, userId, prefetchedFills) : undefined;
+  const performance = accountNumber
+    ? getPerformanceSummary(accountNumber, currentPrices, userId, prefetchedFills, prefetchedPnl)
+    : undefined;
   const executionState = deriveExecutionState(policy, activeAccount);
   const scorecardSource = fillSourceForExecutionMode(executionState);
   // SPY-benchmark scoreboard for the active execution mode's equity curve. Best-effort: a SPY fetch
@@ -611,11 +659,24 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     );
     if (benchmark) performance.benchmark = benchmark;
   }
-  const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills) : [];
-  const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills) : [];
+  const thesisScorecard = accountNumber
+    ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills, prefetchedPnl)
+    : [];
+  const regimeScorecard = accountNumber
+    ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills, prefetchedPnl)
+    : [];
   const redTeamEfficacy = accountNumber ? getDashboardRedTeamEfficacy(userId, policy.connectedAccountId) : undefined;
   const tax = accountNumber
-    ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccount?.taxationType ?? policy.taxSettings?.taxationType }, new Date(), userId, prefetchedFills)
+    ? getTaxSummary(
+        accountNumber,
+        scorecardSource,
+        currentPrices,
+        { ...policy.taxSettings, taxationType: activeAccount?.taxationType ?? policy.taxSettings?.taxationType },
+        new Date(),
+        userId,
+        prefetchedFills,
+        prefetchedPnl
+      )
     : undefined;
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);

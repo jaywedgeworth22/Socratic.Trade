@@ -11,6 +11,7 @@ import type {
   StrategyProfile,
   TradingPolicy
 } from "./types";
+import { invalidateDashboardSnapshotCache } from "./dashboard-snapshot-cache";
 
 // ── User-level vs account-level policy field split ─────────────────────────────
 // User-level fields are stored in user_settings.policy and overlaid on top of the
@@ -591,6 +592,8 @@ export function setPolicy(policy: TradingPolicy, userId: string = "local", conne
     syncActiveProfile({ policy: merged, scoringWeights: merged.scoringWeights }, userId);
     audit("policy_change", { userId, key: "policy", value: merged }, userId);
   }
+  // C1: policy changes materialize in the next dashboard snapshot — drop the short TTL cache.
+  invalidateDashboardSnapshotCache(userId);
 }
 
 export function getStrategyPrompt(userId: string = "local", connectedAccountId?: string): string {
