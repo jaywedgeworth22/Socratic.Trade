@@ -57,17 +57,16 @@ No policy/behavior changes; display structure and discoverability only.
 
 ```bash
 export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
-node -v   # expect v24.x
+node -v   # v24.19.0
 npm ci
-npm run lint
-npx tsc --noEmit
-npm test
-npm run build
-# land
-bash scripts/land.sh
+npx tsc --noEmit          # clean
+npm run lint              # 0 errors (grandfathered warnings only)
+npm test                  # 508 files, 5886 passed | 51 skipped
+npm run build             # Next.js 16.2.12 clean
+bash scripts/land.sh      # PR #2428, auto-merge armed
 ```
 
-(Gates run via land.sh after local tsc/lint smoke.)
+Build status: **all local gates green.** PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2428
 
 ## Next Steps & Blockers
 
