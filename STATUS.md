@@ -1,3 +1,10 @@
+## Current (2026-08-05 GROK)
+
+**2026-08-05 — GROK: issue batch #838/#837/#1319 (branch `grok/issues-batch-prompt-evidence`).**
+Prompt fencing on outcome post-mortem + reflection LLM; headline first-seen v66 for
+evidence-age receipts; approval-path HTTP 4xx → rejected_by_broker. Also unstuck PRs
+#2443/#2444/#2445. Rollout: `docs/rollouts/2026-08-05-issues-prompt-safety-headline-placement.md`.
+
 ## Current (2026-08-04 GROK)
 
 - iOS TestFlight agent ship: `bash scripts/ios-ship-testflight.sh` (fleet README `/Users/jay/apps/ios-fleet/README.md`).

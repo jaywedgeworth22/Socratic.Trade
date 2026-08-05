@@ -67,8 +67,35 @@ import {
   type NormalizedDailyBar
 } from "./outcome-horizons";
 import { calculatePnl, type ClosedLot } from "./performance";
+import {
+  containPromptDataTree,
+  scanForInjectionAttempts,
+  type UntrustedPromptField
+} from "./prompt-safety";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { FillEvent, OrderSide, SocraticDecisionCase, SocraticOutcomeHorizonRow } from "./types";
+
+/** Collect string leaves under a path for advisory injection scanning (bounded). */
+function flattenPromptScanFields(value: unknown, path: string, out: UntrustedPromptField[] = [], depth = 0): UntrustedPromptField[] {
+  if (out.length >= 24 || depth > 6) return out;
+  if (typeof value === "string") {
+    if (value.trim()) out.push({ name: path, text: value });
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length && out.length < 24; i++) {
+      flattenPromptScanFields(value[i], `${path}[${i}]`, out, depth + 1);
+    }
+    return out;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (out.length >= 24) break;
+      flattenPromptScanFields(child, path ? `${path}.${key}` : key, out, depth + 1);
+    }
+  }
+  return out;
+}
 
 const DAY_MS = 86_400_000;
 const DEFAULT_CASE_LIMIT = 25;
@@ -720,7 +747,10 @@ async function generatePostMortemLessons(
   const outcome = decisionCase.outcome;
   if (!outcome) return { written: false, skippedReason: "no_outcome" };
 
-  const userContent = JSON.stringify({
+  // #838: fence untrusted persisted model text (thesis/rationale/dissent/evidence/coach notes)
+  // the same way strategy-tuning and framework-review do — quarantine instruction-like spans
+  // and keep advisory receipts; never block generation.
+  const rawUserPayload = {
     symbol: decisionCase.symbol,
     side: decisionCase.side,
     status: decisionCase.status,
@@ -733,7 +763,33 @@ async function generatePostMortemLessons(
     evidence: decisionCase.evidence.slice(0, 6).map((item) => ({ kind: item.kind, title: item.title, summary: truncate(item.summary, 300) })),
     coachNotes: decisionCase.coachNotes.slice(-5),
     realizedOutcome: outcome
-  });
+  };
+  const contained = containPromptDataTree(rawUserPayload, "unknown", "outcomePostMortem");
+  const injectionFindings = scanForInjectionAttempts(
+    flattenPromptScanFields(contained.value, "outcomePostMortem").slice(0, 24)
+  );
+  if (contained.receipts.length > 0 || injectionFindings.length > 0) {
+    audit(
+      "outcome_postmortem_prompt_safety",
+      {
+        decisionId: decisionCase.id,
+        symbol: decisionCase.symbol,
+        containment: contained.receipts.slice(0, 12).map(({ path, result }) => ({
+          path,
+          status: result.status,
+          patterns: result.findings.map((f) => f.pattern)
+        })),
+        injectionFindings: injectionFindings.slice(0, 12).map((f) => ({
+          name: f.name,
+          pattern: f.pattern,
+          excerpt: f.excerpt.slice(0, 240)
+        }))
+      },
+      userId,
+      decisionCase.connectedAccountId
+    );
+  }
+  const userContent = JSON.stringify(contained.value);
 
   const text = llmOverride
     ? await llmOverride({ systemPrompt: LESSON_SYSTEM_PROMPT, userContent })
