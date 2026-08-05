@@ -591,6 +591,12 @@ export function setPolicy(policy: TradingPolicy, userId: string = "local", conne
     syncActiveProfile({ policy: merged, scoringWeights: merged.scoringWeights }, userId);
     audit("policy_change", { userId, key: "policy", value: merged }, userId);
   }
+  // UX PR-C1: policy writes change snapshot material (systemState, guardrails, active account
+  // pointers). Invalidate this user's short-TTL dashboard cache so the next poll rebuilds.
+  // Lazy import keeps db-profiles free of a static cycle with dashboard.ts.
+  void import("./dashboard-snapshot-cache")
+    .then((m) => m.invalidateDashboardSnapshotCache(userId))
+    .catch(() => undefined);
 }
 
 export function getStrategyPrompt(userId: string = "local", connectedAccountId?: string): string {

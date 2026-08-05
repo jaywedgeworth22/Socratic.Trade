@@ -625,6 +625,11 @@ function finishCommand(command: MobileCommandRecord, status: "succeeded" | "fail
     command.userId
   );
   emitMobileCommandEvent(updated);
+  // UX PR-C1: command completion (approve/stop/activate/etc.) mutates snapshot-visible state.
+  // Drop this user's short-TTL dashboard cache so the next poll/SSE rebuilds.
+  void import("./dashboard-snapshot-cache")
+    .then((m) => m.invalidateDashboardSnapshotCache(command.userId))
+    .catch(() => undefined);
   return updated;
 }
 

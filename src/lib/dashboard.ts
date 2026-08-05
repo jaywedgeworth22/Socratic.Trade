@@ -28,7 +28,14 @@ import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./das
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
-import { getPerformanceSummary, getRedTeamEfficacy, getRegimeScorecard, getThesisScorecard, returnSinceProposalPct } from "./performance";
+import {
+  calculatePnl,
+  getPerformanceSummary,
+  getRedTeamEfficacy,
+  getRegimeScorecard,
+  getThesisScorecard,
+  returnSinceProposalPct
+} from "./performance";
 import { computeSpyBenchmark } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
@@ -49,6 +56,18 @@ import type { BrokerageAccount, BrokerQuote, ConnectedAccount, EquityOrder, Equi
 import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 import { checkAndDispatchOptionAlerts } from "./notifications";
+import {
+  dashboardSnapshotCacheKey,
+  putDashboardSnapshotCache,
+  withDashboardSnapshotCache
+} from "./dashboard-snapshot-cache";
+
+export {
+  dashboardSnapshotCacheKey,
+  invalidateDashboardSnapshotCache,
+  resetDashboardSnapshotCacheForTests,
+  dashboardSnapshotTtlMs
+} from "./dashboard-snapshot-cache";
 
 const PROPOSAL_PERFORMANCE_MIN_AGE_MS = 15 * 60_000;
 const RED_TEAM_EFFICACY_AUDIT_LIMIT = 500;
@@ -261,7 +280,11 @@ export interface CurrentUserDisplay {
   loginProvider?: string;
 }
 
-export async function getDashboardSnapshot(userId: string = "local", currentUser?: string | CurrentUserDisplay) {
+/**
+ * Build the dashboard projection (uncached). Prefer `getDashboardSnapshot`, which applies the
+ * short TTL + singleflight cache (UX PR-C1). Exported for tests that need a forced rebuild.
+ */
+export async function buildDashboardSnapshot(userId: string = "local", currentUser?: string | CurrentUserDisplay) {
   const snapshotStartedAt = Date.now();
   const timedOutSections: string[] = [];
   const currentUserDisplay: CurrentUserDisplay =
@@ -563,12 +586,15 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     ? dailyExecutionStats(accountNumber, new Date(), userId)
     : { orderCount: 0, openingOrderCount: 0, notional: 0 };
 
-  // Fetch live + paper fills ONCE per request (each is a 500-row SELECT + JSON.parse + FIFO replay)
-  // and thread the parsed arrays into every downstream consumer — performance summary, scorecards,
-  // tax, and the unified feed — instead of each re-issuing its own query.
+  // Fetch live + paper fills ONCE per request (each is a 500-row SELECT + JSON.parse) and run
+  // FIFO calculatePnl ONCE per source (UX PR-C2). Thread both into every downstream consumer —
+  // performance summary, scorecards, tax, and the unified feed — instead of each re-issuing its
+  // own query / O(fills) lot-matching pass.
   const liveFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "live", 500, userId) : [];
   const paperFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "paper", 500, userId) : [];
-  const prefetchedFills: PrefetchedFills = { liveFills, paperFills };
+  const livePnl = calculatePnl(liveFills, currentPrices);
+  const paperPnl = calculatePnl(paperFills, currentPrices);
+  const prefetchedFills: PrefetchedFills = { liveFills, paperFills, livePnl, paperPnl };
 
   // currentPrices (broker quotes for held symbols, falling back to the live position's mark) was
   // already computed inside the broker chain above, in parallel with the independent groups.
@@ -924,6 +950,59 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     },
     marketSession: currentMarketSession(),
     macroBoard
+  };
+}
+
+/**
+ * Public dashboard snapshot entry (used by `/api/dashboard` and `/api/mobile/snapshot`).
+ *
+ * UX PR-C1: short (~10s) in-memory TTL cache keyed by `(userId, accountNumber, connectedAccountId)`
+ * with singleflight coalescing. Concurrent polls and dual desktop/mobile tabs share one build.
+ * `currentUser` display fields are re-stamped on every return so a cache hit never leaks another
+ * session's email/name. Invalidate via `invalidateDashboardSnapshotCache` on policy writes and
+ * mobile command completion; the short TTL is the safety net if invalidation is incomplete.
+ */
+export async function getDashboardSnapshot(userId: string = "local", currentUser?: string | CurrentUserDisplay) {
+  // Identity for the cache key comes from sync DB reads (active account / policy pointers) so a
+  // multi-account user switching accounts never reuses another account's snapshot. Broker-resolved
+  // accountNumber inside buildDashboardSnapshot may refine later; we also store under the built
+  // snapshot's policy identity below when it differs.
+  const activeAccount = getActiveConnectedAccount(userId);
+  // peekPolicy avoids seeding account_strategy_state on a pure cache-key probe (getPolicy writes
+  // for un-seeded accounts). Effective account pointers match getPolicy for keying purposes.
+  const policyPeek = peekPolicy(userId, activeAccount?.id);
+  const accountNumber = policyPeek.accountNumber ?? activeAccount?.accountNumber ?? null;
+  const connectedAccountId = policyPeek.connectedAccountId ?? activeAccount?.id ?? null;
+  const cacheKey = dashboardSnapshotCacheKey(userId, accountNumber, connectedAccountId);
+
+  const snapshot = await withDashboardSnapshotCache(cacheKey, async () => {
+    const built = await buildDashboardSnapshot(userId, currentUser);
+    // If broker/policy resolution chose a different account identity than the probe, also pin the
+    // cache under that key so the next poll (which will see the persisted active account) hits.
+    const builtKey = dashboardSnapshotCacheKey(
+      userId,
+      built.policy.accountNumber ?? built.portfolio?.accountNumber ?? accountNumber,
+      built.policy.connectedAccountId ?? connectedAccountId
+    );
+    if (builtKey !== cacheKey) {
+      putDashboardSnapshotCache(builtKey, built);
+    }
+    return built;
+  });
+
+  // Always re-stamp currentUser so a cache hit cannot serve another request's session display.
+  const currentUserDisplay: CurrentUserDisplay =
+    typeof currentUser === "string" ? { email: currentUser } : currentUser ?? {};
+  return {
+    ...snapshot,
+    currentUser: {
+      userId,
+      ...(currentUserDisplay.email ? { email: currentUserDisplay.email } : {}),
+      ...(currentUserDisplay.name ? { name: currentUserDisplay.name } : {}),
+      ...(currentUserDisplay.imageUrl ? { imageUrl: currentUserDisplay.imageUrl } : {}),
+      ...(currentUserDisplay.loginProvider ? { loginProvider: currentUserDisplay.loginProvider } : {}),
+      isAdmin: isAdminEmail(currentUserDisplay.email)
+    }
   };
 }
 

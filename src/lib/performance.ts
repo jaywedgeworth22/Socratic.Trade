@@ -124,7 +124,8 @@ export interface OpenLot {
   entryAt?: string;
 }
 
-interface PnlResult {
+/** FIFO lot-matching result from `calculatePnl` — exported so dashboard assembly can compute once. */
+export interface PnlResult {
   realized: number;
   unrealized: number;
   closedLots: ClosedLot[];
@@ -398,10 +399,18 @@ export function recordFillFromProposal(input: {
  * live + paper fills ONCE and thread them into every consumer instead of each function re-issuing
  * its own `listFillEvents` SELECT + JSON.parse + FIFO replay. When omitted, each function fetches
  * internally exactly as before — so every other caller keeps working unchanged.
+ *
+ * Optional `livePnl` / `paperPnl` (UX PR-C2) carry a single FIFO `calculatePnl` pass per source so
+ * scorecards, tax, and the performance summary reuse the same closed/open lots instead of
+ * replaying O(fills) lot-matching 4–5× per snapshot.
  */
 export interface PrefetchedFills {
   liveFills?: FillEvent[];
   paperFills?: FillEvent[];
+  /** Precomputed `calculatePnl(liveFills, currentPrices)` for this request. */
+  livePnl?: PnlResult;
+  /** Precomputed `calculatePnl(paperFills, currentPrices)` for this request. */
+  paperPnl?: PnlResult;
 }
 
 /** Resolve the fills for a single `FillSource`, preferring pre-fetched arrays when supplied. */
@@ -423,6 +432,34 @@ function fillsForSource(
   return listFillEvents(accountNumber, source, 500, userId);
 }
 
+/**
+ * Resolve FIFO P&L for a source, preferring a request-scoped precomputed result when present.
+ * Falls back to `calculatePnl(fillsForSource(...))` so callers without prefetched P&L are unchanged.
+ */
+function pnlForSource(
+  accountNumber: string,
+  source: FillSource | undefined,
+  userId: string,
+  currentPrices: Record<string, number> = {},
+  prefetched?: PrefetchedFills
+): PnlResult {
+  if (prefetched) {
+    if (source === "live" && prefetched.livePnl) return prefetched.livePnl;
+    if (source === "paper" && prefetched.paperPnl) return prefetched.paperPnl;
+    // Unfiltered (both sources): only reuse when both halves were precomputed — matches fillsForSource.
+    if (source === undefined && prefetched.livePnl && prefetched.paperPnl) {
+      return {
+        realized: prefetched.livePnl.realized + prefetched.paperPnl.realized,
+        unrealized: prefetched.livePnl.unrealized + prefetched.paperPnl.unrealized,
+        closedLots: [...prefetched.livePnl.closedLots, ...prefetched.paperPnl.closedLots],
+        openLots: [...prefetched.livePnl.openLots, ...prefetched.paperPnl.openLots],
+        attribution: combineAttribution(prefetched.livePnl.attribution, prefetched.paperPnl.attribution)
+      };
+    }
+  }
+  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+}
+
 export function getPerformanceSummary(
   accountNumber: string,
   currentPrices: Record<string, number> = {},
@@ -432,8 +469,8 @@ export function getPerformanceSummary(
   const liveFills = prefetched?.liveFills ?? listFillEvents(accountNumber, "live", 500, userId);
   const paperFills = prefetched?.paperFills ?? listFillEvents(accountNumber, "paper", 500, userId);
   const allFills = [...liveFills, ...paperFills].sort((a, b) => a.filledAt.localeCompare(b.filledAt));
-  const livePnl = calculatePnl(liveFills, currentPrices);
-  const paperPnl = calculatePnl(paperFills, currentPrices);
+  const livePnl = prefetched?.livePnl ?? calculatePnl(liveFills, currentPrices);
+  const paperPnl = prefetched?.paperPnl ?? calculatePnl(paperFills, currentPrices);
   const liveSnapshots = listPortfolioSnapshots(accountNumber, "live", 100, userId);
   const paperSnapshots = listPortfolioSnapshots(accountNumber, "paper", 100, userId);
 
@@ -611,7 +648,7 @@ export function getThesisScorecard(
   userId: string = "local",
   prefetched?: PrefetchedFills
 ): ThesisStat[] {
-  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots } = pnlForSource(accountNumber, source, userId, currentPrices, prefetched);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.thesisTag && lot.thesisTag.trim() ? lot.thesisTag.trim() : "Untagged"),
@@ -626,7 +663,7 @@ export function getRegimeScorecard(
   userId: string = "local",
   prefetched?: PrefetchedFills
 ): RegimeStat[] {
-  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots } = pnlForSource(accountNumber, source, userId, currentPrices, prefetched);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.regime && lot.regime.trim() ? lot.regime.trim() : "Unspecified"),
@@ -654,7 +691,7 @@ export function getSectorScorecard(
   userId: string = "local",
   prefetched?: PrefetchedFills
 ): SectorStat[] {
-  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots } = pnlForSource(accountNumber, source, userId, currentPrices, prefetched);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.sector && lot.sector.trim() ? lot.sector.trim() : "Unknown"),
@@ -669,7 +706,7 @@ export function getClosedLotsDetailed(
   userId: string = "local",
   prefetched?: PrefetchedFills
 ): ClosedLot[] {
-  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).closedLots;
+  return pnlForSource(accountNumber, source, userId, {}, prefetched).closedLots;
 }
 
 /**
@@ -711,7 +748,7 @@ export function getThesisRegimeScorecard(
   userId: string = "local",
   prefetched?: PrefetchedFills
 ): ThesisRegimeStat[] {
-  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots } = pnlForSource(accountNumber, source, userId, currentPrices, prefetched);
   return aggregateClosedLots(closedLots, (lot) => {
     const thesis = lot.thesisTag?.trim() || "Untagged";
     const regime = lot.regime?.trim() || "Unspecified";
@@ -729,7 +766,7 @@ export function getClosedLotCount(
   userId: string = "local",
   prefetched?: PrefetchedFills
 ): number {
-  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).closedLots.length;
+  return pnlForSource(accountNumber, source, userId, {}, prefetched).closedLots.length;
 }
 
 /**
@@ -753,7 +790,7 @@ export function getSignalEfficacy(
   userId: string = "local",
   prefetched?: PrefetchedFills
 ): SignalEfficacyStat[] {
-  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots } = pnlForSource(accountNumber, source, userId, currentPrices, prefetched);
   if (closedLots.length === 0) return [];
 
   // runId|symbol -> entry signals, from the signal_snapshot audit trail. The snapshot
@@ -852,7 +889,7 @@ export function getSourceValueScorecard(
     }
   };
 
-  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots } = pnlForSource(accountNumber, source, userId, currentPrices, prefetched);
   for (const lot of closedLots) {
     if (!lot.entryRunId || !lot.symbol) continue;
     // PIT cutoff: only outcomes realized before the held-out fold (lots without exitAt are excluded).
@@ -917,7 +954,7 @@ export function getFactorScorecard(
   options?: FactorScorecardOptions,
   prefetched?: PrefetchedFills
 ): FactorScorecardStat[] {
-  const { closedLots: allLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots: allLots } = pnlForSource(accountNumber, source, userId, currentPrices, prefetched);
   // Optional regime filter — default (no option) preserves the original all-lots behavior.
   // Exact-string join: `lot.regime` is the `entryMarketRegime` stamped from one of the
   // MARKET_REGIME_LABELS values (src/lib/macro.ts) — a persisted contract. See that const's
@@ -1378,7 +1415,7 @@ export function getConfidenceCalibration(
   userId: string = "local",
   prefetched?: PrefetchedFills
 ): ConfidenceCalibrationStat[] {
-  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  const { closedLots } = pnlForSource(accountNumber, source, userId, currentPrices, prefetched);
   return aggregateClosedLots(
     closedLots.filter((lot) => lot.side === "long" && typeof lot.confidence === "number"),
     (lot) => confidenceBandOf(lot.confidence as number),
@@ -1395,7 +1432,7 @@ export function getOpenLots(
   userId: string = "local",
   prefetched?: PrefetchedFills
 ): OpenLot[] {
-  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).openLots;
+  return pnlForSource(accountNumber, source, userId, {}, prefetched).openLots;
 }
 
 /**
