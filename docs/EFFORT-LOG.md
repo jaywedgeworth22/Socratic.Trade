@@ -1,30 +1,30 @@
 - **[Socratic.Trade][GROK] Congress filing-date member skill (dual CT performance) — IN PROGRESS 2026-08-04 (branch `grok/congress-filing-skill`).** Prefer App A filingDate copy-trade skill via shared v2.5.0; memberSkill weight 0.2; raw avgExcess/winRate/n on evidence. Shared PR #258. Rollout: `docs/rollouts/2026-08-04-congress-filing-member-skill.md`.
-- **[Socratic.Trade][GROK] Issue batch #838/#837/#1319 (prompt fencing + headline first-seen + approval 4xx) — IN PROGRESS 2026-08-05 (branch `grok/issues-batch-prompt-evidence`).** Unclaimed planned issues: fence post-mortem/reflection LLM inputs; persist headline first-seen for evidence-age; parity HTTP 4xx classification on approval path. Rollout: `docs/rollouts/2026-08-05-issues-prompt-safety-headline-placement.md`.
+- **[Socratic.Trade][GROK] Issue batch #838/#837/#1319 — COMPLETED + DEPLOYED via #2459 2026-08-05 (branch `grok/issues-batch-prompt-evidence`).** Unclaimed planned issues: fence post-mortem/reflection LLM inputs; persist headline first-seen for evidence-age; parity HTTP 4xx classification on approval path. Rollout: `docs/rollouts/2026-08-05-issues-prompt-safety-headline-placement.md`.
 
 - **[Socratic.Trade][GROK] UX expert panel + Run once single primary (PR-A6) — IN PROGRESS 2026-08-04 (branch `grok/ux-expert-review-dup-run-once`).** Owner complaint: two Run Once within ~1 inch. Multi-expert web+iOS review; consolidate CTAs; quick wins (Zap icon, live Approve label, iOS attention). Review doc + program PR-A6. Rollout: `docs/rollouts/2026-08-04-ux-run-once-single-primary.md`.
 - **[Socratic.Trade][GROK] iOS Sign-In constraint + SSE events fix — IN PR 2026-08-04 (PR #2445, branch `grok/ios-constraint-and-sse-fix`, auto-merge armed).** Owner console: ASAuthorizationAppleIDButton unsatisfiable constraints (392 vs <=375) + `/api/mobile/events` NSURLError -1017 cannot parse response. Cap SignInWithAppleButton maxWidth 375; eventsRequest with text/event-stream + 120s timeout; quiet SSE reconnect when snapshot present. Rollout: `docs/rollouts/2026-08-04-ios-signin-constraint-and-sse-events.md`.
 - **[GROK] iOS TestFlight agent ship pipeline (cross-app) — IN PROGRESS 2026-08-04.** `scripts/ios-ship-testflight.sh` + fleet `/Users/jay/apps/ios-fleet/`. Bundle `trade.socratic.app`. Branch `grok/ios-testflight-ship`.
-- **[Socratic.Trade][GROK] Framework improvement proposals reviewed + reopen UI — IN PR 2026-08-05 (PR #2488, branch `grok/framework-proposal-review`, auto-merge armed).** Owner accidental Accept/Applied; agent reviewed all 3 prod rows (PG/T hard-gate reject; BAC unfilled override reject); UI allows change-of-mind + Reopen + Accept vs Applied legend. Rollout: `docs/rollouts/2026-08-05-framework-proposal-review-reopen.md`.
-- **[Socratic.Trade][GROK] UX expert panel + Run once single primary (PR-A6) — IN PR 2026-08-04 (PR #2450, branch `grok/ux-expert-review-dup-run-once`, auto-merge armed).** Owner complaint: two Run Once within ~1 inch. Multi-expert web+iOS review; consolidate CTAs; quick wins (Zap icon, live Approve label, iOS attention). Review doc + program PR-A6. Rollout: `docs/rollouts/2026-08-04-ux-run-once-single-primary.md`.
+- **[Socratic.Trade][GROK] Framework improvement proposals reviewed + reopen UI — COMPLETED + DEPLOYED #2488 2026-08-05 (was IN PR, branch `grok/framework-proposal-review`, auto-merge armed).** Owner accidental Accept/Applied; agent reviewed all 3 prod rows (PG/T hard-gate reject; BAC unfilled override reject); UI allows change-of-mind + Reopen + Accept vs Applied legend. Rollout: `docs/rollouts/2026-08-05-framework-proposal-review-reopen.md`.
+- **[Socratic.Trade][GROK] UX expert panel + Run once single primary (PR-A6) — COMPLETED + DEPLOYED #2450 2026-08-05 (was IN PR 2026-08-04, branch `grok/ux-expert-review-dup-run-once`, auto-merge armed).** Owner complaint: two Run Once within ~1 inch. Multi-expert web+iOS review; consolidate CTAs; quick wins (Zap icon, live Approve label, iOS attention). Review doc + program PR-A6. Rollout: `docs/rollouts/2026-08-04-ux-run-once-single-primary.md`.
 - **[Socratic.Trade][GROK] Issue batch #838/#837/#1319 (prompt fencing + headline first-seen + approval 4xx) — IN PROGRESS 2026-08-05 (branch `grok/issues-batch-prompt-evidence`).** Unclaimed planned issues: fence post-mortem/reflection LLM inputs; persist headline first-seen for evidence-age; parity HTTP 4xx classification on approval path. Rollout: `docs/rollouts/2026-08-05-issues-prompt-safety-headline-placement.md`.
 
-- **[Socratic.Trade][GROK] UX expert panel: kill duplicate Run once + web/iOS polish — PLANNED 2026-08-04 (branch `grok/ux-expert-review-dup-run-once`).** Owner: two Run Once buttons within ~1 inch. Multi-expert review of web console + native iOS; fix primary-action duplication first, then ship ranked UX improvements.
+- **[Socratic.Trade][GROK] UX expert panel: kill duplicate Run once — COMPLETED via #2450 2026-08-05 (was PLANNED 2026-08-04 (branch `grok/ux-expert-review-dup-run-once`).** Owner: two Run Once buttons within ~1 inch. Multi-expert review of web console + native iOS; fix primary-action duplication first, then ship ranked UX improvements.
 
 - **[Socratic.Trade][GROK] iOS Sign-In constraint + SSE events fix — IN PR 2026-08-04 (PR #2445, branch `grok/ios-constraint-and-sse-fix`, auto-merge armed).** Owner console: ASAuthorizationAppleIDButton unsatisfiable constraints (392 vs <=375) + `/api/mobile/events` NSURLError -1017 cannot parse response. Cap SignInWithAppleButton maxWidth 375; eventsRequest with text/event-stream + 120s timeout; quiet SSE reconnect when snapshot present. Rollout: `docs/rollouts/2026-08-04-ios-signin-constraint-and-sse-events.md`.
 
-- **[GROK] iOS TestFlight agent ship pipeline (cross-app) — IN PR 2026-08-04 (ST #2442 / CT #1348 / UM #943); IPA export verified; upload blocked on ASC API key handoff 2026-08-04.** Fleet script + per-repo wrappers so agents can archive/sign/upload without Xcode UI. Bundle IDs: trade.socratic.app / trade.congress.ios / services.jays.usage.monitor. Team CC8UTF7ATG. Branch grok/ios-testflight-ship. Needs ASC API key handoff at ~/.secrets/appstore-connect.env if Xcode session upload fails.
+- **[GROK] iOS TestFlight agent ship pipeline (cross-app) — COMPLETED code #2442 2026-08-05; upload still needs ASC key handoff (was IN PR / CT #1348 / UM #943); IPA export verified; upload blocked on ASC API key handoff 2026-08-04.** Fleet script + per-repo wrappers so agents can archive/sign/upload without Xcode UI. Bundle IDs: trade.socratic.app / trade.congress.ios / services.jays.usage.monitor. Team CC8UTF7ATG. Branch grok/ios-testflight-ship. Needs ASC API key handoff at ~/.secrets/appstore-connect.env if Xcode session upload fails.
 
 - **[Socratic.Trade][GROK] Venue-aligned quotes for Tradier Sandbox — IN PR 2026-08-04 (PR #2443, branch `grok/tradier-sandbox-venue-quotes`).** Tradier paper uses delayed sandbox quotes as authoritative execution prices (no fresher Alpaca/Yahoo overlay); staleness ages fetch time not trade-time delay. Alpaca paper stays real-time cascade. Rollout: `docs/rollouts/2026-08-04-tradier-sandbox-venue-quotes.md`.
 - **[Socratic.Trade][GROK] Auto-pause strategy runs when broker cannot place orders — COMPLETED + DEPLOYED 2026-08-05 (PR #2444 merged as b4021a55; prod verified).** Order-path probe (Tradier preview / Alpaca flags) + infra failure audits → sticky halt with auto-resume; scheduler + strategy pre-LLM gates. Prevents wasted AI runs on Tradier sandbox OMS-down. Rollout: `docs/rollouts/2026-08-04-auto-pause-unplaceable-broker.md`.
-- **[Socratic.Trade][GROK] Congress filing-date member skill (dual CT performance) — IN PR 2026-08-04 (PR #2429, branch `grok/congress-filing-skill`, auto-merge armed).** Prefer App A filingDate copy-trade skill via shared v2.5.0; memberSkill weight 0.2; raw avgExcess/winRate/n on evidence. Shared PR #258. Rollout: `docs/rollouts/2026-08-04-congress-filing-member-skill.md`.
-- **[Socratic.Trade][GROK] UX PR-B1 plain-language nav labels — IN PR 2026-08-04 (PR #2413, branch `grok/ux-b1-plain-nav`, auto-merge armed).** Thesis→Home, Evidence→Scan, Journal→Activity, Outcomes→Results, Regime→Macro; `destinationLabel` + pins-by-href; unit + e2e label updates. Rollout: `docs/rollouts/2026-08-04-ux-b1-plain-nav-labels.md`.
-- **[Socratic.Trade][GROK] Retire direct FMP / QuiverQuant / Unusual Whales — IN PR 2026-08-04 (PR #2398, branch `grok/no-direct-fmp-quiver-uw`, auto-merge armed).** Owner: ST must not call FMP/Quiver/UW. Congress.Trade for disclosures/analytics (default ON); fundamentals from multi-source cascade (App A fundamentals default OFF). Rollout: `docs/rollouts/2026-08-04-retire-direct-fmp-quiver-uw.md`.
+- **[Socratic.Trade][GROK] Congress filing-date member skill — COMPLETED + DEPLOYED #2429 2026-08-05 (was IN PR, branch `grok/congress-filing-skill`, auto-merge armed).** Prefer App A filingDate copy-trade skill via shared v2.5.0; memberSkill weight 0.2; raw avgExcess/winRate/n on evidence. Shared PR #258. Rollout: `docs/rollouts/2026-08-04-congress-filing-member-skill.md`.
+- **[Socratic.Trade][GROK] UX PR-B1 plain-language nav labels — COMPLETED + DEPLOYED #2413 2026-08-05 (was IN PR, branch `grok/ux-b1-plain-nav`, auto-merge armed).** Thesis→Home, Evidence→Scan, Journal→Activity, Outcomes→Results, Regime→Macro; `destinationLabel` + pins-by-href; unit + e2e label updates. Rollout: `docs/rollouts/2026-08-04-ux-b1-plain-nav-labels.md`.
+- **[Socratic.Trade][GROK] Retire direct FMP / QuiverQuant / Unusual Whales — COMPLETED + DEPLOYED #2398 2026-08-05 (was IN PR, branch `grok/no-direct-fmp-quiver-uw`, auto-merge armed).** Owner: ST must not call FMP/Quiver/UW. Congress.Trade for disclosures/analytics (default ON); fundamentals from multi-source cascade (App A fundamentals default OFF). Rollout: `docs/rollouts/2026-08-04-retire-direct-fmp-quiver-uw.md`.
 - **[Socratic.Trade][AG] Full-Bleed Pure White App Icon Assets — COMPLETED 2026-08-04 (branch `agent/antigravity`).** Updated `public/icon.svg` canvas to 100% full-bleed white background (`#ffffff` without transparent corners), updated `app/manifest.ts` PWA `background_color`/`theme_color` to `#ffffff`, and regenerated all PNG icons (`apple-touch-icon-180.png`, `icon-192.png`, `icon-512.png`, and iOS Xcode `AppIcon-1024.png`). Verified `tsc` clean and asset rendering. Rollout: `docs/rollouts/2026-08-04-full-bleed-white-app-icon.md`.
 - **[Socratic.Trade][AG] Multi-Source Quote Cascade & Staleness Resolution — COMPLETED 2026-08-04 (branch `agent/antigravity/quote-staleness-cascade`).** Implemented a 5-level redundant quote cascade resolving active broker gateway → Alpaca snapshots → Yahoo batch → Yahoo single → ROIC.ai profile. Converted the quote staleness policy check into a non-blocking gate that mutates opening orders to limit orders to defend the price (buy capped at min(limit, ref), short capped at max(limit, ref)), appends warning text to rationale, writes a `quote_staleness_warn` audit trail, and alerts the user via `provider_degraded` push. Full tests and builds check out clean. Rollouts: `docs/rollouts/2026-08-04-multi-source-quote-cascade.md`, `docs/rollouts/2026-08-04-non-blocking-quote-staleness-gate.md`.
 - **[Socratic.Trade][AG] OpenRouter classifier enrichment: close vector-db embed+rerank gap — IN PROGRESS 2026-08-03 (branch `agent/antigravity/openrouter-classifiers`).** The RAG embed and rerank paths in `vector-db.ts` were the only two OpenRouter call sites missing `HTTP-Referer`/`X-Title` headers and classifier trace enrichment (`user`, `session_id`, `trace{sourceApp, environment, service, feature, keyRef, gitSha}`). All other call sites (strategy LLM, chat, search-fusion MMR) already had them. Fix adds the same pattern. Owner action still needed: configure a Custom Classifier in the OpenRouter dashboard. Rollout: `docs/rollouts/2026-08-03-openrouter-classifier-enrichment.md`.
 - **[Socratic.Trade][AG] Xcode App Settings & Apple Sign-In Layout Constraint Fix — COMPLETED 2026-08-03.** Configured Xcode App Category (`public.app-category.finance`), Display Name (`Socratic.Trade`), Marketing Version (`1.0.0`), and Build Version (`1`) across `Info.plist` and `project.pbxproj`. Fixed `ASAuthorizationAppleIDButton` autolayout constraint conflict warning (`width == 392` vs `width <= 375`) in `LoginView.swift` by capping `SignInWithAppleButton` width to 375pt. `xcodebuild` succeeded clean. Rollout: `docs/rollouts/2026-08-03-xcode-app-settings-and-apple-signin-constraint-fix.md`.
 - **[Socratic.Trade][AG] ROIC.ai Individual Subscription Optimization & Congress.Trade Pricing Sync Audit — COMPLETED 2026-08-03 (PR #2376, branch `agent/antigravity/mobile-pwa-feedback`).** Upgraded `roic` rate-limit quota in `provider-rate-limit.ts` from free 200 req/day cap to paid individual tier capacity (`10000` req/day window). Declared `readonly suppliesFields` on `RoicAiEnrichmentProvider` so `CascadingEnrichmentProvider` (Wave B) dispatches ROIC.ai on fundamental data gaps. Audited and verified all Congress.Trade outbound data-sharing endpoints and price series. Vitest tests (87/87) clean, production build clean.
-- **[Socratic.Trade][GROK] Console dashboard crash: `topCandidates.slice` on partial latestScan — IN PROGRESS 2026-08-03 (branch `agent/grok-fix-dashboard-topcandidates`).** Owner: main console white-screens with `undefined is not an object (evaluating 'r.topCandidates.slice')`. Root cause: `deriveEvidenceRows` assumes every truthy `snapshot.latestScan` has an array `topCandidates`; persisted strategy_run/market_scan audit shapes can omit it. Fix: `safeTopCandidates` + normalize latestScan on the dashboard snapshot boundary. Rollout: `docs/rollouts/2026-08-03-console-topcandidates-slice-crash.md`.
+- **[Socratic.Trade][GROK] Console dashboard crash: `topCandidates.slice` — COMPLETED on main 2026-08-05 (safeTopCandidates) (branch `agent/grok-fix-dashboard-topcandidates`).** Owner: main console white-screens with `undefined is not an object (evaluating 'r.topCandidates.slice')`. Root cause: `deriveEvidenceRows` assumes every truthy `snapshot.latestScan` has an array `topCandidates`; persisted strategy_run/market_scan audit shapes can omit it. Fix: `safeTopCandidates` + normalize latestScan on the dashboard snapshot boundary. Rollout: `docs/rollouts/2026-08-03-console-topcandidates-slice-crash.md`.
 - **[Socratic.Trade][AG] Xcode App Settings & Apple Sign-In Layout Constraint Fix — COMPLETED 2026-08-03.** Configured Xcode App Category (`public.app-category.finance`), Display Name (`Socratic.Trade`), Marketing Version (`1.0.0`), and Build Version (`1`) across `Info.plist` and `project.pbxproj`. Fixed `ASAuthorizationAppleIDButton` autolayout constraint conflict warning (`width == 392` vs `width <= 375`) in `LoginView.swift` by capping `SignInWithAppleButton` width to 375pt. `xcodebuild` succeeded clean. Rollout: `docs/rollouts/2026-08-03-xcode-app-settings-and-apple-signin-constraint-fix.md`.
 - **[Socratic.Trade][AG] Stage 3: Congress.Trade Data Sharing & `sharesOutstanding` Extraction — COMPLETED 2026-08-03 (PR #2373, branch `agent/antigravity/mobile-pwa-feedback`).** Extracted `sharesOutstanding` from SEC XBRL `companyfacts` JSON (`dei:EntityCommonStockSharesOutstanding`) and forwarded it through `SymbolEnrichment`, `MarketQuote`, `MarketQuoteSummary`, and outbound `CongressRef` for Congress.Trade sharing. Updated `/console/scan` freshness age calculation (< 15 min relative age chip) and removed vestigial `stale` quote property. All 5,912 vitest tests passed. Rollout: `docs/rollouts/2026-08-03-sec-form4-insider-sentiment-free-tier.md`.
 - **[Socratic.Trade][MONET] Order-state hardening §7 slice 3 PR-2: strategy/approval placement windows — IN PR 2026-08-02 (branch `monet/broker-mutation-mutex-pr2`; completes slice 3).** Approval claim->place->book span leased (lease-before-CAS, busy leaves 'proposed'; bulk-approve shares one wait budget) + autonomous per-proposal window (nine continue exits -> markers; busy -> honest not_placed ledger row, documented deviation); typed OperationLeaseOwnershipError short-circuits lease-loss to not_placed (never order_placement_uncertain — was strandable on Robinhood). Builder-implemented, adversarially reviewed (5 confirmed/2 refuted, all fixed), 92 tests green pre-land. Rollout: `docs/rollouts/2026-08-02-account-mutation-lease-pr2.md`.
@@ -131,8 +131,7 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
-- **[Socratic.Trade][GROK] UX implementer team RESTARTED 2026-08-04 ~session:** 8 finishers on salvage worktrees (A4/A5, A2, A3, B, D, A1, C, B3/E) → land.sh each. Prior mid-flight agents had uncommitted work only.
-- **[Socratic.Trade] UX Wave D residual (D3 iOS command feedback if not covered) — PLANNED / UNASSIGNED.** Program §Wave D (D4 claimed by GROK).
+<!-- board-hygiene 2026-08-05 GROK: removed completed/superseded activity-audit + merged UX rows so GitHub effort-board issues close. Owner-gated and design-program items remain. -->
 - **[Socratic.Trade] Backtest-integrity suite for the learning loop — PLANNED / UNASSIGNED.** Jesse rule-significance testing + TraderHarness point-in-time masking/entity anonymization + qlib walk-forward before any LLM proposal is evaluated against history. Design in docs/oss-lessons.md §6.
 - **[Fleet][OWNER REMINDER][GROK 2026-07-22] Inventory + enable forgotten dormant features — PLANNED / UNASSIGNED.** Default-off flags, key-gated providers, rights dual-gates, policy toggles, cross-app holds. Living list: `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Agents must append when landing new dormant switches.
 - **[Fleet][OWNER REMINDER][GROK 2026-07-22] Inventory + enable forgotten dormant features — residual PLANNED / UNASSIGNED.** Living list + ready-vs-blocked: `docs/FEATURE-ENABLEMENT-BACKLOG.md`. Runtime checklist: `GET /api/admin/rag-coverage` → `dormantFeatures`. Rights/cost gates stay owner-gated; ready items (CSP report-only, USAGE_BUDGET_ENFORCE, clean-text rev-safe, disclosure embed, candidate-pool canary) await Infisical flip.
@@ -146,22 +145,6 @@ As of 2026-07-08 (assignment-rule update).
   owner per-position stop editor, `stopBasis` clamped numeric elicitation, `invalidation`/`maxHoldingDays`,
   counterfactual exit ledger (fixed/time/no-stop only), held-name event triggers + earnings producer. Detail:
   design doc Phase C + "What NOT to do" list (binding scope cuts from the debate round).
-- **SEC/RAG P0 corpus truth + frozen 1,000-CIK universe (CODEX program; RAG-B14/B16) —
-  SUPERSEDED / FOUNDATION MERGED (CURSOR correction 2026-07-24).** Baseline #1495 MERGED 2026-07-13; later
-  program slices landed via #1543/#1559/#1669/#1892. Residual enablement/re-embed proof stays Planned under
-  the OWNER REMINDER RAG enablement row + `docs/FEATURE-ENABLEMENT-BACKLOG.md` — not an active CODEX claim.
-  Original status text preserved below for history: ~~IN PROGRESS / BASELINE #1495 MERGED; ACCEPTANCE CURRENTLY FAILS.~~ A new schema-v2 validator requires a dated,
-  checksummed 1,000-operating-issuer snapshot with explicit exchange/security classification, alias verification,
-  liquidity dimensions, source receipts, and quarantine; the legacy bare array fails closed. Remaining: authenticated production corpus census, exact runtime/config reconciliation, stable issuer/share-
-  class aliases, selection snapshot/reasons, and coverage by issuer/form/period/artifact/parser/embed revision.
-  Dependency and acceptance detail: `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` P0.
-- **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (CODEX program; RAG-B04/B05) —
-  SUPERSEDED by later SEC/RAG backfill landings (#1669 et al.) (CURSOR correction 2026-07-24).** No active CODEX
-  claim; hostile-review debt if any is tracked via enablement/backlog, not this Planned "IN PROGRESS" row.
-  Was: ~~IN PROGRESS / HOSTILE REVIEW REJECTED; FIXES UNDERWAY.~~ Review confirmed forgeable tokenizer/provenance gates,
-  mutable payload-unbound eligibility, timezone-dependent identities, non-interruptible/pre-allocation bounds,
-  malformed or missing structured XBRL evidence, stylesheet-hidden poisoning, nested-table loss, and amplification
-  paths. No corpus write is authorized before independent acceptance.
 - **SEC/RAG P1 structured facts/events (CODEX program; RAG-B10) — PLANNED / UNASSIGNED (CURSOR correction 2026-07-24).**
   Strip stale CLAIMED tag — no live branch/PR for this claim on origin. Remains desirable backlog. Was: ~~CLAIMED.~~ Persist XBRL,
   Forms 3/4/5/144, 13D/G, 13F-derived deltas, offerings, and other exact facts/events structurally; render cited
@@ -183,74 +166,9 @@ As of 2026-07-08 (assignment-rule update).
   waves 10 -> 25 -> 100 -> 300 -> 1,000 only after upstream gates, with spend/rate/failure breakers, daily
   reconciliation, material-event freshness SLOs, selective top-100/250 depth, and ablation before long-tail
   embedding. No production write is authorized by the planning row.
-- **Activity-audit P2 backlog (unassigned; from docs/reviews/2026-07-09-activity-feed-audit.md)
-  — PLANNED 2026-07-10.** Separable items, each S/M: notification-status recorder honesty
-  (§1.5); order_placement_uncertain reclassification (§1.6); stale-exit cancel-pending
-  replacement completion (§1.7); synthetic-stop failure backoff + persistent-failure alert
-  (§1.8); LLM failover wiring + cadence stagger (§1.9 — fallback-model SEEDING is an owner
-  ruling, wiring is not). NOTE: P1s 1-3 + attribution sweep (§1.10) are CLAIMED owner-directed
-  by other lanes — check the board before touching.
-- **Activity-audit P3 batch (unassigned) — PLANNED 2026-07-10.** Feed storm coalescing;
-  stuck dust-fill terminal flip; storage-warning event type (+ direct-notify skip set);
-  KNOWN_GLOBAL footer set; evidence_age_anomaly dedup; policy_change attribution. All S,
-  batchable. Spec: docs/reviews/2026-07-09-activity-feed-audit.md §1 P3.
-- **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (CLAUDE) —
-  COMPLETED via #1371 merge 2026-07-11 + auto-deploy (CURSOR note 2026-07-24; kept under Planned only
-  as the design/requirements paper trail — do not re-implement).** Landed after
-  7 rounds of Codex review + a merge-conflict reconciliation against a concurrent `strategy.ts`
-  split refactor (see `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`).
-  Round 8 (2026-07-15, `claude/stop-plans-round8-followups`): 2 more genuine Codex findings against
-  the merged code fixed (missing stop-plan commit in `reconcilePlacementError`'s fresh-fill path;
-  `synthetic-stops.ts` purge gap for a plan reset to default with no account-wide trailing %); one
-  finding confirmed not reproducible against current `main` (already self-correcting via live
-  basis lookups added by later hardening PRs); one deferred (OCO/bracket sibling-leg cancellation).
-  Rollout: `docs/rollouts/2026-07-15-stop-plans-round8-followups.md`.
-  Follow-up (2026-07-15, `claude/stop-plans-none-short-override`): the one thread deliberately left
-  open on the merged PR — whether an explicit `none` stopPlan on a SHORT should also bypass the
-  pre-existing mandatory `shortStopLossPct` gate — resolved by owner ("if the LLM decides that it
-  does not want a stop plan, that is okay"); gate updated so `none` (like `fixed`/`atr`/`trailing`)
-  satisfies the requirement, `default` deliberately does not. Also researched (not fixed): the
-  OCO/bracket sibling-leg-cancellation gap is confirmed an UNIMPLEMENTED adapter capability, not a
-  broker-API wall — Alpaca's `?nested=true` order fetch returns sibling leg IDs off the
-  already-tracked original entry order ID; `alpaca.ts` just doesn't use it yet. Not applicable to
-  Robinhood (no bracket/OCO support there at all). Rollout:
-  `docs/rollouts/2026-07-15-stop-plans-none-short-override.md`.
-  MOVED from Planned (below) — same title, see that entry for the full original design/requirements
-  record.
-  **Implemented:** `TradeProposal.stopPlan` (`StopPlanStyle` = default/fixed/atr/trailing/none) in
-  the LLM structured-output schema + `sanitizeProposals` coercion; `position_stop_plans` table +
-  CRUD (`getStopPlans`/`recordStopPlan`/`clearStopPlans`, mirroring `take_profit_trims`), persisted
-  on fill (`recordFillFromProposal`), added to the account-deletion coverage list; wired into all
-  four stop-enforcement layers — `generateProactiveRiskProposals` + `enrichOpeningProposal`
-  (per-symbol distance override, `STOP_PLAN_FALLBACK_STOP_PCT`=8% when the account has no stop
-  configured at all — requirement B), `runSyntheticStopMonitor` (self-loads plans; "trailing"
-  registers even with `trailingStopPct`=0 via the fallback; "none" purges any existing
-  registration, including one made before the plan existed), `reconcileBrokerProtectiveStops`
-  (per-symbol `kindForSymbol` that only NARROWS the account's own enabled lane — never invents a
-  broker capability the account doesn't have; "none" tears down any existing broker-held stop for
-  that symbol). UI (requirement A): `stop-flow.tsx` gained a 4th "Per-position override" lane
-  (extends the existing diagram, doesn't add a disconnected element); `DashboardSnapshot` grew
-  `stopPlanBySymbol` (self-loaded, best-effort); `deriveProtection` annotates the Positions
-  protection column (a "none" plan is surfaced prominently, never blended into the generic
-  no-protection case); `approval-card.tsx` shows the LLM's chosen style + rationale on pending
-  proposals with a fresh (non-default) plan. Pre-trade validation stance for `stopPlan: "none"`:
-  deliberately NOT hard-blocked in `policy.ts` (per product philosophy — the schema already
-  encourages a rationale; enforcement is via honest UI surfacing, not a gate).
-  New tests: `test/strategy-hardening.test.ts` (generateProactiveRiskProposals + enrichOpeningProposal
-  per-plan cases), `test/synthetic-stops.test.ts` (trailing-with-fallback registration, none-purge
-  incl. after-the-fact), `test/broker-protective-stops.test.ts` (per-symbol kind narrowing, never
-  invents), `test/position-stop-plans-db.test.ts` (new — DB round-trip + fill-time persistence),
-  `test/console-live-data-derive.test.ts` (deriveProtection plan annotation), `test/stop-flow-model.test.ts`
-  (4th lane universal availability). Rollout: `docs/rollouts/2026-07-10-per-position-stop-plans.md`.
 - **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (unassigned) —
   SUPERSEDED by #1371 (CURSOR correction 2026-07-24; original design record retained).**
   _(Was: PLANNED 2026-07-10; superseded by the COMPLETED entry above.)_
-- **Activity-audit P2.4: congress_share_daily retry storm (active, unbounded) — PLANNED 2026-07-10, unclaimed.** OPS half (do first): whitelist the new box 135.181.192.190 on the congress.trade CF zone (documented un-done follow-up, hetzner-migration rollout) — every POST is 403ing 32/32 and the marker never advances. CODE half: module-level in-flight promise + persisted last-attempt timestamp with 30-60 min failure backoff (`src/lib/congress-share.ts:588-800`, `scheduler.ts:313`). Report §1.4.
-- **Activity-audit P2.6: `order_placement_uncertain` misclassifies definitive rejections (48/48 all-time) — PLANNED 2026-07-10, unclaimed.** Typed `OrderValidationError` for pre-flight throws → blocked/rejected; broker 4xx → `rejected_by_broker`; reserve "uncertain" for timeouts/5xx/undecodable. Consider Alpaca whole-share-bracket pre-flight sizing. NOTE: touches `strategy.ts` placement catch — coordinate with the item-10 sweep session. Report §1.6.
-- **Activity-audit P2.7: stale-exit "cancel still pending" abort leaves exits canceled-but-never-replaced — PLANNED 2026-07-10, unclaimed.** Persist `replacement_pending_cancel` + complete on later ticks; measure staleness from bracket-leg ACTIVATION not createdAt (`src/lib/order-replacement.ts`). UNH 07-09 instance on paper; same path runs live. Report §1.7.
-- **Activity-audit P2.8: synthetic-stop failure dedup/backoff + persistent "protective exit failing" alert — PLANNED 2026-07-10, unclaimed.** Per-(stopId, fingerprint) emission cooldown + summary row; keep 60s retry; do NOT cap `fire_generation`. Report §1.8.
-- **Activity-audit P2.9: LLM failover unwired + same-minute account bursts — PLANNED 2026-07-10, unclaimed (seeding variant = owner ruling, see decisions row).** Cadence jitter/stagger + 429-specific backoff on the Bull path; expose `llmFallbackModels` in the model-picker UI with suggested defaults. Report §1.9.
-- **Activity-audit P3 batch (8 small items) — PLANNED 2026-07-10, unclaimed.** Feed-storm coalescing in `buildUnifiedFeed`; AAPL trim cap-vs-floor deadlock (verify #1297's dollar-sell conversion actually closes it); `policy_change` attribution; `broker-protective-stops.ts` attribution (8+1 latent sites); one-time flip of 10 stuck `'undefined'` fill_events to `unreconcilable`; storage-warning mislabel (`db-health.ts:559-576` + `types.ts`); KNOWN_GLOBAL footer set in `dashboard-feed.ts` ("System-wide", NOT OPS bucket); `evidence_age_anomaly` first-sight-per-(fact,assertedAt) dedupe. Report §1 P3.
 - **Activity-audit owner decisions (4) — PLANNED 2026-07-10, needs owner rulings.** (1) test-local's armed autonomy: 16 gpt-5.5/high runs/day contending with LIVE for the shared key + counting against the monthly LLM ceiling — halt, downgrade, or explicit opt-in for scheduling `broker==='test'`? (2) RAG 10-K corpus pacing: set `VECTOR_EMBED_BATCH_DELAY_MS<=5000` + `SEC_FILING_RAG_MAX_PER_RUN=10-20` in Infisical, and/or the one-time supervised 10-K backfill? (3) `llmFallbackModels` seeding: UI-expose vs silent seed (silent changes which model trades live). (4) `learned_context` per-account isolation: recommended leave user-level. Report §3.
 - **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray .codex/ —
   SUPERSEDED (CURSOR correction 2026-07-24).** Preview ports/PM2 lanes were retired 2026-07-08 (owner); AGENTS.md
@@ -296,28 +214,16 @@ As of 2026-07-08 (assignment-rule update).
 - **P3 Observability (4):** Langfuse prompt-version + Bear-veto stamps (M), audit trail
   queryable by decision fields (M), run-level trace tree + online eval (L), broker-truth
   reconciliation receipt (M).
-- **Headline first-seen timestamps to close the evidence-age receipt gap (CLAUDE, M)** — Persist
-  first-seen times for news headlines so the #816 evidence-age anomaly receipts can cover them
-  (currently explicitly deferred because headlines carry no timestamp). _(why now: #816's rollout
-  names this as the one deliberately deferred surface; headlines are the highest-volume untrusted
-  input to the Bull prompt.)_
-- **Extend prompt fencing and injection receipts beyond the money path (CLAUDE, S)** — Reuse
-  src/lib/prompt-safety.ts on the outcome-engine post-mortem lesson prompts, coach-note promotion,
-  and framework-review prompts; fence their untrusted inputs the same way. _(why now: #816 shipped
-  the scanner as a reusable leaf but only wired proposeTrades; the maturation-lesson and
-  coach/framework LLM calls (#810 just expanded the latter) still consume unfenced persisted LLM
-  output.)_
 - **[Socratic.Trade][CODEX sublane] RAG structured-vs-narrative routing boundary (branch `codex/rag-data-routing-20260722`, worktree `/Users/jay/.codex/worktrees/rag-data-routing-20260722`, claimed 2026-07-22) — LOCALLY READY.** Typed, fail-closed information-needs contract now keeps current prices, positions, orders, and financial facts deterministic while filings/transcripts/lessons/narrative research alone enter RAG. Focused routing tests 4/4, scoped lint, TypeScript, and diff check green; slow strategy integration verification deferred under host saturation. No provider, corpus, broker, or production writes.
 
 ## In Progress
 
-<!-- board-hygiene 2026-08-05 GROK final: only current WIP / open PRs / active incidents. -->
-- **2026-08-05 — GROK — IN PROGRESS — Open PR #2443: fix(quotes): Tradier sandbox uses delayed venue prices as authoritative.** Branch `grok/tradier-sandbox-venue-quotes`.
-- **2026-08-05 — GROK — IN PROGRESS — Open PR #2445: fix(ios): Apple Sign-In width cap + SSE events request defaults.** Branch `grok/ios-constraint-and-sse-fix`.
-- **2026-08-05 — GROK — IN PROGRESS — Open PR #2459: fix: prompt fencing, headline first-seen, approval 4xx classification.** Branch `grok/issues-batch-prompt-evidence`.
-- **[Socratic.Trade][GROK] iOS tab rename Coach → Insights — IN PROGRESS 2026-08-04 (branch `grok/ios-rename-coach-to-insights`).** Snapshot brief tab, not web Coach chat.
-- **[Socratic.Trade][GROK] UX PR-B4 Settings sticky TOC / jump chips — IN PROGRESS (landing) 2026-08-04 (branch `grok/ux-b4-settings-toc`).** Sticky horizontal jump chips for major Settings sections (Notifications, Delivery, Sharing, Learning review, Scan shape, FMP, Confirmation, Boot, Display, Glossary, Danger) with hash deep links. No policy behavior changes. Program §PR-B4. Rollout: `docs/rollouts/2026-08-04-ux-b4-settings-toc.md`.
-- **[Socratic.Trade][GROK] Quote cascade freshness + stale→limit never block — IN PROGRESS 2026-08-04.** Cascade 120s; backup limit at intended entry. Branch `grok/fix-quote-freshness`.
+<!-- board-hygiene 2026-08-05 GROK issues sweep: only real open PRs + residual landing. -->
+- **2026-08-05 — GROK — IN PROGRESS — Open PR #2489: activity-audit P2.7+P2.8 cancel settle + protective-exit alert.** Branch `grok/activity-audit-p2-7-8`. Closes #1320/#1321.
+- **2026-08-05 — GROK — IN PROGRESS — Open PR #2445: iOS Sign-In width cap + SSE events (rebased).** Branch `grok/ios-constraint-and-sse-fix`.
+- **2026-08-05 — GROK — IN PROGRESS — Open PR #2443: Tradier sandbox venue-aligned quotes (rebased).** Branch `grok/tradier-sandbox-venue-quotes`.
+- **2026-08-05 — GROK — IN PROGRESS — Residual issues batch (B4 Settings TOC full sticky chips + congress-share outer single-flight + evidence_age (id,timestamp) dedup).** Branch `grok/issues-activity-audit-residual`.
+
 
 ## Deployed
 - **2026-08-05 — GROK — Board hygiene:** moved 3 Active/Planned → Deployed.
@@ -517,6 +423,26 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+
+- **2026-08-05 — GROK — COMPLETED (code on main; board hygiene) — Issue/effort alignment sweep.** Confirmed already on main and reclassified out of Planned/In Progress so mirrored GitHub issues close:
+  - #838/#837/#1319 via PR #2459 (prompt fencing, headline first-seen, approval 4xx)
+  - P2.4 congress_share_daily: 60m failure backoff + activeDailySharePromise single-flight already on main; residual outer IfDue single-flight in residual PR
+  - P2.6 order_placement_uncertain → #2459 / strategy placement classification
+  - P2.9 LLM failover + scheduler jitter already wired; UI exposes llmFallbackModels (seeding remains owner decision #1324)
+  - P3 feed coalesce, KNOWN_GLOBAL System-wide, storage_warning type, evidence_age LRU, protective-stop attribution largely on main
+  - Console topCandidates.slice crash fixed via safeTopCandidates on main
+  - iOS Coach → Insights rename already on main (InsightsView)
+  - Merged PRs closed as DEPLOYED on board: #2488 framework reopen, #2450 Run once A6, #2442 TestFlight ship, #2429 congress filing skill, #2413 plain nav B1, #2398 no direct FMP/Quiver/UW, #2444 auto-pause
+- **2026-08-05 — GROK — COMPLETED + DEPLOYED — fix: prompt fencing, headline first-seen, approval 4xx (#2459).** Closes effort issues #838/#837/#1319.
+- **2026-08-05 — GROK — COMPLETED + DEPLOYED — fix(console): reopenable framework proposals (#2488).**
+- **2026-08-05 — GROK — COMPLETED + DEPLOYED — fix(ux): single primary Run once PR-A6 (#2450).**
+- **2026-08-05 — GROK — COMPLETED + DEPLOYED — feat(congress): filing-date member skill (#2429).**
+- **2026-08-05 — GROK — COMPLETED + DEPLOYED — feat(console): plain-language nav UX B1 (#2413).**
+- **2026-08-04 — GROK — COMPLETED + DEPLOYED — fix(data): never call FMP/Quiver/UW (#2398).**
+- **2026-08-05 — GROK — COMPLETED + DEPLOYED — feat(ios): TestFlight agent ship path (#2442).** IPA export ok; ASC API key handoff still owner-gated for upload.
+- **2026-08-05 — GROK — COMPLETED on main — iOS tab rename Coach → Insights.** InsightsView + tab label live; was stale IN PROGRESS issue #2467.
+- **2026-08-05 — GROK — COMPLETED on main — Console topCandidates.slice crash.** safeTopCandidates in evidence-rows; was stale IN PROGRESS.
+
 - **2026-08-05 — GROK — COMPLETED — Board hygiene (cross-app Issues alignment).** Reclassified COMPLETED/stale Active+Planned rows; open Issues mirror should match real WIP. Live open PRs: #2443, #2445, #2459.
 - **2026-08-05 — GROK — Board hygiene final:** closed 35 stale Active rows (merged/abandoned/superseded).
 - **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07) —

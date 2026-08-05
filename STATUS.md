@@ -1,3 +1,9 @@
+
+## 2026-08-05 GROK — issues/effort sweep
+- Open PRs armed: #2489 (P2.7/P2.8), #2445 (iOS SSE), #2443 (Tradier quotes).
+- Residual branch `grok/issues-activity-audit-residual`: B4 Settings TOC + congress-share IfDue single-flight + evidence_age (id,timestamp) dedup + board hygiene.
+- Confirmed already on main: #2459 batch, Coach→Insights, safeTopCandidates, most activity-audit P2/P3.
+
 ## Current (2026-08-05 GROK)
 
 **2026-08-05 — GROK: issue batch #838/#837/#1319 (branch `grok/issues-batch-prompt-evidence`).**

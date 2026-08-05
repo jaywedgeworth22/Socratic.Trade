@@ -1517,9 +1517,11 @@ export async function runStrategyOnce(
     // already-audited items don't consume slots, then cache only the items
     // actually emitted (items beyond index 12 are NOT cached, so they can be
     // picked up on the next run).
+    // P3: first-sight per (fact id, assertedAt/timestamp) — re-assertion with a new
+    // timestamp is a new event; the same (id, timestamp) must not re-audit every run.
     const uncachedInputs = evidenceAgeInputs.filter((input) => {
       if (evidenceAgeAnomalyDedup.size > 1000) evidenceAgeAnomalyDedup.clear();
-      const key = `${userId}:${connectedAccountId ?? "global"}:${input.id}`;
+      const key = `${userId}:${connectedAccountId ?? "global"}:${input.id}:${input.timestamp ?? ""}`;
       const now = Date.now();
       const last = evidenceAgeAnomalyDedup.get(key);
       return !(last && now - last < 6 * 60 * 60 * 1000);
@@ -1528,7 +1530,8 @@ export async function runStrategyOnce(
     // Cache only items the cap allowed through, so capped-off items can
     // still reach the audit on the next run.
     for (const item of evidenceAgeAnomalies) {
-      const key = `${userId}:${connectedAccountId ?? "global"}:${item.id}`;
+      const src = uncachedInputs.find((i) => i.id === item.id);
+      const key = `${userId}:${connectedAccountId ?? "global"}:${item.id}:${src?.timestamp ?? ""}`;
       evidenceAgeAnomalyDedup.set(key, Date.now());
     }
 
