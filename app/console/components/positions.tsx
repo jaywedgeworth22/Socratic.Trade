@@ -4,6 +4,7 @@
  *  from the snapshot (resting broker stop order, app-managed stop rule, or
  *  "—" when nothing protects). Money in tabular numerals; missing = "—". */
 
+import { memo } from "react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import type { OptionPosition } from "@/lib/types";
 import { deriveProtection } from "../lib/derive";
@@ -31,7 +32,7 @@ function exposureCue(weightPct: number | undefined, capPct: number | undefined):
   };
 }
 
-export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
+export const PositionsCard = memo(function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
   const positions = snapshot.positions ?? [];
   const equity = snapshot.portfolio?.totalMarketValue;
   const exposureCap = snapshot.policy.maxSymbolExposurePct;
@@ -300,4 +301,4 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
     )}
   </>
 );
-}
+});

@@ -1,4 +1,5 @@
 import { getPolicy } from "@/lib/db";
+import { invalidateDashboardSnapshotCache } from "@/lib/dashboard-snapshot-cache";
 import { STOPPED_PROPOSAL_ACTION_MESSAGE, isProposalActionStopped } from "@/lib/proposal-actions";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
@@ -24,6 +25,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
     const { id } = await params;
     const result = await executeProposal(id, userId, { liveConfirmation: body.liveConfirmation });
+    // C1: order/proposal state changed — next dashboard poll must recompute.
+    invalidateDashboardSnapshotCache(userId);
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof LiveApprovalConfirmationError) {
