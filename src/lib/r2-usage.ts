@@ -345,7 +345,7 @@ function numericEnv(name: string, fallback: number, min: number): number {
 /**
  * The fleet uses THREE Cloudflare accounts (owner directive 2026-08-01), each
  * with its own independent R2 free tier (10 GiB / 1M A / 10M B per account):
- *   st — SocraticTrade.com  (socratic-trade-bucket)
+ *   st — Socratic Trade  (socratic-trade-bucket)
  *   ct — Congress.Trade     (congress-trade-bucket)
  *   um — Usage.Jays.Services (usage-monitor-receipts)
  * Each slot is configured by an env pair; every configured slot is monitored.
@@ -360,7 +360,7 @@ export interface R2UsageAccountConfig {
 
 export function loadR2UsageAccounts(): R2UsageAccountConfig[] {
   const slots: Array<{ id: "st" | "ct" | "um"; label: string; tokenEnv: string; accountEnv: string }> = [
-    { id: "st", label: "Socratic.Trade", tokenEnv: "CLOUDFLARE_ST_API_TOKEN", accountEnv: "CLOUDFLARE_ST_ACCOUNT_ID" },
+    { id: "st", label: "Socratic Trade", tokenEnv: "CLOUDFLARE_ST_API_TOKEN", accountEnv: "CLOUDFLARE_ST_ACCOUNT_ID" },
     { id: "ct", label: "Congress.Trade", tokenEnv: "CLOUDFLARE_CT_API_TOKEN", accountEnv: "CLOUDFLARE_CT_ACCOUNT_ID" },
     { id: "um", label: "Usage Monitor", tokenEnv: "CLOUDFLARE_JAY_API_TOKEN", accountEnv: "CLOUDFLARE_JAY_ACCOUNT_ID" },
   ];
@@ -577,7 +577,7 @@ export async function runR2UsageCheck(
   if (exceededMetrics.length > 0 && isR2AutoDisableArmed(cfg) && !isR2ReplicationDisabled(cfg)) {
     const markerPayload = {
       disabledAt: new Date(now).toISOString(),
-      reason: `Socratic.Trade R2 account over ${cfg.thresholdPct}% free-tier threshold`,
+      reason: `Socratic Trade R2 account over ${cfg.thresholdPct}% free-tier threshold`,
       thresholdPct: cfg.thresholdPct,
       exceeded: exceededMetrics.map((m) => ({
         id: m.id,
@@ -595,7 +595,7 @@ export async function runR2UsageCheck(
         await notifyImpl("local", {
           title: `🛑 R2 free-tier kill-switch: litestream replication auto-disabled`,
           body:
-            `The Socratic.Trade Cloudflare account crossed the ${cfg.thresholdPct}% free-tier threshold:\n` +
+            `The Socratic Trade Cloudflare account crossed the ${cfg.thresholdPct}% free-tier threshold:\n` +
             exceededMetrics
               .map((m) => `${m.label}: ${m.alertBasis === "pace" ? `projected ${formatR2Projected(m)} (${m.projectedPct.toFixed(1)}%)` : `${formatR2MetricValue(m)} (${m.pctUsed.toFixed(1)}%)`}`)
               .join("\n") +

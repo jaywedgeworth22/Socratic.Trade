@@ -406,7 +406,7 @@ describe("daily digest", () => {
   it("buildR2UsageDigestMessage renders per-account sections with flags", async () => {
     const snapshot = {
       accountId: "acct-st",
-      accountLabel: "Socratic.Trade",
+      accountLabel: "Socratic Trade",
       checkedAt: "2026-07-16T12:00:00.000Z",
       month: { startISO: "2026-07-01T00:00:00.000Z", endISO: "2026-08-01T00:00:00.000Z", elapsedFraction: 0.5 },
       thresholdPct: 70,
@@ -428,7 +428,7 @@ describe("daily digest", () => {
     const { title, body } = buildR2UsageDigestMessage([snapshot, ct]);
     expect(title).toContain("2026-07-16");
     expect(title).toContain("⚠️"); // ST storage over threshold
-    expect(body).toContain("Socratic.Trade");
+    expect(body).toContain("Socratic Trade");
     expect(body).toContain("Congress.Trade");
     expect(body).toContain("Storage: 8.00 GiB MTD (80.0%)");
     expect(body).toContain("Class A operations: 100,000 MTD (10.0%)");
@@ -487,7 +487,7 @@ describe("multi-account", () => {
     process.env.CLOUDFLARE_JAY_ACCOUNT_ID = "a3";
     const accounts = loadR2UsageAccounts();
     expect(accounts.map((a) => a.id)).toEqual(["st", "um"]);
-    expect(accounts[0].label).toBe("Socratic.Trade");
+    expect(accounts[0].label).toBe("Socratic Trade");
     expect(accounts[1].label).toBe("Usage Monitor");
   });
 
@@ -527,6 +527,6 @@ describe("multi-account", () => {
     }) as unknown as typeof fetch;
     await runR2UsageCheck(MID_JULY, { fetchImpl, notifyImpl });
     expect(notifyCalls).toHaveLength(1);
-    expect(notifyCalls[0].title).toContain("Socratic.Trade");
+    expect(notifyCalls[0].title).toContain("Socratic Trade");
   });
 });
