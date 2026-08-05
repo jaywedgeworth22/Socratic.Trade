@@ -2657,6 +2657,59 @@ const MIGRATIONS: Migration[] = [
           ON symbol_field_latest (as_of);
       `);
     }
+  },
+  {
+    // Per-user declared plan tier for optional market-data API keys (free/power/starter/…).
+    // Used by Connections dropdown + provider-tier-plan → quota hints when env knobs unset.
+    version: 70,
+    name: "user_api_keys_plan_tier",
+    up: (database) => {
+      const table = database
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'user_api_keys'`)
+        .get() as { name: string } | undefined;
+      if (!table) return;
+      const cols = database.prepare("PRAGMA table_info(user_api_keys)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "plan_tier")) {
+        database.exec("ALTER TABLE user_api_keys ADD COLUMN plan_tier TEXT");
+      }
+    }
+  },
+  {
+    // Provenance on durable EOD history cache: which cascade tier wrote each bar.
+    // `updated_at` is already fetched_at; `source` completes the (source, as_of=date, fetched_at)
+    // triple required for every cached data point. See source-capability-matrix ohlcv_daily.
+    version: 71,
+    name: "history_cache_eod_source",
+    up: (database) => {
+      const table = database
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'history_cache_eod'`)
+        .get() as { name: string } | undefined;
+      if (!table) {
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS history_cache_eod (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL NOT NULL,
+            volume REAL,
+            vwap REAL,
+            source TEXT NOT NULL DEFAULT 'unknown',
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (ticker, date)
+          );
+          CREATE INDEX IF NOT EXISTS idx_history_cache_eod_ticker ON history_cache_eod (ticker, date);
+        `);
+        return;
+      }
+      const cols = database.prepare(`PRAGMA table_info(history_cache_eod)`).all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "source")) {
+        database.exec(
+          `ALTER TABLE history_cache_eod ADD COLUMN source TEXT NOT NULL DEFAULT 'unknown'`
+        );
+      }
+    }
   }
 ];
 
@@ -3157,6 +3210,8 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_symbol_field_latest_as_of
       ON symbol_field_latest (as_of);
 
+    -- history_cache_eod.source: which cascade tier last wrote the bar (migration v71).
+
     CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_account ON portfolio_snapshots (account_number, created_at);
     CREATE INDEX IF NOT EXISTS idx_fill_events_account ON fill_events (account_number, filled_at);
     CREATE INDEX IF NOT EXISTS idx_notification_events_created ON notification_events (created_at);
@@ -3184,6 +3239,7 @@ function migrate(database: Database.Database): void {
       service TEXT NOT NULL,
       api_key TEXT NOT NULL,
       label TEXT,
+      plan_tier TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       UNIQUE(user_id, service)
@@ -3714,6 +3770,7 @@ function migrate(database: Database.Database): void {
       close REAL NOT NULL,
       volume REAL,
       vwap REAL,
+      source TEXT NOT NULL DEFAULT 'unknown',
       updated_at TEXT NOT NULL,
       PRIMARY KEY (ticker, date)
     );

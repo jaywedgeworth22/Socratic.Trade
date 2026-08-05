@@ -48,7 +48,7 @@ import { WisesheetsEnrichmentProvider, resolveWisesheetsApiKey } from "./wiseshe
 import { SimFinEnrichmentProvider, resolveSimFinApiKey } from "./simfin-provider";
 import { MarketauxEnrichmentProvider, resolveMarketauxApiKey } from "./marketaux-provider";
 import { getStreamedHeadlines } from "./streams/news-store";
-import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
+import { BROWSER_UA, politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
 import { withProviderLimit, admitProviderRequests, refundProviderRequests, resetProviderQuotaState, resolveProviderQuota, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
@@ -250,7 +250,9 @@ export type EnrichmentSourcedField =
   | "insiderTradesQuiver"
   | "govContractsQuiver"
   | "lobbyingQuiver"
-  | "patentsQuiver";
+  | "patentsQuiver"
+  /** First-wins array of headline strings; stamped for store/UI provenance (not score-arbitrated). */
+  | "headlines";
 
 export type EnrichmentFieldObservations = Partial<
   Record<EnrichmentSourcedField, FieldObservation<unknown>>
@@ -605,6 +607,12 @@ export async function fetchWithRetry(
     deferSuccessUsage?: boolean;
     suppressHealthStatuses?: number[];
     /**
+     * HTTP statuses that still write an ok=false health row but as soft/expected-limit (do not
+     * count toward hard consecutive-failure STOPPED). HTTP 429 is always soft regardless of this
+     * list. Use for provider-specific "not entitled / unsubscribed" shapes (e.g. RapidAPI 403).
+     */
+    softHealthStatuses?: number[];
+    /**
      * Optional durable-operation fence. When ownership is lost, the transport result/error is
      * propagated without writing health or provider-call telemetry for the successor's operation.
      */
@@ -650,17 +658,9 @@ export async function fetchWithRetry(
       // any health/provider ledger and before deciding whether an internal retry should run.
       assertFetchWithRetryGuard(options.guard);
       if (response.status === 429 && attempt < retries) {
-        if (healthService) {
-          assertFetchWithRetryGuard(options.guard);
-          logApiHealth({
-            service: healthService,
-            ok: false,
-            latencyMs: Date.now() - start,
-            errorText: "HTTP 429 (rate limited, retrying)",
-            keySource: options.keySource,
-            userId: options.userId,
-          });
-        }
+        // Do NOT write a health row for intermediate 429 retries — each retry would otherwise
+        // look like a hard failure and five rapid 429s painted the lane red STOPPED even when
+        // the eventual attempt (or the next symbol) succeeded. Final 429 is logged below as soft.
         await guardedFetchBackoff(backoffMs * (attempt + 1), options.guard);
         continue;
       }
@@ -670,6 +670,10 @@ export async function fetchWithRetry(
       const suppressHealth = !response.ok && (options.suppressHealthStatuses ?? []).includes(response.status);
       if (healthService && !(response.ok && options.deferSuccessLog) && !suppressHealth) {
         assertFetchWithRetryGuard(options.guard);
+        // HTTP 429 (and any status the caller opts into via softHealthStatuses) is an expected
+        // limit, not a broken integration — soft so consecutive-failure STOPPED / circuit stay off.
+        const softStatuses = new Set([429, ...(options.softHealthStatuses ?? [])]);
+        const soft = !response.ok && softStatuses.has(response.status);
         logApiHealth({
           service: healthService,
           ok: response.ok,
@@ -677,6 +681,7 @@ export async function fetchWithRetry(
           errorText: response.ok ? undefined : scrubProviderErrorText(`HTTP ${response.status}`, options.apiKey),
           keySource: options.keySource,
           userId: options.userId,
+          soft,
         });
       }
       // Call-volume telemetry: one logical market-data call per fetchWithRetry invocation
@@ -1496,14 +1501,25 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       ) => {
         const supplied = currentRecord?.fieldObservations?.[field] as FieldObservation<SymbolEnrichment[K]> | undefined;
         if (value !== undefined || supplied) {
+          // Always stamp source + asOf + fetchedAt (never leave asOf blank when we have a value).
+          // Provider fieldDates / fieldObservations win when present; else cascade clock.
+          // Capability / preference notes: source-capability-matrix.ts
+          const resolvedValue = value ?? supplied?.value;
+          const asOf =
+            supplied?.asOf ??
+            currentRecord?.fieldDates?.[field] ??
+            (field === "asOf" && typeof resolvedValue === "string" ? resolvedValue : undefined) ??
+            supplied?.observedAt ??
+            (field === "asOf" ? undefined : currentRecord?.asOf) ??
+            cascadeFetchedAt;
           const observation: FieldObservation<unknown> = {
             ...supplied,
-            value: value ?? supplied?.value,
+            value: resolvedValue,
             source: supplied?.source ?? sourceName,
             upstreamFamily: supplied?.upstreamFamily ?? sourceName,
             observedAt: supplied?.observedAt ?? (field === "asOf" ? undefined : currentRecord?.asOf),
             fetchedAt: supplied?.fetchedAt ?? cascadeFetchedAt,
-            asOf: supplied?.asOf ?? currentRecord?.fieldDates?.[field] ?? undefined,
+            asOf,
             status: supplied?.status ?? "ok"
           };
           const candidates: FieldObservationCandidate<unknown>[] = scalarCandidates[field] ?? [];
@@ -1573,10 +1589,14 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("govContractsQuiver", name, r.govContractsQuiver);
         takeScalar("lobbyingQuiver", name, r.lobbyingQuiver);
         takeScalar("patentsQuiver", name, r.patentsQuiver);
-        if (!base.headlines?.length && r.headlines?.length) {
-          base.headlines = r.headlines;
-          this.contributingNames.add(name);
-        }
+        // sharesOutstanding was in EMPTY_SOURCED / EnrichmentSourcedField but never takeScalar'd —
+        // providers (e.g. SEC XBRL, Wisesheets) returned it and applyEnrichment could carry it, yet
+        // cascade merge dropped it and never wrote source/asOf into symbol_field_latest.
+        takeScalar("sharesOutstanding", name, r.sharesOutstanding);
+        // Headlines: first-wins array (takeScalar also first-wins on base[field] === undefined).
+        // Stamping source + observation time so the durable store never records source=unknown.
+        // See source-capability-matrix.ts data point "headlines" for provider preference notes.
+        takeScalar("headlines", name, r.headlines);
         // Collect every provider's analyst read. Defer crediting it as a contributor:
         // if its entry is overwritten by a same-source provider that runs later (same
         // analystBySource key), it supplied no FINAL value. Track the last writer per key.
@@ -1772,7 +1792,9 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
   }
 }
 
-// Marker set so takeScalar only stamps fields that are actually sourced (not headlines/analyst).
+// Marker set so takeScalar / arbitration covers every EnrichmentSourcedField.
+// analystRating is blended after the loop (not first-wins); still listed so arbitration can
+// surface no_match when no provider contributed. Prefer source ranks: source-capability-matrix.ts.
 const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   price: true,
   bid: true,
@@ -1817,7 +1839,8 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   insiderTradesQuiver: true,
   govContractsQuiver: true,
   lobbyingQuiver: true,
-  patentsQuiver: true
+  patentsQuiver: true,
+  headlines: true
 };
 
 // ── Webull unofficial quote bridge (opt-in, market-data only) ────────────────
@@ -2411,8 +2434,12 @@ export function parseAlpacaSnapshot(snap: AlpacaSnapshot | undefined | null): Sy
 // ── Nasdaq.com public quote/summary (no API key) ─────────────────────────────
 // Keyless JSON endpoints used by nasdaq.com (same family as the delayed screener in
 // market.ts). Complements Yahoo when the crumb handshake fails or Yahoo rate-limits.
-const NASDAQ_QUOTE_UA =
-  "Mozilla/5.0 (compatible; SocraticTrade/1.0; +https://socratictrade.com; research@socratictrade.com)";
+//
+// UA must look like a real browser: live-verified 2026-08-05 that the prior contactable
+// "compatible; SocraticTrade/1.0" bot UA hangs/times out against api.nasdaq.com while a
+// Chrome desktop UA returns 200 on the same host+path. BROWSER_UA is shared with macro/VIX
+// and the web-sources scrapers for the same reason.
+const NASDAQ_QUOTE_UA = BROWSER_UA;
 
 /** Parse `/api/quote/{sym}/info` + `/api/quote/{sym}/summary` (+ optional holdings). */
 export function parseNasdaqQuoteInfo(payload: unknown): SymbolEnrichment {
@@ -4126,6 +4153,8 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
     logApiHealth({
       service: this.name,
       ok: false,
+      // Expected free-tier daily cap — soft so the lane is DEGRADED yellow, not red STOPPED.
+      soft: true,
       errorText: `Alpha Vantage: entire key pool exhausted for today (${total}/${total} keys hit the 25/day cap)`,
       keySource: this.keySource,
       userId: this.userId,
@@ -4150,6 +4179,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
     logApiHealth({
       service: this.name,
       ok: false,
+      soft: true,
       errorText: `Alpha Vantage: proactive daily call budget exhausted (self-limited to ${budget}/day, PROVIDER_QUOTA_ALPHA_VANTAGE_PER_DAY)`,
       keySource: this.keySource,
       userId: this.userId,
@@ -4298,10 +4328,23 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
               // warning shares the same "25 requests per day" upsell text but never contains
               // that phrase — leave the sticky key in place for it; the existing 1.1s pacer is
               // what actually addresses that case.
-              if (dispatchKey && isAlphaVantageDailyCapMessage(rawMsg)) {
+              const isDailyCap = isAlphaVantageDailyCapMessage(rawMsg);
+              if (dispatchKey && isDailyCap) {
                 this.pool.markExhausted(dispatchKey);
               }
-              logApiHealth({ service: this.name, ok: false, errorText: `Alpha Vantage API warning/error${keyTag}: ${msg}`, keySource: this.keySource, userId: this.userId });
+              // Daily-cap and rate-limit-shaped AV body errors are expected free-tier behavior,
+              // not a broken key — soft so five of them cannot paint the lane red STOPPED.
+              logApiHealth({
+                service: this.name,
+                ok: false,
+                soft: isDailyCap || /\b25 requests per day\b|rate limit|Thank you for using Alpha Vantage/i.test(rawMsg),
+                errorText: `Alpha Vantage API warning/error${keyTag}: ${msg}`,
+                keySource: this.keySource,
+                userId: this.userId,
+                ...(isDailyCap
+                  ? { quotaResetAt: new Date(Date.now() + millisUntilNextAlphaVantageDailyReset(Date.now())).toISOString() }
+                  : {})
+              });
               throw new Error(`Alpha Vantage API warning/error: ${msg}`);
             }
             // Same [key i/N] tag on the success row too (stored in errorText, the only free-form
@@ -4613,6 +4656,9 @@ async function rapidApiGetJson(
           // only ever gets decremented by 1, silently letting a single admitted reservation spend
           // two real upstream calls right when the scarce monthly-backed quota is closest to empty.
           retries: 0,
+          // 403 = typically unsubscribed/not-entitled on RapidAPI hub (seeking-alpha delisted,
+          // plan gap). Soft so it degrades yellow instead of hard STOPPED; 401 stays hard (bad key).
+          softHealthStatuses: [403],
           durableAttempt: {
             onDispatch: () => { if (dispatchTracker) dispatchTracker.dispatched = true; },
             onResponse: (r) => recordProviderCall(options.service, { ok: r.ok, keySource: options.keySource, userId: options.userId }),
@@ -6133,7 +6179,12 @@ export class InsidersRapidApiEnrichmentProvider implements MarketEnrichmentProvi
             "x-rapidapi-key": this.apiKey
           }
         },
-        { service: this.name, keySource: this.keySource, userId: this.userId }
+        {
+          service: this.name,
+          keySource: this.keySource,
+          userId: this.userId,
+          softHealthStatuses: [403],
+        }
       );
       if (response.status === 404) return { transactions: [] };
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -6233,7 +6284,12 @@ export class TwelveDataRapidApiEnrichmentProvider implements MarketEnrichmentPro
             "x-rapidapi-key": this.apiKey
           }
         },
-        { service: this.name, keySource: this.keySource, userId: this.userId }
+        {
+          service: this.name,
+          keySource: this.keySource,
+          userId: this.userId,
+          softHealthStatuses: [403],
+        }
       );
       if (response.status === 404) return {};
       if (!response.ok) throw new Error(`HTTP ${response.status}`);

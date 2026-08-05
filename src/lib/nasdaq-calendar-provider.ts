@@ -46,13 +46,14 @@
 import type { EnrichmentContext, MarketEnrichmentProvider, SymbolEnrichment } from "./data-providers";
 import { fetchWithRetry } from "./data-providers";
 import { normalizeSymbol } from "./money";
+import { BROWSER_UA } from "./web-sources/http";
 
 const NASDAQ_CALENDAR_BASE = "https://api.nasdaq.com/api/calendar";
 
-// Descriptive, contactable UA — mirrors NASDAQ_QUOTE_UA in data-providers.ts (same host, same
-// posture: identify ourselves rather than pretend to be a browser).
-const NASDAQ_CALENDAR_UA =
-  "Mozilla/5.0 (compatible; SocraticTrade/1.0; +https://socratictrade.com; research@socratictrade.com)";
+// Browser-like UA — same as NASDAQ_QUOTE_UA in data-providers.ts. Live-verified 2026-08-05:
+// the prior contactable "compatible; SocraticTrade/1.0" bot UA hangs against api.nasdaq.com
+// while Chrome desktop UA returns 200 for /api/calendar/earnings and quote paths.
+const NASDAQ_CALENDAR_UA = BROWSER_UA;
 
 function flagEnabled(value: string | undefined): boolean {
   const v = (value ?? "").trim().toLowerCase();
@@ -223,7 +224,25 @@ export class NasdaqCalendarEnrichmentProvider implements MarketEnrichmentProvide
           if (daySymbols.has(symbol)) matched.push(symbol);
         }
         for (const symbol of matched) {
-          result[symbol] = { daysToEarnings: offset };
+          const fetchedAt = new Date(now).toISOString();
+          // Calendar row asOf = the earnings date key (market fact); fetchedAt = when we read it.
+          // Cascade takeScalar will preserve these fieldObservations (source-capability-matrix: earnings_calendar).
+          const earningsDate = dateKeyFromOffset(now, offset);
+          result[symbol] = {
+            daysToEarnings: offset,
+            sources: { daysToEarnings: "nasdaq-calendar" },
+            fieldObservations: {
+              daysToEarnings: {
+                value: offset,
+                source: "nasdaq-calendar",
+                upstreamFamily: "nasdaq-calendar",
+                asOf: earningsDate,
+                fetchedAt,
+                status: "ok"
+              }
+            },
+            fieldDates: { daysToEarnings: earningsDate }
+          };
           remaining.delete(symbol);
         }
       }

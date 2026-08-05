@@ -33,6 +33,45 @@ export interface FieldObservation<T> {
   conflict?: FieldConflict;
 }
 
+/**
+ * Build a complete per-field provenance stamp (source + asOf + fetchedAt).
+ * Prefer calling this (or cascade takeScalar) whenever a scan/cache value is accepted
+ * so consumers never see bare scalars without provenance.
+ * Preference ranks for *which* source to call live in `source-capability-matrix.ts`.
+ */
+export function stampFieldObservation<T>(
+  value: T | undefined,
+  source: string,
+  opts?: {
+    asOf?: string;
+    observedAt?: string;
+    effectiveAt?: string;
+    fetchedAt?: string;
+    status?: FieldAvailabilityStatus;
+    upstreamFamily?: string;
+    confidence?: number;
+    reliability?: number;
+    directness?: number;
+  }
+): FieldObservation<T> {
+  const fetchedAt = opts?.fetchedAt ?? new Date().toISOString();
+  const asOf = opts?.asOf ?? opts?.observedAt ?? opts?.effectiveAt ?? fetchedAt;
+  const resolvedSource = source.trim() ? source : "unknown";
+  return {
+    value,
+    source: resolvedSource,
+    upstreamFamily: opts?.upstreamFamily ?? resolvedSource,
+    observedAt: opts?.observedAt,
+    effectiveAt: opts?.effectiveAt,
+    fetchedAt,
+    asOf,
+    status: opts?.status ?? (value === undefined ? "no_match" : "ok"),
+    confidence: opts?.confidence,
+    reliability: opts?.reliability,
+    directness: opts?.directness
+  };
+}
+
 export interface ProviderFailureReceipt {
   source: string;
   upstreamFamily?: string;
