@@ -8,25 +8,46 @@ function baseUrl(): string {
   return (process.env.CONGRESS_TRADE_BASE_URL ?? DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
 }
 
-function flagOn(value: string | undefined): boolean {
+/**
+ * Parse an env flag. When `defaultOn` is true, an unset/blank value enables the
+ * feature; explicit off (`0`/`false`/`no`/`off`) still disables it.
+ */
+function flagOn(value: string | undefined, defaultOn = false): boolean {
   const v = (value ?? "").trim().toLowerCase();
+  if (!v) return defaultOn;
+  if (v === "0" || v === "false" || v === "no" || v === "off") return false;
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
+/** Price/history cache-aside — remains opt-in (can echo Massive via peer; keep default off). */
 export function congressReadsEnabled(): boolean {
-  return flagOn(process.env.CONGRESS_TRADE_READS_ENABLED);
+  return flagOn(process.env.CONGRESS_TRADE_READS_ENABLED, false);
 }
 
+/**
+ * Fundamentals/analyst read-back from App A. Default OFF — owner 2026-08-04:
+ * Socratic fundamentals come from the multi-provider cascade (Yahoo, Finnhub,
+ * ROIC, SEC XBRL, Tiingo, SimFin, …), not from Congress.Trade or direct FMP.
+ * Opt in only if you want App A as an extra cache-aside tier.
+ */
 export function congressFundamentalsEnabled(): boolean {
-  return flagOn(process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED);
+  return flagOn(process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED, false);
 }
 
+/**
+ * App A as congressional disclosure source of record. Default ON: replaces
+ * scrapers / direct Quiver congressional counts (owner 2026-08-04).
+ */
 export function congressAsCongressSourceEnabled(): boolean {
-  return flagOn(process.env.CONGRESS_TRADE_AS_CONGRESS_SOURCE);
+  return flagOn(process.env.CONGRESS_TRADE_AS_CONGRESS_SOURCE, true);
 }
 
+/**
+ * App A analytics overlay (conviction, clusters, member skill). Default ON so
+ * congress composite scoring has a real peer feed without paid alt-data keys.
+ */
 export function congressAnalyticsEnabled(): boolean {
-  return flagOn(process.env.CONGRESS_ANALYTICS_ENABLED);
+  return flagOn(process.env.CONGRESS_ANALYTICS_ENABLED, true);
 }
 
 function readToken(): string | undefined {

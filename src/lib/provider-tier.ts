@@ -148,31 +148,16 @@ const FMP_FREE_SIGNAL = /exclusive|premium|upgrade|limit reach|special endpoint|
 
 export async function probeFmpTier(
   key: string | undefined,
-  fetcher: Fetcher = fetch
+  _fetcher: Fetcher = fetch
 ): Promise<{ tier: ProviderTier; reason: string; signal: ProviderTierSignal }> {
-  if (!key) return { tier: "unknown", reason: "no FMP key configured", signal: "no_key" };
-  const url = `https://financialmodelingprep.com/stable/ratios-ttm?symbol=AAPL&apikey=${encodeURIComponent(key)}`;
-  let res: Response;
-  try {
-    res = await fetcher(url, { cache: "no-store", signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
-  } catch {
-    return { tier: "unknown", reason: "network/timeout error", signal: "probe_error" };
-  }
-  if (res.status === 429) return { tier: "free", reason: "429 (free tier 250 calls/day cap)", signal: "rate_limited_429" };
-  const text = await res.text().catch(() => "");
-  if (!res.ok) {
-    return FMP_FREE_SIGNAL.test(text)
-      ? { tier: "free", reason: `premium-gated error (HTTP ${res.status})`, signal: "premium_gated_error" }
-      : { tier: "unknown", reason: `HTTP ${res.status}`, signal: "probe_error" };
-  }
-  let json: unknown = null;
-  try { json = JSON.parse(text); } catch { return { tier: "unknown", reason: "unparseable response", signal: "probe_error" }; }
-  if (json && typeof json === "object" && !Array.isArray(json)) {
-    const msg = String((json as Record<string, unknown>)["Error Message"] ?? (json as Record<string, unknown>).message ?? "");
-    if (FMP_FREE_SIGNAL.test(msg)) return { tier: "free", reason: `error envelope: ${msg.slice(0, 80)}`, signal: "premium_gated_error" };
-  }
-  if (Array.isArray(json) && json.length > 0) return { tier: "paid", reason: "plan-access probe: ratios-ttm returned data (checks endpoint access, not today's data freshness)", signal: "data_returned" };
-  return { tier: "unknown", reason: "ambiguous response (no premium signal, no data)", signal: "ambiguous" };
+  // Owner 2026-08-04: never probe financialmodelingprep.com from this app.
+  // FMP quota lives on Congress.Trade; ignore any local key presence.
+  if (!key) return { tier: "unknown", reason: "FMP direct access retired (use Congress.Trade)", signal: "no_key" };
+  return {
+    tier: "unknown",
+    reason: "FMP direct access retired in Socratic.Trade — no probe issued",
+    signal: "no_key"
+  };
 }
 
 // ── Orchestration ──────────────────────────────────────────────────────────────
@@ -189,11 +174,8 @@ export async function runProviderTierCheck(opts: { userId?: string; now?: number
     const r = await probeMassiveTier(massiveKey, now, fetcher);
     next.massive = { tier: r.tier, at: nowIso, reason: r.reason, signal: r.signal };
   }
-  const fmpKey = resolveApiKey("fmp", userId);
-  if (fmpKey) {
-    const r = await probeFmpTier(fmpKey, fetcher);
-    next.fmp = { tier: r.tier, at: nowIso, reason: r.reason, signal: r.signal };
-  }
+  // FMP tier probe retired with direct FMP access (owner 2026-08-04). Do not
+  // resolve or call FMP keys from this app — Congress.Trade owns that quota.
 
   setInternalSetting(providerTierStatusKey(userId), next);
   audit("provider_tier_check", { massive: next.massive, fmp: next.fmp }, userId);
