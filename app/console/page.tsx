@@ -88,6 +88,7 @@ export default function ConsoleHomePage() {
   // floor. See docs/rollouts/2026-07-08-console-page-width-parity.md.
   return (
     <div className="flex flex-col gap-4">
+      <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console")}</h1>
       {/* First-run checklist (PR-A3): when incomplete it dominates Thesis above the
           strategy bar + two-column desk; when ready it collapses to "You're set". */}
       <ReadinessChecklistHero snapshot={snapshot} />
