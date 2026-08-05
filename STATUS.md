@@ -1,3 +1,7 @@
+**2026-08-04 — GROK: Tradier Sandbox venue-aligned quotes (branch `grok/tradier-sandbox-venue-quotes`).**
+Paper Tradier keeps ~15m delayed sandbox quotes as execution-authoritative (no fresher Alpaca/Yahoo
+overlay); staleness ages `fetchedAt` not trade-time delay. Alpaca paper stays real-time cascade.
+Rollout: `docs/rollouts/2026-08-04-tradier-sandbox-venue-quotes.md`.
 ## Current (2026-08-05 GROK)
 
 **2026-08-05 — GROK: issue batch #838/#837/#1319 (branch `grok/issues-batch-prompt-evidence`).**
