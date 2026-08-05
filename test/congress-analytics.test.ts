@@ -61,6 +61,7 @@ function stubAnalyticsFetch(p: {
 
 describe("congress analytics overlay", () => {
   it("is inert when disabled (no fetch, skipped refresh)", async () => {
+    process.env.CONGRESS_ANALYTICS_ENABLED = "off";
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const res = await refreshCongressAnalytics(Date.now());
@@ -237,7 +238,7 @@ describe("buildMemberSkillScores", () => {
   });
 
   it("is empty (no fetch) when analytics is disabled", async () => {
-    delete process.env.CONGRESS_ANALYTICS_ENABLED;
+    process.env.CONGRESS_ANALYTICS_ENABLED = "off";
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     expect((await buildMemberSkillScores(["a"])).size).toBe(0);

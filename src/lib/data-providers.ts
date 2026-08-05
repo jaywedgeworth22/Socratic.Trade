@@ -1,13 +1,12 @@
 // Market enrichment: fundamentals (P/E) + analyst-consensus sentiment layered on top of
 // the NASDAQ screener scan.
 //
-// Provider cascade (first non-null value wins per field):
-//   1. Finnhub           — news sentiment, analyst recs, profile, basic financials (FINNHUB_API_KEY)
-//   2. FMP stable API    — P/E (ratios-ttm), analyst grades-consensus             (FMP_API_KEY)
-//   3. Yahoo Finance     — sector, industry, P/E, EPS, div yield, analyst rating  (no key needed)
+// Fundamentals come from a COLLECTION of providers (first non-null wins per field), e.g.:
+//   Finnhub, Tiingo, ROIC.ai, SEC XBRL, Yahoo Finance, Nasdaq, SimFin, Wisesheets, …
+// Congress.Trade fundamentals/analyst read-back is opt-in only (default OFF).
 //
-// Each keyed provider is only instantiated when its env key is set. Yahoo Finance is always
-// the final real tier — no API key required, uses session crumb auth.
+// Owner 2026-08-04: FMP, QuiverQuant, and Unusual Whales are NEVER called from this app.
+// Congressional disclosures/analytics come from Congress.Trade; fundamentals do not default there.
 //
 // A quota-scarce RapidAPI-hosted FAILOVER tier (Mboum Finance, YH Finance 15, Alpha Vantage's
 // RapidAPI transport) is registered AFTER Yahoo Finance, gated on RAPIDAPI_KEY — see the doc
@@ -42,7 +41,8 @@ import { expiresAtRespectingMarketClose } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
-import { QuiverEnrichmentProvider, resolveQuiverApiKey } from "./quiver-provider";
+import { resolveQuiverApiKey } from "./quiver-provider";
+import { isDirectVendorAccessAllowed } from "./retired-direct-vendors";
 import { NasdaqCalendarEnrichmentProvider } from "./nasdaq-calendar-provider";
 import { WisesheetsEnrichmentProvider, resolveWisesheetsApiKey } from "./wisesheets-provider";
 import { SimFinEnrichmentProvider, resolveSimFinApiKey } from "./simfin-provider";
@@ -971,7 +971,8 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const providers: MarketEnrichmentProvider[] = [];
   const finnhub = resolveApiKeyWithSource("finnhub", userId);
   const alphaVantage = resolveAlphaVantageKeyPool(userId);
-  const fmp = resolveApiKeyWithSource("fmp", userId);
+  // FMP key may still resolve from env/DB, but direct FMP is retired — never register it.
+  // Fundamentals come from the multi-provider cascade below (not FMP, not App A by default).
   const roic = resolveApiKeyWithSource("roic", userId);
   const fintech = resolveApiKeyWithSource("fintechstudios", userId);
   const tiingo = resolveApiKeyWithSource("tiingo", userId);
@@ -998,10 +999,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // self-skips when either Alpaca key is absent — then the delayed sources fill these
   // fields in exactly the same order they would today.
   if (alpacaData.apiKey && alpacaData.secretKey) providers.push(withHealthLane(new AlpacaSnapshotEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId), alpacaData.source));
-  // Tier 1.5 — Congress.Trade cross-app cache (fundamentals/analyst only, no price).
-  // Gated by its OWN flag (CONGRESS_TRADE_FUNDAMENTALS_ENABLED), separate from the
-  // price/history reads, so enabling price cache-aside doesn't silently give App A
-  // precedence over the direct fundamentals providers. Default-OFF.
+  // Tier 1.5 — Congress.Trade fundamentals/analyst cache-aside (opt-in, default OFF).
+  // Owner: fundamentals should come from the multi-source cascade (Finnhub/ROIC/SEC/Yahoo/…),
+  // not App A. Enable CONGRESS_TRADE_FUNDAMENTALS_ENABLED only as an extra peer tier.
+  // Separate from price/history CONGRESS_TRADE_READS_ENABLED.
   if (congressFundamentalsEnabled()) providers.push(new CongressTradeEnrichmentProvider(userId));
   // Tier 2 — DELAYED quotes + fundamentals, in availability order (unchanged relative ordering).
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
@@ -1038,12 +1039,13 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   }
   // Marketaux: a genuine per-article sentiment model (not a keyword-scored proxy), so it's seated
   // right after AV's own model-based NEWS_SENTIMENT rather than down with the keyword-proxy tiers.
-  // Key-gated on MARKETAUX_API_KEY (process.env only, mirrors QuiverEnrichmentProvider). Declares
-  // quotaScarce (its free tier is 100 req/day) + suppliesFields, so the free-first planner's wave
-  // gate only spends it on symbols still missing headlines/sentiment after the free wave resolved.
+  // Key-gated on MARKETAUX_API_KEY (process.env only). Declares quotaScarce (free tier 100 req/day)
+  // + suppliesFields, so the free-first planner's wave gate only spends it on symbols still
+  // missing headlines/sentiment after the free wave resolved.
   const marketauxKey = resolveMarketauxApiKey();
   if (marketauxKey) providers.push(withHealthLane(new MarketauxEnrichmentProvider(marketauxKey), "env"));
-  if (fmp.key) providers.push(withHealthLane(new FmpEnrichmentProvider(fmp.key, fmp.source, userId), fmp.source));
+  // FMP EnrichmentProvider deliberately NOT registered (owner 2026-08-04). Class remains for
+  // tests / dead-code reference; requestFmp + enrich() are hard-blocked.
   if (roic.key) providers.push(withHealthLane(new RoicAiEnrichmentProvider(roic.key, roic.source, userId), roic.source));
   // Massive REST: REAL second short-interest source (FINRA short interest / free float) for the
   // Yahoo-vs-Massive disagreement cross-check. Supplies ONLY the carrier shortPercentOfFloatSecondary
@@ -1076,12 +1078,13 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (robinhoodOptionsEnrichmentEnabled() && robinhoodMcpDataEnabled()) {
     providers.push(new RobinhoodOptionsEnrichmentProvider(userId));
   }
-  // QuiverQuant: supplies ONLY the five *Quiver carrier fields (congress/insider trades, gov
-  // contracts, lobbying, patents) nothing else in the cascade produces, so seating it here is
-  // low-stakes for ordering. Key-gated on QUIVER_API_KEY (process.env only) — absent key means
-  // it's never registered, i.e. fully dormant. See src/lib/quiver-provider.ts.
+  // QuiverQuant: RETIRED as a direct ST producer (owner 2026-08-04). Congressional data comes
+  // from Congress.Trade (CONGRESS_TRADE_AS_CONGRESS_SOURCE). resolveQuiverApiKey() always
+  // returns undefined; keep the check so a future regression re-enabling the key still fails closed.
   const quiverKey = resolveQuiverApiKey();
-  if (quiverKey) providers.push(withHealthLane(new QuiverEnrichmentProvider(quiverKey), "env"));
+  if (quiverKey) {
+    console.warn("[data-providers] QuiverQuant key present but direct access is retired; not registering quiverquant");
+  }
   // Keyless Nasdaq quote/summary/holdings — free-wave redundancy beside Yahoo (no crumb handshake).
   // Seated just before Yahoo so both participate in wave A; first-wins still prefers earlier paid
   // tiers when they filled a field.
@@ -1098,8 +1101,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // comment on the provider classes + rapidapi-quota.ts). Dormant unless RAPIDAPI_KEY is set.
   // Scarce providers (Mboum / YH15 / AV-RapidAPI / Insiders / TwelveData-RapidAPI) declare
   // `quotaScarce` + `suppliesFields` so the free-first planner's wave C only spends them on
-  // symbols still missing those fields. FMP-RapidAPI is costTier "free" / not scarce so it
-  // participates in the free wave (extra fundamentals without a native FMP key).
+  // symbols still missing those fields. FMP-RapidAPI is retired with direct FMP (owner 2026-08-04).
   if (rapidApiKey) {
     // Mboum first (owner: prioritize by lowest disclosed RapidAPI-listing latency, 1663ms vs YH
     // Finance 15's 1757ms) — near-identical, so this is a tie-break, not a meaningful difference.
@@ -1112,7 +1114,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
       "env"
     ));
     providers.push(withHealthLane(new AlphaVantageRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
-    providers.push(withHealthLane(new FmpRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    // FmpRapidApiEnrichmentProvider intentionally not registered — same retirement as native FMP.
     providers.push(withHealthLane(new InsidersRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
     providers.push(withHealthLane(new TwelveDataRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
     // Additional RapidAPI free-tier failover lanes. Working Pricing page (verified):
@@ -3225,6 +3227,8 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    // Owner 2026-08-04: never call FMP from this app (even if constructed in tests/scripts).
+    if (!isDirectVendorAccessAllowed("fmp")) return {};
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
@@ -6000,172 +6004,23 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
 }
 
 // ── RapidAPI: Financial Modeling Prep ────────────────────────────────────────
+// RETIRED (owner 2026-08-04): never call FMP (native or RapidAPI-hosted) from
+// Socratic.Trade. Class kept as a no-op so imports/tests that construct it stay stable.
 
 export class FmpRapidApiEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "fmp-rapidapi";
   readonly costTier = "free" as const;
   readonly configured = true;
-  readonly quotaScarce = false; // "doubles the quota" per inventory - putting it in wave 1!
-  private readonly base = "https://financial-modeling-prep.p.rapidapi.com/v3";
-  private readonly scope: CacheScope;
-  private readonly keySource: ApiKeySource;
+  readonly quotaScarce = false;
 
   constructor(
-    private readonly apiKey: string,
-    keySource: ApiKeySource = "env",
-    private readonly userId?: string
-  ) {
-    this.scope = cacheScopeForKeySource(keySource, userId);
-    this.keySource = keySource;
-  }
+    _apiKey: string,
+    _keySource: ApiKeySource = "env",
+    _userId?: string
+  ) {}
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
-    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
-    if (normalized.length === 0) return {};
-
-    const now = Date.now();
-    const consented = hasDataPoolConsent(this.userId ?? "local");
-    const result: Record<string, SymbolEnrichment> = {};
-    const misses: string[] = [];
-
-    for (const symbol of normalized) {
-      const cached = readEnrichmentCache("fmp-rapidapi", symbol, this.userId, consented, now);
-      if (cached) result[symbol] = cached.data;
-      else misses.push(symbol);
-    }
-
-    const CONCURRENCY = 3;
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
-      const chunk = misses.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async (symbol) => {
-          const admitted = tryReserveRapidApiCalls("fmp-rapidapi", 2, now);
-          if (admitted < 2) {
-            // Give back whatever partial we got, skip this symbol
-            refundRapidApiCalls("fmp-rapidapi", admitted, now);
-            result[symbol] = {};
-            return;
-          }
-          try {
-            const [profileRaw, ratiosRaw] = await Promise.allSettled([
-              this.getJson(`${this.base}/profile/${encodeURIComponent(symbol)}`),
-              this.getJson(`${this.base}/ratios-ttm/${encodeURIComponent(symbol)}`)
-            ]);
-
-            let companyName: string | undefined;
-            let sector: string | undefined;
-            let industry: string | undefined;
-            let beta: number | undefined;
-            let dividendYield: number | undefined;
-            let fiftyTwoWeekHigh: number | undefined;
-            let fiftyTwoWeekLow: number | undefined;
-
-            if (profileRaw.status === "fulfilled" && Array.isArray(profileRaw.value)) {
-              const row = (profileRaw.value as Array<Record<string, unknown>>)[0];
-              if (row) {
-                const clean = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined);
-                const finite = (value: unknown) => {
-                  const parsed = Number(value);
-                  return Number.isFinite(parsed) ? parsed : undefined;
-                };
-                companyName = clean(row.companyName);
-                sector = clean(row.sector);
-                industry = clean(row.industry);
-                beta = finite(row.beta);
-                const lastDividend = finite(row.lastDividend ?? row.lastDiv);
-                const profilePrice = finite(row.price);
-                if (lastDividend !== undefined && lastDividend >= 0 && profilePrice !== undefined && profilePrice > 0) {
-                  dividendYield = Math.round((lastDividend / profilePrice) * 10_000) / 100;
-                }
-                const range = clean(row.range)?.match(/^\s*([\d.]+)\s*-\s*([\d.]+)\s*$/);
-                if (range) {
-                  fiftyTwoWeekLow = finite(range[1]);
-                  fiftyTwoWeekHigh = finite(range[2]);
-                }
-              }
-            }
-
-            let peRatio: number | undefined;
-            let pbRatio: number | undefined;
-            let debtToEquity: number | undefined;
-            let returnOnEquity: number | undefined;
-            let returnOnAssets: number | undefined;
-            let grossProfitMargin: number | undefined;
-
-            if (ratiosRaw.status === "fulfilled" && Array.isArray(ratiosRaw.value)) {
-              const row = (ratiosRaw.value as Array<Record<string, unknown>>)[0];
-              if (row) {
-                const finite = (value: unknown) => {
-                  const parsed = Number(value);
-                  return Number.isFinite(parsed) ? parsed : undefined;
-                };
-                const percent = (value: unknown) => {
-                  const parsed = finite(value);
-                  return parsed === undefined ? undefined : Math.round(parsed * 10_000) / 100;
-                };
-                const pe = finite(row.priceToEarningsRatioTTM);
-                const pb = finite(row.priceToBookRatioTTM);
-                if (pe !== undefined && pe > 0) peRatio = pe;
-                if (pb !== undefined && pb > 0) pbRatio = pb;
-                debtToEquity = finite(row.debtToEquityRatioTTM ?? row.debtEquityRatioTTM);
-                returnOnEquity = percent(row.returnOnEquityTTM);
-                returnOnAssets = percent(row.returnOnAssetsTTM);
-                grossProfitMargin = percent(row.grossProfitMarginTTM);
-                if (dividendYield === undefined) {
-                  dividendYield = percent(row.dividendYieldTTM);
-                }
-              }
-            }
-
-            const data: SymbolEnrichment = {
-              ...(peRatio !== undefined && { peRatio }),
-              ...(pbRatio !== undefined && { pbRatio }),
-              ...(debtToEquity !== undefined && { debtToEquity }),
-              ...(returnOnEquity !== undefined && { returnOnEquity }),
-              ...(returnOnAssets !== undefined && { returnOnAssets }),
-              ...(grossProfitMargin !== undefined && { grossProfitMargin }),
-              ...(companyName !== undefined && { companyName }),
-              ...(sector !== undefined && { sector }),
-              ...(industry !== undefined && { industry }),
-              ...(beta !== undefined && { beta }),
-              ...(dividendYield !== undefined && { dividendYield }),
-              ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
-              ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
-            };
-
-            writeEnrichmentCache("fmp-rapidapi", symbol, this.scope, this.userId, data, now + ttlMs());
-            result[symbol] = data;
-          } catch (err) {
-            result[symbol] = {};
-          }
-        })
-      );
-    }
-    return result;
-  }
-
-  private async getJson(url: string): Promise<unknown> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-    try {
-      const response = await fetchWithRetry(
-        url,
-        {
-          cache: "no-store",
-          signal: controller.signal,
-          headers: {
-            "x-rapidapi-host": "financial-modeling-prep.p.rapidapi.com",
-            "x-rapidapi-key": this.apiKey
-          }
-        },
-        { service: this.name, keySource: this.keySource, userId: this.userId }
-      );
-      if (response.status === 404) return [];
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json();
-    } finally {
-      clearTimeout(timeout);
-    }
+  async enrich(_symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    return {};
   }
 }
 

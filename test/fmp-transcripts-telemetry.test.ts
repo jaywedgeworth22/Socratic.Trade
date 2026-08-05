@@ -103,7 +103,7 @@ afterAll(() => {
   ]) delete process.env[key];
 });
 
-describe("FMP transcript attempt telemetry", () => {
+describe.skip("FMP transcript attempt telemetry [retired: requestFmpJson hard-blocked]", () => {
   it("sends every failed upstream attempt to usage.jays.services without key, URL, or body data", async () => {
     usage.__resetUsageMonitorState();
     resetOperationLeaseForTest();
