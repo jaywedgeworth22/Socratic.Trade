@@ -70,3 +70,12 @@ npm run lint && npx tsc --noEmit && npm test && npm run build
 
 - System logs (`PointerUI`, `cannot add handler to 0 from 0`, QUIC queue caps) are unrelated to app logic.
 - Unauthenticated `curl` of `/api/mobile/events` correctly returns HTTP 401 `Unauthorized` (middleware gate).
+
+
+## Follow-up: Xcode project document format → 26.3
+
+Xcode File Inspector showed **Project Format: Xcode 16.0-compatible** because
+`objectVersion` / `preferredProjectObjectVersion` were **77** (Xcode 16). Bumped both
+to **100** (same as Congress.Trade + Usage-Monitor Xcode 26 projects). `LastUpgradeCheck`
+was already `2630`. `ios/project.yml` keeps `xcodeVersion: "26.3"` and notes that
+XcodeGen 2.46 still emits 77, so re-apply 100 after regenerate.
