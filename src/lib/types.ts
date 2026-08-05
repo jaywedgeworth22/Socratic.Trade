@@ -2244,6 +2244,13 @@ export interface BrokerGateway {
    * Optional — undefined on a broker/adapter with no bracket support (e.g. Robinhood).
    */
   cancelBracketSiblingLegs?(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }>;
+  /**
+   * Lightweight "can this account place orders right now?" probe used by broker-health to auto-pause
+   * strategy runs when the order path is down (e.g. Tradier sandbox OMS 500s) without spending an
+   * LLM run. Must be cheap, side-effect free (preview / account flags only — never a real order),
+   * and may throttle internally. Optional — gateways without a probe skip this check.
+   */
+  probeOrderCapability?(accountNumber: string): Promise<{ ok: boolean; reason?: string }>;
 }
 
 /** Strategy run status — see `src/lib/strategy-run-status.ts` for skip taxonomy (UX PR-A1). */

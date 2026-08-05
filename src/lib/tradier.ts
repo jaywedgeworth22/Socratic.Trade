@@ -44,6 +44,10 @@ export function getTradierGateway(userId: string = "local", connectedAccountId?:
   return new TradierBrokerGateway(userId, connectedAccountId);
 }
 
+/** In-process throttle for order-capability probes (scheduler ticks every few seconds). */
+const tradierProbeCache = new Map<string, { at: number; ok: boolean; reason?: string }>();
+const TRADIER_PROBE_TTL_MS = 2 * 60_000;
+
 // Tradier envelopes wrap collections as { orders: { order: [...] } }, collapse a lone element to a
 // bare object { orders: { order: {...} } }, and report empty as null or the string "null". Normalize
 // any of those to a plain array so per-row mapping is uniform.
@@ -818,6 +822,61 @@ class TradierBrokerGateway implements BrokerGateway {
       averagePrice,
       raw: body
     };
+  }
+
+  /**
+   * Side-effect-free order-path probe: submit a 1-share limit PREVIEW. A 200 with a structured
+   * validation/BP error means the OMS is reachable (ok). HTTP 5xx / "backend" / "unexpected error"
+   * means paper/live OMS is down — the case that was burning strategy LLM runs on VA93389646.
+   * Throttled to once per 2 minutes per account so the scheduler tick does not hammer Tradier.
+   */
+  async probeOrderCapability(accountNumber: string): Promise<{ ok: boolean; reason?: string }> {
+    const key = `${this.baseUrl}|${accountNumber}`;
+    const cached = tradierProbeCache.get(key);
+    if (cached && Date.now() - cached.at < TRADIER_PROBE_TTL_MS) {
+      return { ok: cached.ok, reason: cached.reason };
+    }
+    try {
+      await this.trackHealth(() =>
+        this.request<{ order?: Record<string, unknown> }>("POST", `/accounts/${accountNumber}/orders`, {
+          form: {
+            class: "equity",
+            symbol: "AAPL",
+            side: "buy",
+            quantity: "1",
+            type: "limit",
+            duration: "day",
+            price: "1.00",
+            preview: "true"
+          }
+        })
+      );
+      // Preview accepted with result — OMS up.
+      tradierProbeCache.set(key, { at: Date.now(), ok: true });
+      return { ok: true };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      // Structured OMS rejections prove the order path is alive (account just can't afford /
+      // validate this probe). Treat as healthy order capability.
+      if (
+        /buying power|InitialMargin|MaintenanceMargin|OrderQuantity|LimitPrice|IncorrectOrder|not enough|day.?trad|margin|AccountDisabled|TradingDenied|AssetTrading|pdt/i.test(
+          msg
+        ) &&
+        !/HTTP 5\d\d|backend|unexpected error|OmsUnavailable|OmsInternal/i.test(msg)
+      ) {
+        tradierProbeCache.set(key, { at: Date.now(), ok: true });
+        return { ok: true };
+      }
+      if (/HTTP 5\d\d|backend|unexpected error|OmsUnavailable|OmsInternalError/i.test(msg)) {
+        const reason = `Tradier order path unavailable: ${msg.slice(0, 220)}`;
+        tradierProbeCache.set(key, { at: Date.now(), ok: false, reason });
+        return { ok: false, reason };
+      }
+      // Connectivity / auth failures — cannot place.
+      const reason = `Tradier order capability probe failed: ${msg.slice(0, 220)}`;
+      tradierProbeCache.set(key, { at: Date.now(), ok: false, reason });
+      return { ok: false, reason };
+    }
   }
 
   async cancelEquityOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder> {

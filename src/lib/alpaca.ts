@@ -54,6 +54,10 @@ export function getAlpacaGateway(userId: string = "local", connectedAccountId?: 
   return new AlpacaBrokerGateway(userId, connectedAccountId);
 }
 
+/** In-process throttle for order-capability probes. */
+const alpacaProbeCache = new Map<string, { at: number; ok: boolean; reason?: string }>();
+const ALPACA_PROBE_TTL_MS = 2 * 60_000;
+
 // Re-exported for existing callers/tests that import symbol conversion from this module — the
 // canonical definitions now live in ./money alongside normalizeSymbol so data-providers.ts and
 // the Alpaca stream workers can share them without importing this (much heavier) gateway module.
@@ -294,6 +298,47 @@ class AlpacaBrokerGateway implements BrokerGateway {
     }
   }
 
+
+  /**
+   * Side-effect-free order-path probe via Alpaca account flags (no order submitted).
+   * `trading_blocked` / non-ACTIVE status means strategy runs would only mint unplaceable proposals.
+   */
+  async probeOrderCapability(accountNumber: string): Promise<{ ok: boolean; reason?: string }> {
+    const key = `alpaca|${accountNumber}|${this.keySource}`;
+    const cached = alpacaProbeCache.get(key);
+    if (cached && Date.now() - cached.at < ALPACA_PROBE_TTL_MS) {
+      return { ok: cached.ok, reason: cached.reason };
+    }
+    try {
+      const account = await this.trackHealth(() => this.alpaca.getAccount());
+      if (account && String(account.account_number ?? "") && accountNumber) {
+        const live = String(account.account_number).trim().toLowerCase();
+        const want = String(accountNumber).trim().toLowerCase();
+        if (live && want && live !== want) {
+          const reason = `Alpaca credentials are for account ${account.account_number}, not ${accountNumber}`;
+          alpacaProbeCache.set(key, { at: Date.now(), ok: false, reason });
+          return { ok: false, reason };
+        }
+      }
+      if (account?.trading_blocked === true || account?.account_blocked === true) {
+        const reason = "Alpaca reports this account is blocked from trading";
+        alpacaProbeCache.set(key, { at: Date.now(), ok: false, reason });
+        return { ok: false, reason };
+      }
+      const status = String(account?.status ?? "").toUpperCase();
+      if (status && status !== "ACTIVE") {
+        const reason = `Alpaca account status is ${status} (not ACTIVE)`;
+        alpacaProbeCache.set(key, { at: Date.now(), ok: false, reason });
+        return { ok: false, reason };
+      }
+      alpacaProbeCache.set(key, { at: Date.now(), ok: true });
+      return { ok: true };
+    } catch (error) {
+      const reason = `Alpaca order capability probe failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 240);
+      alpacaProbeCache.set(key, { at: Date.now(), ok: false, reason });
+      return { ok: false, reason };
+    }
+  }
 
   async getAccounts(): Promise<BrokerageAccount[]> {
     const getCapabilities = (acc: any): AccountCapabilities => {

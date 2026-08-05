@@ -51,7 +51,7 @@ import { createEvidencePack, createEvidenceRef } from "./evidence-pack";
 import { derivePromptRagConsumption, type PromptRagCandidate, type PromptRagConsumptionResult } from "./rag/evidence-consumption";
 import { summarizeSourceCoverage } from "./source-value";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { checkBrokerHealth } from "./broker-health";
+import { applyBrokerOrderPlacementPause, checkBrokerHealth, isOrderPlacementInfrastructureFailure } from "./broker-health";
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
@@ -519,16 +519,37 @@ export async function runStrategyOnce(
     await runSafetyMaintenance(userId, policy as RunnablePolicy, activeAccount!, gateway);
     lockGuard.assertOwned();
 
-    // Check broker health before making LLM calls.
+    // Check broker health before making LLM calls. When the account cannot place orders
+    // (OMS down, trading blocked, elevated place failures, …), auto-halt autonomous trading
+    // so future cadence ticks do not burn LLM budget on unplaceable proposals.
     const healthSignals = activeAccount ? await checkBrokerHealth(userId, activeAccount, gateway) : undefined;
     lockGuard.assertOwned();
-    if (healthSignals && !healthSignals.isHealthy) {
-      const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
-      console.warn(`[Strategy] ${reason}`);
-      audit("run_skipped_broker_unhealthy", { runId, userId, reason }, userId, connectedAccountId);
-      result = { runId, status: "skipped_broker_unhealthy", summary: reason, proposals: [] };
-      finishStrategyRun(runId, "skipped_broker_unhealthy", reason, userId);
-      return result;
+    if (healthSignals) {
+      const accountScope = connectedAccountId ?? `${policy.accountNumber}:${activeAccount?.broker ?? "unknown"}`;
+      const pauseResult = await applyBrokerOrderPlacementPause({
+        userId,
+        connectedAccountId,
+        accountScope,
+        health: healthSignals,
+        policy
+      });
+      lockGuard.assertOwned();
+      if (pauseResult.action === "halted") {
+        const reason = `Broker cannot place orders — autonomous strategy auto-paused: ${pauseResult.reason}`;
+        console.warn(`[Strategy] ${reason}`);
+        audit("run_skipped_broker_unhealthy", { runId, userId, reason, autoHalted: true }, userId, connectedAccountId);
+        result = { runId, status: "skipped_broker_unhealthy", summary: reason, proposals: [] };
+        finishStrategyRun(runId, "skipped_broker_unhealthy", reason, userId);
+        return result;
+      }
+      if (!healthSignals.isHealthy) {
+        const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
+        console.warn(`[Strategy] ${reason}`);
+        audit("run_skipped_broker_unhealthy", { runId, userId, reason, pauseAction: pauseResult.action }, userId, connectedAccountId);
+        result = { runId, status: "skipped_broker_unhealthy", summary: reason, proposals: [] };
+        finishStrategyRun(runId, "skipped_broker_unhealthy", reason, userId);
+        return result;
+      }
     }
 
     const [accounts, portfolio, positions, orders] = await Promise.all([
@@ -3772,6 +3793,17 @@ export async function runStrategyOnce(
           } catch (placeError) {
             const message = placeError instanceof Error ? placeError.message : String(placeError);
             const sym = normalizedProposal.symbol;
+
+            // Infrastructure/OMS failures (5xx, backend unreachable) feed the broker-health
+            // auto-pause gate so the next run halts instead of burning another LLM cycle.
+            if (isOrderPlacementInfrastructureFailure(message) && connectedAccountId) {
+              audit(
+                "order_place_infrastructure_failed",
+                { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message.slice(0, 400) },
+                userId,
+                connectedAccountId
+              );
+            }
 
             // P2.6: Explicitly intercept pre-flight validation throws and broker 4xx rejections.
             // A 4xx (e.g. 403 Forbidden, 400 Bad Request) means the broker definitively received and rejected it.
