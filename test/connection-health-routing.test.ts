@@ -213,6 +213,39 @@ describe("Connection Health & Failure Routing", () => {
     expect(body.checks.dependencies.pinecone.ok).toBe(false);
   });
 
+  it("/api/health stays 200 when env lane hard-stops but a user-keyed lane for the same critical service is healthy", async () => {
+    // Prod failure mode 2026-08-05: Infisical env Alpaca keys 401 (env lane hard-stopped) while
+    // Connections user keys succeed — Coolify healthcheck required HTTP 200 and rolled every deploy.
+    const { healthRoute, db } = await load();
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({
+        service: "alpaca-broker",
+        ok: false,
+        errorText: "Request failed with status code 401",
+        keySource: "env"
+      });
+    }
+    for (let i = 0; i < 3; i++) {
+      db.logApiHealth({
+        service: "alpaca-broker",
+        ok: true,
+        latencyMs: 50,
+        keySource: "user",
+        userId: "local"
+      });
+    }
+
+    const response = await healthRoute.GET(anonymousHealthRequest());
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.checks.dependencies["alpaca-broker"].ok).toBe(true);
+    // Env hard-stop is still visible as degraded so operators know the Infisical key is bad.
+    expect(body.checks.dependencies["alpaca-broker"].degraded).toBe(true);
+  });
+
   // rag-embed/rag-rerank criticality (bge-m3-metering-gate 2026-07-18; lane rename 2026-07-19 —
   // see docs/rollouts/2026-07-19-advisory-cleanup-batch.md). The lanes are now provider-generic:
   // whichever embed/rerank provider is ACTUALLY active (Voyage, OpenRouter, SiliconFlow) logs

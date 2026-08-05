@@ -207,6 +207,17 @@ export async function GET(request: Request) {
     for (const summary of summaries) {
       if (summary.keySource === "env" || summary.keySource === "user") configuredService.add(summary.service);
     }
+    // Configured lanes that are NOT hard-stopped (env OR user). Critical liveness must not 503
+    // when a user-stored broker key is healthy even if a stale env key is 401'ing — prod uses
+    // Connections-page user keys for Alpaca; bad Infisical env credentials alone rolled back
+    // every Coolify deploy (healthcheck requires HTTP 200 on /api/health).
+    const configuredLaneHealthy = new Set<string>();
+    for (const summary of summaries) {
+      if (summary.keySource !== "env" && summary.keySource !== "user") continue;
+      const hardStopped =
+        summary.stoppedWorking && summary.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES;
+      if (!hardStopped) configuredLaneHealthy.add(summary.service);
+    }
     for (const summary of summaries) {
       const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
       if (!isGlobal) continue;
@@ -220,12 +231,16 @@ export async function GET(request: Request) {
       // service degraded but must NOT 503.
       const hardStopped = summary.stoppedWorking && summary.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES;
       const existing = dependencies[summary.service];
-      const nextOk = !hardStopped;
-      const nextDegraded = summary.stoppedWorking && !hardStopped;
+      // Prefer any healthy configured lane (including user keys not shown as "global" rows).
+      const nextOk = !hardStopped || configuredLaneHealthy.has(summary.service);
+      const nextDegraded =
+        (summary.stoppedWorking && !hardStopped) ||
+        (hardStopped && configuredLaneHealthy.has(summary.service)) ||
+        undefined;
       if (existing) {
-        // Merge lanes for the same service: any hard-stopped lane wins ok=false; degraded is sticky.
+        // Merge lanes for the same service: hard-stopped only wins when no configured lane is healthy.
         dependencies[summary.service] = {
-          ok: existing.ok && nextOk,
+          ok: (existing.ok && nextOk) || configuredLaneHealthy.has(summary.service),
           degraded: existing.degraded || nextDegraded || undefined
         };
       } else {
@@ -244,8 +259,12 @@ export async function GET(request: Request) {
       // recordMissingRagKey's still-literal-"voyage" missing-key path) are simply not in
       // criticalServices and degrade this route rather than 503 it — consistent with treating them
       // as legacy/informational once the real per-operation lane has taken over.
+      //
+      // Env-lane hard-stop alone does NOT 503 when a user-keyed lane for the same service is
+      // healthy (see configuredLaneHealthy) — otherwise bad Infisical env Alpaca keys block deploys
+      // forever while trading still works through Connections user keys.
       const isCritical = criticalServices.has(summary.service);
-      if (isCritical && hardStopped) {
+      if (isCritical && hardStopped && !configuredLaneHealthy.has(summary.service)) {
         ok = false;
       }
     }
