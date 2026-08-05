@@ -6,7 +6,7 @@
 // reuse that ISO timestamp on later runs so same-day news can be receipted like learned
 // facts / RAG chunks. Leaf-ish: only depends on getDb; pure fingerprinting is exportable.
 
-import { createHash } from "node:crypto";
+import { createHash } from "crypto";
 import { getDb } from "./db";
 
 /** Normalize + hash for stable identity across whitespace/case/punctuation drift. */
