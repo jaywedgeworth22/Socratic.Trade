@@ -70,6 +70,38 @@ struct CommandAttemptTracker {
     }
 }
 
+/// Per-proposal approve/reject feedback — mirrors PWA `proposalActionFeedback`.
+enum ProposalActionFeedback: Equatable {
+    case sending(action: ProposalAction)
+    case pending(action: ProposalAction, status: String)
+    case failed(action: ProposalAction, message: String)
+    case succeeded(action: ProposalAction)
+
+    enum ProposalAction: String, Equatable {
+        case approve
+        case reject
+    }
+
+    var action: ProposalAction {
+        switch self {
+        case .sending(let action), .pending(let action, _), .failed(let action, _), .succeeded(let action):
+            return action
+        }
+    }
+
+    var isInFlight: Bool {
+        switch self {
+        case .sending, .pending: return true
+        case .failed, .succeeded: return false
+        }
+    }
+
+    var isSettledSuccess: Bool {
+        if case .succeeded = self { return true }
+        return false
+    }
+}
+
 @MainActor
 final class MobileStore: ObservableObject {
     @Published private(set) var snapshot: MobileSnapshot?
@@ -84,6 +116,10 @@ final class MobileStore: ObservableObject {
     @Published private(set) var isDeletingAccount = false
     @Published private(set) var isSigningIn = false
     @Published private(set) var snapshotLoadFailed = false
+    /// proposalId → queued command id so cards can follow approve/reject through recentCommands.
+    @Published private(set) var proposalCommandIds: [String: String] = [:]
+    /// proposalId → submit-time failure shown on the card itself.
+    @Published private(set) var proposalNotices: [String: (message: String, action: ProposalActionFeedback.ProposalAction)] = [:]
 
     private let client: MobileAPIClient
     private var eventTask: Task<Void, Never>?
@@ -110,6 +146,43 @@ final class MobileStore: ObservableObject {
 
     func isBusy(_ operationID: String) -> Bool {
         busyOperations.contains(operationID)
+    }
+
+    /// Derive on-card approve/reject feedback: sending → queued/running → succeeded/failed.
+    func proposalActionFeedback(proposalId: String) -> ProposalActionFeedback? {
+        let approveOp = "proposal.approve:\(proposalId)"
+        let rejectOp = "proposal.reject:\(proposalId)"
+        if busyOperations.contains(approveOp) {
+            return .sending(action: .approve)
+        }
+        if busyOperations.contains(rejectOp) {
+            return .sending(action: .reject)
+        }
+        if let notice = proposalNotices[proposalId] {
+            return .failed(action: notice.action, message: notice.message)
+        }
+        guard
+            let commandID = proposalCommandIds[proposalId],
+            let command = snapshot?.recentCommands.first(where: { $0.id == commandID })
+        else {
+            return nil
+        }
+        let action: ProposalActionFeedback.ProposalAction =
+            command.commandType == "proposal.reject" ? .reject : .approve
+        switch command.status {
+        case "queued", "running":
+            return .pending(action: action, status: command.status)
+        case "failed":
+            let detail = command.error?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = (detail?.isEmpty == false)
+                ? detail!
+                : "Command failed — check Activity for details."
+            return .failed(action: action, message: message)
+        case "succeeded":
+            return .succeeded(action: action)
+        default:
+            return nil
+        }
     }
 
     func isSnapshotStale(at now: Date = Date()) -> Bool {
@@ -219,6 +292,17 @@ final class MobileStore: ObservableObject {
             payload: payload
         )
         busyOperations.insert(operationID)
+        let proposalId = payload["proposalId"] as? String
+        let proposalAction: ProposalActionFeedback.ProposalAction? = {
+            switch commandType {
+            case "proposal.approve": return .approve
+            case "proposal.reject": return .reject
+            default: return nil
+            }
+        }()
+        if let proposalId, proposalAction != nil {
+            proposalNotices.removeValue(forKey: proposalId)
+        }
 
         do {
             let command = try await client.submit(
@@ -227,6 +311,9 @@ final class MobileStore: ObservableObject {
                 idempotencyKey: idempotencyKey
             )
             commandAttemptTracker.track(command, operationID: operationID)
+            if let proposalId, proposalAction != nil {
+                proposalCommandIds[proposalId] = command.id
+            }
             // Immediate commands (account.activate, stop, …) return terminal in the POST body.
             // Clear the busy spinner before the snapshot reload so the Use button does not
             // stay locked for the duration of a slow /api/mobile/snapshot fetch.
@@ -235,6 +322,15 @@ final class MobileStore: ObservableObject {
             // A deduplicated request can already be terminal even if it has fallen out of the
             // latest snapshot page. Reconcile that direct response as a final fallback.
             reconcileTrackedCommands([command])
+            if command.didFail, let proposalId, let proposalAction {
+                let detail = command.error?.trimmingCharacters(in: .whitespacesAndNewlines)
+                proposalNotices[proposalId] = (
+                    message: (detail?.isEmpty == false)
+                        ? detail!
+                        : "The queued action was \(command.status).",
+                    action: proposalAction
+                )
+            }
             return !command.didFail
         } catch is CancellationError {
             busyOperations.remove(operationID)
@@ -246,6 +342,12 @@ final class MobileStore: ObservableObject {
             // Network/decoding errors keep the idempotency key for an explicit retry, but they do
             // not leave the control visually locked when no command id was confirmed.
             busyOperations.remove(operationID)
+            if let proposalId, let proposalAction {
+                proposalNotices[proposalId] = (
+                    message: caught.localizedDescription,
+                    action: proposalAction
+                )
+            }
             applyAuthAwareError(caught)
             return false
         }
@@ -337,6 +439,8 @@ final class MobileStore: ObservableObject {
         snapshotLoadFailed = false
         deletionRequest = nil
         busyOperations = []
+        proposalCommandIds = [:]
+        proposalNotices = [:]
         commandAttemptTracker.removeAll()
         isRefreshing = false
         isAuthenticated = false

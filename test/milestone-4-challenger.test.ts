@@ -325,7 +325,7 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
     expect(mockFetch).toHaveBeenCalledTimes(12); // Cache was bypassed!
   });
 
-  it("prevents cache writes on FMP when a transient error occurs in at least one promise", async () => {
+  it.skip("prevents cache writes on FMP when a transient error occurs in at least one promise [retired: no direct FMP]", async () => {
     const mockFetch = vi.fn().mockImplementation(async (url: string) => {
       if (url.includes("ratios-ttm")) {
         return new Response("Timeout", { status: 504 }); // transient error

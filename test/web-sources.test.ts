@@ -25,6 +25,8 @@ beforeEach(async () => {
   delete process.env.WEB_SOURCE_CONGRESS;
   delete process.env.WEB_SOURCE_CONGRESS_TTL_MS;
   delete process.env.WEB_SOURCE_RETRY_BACKOFF_MS;
+  // Scraper-path tests need App A default-OFF so senate-efd / Apify mocks run.
+  process.env.CONGRESS_TRADE_AS_CONGRESS_SOURCE = "off";
 });
 
 afterEach(() => {

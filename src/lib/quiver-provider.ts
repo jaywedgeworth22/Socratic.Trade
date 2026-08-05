@@ -41,6 +41,7 @@
 import type { MarketEnrichmentProvider, SymbolEnrichment } from "./data-providers";
 import { fetchWithRetry } from "./data-providers";
 import { normalizeSymbol } from "./money";
+import { directVendorRetirementMessage, isDirectVendorAccessAllowed } from "./retired-direct-vendors";
 
 const QUIVER_BASE_URL = "https://api.quiverquant.com/beta";
 
@@ -78,12 +79,15 @@ const GOV_CONTRACTS_LOOKBACK_DAYS = 365;
 const LOBBYING_LOOKBACK_DAYS = 365;
 const PATENTS_LOOKBACK_DAYS = 180;
 
-/** The sole registration gate: trimmed QUIVER_API_KEY, or undefined when unset/blank. */
+/**
+ * Registration gate — permanently returns undefined.
+ * Owner 2026-08-04: Socratic.Trade never calls QuiverQuant; congressional /
+ * alt-data of that class comes from Congress.Trade (App A). Env keys may still
+ * exist in secret stores for Congress.Trade latency probes; they must not
+ * activate a producer here.
+ */
 export function resolveQuiverApiKey(): string | undefined {
-  // Accept both spellings — the owner's secret store has long carried QUIVERQUANT_API_TOKEN,
-  // so keying only on QUIVER_API_KEY silently left the provider dormant (prod 2026-08-01).
-  const key = (process.env.QUIVER_API_KEY ?? "").trim() || (process.env.QUIVERQUANT_API_TOKEN ?? "").trim();
-  return key || undefined;
+  return undefined;
 }
 
 interface QuiverRow {
@@ -198,60 +202,18 @@ export class QuiverEnrichmentProvider implements MarketEnrichmentProvider {
 
   constructor(private readonly apiKey: string) {}
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
-    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, quiverMaxSymbols());
-    const result: Record<string, SymbolEnrichment> = {};
-    if (normalized.length === 0) return result;
-
-    const now = Date.now();
-    const misses: string[] = [];
-    for (const symbol of normalized) {
-      const cached = quiverCache.get(symbol);
-      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
-      else misses.push(symbol);
+  async enrich(_symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    // Hard ban: never open a socket to api.quiverquant.com from this app.
+    if (!isDirectVendorAccessAllowed("quiverquant")) {
+      return {};
     }
-    if (misses.length === 0) return result;
-
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
-      const chunk = misses.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async (symbol) => {
-          const settled = await Promise.allSettled([
-            this.getRows(symbol, "historical/congresstrading"),
-            this.getRows(symbol, "historical/insiders"),
-            this.getRows(symbol, "historical/govcontractsall"),
-            this.getRows(symbol, "historical/lobbying"),
-            this.getRows(symbol, "historical/patents")
-          ]);
-          const [congress, insiders, govContracts, lobbying, patents] = settled;
-
-          const data: SymbolEnrichment = {};
-          let allOk = true;
-
-          if (congress.status === "fulfilled") data.congressTradesQuiver = parseCongressTradesCount(congress.value, now);
-          else allOk = false;
-          if (insiders.status === "fulfilled") data.insiderTradesQuiver = parseInsiderTradesCount(insiders.value, now);
-          else allOk = false;
-          if (govContracts.status === "fulfilled") data.govContractsQuiver = parseGovContractsTotal(govContracts.value, now);
-          else allOk = false;
-          if (lobbying.status === "fulfilled") data.lobbyingQuiver = parseLobbyingTotal(lobbying.value, now);
-          else allOk = false;
-          if (patents.status === "fulfilled") data.patentsQuiver = parsePatentsCount(patents.value, now);
-          else allOk = false;
-
-          // All five succeeded -> cache at the long positive floor. Any partial failure -> cache
-          // whatever DID succeed (never lost this cycle) but at the short negative TTL so the
-          // failed dataset(s) are retried the same day instead of waiting out the 24h floor.
-          quiverCache.set(symbol, { expiresAt: now + (allOk ? quiverTtlMs() : quiverNegativeTtlMs()), data });
-          result[symbol] = data;
-        })
-      );
-    }
-
-    return result;
+    return {};
   }
 
   private async getRows(symbol: string, path: string): Promise<QuiverRow[]> {
+    if (!isDirectVendorAccessAllowed("quiverquant")) {
+      throw new Error(directVendorRetirementMessage("quiverquant"));
+    }
     const url = `${QUIVER_BASE_URL}/${path}/${encodeURIComponent(symbol)}`;
     const response = await fetchWithRetry(
       url,
@@ -259,9 +221,6 @@ export class QuiverEnrichmentProvider implements MarketEnrichmentProvider {
       {
         service: "quiverquant",
         keySource: "env",
-        // A ticker with no rows for a dataset (e.g. no gov contracts) is a normal empty result,
-        // not a failure. Some deployments 404 rather than return `[]` for that case — treat both
-        // as "no data" and never let it count against the lane's health.
         suppressHealthStatuses: [404]
       }
     );

@@ -44,7 +44,7 @@ struct LoginView: View {
             VStack(spacing: 5) {
                 Text("Socratic Trade")
                     .font(.largeTitle.weight(.bold))
-                Text("Your trading agent, built for the phone")
+                Text("Control remote for your trading agent")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -54,9 +54,9 @@ struct LoginView: View {
     private var valueCard: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 14) {
-                LoginFeature(systemImage: "checklist", text: "Review and approve proposals")
+                LoginFeature(systemImage: "checklist", text: "Review and approve proposals on the go")
                 LoginFeature(systemImage: "chart.xyaxis.line", text: "Track positions, orders, and performance")
-                LoginFeature(systemImage: "bolt.shield.fill", text: "Control the backend agent without moving credentials onto the device")
+                LoginFeature(systemImage: "bolt.shield.fill", text: "Full desk stays on desktop — phone is a control remote")
             }
         }
     }
