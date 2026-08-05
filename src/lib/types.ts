@@ -1752,6 +1752,19 @@ export interface MarketQuote {
   congressCompositeVersion?: string;
   congressCompositeWeights?: Record<string, number>;
   preCongressScore?: number;
+  /** Best cluster member skill rank 0–100 (App A; filing-date preferred). */
+  congressMemberSkillScore?: number;
+  congressMemberSkillSource?: string;
+  congressMemberFilerId?: string;
+  /** Raw excess return vs S&P since disclosure (copy-trade) for that member. */
+  congressMemberFilingAvgExcess?: number;
+  congressMemberFilingWinRate?: number;
+  congressMemberFilingScoredCount?: number;
+  congressMemberFilingAvgAnnualizedExcess?: number;
+  /** Opposite-anchor context: excess since the politician's trade date. */
+  congressMemberTradeAvgExcess?: number;
+  congressMemberTradeWinRate?: number;
+  congressMemberTradeScoredCount?: number;
   evidenceBulletins?: string[]; // 1-line backend web-source bulletins (congress, insider, etc.)
   sources?: EnrichmentSources;
   fieldObservations?: EnrichmentFieldObservations;
@@ -1832,6 +1845,16 @@ export interface CandidateEvidence {
   congressCompositeVersion?: string;
   congressCompositeWeights?: Record<string, number>;
   preCongressScore?: number;
+  congressMemberSkillScore?: number;
+  congressMemberSkillSource?: string;
+  congressMemberFilerId?: string;
+  congressMemberFilingAvgExcess?: number;
+  congressMemberFilingWinRate?: number;
+  congressMemberFilingScoredCount?: number;
+  congressMemberFilingAvgAnnualizedExcess?: number;
+  congressMemberTradeAvgExcess?: number;
+  congressMemberTradeWinRate?: number;
+  congressMemberTradeScoredCount?: number;
   asOf?: string; // candidate data freshness (most-recent enrichment timestamp)
   provider?: string; // primary provider
   sources?: EnrichmentSources; // per-field provenance (source attribution)

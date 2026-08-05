@@ -4,6 +4,12 @@ Rollout: `docs/rollouts/2026-08-04-model-slug-test-fixes.md`.
 
 # STATUS — current repo snapshot
 
+**2026-08-04 — GROK: Congress filing-date member skill → ST.** Prefer CT `filingDate`
+copy-trade skill (shared package v2.5.0 dual performance); restore `memberSkill` weight
+0.2; persist raw avgExcess/winRate/scoredCount on quotes + signal_snapshot. Branch
+`grok/congress-filing-skill`. Rollout:
+`docs/rollouts/2026-08-04-congress-filing-member-skill.md`.
+
 **2026-08-04 — Full-Bleed Pure White App Icon Assets (ANTIGRAVITY, branch `agent/antigravity`).** Updated `public/icon.svg` canvas to 100% full-bleed white background (`#ffffff` without transparent corners), updated `app/manifest.ts` PWA `background_color`/`theme_color` to `#ffffff`, and regenerated all PNG icons (`apple-touch-icon-180.png`, `icon-192.png`, `icon-512.png`, and iOS Xcode `AppIcon-1024.png`). Verified `tsc` clean and asset rendering. Rollout: `docs/rollouts/2026-08-04-full-bleed-white-app-icon.md`.
 
 **2026-08-04 — GROK: PR drain complete; prod deploy unblocked via slim Dockerfile.** Merged open PRs #2367-#2371, #2375, #2381. Prod stuck on 6ad913d5 because Coolify timed out on multi-GB `COPY --chown`. Fix: `.dockerignore` + prune + chown-in-RUN (`grok/docker-slim-deploy`). Rollout: `docs/rollouts/2026-08-04-docker-slim-deploy.md`.
