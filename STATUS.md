@@ -1,3 +1,10 @@
+## 2026-08-05 GROK — P0 security residual tranche
+
+- **P0-5** decryptValue rejects plaintext; OAuth legacy path gated by isEncryptedValue.
+- **P0-4** audit hash chain schema v67 + verifyAuditChain.
+- Confirmed already on main: P0-1/2/3, P1-1..7 mechanical.
+- Branch `grok/p0-security-p1-mechanical`.
+
 **2026-08-04 — GROK: Tradier Sandbox venue-aligned quotes (branch `grok/tradier-sandbox-venue-quotes`).**
 Paper Tradier keeps ~15m delayed sandbox quotes as execution-authoritative (no fresher Alpaca/Yahoo
 overlay); staleness ages `fetchedAt` not trade-time delay. Alpaca paper stays real-time cascade.

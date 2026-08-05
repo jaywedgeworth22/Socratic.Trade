@@ -58,7 +58,7 @@ describe("G2: Robinhood OAuth token encryption at rest", () => {
     });
 
     const loaded = getStoredMcpOAuthTokens("local");
-    // decryptValue's non-envelope fallback returns the plaintext unchanged.
+    // decryptStoredTokens keeps legacy plaintext loadable (isEncryptedValue gate).
     expect(loaded?.accessToken).toBe(ACCESS);
     expect(loaded?.refreshToken).toBe(REFRESH);
     expect(loaded?.tokenType).toBe("Bearer");
