@@ -255,7 +255,13 @@ final class MobileStore: ObservableObject {
                     return
                 } catch {
                     self?.isStreamConnected = false
-                    self?.applyAuthAwareError(error, preserveTransientMessage: self?.snapshot == nil)
+                    // SSE sockets drop often (Cloudflare/QUIC resets, idle gaps). Reconnect
+                    // quietly when we already have data; only surface 401/403 or a blank screen.
+                    if let apiError = error as? MobileAPIError, case .unauthorized = apiError {
+                        self?.applyAuthAwareError(apiError, preserveTransientMessage: false)
+                    } else if self?.snapshot == nil {
+                        self?.applyAuthAwareError(error, preserveTransientMessage: true)
+                    }
                     if self?.isAuthenticated != true { return }
                 }
 

@@ -126,6 +126,18 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(dispatches, 2)
     }
 
+    func testEventsRequestUsesSSEAcceptAndLongTimeout() {
+        let client = MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!)
+        let request = client.eventsRequest()
+
+        XCTAssertEqual(request.url?.path, "/api/mobile/events")
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "accept"), "text/event-stream")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "cache-control"), "no-cache")
+        XCTAssertGreaterThanOrEqual(request.timeoutInterval, 90)
+        XCTAssertNotEqual(request.value(forHTTPHeaderField: "accept"), "application/json")
+    }
+
     func testLiveApprovalPayloadMatchesBackendContract() {
         let confirmation = LiveApprovalConfirmation(
             proposalId: "proposal-1",
