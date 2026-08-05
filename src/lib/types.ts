@@ -1812,6 +1812,30 @@ export interface MarketScan {
   cacheTtlMs?: number;
   cached?: boolean;
   warnings: string[];
+  /**
+   * Honest fill/shortfall report for the candidate set — makes missing PE/EPS/news
+   * and provider failures obvious on Scan/admin instead of silent dashes.
+   */
+  dataCoverage?: MarketScanDataCoverage;
+}
+
+/** Per-scan coverage shortfall report (user-visible + ops). */
+export interface MarketScanDataCoverage {
+  symbolCount: number;
+  /** 0–1 fill rate for key display fields on topCandidates. */
+  fieldFillRates: Record<string, number>;
+  /** Fields with fillRate === 0. */
+  missingFields: string[];
+  /** Fields with 0 < fillRate < 1. */
+  partialFields: string[];
+  /** One plain-language line for the Scan banner. */
+  shortfallSummary: string;
+  /** Providers that contributed at least one field this scan (from sources). */
+  contributingSources: string[];
+  /** How many topCandidates had at least one durable-store fieldObservation. */
+  durableStoreSeededCount: number;
+  /** Worst missing/partial fields for triage (capped). */
+  topGaps: Array<{ field: string; fillRate: number; missingCount: number }>;
 }
 
 export type MarketFactor = keyof ScoringWeights;

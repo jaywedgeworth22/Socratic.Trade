@@ -69,3 +69,20 @@ npx vitest run test/symbol-field-latest.test.ts test/persistence-hardening.test.
 - Surface per-field age chips in Scan UI (data already on `fieldObservations`).
 - Ensure ROIC/Yahoo actually fill on strategy path (separate verification; this PR is the
   durability layer so fills are never thrown away again).
+
+## Follow-on (same PR) — multi-broker fan-in + default share + loud shortfalls
+
+### Changes
+- **`fetchFreshQuotesCascade` Level 1b:** after the active broker, try **every other
+  connected broker for that user** for remaining symbols (market-data only; never
+  venue-authoritative for non-active). One user-scoped cascade — not per-account silos.
+- **`hasDataPoolConsent`:** unset users **pool by default** (version 0 / no acceptedAt);
+  explicit decline still turns pooling off; first-run gate still uses version bump.
+- **`MarketScan.dataCoverage`:** fill rates + plain-language `shortfallSummary` + top gaps;
+  pushed into `warnings` and a red **Data coverage shortfall** banner on `/console/scan`.
+
+### Verification
+```bash
+npx vitest run test/data-pool-consent.test.ts test/scan-data-coverage.test.ts \
+  test/quotes-cascade.test.ts test/symbol-field-latest.test.ts
+```

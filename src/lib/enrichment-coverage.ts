@@ -330,3 +330,112 @@ export function symbolHasCoverageGap(
 ): boolean {
   return fields.some((field) => !filled.has(field));
 }
+
+/** Fields the Scan table and LLM care about most — used for user-facing shortfalls. */
+export const SCAN_DISPLAY_COVERAGE_FIELDS = [
+  "peRatio",
+  "epsGrowth",
+  "dividendYield",
+  "analystRating",
+  "sentiment",
+  "volume",
+  "sector",
+  "eps",
+  "headlines",
+  "insiderSentiment"
+] as const;
+
+export interface ScanCandidateCoverageInput {
+  symbol: string;
+  peRatio?: number;
+  epsGrowth?: number;
+  dividendYield?: number;
+  analystRating?: string;
+  sentiment?: number;
+  volume?: number;
+  sector?: string;
+  eps?: number;
+  headlines?: string[];
+  insiderSentiment?: number;
+  sources?: Partial<Record<string, string>>;
+  fieldObservations?: Partial<Record<string, { fetchedAt?: string; source?: string }>>;
+}
+
+/**
+ * Build a loud, plain-language coverage report for topCandidates so blanks are never silent.
+ */
+export function buildScanDataCoverage(
+  candidates: ScanCandidateCoverageInput[]
+): {
+  symbolCount: number;
+  fieldFillRates: Record<string, number>;
+  missingFields: string[];
+  partialFields: string[];
+  shortfallSummary: string;
+  contributingSources: string[];
+  durableStoreSeededCount: number;
+  topGaps: Array<{ field: string; fillRate: number; missingCount: number }>;
+} {
+  const symbolCount = candidates.length;
+  const fieldFillRates: Record<string, number> = {};
+  const missingFields: string[] = [];
+  const partialFields: string[] = [];
+  const topGaps: Array<{ field: string; fillRate: number; missingCount: number }> = [];
+  const sources = new Set<string>();
+  let durableStoreSeededCount = 0;
+
+  for (const c of candidates) {
+    for (const src of Object.values(c.sources ?? {})) {
+      if (src) sources.add(src);
+    }
+    if (c.fieldObservations && Object.keys(c.fieldObservations).length > 0) {
+      durableStoreSeededCount += 1;
+    }
+  }
+
+  const readField = (c: ScanCandidateCoverageInput, field: string): unknown =>
+    (c as unknown as Record<string, unknown>)[field];
+
+  for (const field of SCAN_DISPLAY_COVERAGE_FIELDS) {
+    let filled = 0;
+    for (const c of candidates) {
+      if (isFilledEnrichmentValue(readField(c, field))) filled += 1;
+    }
+    const fillRate = symbolCount === 0 ? 0 : filled / symbolCount;
+    fieldFillRates[field] = fillRate;
+    const missingCount = symbolCount - filled;
+    if (filled === 0) missingFields.push(field);
+    else if (filled < symbolCount) partialFields.push(field);
+    if (fillRate < 1) topGaps.push({ field, fillRate, missingCount });
+  }
+
+  topGaps.sort((a, b) => a.fillRate - b.fillRate || b.missingCount - a.missingCount);
+
+  let shortfallSummary: string;
+  if (symbolCount === 0) {
+    shortfallSummary = "No candidates in this scan — nothing to cover.";
+  } else if (missingFields.length === 0 && partialFields.length === 0) {
+    shortfallSummary = `All key fields filled for ${symbolCount} candidates (${Array.from(sources).slice(0, 6).join(", ") || "no sources stamped"}).`;
+  } else {
+    const worst = topGaps
+      .slice(0, 5)
+      .map((g) => `${g.field} ${Math.round(g.fillRate * 100)}% (${g.missingCount} blank)`)
+      .join("; ");
+    const storeNote =
+      durableStoreSeededCount > 0
+        ? ` Durable store seeded ${durableStoreSeededCount}/${symbolCount}.`
+        : " Durable field store had no prior rows for these names — run a full enrich (strategy/freshness) to populate.";
+    shortfallSummary = `Data shortfall on ${symbolCount} candidates — ${worst}.${storeNote}`;
+  }
+
+  return {
+    symbolCount,
+    fieldFillRates,
+    missingFields,
+    partialFields,
+    shortfallSummary,
+    contributingSources: Array.from(sources).sort(),
+    durableStoreSeededCount,
+    topGaps: topGaps.slice(0, 10)
+  };
+}

@@ -101,8 +101,19 @@ export interface DataPoolConsent {
 /** Bump when the consent terms materially change so prior acceptances must be re-confirmed. */
 export const DATA_POOL_CONSENT_VERSION = 1;
 
+/**
+ * Unset users: version 0 + acceptedAt null. Pooling defaults ON (owner 2026-08-05) via
+ * hasDataPoolConsent, while the first-run gate still uses version < CURRENT to re-prompt.
+ * Prior default accepted:false made shared fundamentals look broken.
+ */
+const DATA_POOL_CONSENT_DEFAULT: DataPoolConsent = {
+  accepted: true,
+  acceptedAt: null,
+  version: 0
+};
+
 export function getDataPoolConsent(userId: string = "local"): DataPoolConsent {
-  return getUserSetting<DataPoolConsent>(userId, "data_pool_consent", { accepted: false, acceptedAt: null, version: 0 });
+  return getUserSetting<DataPoolConsent>(userId, "data_pool_consent", DATA_POOL_CONSENT_DEFAULT);
 }
 
 export function setDataPoolConsent(userId: string, accepted: boolean): DataPoolConsent {
@@ -116,10 +127,20 @@ export function setDataPoolConsent(userId: string, accepted: boolean): DataPoolC
   return record;
 }
 
-/** True only when the user has accepted the CURRENT consent version (re-prompt on a version bump). */
+/**
+ * True when market-data pooling is allowed for cache scope (shared store / pool tier).
+ * - Explicit accept at current version → true
+ * - Never decided (version 0, no acceptedAt) → true (default share)
+ * - Explicit decline at current version → false
+ * - Stale accept under older version → false (re-prompt; gate uses version)
+ */
 export function hasDataPoolConsent(userId: string = "local"): boolean {
   const c = getDataPoolConsent(userId);
-  return c.accepted === true && (c.version ?? 0) >= DATA_POOL_CONSENT_VERSION;
+  if (c.accepted === true && (c.version ?? 0) >= DATA_POOL_CONSENT_VERSION) return true;
+  // Unset / default shell: share market data by default across users.
+  if ((c.version ?? 0) === 0 && c.acceptedAt == null) return true;
+  if (c.accepted === false) return false;
+  return false;
 }
 
 // ── Learned-context sharing preferences ──────────────────────────────────────

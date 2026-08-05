@@ -614,6 +614,18 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       [...universeSources]
     );
 
+    // Loud shortfall report — never leave blank PE/EPS/news as silent dashes only.
+    let dataCoverage: MarketScan["dataCoverage"];
+    try {
+      const { buildScanDataCoverage } = await import("./enrichment-coverage");
+      dataCoverage = buildScanDataCoverage(topCandidates);
+      if (dataCoverage.missingFields.length > 0 || dataCoverage.partialFields.length > 0) {
+        warnings.push(dataCoverage.shortfallSummary);
+      }
+    } catch {
+      dataCoverage = undefined;
+    }
+
     const result: MarketScan = {
       source,
       generatedAt: new Date().toISOString(),
@@ -629,7 +641,8 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       quotesBySymbol: quotesBySymbol(mergedRanked),
       cacheTtlMs: options?.ttlMs ?? marketCacheTtlMs(),
       cached,
-      warnings
+      warnings,
+      dataCoverage
     };
 
     // Persist every filled field on every candidate (and the ranked merge set) into the
