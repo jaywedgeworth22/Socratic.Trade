@@ -95,7 +95,22 @@ describe("staleness gate", () => {
     expect(result.quoteStale).toBeDefined();
     expect(result.quoteStale?.ageSec).toBe(600);
     expect(result.quoteStale?.referencePrice).toBe(10);
-    expect(proposal.rationale).toContain("Stale quote warning: quote timestamp is 600s old");
+    expect(proposal.rationale).toContain("Stale quote backup");
+    expect(proposal.rationale).toContain("not blocked");
+    expect(result.escalations ?? []).toHaveLength(0);
+  });
+
+  it("honors the proposal's referencePrice as the limit anchor when the quote is stale", () => {
+    const staleAsOf = new Date(NOW.getTime() - 600_000).toISOString();
+    const policy: TradingPolicy = { ...basePolicy, maxQuoteAgeSec: 60 };
+    // Scan last print is 10; strategy decided the name is worth $9.50 — honor $9.50, not chase 10.
+    const proposal: TradeProposal = { ...buyProposal, referencePrice: 9.5, type: "market" };
+    const result = evaluateTradeProposal(proposal, ctx(policy, scanWith(staleAsOf, FRESH_GENERATED_AT)));
+    expect(result.approved).toBe(true);
+    expect(proposal.type).toBe("limit");
+    expect(proposal.limitPrice).toBe(9.5);
+    expect(result.quoteStale?.referencePrice).toBe(9.5);
+    expect(result.reasons).toEqual([]);
   });
 
   it("allows an opening buy whose quote is fresh", () => {
@@ -139,7 +154,8 @@ describe("staleness gate", () => {
     expect(proposal.type).toBe("limit");
     expect(result.quoteStale).toBeDefined();
     expect(result.quoteStale?.ageSec).toBeUndefined();
-    expect(proposal.rationale).toContain("Stale quote warning: quote timestamp is missing/unparseable");
+    expect(proposal.rationale).toContain("Stale quote backup");
+    expect(proposal.rationale).toContain("missing/unparseable");
   });
 
   it("does not warn or mutate on missing quote timestamp when the gate is OFF", () => {
@@ -160,17 +176,21 @@ describe("staleness gate", () => {
     expect(proposal.type).toBe("limit");
     expect(result.quoteStale).toBeDefined();
     expect(result.quoteStale?.ageSec).toBeUndefined();
-    expect(proposal.rationale).toContain("Stale quote warning: quote timestamp is missing/unparseable");
+    expect(proposal.rationale).toContain("Stale quote backup");
+    expect(proposal.rationale).toContain("missing/unparseable");
   });
 
-  it("blocks on stale fundamentals (scan generatedAt) older than maxFundamentalsAgeSec", () => {
+  it("does NOT block or escalate on stale fundamentals — annotate only (owner: never block on staleness)", () => {
     const freshAsOf = new Date(NOW.getTime() - 10_000).toISOString(); // quote is fresh
     const staleGeneratedAt = new Date(NOW.getTime() - 7_200_000).toISOString(); // 7200s ago
     const policy: TradingPolicy = { ...basePolicy, maxFundamentalsAgeSec: 3600 };
     const proposal = { ...buyProposal };
     const result = evaluateTradeProposal(proposal, ctx(policy, scanWith(freshAsOf, staleGeneratedAt)));
-    expect(result.approved).toBe(false);
-    expect(result.reasons.some((r) => r.includes("staleness_gate") && r.includes("market scan is"))).toBe(true);
+    expect(result.approved).toBe(true);
+    expect(result.reasons.every((r) => !r.includes("staleness_gate"))).toBe(true);
+    expect(result.escalations ?? []).toHaveLength(0);
+    expect(proposal.rationale).toContain("Scan-age note");
+    expect(proposal.rationale).toContain("not blocking");
   });
 
   it("never blocks a risk-reducing SELL even with very stale data and the gate ON", () => {

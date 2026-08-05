@@ -46,7 +46,7 @@ interface Destination {
 }
 
 export const DESTINATIONS: Destination[] = [
-  // PR-B1 (UX program Wave B): plain-language rail labels. Hover `desc` keeps the
+  // Wave B / PR-B1: plain-language rail labels. Hover `desc` keeps the
   // sophisticated Socratic metaphor (thesis / evidence / journal / regime / outcomes).
   { href: "/console", label: "Home", icon: LayoutDashboard, desc: "Live thesis, actions, evidence, dissent, and framework learning." },
   { href: "/console/approvals", label: "Proposals", icon: Inbox, desc: "Trade proposals awaiting your judgment." },
@@ -67,7 +67,8 @@ export const DESTINATIONS: Destination[] = [
 
 /** Canonical destination name for page titles. Every page h1 renders through this
  *  (h1 === rail label, the 2026-07-16 naming canon) so nav and titles can't drift
- *  apart again. PR-B1 plain labels: Home / Scan / Activity / Results / Macro. */
+ *  apart again — Wave B / PR-B1 plain renames (Home/Scan/Activity/Results/Macro)
+ *  flow through here so the rail and h1 stay locked. */
 export function destinationLabel(href: string): string {
   return DESTINATIONS.find((d) => d.href === href)?.label ?? href;
 }
