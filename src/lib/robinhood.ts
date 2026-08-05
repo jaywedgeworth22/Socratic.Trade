@@ -775,6 +775,10 @@ class TestBrokerGateway implements BrokerGateway {
     }];
   }
 
+  async probeOrderCapability(_accountNumber: string): Promise<{ ok: boolean; reason?: string }> {
+    return { ok: true };
+  }
+
   async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {
     const lots = getOpenLots(accountNumber, undefined, this.userId);
     if (lots.length === 0) return [];

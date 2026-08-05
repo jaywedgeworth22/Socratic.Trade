@@ -13,6 +13,7 @@ import {
   Database,
   GitBranch,
   MessageSquare,
+  RotateCcw,
   TrendingUp,
   X,
   Zap
@@ -1178,7 +1179,7 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
 
   const update = async (
     proposal: SocraticFrameworkProposal,
-    status: "accepted" | "rejected" | "applied",
+    status: "pending" | "accepted" | "rejected" | "applied",
     ownerVerb?: "accept" | "reject" | "rewrite"
   ) => {
     setBusyId(proposal.id);
@@ -1222,7 +1223,16 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
           <Brain size={14} /> {reviewing ? "Reviewing…" : "AI review pending"}
         </button>
       </div>
-      {proposals.slice(0, 5).map((proposal) => (
+      <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+        <strong>Accept</strong> = agree this change should be made (intent only — nothing auto-implements).{" "}
+        <strong>Applied</strong> = you already put that change into policy/prompt/code.{" "}
+        <strong>Rewrite</strong> = accept your edited text.{" "}
+        <strong>Reject</strong> = discard. Decisions can be changed anytime.
+      </p>
+      {proposals.slice(0, 5).map((proposal) => {
+        const responseText = (responses[proposal.id] ?? proposal.ownerResponse ?? "").trim();
+        const busy = busyId === proposal.id;
+        return (
         <article key={proposal.id} className="con-evidence-card con-evidence-accent">
           <div className="flex items-start justify-between gap-3">
             <strong>{proposal.title}</strong>
@@ -1241,7 +1251,7 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
                   <button
                     type="button"
                     className="con-btn con-btn-outline con-btn-sm mt-2"
-                    disabled={proposal.status !== "pending"}
+                    disabled={busy}
                     onClick={() => setResponses((current) => ({ ...current, [proposal.id]: proposal.aiReview!.rewrittenChange ?? "" }))}
                   >
                     <MessageSquare size={13} /> Use suggested rewrite
@@ -1267,7 +1277,8 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
             <button
               type="button"
               className="con-btn con-btn-pos con-btn-sm"
-              disabled={busyId === proposal.id || proposal.status !== "pending"}
+              disabled={busy}
+              title="Agree this proposed change should be made. Does not auto-edit policy or prompts."
               onClick={() => void update(proposal, "accepted", "accept")}
             >
               <Check size={14} /> Accept
@@ -1275,7 +1286,8 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
             <button
               type="button"
               className="con-btn con-btn-outline con-btn-sm"
-              disabled={busyId === proposal.id || proposal.status !== "pending" || !(responses[proposal.id] ?? proposal.ownerResponse ?? "").trim()}
+              disabled={busy || !responseText}
+              title="Accept using the text in Owner response as the rewritten proposed change."
               onClick={() => void update(proposal, "accepted", "rewrite")}
             >
               <MessageSquare size={14} /> Rewrite
@@ -1283,7 +1295,8 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
             <button
               type="button"
               className="con-btn con-btn-outline con-btn-sm"
-              disabled={busyId === proposal.id || proposal.status !== "accepted"}
+              disabled={busy || (proposal.status !== "accepted" && proposal.status !== "applied")}
+              title="Mark that you already implemented the accepted change (policy, prompt, or code)."
               onClick={() => void update(proposal, "applied")}
             >
               <GitBranch size={14} /> Applied
@@ -1291,14 +1304,27 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
             <button
               type="button"
               className="con-btn con-btn-danger-outline con-btn-sm"
-              disabled={busyId === proposal.id || proposal.status !== "pending"}
+              disabled={busy}
+              title="Discard this proposal. You can change your mind later."
               onClick={() => void update(proposal, "rejected", "reject")}
             >
               <X size={14} /> Reject
             </button>
+            {proposal.status !== "pending" && (
+              <button
+                type="button"
+                className="con-btn con-btn-outline con-btn-sm"
+                disabled={busy}
+                title="Return this proposal to Pending so it can be re-reviewed."
+                onClick={() => void update(proposal, "pending")}
+              >
+                <RotateCcw size={14} /> Reopen
+              </button>
+            )}
           </div>
         </article>
-      ))}
+        );
+      })}
       {message && <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{message}</span>}
     </div>
   );
