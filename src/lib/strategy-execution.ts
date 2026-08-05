@@ -1263,28 +1263,51 @@ export async function executeProposal(
           // happened is pointless and, worse, concludes not_placed ("safe to retry") for an order
           // that will be refused identically every retry. Mirror the autonomous lane's short-circuit
           // (strategy.ts) and the protective-state block above: honest terminal "blocked".
-          if (placeError instanceof OrderValidationError) {
-            const blockedDecision: PolicyDecision = {
-              ...decision,
-              approved: false,
-              reasons: [...decision.reasons, message]
-            };
-            updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
+          // P2.6 / #1319: pre-flight validation AND definitive broker HTTP 4xx are never
+          // "uncertain". Mirror the autonomous lane (strategy.ts): OrderValidationError → blocked;
+          // broker 4xx (order never accepted) → rejected_by_broker. Reserve uncertain for
+          // timeouts / 5xx / undecodable broker state.
+          if (placeError instanceof OrderValidationError || /\bHTTP 4\d\d\b/i.test(message)) {
+            const isValidation = placeError instanceof OrderValidationError;
+            if (isValidation) {
+              const blockedDecision: PolicyDecision = {
+                ...decision,
+                approved: false,
+                reasons: [...decision.reasons, message]
+              };
+              updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
+              audit(
+                "order_blocked_validation",
+                { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval" },
+                userId,
+                policy.connectedAccountId
+              );
+              await sendNotification(
+                {
+                  type: "block",
+                  title: `${sym} order blocked before submission`,
+                  payload: { proposalId, refId, proposal, reason: message, decision: blockedDecision }
+                },
+                { policy, userId }
+              );
+              return { status: "blocked", reasons: [message] };
+            }
+            updateProposalStatus(proposalId, "rejected_by_broker", undefined, review, review.estimatedNotional, userId, undefined, message);
             audit(
-              "order_blocked_validation",
-              { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval" },
+              "order_rejected_by_broker",
+              { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval", via: "http_4xx" },
               userId,
               policy.connectedAccountId
             );
             await sendNotification(
               {
-                type: "block",
-                title: `${sym} order blocked before submission`,
-                payload: { proposalId, refId, proposal, reason: message, decision: blockedDecision }
+                type: "run_failed",
+                title: `${sym} order rejected by broker`,
+                payload: { proposalId, refId, reason: message, reconcile: "rejected_by_broker" }
               },
               { policy, userId }
             );
-            return { status: "blocked", reasons: [message] };
+            return { status: "error", reasons: [message] };
           }
           // A lost mutation lease (mutationCtx.assertOwned() above) is ALSO a deterministic
           // pre-submission refusal — the order provably never reached the broker — so it gets the
