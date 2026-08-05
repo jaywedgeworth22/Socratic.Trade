@@ -46,18 +46,15 @@ changing policy defaults or clobbering PR-A4 Advanced disclosure work.
 
 ## Verification State
 
-```bash
-# Node 24 per .nvmrc
-npm run lint
-npx tsc --noEmit
-npx vitest run test/console-nav-labels.test.ts
-npm test
-npm run build
-# then
-bash scripts/land.sh
-```
+Node **24.19.0** (`/opt/homebrew/opt/node@24`).
 
-(Fill exact results at land time.)
+```bash
+npm run lint          # 0 errors, 671 grandfathered warnings — EXIT 0
+npx tsc --noEmit      # clean — EXIT 0
+npx vitest run test/console-nav-labels.test.ts  # 3/3 passed
+npm test              # 509 files passed | 1 skipped; 5889 tests passed | 51 skipped — EXIT 0
+npm run build         # Next production build clean — EXIT 0
+```
 
 ## Next Steps & Blockers
 
