@@ -355,7 +355,8 @@ export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, strin
   autonomy_halted_on_boot: "Autonomy halted on boot",
   option_alert: "Option alert",
   earningscalls_entitlement_blocked: "EarningsCalls plan entitlement blocked",
-  risk_advisory: "Risk advisory"
+  risk_advisory: "Risk advisory",
+  protective_exit_failing: "Protective exit failing"
 };
 
 export function notificationTypeLabel(type?: string | null): string {

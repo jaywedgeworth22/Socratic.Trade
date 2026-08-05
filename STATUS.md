@@ -16,6 +16,11 @@ evidence-age receipts; approval-path HTTP 4xx → rejected_by_broker. Also unstu
 
 **2026-08-04 — GROK: iOS Sign-In constraint + SSE events (-1017).** Branch `grok/ios-constraint-and-sse-fix`. Cap Apple Sign-In button at 375pt; dedicated SSE request (`Accept: text/event-stream`, 120s idle timeout); quiet reconnect when snapshot already loaded. AG's 2026-08-03 constraint fix never reached main — lands here. Rollout: `docs/rollouts/2026-08-04-ios-signin-constraint-and-sse-events.md`.
 
+
+## Current (2026-08-05 GROK activity-audit)
+
+- P2.7/P2.8: multi-poll cancel settle + `protective_exit_failing` notification (branch `grok/activity-audit-p2-7-8`, issues #1320/#1321). Rollout: `docs/rollouts/2026-08-05-activity-audit-p2-7-8.md`.
+- Unstuck phantom-conflict open PRs #2459 #2445 #2443 (merge main + re-arm auto-merge; CI re-running).
 ## Current (2026-08-05 GROK)
 
 - Framework proposals: all 3 prod rows set to **rejected** after agent review (PG/T hard accounting gates; BAC unfilled red-team override). UI reopen/change-of-mind on branch `grok/framework-proposal-review`. Rollout: `docs/rollouts/2026-08-05-framework-proposal-review-reopen.md`.
