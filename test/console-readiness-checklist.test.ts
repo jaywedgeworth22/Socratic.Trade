@@ -51,8 +51,12 @@ function snapshotWith(input: {
     unifiedFeed: [],
     strategyPrompt: "",
     notifications: [],
-    symbolMetaBySymbol: {}
-  } as DashboardSnapshot;
+    symbolMetaBySymbol: {},
+    profiles: [],
+    notificationStatus: { configured: false, enabledEvents: [] },
+    robinhoodMcpConnected: false,
+    autoResumeOnBoot: false
+  } as unknown as DashboardSnapshot;
 }
 
 describe("deriveReadinessChecklist", () => {
