@@ -795,7 +795,7 @@ export function MobilePwaClient() {
 
         <section className="space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Approvals</h2>
+            <h2 className="text-sm font-semibold">Proposals</h2>
             <span className="text-xs text-faint">{pendingProposals.length}</span>
           </div>
           {pendingProposals.length === 0 ? (
