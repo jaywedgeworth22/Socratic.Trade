@@ -32,6 +32,11 @@ export interface ExecutionState {
 export interface HealthSignals {
   isHealthy: boolean;
   reason?: string;
+  /**
+   * Why the account is unhealthy when `isHealthy` is false. Used by the auto-pause path to
+   * label audit/notifications (order_capability = OMS/placement path; equity = unfunded, etc.).
+   */
+  category?: "connectivity" | "account" | "equity" | "error_rate" | "order_capability";
 }
 
 type ExecutionPolicy = Pick<TradingPolicy, "accountNumber" | "connectedAccountId" | "activeBroker">;
