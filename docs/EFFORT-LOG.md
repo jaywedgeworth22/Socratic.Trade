@@ -291,13 +291,8 @@ As of 2026-07-08 (assignment-rule update).
   construction; active hedging; transcript/news PIT ingestion; groundedness gate; leakage
   certificate; tamper-evident audit chain; model/prompt registry; decision-bundle replay;
   multi-user fill streaming; admin subdomain.
-- **P0 Security (5):** rate-limit /api/chat+scan (M), encrypt Robinhood OAuth tokens (M),
-  constant-time admin-token compare (S), tamper-evident audit chain (M), flip decryptValue to
-  reject plaintext keys (S).
-- **P1 Mechanical fixes (9):** collapse redundant listFillEvents fetch (M), batch proposal
-  point-queries (M), cap buildUnifiedFeed output (S), better-sqlite3 pragmas (S), Socratic
-  case-write retry receipt (S), crashed-run status sweep (S), durable due-jobs substrate (M),
-  agent-not-running receipts (M), money-path concurrency/property/fault-injection tests (M).
+- **P0 Security (5) — COMPLETED 2026-08-05 (GROK + prior CURSOR).** P0-1 rate-limit chat/scan, P0-2 RH OAuth encrypt, P0-3 timing-safe admin already on main (CURSOR 2026-07-06). P0-4 audit chain + P0-5 decryptValue reject plaintext: branch `grok/p0-security-p1-mechanical`. Was: ~~rate-limit… reject plaintext keys (S).~~
+- **P1 Mechanical fixes (9) — MOSTLY COMPLETED 2026-08-05 (GROK hygiene).** P1-1/2 fills+proposals batching, P1-3 feed cap, P1-4 sqlite pragmas, P1-5 socratic receipt, P1-6 crashed-run sweep, P1-7 due_jobs already on main. Residual: P1-8 agent-not-running receipts, P1-9 money-path fault-injection suite. Was: ~~collapse redundant… fault-injection tests (M).~~
 - **P2 Ops (9):** verify drawdown kill-switch (S), verify correlation gate (S), Litestream
   restore verification (S), account-deletion table sync test (S), disk/WAL monitoring (S),
   automated restore drill (M), Mac sleep keep-awake (S), account-deletion Pinecone propagation
@@ -319,6 +314,8 @@ As of 2026-07-08 (assignment-rule update).
 - **[Socratic.Trade][CODEX sublane] RAG structured-vs-narrative routing boundary (branch `codex/rag-data-routing-20260722`, worktree `/Users/jay/.codex/worktrees/rag-data-routing-20260722`, claimed 2026-07-22) — LOCALLY READY.** Typed, fail-closed information-needs contract now keeps current prices, positions, orders, and financial facts deterministic while filings/transcripts/lessons/narrative research alone enter RAG. Focused routing tests 4/4, scoped lint, TypeScript, and diff check green; slow strategy integration verification deferred under host saturation. No provider, corpus, broker, or production writes.
 
 ## In Progress
+
+- **2026-08-05 — GROK — IN PROGRESS — P0 security residual (#1159): decryptValue reject plaintext + audit hash chain (schema v67).** Branch `grok/p0-security-p1-mechanical`. P0-1/2/3 + P1-1/2 already on main (CURSOR 2026-07-06).
 
 <!-- board-hygiene 2026-08-05 GROK final: only current WIP / open PRs / active incidents. -->
 - **2026-08-05 — GROK — IN PROGRESS — Open PR #2443: fix(quotes): Tradier sandbox uses delayed venue prices as authoritative.** Branch `grok/tradier-sandbox-venue-quotes`.
@@ -526,6 +523,8 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+
+- **2026-08-05 — GROK — COMPLETED (in PR) — P0 Security residual: audit hash chain (v67) + decryptValue reject plaintext.** Closes remaining #1159 items; documents P0-1..3 and most P1 mechanical already on main. Rollout: `docs/rollouts/2026-08-05-p0-security-audit-chain-decrypt.md`.
 - **2026-08-05 — GROK — COMPLETED — Board hygiene (cross-app Issues alignment).** Reclassified COMPLETED/stale Active+Planned rows; open Issues mirror should match real WIP. Live open PRs: #2443, #2445, #2459.
 - **2026-08-05 — GROK — Board hygiene final:** closed 35 stale Active rows (merged/abandoned/superseded).
 - **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07) —
