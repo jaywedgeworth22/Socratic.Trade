@@ -39,6 +39,7 @@ name: Sentry CI Report
 on:
   workflow_run:
     workflows:
+      - Auto-merge congress-trading-shared PRs
       - CI
       - Cleanup Actions Caches
       - Codex Autofix
