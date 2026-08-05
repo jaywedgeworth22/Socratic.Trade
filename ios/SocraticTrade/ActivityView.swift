@@ -195,10 +195,7 @@ private struct CommandActivityRow: View {
     }
 
     private var displayName: String {
-        command.commandType
-            .replacingOccurrences(of: ".", with: " ")
-            .replacingOccurrences(of: "_", with: " ")
-            .capitalized
+        AppFormat.commandLabel(command.commandType)
     }
 
     private var statusIcon: String {
