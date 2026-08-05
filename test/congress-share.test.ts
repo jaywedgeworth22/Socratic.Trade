@@ -404,6 +404,15 @@ describe("isCongressDailyShareDue", () => {
     setInternalSetting("congress-share:lastDailyRunDate", "2026-06-22");
     expect(isCongressDailyShareDue(now)).toBe(false);
   });
+
+  it("applies a 60-minute failure backoff even when the daily marker is stale", () => {
+    const now = Date.UTC(2026, 5, 22, 13, 0, 0);
+    setInternalSetting("congress-share:lastDailyRunDate", "2026-06-21");
+    setInternalSetting("congress_share_last_failure_ms", now - 30 * 60 * 1000);
+    expect(isCongressDailyShareDue(now)).toBe(false);
+    setInternalSetting("congress_share_last_failure_ms", now - 61 * 60 * 1000);
+    expect(isCongressDailyShareDue(now)).toBe(true);
+  });
 });
 
 describe("runCongressDailyShare", () => {

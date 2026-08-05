@@ -9,7 +9,13 @@ import { audit, clearStopPlans, deriveExitContractFromOpening, getDb, recordStop
 import { auditDeduped } from "./audit-dedupe";
 import { getActiveConnectedAccount } from "./db-api-keys";
 import { acquireStrategyLock, dailyExecutionStats, notionalInLastMinutes, countDayTradesInLastBusinessDays, releaseStrategyLock } from "./db-execution";
-import { listPendingBrokerReconciliationFills, netAccountingFillQuantity, updateFillEvent, listFillEventsByProposalId } from "./db-fills";
+import {
+  listPendingBrokerReconciliationFills,
+  markUnreconcilableUnusableBrokerOrderFills,
+  netAccountingFillQuantity,
+  updateFillEvent,
+  listFillEventsByProposalId
+} from "./db-fills";
 import { resolveBrokerVerificationNotifications } from "./db-notifications";
 import { getPolicy } from "./db-profiles";
 import { getProposal, updatePendingProposalReprice, updateProposalStatus, transitionProposalIfPending, claimProposalForExecution, listStalePlacingProposals } from "./db-proposals";
@@ -311,7 +317,7 @@ export async function executeProposal(
     const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
     const approvalScan = mergeQuoteData(
       approvalScanBase,
-      await fetchFreshQuotesCascade(approvalQuoteSymbols, userId, policy.accountNumber)
+      await fetchFreshQuotesCascade(approvalQuoteSymbols, userId, policy.accountNumber, policy.connectedAccountId)
     );
 
     // An account is an account: the approval is always evaluated against the real broker-reported
@@ -1509,6 +1515,24 @@ export async function executeProposal(
   }
 }
 export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local", connectedAccountId?: string): Promise<void> {
+  // Forward guard: fills with empty/literal-"undefined" broker_order_id can never match a broker
+  // order (historical String(undefined) bug; insertion path fixed in PR #284). Flip to terminal
+  // unreconcilable so they leave the pending list and stop forcing reconcile work every run.
+  const quarantined = markUnreconcilableUnusableBrokerOrderFills(accountNumber, userId);
+  for (const fill of quarantined) {
+    audit(
+      "fill_unreconcilable",
+      {
+        fillId: fill.id,
+        symbol: fill.symbol,
+        brokerOrderId: fill.brokerOrderId ?? null,
+        reason: "broker_order_id_unusable"
+      },
+      userId,
+      connectedAccountId
+    );
+  }
+
   const pending = listPendingBrokerReconciliationFills(accountNumber, userId);
   if (pending.length === 0) return;
 
