@@ -57,6 +57,8 @@ from sibling `grok/ux-d4-pwa-polish` and tab-switch Review CTA from `grok/ux-d-i
   for true parity with iOS D3 acceptance.
 - Unrelated tsc fix: `buildMemberSkillScores` now reads `MemberDualPerformance.tradeDate ??
   .performance` (shared package dual-anchor shape) instead of flat fields that no longer typecheck.
+- Main Wave D body landed as PR #2424; follow-up on this branch carries the dual-perf tsc fix
+  + verified gate receipts after merge with main.
 
 ## Verification State
 
@@ -75,10 +77,10 @@ xcodebuild -project "ios/Socratic Trade.xcodeproj" -scheme SocraticTrade \
 
 ## Next Steps & Blockers
 
-1. Land via `scripts/land.sh`; auto-merge when verify green.
+1. Land dual-perf follow-up via `scripts/land.sh`; auto-merge when verify green.
 2. Optional follow-ups: Live Activities / push (Wave F2), full Coach chat on iOS (F3).
-3. Sibling worktrees `grok/ux-d4-pwa-polish` and `grok/ux-d-ios-brand-home` can discard once this
-   lands (changes absorbed).
+3. Sibling worktrees `grok/ux-d4-pwa-polish` and `grok/ux-d-ios-brand-home` can discard once
+   main has absorbed Wave D (#2424).
 
 ## Zero-Code Findings
 
