@@ -16,6 +16,9 @@ heading Approvals → Proposals. Display-only. lint+tsc clean. Rollout:
 
 # STATUS — current repo snapshot
 
+**2026-08-04 — GROK: UX B3+E2+E3 polish (branch `grok/ux-b3-e-polish`).** Strategy page collapsible sections (Models + Instructions open; Scoring weights collapsed; Presets open). Login page three value bullets matching iOS. Command palette trigger always visible on mobile chrome (icon-only below sm). Healthy mobile freshness collapses to one line. No policy changes. Rollout: `docs/rollouts/2026-08-04-ux-b3-e-polish.md`.
+
+
 **2026-08-04 — GROK: retire direct FMP/Quiver/UW; fundamentals multi-source.** Hard ban
 on direct FMP/Quiver/UW. Congress.Trade for disclosures/analytics (default ON);
 fundamentals from the multi-provider cascade (App A fundamentals default OFF). PR #2398.
