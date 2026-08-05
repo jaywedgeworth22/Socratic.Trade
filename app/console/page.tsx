@@ -39,7 +39,6 @@ import { redTeamFailureMeta, redTeamVerdictLabel } from "./lib/red-team";
 import { decisionActionLabel, deterministicOutcomePresentation, splitThesisRationale } from "./lib/thesis";
 import { useConsoleData } from "./lib/useConsoleData";
 import { safeTopCandidates } from "./lib/evidence-rows";
-import { RunOnceButton } from "./components/chrome";
 import { destinationLabel } from "./components/nav";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
 import { SymbolButton } from "./ui/symbol-drilldown";
@@ -416,10 +415,10 @@ export default function ConsoleHomePage() {
           </Card>
 
           <Card title="Run cadence">
+            {/* Run once lives only in the chrome bar (labeled desktop / icon-only phone).
+                A second button here stacked under the sticky header on mobile — two "Run once"
+                controls within ~1 inch (owner report). Cadence status chips stay local. */}
             <div className="flex flex-wrap items-center gap-2">
-              <div className="sm:hidden">
-                <RunOnceButton snapshot={snapshot} size="sm" />
-              </div>
               <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"}>{state.label}</Chip>
               {latestRow && lastRun && (
                 <Chip
