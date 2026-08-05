@@ -316,6 +316,10 @@ const FEED_STATUS_LABELS: Record<string, string> = {
   paper: "Paper trade",
   completed: "Completed",
   skipped: "Skipped",
+  // Strategy-run pre-decision skips (UX PR-A1) — never success-ish "Completed".
+  skipped_budget: "Skipped — LLM budget",
+  skipped_market_closed: "Skipped — market closed",
+  skipped_broker_unhealthy: "Skipped — broker unhealthy",
   placing_failed: "Placement failed",
   not_placed: "Not placed - safe to retry",
   running: "Running"

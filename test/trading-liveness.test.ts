@@ -28,7 +28,13 @@ async function load() {
  * now()-stamped insertStrategyRun/finishStrategyRun helpers so tests can control run age. */
 function insertRunAt(
   db: Awaited<ReturnType<typeof load>>["db"],
-  opts: { userId: string; connectedAccountId: string; status: "completed" | "failed"; startedAt: string; finishedAt: string }
+  opts: {
+    userId: string;
+    connectedAccountId: string;
+    status: "completed" | "failed" | "skipped" | "skipped_budget" | "skipped_market_closed" | "skipped_broker_unhealthy";
+    startedAt: string;
+    finishedAt: string;
+  }
 ): void {
   db.getDb()
     .prepare(
@@ -179,6 +185,39 @@ describe("trading-liveness", () => {
     expect(result.marketOpen).toBe(true);
     expect(result.degradedReasons).toContain("stale_last_completed_run");
     expect(result.degraded).toBe(true);
+  });
+
+  it("does not treat pure skip statuses as healthy decision completions (UX PR-A1)", async () => {
+    process.env.TRADING_LIVENESS_STALE_MINUTES = "60";
+    const { db, liveness } = await load();
+    const { userId, accountId } = await makeAccount(db, "Skip-Only Account");
+    // Wednesday mid-session — market open so staleness is actionable if lastCompleted is old.
+    const now = Date.parse("2026-07-15T18:00:00.000Z");
+    // Old completed run well outside the window...
+    insertRunAt(db, {
+      userId,
+      connectedAccountId: accountId,
+      status: "completed",
+      startedAt: new Date(now - 400 * 60_000).toISOString(),
+      finishedAt: new Date(now - 399 * 60_000).toISOString()
+    });
+    // ...then only recent pre-decision skips (budget / market / broker). These must NOT
+    // refresh lastCompletedRunAt or clear staleness.
+    for (const status of ["skipped_budget", "skipped_market_closed", "skipped_broker_unhealthy"] as const) {
+      insertRunAt(db, {
+        userId,
+        connectedAccountId: accountId,
+        status,
+        startedAt: new Date(now - 5 * 60_000).toISOString(),
+        finishedAt: new Date(now - 4 * 60_000).toISOString()
+      });
+    }
+
+    const result = liveness.computeAccountTradingLiveness(userId, accountId, "Skip-Only Account", now);
+    expect(result.lastCompletedRunAgeSeconds).toBe(399 * 60);
+    expect(result.degradedReasons).toContain("stale_last_completed_run");
+    // Skips are neither failures nor completions — failure streak stays 0.
+    expect(result.consecutiveFailedRuns).toBe(0);
   });
 
   it("includes an active account in the summary and surfaces its degraded state", async () => {
