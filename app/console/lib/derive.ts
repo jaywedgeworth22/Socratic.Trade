@@ -664,10 +664,11 @@ export function deriveReadinessChecklist(snapshot: DashboardSnapshot): Readiness
       title: "Run once → review Proposals",
       detail: hasRunOnce
         ? "At least one strategy run or proposal is on the record."
-        : "Trigger a manual run to generate the first decision trace, then open Proposals to approve or reject.",
+        : "Use Run once in the top bar to generate the first decision trace, then open Proposals to approve or reject. (One control — not duplicated in this checklist.)",
       complete: hasRunOnce,
-      href: hasRunOnce ? undefined : "/console/approvals",
-      ctaLabel: hasRunOnce ? undefined : "Open Proposals"
+      // No deep-link to empty Proposals: the action is chrome Run once, not this row.
+      href: undefined,
+      ctaLabel: hasRunOnce ? undefined : "Top bar → Run once"
     }
   ];
 

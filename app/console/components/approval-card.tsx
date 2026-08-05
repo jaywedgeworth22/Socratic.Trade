@@ -832,10 +832,27 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
         </Btn>
         {/* Approving a broker-connected order stays visually primary; the typed
             ritual in the sheet is the real friction. */}
-        <Btn variant={live ? "primary" : "pos"} disabled={busy !== null} onClick={() => void approve()}>
-          {busy === "approve" ? "Approving…" : willPromptTyped ? (
+        <Btn
+          variant={live ? "primary" : "pos"}
+          disabled={busy !== null}
+          onClick={() => void approve()}
+          aria-label={
+            live
+              ? willPromptTyped
+                ? `Approve live broker order for ${pending.proposal.side} ${pending.proposal.symbol}`
+                : `Approve live order for ${pending.proposal.side} ${pending.proposal.symbol}`
+              : `Approve paper order for ${pending.proposal.side} ${pending.proposal.symbol}`
+          }
+        >
+          {busy === "approve" ? (
+            "Approving…"
+          ) : willPromptTyped ? (
             <>
-              Approve broker order… <LiveTag />
+              Approve live… <LiveTag />
+            </>
+          ) : live ? (
+            <>
+              Approve live <LiveTag />
             </>
           ) : (
             "Approve"

@@ -1,3 +1,5 @@
+**2026-08-04 — GROK: expert panel UX — Run once single primary (PR-A6).** Branch `grok/ux-expert-review-dup-run-once`. Owner: two Run once within ~1 inch. Four-expert review of web+iOS; chrome/home owns one primary; removed cadence/readiness/Guardrails/Insights duplicates; Zap icon; Approve live always labeled; iOS LIVE/PAPER + tappable attention. Review: `docs/reviews/2026-08-04-expert-panel-web-ios-ux.md`. Rollout: `docs/rollouts/2026-08-04-ux-run-once-single-primary.md`.
+
 **2026-08-04 — GROK: iOS Sign-In constraint + SSE events (-1017).** Branch `grok/ios-constraint-and-sse-fix`. Cap Apple Sign-In button at 375pt; dedicated SSE request (`Accept: text/event-stream`, 120s idle timeout); quiet reconnect when snapshot already loaded. AG's 2026-08-03 constraint fix never reached main — lands here. Rollout: `docs/rollouts/2026-08-04-ios-signin-constraint-and-sse-events.md`.
 ## Current (2026-08-04 GROK)
 

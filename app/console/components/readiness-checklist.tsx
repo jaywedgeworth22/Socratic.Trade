@@ -11,7 +11,6 @@ import { ArrowRight, Check, Circle, ListChecks } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { deriveReadinessChecklist, type ReadinessStep } from "../lib/derive";
 import { Card } from "../ui/primitives";
-import { RunOnceButton } from "./chrome";
 
 function StepRow({ step, isNext }: { step: ReadinessStep; isNext: boolean }) {
   const body = (
@@ -56,8 +55,9 @@ function StepRow({ step, isNext }: { step: ReadinessStep; isNext: boolean }) {
     </div>
   );
 
-  // Run-once: link to Proposals; the chrome Run once button sits beside the hero header.
-  if (!step.complete && step.href) {
+  // Run-once step: chrome owns the single Run once control (no second button in this card).
+  // Other incomplete steps deep-link to the fix destination.
+  if (!step.complete && step.href && step.id !== "run-once") {
     return (
       <Link href={step.href} className="block hover:opacity-90">
         {body}
@@ -122,15 +122,12 @@ export function ReadinessChecklistHero({
           </span>
         </span>
       }
-      action={
-        checklist.flags.hasLlmKey && checklist.flags.hasActiveAccount ? (
-          <RunOnceButton snapshot={snapshot} size="sm" />
-        ) : null
-      }
     >
       <p className="mb-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
         Finish these steps so the strategy can scan, propose, and place through your broker. Each
-        row goes straight to the fix.
+        row goes straight to the fix. When you&apos;re ready for a cycle, use{" "}
+        <strong className="font-semibold text-[color:var(--con-fg)]">Run once</strong> in the top
+        bar (one control — not duplicated here).
       </p>
       <div className="flex flex-col gap-2">
         {checklist.steps.map((step) => (
