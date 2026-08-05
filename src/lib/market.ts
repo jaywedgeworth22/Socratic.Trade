@@ -514,8 +514,6 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
               congressMemberFilingAvgExcess: sig.congressAnalytics.topMemberFilingAvgExcess ?? undefined,
               congressMemberFilingWinRate: sig.congressAnalytics.topMemberFilingWinRate ?? undefined,
               congressMemberFilingScoredCount: sig.congressAnalytics.topMemberFilingScoredCount,
-              congressMemberFilingAvgAnnualizedExcess:
-                sig.congressAnalytics.topMemberFilingAvgAnnualizedExcess ?? undefined,
               congressMemberTradeAvgExcess: sig.congressAnalytics.topMemberTradeAvgExcess ?? undefined,
               congressMemberTradeWinRate: sig.congressAnalytics.topMemberTradeWinRate ?? undefined,
               congressMemberTradeScoredCount: sig.congressAnalytics.topMemberTradeScoredCount

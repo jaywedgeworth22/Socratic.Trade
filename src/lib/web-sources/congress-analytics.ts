@@ -13,7 +13,6 @@ import {
 } from "../api-clients/congress";
 import type {
   ConvictionTicker,
-  MemberDualPerformance,
   MemberLeader,
   MemberPerformance
 } from "@jaywedgeworth22/congress-trading-shared";
@@ -113,7 +112,6 @@ export interface MemberSkillDetail {
   medianExcess?: number | null;
   winRate?: number | null;
   scoredCount?: number;
-  avgAnnualizedExcess?: number | null;
   /** Opposite-anchor context (trade when primary is filing, and vice versa). */
   otherAnchor?: MemberSkillAnchor;
   otherAvgExcess?: number | null;
@@ -129,7 +127,7 @@ function legAlpha(leg: MemberPerformance | null | undefined): number | undefined
   if (!leg) return undefined;
   if (typeof leg.scoredCount !== "number" || leg.scoredCount <= 0) return undefined;
   // Prefer avgExcess (vs S&P); annualized is secondary ranking signal for filing leg only.
-  return [leg.avgExcess, leg.medianExcess, leg.avgAnnualizedExcess, leg.avgReturn].find(
+  return [leg.avgExcess, leg.medianExcess, leg.avgReturn].find(
     (v): v is number => typeof v === "number" && Number.isFinite(v)
   );
 }
@@ -138,20 +136,15 @@ function legAlpha(leg: MemberPerformance | null | undefined): number | undefined
  * Pick the trading-relevant leg: **filingDate** (copy-trade since disclosure) first;
  * fall back to tradeDate (politician timing) when filing is unscored.
  */
-export function preferMemberSkillLeg(dual: MemberDualPerformance | null | undefined): {
+export function preferMemberSkillLeg(perf: MemberPerformance | null | undefined): {
   leg: MemberPerformance;
   anchor: MemberSkillAnchor;
   other?: MemberPerformance;
   otherAnchor?: MemberSkillAnchor;
 } | null {
-  if (!dual) return null;
-  const filing = dual.filingDate ?? undefined;
-  const trade = dual.tradeDate ?? dual.performance ?? undefined;
-  if (legAlpha(filing) !== undefined && filing) {
-    return { leg: filing, anchor: "filing", other: trade, otherAnchor: trade ? "trade" : undefined };
-  }
-  if (legAlpha(trade) !== undefined && trade) {
-    return { leg: trade, anchor: "trade", other: filing, otherAnchor: filing ? "filing" : undefined };
+  if (!perf) return null;
+  if (legAlpha(perf) !== undefined) {
+    return { leg: perf, anchor: "filing" };
   }
   return null;
 }
@@ -206,7 +199,6 @@ export async function buildMemberSkillDetails(filerIds: string[]): Promise<Map<s
       medianExcess: s.leg.medianExcess ?? null,
       winRate: s.leg.winRate ?? null,
       scoredCount: finiteNum(s.leg.scoredCount),
-      avgAnnualizedExcess: s.leg.avgAnnualizedExcess ?? null,
       otherAnchor: s.otherAnchor,
       otherAvgExcess: s.other?.avgExcess ?? null,
       otherWinRate: s.other?.winRate ?? null,
@@ -367,7 +359,6 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
           entry.topMemberFilingAvgExcess = bestDetail.avgExcess ?? null;
           entry.topMemberFilingWinRate = bestDetail.winRate ?? null;
           entry.topMemberFilingScoredCount = bestDetail.scoredCount;
-          entry.topMemberFilingAvgAnnualizedExcess = bestDetail.avgAnnualizedExcess ?? null;
           entry.topMemberTradeAvgExcess = bestDetail.otherAvgExcess ?? null;
           entry.topMemberTradeWinRate = bestDetail.otherWinRate ?? null;
           entry.topMemberTradeScoredCount = bestDetail.otherScoredCount;
