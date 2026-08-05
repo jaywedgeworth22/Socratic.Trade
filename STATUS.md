@@ -1,3 +1,9 @@
+
+## 2026-08-05 GROK — issues/effort sweep
+- Open PRs armed: #2489 (P2.7/P2.8), #2445 (iOS SSE), #2443 (Tradier quotes).
+- Residual branch `grok/issues-activity-audit-residual`: B4 Settings TOC + congress-share IfDue single-flight + evidence_age (id,timestamp) dedup + board hygiene.
+- Confirmed already on main: #2459 batch, Coach→Insights, safeTopCandidates, most activity-audit P2/P3.
+
 ## 2026-08-05 GROK — P0 security residual tranche
 
 - **P0-5** decryptValue rejects plaintext; OAuth legacy path gated by isEncryptedValue.
