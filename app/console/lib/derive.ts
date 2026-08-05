@@ -530,6 +530,164 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
   return items;
 }
 
+// ── First-run / readiness checklist (Thesis hero) ────────────────────────────
+//
+// Canonical steps (docs/design/ux-improvement-program.md §PR-A3):
+//   1. Connect broker
+//   2. Active account selected
+//   3. Universe/index configured
+//   4. LLM key + Green team model
+//   5. Run once → open Proposals
+// Every field is a real snapshot value — never invent readiness.
+
+export type ReadinessStepId =
+  | "connect-broker"
+  | "active-account"
+  | "universe"
+  | "llm"
+  | "run-once";
+
+export interface ReadinessStep {
+  id: ReadinessStepId;
+  title: string;
+  detail: string;
+  complete: boolean;
+  /** Deep-link when incomplete (one CTA per step). */
+  href?: string;
+  ctaLabel?: string;
+}
+
+export interface ReadinessChecklist {
+  /** True only when every step is complete — no false ready when account/universe/LLM missing. */
+  ready: boolean;
+  steps: ReadinessStep[];
+  completedCount: number;
+  totalCount: number;
+  /** Flat flags for tests / iOS parity (PR-D2). */
+  flags: {
+    hasBroker: boolean;
+    hasActiveAccount: boolean;
+    hasUniverse: boolean;
+    hasLlmKey: boolean;
+    hasGreenModel: boolean;
+    hasRunOnce: boolean;
+  };
+}
+
+/** Structured first-run checklist from DashboardSnapshot. Pure — no side effects. */
+export function deriveReadinessChecklist(snapshot: DashboardSnapshot): ReadinessChecklist {
+  const hasBroker = (snapshot.connectedAccounts?.length ?? 0) > 0;
+  const active = activeConnectedAccount(snapshot);
+  // Active account: isActive row, or policy points at a known connected account / account number.
+  const hasActiveAccount = Boolean(
+    active ||
+      (snapshot.policy.connectedAccountId &&
+        snapshot.connectedAccounts?.some((a) => a.id === snapshot.policy.connectedAccountId)) ||
+      (snapshot.policy.accountNumber &&
+        snapshot.connectedAccounts?.some((a) => a.accountNumber === snapshot.policy.accountNumber))
+  );
+  const indices = snapshot.policy.includedIndices ?? [];
+  const extras = snapshot.policy.additionalSymbols ?? [];
+  const hasUniverse = indices.length > 0 || extras.length > 0;
+  // llmConfigured is optional on older payloads — undefined means "not reported, do not block".
+  // Explicit false is the only hard "no key" signal from the snapshot.
+  const hasLlmKey = snapshot.llmConfigured !== false;
+  const hasGreenModel = Boolean(snapshot.policy.llmModel?.trim());
+  const hasRunOnce = Boolean(
+    snapshot.latestStrategyRun ||
+      (snapshot.strategyRuns?.length ?? 0) > 0 ||
+      (snapshot.pendingProposals?.length ?? 0) > 0 ||
+      (snapshot.recentProposals?.length ?? 0) > 0
+  );
+
+  const steps: ReadinessStep[] = [
+    {
+      id: "connect-broker",
+      title: "Connect a broker",
+      detail: hasBroker
+        ? `${snapshot.connectedAccounts.length} account${snapshot.connectedAccounts.length === 1 ? "" : "s"} connected.`
+        : "Connect Alpaca or Robinhood (live when ready; paper is fine for training). The app cannot place orders without a connected account.",
+      complete: hasBroker,
+      href: hasBroker ? undefined : "/console/connections#brokers",
+      ctaLabel: hasBroker ? undefined : "Open Connections"
+    },
+    {
+      id: "active-account",
+      title: "Select an active account",
+      detail: hasActiveAccount
+        ? active
+          ? `Active: ${active.label || active.broker || active.accountNumber || "selected account"}.`
+          : "An account is selected in policy."
+        : hasBroker
+          ? "Pick which connected account this console should trade on."
+          : "Connect a broker first, then select which account is active.",
+      complete: hasActiveAccount,
+      href: hasActiveAccount ? undefined : "/console/connections#brokers",
+      ctaLabel: hasActiveAccount ? undefined : "Choose account"
+    },
+    {
+      id: "universe",
+      title: "Configure universe / index",
+      detail: hasUniverse
+        ? [
+            indices.length > 0 ? `${indices.length} index${indices.length === 1 ? "" : "es"}` : null,
+            extras.length > 0 ? `${extras.length} extra symbol${extras.length === 1 ? "" : "s"}` : null
+          ]
+            .filter(Boolean)
+            .join(" · ") + " in the scan universe."
+        : "Choose at least one base index (e.g. S&P 500) or add watchlist symbols so the strategy has names to scan.",
+      complete: hasUniverse,
+      href: hasUniverse ? undefined : "/console/guardrails",
+      ctaLabel: hasUniverse ? undefined : "Open Guardrails · Universe"
+    },
+    {
+      id: "llm",
+      title: "LLM key + Green team model",
+      detail:
+        hasLlmKey && hasGreenModel
+          ? `Key ready · Green model ${snapshot.policy.llmModel!.trim()}.`
+          : !hasLlmKey
+            ? "Add an OpenRouter (or other) LLM key so Green/Red teams can propose and debate."
+            : "Choose the Green team model that writes trade ideas (Strategy → Models).",
+      complete: hasLlmKey && hasGreenModel,
+      href:
+        hasLlmKey && hasGreenModel
+          ? undefined
+          : !hasLlmKey
+            ? "/console/connections#api-keys"
+            : "/console/strategy#models",
+      ctaLabel:
+        hasLlmKey && hasGreenModel ? undefined : !hasLlmKey ? "Add API key" : "Choose Green model"
+    },
+    {
+      id: "run-once",
+      title: "Run once → review Proposals",
+      detail: hasRunOnce
+        ? "At least one strategy run or proposal is on the record."
+        : "Trigger a manual run to generate the first decision trace, then open Proposals to approve or reject.",
+      complete: hasRunOnce,
+      href: hasRunOnce ? undefined : "/console/approvals",
+      ctaLabel: hasRunOnce ? undefined : "Open Proposals"
+    }
+  ];
+
+  const completedCount = steps.filter((s) => s.complete).length;
+  return {
+    ready: completedCount === steps.length,
+    steps,
+    completedCount,
+    totalCount: steps.length,
+    flags: {
+      hasBroker,
+      hasActiveAccount,
+      hasUniverse,
+      hasLlmKey,
+      hasGreenModel,
+      hasRunOnce
+    }
+  };
+}
+
 // ── Daily spend meter ────────────────────────────────────────────────────────
 
 export interface SpendInfo {
