@@ -1,0 +1,38 @@
+name: Auto-merge congress-trading-shared PRs
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Check if PR updates congress-trading-shared
+        id: check
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          IS_SHARED=false
+          if [[ "$HEAD_REF" =~ (dependabot|congress-trading-shared|shared-package|bump-congress|antigravity/bump) ]]; then
+            IS_SHARED=true
+          elif [[ "$TITLE" =~ (congress-trading-shared|shared-package|@jaywedgeworth22/congress-trading-shared) ]]; then
+            IS_SHARED=true
+          fi
+          echo "is_shared=$IS_SHARED" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge
+        if: steps.check.outputs.is_shared == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          echo "Enabling auto-merge for $PR_URL"
+          gh pr merge --auto --squash --delete-branch "$PR_URL" || echo "Auto-merge already set or failed."
