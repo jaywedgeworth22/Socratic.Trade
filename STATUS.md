@@ -3,6 +3,10 @@ Plain nav labels Home/Scan/Activity/Results/Macro via `DESTINATIONS` + `destinat
 Guardrails Autonomy panel (`#autonomy`) with run state/authority/cadence/readiness + chrome Run
 controls; Settings sticky TOC. B3 via #2426 on main; no policy defaults; A4 `defaultOpen={false}`
 preserved. Supersedes #2413/#2419. Rollout: `docs/rollouts/2026-08-04-ux-wave-b-ia.md`.
+**2026-08-04 — GROK: UX PR-B1 plain nav labels (branch `grok/ux-b1-plain-nav`).** Owner D2:
+Thesis→Home, Evidence→Scan, Journal→Activity, Outcomes→Results, Regime→Macro. `desc`
+tooltips keep metaphor; home CTAs use `destinationLabel`; mobile pins already by href.
+Rollout: `docs/rollouts/2026-08-04-ux-b1-plain-nav-labels.md`.
 **2026-08-04 — GROK: retire direct FMP / QuiverQuant / Unusual Whales.** Owner:
 Socratic.Trade must not call those vendors. Congressional disclosures/analytics from
 Congress.Trade (default ON); **fundamentals from multi-source cascade** (Yahoo/Finnhub/

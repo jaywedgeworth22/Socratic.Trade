@@ -18,7 +18,8 @@ const STORAGE_KEY = "console.mobileTabs.v1";
 export const MOBILE_TABS_MIN = 2;
 export const MOBILE_TABS_MAX = 4;
 
-/** Owner-decided default: Home, Proposals, Activity, Orders (href-keyed pins). */
+/** Owner-decided default pins (stored by href, not label — renames are safe):
+ *  Home, Proposals, Activity, Orders. */
 export const DEFAULT_MOBILE_TAB_HREFS: readonly string[] = [
   "/console",
   "/console/approvals",

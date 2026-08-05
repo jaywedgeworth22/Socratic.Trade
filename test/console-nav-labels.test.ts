@@ -38,6 +38,13 @@ describe("console destination labels (Wave B / PR-B1)", () => {
     }
   });
 
+  it("keeps dest descriptions non-empty for every destination", () => {
+    for (const d of DESTINATIONS) {
+      expect(d.desc.trim().length).toBeGreaterThan(10);
+      expect(d.label.trim().length).toBeGreaterThan(0);
+    }
+  });
+
   it("pins mobile default tabs by href (rename-safe)", () => {
     expect(DEFAULT_MOBILE_TAB_HREFS).toEqual([
       "/console",
@@ -45,5 +52,12 @@ describe("console destination labels (Wave B / PR-B1)", () => {
       "/console/activity",
       "/console/orders"
     ]);
+    // Labels derive from DESTINATIONS via href — never stored as strings.
+    const labels = DEFAULT_MOBILE_TAB_HREFS.map((href) => destinationLabel(href));
+    expect(labels).toEqual(["Home", "Proposals", "Activity", "Orders"]);
+  });
+
+  it("destinationLabel falls back to the href when unknown", () => {
+    expect(destinationLabel("/console/does-not-exist")).toBe("/console/does-not-exist");
   });
 });
