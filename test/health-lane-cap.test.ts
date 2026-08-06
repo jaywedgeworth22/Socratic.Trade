@@ -123,3 +123,39 @@ describe("admin connections panel count formatting", () => {
     expect(formatLaneCallCount(1200, undefined)).toBe("1200");
   });
 });
+
+describe("admin connections intentional OFF (retired FMP/Quiver)", () => {
+  it("treats intentionalOff as muted OFF — never hard-stopped / soft-degraded", async () => {
+    const {
+      isHardStopped,
+      isSoftDegraded,
+      statusTone,
+      laneSortRank
+    } = await import("../app/admin/connections/connections-health-client");
+
+    const retiredFmp = {
+      service: "fmp",
+      keySource: "env" as string | null,
+      lastSuccessTs: null,
+      lastSuccessLatencyMs: null,
+      lastFailureTs: "2026-08-05T00:00:00.000Z",
+      lastFailureError: "403",
+      callsLastHour: 5,
+      callsLast24h: 5,
+      stoppedWorking: true,
+      stoppedReason: "Last 5 consecutive calls failed",
+      stoppedReasonKind: "consecutive-failures" as const,
+      intentionalOff: true
+    };
+
+    expect(isHardStopped(retiredFmp)).toBe(false);
+    expect(isSoftDegraded(retiredFmp)).toBe(false);
+    expect(statusTone(retiredFmp)).toBe("muted");
+    expect(laneSortRank(retiredFmp)).toBe(3);
+
+    const hard = { ...retiredFmp, intentionalOff: false };
+    expect(isHardStopped(hard)).toBe(true);
+    expect(statusTone(hard)).toBe("neg");
+    expect(laneSortRank(hard)).toBe(0);
+  });
+});

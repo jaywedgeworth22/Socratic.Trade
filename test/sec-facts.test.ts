@@ -13,7 +13,8 @@ beforeAll(() => {
 });
 
 vi.mock("../src/lib/web-sources/http", () => ({
-  politeFetch: vi.fn()
+  politeFetch: vi.fn(),
+  BROWSER_UA: "Mozilla/5.0 test"
 }));
 
 describe("SEC Facts and Insider Transactions Ingestion (P4)", () => {

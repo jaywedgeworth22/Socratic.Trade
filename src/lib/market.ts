@@ -17,6 +17,7 @@ import {
 } from "./scan-settings";
 import { fetchYahooFinanceQuote, type YahooFinanceQuote } from "./yahoo-finance";
 import type {
+  EnrichmentFieldObservations,
   EnrichmentSources,
   EquityPosition,
   IndexUniverse,
@@ -29,6 +30,7 @@ import type {
   ScoringWeights,
   UniverseFloor
 } from "./types";
+import { stampFieldObservation } from "./evidence-facts";
 
 /**
  * A web signal worth pulling a below-cutoff name into the candidate set for.
@@ -988,20 +990,73 @@ export function mergeQuoteData(
     if (usedVol) next.volume = extra.provider;
     return next;
   };
+  const stampQuoteMergeObservations = (
+    prior: EnrichmentFieldObservations | undefined,
+    extra: {
+      bid?: number;
+      ask?: number;
+      price?: number;
+      volume?: number;
+      asOf?: string;
+      provider?: string;
+      fetchedAt?: string;
+      syntheticSpread?: boolean;
+      syntheticBid?: boolean;
+      syntheticAsk?: boolean;
+    },
+    resolved: { bid?: number; ask?: number; price?: number; volume?: number }
+  ): EnrichmentFieldObservations | undefined => {
+    if (!extra.provider) return prior;
+    const usedBid = positiveNumber(extra.bid) !== undefined;
+    const usedAsk = positiveNumber(extra.ask) !== undefined;
+    const usedPrice = positiveNumber(extra.price) !== undefined;
+    const usedVol = !!(extra.volume && extra.volume > 0);
+    if (!usedBid && !usedAsk && !usedPrice && !usedVol) return prior;
+    const provider = extra.provider;
+    const asOf = extra.asOf;
+    const fetchedAt = extra.fetchedAt ?? extra.asOf ?? new Date().toISOString();
+    const next: EnrichmentFieldObservations = { ...(prior ?? {}) };
+    if (usedPrice && resolved.price !== undefined) {
+      next.price = stampFieldObservation(resolved.price, provider, { asOf, fetchedAt });
+    }
+    if (usedBid && resolved.bid !== undefined) {
+      const bidSrc =
+        (extra.syntheticBid ?? extra.syntheticSpread) ? `${provider}-synthetic` : provider;
+      next.bid = stampFieldObservation(resolved.bid, bidSrc, { asOf, fetchedAt });
+    }
+    if (usedAsk && resolved.ask !== undefined) {
+      const askSrc =
+        (extra.syntheticAsk ?? extra.syntheticSpread) ? `${provider}-synthetic` : provider;
+      next.ask = stampFieldObservation(resolved.ask, askSrc, { asOf, fetchedAt });
+    }
+    if (usedVol && resolved.volume !== undefined) {
+      next.volume = stampFieldObservation(resolved.volume, provider, { asOf, fetchedAt });
+    }
+    if (asOf) {
+      next.asOf = stampFieldObservation(asOf, provider, { asOf, fetchedAt });
+    }
+    return next;
+  };
+
   const normalize = (quote: MarketQuote): MarketQuote => {
     const extra = quoteData[quote.symbol];
     if (!extra) return quote;
     const usedBid = positiveNumber(extra.bid);
     const usedAsk = positiveNumber(extra.ask);
+    const usedPrice = positiveNumber(extra.price);
     const bidSynthetic = extra.syntheticBid ?? extra.syntheticSpread ?? false;
     const askSynthetic = extra.syntheticAsk ?? extra.syntheticSpread ?? false;
+    const volume =
+      (extra.volume && extra.volume > 0 ? extra.volume : undefined) ??
+      (quote.volume > 0 ? quote.volume : undefined) ??
+      0;
     return {
       ...quote,
       bid: usedBid ?? quote.bid,
       ask: usedAsk ?? quote.ask,
-      price: positiveNumber(extra.price) ?? quote.price,
+      price: usedPrice ?? quote.price,
       // Use broker/Yahoo volume if the screener didn't supply it (NASDAQ tableonly has no volume field).
-      volume: (extra.volume && extra.volume > 0 ? extra.volume : undefined) ?? (quote.volume > 0 ? quote.volume : undefined) ?? 0,
+      volume,
       asOf: extra.asOf ?? quote.asOf,
       provider: extra.provider ?? quote.provider,
       // Venue-delayed execution prices (Tradier sandbox) must survive the merge so policy ages
@@ -1013,7 +1068,13 @@ export function mergeQuoteData(
       // provided, the original quote's flag is preserved by the spread operator above.
       syntheticBid: usedBid ? bidSynthetic : quote.syntheticBid,
       syntheticAsk: usedAsk ? askSynthetic : quote.syntheticAsk,
-      sources: refreshSideProvenance(quote.sources, extra)
+      sources: refreshSideProvenance(quote.sources, extra),
+      fieldObservations: stampQuoteMergeObservations(quote.fieldObservations, extra, {
+        bid: usedBid ?? quote.bid,
+        ask: usedAsk ?? quote.ask,
+        price: usedPrice ?? quote.price,
+        volume
+      })
     };
   };
   const topCandidates = scan.topCandidates.map(normalize);
@@ -1022,20 +1083,34 @@ export function mergeQuoteData(
       const extra = quoteData[quote.symbol];
       const usedBid = positiveNumber(extra?.bid);
       const usedAsk = positiveNumber(extra?.ask);
+      const usedPrice = positiveNumber(extra?.price);
       const bidSynthetic = extra?.syntheticBid ?? extra?.syntheticSpread ?? false;
       const askSynthetic = extra?.syntheticAsk ?? extra?.syntheticSpread ?? false;
+      const volume =
+        extra && extra.volume && extra.volume > 0
+          ? extra.volume
+          : quote.volume;
       const merged: MarketQuoteSummary = {
         ...quote,
         bid: usedBid ?? quote.bid,
         ask: usedAsk ?? quote.ask,
-        price: positiveNumber(extra?.price) ?? quote.price,
+        price: usedPrice ?? quote.price,
+        volume: volume ?? quote.volume,
         provider: extra?.provider ?? quote.provider,
         asOf: extra?.asOf ?? quote.asOf,
         venuePriceAuthoritative: extra?.venuePriceAuthoritative ?? quote.venuePriceAuthoritative,
         fetchedAt: extra?.fetchedAt ?? quote.fetchedAt,
         syntheticBid: usedBid ? bidSynthetic : quote.syntheticBid,
         syntheticAsk: usedAsk ? askSynthetic : quote.syntheticAsk,
-        sources: extra ? refreshSideProvenance(quote.sources, extra) : quote.sources
+        sources: extra ? refreshSideProvenance(quote.sources, extra) : quote.sources,
+        fieldObservations: extra
+          ? stampQuoteMergeObservations(quote.fieldObservations, extra, {
+              bid: usedBid ?? quote.bid,
+              ask: usedAsk ?? quote.ask,
+              price: usedPrice ?? quote.price,
+              volume: volume ?? quote.volume
+            })
+          : quote.fieldObservations
       };
       return [quote.symbol, merged] as const;
     })
@@ -1073,16 +1148,26 @@ export function mergeQuoteData(
 export function mergeGroupedBarData(scan: MarketScan, bars: GroupedDailyBar[], provider = "massive-vwap"): MarketScan {
   const bySymbol = new Map(bars.map((bar) => [normalizeSymbol(bar.ticker), bar]));
   let applied = false;
+  const fetchedAt = new Date().toISOString();
 
   const withVwap = <T extends MarketQuote | MarketQuoteSummary>(quote: T): T => {
     const bar = bySymbol.get(quote.symbol);
     const vwap = positiveNumber(bar?.vwap);
     if (!vwap) return quote;
     applied = true;
+    // Grouped daily bars carry session VWAP; stamp per-field source + time (capability: ohlcv_daily / vwap).
     return {
       ...quote,
       vwap,
-      sources: { ...(quote.sources ?? {}), vwap: provider }
+      sources: { ...(quote.sources ?? {}), vwap: provider },
+      fieldObservations: {
+        ...(quote.fieldObservations ?? {}),
+        vwap: stampFieldObservation(vwap, provider, {
+          // Bar date when present on the payload; else fetch clock.
+          asOf: (bar as { date?: string } | undefined)?.date ?? fetchedAt,
+          fetchedAt
+        })
+      }
     };
   };
   const topCandidates = scan.topCandidates.map(withVwap);

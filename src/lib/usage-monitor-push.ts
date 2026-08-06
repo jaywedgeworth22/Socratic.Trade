@@ -860,11 +860,27 @@ async function flushUsageMonitorOnce(): Promise<void> {
  */
 function recordUsageMonitorHealth(ok: boolean, startedAt: number, err?: unknown): void {
   try {
+    const errorText = ok ? undefined : err instanceof Error ? err.message : String(err);
+    // Expected receiver limits (429/503/timeouts during half-up outages) are soft so the
+    // usage-monitor lane does not paint red STOPPED forever while the local breaker already
+    // backs off pushes. Auth/schema/config errors stay hard.
+    const soft =
+      !ok &&
+      !!errorText &&
+      (/\bHTTP 429\b|\bHTTP 503\b|\brate limit|\btoo many requests|\bECONNRESET\b|\bETIMEDOUT\b|\babort(?:ed|ion)?\b|\btimeout\b/i.test(
+        errorText
+      ) ||
+        (typeof err === "object" &&
+          err != null &&
+          "status" in err &&
+          (Number((err as { status?: unknown }).status) === 429 ||
+            Number((err as { status?: unknown }).status) === 503)));
     logApiHealth({
       service: HEALTH_SERVICE,
       ok,
       latencyMs: Date.now() - startedAt,
-      ...(ok ? {} : { errorText: err instanceof Error ? err.message : String(err) }),
+      ...(errorText ? { errorText } : {}),
+      soft,
     });
   } catch {
     /* health recording is best-effort; never break the caller/replay path */

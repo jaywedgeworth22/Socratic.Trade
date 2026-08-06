@@ -47,7 +47,7 @@ const SETTINGS_TOC: ReadonlyArray<{ id: string; label: string }> = [
   { id: "sharing", label: "Sharing" },
   { id: "learning-review", label: "Learning review" },
   { id: "scan-shape", label: "Scan shape" },
-  { id: "fmp-features", label: "FMP" },
+  { id: "fmp-features", label: "FMP (retired)" },
   { id: "confirmation", label: "Confirmation" },
   { id: "boot", label: "Boot" },
   { id: "you", label: "You" },
@@ -673,71 +673,58 @@ function YouCard() {
   );
 }
 
-// ── All accounts: FMP Features ───────────────────────────────────────────────
+// ── All accounts: FMP Features (retired for product use) ─────────────────────
 
 function FmpFeaturesCard() {
-  const { snapshot, refresh } = useConsoleData();
-  const autoSave = useAutoSave();
+  const { snapshot } = useConsoleData();
   if (!snapshot) return null;
 
-  const policy = snapshot.policy;
-
+  // Direct FMP is retired in Socratic.Trade (owner 2026-08-04). Defaults are false; toggles
+  // stay visible as read-only OFF so existing policies don't look "on" and operators know
+  // where FMP-class latency lives (Congress.Trade), not ST Connections.
   return (
-    <Card title="Financial Modeling Prep (FMP) Features" action={<SaveStatus status={autoSave.status} />}>
+    <Card
+      title="Financial Modeling Prep (FMP) — retired"
+      action={<Chip tone="muted">OFF</Chip>}
+    >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Toggle which FMP data modules are active. These settings are user-level and apply across all your accounts. Defaults to ON.
+        Direct FMP access is retired for Socratic.Trade product use. Fundamentals and market
+        enrichment come from the multi-source cascade (Yahoo, Finnhub, ROIC, SEC, …). FMP-class
+        latency probes and congressional alt-data live on{" "}
+        <strong className="font-semibold text-[color:var(--con-muted)]">Congress.Trade</strong>
+        {" "}— not here. Policy toggles default off and are disabled.
       </p>
       <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 opacity-70">
           <div>
             <div className="text-[length:var(--con-fs-sm)] font-semibold">Real-Time & Index Data</div>
-            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Real-time quotes, ETF holdings, sector weightings, and index market data.</p>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Retired — not called from this app.</p>
           </div>
-          <Toggle
-            checked={policy.fmpRealTimeDataEnabled !== false}
-            onChange={(next) => autoSave.save(() => savePolicy({ fmpRealTimeDataEnabled: next }).then(() => refresh()))}
-            disabled={autoSave.saving}
-            label="Real-Time Data"
-          />
+          <Toggle checked={false} onChange={() => {}} disabled label="Real-Time Data" />
         </div>
-        
-        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 opacity-70">
           <div>
             <div className="text-[length:var(--con-fs-sm)] font-semibold">Macro & Commodities</div>
-            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">BTC/ETH, VIX, Treasury Yields, GDP, CPI, Crude Oil, and Gold data.</p>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Retired — not called from this app.</p>
           </div>
-          <Toggle
-            checked={policy.fmpMacroDataEnabled !== false}
-            onChange={(next) => autoSave.save(() => savePolicy({ fmpMacroDataEnabled: next }).then(() => refresh()))}
-            disabled={autoSave.saving}
-            label="Macro Data"
-          />
+          <Toggle checked={false} onChange={() => {}} disabled label="Macro Data" />
         </div>
 
-        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 opacity-70">
           <div>
             <div className="text-[length:var(--con-fs-sm)] font-semibold">Events & News</div>
-            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Earnings calendars, economic calendars, and FMP market news.</p>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Retired — not called from this app.</p>
           </div>
-          <Toggle
-            checked={policy.fmpEventsDataEnabled !== false}
-            onChange={(next) => autoSave.save(() => savePolicy({ fmpEventsDataEnabled: next }).then(() => refresh()))}
-            disabled={autoSave.saving}
-            label="Events Data"
-          />
+          <Toggle checked={false} onChange={() => {}} disabled label="Events Data" />
         </div>
 
-        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 opacity-70">
           <div>
             <div className="text-[length:var(--con-fs-sm)] font-semibold">Deep Fundamentals</div>
-            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Advanced Market Metrics (DCF, Piotroski, Altman Z-Scores) and Analyst Ratings.</p>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Retired — multi-source cascade instead of FMP.</p>
           </div>
-          <Toggle
-            checked={policy.fmpFundamentalsDataEnabled !== false}
-            onChange={(next) => autoSave.save(() => savePolicy({ fmpFundamentalsDataEnabled: next }).then(() => refresh()))}
-            disabled={autoSave.saving}
-            label="Fundamentals Data"
-          />
+          <Toggle checked={false} onChange={() => {}} disabled label="Fundamentals Data" />
         </div>
       </div>
     </Card>

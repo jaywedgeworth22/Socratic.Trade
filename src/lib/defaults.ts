@@ -154,10 +154,13 @@ export const DEFAULT_POLICY: TradingPolicy = {
   riskRules: DEFAULT_RISK_RULES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   taxSettings: DEFAULT_TAX_SETTINGS,
-  fmpRealTimeDataEnabled: true,
-  fmpMacroDataEnabled: true,
-  fmpEventsDataEnabled: true,
-  fmpFundamentalsDataEnabled: true
+  // FMP direct product use is retired (owner 2026-08-04): defaults OFF so Settings and new
+  // policies do not advertise FMP modules as active. ST consumes FMP-class latency via
+  // Congress.Trade; these toggles are legacy / no-op for the cascade.
+  fmpRealTimeDataEnabled: false,
+  fmpMacroDataEnabled: false,
+  fmpEventsDataEnabled: false,
+  fmpFundamentalsDataEnabled: false
   // No default broker: a fresh policy is broker-neutral. activeBroker is set when a real broker is
   // connected (see db-profiles.ts). With no connected account the app cannot place orders — there is
   // no local-sim fallback.
