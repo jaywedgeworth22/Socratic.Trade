@@ -70,6 +70,12 @@ const NAV_ITEMS: NavItem[] = [
     icon: Layers
   },
   {
+    href: "/admin/data-catalog",
+    label: "Data catalog",
+    desc: "All fields + possible sources, RAG/numeric completeness %, provenance policy.",
+    icon: Database
+  },
+  {
     href: "/admin/server",
     label: "Server Stats",
     desc: "Host node metrics and Coolify application resource statuses.",
