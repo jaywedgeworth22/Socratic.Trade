@@ -12,6 +12,7 @@
 import type { CongressTrade } from "./types";
 import type { InsiderFiling } from "./sec";
 import type { ContextDocument } from "../vector-db";
+import { envFlagOn } from "../rag/env-flag";
 import { resolveSourceBool } from "../source-settings";
 
 // ── Flag ─────────────────────────────────────────────────────────────────────
