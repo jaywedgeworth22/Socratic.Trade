@@ -5,6 +5,9 @@ Full 8-K/10-K/10-Q/earnings-transcript stay native; extractive `document-summary
 `earnings-summary` abstracts for LLM proposal use; routing + coverage expanded; Infisical
 8-K full-body + EarningsCalls daily knobs on. Rollout: `docs/rollouts/2026-08-05-rag-multi-source-ingest.md`.
 
+## Current (2026-08-05 GROK You're set card center)
+
+**Collapsed readiness card vertical center (branch `grok/youre-set-card-vertical-center`).** Closed collapsible cards get balanced header padding + min-height so "YOU'RE SET" sits centered. Rollout: `docs/rollouts/2026-08-05-youre-set-card-vertical-center.md`.
 ## Current (2026-08-05 GROK mobile tab bar chrome gap)
 
 **Mobile tab bar: close 80% of Safari chrome gap + continuous surface (branch `grok/mobile-tabbar-gap-and-chrome-bg`).** Measure gap above floating URL chrome; shift `.con-tabbar` down 80%; solid surface underlay for remaining gap + under translucent chrome so colder `--con-bg` no longer flashes around the address bar. Rollout: `docs/rollouts/2026-08-05-mobile-tabbar-chrome-gap.md`.
