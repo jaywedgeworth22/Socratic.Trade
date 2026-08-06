@@ -45,3 +45,46 @@ export function isRetiredDirectVendorUrl(url: string): boolean {
   const lower = url.toLowerCase();
   return RETIRED_DIRECT_VENDOR_HOSTS.some((host) => lower.includes(host));
 }
+
+/**
+ * Health-lane / Connections service names that are intentionally retired for
+ * product use. Admin Connections health must show these as muted OFF — never
+ * red STOPPED — even when historical failure rows exist in api_health_log.
+ *
+ * Includes FMP native + RapidAPI / transcript variants and Quiver / UW.
+ */
+export function isIntentionalOffHealthService(service: string): boolean {
+  const s = service.trim().toLowerCase();
+  if (!s) return false;
+  if (s === "fmp" || s.startsWith("fmp-") || s.startsWith("fmp_")) return true;
+  if (s === "quiverquant" || s === "quiver" || s.startsWith("quiver")) return true;
+  if (
+    s === "unusual_whales" ||
+    s === "unusual-whales" ||
+    s.includes("unusualwhales") ||
+    s.includes("unusual_whales")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Short operator-facing reason for Connections health OFF chip / detail. */
+export function intentionalOffHealthReason(service: string): string {
+  const s = service.trim().toLowerCase();
+  if (s === "fmp" || s.startsWith("fmp-") || s.startsWith("fmp_")) {
+    return "FMP direct access is retired in Socratic.Trade; FMP-class latency lives on Congress.Trade";
+  }
+  if (s === "quiverquant" || s === "quiver" || s.startsWith("quiver")) {
+    return "QuiverQuant direct access is retired; congressional / alt-data via Congress.Trade";
+  }
+  if (
+    s === "unusual_whales" ||
+    s === "unusual-whales" ||
+    s.includes("unusualwhales") ||
+    s.includes("unusual_whales")
+  ) {
+    return "Unusual Whales is not a Socratic.Trade producer (permanently retired)";
+  }
+  return directVendorRetirementMessage("fmp");
+}

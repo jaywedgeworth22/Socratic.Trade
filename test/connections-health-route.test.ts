@@ -72,4 +72,55 @@ describe("connections-health API route", () => {
     expect(avLanes).toHaveLength(1);
     expect(avLanes[0]?.keySource).toBe("env");
   });
+
+  it("marks FMP as intentional OFF (not stopped) even with consecutive failure rows", async () => {
+    const { db, route } = await load();
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({
+        service: "fmp",
+        ok: false,
+        errorText: "403 subscription suspended",
+        keySource: "env",
+      });
+    }
+
+    const response = await route.GET(authenticatedAdminRequest());
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      services: Array<{
+        service: string;
+        keySource: string | null;
+        intentionalOff?: boolean;
+        stoppedWorking: boolean;
+        stoppedReason: string | null;
+      }>;
+    };
+    const fmpLanes = body.services.filter((lane) => lane.service === "fmp");
+    expect(fmpLanes.length).toBeGreaterThanOrEqual(1);
+    for (const lane of fmpLanes) {
+      expect(lane.intentionalOff).toBe(true);
+      expect(lane.stoppedWorking).toBe(false);
+      expect(lane.stoppedReason).toMatch(/retired|Congress\.Trade/i);
+    }
+  });
+
+  it("marks historical quiverquant log lanes intentional OFF", async () => {
+    const { db, route } = await load();
+    db.logApiHealth({
+      service: "quiverquant",
+      ok: false,
+      errorText: "retired",
+      keySource: "env",
+    });
+
+    const response = await route.GET(authenticatedAdminRequest());
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      services: Array<{ service: string; intentionalOff?: boolean; stoppedWorking: boolean }>;
+    };
+    const quiver = body.services.filter((lane) => lane.service === "quiverquant");
+    expect(quiver.length).toBe(1);
+    expect(quiver[0]?.intentionalOff).toBe(true);
+    expect(quiver[0]?.stoppedWorking).toBe(false);
+  });
 });

@@ -1,3 +1,18 @@
+## Current (2026-08-05 GROK API key plan tiers)
+
+**Plan-tier dropdowns on Connections API keys (branch `grok/data-sources-overhaul`).** Optional market-data keys declare free/power/starter/…; persist `user_api_keys.plan_tier` (v70); `provider-tier-plan.ts` → `resolveProviderQuota` when env knobs unset; FMP marked Retired · CT-only. Rollout: `docs/rollouts/2026-08-05-api-key-plan-tiers.md`.
+
+## Current (2026-08-05 GROK FMP/Quiver health OFF)
+
+**FMP/Quiver intentional OFF on admin Connections + FMP policy defaults false (branch `grok/data-sources-overhaul`).** Retired vendors show muted OFF chip (not red STOPPED), excluded from stopped/degraded counts; DEFAULT_POLICY fmp* toggles false; Settings FMP card retired→Congress.Trade; keys POST rejects FMP. Rollout: `docs/rollouts/2026-08-05-fmp-quiver-health-off.md`.
+
+## Current (2026-08-05 GROK provenance stamps)
+
+**Provenance completeness on scan/cache/history (branch `grok/data-sources-overhaul`).** Cascade stamps sharesOutstanding+headlines; mergeQuoteData/bar fieldObservations; OHLC + history_cache_eod.source (v71); macro fieldSources; calendar observations. Rollout: `docs/rollouts/2026-08-05-provenance-stamps-completeness.md`.
+
+
+**2026-08-05 — GROK team: data sources overhaul (IN PR).** Capability matrix + ROIC transcript scheduler; FMP/Quiver health OFF; soft expected-limit health; plan-tier key dropdowns; provenance stamps; CT FMP latency family OFF grey (Congress.Trade #1417). Branch `grok/data-sources-overhaul`. Rollouts under `docs/rollouts/2026-08-05-*-*.md` + umbrella `data-sources-overhaul`.
+
 ## Current (2026-08-05 GROK You're set card center)
 
 **Collapsed readiness card vertical center (branch `grok/youre-set-card-vertical-center`).** Closed collapsible cards get balanced header padding + min-height so "YOU'RE SET" sits centered. Rollout: `docs/rollouts/2026-08-05-youre-set-card-vertical-center.md`.
