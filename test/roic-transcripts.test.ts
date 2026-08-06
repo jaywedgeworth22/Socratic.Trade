@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseRoicTranscriptResponse } from "../src/lib/web-sources/roic-transcripts";
+import {
+  parseRoicTranscriptResponse,
+  recentFiscalPeriods
+} from "../src/lib/web-sources/roic-transcripts";
 
 describe("roic-transcripts", () => {
   it("parses valid transcript JSON response", () => {
@@ -28,5 +31,18 @@ describe("roic-transcripts", () => {
 
     const parsed = parseRoicTranscriptResponse(short, "AAPL", 2024, 1);
     expect(parsed).toBeNull();
+  });
+
+  it("recentFiscalPeriods walks backward from last completed calendar quarter", () => {
+    // 2026-08-05 → current Q3 incomplete → start at Q2 2026
+    const periods = recentFiscalPeriods(new Date("2026-08-05T12:00:00Z"), 3);
+    expect(periods).toEqual([
+      { year: 2026, quarter: 2 },
+      { year: 2026, quarter: 1 },
+      { year: 2025, quarter: 4 }
+    ]);
+    // January → last completed is Q4 prior year
+    const jan = recentFiscalPeriods(new Date("2026-01-15T00:00:00Z"), 1);
+    expect(jan).toEqual([{ year: 2025, quarter: 4 }]);
   });
 });

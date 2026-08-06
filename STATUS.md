@@ -10,6 +10,9 @@
 
 **Provenance completeness on scan/cache/history (branch `grok/data-sources-overhaul`).** Cascade stamps sharesOutstanding+headlines; mergeQuoteData/bar fieldObservations; OHLC + history_cache_eod.source (v71); macro fieldSources; calendar observations. Rollout: `docs/rollouts/2026-08-05-provenance-stamps-completeness.md`.
 
+
+**2026-08-05 — GROK team: data sources overhaul (IN PR).** Capability matrix + ROIC transcript scheduler; FMP/Quiver health OFF; soft expected-limit health; plan-tier key dropdowns; provenance stamps; CT FMP latency family OFF grey (Congress.Trade #1417). Branch `grok/data-sources-overhaul`. Rollouts under `docs/rollouts/2026-08-05-*-*.md` + umbrella `data-sources-overhaul`.
+
 ## Current (2026-08-05 GROK mobile tab bar chrome gap)
 
 **Mobile tab bar: close 80% of Safari chrome gap + continuous surface (branch `grok/mobile-tabbar-gap-and-chrome-bg`).** Measure gap above floating URL chrome; shift `.con-tabbar` down 80%; solid surface underlay for remaining gap + under translucent chrome so colder `--con-bg` no longer flashes around the address bar. Rollout: `docs/rollouts/2026-08-05-mobile-tabbar-chrome-gap.md`.
