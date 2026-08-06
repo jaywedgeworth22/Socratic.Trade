@@ -441,6 +441,53 @@ export function extractFilingText(html: string): string {
  * - On failure, returns the error string rather than swallowing it.
  * - Always writes with userId='local' so cleanMetadata → scope:'shared'.
  */
+/**
+ * When the full body is already in `ingested_accessions`, still rewrite the
+ * compact extractive abstract if it is missing or stamped with an older model.
+ * Uses local SEC HTML artifacts only (no EDGAR re-fetch). Best-effort.
+ */
+export async function maybeRefreshSecFilingAbstract(
+  ticker: string,
+  filingRef: FilingRef,
+  _userId: string = "local"
+): Promise<void> {
+  const sourceType = filingRef.docType === "10-Q" ? "10q-delta" : "10k-delta";
+  const { abstractNeedsUpgrade, generateAndStoreDocumentAbstract, tradeHighlightChunksFromText } =
+    await import("../rag/document-summarizer");
+  if (!abstractNeedsUpgrade(filingRef.accession, sourceType)) return;
+
+  const cik = await getCikForTicker(ticker);
+  if (!cik) return;
+  const html = await readLocalArtifact(
+    cik,
+    filingRef.accession,
+    1,
+    filingRef.primaryDoc || "main.html"
+  );
+  if (!html || html.length < 200) return;
+
+  const { text, sections } = parseFilingHtml(html, { formType: filingRef.docType });
+  if (text.length < 100) return;
+  const formHint = filingRef.docType === "10-Q" ? "10-Q" : "10-K";
+  await generateAndStoreDocumentAbstract({
+    ticker,
+    accessionOrEventId: filingRef.accession,
+    sourceType,
+    headline: `${ticker} ${filingRef.docType} highlights (${filingRef.filedAt})`,
+    chunks: tradeHighlightChunksFromText(text, {
+      maxChunks: 8,
+      formHint,
+      sections: sections.map((s) => ({
+        itemCode: s.itemCode,
+        itemTitle: s.itemTitle,
+        text: s.text
+      }))
+    }),
+    publishedAt: filingRef.filedAt,
+    acceptanceDatetime: filingRef.acceptanceDateTime ?? filingRef.filedAt
+  });
+}
+
 export async function ingestFiling(
   ticker: string,
   filingRef: FilingRef,
@@ -458,6 +505,15 @@ export async function ingestFiling(
   // (clear ingested_accessions rows for the affected docTypes), not by weakening this
   // sole-gate skip.
   if (hasIngestedAccession(filingRef.accession, filingRef.docType)) {
+    // Body is already ledgered — still upgrade extractive abstracts when model lags.
+    try {
+      await maybeRefreshSecFilingAbstract(ticker, filingRef, userId);
+    } catch (err) {
+      console.warn(
+        `[sec-filings] abstract refresh skipped for ${filingRef.accession}:`,
+        err instanceof Error ? err.message : String(err)
+      );
+    }
     return { skipped: true, chunks: 0 };
   }
 
@@ -615,12 +671,21 @@ export async function ingestFiling(
       "../rag/document-summarizer"
     );
     const sourceType = filingRef.docType === "10-Q" ? "10q-delta" : "10k-delta";
+    const formHint = filingRef.docType === "10-Q" ? "10-Q" : "10-K";
     await generateAndStoreDocumentAbstract({
       ticker,
       accessionOrEventId: filingRef.accession,
       sourceType,
       headline: `${ticker} ${filingRef.docType} highlights (${filingRef.filedAt})`,
-      chunks: tradeHighlightChunksFromText(text, { maxChunks: 8 }),
+      chunks: tradeHighlightChunksFromText(text, {
+        maxChunks: 8,
+        formHint,
+        sections: sections.map((s) => ({
+          itemCode: s.itemCode,
+          itemTitle: s.itemTitle,
+          text: s.text
+        }))
+      }),
       publishedAt: filingRef.filedAt,
       acceptanceDatetime: filingRef.acceptanceDateTime ?? filingRef.filedAt
     });

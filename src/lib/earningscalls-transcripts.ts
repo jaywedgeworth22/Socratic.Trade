@@ -910,7 +910,10 @@ async function ingestCachedTranscript(
       accessionOrEventId: accession,
       sourceType: "earnings-summary",
       headline: `${row.symbol} earnings call highlights ${row.fiscalYear} Q${row.fiscalQuarter}`,
-      chunks: tradeHighlightChunksFromText(row.content, { maxChunks: 8 }),
+      chunks: tradeHighlightChunksFromText(row.content, {
+        maxChunks: 8,
+        formHint: "earnings"
+      }),
       publishedAt: row.eventDate ?? row.fetchedAt,
       acceptanceDatetime: row.fetchedAt
     });
