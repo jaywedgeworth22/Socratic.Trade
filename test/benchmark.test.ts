@@ -172,14 +172,64 @@ describe("normalizeAgainstBenchmark", () => {
       { date: "2026-06-01", close: 500 },
       { date: "2026-06-02", close: 500 }
     ];
-    // $10k of the equity rise is a market gain on positions... this fixture holds everything
-    // in cash terms: cash went 100k → 200k with no trades = +100k external flow.
+    // $10k of the equity rise is a market gain; cash went 100k → 200k with no trades = +100k flow.
     const flows = inferExternalCashFlows(equity, []);
     expect(flows.get("2026-06-02")).toBeCloseTo(100_000, 2);
     const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
     expect(r.cashFlowAdjusted).toBe(true);
-    // TWR: 210k / (100k + 100k) − 1 = +5%
-    expect(r.accountReturnPct).toBeCloseTo(5, 2);
+    // Capital-adjusted: (210k − 100k − 100k deposit) / 100k = +10% market P&L on starting capital.
+    expect(r.accountReturnPct).toBeCloseTo(10, 2);
+    expect(r.netExternalFlows).toBeCloseTo(100_000, 2);
+  });
+
+  it("neutralizes a withdrawal while positions stay open", () => {
+    // Started $100k (50k cash + 50k stock). Withdraw $20k cash. Stock flat. Equity 100k → 80k.
+    // Must read ~0% account return, not −20%.
+    const equity = [
+      { timestamp: "2026-05-01T16:00:00Z", equity: 100_000, cash: 50_000, positionsValue: 50_000, source: "paper" as const },
+      { timestamp: "2026-05-02T16:00:00Z", equity: 80_000, cash: 30_000, positionsValue: 50_000, source: "paper" as const }
+    ];
+    const spy = [
+      { date: "2026-05-01", close: 500 },
+      { date: "2026-05-02", close: 500 }
+    ];
+    const flows = inferExternalCashFlows(equity, []);
+    expect(flows.get("2026-05-02")).toBeCloseTo(-20_000, 2);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.cashFlowAdjusted).toBe(true);
+    expect(r.netExternalFlows).toBeCloseTo(-20_000, 2);
+    // (80k − 100k − (−20k)) / 100k = 0%
+    expect(r.accountReturnPct).toBeCloseTo(0, 2);
+    const raw = normalizeAgainstBenchmark(equity, spy)!;
+    expect(raw.accountReturnPct).toBeCloseTo(-20, 2);
+  });
+
+  it("nets deposit then withdrawal to the true market P&L", () => {
+    // 100k all cash → +50k deposit → 150k → −30k withdrawal → 120k → positions mark +5k → 125k.
+    const equity = [
+      { timestamp: "2026-01-02T16:00:00Z", equity: 100_000, cash: 100_000, positionsValue: 0, source: "paper" as const },
+      { timestamp: "2026-02-02T16:00:00Z", equity: 150_000, cash: 150_000, positionsValue: 0, source: "paper" as const },
+      { timestamp: "2026-03-02T16:00:00Z", equity: 120_000, cash: 120_000, positionsValue: 0, source: "paper" as const },
+      // Deploy cash into stock (fill), then mark up:
+      { timestamp: "2026-03-03T16:00:00Z", equity: 120_000, cash: 20_000, positionsValue: 100_000, source: "paper" as const },
+      { timestamp: "2026-04-02T16:00:00Z", equity: 125_000, cash: 20_000, positionsValue: 105_000, source: "paper" as const }
+    ];
+    const spy = [
+      { date: "2026-01-02", close: 500 },
+      { date: "2026-02-02", close: 500 },
+      { date: "2026-03-02", close: 500 },
+      { date: "2026-03-03", close: 500 },
+      { date: "2026-04-02", close: 500 }
+    ];
+    const flows = inferExternalCashFlows(equity, [
+      fill({ filledAt: "2026-03-03T15:00:00Z", side: "buy", notional: 100_000 })
+    ]);
+    expect(flows.get("2026-02-02")).toBeCloseTo(50_000, 2);
+    expect(flows.get("2026-03-02")).toBeCloseTo(-30_000, 2);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.netExternalFlows).toBeCloseTo(20_000, 2); // +50 − 30
+    // (125 − 100 − 20) / 100 = +5%
+    expect(r.accountReturnPct).toBeCloseTo(5, 1);
   });
 
   it("ignores sub-threshold cash drift (dividends/fees are not transfers)", () => {
@@ -191,7 +241,9 @@ describe("normalizeAgainstBenchmark", () => {
     expect(flows.size).toBe(0);
   });
 
-  it("returns no flows when the curve has no cash data (synthetic curves)", () => {
+  it("treats no-cash flat books as transfers when equity jumps without trades", () => {
+    // Missing cash fields but no positions metadata and no fills → equity delta is a transfer
+    // (paper reset / deposit). Previously these returned no flows and raw TWR misread them as alpha.
     const flows = inferExternalCashFlows(
       curve([
         ["2026-08-01T16:00:00Z", 100_000],
@@ -199,7 +251,26 @@ describe("normalizeAgainstBenchmark", () => {
       ]),
       []
     );
-    expect(flows.size).toBe(0);
+    expect(flows.get("2026-08-02")).toBeCloseTo(-50_000, 2);
+  });
+
+  it("all-cash prefers cash≈equity even when positionsValue is wrongly equal to equity", () => {
+    // Regression: isAllCash used to check positionsValue FIRST, so a buggy positionsValue=equity
+    // (while cash is full equity) blocked the all-cash deposit path and inflated account return.
+    const equity = [
+      { timestamp: "2026-01-02T16:00:00Z", equity: 66_000, cash: 66_000, positionsValue: 66_000, source: "paper" as const },
+      { timestamp: "2026-02-02T16:00:00Z", equity: 100_000, cash: 100_000, positionsValue: 100_000, source: "paper" as const }
+    ];
+    const spy = [
+      { date: "2026-01-02", close: 500 },
+      { date: "2026-02-02", close: 500 }
+    ];
+    const flows = inferExternalCashFlows(equity, []);
+    expect(flows.get("2026-02-02")).toBeCloseTo(34_000, 2);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.accountReturnPct).toBeCloseTo(0, 1);
+    const raw = normalizeAgainstBenchmark(equity, spy)!;
+    expect(raw.accountReturnPct).toBeGreaterThan(50);
   });
 
   it("all-cash paper resets/deposits are neutralized (owner +31% vs SPY bug)", () => {
@@ -275,5 +346,44 @@ describe("normalizeAgainstBenchmark", () => {
     expect(r.cashFlowAdjusted).toBe(true);
     // Rebase with 0% for the wiped period — leftover $5k is new principal, not a −95% loss.
     expect(r.accountReturnPct).toBeCloseTo(0, 1);
+  });
+});
+
+describe("computeSpyBenchmark synthetic curve guard", () => {
+  it("refuses a synthetic $100-base fill curve even when tipped with a live $100k snapshot", async () => {
+    // Repro: paperAverage/syntheticPaperCurve builds equity=100+realized; dashboard tips with
+    // live totalMarketValue ~$100k. Old hasRealSnapshot=some(cash) treated the tip as enough
+    // and TWR read ~+tens of thousands % as "Your account".
+    const { computeSpyBenchmark } = await import("../src/lib/benchmark");
+    const synthetic: EquityCurvePoint[] = [
+      { timestamp: "2026-07-01T16:00:00Z", equity: 100, source: "paper" },
+      { timestamp: "2026-07-15T16:00:00Z", equity: 150, source: "paper" },
+      {
+        timestamp: "2026-08-05T16:00:00Z",
+        equity: 100_000,
+        cash: 95_000,
+        positionsValue: 5_000,
+        source: "paper"
+      }
+    ];
+    // fetchDailyOHLC may be called if guard fails — mock by only testing the filter: with a
+    // single real point the function returns null before network.
+    const result = await computeSpyBenchmark(synthetic, "local", Date.parse("2026-08-05T16:00:00Z"), []);
+    expect(result).toBeNull();
+  });
+
+  it("accepts two real snapshots (with cash) and computes a sane small return", async () => {
+    const { computeSpyBenchmark } = await import("../src/lib/benchmark");
+    const real: EquityCurvePoint[] = [
+      { timestamp: "2026-07-01T16:00:00Z", equity: 100_000, cash: 100_000, positionsValue: 0, source: "paper" },
+      { timestamp: "2026-08-05T16:00:00Z", equity: 99_000, cash: 90_000, positionsValue: 9_000, source: "paper" }
+    ];
+    // May return null if SPY history fetch fails in offline CI — either null or a small negative
+    // account return is acceptable; never a huge positive.
+    const result = await computeSpyBenchmark(real, "local", Date.parse("2026-08-05T16:00:00Z"), []);
+    if (result) {
+      expect(result.accountReturnPct).toBeLessThan(5);
+      expect(result.accountReturnPct).toBeGreaterThan(-20);
+    }
   });
 });

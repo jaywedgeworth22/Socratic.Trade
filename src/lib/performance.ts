@@ -1663,9 +1663,38 @@ function winRate(lots: ClosedLot[]): number {
   return (lots.filter((lot) => lot.pnl > 0).length / lots.length) * 100;
 }
 
+/**
+ * Closed-trade return for the account scorecard.
+ *
+ * Prefer **capital-weighted** return: sum(pnl) / sum(|entry notional|) × 100.
+ * The old unweighted mean of per-lot returnPct made a handful of small +50% round-trips
+ * read as "the account is up 50%" while NAV was flat or down on large open losers.
+ * Falls back to unweighted mean only when entry prices are missing (legacy lots).
+ */
 function averageReturn(lots: ClosedLot[]): number {
   if (lots.length === 0) return 0;
-  return lots.reduce((sum, lot) => sum + lot.returnPct, 0) / lots.length;
+  let weightedPnl = 0;
+  let weightedCapital = 0;
+  let unweightedSum = 0;
+  let unweightedN = 0;
+  for (const lot of lots) {
+    unweightedSum += lot.returnPct;
+    unweightedN += 1;
+    const entry = lot.entryPrice;
+    // Reconstruct entry notional when we have entry price; ClosedLot does not store quantity,
+    // but pnl / (returnPct/100) = entry notional for the matched size.
+    if (entry != null && entry > 0 && Number.isFinite(lot.returnPct) && Math.abs(lot.returnPct) > 1e-9) {
+      const entryNotional = Math.abs(lot.pnl / (lot.returnPct / 100));
+      if (Number.isFinite(entryNotional) && entryNotional > 0) {
+        weightedPnl += lot.pnl;
+        weightedCapital += entryNotional;
+        continue;
+      }
+    }
+    // Flat lots (returnPct ≈ 0) still count capital if we can recover notional from pnl≈0 — skip.
+  }
+  if (weightedCapital > 0) return (weightedPnl / weightedCapital) * 100;
+  return unweightedN > 0 ? unweightedSum / unweightedN : 0;
 }
 
 function positiveNumber(value: unknown): number | undefined {

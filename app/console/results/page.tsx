@@ -233,19 +233,19 @@ export default function ResultsPage() {
                 label="Your account"
                 value={fmtPct(perf.benchmark.accountReturnPct, 2, true)}
                 sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`}
-                title="Time-weighted account return over this window when cash flows can be detected; otherwise raw account equity growth. This is the account return before subtracting SPY."
+                title="Capital-adjusted return: (ending equity − starting equity − net deposits/withdrawals) ÷ starting equity. Deposits and withdrawals are stripped so only market P&L remains. Not the same as unweighted trade averages."
               />
               <Stat
                 label={perf.benchmark.benchmarkSymbol}
                 value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)}
                 sub="same window, buy and hold"
-                title="What the same dollars would have done tracking SPY over this window (buy and hold). Excess = your account return minus this."
+                title="What buy-and-hold SPY did over the same calendar window. Excess = your account return minus this."
               />
               <div>
                 <div className="con-card-title">vs {perf.benchmark.benchmarkSymbol}</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold">
                   <SignedText value={perf.benchmark.excessReturnPct}>
-                    <span title="Your account return minus SPY over the same window. If this is +5% and SPY is +8%, the account returned +13%. Deposits/withdrawals are neutralized so transfers are not counted as alpha.">
+                    <span title="Your capital-adjusted account return minus SPY over the same window. Deposits and withdrawals are neutralized so transfers are not counted as performance.">
                       {fmtPct(perf.benchmark.excessReturnPct, 2, true)}
                     </span>
                   </SignedText>
@@ -257,10 +257,10 @@ export default function ResultsPage() {
             </div>
             <p className="mt-3 border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
               {perf.benchmark.cashFlowAdjusted
-                ? `Time-weighted return — adjusted for ${fmtMoney(Math.abs(perf.benchmark.netExternalFlows ?? 0))} of detected ${
+                ? `Capital-adjusted — stripped ${fmtMoney(Math.abs(perf.benchmark.netExternalFlows ?? 0))} net ${
                     (perf.benchmark.netExternalFlows ?? 0) < 0 ? "withdrawals" : "deposits"
-                  } so the comparison is “same dollars tracking SPY.” Flows are inferred from account snapshots, not a broker transfer ledger.`
-                : "Raw equity growth over the window — no deposits or withdrawals were detected. If money moved in or out without being captured in snapshots, this includes those transfers and is not a pure return figure."}
+                  } (deposits +, withdrawals −) so only market P&L counts. Flows are inferred from account snapshots and fills, not a broker transfer ledger.`
+                : "No material deposits or withdrawals detected in snapshots. If money moved in or out without being captured, this figure still includes those transfers."}
             </p>
           </>
         ) : (
@@ -546,7 +546,7 @@ function BucketCard({
           <div className="con-num mt-0.5">{hasAny && typeof winRate === "number" ? fmtPct(winRate, 0) : EM_DASH}</div>
         </div>
         <div>
-          <div className="con-card-title" title="Raw realized return per closed trade in this bucket, not benchmark-relative. The separate SPY panel below handles benchmark/excess return.">Avg return / closed trade</div>
+          <div className="con-card-title" title="Capital-weighted realized return across closed lots (sum of P&amp;L ÷ sum of entry notional). Not the same as account NAV change — open positions and cash are excluded. Unweighted trade averages were retired because small round-trips dominated. The SPY panel below is the account equity time-weighted return.">Avg return / closed capital</div>
           <div className="con-num mt-0.5" title="Raw realized return per closed trade, based on entry and exit prices. It is not adjusted for SPY or market beta.">
             {hasAny && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}
           </div>
