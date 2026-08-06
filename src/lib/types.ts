@@ -2508,27 +2508,43 @@ export interface BenchmarkSeriesPoint {
  * returned +13%. Computed on the fly from portfolio snapshots + SPY daily closes; null/absent when
  * there isn't enough history or SPY data is unavailable (degrade to "—").
  */
+/**
+ * One capital regime between deposits/withdrawals (or a coalesced no-flow run of snapshots).
+ * Account and SPY returns are for this sub-period only; overall TWR is the geometric product
+ * of (1 + r_i) across subPeriods.
+ */
+export interface BenchmarkSubPeriod {
+  startDate: string;
+  endDate: string;
+  startEquity: number;
+  endEquity: number;
+  /** External cash on endDate: deposit +, withdrawal −, 0 if none. */
+  externalFlow: number;
+  accountReturnPct: number;
+  benchmarkReturnPct: number;
+}
+
 export interface BenchmarkComparison {
   equityIndex: BenchmarkSeriesPoint[];
   benchmarkIndex: BenchmarkSeriesPoint[];
-  /** Account total return over the window (%, base→last). Capital-adjusted simple return:
-   *  (V_end − V_start − netExternalFlows) / V_start — deposits (+) and withdrawals (−) stripped. */
+  /** Account multi-period time-weighted return (%, geometric chain of sub-period returns
+   *  between each deposit/withdrawal). External cash is neutralized each sub-period. */
   accountReturnPct: number;
-  /** Benchmark (SPY) total return over the same window (%). */
+  /** SPY multi-period return over the same sub-period calendar windows, geometrically chained
+   *  the same way (equals full-window SPY buy-hold when segments cover the timeline). */
   benchmarkReturnPct: number;
-  /** accountReturnPct − benchmarkReturnPct, in percentage points (positive = outperformance).
-   *  Same-dollars-vs-SPY alpha: deposits/withdrawals are neutralized on the account side. */
+  /** accountReturnPct − benchmarkReturnPct, in percentage points (positive = outperformance). */
   excessReturnPct: number;
   startDate: string;
   endDate: string;
   points: number;
   benchmarkSymbol: string;
-  /** True when at least one material external deposit/withdrawal was inferred and stripped
-   *  from accountReturnPct. False/absent = no material flows detected (raw equity growth). */
+  /** Back-to-back capital regimes (split at each inferred deposit/withdrawal). */
+  subPeriods?: BenchmarkSubPeriod[];
+  /** True when at least one material external deposit/withdrawal was inferred and neutralized. */
   cashFlowAdjusted?: boolean;
   /** Net inferred external flow over the window in dollars (deposits positive, withdrawals
-   *  negative). Present when cashFlowAdjusted is true. Inferred from snapshot cash/equity
-   *  deltas minus recorded trade cash — an estimate, not a broker transfer ledger. */
+   *  negative). Present when cashFlowAdjusted is true. */
   netExternalFlows?: number;
 }
 
