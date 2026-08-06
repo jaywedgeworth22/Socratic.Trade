@@ -126,6 +126,13 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(dispatches, 2)
     }
 
+    func testCloudflareOriginDownErrorsAreUserReadable() {
+        let error = MobileAPIError.serverError(statusCode: 522, message: nil)
+        let text = error.errorDescription ?? ""
+        XCTAssertTrue(text.contains("522"), text)
+        XCTAssertTrue(text.contains("unreachable") || text.contains("Cloudflare"), text)
+    }
+
     func testEventsRequestUsesSSEAcceptAndLongTimeout() {
         let client = MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!)
         let request = client.eventsRequest()
