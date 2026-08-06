@@ -24,6 +24,7 @@ import { logApiHealth } from "../db-health";
 import { getInternalSetting, setInternalSetting } from "../db-settings";
 import { normalizeSymbol } from "../money";
 import { lookupRegisteredPlanTier, roicTranscriptQuartersForPlan } from "../provider-tier-plan";
+import { resolveSourceBool, resolveSourceNumber } from "../source-settings";
 import { storeDocument } from "../vector-db";
 
 export const ROIC_TRANSCRIPT_DOC_TYPE = "earnings-transcript";
@@ -41,13 +42,7 @@ function flagOn(value: string | undefined): boolean {
 
 /** Owner kill-switch — halts ROIC transcript fetch without deleting the key. */
 export function roicTranscriptsKillSwitchOn(): boolean {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { resolveSourceBool } = require("../source-settings") as typeof import("../source-settings");
-    return resolveSourceBool("ROIC_TRANSCRIPTS_DISABLED");
-  } catch {
-    return flagOn(process.env.ROIC_TRANSCRIPTS_DISABLED);
-  }
+  return resolveSourceBool("ROIC_TRANSCRIPTS_DISABLED");
 }
 
 /** Key present (user or env) and kill-switch off. */
@@ -62,15 +57,8 @@ function ttlMs(): number {
 }
 
 function maxTranscriptsPerRun(): number {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { resolveSourceNumber } = require("../source-settings") as typeof import("../source-settings");
-    const n = resolveSourceNumber("ROIC_TRANSCRIPTS_MAX_PER_RUN");
-    return Math.max(1, Math.min(50, Number.isFinite(n) ? n : DEFAULT_MAX_TRANSCRIPTS_PER_RUN));
-  } catch {
-    const n = Number(process.env.ROIC_TRANSCRIPTS_MAX_PER_RUN ?? DEFAULT_MAX_TRANSCRIPTS_PER_RUN);
-    return Math.max(1, Math.min(50, Number.isFinite(n) ? n : DEFAULT_MAX_TRANSCRIPTS_PER_RUN));
-  }
+  const n = resolveSourceNumber("ROIC_TRANSCRIPTS_MAX_PER_RUN");
+  return Math.max(1, Math.min(50, Number.isFinite(n) ? n : DEFAULT_MAX_TRANSCRIPTS_PER_RUN));
 }
 
 /** Effective quarters: env override wins, else Connections plan tier, else free-safe 2. */

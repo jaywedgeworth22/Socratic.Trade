@@ -22,6 +22,7 @@ import {
 } from "../db";
 import { normalizeSymbol } from "../money";
 import { envFlagOn } from "../rag/env-flag";
+import { resolveSourceBool } from "../source-settings";
 import {
   eligibleMaterialTriggerUserIds,
   enqueueMaterialEventsForUsersTx,
@@ -836,9 +837,6 @@ function assertEightKIngestLease(leaseGuard?: VectorStoreLeaseGuard): void {
 
 /** Whether full 8-K body ingestion is enabled (default OFF). Settings / Infisical. */
 export function eightKFullBodyEnabled(): boolean {
-  // Lazy require avoids circular import at module load (sec8k ↔ source-settings ↔ db).
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { resolveSourceBool } = require("../source-settings") as typeof import("../source-settings");
   return resolveSourceBool("WEB_SOURCE_SEC8K_FULL_BODY");
 }
 
