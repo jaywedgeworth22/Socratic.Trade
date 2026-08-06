@@ -758,9 +758,9 @@ describe("RequestQuota (sliding-window, fake clock)", () => {
     expect(quota.admit("filingapi", "k", 100)).toBe(0); // day's budget already spent
   });
 
-  it("admits up to roic's 10000/day default and denies once the day's budget is spent", () => {
+  it("admits up to roic's free-safe 300/day default and denies once the day's budget is spent", () => {
     const quota = new RequestQuota(new FakeClock());
-    expect(quota.admit("roic", "k", 15000)).toBe(10000);
+    expect(quota.admit("roic", "k", 15000)).toBe(300);
     expect(quota.admit("roic", "k", 15000)).toBe(0);
   });
 
