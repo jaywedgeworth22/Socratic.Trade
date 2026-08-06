@@ -110,9 +110,12 @@ describe("ingestEightKBody (full-body ingest path when the flag is on)", () => {
       EVENT.filingUrl,
       expect.objectContaining({ headers: expect.any(Object) })
     );
-    expect(mocks.storeDocument).toHaveBeenCalledTimes(1);
+    // Full 8-K body + extractive document-summary abstract (trade highlights).
+    expect(mocks.storeDocument).toHaveBeenCalledTimes(2);
     const [doc] = mocks.storeDocument.mock.calls[0]!;
     expect(doc).toMatchObject({ ticker: "AAPL", doc_type: "8-k", source: "sec-8k" });
+    const abstractDoc = mocks.storeDocument.mock.calls[1]![0] as { doc_type?: string; source?: string };
+    expect(abstractDoc).toMatchObject({ doc_type: "document-summary", source: "document-summarizer" });
     // Recorded in ingested_accessions so a second call for the same accession is skipped.
     expect(hasIngestedAccession(EVENT.accession, "8-K-body")).toBe(true);
   });
@@ -249,7 +252,8 @@ describe("ingestEightKBodies (batch path called from refreshEightK when the flag
     expect(result.ingested).toBe(2);
     expect(result.skipped).toBe(0);
     expect(result.errors).toEqual([]);
-    expect(mocks.storeDocument).toHaveBeenCalledTimes(2);
+    // 2 full bodies + 2 highlight abstracts
+    expect(mocks.storeDocument).toHaveBeenCalledTimes(4);
   });
 
   it("stops before fetching the tail after capacity is exhausted and returns every deferred accession", async () => {

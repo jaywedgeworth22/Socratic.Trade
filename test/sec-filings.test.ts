@@ -685,7 +685,8 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     expect(result.ingested).toBe(1);
     expect(result.attempted).toBe(2); // the successful one + the pre-flight that stopped the run
     expect(result.deferredForBudget).toBe(2); // min(4, 25) - 2 processed
-    expect(mocks.storeDocument).toHaveBeenCalledTimes(1);
+    // Full filing body + extractive document-summary abstract
+    expect(mocks.storeDocument).toHaveBeenCalledTimes(2);
   });
 
   it("does not trust content-only dedup as occurrence completion and still advances fairly", async () => {
@@ -707,7 +708,8 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     expect(result.attempted).toBe(2); // both of AAPL's pending filings processed
     expect(result.skipped).toBe(1); // the healed one
     expect(result.ingested).toBe(1); // the second one embedded normally
-    expect(mocks.storeDocument).toHaveBeenCalledTimes(2);
+    // incomplete + full body + abstract
+    expect(mocks.storeDocument).toHaveBeenCalledTimes(3);
     expect(result.errors).toEqual([]);
   });
 

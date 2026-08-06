@@ -246,7 +246,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
 
     const payload = coverageAudits[0]!.payload as { emptyDocTypes?: string[]; requestedDocTypes?: string[] };
     expect(payload.emptyDocTypes).toEqual(["10-k"]);
-    expect(payload.requestedDocTypes).toEqual(["10-k", "10-q", "8-k"]);
+    expect(payload.requestedDocTypes).toEqual(["10-k", "10-q", "8-k", "document-summary"]);
 
     const cases = listSocraticDecisionCases("local", { runId: result.runId });
     expect(cases.length).toBeGreaterThanOrEqual(1);

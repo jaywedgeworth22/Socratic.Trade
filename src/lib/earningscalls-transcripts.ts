@@ -899,6 +899,28 @@ async function ingestCachedTranscript(
   const at = new Date().toISOString();
   recordIngestedLedgerRow(accession, normalizeSymbol(row.symbol), stored.attempted, at);
   markEarningsCallsTranscriptIngested(row.symbol, row.fiscalYear, row.fiscalQuarter, at);
+
+  // Compact earnings-summary for LLM trade use (full earnings-transcript stays in the corpus).
+  try {
+    const { generateAndStoreDocumentAbstract, tradeHighlightChunksFromText } = await import(
+      "./rag/document-summarizer"
+    );
+    await generateAndStoreDocumentAbstract({
+      ticker: row.symbol,
+      accessionOrEventId: accession,
+      sourceType: "earnings-summary",
+      headline: `${row.symbol} earnings call highlights ${row.fiscalYear} Q${row.fiscalQuarter}`,
+      chunks: tradeHighlightChunksFromText(row.content, { maxChunks: 8 }),
+      publishedAt: row.eventDate ?? row.fetchedAt,
+      acceptanceDatetime: row.fetchedAt
+    });
+  } catch (err) {
+    console.warn(
+      `[earningscalls] abstract failed for ${accession}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
   return true;
 }
 

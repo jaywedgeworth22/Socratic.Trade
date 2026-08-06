@@ -1,3 +1,9 @@
+## Current (2026-08-05 GROK multi-source RAG)
+
+**Earnings transcripts + SEC full bodies + trade highlights in RAG (branch `grok/rag-multi-source-ingest`).**
+Full 8-K/10-K/10-Q/earnings-transcript stay native; extractive `document-summary` /
+`earnings-summary` abstracts for LLM proposal use; routing + coverage expanded; Infisical
+8-K full-body + EarningsCalls daily knobs on. Rollout: `docs/rollouts/2026-08-05-rag-multi-source-ingest.md`.
 ## Current (2026-08-05 GROK API key plan tiers)
 
 **Plan-tier dropdowns on Connections API keys (branch `grok/data-sources-overhaul`).** Optional market-data keys declare free/power/starter/…; persist `user_api_keys.plan_tier` (v70); `provider-tier-plan.ts` → `resolveProviderQuota` when env knobs unset; FMP marked Retired · CT-only. Rollout: `docs/rollouts/2026-08-05-api-key-plan-tiers.md`.

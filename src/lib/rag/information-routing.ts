@@ -34,10 +34,18 @@ const INFORMATION_NEED_SPECS: Record<InformationNeed, {
   open_orders: { channel: "structured", structuredSource: "orders" },
   financial_facts: { channel: "structured", structuredSource: "financial_facts" },
   insider_transactions: { channel: "structured", structuredSource: "insider_transactions" },
-  filing_narrative: { channel: "semantic", documentTypes: ["10-k", "10-q", "8-k"] },
-  earnings_transcript_narrative: { channel: "semantic", documentTypes: ["earnings-transcript"] },
+  // Full filings + compact document-summary abstracts (trade-relevant highlights for the LLM).
+  filing_narrative: {
+    channel: "semantic",
+    documentTypes: ["10-k", "10-q", "8-k", "document-summary"]
+  },
+  // Full call text + earnings-summary abstracts when the document-summarizer has run.
+  earnings_transcript_narrative: {
+    channel: "semantic",
+    documentTypes: ["earnings-transcript", "earnings-summary"]
+  },
   lesson_narrative: { channel: "semantic", documentTypes: ["lesson"] },
-  research_narrative: { channel: "semantic", documentTypes: ["research"] }
+  research_narrative: { channel: "semantic", documentTypes: ["research", "document-summary"] }
 };
 
 export interface InformationRoutingPlan {

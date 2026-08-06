@@ -994,7 +994,9 @@ describe("resolution fallback + lease/ingest semantics (adapted from the pre-red
 
     let capturedOptions: { leaseGuard?: { signal?: unknown; assertOwnership?: unknown } } | undefined;
     storeDocumentStub.impl = (...args: unknown[]) => {
-      capturedOptions = args[2] as typeof capturedOptions;
+      // Full transcript ingest passes leaseGuard; the follow-on earnings-summary abstract does not.
+      const opts = args[2] as typeof capturedOptions;
+      if (opts?.leaseGuard) capturedOptions = opts;
       return Promise.resolve({ attempted: 3, indexed: 3, documentComplete: true });
     };
     result = await refreshEarningsCallsTranscriptsIfDue(NOW, noHttp);
