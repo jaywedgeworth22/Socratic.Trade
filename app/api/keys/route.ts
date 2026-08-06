@@ -1,8 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiKeyEnvVarForService, listUserApiKeys, LOCAL_USER, maskApiKeyPreview, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
+import {
+  apiKeyEnvVarForService,
+  listUserApiKeys,
+  LOCAL_USER,
+  maskApiKeyPreview,
+  normalizeApiKeyService,
+  upsertUserApiKey,
+  deleteUserApiKey,
+  setUserApiKeyPlanTier,
+  resolveApiKeyWithSource
+} from "@/lib/db";
 import { checkAdmin } from "@/lib/auth/admin";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { queueStPrimaryBridgeWriterSync } from "@/lib/st-primary-bridge-writer";
+import {
+  defaultPlanTierForService,
+  isRetiredMarketDataService,
+  isValidPlanTierForService,
+  planTierOptionsForService,
+  servicesWithPlanTierUi
+} from "@/lib/provider-tier-plan";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +33,7 @@ export const dynamic = "force-dynamic";
  *
  * GET  /api/keys             → list all keys for the current user
  * GET  /api/keys?service=<s> → resolve key (user → env fallback)
- * POST /api/keys  { service, apiKey, label? }  → upsert key
+ * POST /api/keys  { service, apiKey?, label?, planTier? }  → upsert key and/or plan tier
  * DELETE /api/keys?service=<s>  → delete key
  */
 
@@ -98,8 +115,10 @@ const API_KEY_CATALOG = [
     label: "Financial Modeling Prep",
     category: "Market data",
     required: false,
-    unlocks: "Fundamentals, ratios, analyst grades, and earnings-related enrichment.",
-    docsUrl: "https://site.financialmodelingprep.com/developer/docs"
+    unlocks: "Retired on Socratic.Trade — CT-only. Do not use for ST product enrichment.",
+    docsUrl: "https://site.financialmodelingprep.com/developer/docs",
+    retired: true,
+    retiredNote: "Retired on Socratic.Trade (Congress.Trade only). Key row kept for archaeology; product code never calls FMP."
   },
   {
     service: "alphavantage",
@@ -159,6 +178,46 @@ const API_KEY_CATALOG = [
     docsUrl: "https://twelvedata.com/account/api-keys"
   },
   {
+    service: "roic",
+    label: "ROIC.ai",
+    category: "Market data",
+    required: false,
+    unlocks: "Company profile, fundamentals ratios, and earnings-call transcript pages.",
+    docsUrl: "https://roic.ai"
+  },
+  {
+    service: "filingapi",
+    label: "FilingAPI",
+    category: "Market data",
+    required: false,
+    unlocks: "Sector/industry, earnings calendar proximity, and insider-sentiment summaries.",
+    docsUrl: "https://filingapi.dev"
+  },
+  {
+    service: "marketaux",
+    label: "MarketAux",
+    category: "Market sentiment",
+    required: false,
+    unlocks: "News stream with free-tier daily budget (scarce — use after free floors).",
+    docsUrl: "https://www.marketaux.com/"
+  },
+  {
+    service: "earningscalls",
+    label: "EarningsCalls.dev",
+    category: "Transcripts",
+    required: false,
+    unlocks: "Earnings-call transcripts (preview vs paid entitlement).",
+    docsUrl: "https://earningscalls.dev"
+  },
+  {
+    service: "rapidapi",
+    label: "RapidAPI",
+    category: "Market data",
+    required: false,
+    unlocks: "Shared marketplace key for RapidAPI-hosted finance hosts (scarce daily budgets).",
+    docsUrl: "https://rapidapi.com/"
+  },
+  {
     service: "fintechstudios",
     label: "Fintech Studios",
     category: "Market sentiment",
@@ -187,11 +246,24 @@ const API_KEY_CATALOG = [
 
 const VALID_SERVICES: ReadonlySet<string> = new Set(API_KEY_CATALOG.map((item) => item.service));
 const ST_PRIMARY_BRIDGE_SERVICES: ReadonlySet<string> = new Set(["gemini", "deepseek"]);
+const PLAN_TIER_SERVICES = servicesWithPlanTierUi();
 
 function queuePrimaryBridgeAfterTrackedMutation(userId: string, service: string): void {
   if (userId === LOCAL_USER && ST_PRIMARY_BRIDGE_SERVICES.has(service)) {
     queueStPrimaryBridgeWriterSync();
   }
+}
+
+function planTierFields(service: string, storedPlanTier?: string | null) {
+  if (!PLAN_TIER_SERVICES.has(service)) {
+    return { planTier: undefined as string | undefined, planTierOptions: undefined as undefined };
+  }
+  const options = planTierOptionsForService(service) ?? [];
+  const planTier = storedPlanTier && storedPlanTier.length > 0 ? storedPlanTier : defaultPlanTierForService(service);
+  return {
+    planTier,
+    planTierOptions: options
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -216,12 +288,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: `Invalid service. Must be one of: ${[...VALID_SERVICES].join(", ")}` }, { status: 400 });
     }
     const resolved = resolveApiKeyWithSource(canonical, userId);
+    const keys = listUserApiKeys(userId);
+    const stored = keys.find((k) => normalizeApiKeyService(k.service) === canonical);
+    const tiers = planTierFields(canonical, stored?.planTier);
     return NextResponse.json({
       service: canonical,
       configured: Boolean(resolved.key),
       source: resolved.source,
       envVar: resolved.envVar,
-      preview: previewFor(resolved)
+      preview: previewFor(resolved),
+      ...tiers,
+      retired: isRetiredMarketDataService(canonical)
       // NOTE: never return the actual key in a GET response for security — `preview` is the
       // elided first-8/last-4 form only (see maskApiKeyPreview).
     });
@@ -235,6 +312,8 @@ export async function GET(request: NextRequest) {
       const stored = storedByService.get(entry.service);
       const resolved = resolveApiKeyWithSource(entry.service, userId);
       const envVar = apiKeyEnvVarForService(entry.service);
+      const tiers = planTierFields(entry.service, stored?.planTier);
+      const retired = "retired" in entry && entry.retired === true;
       return {
         ...entry,
         envVar,
@@ -242,7 +321,10 @@ export async function GET(request: NextRequest) {
         source: resolved.source,
         preview: previewFor(resolved),
         updatedAt: stored?.updatedAt,
-        savedLabel: stored?.label
+        savedLabel: stored?.label,
+        ...tiers,
+        retired: retired || isRetiredMarketDataService(entry.service),
+        retiredNote: "retiredNote" in entry ? entry.retiredNote : undefined
       };
     })
   });
@@ -250,19 +332,84 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as { userId?: string; service?: string; apiKey?: string; label?: string };
-    const { service, apiKey, label } = body;
+    const body = (await request.json()) as {
+      userId?: string;
+      service?: string;
+      apiKey?: string;
+      label?: string;
+      planTier?: string | null;
+    };
+    const { service, apiKey, label, planTier } = body;
     const userId = resolveRequestUserId(request, body);
 
     const canonical = service ? normalizeApiKeyService(service) : "";
     if (!canonical || !VALID_SERVICES.has(canonical)) {
       return NextResponse.json({ error: `service is required and must be one of: ${[...VALID_SERVICES].join(", ")}` }, { status: 400 });
     }
-    if (!apiKey || typeof apiKey !== "string" || apiKey.trim().length === 0) {
-      return NextResponse.json({ error: "apiKey is required and must be a non-empty string" }, { status: 400 });
+
+    // FMP (and any other catalog row marked retired / retired-market-data) cannot be stored for
+    // product use — ST does not call those vendors; Congress.Trade owns that class of data.
+    if (isRetiredMarketDataService(canonical) || API_KEY_CATALOG.some((e) => e.service === canonical && "retired" in e && e.retired === true)) {
+      return NextResponse.json(
+        {
+          error:
+            "This provider is retired on Socratic.Trade. Use Congress.Trade for FMP-class latency / congressional alt-data; do not store a key here."
+        },
+        { status: 400 }
+      );
     }
 
-    const result = upsertUserApiKey(userId, canonical, apiKey.trim(), label);
+    if (planTier !== undefined && planTier !== null && planTier !== "") {
+      if (!isValidPlanTierForService(canonical, planTier)) {
+        const opts = planTierOptionsForService(canonical);
+        return NextResponse.json(
+          {
+            error: opts
+              ? `planTier must be one of: ${opts.map((o) => o.id).join(", ")}`
+              : "planTier is not supported for this service"
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    const hasKey = typeof apiKey === "string" && apiKey.trim().length > 0;
+    const hasTierUpdate = planTier !== undefined;
+
+    // Tier-only update: no secret re-paste required when a key already exists.
+    if (!hasKey && hasTierUpdate) {
+      const updated = setUserApiKeyPlanTier(userId, canonical, planTier === "" ? null : planTier);
+      if (!updated) {
+        return NextResponse.json(
+          { error: "No stored key for this service — paste an apiKey when setting planTier for the first time." },
+          { status: 400 }
+        );
+      }
+      queuePrimaryBridgeAfterTrackedMutation(userId, canonical);
+      return NextResponse.json({
+        success: true,
+        key: {
+          id: updated.id,
+          service: updated.service,
+          label: updated.label,
+          planTier: updated.planTier ?? defaultPlanTierForService(canonical),
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt
+        }
+      });
+    }
+
+    if (!hasKey) {
+      return NextResponse.json({ error: "apiKey is required and must be a non-empty string (or pass planTier alone to update tier)" }, { status: 400 });
+    }
+
+    const result = upsertUserApiKey(
+      userId,
+      canonical,
+      apiKey!.trim(),
+      label,
+      planTier === undefined ? undefined : planTier === "" ? null : planTier
+    );
     queuePrimaryBridgeAfterTrackedMutation(userId, canonical);
     return NextResponse.json({
       success: true,
@@ -270,6 +417,7 @@ export async function POST(request: NextRequest) {
         id: result.id,
         service: result.service,
         label: result.label,
+        planTier: result.planTier ?? (PLAN_TIER_SERVICES.has(canonical) ? defaultPlanTierForService(canonical) : undefined),
         createdAt: result.createdAt,
         updatedAt: result.updatedAt
       }

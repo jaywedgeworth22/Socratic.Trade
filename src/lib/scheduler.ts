@@ -10,6 +10,7 @@ import { runCongressDailyShareIfDue } from "./congress-share";
 import { runMarketScanFreshnessIfDue } from "./market-scan-freshness";
 import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getInternalSetting, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
 import { isEarningsCallsRefreshDue, refreshEarningsCallsTranscriptsIfDue } from "./earningscalls-transcripts";
+import { isRoicTranscriptRefreshDue, refreshRoicTranscriptsIfDue } from "./web-sources/roic-transcripts";
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
@@ -614,6 +615,16 @@ async function tick(): Promise<void> {
   if (isEarningsCallsRefreshDue() && checkMonthlyLlmSpendCeiling().ok) {
     void journalLane("earningscalls-refresh", {}, () => refreshEarningsCallsTranscriptsIfDue()).catch((err) =>
       console.error("[scheduler] earningscalls transcript refresh error:", err instanceof Error ? err.message : err)
+    );
+  }
+
+  // ROIC.ai full-text transcripts (key = opt-in; ROIC_TRANSCRIPTS_DISABLED=1 kill-switch).
+  // Prefer this over free EarningsCalls previews when the ROIC individual plan is configured.
+  // Holdings → watchlist, last N fiscal quarters, cap ROIC_TRANSCRIPTS_MAX_PER_RUN.
+  // Library helpers existed earlier without a scheduler caller — that left zero ROIC saves.
+  if (isRoicTranscriptRefreshDue() && checkMonthlyLlmSpendCeiling().ok) {
+    void journalLane("roic-transcript-refresh", {}, () => refreshRoicTranscriptsIfDue()).catch((err) =>
+      console.error("[scheduler] roic transcript refresh error:", err instanceof Error ? err.message : err)
     );
   }
 

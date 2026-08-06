@@ -58,7 +58,8 @@ vi.mock("../src/lib/web-sources/http", () => ({
   politeFetchText: mocks.politeFetchText,
   secUserAgent: mocks.secUserAgent,
   sleep: mocks.sleep,
-  runRateLimited: mocks.runRateLimited
+  runRateLimited: mocks.runRateLimited,
+  BROWSER_UA: "Mozilla/5.0 test"
 }));
 
 vi.mock("../src/lib/web-sources/sec8k", () => ({

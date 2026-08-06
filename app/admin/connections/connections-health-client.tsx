@@ -25,6 +25,8 @@ interface ServiceHealthSummary {
   // have never logged a call.
   stoppedReasonKind?: "consecutive-failures" | "no-success-ever" | "no-success-this-hour" | null;
   laneLogCap?: number;
+  /** Product-retired vendor (FMP / Quiver / UW) — render muted OFF, never red STOPPED. */
+  intentionalOff?: boolean;
 }
 
 interface HealthLogRow {
@@ -71,10 +73,18 @@ function relTime(iso: string | null): string {
  *  merely warming up. This is the same hard/soft split app/api/health/route.ts already uses to
  *  decide what fails liveness versus what is only `degraded` — keep the two consistent.
  *  A stopped lane with no `stoppedReasonKind` (never-seen shape) counts as HARD: fail loud rather
- *  than silently demoting a real outage to a muted chip. */
-function isHardStopped(s: ServiceHealthSummary): boolean {
+ *  than silently demoting a real outage to a muted chip.
+ *  Product-retired vendors (intentionalOff) never count as hard-stopped. */
+export function isHardStopped(s: ServiceHealthSummary): boolean {
+  if (s.intentionalOff) return false;
   if (!s.stoppedWorking) return false;
   return s.stoppedReasonKind !== "no-success-ever" && s.stoppedReasonKind !== "no-success-this-hour";
+}
+
+/** Soft degraded only — excludes intentional OFF and hard stops. Exported for unit tests. */
+export function isSoftDegraded(s: ServiceHealthSummary): boolean {
+  if (s.intentionalOff) return false;
+  return Boolean(s.stoppedWorking) && !isHardStopped(s);
 }
 
 /** Window call counts come from a log capped at `laneLogCap` rows per lane, so a count that reached
@@ -90,12 +100,22 @@ function callCountTitle(laneLogCap: number | undefined): string | undefined {
   return `Only the most recent ${laneLogCap} calls per lane are retained, so these counts saturate at ${laneLogCap}+.`;
 }
 
-function statusTone(s: ServiceHealthSummary): "pos" | "neg" | "warn" | "muted" {
+/** Exported for unit tests — intentional OFF is always muted grey, never red/yellow alarm. */
+export function statusTone(s: ServiceHealthSummary): "pos" | "neg" | "warn" | "muted" {
+  if (s.intentionalOff) return "muted";
   if (isHardStopped(s)) return "neg";
   if (s.stoppedWorking) return "warn";
   if (!s.lastSuccessTs) return s.callsLast24h > 0 ? "warn" : "muted";
   if (s.lastFailureTs && s.lastFailureTs > s.lastSuccessTs) return "warn";
   return "pos";
+}
+
+/** Sort weight: hard stops first, then soft degraded, then active, then intentional OFF last. */
+export function laneSortRank(s: ServiceHealthSummary): number {
+  if (s.intentionalOff) return 3;
+  if (isHardStopped(s)) return 0;
+  if (s.stoppedWorking) return 1;
+  return 2;
 }
 
 // ── Service card ──────────────────────────────────────────────────────────────
@@ -111,6 +131,7 @@ function ServiceCard({
 }) {
   const tone = statusTone(summary);
   const hardStopped = isHardStopped(summary);
+  const intentionalOff = Boolean(summary.intentionalOff);
   const capTitle = callCountTitle(summary.laneLogCap);
 
   // Hand-authored card recipe (not .con-card): the con-card class sets
@@ -137,9 +158,11 @@ function ServiceCard({
             )}
           </span>
         </div>
-        {summary.stoppedWorking && (
+        {intentionalOff ? (
+          <Chip tone="muted">OFF</Chip>
+        ) : summary.stoppedWorking ? (
           hardStopped ? <Chip tone="neg">STOPPED</Chip> : <Chip tone="warn">DEGRADED</Chip>
-        )}
+        ) : null}
       </div>
 
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
@@ -155,7 +178,12 @@ function ServiceCard({
         </div>
       )}
 
-      {summary.stoppedWorking && summary.stoppedReason && (
+      {intentionalOff && summary.stoppedReason && (
+        <div className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          {summary.stoppedReason}
+        </div>
+      )}
+      {!intentionalOff && summary.stoppedWorking && summary.stoppedReason && (
         <div className={cx("mt-2 text-[length:var(--con-fs-xs)]", hardStopped ? "text-[color:var(--con-neg)]" : "text-[color:var(--con-warn)]")}>
           {summary.stoppedReason}
         </div>
@@ -321,9 +349,11 @@ export function ConnectionsHealthClient() {
   // Split rather than one flat "N stopped": a lane tripped by the soft "no success yet this hour"
   // heuristic (one cold failure is enough) is not the same event as a lane that failed five calls in
   // a row, and merging them made the header count read alarmingly high for a healthy box.
-  const stoppedLanes = data?.services.filter((s) => s.stoppedWorking) ?? [];
+  // Intentional OFF (retired FMP/Quiver/UW) never contributes to stopped/degraded header chips.
+  const activeLanes = data?.services.filter((s) => !s.intentionalOff) ?? [];
+  const stoppedLanes = activeLanes.filter((s) => s.stoppedWorking);
   const hardStoppedCount = stoppedLanes.filter(isHardStopped).length;
-  const degradedCount = stoppedLanes.length - hardStoppedCount;
+  const degradedCount = stoppedLanes.filter(isSoftDegraded).length;
 
   return (
     <div className="space-y-4">
@@ -375,12 +405,10 @@ export function ConnectionsHealthClient() {
                 {data.services
                   .slice()
                   .sort((a, b) => {
-                    // Hard-stopped first, then soft-degraded, then healthy — same weighting as the
-                    // header chips, so the list order matches the counts above it.
-                    const aHard = isHardStopped(a);
-                    const bHard = isHardStopped(b);
-                    if (aHard !== bHard) return aHard ? -1 : 1;
-                    if (a.stoppedWorking !== b.stoppedWorking) return a.stoppedWorking ? -1 : 1;
+                    // Hard-stopped first, then soft-degraded, then healthy, then intentional OFF —
+                    // same weighting as the header chips, so the list order matches the counts.
+                    const rankDiff = laneSortRank(a) - laneSortRank(b);
+                    if (rankDiff !== 0) return rankDiff;
                     const svcCmp = a.service.localeCompare(b.service);
                     if (svcCmp !== 0) return svcCmp;
                     return (a.keySource ?? "").localeCompare(b.keySource ?? "");

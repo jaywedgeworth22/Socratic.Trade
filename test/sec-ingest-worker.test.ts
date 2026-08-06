@@ -18,7 +18,8 @@ beforeAll(() => {
 
 vi.mock("../src/lib/web-sources/http", () => ({
   politeFetchText: vi.fn(),
-  politeFetch: vi.fn()
+  politeFetch: vi.fn(),
+  BROWSER_UA: "Mozilla/5.0 test"
 }));
 
 vi.mock("../src/lib/vector-db", () => ({

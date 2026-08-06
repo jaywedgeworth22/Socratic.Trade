@@ -235,45 +235,80 @@ export async function fetchDailyOHLC(
   // 1. Evaluate local SQLite history cache
   const localBars = await fetchHistoryCacheEod(symbol);
   if (localBars && localBars.length >= 2 && isBarSeriesFresh(localBars, 3, now)) {
-    cache.set(sharedCacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars: localBars });
+    const stampedLocal = stampOhlcBarProvenance(localBars, "history-cache-eod", new Date(now).toISOString());
+    cache.set(sharedCacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars: stampedLocal });
     emitHistoryDemandFilled(symbol, now);
-    return localBars;
+    return stampedLocal;
   }
 
   // If localBars exists but is STALE, retain for topping up with active provider data
   const staleLocalBars = localBars && localBars.length >= 2 ? localBars : null;
 
   const startDate = new Date(now - 1825 * 24 * 60 * 60_000).toISOString().slice(0, 10);
-  const sources: Array<{ scope: CacheScope; fetch: () => Promise<OHLCBar[] | null> }> = [
+  const sources: Array<{
+    scope: CacheScope;
+    sourceId: string;
+    fetch: () => Promise<OHLCBar[] | null>;
+  }> = [
     // Local imported-EOD cache tier (congress.trade return-path): App A POSTs gap-fill closes to
     // /api/admin/securities/import; they land in imported_price_eod/imported_spx_eod. Reading the local
     // table first (ahead of the App A HTTP read and our keyed providers) lets an imported series displace
     // a re-fetch entirely. DEFAULT OFF + density-guarded inside fetchImportedHistory so a sparse gap-fill
     // never short-circuits with an incomplete series. Close-only bars.
-    { scope: "shared", fetch: async () => fetchImportedHistory(symbol) },
+    { scope: "shared", sourceId: "imported-eod", fetch: async () => fetchImportedHistory(symbol) },
     ...(opts?.skipAppATier
       ? []
-      : [{ scope: "shared" as const, fetch: () => fetchAppAHistory(symbol) }]),
-    { scope: cacheScopeForKeySource(keySources.massive.source, userId), fetch: () => fetchMassive(symbol, startDate, keySources.massive.key) },
+      : [{ scope: "shared" as const, sourceId: "congress.trade", fetch: () => fetchAppAHistory(symbol) }]),
+    {
+      scope: cacheScopeForKeySource(keySources.massive.source, userId),
+      sourceId: "massive",
+      fetch: () => fetchMassive(symbol, startDate, keySources.massive.key)
+    },
     // ROIC.ai historical daily prices (v3 stock-prices). Operator-key only; seats after Massive
     // so a healthy Massive plan still wins, but ROIC covers Massive free-tier history gaps and
     // feeds App A via /api/market/* peer reads without CT holding a ROIC key.
-    { scope: cacheScopeForKeySource(keySources.roic.source, userId), fetch: () => fetchRoic(symbol, startDate, keySources.roic.key) },
+    {
+      scope: cacheScopeForKeySource(keySources.roic.source, userId),
+      sourceId: "roic",
+      fetch: () => fetchRoic(symbol, startDate, keySources.roic.key)
+    },
     // Always "shared" — sourced from the owner's own connected broker account, not a per-user key
     // or consent-gated pool contribution (see resolveTradierHistoryCredential's doc comment).
-    { scope: "shared", fetch: () => fetchTradier(symbol, startDate, tradierCredential.key, tradierCredential.baseUrl) },
-    { scope: cacheScopeForKeySource(keySources.tiingo.source, userId), fetch: () => fetchTiingo(symbol, startDate, keySources.tiingo.key) },
-    { scope: cacheScopeForKeySource(keySources.marketstack.source, userId), fetch: () => fetchMarketstack(symbol, keySources.marketstack.key) },
+    {
+      scope: "shared",
+      sourceId: "tradier",
+      fetch: () => fetchTradier(symbol, startDate, tradierCredential.key, tradierCredential.baseUrl)
+    },
+    {
+      scope: cacheScopeForKeySource(keySources.tiingo.source, userId),
+      sourceId: "tiingo",
+      fetch: () => fetchTiingo(symbol, startDate, keySources.tiingo.key)
+    },
+    {
+      scope: cacheScopeForKeySource(keySources.marketstack.source, userId),
+      sourceId: "marketstack",
+      fetch: () => fetchMarketstack(symbol, keySources.marketstack.key)
+    },
     ...(userId
-      ? [{ scope: cacheScopeForKeySource("user", userId), fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year", userId }) }]
+      ? [
+          {
+            scope: cacheScopeForKeySource("user", userId),
+            sourceId: "robinhood",
+            fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year", userId })
+          }
+        ]
       : []),
-    { scope: "shared", fetch: () => fetchYahoo(symbol) }
+    { scope: "shared", sourceId: "yahoo-finance", fetch: () => fetchYahoo(symbol) }
   ];
 
   for (const source of sources) {
     const liveBars = await source.fetch();
     if (liveBars && liveBars.length >= 2) {
-      const finalBars = staleLocalBars ? mergeOHLCBars(staleLocalBars, liveBars) : liveBars;
+      const fetchedAt = new Date(now).toISOString();
+      const stampedLive = stampOhlcBarProvenance(liveBars, source.sourceId, fetchedAt);
+      const finalBars = staleLocalBars
+        ? stampOhlcBarProvenance(mergeOHLCBars(staleLocalBars, stampedLive), source.sourceId, fetchedAt)
+        : stampedLive;
       persistEodBarsToCache(symbol, finalBars);
 
       const cacheKey = source.scope === "private" ? privateCacheKey : source.scope === "pool" ? poolCacheKey : sharedCacheKey;
@@ -298,8 +333,9 @@ export async function fetchDailyOHLC(
       { symbol, lastBarTime: lastBar?.time, note: "All active EOD price history providers failed or expired; falling back to stale local bars." },
       userId ?? "local"
     );
-    cache.set(sharedCacheKey, { expiresAt: now + 5 * 60_000, bars: staleLocalBars });
-    return staleLocalBars;
+    const stampedStale = stampOhlcBarProvenance(staleLocalBars, "history-cache-eod-stale", new Date(now).toISOString());
+    cache.set(sharedCacheKey, { expiresAt: now + 5 * 60_000, bars: stampedStale });
+    return stampedStale;
   }
 
   recordMarketDataDemand({ kind: "history", symbol, userId, now });
@@ -310,6 +346,25 @@ function historyCacheKey(symbol: string, userId: string | undefined, scope: Cach
   if (scope === "private") return `user:${userId ?? "local"}:${symbol}`;
   if (scope === "pool") return `pool:${symbol}`;
   return `shared:${symbol}`;
+}
+
+/**
+ * Stamp every bar in a series with source + fetch clock. Bar `time` remains the session
+ * date/as-of; `fetchedAt` is when we obtained the series. Capability ranks: source-capability-matrix
+ * `ohlcv_daily`.
+ */
+export function stampOhlcBarProvenance(
+  bars: OHLCBar[],
+  source: string,
+  fetchedAt: string = new Date().toISOString()
+): OHLCBar[] {
+  if (!bars.length) return bars;
+  const src = source.trim() || "unknown";
+  return bars.map((bar) => ({
+    ...bar,
+    source: bar.source ?? src,
+    fetchedAt: bar.fetchedAt ?? fetchedAt
+  }));
 }
 
 function cacheScopeForKeySource(source: ApiKeySource, userId: string | undefined): CacheScope {

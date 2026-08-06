@@ -69,6 +69,15 @@ export interface MacroData {
    *        in this shape at all) stays blank.
    */
   blsSourced?: boolean;
+  /**
+   * Per-field provenance for non-empty macro values (source id only).
+   * `asOf` on the payload is the series observation/fetch day; pair with this map so
+   * dashboard/API consumers can retain source without a UI redesign.
+   * Preference ranks: source-capability-matrix (vix, treasury_yields, cpi_labor, …).
+   */
+  fieldSources?: Partial<Record<Exclude<keyof MacroData, "fieldSources" | "fredSourced" | "treasurySourced" | "blsSourced">, string>>;
+  /** When we assembled this payload (ISO). Distinct from asOf (market/release date). */
+  fetchedAt?: string;
 }
 
 /**
@@ -234,6 +243,32 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
     // fields are real); the console blanks each empty field per-tile (its mv/mn helpers treat "" as
     // missing → EM_DASH), so no fredSourced-gated tile shows a placeholder. This closes the "partial
     // payload flagged fully sourced" gap without discarding the series that did resolve.
+    const asOf = new Date().toISOString().split("T")[0];
+    const fetchedAt = new Date(now).toISOString();
+    const fieldSources: NonNullable<MacroData["fieldSources"]> = {};
+    const stamp = (field: keyof NonNullable<MacroData["fieldSources"]>, raw: string | undefined) => {
+      if (raw) fieldSources[field] = "fred";
+    };
+    stamp("fedFundsRate", fedFunds);
+    stamp("dgs3moTreasury", dgs3mo);
+    stamp("dgs2Treasury", dgs2);
+    stamp("dgs10Treasury", dgs10);
+    stamp("inflationExpectation10y", breakeven10y);
+    stamp("cpiInflation", cpi);
+    stamp("corePCE", corePce);
+    stamp("realGDPGrowth", realGdp);
+    stamp("unemploymentRate", unemployment);
+    stamp("initialClaims", claims);
+    stamp("m2MoneySupply", m2);
+    stamp("m2GrowthYoY", m2Growth);
+    stamp("hyCreditSpread", hySpread);
+    stamp("usdIndex", usd);
+    stamp("wtiOil", oil);
+    stamp("housingStarts", houst);
+    stamp("consumerSentiment", umcsent);
+    stamp("vix", vix);
+    stamp("vix3m", vix3m);
+
     const data: MacroData = {
       fedFundsRate: fedFunds ? `${Number(fedFunds).toFixed(2)}%` : "",
       dgs3moTreasury: dgs3mo ? `${Number(dgs3mo).toFixed(2)}%` : "",
@@ -257,8 +292,10 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
       nonfarmPayrollsChangeK: "",
       vix: vix ? `${Number(vix).toFixed(2)}` : "",
       vix3m: vix3m ? `${Number(vix3m).toFixed(2)}` : "",
-      asOf: new Date().toISOString().split("T")[0],
-      fredSourced: true
+      asOf,
+      fredSourced: true,
+      fieldSources,
+      fetchedAt
     };
 
     writeMacroCache(scope, userId, data, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
@@ -301,24 +338,48 @@ async function fetchVixOnlyFallback(scope: MacroCacheScope, userId: string | und
     writeMacroCache(scope, userId, fallback, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
     return fallback;
   }
+  const fieldSources: NonNullable<MacroData["fieldSources"]> = {};
   const lightMacro: MacroData = {
     ...BLANK_MACRO,
     asOf: new Date().toISOString().split("T")[0],
-    fredSourced: false
+    fredSourced: false,
+    fetchedAt: new Date(now).toISOString(),
+    fieldSources
   };
-  if (liveVix !== null) lightMacro.vix = liveVix.toFixed(2);
+  if (liveVix !== null) {
+    lightMacro.vix = liveVix.toFixed(2);
+    fieldSources.vix = "vix-keyless";
+  }
   if (treasury !== null) {
-    if (treasury.y3mo !== undefined) lightMacro.dgs3moTreasury = `${treasury.y3mo.toFixed(2)}%`;
-    if (treasury.y2 !== undefined) lightMacro.dgs2Treasury = `${treasury.y2.toFixed(2)}%`;
-    if (treasury.y10 !== undefined) lightMacro.dgs10Treasury = `${treasury.y10.toFixed(2)}%`;
+    if (treasury.y3mo !== undefined) {
+      lightMacro.dgs3moTreasury = `${treasury.y3mo.toFixed(2)}%`;
+      fieldSources.dgs3moTreasury = "treasury.gov";
+    }
+    if (treasury.y2 !== undefined) {
+      lightMacro.dgs2Treasury = `${treasury.y2.toFixed(2)}%`;
+      fieldSources.dgs2Treasury = "treasury.gov";
+    }
+    if (treasury.y10 !== undefined) {
+      lightMacro.dgs10Treasury = `${treasury.y10.toFixed(2)}%`;
+      fieldSources.dgs10Treasury = "treasury.gov";
+    }
     lightMacro.treasurySourced = true;
   }
   if (bls !== null) {
     // BLS's own cpiInflation is already a YoY %, matching FRED's pc1-transformed CPIAUCSL semantics
     // — safe to drop straight into the same field with no re-transform.
-    if (bls.cpiInflation !== undefined) lightMacro.cpiInflation = bls.cpiInflation;
-    if (bls.unemploymentRate !== undefined) lightMacro.unemploymentRate = bls.unemploymentRate;
-    if (bls.nonfarmPayrollsChangeK !== undefined) lightMacro.nonfarmPayrollsChangeK = bls.nonfarmPayrollsChangeK;
+    if (bls.cpiInflation !== undefined) {
+      lightMacro.cpiInflation = bls.cpiInflation;
+      fieldSources.cpiInflation = "bls";
+    }
+    if (bls.unemploymentRate !== undefined) {
+      lightMacro.unemploymentRate = bls.unemploymentRate;
+      fieldSources.unemploymentRate = "bls";
+    }
+    if (bls.nonfarmPayrollsChangeK !== undefined) {
+      lightMacro.nonfarmPayrollsChangeK = bls.nonfarmPayrollsChangeK;
+      fieldSources.nonfarmPayrollsChangeK = "bls";
+    }
     lightMacro.blsSourced = true;
   }
   writeMacroCache(scope, userId, lightMacro, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
@@ -379,9 +440,11 @@ async function fetchVixLane(
   const breaker = apiCircuitBreakerShouldSkip(lane, null);
   if (breaker.skip) return null; // lane backed off — try the next source
   const start = Date.now();
-  const log = (ok: boolean, errorText?: string) =>
+  const log = (ok: boolean, errorText?: string, soft = false) =>
     // keySource omitted -> stored as NULL, matching the breaker's (lane, null) keyless lane.
-    logApiHealth({ service: lane, ok, latencyMs: Date.now() - start, errorText });
+    // Soft for expected limits (429) so vix-yahoo cannot hard-STOP and spam the admin board
+    // when Cboe is already the preferred primary (see cascade order below).
+    logApiHealth({ service: lane, ok, latencyMs: Date.now() - start, errorText, soft });
   try {
     for (let attempt = 0; attempt < VIX_LANE_429_MAX_ATTEMPTS; attempt++) {
       const controller = new AbortController();
@@ -397,13 +460,15 @@ async function fetchVixLane(
         clearTimeout(timeout);
       }
       if (res.status === 429 && attempt < VIX_LANE_429_MAX_ATTEMPTS - 1) {
+        // Intermediate 429: no health row (same posture as fetchWithRetry) — only the final
+        // attempt records so retries don't invent a hard consecutive-failure streak.
         await new Promise((resolve) =>
           setTimeout(resolve, Math.min(4000, VIX_LANE_429_BASE_BACKOFF_MS * 2 ** attempt))
         );
         continue;
       }
       if (!res.ok) {
-        log(false, `HTTP ${res.status}`);
+        log(false, `HTTP ${res.status}`, res.status === 429);
         return null;
       }
       const value = await parse(res);

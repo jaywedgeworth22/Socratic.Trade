@@ -9,6 +9,7 @@ vi.mock("../src/lib/web-sources/http", () => ({
   politeFetchText: mocks.politeFetchText,
   secUserAgent: mocks.secUserAgent,
   sleep: vi.fn(() => Promise.resolve()),
+  BROWSER_UA: "Mozilla/5.0 test",
   runRateLimited: async <T, R>(items: T[], _delay: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> =>
     Promise.all(items.map((item, idx) => fn(item, idx)))
 }));
