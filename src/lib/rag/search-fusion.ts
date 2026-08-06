@@ -31,17 +31,18 @@ function getJaccardSimilarity(a: string, b: string): number {
 }
 
 /**
- * Embed texts through the ACTIVE alternative HTTP embedding provider (SiliconFlow or OpenRouter).
- * Returns `null` when neither is configured — in the normal Voyage-only deployment there is no
- * HTTP endpoint that accepts the Voyage credential, so the caller must use the Jaccard MMR
- * fallback deliberately instead of sending a Voyage key to SiliconFlow and failing every time.
+ * Embed texts through the same BAAI/bge-m3 HTTP path as vector-db (OpenRouter preferred,
+ * SiliconFlow fallback). Precedence matches `activeEmbeddingProvider` so search-fusion MMR
+ * never diverges into a second embedding space when both keys exist.
+ * Returns `null` when neither is configured — caller uses Jaccard MMR fallback.
  * (Exported for the usage-compliance test suite; production callers stay module-internal.)
  */
 export async function fetchAlternativeEmbedding(texts: string[], userId: string = "local"): Promise<number[][] | null> {
-  const siliconflowKey = resolveApiKey("siliconflow", userId);
   const openrouterKey = resolveApiKey("openrouter", userId);
-  const useSiliconFlow = !!siliconflowKey && !siliconflowKey.startsWith("mock");
-  const useOpenRouter = !useSiliconFlow && !!openrouterKey && !openrouterKey.startsWith("mock");
+  const siliconflowKey = resolveApiKey("siliconflow", userId);
+  // Match vector-db resolveActiveRagProvider: OpenRouter first, then SiliconFlow.
+  const useOpenRouter = !!openrouterKey && !openrouterKey.startsWith("mock");
+  const useSiliconFlow = !useOpenRouter && !!siliconflowKey && !siliconflowKey.startsWith("mock");
   if (!useSiliconFlow && !useOpenRouter) return null;
 
   const url = useSiliconFlow ? "https://api.siliconflow.cn/v1/embeddings" : "https://openrouter.ai/api/v1/embeddings";

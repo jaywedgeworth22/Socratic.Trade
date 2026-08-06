@@ -861,6 +861,45 @@ export async function ingestEightKBody(
 }> {
   assertEightKIngestLease(leaseGuard);
   if (hasIngestedAccession(event.accession, "8-K-body")) {
+    // Body already ledgered — still upgrade extractive abstract if model lags.
+    try {
+      const { abstractNeedsUpgrade, generateAndStoreDocumentAbstract, tradeHighlightChunksFromText } =
+        await import("../rag/document-summarizer");
+      if (abstractNeedsUpgrade(event.accession, "8k-brief")) {
+        const url = absoluteSecUrl(event.filingUrl);
+        if (url) {
+          const html = await politeFetchText(url, {
+            headers: {
+              "user-agent": secUserAgent(),
+              accept: "text/html,application/xhtml+xml"
+            },
+            timeoutMs: 30_000
+          });
+          const bodyText = extractFilingText(html);
+          if (bodyText.length >= 100) {
+            const itemsHint = (event.items ?? []).slice(0, 6).join(", ");
+            await generateAndStoreDocumentAbstract({
+              ticker: event.symbol,
+              accessionOrEventId: event.accession,
+              sourceType: "8k-brief",
+              headline: `${event.symbol} 8-K highlights (${event.filedAt})${itemsHint ? ` — ${itemsHint}` : ""}`,
+              chunks: tradeHighlightChunksFromText(bodyText, {
+                maxChunks: 6,
+                formHint: "8-K",
+                materialItems: event.items ?? []
+              }),
+              publishedAt: event.filedAt,
+              acceptanceDatetime: event.acceptedAt ?? event.filedAt
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[sec8k] abstract refresh skipped for ${event.accession}:`,
+        err instanceof Error ? err.message : String(err)
+      );
+    }
     return { skipped: true, chunks: 0, completed: true };
   }
 
@@ -1016,7 +1055,11 @@ export async function ingestEightKBody(
       accessionOrEventId: event.accession,
       sourceType: "8k-brief",
       headline: `${event.symbol} 8-K highlights (${event.filedAt})${itemsHint ? ` — ${itemsHint}` : ""}`,
-      chunks: tradeHighlightChunksFromText(text, { maxChunks: 6 }),
+      chunks: tradeHighlightChunksFromText(text, {
+        maxChunks: 6,
+        formHint: "8-K",
+        materialItems: event.items ?? []
+      }),
       publishedAt: event.filedAt,
       acceptanceDatetime: event.acceptedAt ?? event.filedAt
     });

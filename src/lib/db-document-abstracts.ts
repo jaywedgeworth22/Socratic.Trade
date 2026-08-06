@@ -39,6 +39,20 @@ export function insertDocumentAbstract(item: DocumentAbstract): void {
   );
 }
 
+/** Remove a single abstract so a newer extractive model can rewrite it. */
+export function deleteDocumentAbstractByAccessionAndSource(
+  accessionOrEventId: string,
+  sourceType: string
+): number {
+  const db = getDb();
+  const result = db
+    .prepare(
+      "DELETE FROM document_abstracts WHERE accession_or_event_id = ? AND source_type = ?"
+    )
+    .run(accessionOrEventId, sourceType);
+  return Number(result.changes ?? 0);
+}
+
 export function getDocumentAbstractsForTicker(ticker: string, limit = 20): DocumentAbstract[] {
   const db = getDb();
   const rows = db.prepare(`
