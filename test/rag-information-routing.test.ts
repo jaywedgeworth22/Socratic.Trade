@@ -27,7 +27,14 @@ describe("information routing boundary", () => {
     expect(plan.structured).toEqual({ needs: ["financial_facts"], sourceKinds: ["financial_facts"] });
     expect(plan.semantic).toEqual({
       needs: ["filing_narrative", "earnings_transcript_narrative"],
-      documentTypes: ["10-k", "10-q", "8-k", "earnings-transcript"]
+      documentTypes: [
+        "10-k",
+        "10-q",
+        "8-k",
+        "document-summary",
+        "earnings-transcript",
+        "earnings-summary"
+      ]
     });
   });
 
@@ -40,12 +47,21 @@ describe("information routing boundary", () => {
   });
 
   it("only adds transcript vectors when the caller has enabled that narrative source", () => {
-    expect(strategyInformationRouting(false).semantic.documentTypes).toEqual(["10-k", "10-q", "8-k"]);
+    // Full filings + document-summary abstracts always; earnings-transcript + earnings-summary
+    // when the caller enables transcript producers (FMP dual-gate or EarningsCalls key).
+    expect(strategyInformationRouting(false).semantic.documentTypes).toEqual([
+      "10-k",
+      "10-q",
+      "8-k",
+      "document-summary"
+    ]);
     expect(strategyInformationRouting(true).semantic.documentTypes).toEqual([
       "10-k",
       "10-q",
       "8-k",
-      "earnings-transcript"
+      "document-summary",
+      "earnings-transcript",
+      "earnings-summary"
     ]);
   });
 });

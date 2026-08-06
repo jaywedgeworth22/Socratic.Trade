@@ -1004,6 +1004,29 @@ export async function ingestEightKBody(
   } catch {
     return { skipped: true, chunks: result.indexed, error: "document-commit-proof-lost", retryable: true };
   }
+
+  // Trade-relevant highlights as a short document-summary (full 8-k body remains retrievable).
+  try {
+    const { generateAndStoreDocumentAbstract, tradeHighlightChunksFromText } = await import(
+      "../rag/document-summarizer"
+    );
+    const itemsHint = (event.items ?? []).slice(0, 6).join(", ");
+    await generateAndStoreDocumentAbstract({
+      ticker: event.symbol,
+      accessionOrEventId: event.accession,
+      sourceType: "8k-brief",
+      headline: `${event.symbol} 8-K highlights (${event.filedAt})${itemsHint ? ` — ${itemsHint}` : ""}`,
+      chunks: tradeHighlightChunksFromText(text, { maxChunks: 6 }),
+      publishedAt: event.filedAt,
+      acceptanceDatetime: event.acceptedAt ?? event.filedAt
+    });
+  } catch (err) {
+    console.warn(
+      `[sec8k] abstract failed for ${event.accession}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
   return { skipped: false, chunks: result.attempted, completed: true };
 }
 

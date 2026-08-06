@@ -229,7 +229,11 @@ const MAX_SKIPPED_EVIDENCE = 25;
 const BASE_COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q"];
 
 export function coverageCheckedFilingsDocTypes(): string[] {
-  return fmpTranscriptsEnabled()
+  // EarningsCalls.dev (key = opt-in) and FMP (dual-gated) both write doc_type earnings-transcript.
+  // Include the type in empty-corpus receipts whenever ANY producer is active so strategy
+  // coverage canaries see transcript gaps (owner 2026-08-05 multi-source RAG).
+  const transcriptsOn = fmpTranscriptsEnabled() || earningsCallsTranscriptsEnabled();
+  return transcriptsOn
     ? [...BASE_COVERAGE_CHECKED_DOC_TYPES, "earnings-transcript"]
     : [...BASE_COVERAGE_CHECKED_DOC_TYPES];
 }

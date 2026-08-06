@@ -607,6 +607,29 @@ export async function ingestFiling(
     return { skipped: true, chunks: result.indexed, error: err instanceof Error ? err.message : "document-commit-proof-lost" };
   }
 
+  // Compact document-summary for LLM trade use (full 10-K/10-Q body stays in the corpus).
+  // Extractive highlights only — no extra LLM spend on the ingest path.
+  try {
+    const { generateAndStoreDocumentAbstract, tradeHighlightChunksFromText } = await import(
+      "../rag/document-summarizer"
+    );
+    const sourceType = filingRef.docType === "10-Q" ? "10q-delta" : "10k-delta";
+    await generateAndStoreDocumentAbstract({
+      ticker,
+      accessionOrEventId: filingRef.accession,
+      sourceType,
+      headline: `${ticker} ${filingRef.docType} highlights (${filingRef.filedAt})`,
+      chunks: tradeHighlightChunksFromText(text, { maxChunks: 8 }),
+      publishedAt: filingRef.filedAt,
+      acceptanceDatetime: filingRef.acceptanceDateTime ?? filingRef.filedAt
+    });
+  } catch (err) {
+    console.warn(
+      `[sec-filings] abstract failed for ${filingRef.accession}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
   return { skipped: false, chunks: result.attempted };
 }
 

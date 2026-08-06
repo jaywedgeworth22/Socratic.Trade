@@ -5,13 +5,36 @@ import {
   getDocumentAbstractByAccession,
   DocumentAbstract
 } from "../src/lib/db-document-abstracts";
-import { generateAndStoreDocumentAbstract } from "../src/lib/rag/document-summarizer";
+import {
+  generateAndStoreDocumentAbstract,
+  tradeHighlightChunksFromText
+} from "../src/lib/rag/document-summarizer";
 import { getDb } from "../src/lib/db";
 
 describe("Document Abstracts & Summarizer", () => {
   beforeEach(() => {
     const db = getDb();
     db.prepare("DELETE FROM document_abstracts").run();
+  });
+
+  it("tradeHighlightChunksFromText prefers guidance/revenue paragraphs and caps count", () => {
+    const text = [
+      "Boilerplate intro about the company history and founders with little market signal content here.",
+      "",
+      "We raised full-year guidance and now expect revenue growth of 12% with expanded operating margins.",
+      "",
+      "The cafeteria menu was updated for the summer picnic season and employee wellness programs.",
+      "",
+      "Management discussed EPS beats, backlog strength, and demand recovery in the core segment."
+    ].join("\n");
+    const chunks = tradeHighlightChunksFromText(text, { maxChunks: 2 });
+    expect(chunks.length).toBe(2);
+    expect(chunks[0].text.toLowerCase()).toMatch(/guidance|revenue|eps|backlog|demand/);
+    expect(chunks.every((c) => c.id.startsWith("hl-"))).toBe(true);
+  });
+
+  it("tradeHighlightChunksFromText returns empty for blank input", () => {
+    expect(tradeHighlightChunksFromText("   ")).toEqual([]);
   });
 
   it("inserts and retrieves document abstracts by ticker and accession", () => {
