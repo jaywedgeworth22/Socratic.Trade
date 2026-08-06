@@ -13,22 +13,16 @@ import type { CongressTrade } from "./types";
 import type { InsiderFiling } from "./sec";
 import type { ContextDocument } from "../vector-db";
 import { envFlagOn } from "../rag/env-flag";
+import { resolveSourceBool } from "../source-settings";
 
 // ── Flag ─────────────────────────────────────────────────────────────────────
 
 /**
- * Returns true when RAG_EMBED_DISCLOSURES is set to a truthy value. Default is off.
- *
- * R6 (2026-07-01 RAG backlog): previously required the EXACT string "on" — `RAG_EMBED_DISCLOSURES=true`
- * silently no-op'd even though every other RAG flag in this app accepts "true"/"1"/"yes". Now routed
- * through the shared `envFlagOn` parser so "true"/"1"/"yes"/"on" are all accepted. This is an
- * intentional, SAFE-DIRECTION behavior change: an operator who set any of those "look-alike" values
- * was already trying to turn disclosure embedding ON. Note it triggers real Voyage/Pinecone embedding
- * cost/corpus growth for any operator who was unknowingly relying on the old exact-match quirk to
- * silently no-op with e.g. `=true`.
+ * Returns true when RAG_EMBED_DISCLOSURES is truthy via Settings override or env.
+ * Default is off. Accepts "true"/"1"/"yes"/"on" through the shared source-settings resolver.
  */
 export function disclosureRagEnabled(): boolean {
-  return envFlagOn("RAG_EMBED_DISCLOSURES", false);
+  return resolveSourceBool("RAG_EMBED_DISCLOSURES");
 }
 
 // ── Text builders ────────────────────────────────────────────────────────────

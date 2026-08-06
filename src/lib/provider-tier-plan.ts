@@ -1,11 +1,16 @@
 // provider-tier-plan.ts — user-declared plan tiers for optional market-data keys.
 //
-// Connections/Settings lets the owner say "this Tiingo key is free vs Power" so the app can
+// Connections lets the owner say "this Tiingo key is free vs Power" so the app can
 // apply free-tier-safe quotas without requiring Infisical env knobs. Env
 // PROVIDER_QUOTA_* / Usage Monitor knobs still win when set (see provider-rate-limit.ts).
 //
 // Facts live in docs/market-data-provider-pricing.md — keep labels/caps aligned when pricing
-// changes. Mandatory infra (pinecone/voyage/openrouter/LLM) is intentionally out of this map.
+// changes. LLM keys (openai/anthropic/openrouter/…) and pure contact strings (SEC User-Agent)
+// stay out of this map: they are not multi-tier market-data quotas.
+//
+// Rule (owner 2026-08-06): every data source we use or have used (other than free-only
+// infrastructure like SEC User-Agent) exposes a plan-tier dropdown with all common paid
+// tiers a user might hold, plus free/unknown free-safe defaults.
 
 export interface RateWindowHint {
   maxRequests: number;
@@ -30,27 +35,31 @@ const DAY = 86_400_000;
 const TIER_OPTIONS: Record<string, PlanTierOption[]> = {
   tiingo: [
     { id: "free", label: "Free", hint: "50/hr · 1,000/day · news not included" },
-    { id: "power", label: "Power", hint: "10k/hr · 100k/day · News API" },
+    { id: "power", label: "Power", hint: "10k/hr · 100k/day · News API · $30/mo or $300/yr" },
+    { id: "commercial", label: "Commercial", hint: "Power-level + commercial license (~$499/yr site tier)" },
     { id: "unknown", label: "Unknown", hint: "Use free-safe caps until you confirm" }
   ],
   massive: [
     { id: "free", label: "Free", hint: "5 calls/min · EOD · 2 yr history" },
-    { id: "starter", label: "Stocks Starter", hint: "Unlimited REST · 15m delayed · 5 yr" },
-    { id: "advanced", label: "Advanced", hint: "Real-time + ratios (higher plan)" },
+    { id: "starter", label: "Stocks Starter", hint: "$29/mo · Unlimited REST · 15m delayed · 5 yr" },
+    { id: "developer", label: "Developer", hint: "Mid tier when offered · higher history/realtime than free" },
+    { id: "advanced", label: "Advanced", hint: "~$199/mo · Real-time + trades/quotes + ratios" },
+    { id: "business", label: "Business / Enterprise", hint: "Highest Massive plan · contact sales shape" },
     { id: "unknown", label: "Unknown" }
   ],
-  // FMP is retired for ST product use — options remain for CT/admin archaeology only.
+  // FMP retired for ST product use — options remain for CT/admin archaeology + accurate quotas.
   fmp: [
-    { id: "free", label: "Free", hint: "250/day" },
-    { id: "starter", label: "Starter", hint: "~300/min · annual statements" },
-    { id: "premium", label: "Premium", hint: "Quarterly fundamentals" },
-    { id: "ultimate", label: "Ultimate", hint: "Transcripts (CT only)" },
+    { id: "free", label: "Free", hint: "250/day · EOD" },
+    { id: "starter", label: "Starter", hint: "~300/min · annual statements · $22/mo annual" },
+    { id: "premium", label: "Premium", hint: "~750/min · quarterly fundamentals" },
+    { id: "ultimate", label: "Ultimate", hint: "~3k/min · transcripts (CT only on ST)" },
     { id: "unknown", label: "Unknown" }
   ],
   twelvedata: [
     { id: "free", label: "Free / Basic", hint: "8 credits/min · 800/day" },
-    { id: "grow", label: "Grow", hint: "377 credits/min · no daily cap" },
-    { id: "pro", label: "Pro", hint: "WebSocket + higher credits" },
+    { id: "grow", label: "Grow", hint: "377 credits/min · no daily cap · ~$79/mo" },
+    { id: "pro", label: "Pro", hint: "WebSocket + higher credits · ~$229/mo" },
+    { id: "ultra", label: "Ultra / Enterprise", hint: "Highest credit budget" },
     { id: "unknown", label: "Unknown" }
   ],
   finnhub: [
@@ -60,18 +69,18 @@ const TIER_OPTIONS: Record<string, PlanTierOption[]> = {
   ],
   alphavantage: [
     { id: "free", label: "Free", hint: "25/day per IP (not per key)" },
-    { id: "premium", label: "Premium", hint: "75/min · no daily cap" },
+    { id: "premium_49", label: "Premium $50", hint: "75/min · no daily cap · entry paid" },
+    { id: "premium", label: "Premium (any)", hint: "75+/min paid plan" },
+    { id: "premium_149", label: "Premium higher", hint: "Higher AV paid steps if purchased" },
     { id: "unknown", label: "Unknown" }
   ],
   marketstack: [
     { id: "free", label: "Free", hint: "100 req/mo ≈ 3/day" },
-    { id: "basic", label: "Basic", hint: "10,000 req/mo" },
-    { id: "professional", label: "Professional", hint: "Higher volume + intraday" },
-    { id: "business", label: "Business", hint: "Statements + long history" },
+    { id: "basic", label: "Basic", hint: "10,000 req/mo ≈ 333/day · $9.99/mo" },
+    { id: "professional", label: "Professional", hint: "Higher volume + sub-15m · ~$50/mo" },
+    { id: "business", label: "Business", hint: "Statements + long history · ~$150/mo" },
     { id: "unknown", label: "Unknown" }
   ],
-  // Align with https://www.roic.ai/pricing — free is low request + short transcript history;
-  // paid individual/professional unlock deep fundamentals + full transcript archive.
   roic: [
     { id: "free", label: "Free", hint: "~300 req/day · ~2 quarters transcripts" },
     { id: "starter", label: "Starter / Plus", hint: "Higher daily quota · longer transcript history" },
@@ -81,27 +90,79 @@ const TIER_OPTIONS: Record<string, PlanTierOption[]> = {
   ],
   filingapi: [
     { id: "free", label: "Free", hint: "~50 req/day (app uses 45)" },
-    { id: "paid", label: "Paid", hint: "Higher daily cap (set when confirmed)" },
+    { id: "starter", label: "Starter", hint: "Entry paid when offered" },
+    { id: "pro", label: "Pro", hint: "Higher daily cap" },
+    { id: "paid", label: "Paid (generic)", hint: "Any paid plan — 500/day placeholder" },
     { id: "unknown", label: "Unknown" }
   ],
   fintechstudios: [
     { id: "free", label: "Free", hint: "$0 marketing free plan" },
-    { id: "pro", label: "Pro", hint: "Self-serve Pro credits" },
+    { id: "pro", label: "Pro", hint: "Self-serve Pro credits (~$20–120/mo)" },
+    { id: "enterprise", label: "Enterprise", hint: "Contact-sales institutional feed" },
     { id: "unknown", label: "Unknown" }
   ],
   marketaux: [
     { id: "free", label: "Free", hint: "~100 req/day" },
-    { id: "paid", label: "Paid", hint: "Higher daily budget" },
+    { id: "starter", label: "Starter", hint: "Entry paid news budget" },
+    { id: "professional", label: "Professional", hint: "Higher news volume" },
+    { id: "paid", label: "Paid (generic)", hint: "Any paid plan — 1k/day placeholder" },
     { id: "unknown", label: "Unknown" }
   ],
   earningscalls: [
-    { id: "preview", label: "Preview / trial", hint: "Limited preview entitlement" },
-    { id: "paid", label: "Paid", hint: "Full transcript access" },
+    { id: "preview", label: "Preview / free", hint: "Short previews · limited monthly requests" },
+    { id: "basic", label: "Basic", hint: "Entry paid full-text when offered" },
+    { id: "pro", label: "Pro", hint: "Higher full-text quota" },
+    { id: "paid", label: "Paid (generic)", hint: "Full transcript access" },
     { id: "unknown", label: "Unknown" }
   ],
   rapidapi: [
-    { id: "basic", label: "Basic", hint: "Marketplace Basic / free-ish caps" },
-    { id: "pro", label: "Pro", hint: "Higher RapidAPI plan" },
+    { id: "basic", label: "Basic / Free hub", hint: "≤~1k req/hr platform ceiling · per-API free quotas" },
+    { id: "pro", label: "Pro", hint: "Higher marketplace plan" },
+    { id: "ultra", label: "Ultra", hint: "Highest RapidAPI personal plan" },
+    { id: "mega", label: "Mega / Enterprise", hint: "Org marketplace plan" },
+    { id: "unknown", label: "Unknown" }
+  ],
+  // Free-only economic data — still show free/unknown so UI is consistent.
+  fred: [
+    { id: "free", label: "Free", hint: "No paid tiers — FRED is always free with a key" },
+    { id: "unknown", label: "Unknown" }
+  ],
+  apify: [
+    { id: "free", label: "Free", hint: "Limited compute units / month" },
+    { id: "starter", label: "Starter", hint: "Entry paid Actor compute" },
+    { id: "scale", label: "Scale", hint: "Higher compute + concurrency" },
+    { id: "business", label: "Business", hint: "Team / production scrapers" },
+    { id: "enterprise", label: "Enterprise", hint: "Highest plan" },
+    { id: "unknown", label: "Unknown" }
+  ],
+  logodev: [
+    { id: "free", label: "Community free", hint: "500k req/mo · attribution may apply" },
+    { id: "startup", label: "Startup", hint: "~1M req/mo · no attribution · annual" },
+    { id: "pro", label: "Pro", hint: "Brand API + higher volume" },
+    { id: "unknown", label: "Unknown" }
+  ],
+  // Broker market-data sides (if ever stored as keys) — Tradier is account-linked today.
+  tradier: [
+    { id: "sandbox", label: "Sandbox", hint: "15m delayed · 60/min market-data typical" },
+    { id: "live_lite", label: "Live Lite $0", hint: "Production token · real-time on funded/live account" },
+    { id: "live", label: "Live (any plan)", hint: "Production market-data rates · ~120/min typical" },
+    { id: "unknown", label: "Unknown" }
+  ],
+  // RAG infra (if added to Connections catalog later — safe to expose tiers).
+  pinecone: [
+    { id: "free", label: "Free / Starter", hint: "Serverless free allowance · low WU" },
+    { id: "standard", label: "Standard", hint: "Paid serverless" },
+    { id: "enterprise", label: "Enterprise", hint: "Highest capacity" },
+    { id: "unknown", label: "Unknown" }
+  ],
+  voyage: [
+    { id: "free", label: "Free", hint: "Low free embed tokens" },
+    { id: "paid", label: "Paid", hint: "Metered embeddings" },
+    { id: "unknown", label: "Unknown" }
+  ],
+  siliconflow: [
+    { id: "free", label: "Free", hint: "Low free embed/chat allowance" },
+    { id: "paid", label: "Paid", hint: "Metered" },
     { id: "unknown", label: "Unknown" }
   ]
 };
@@ -109,7 +170,8 @@ const TIER_OPTIONS: Record<string, PlanTierOption[]> = {
 /**
  * Quota windows implied by a declared tier when PROVIDER_QUOTA_* env / UM knobs are unset.
  * Missing entry → fall through to provider-rate-limit RATE_QUOTAS hard defaults.
- * Align with docs/market-data-provider-pricing.md upgrade cheat-sheet.
+ * Empty array = intentionally unlimited windowed budget (e.g. Massive starter REST).
+ * Align with docs/market-data-provider-pricing.md.
  */
 const TIER_QUOTA_WINDOWS: Record<string, Record<string, RateWindowHint[]>> = {
   tiingo: {
@@ -118,6 +180,10 @@ const TIER_QUOTA_WINDOWS: Record<string, Record<string, RateWindowHint[]>> = {
       { maxRequests: 1000, windowMs: DAY }
     ],
     power: [
+      { maxRequests: 10_000, windowMs: HOUR },
+      { maxRequests: 100_000, windowMs: DAY }
+    ],
+    commercial: [
       { maxRequests: 10_000, windowMs: HOUR },
       { maxRequests: 100_000, windowMs: DAY }
     ],
@@ -133,6 +199,7 @@ const TIER_QUOTA_WINDOWS: Record<string, Record<string, RateWindowHint[]>> = {
     ],
     grow: [{ maxRequests: 377, windowMs: MINUTE }],
     pro: [{ maxRequests: 800, windowMs: MINUTE }],
+    ultra: [{ maxRequests: 1_500, windowMs: MINUTE }],
     unknown: [
       { maxRequests: 8, windowMs: MINUTE },
       { maxRequests: 800, windowMs: DAY }
@@ -142,7 +209,7 @@ const TIER_QUOTA_WINDOWS: Record<string, Record<string, RateWindowHint[]>> = {
     free: [{ maxRequests: 240, windowMs: DAY }],
     starter: [{ maxRequests: 290, windowMs: MINUTE }],
     premium: [{ maxRequests: 740, windowMs: MINUTE }],
-    ultimate: [{ maxRequests: 2900, windowMs: MINUTE }],
+    ultimate: [{ maxRequests: 2_900, windowMs: MINUTE }],
     unknown: [{ maxRequests: 240, windowMs: DAY }]
   },
   marketstack: {
@@ -161,19 +228,23 @@ const TIER_QUOTA_WINDOWS: Record<string, Record<string, RateWindowHint[]>> = {
   },
   filingapi: {
     free: [{ maxRequests: 45, windowMs: DAY }],
+    starter: [{ maxRequests: 200, windowMs: DAY }],
+    pro: [{ maxRequests: 1_000, windowMs: DAY }],
     paid: [{ maxRequests: 500, windowMs: DAY }],
     unknown: [{ maxRequests: 45, windowMs: DAY }]
   },
   marketaux: {
     free: [{ maxRequests: 80, windowMs: DAY }],
+    starter: [{ maxRequests: 500, windowMs: DAY }],
+    professional: [{ maxRequests: 2_000, windowMs: DAY }],
     paid: [{ maxRequests: 1_000, windowMs: DAY }],
     unknown: [{ maxRequests: 80, windowMs: DAY }]
   },
-  // Finnhub / Alpha Vantage / Massive mainly pace via HARD_DEFAULTS (per-min), not RATE_QUOTAS.
-  // Still expose free-safe day caps for alphavantage so admit sites can use them later.
   alphavantage: {
     free: [{ maxRequests: 25, windowMs: DAY }],
+    premium_49: [{ maxRequests: 75, windowMs: MINUTE }],
     premium: [{ maxRequests: 75, windowMs: MINUTE }],
+    premium_149: [{ maxRequests: 150, windowMs: MINUTE }],
     unknown: [{ maxRequests: 25, windowMs: DAY }]
   },
   finnhub: {
@@ -183,13 +254,119 @@ const TIER_QUOTA_WINDOWS: Record<string, Record<string, RateWindowHint[]>> = {
   },
   massive: {
     free: [{ maxRequests: 5, windowMs: MINUTE }],
-    // Unlimited REST on paid starter — empty array means "no windowed budget from tier"
-    // (resolveProviderQuota treats empty tier base as unlimited unless RATE_QUOTAS/env add windows).
     starter: [],
+    developer: [],
     advanced: [],
+    business: [],
     unknown: [{ maxRequests: 5, windowMs: MINUTE }]
+  },
+  fintechstudios: {
+    free: [{ maxRequests: 50, windowMs: DAY }],
+    pro: [{ maxRequests: 500, windowMs: DAY }],
+    enterprise: [{ maxRequests: 5_000, windowMs: DAY }],
+    unknown: [{ maxRequests: 50, windowMs: DAY }]
+  },
+  earningscalls: {
+    // Soft request budgets (provider hard caps vary); dual-bound ledger also enforces monthly.
+    preview: [{ maxRequests: 8, windowMs: DAY }],
+    basic: [{ maxRequests: 50, windowMs: DAY }],
+    pro: [{ maxRequests: 200, windowMs: DAY }],
+    paid: [{ maxRequests: 100, windowMs: DAY }],
+    unknown: [{ maxRequests: 8, windowMs: DAY }]
+  },
+  rapidapi: {
+    // Platform free ceiling ~1000/hr; per-API free quotas are usually much lower — stay conservative.
+    basic: [
+      { maxRequests: 60, windowMs: MINUTE },
+      { maxRequests: 500, windowMs: DAY }
+    ],
+    pro: [
+      { maxRequests: 300, windowMs: MINUTE },
+      { maxRequests: 5_000, windowMs: DAY }
+    ],
+    ultra: [
+      { maxRequests: 600, windowMs: MINUTE },
+      { maxRequests: 20_000, windowMs: DAY }
+    ],
+    mega: [
+      { maxRequests: 1_000, windowMs: MINUTE },
+      { maxRequests: 50_000, windowMs: DAY }
+    ],
+    unknown: [
+      { maxRequests: 30, windowMs: MINUTE },
+      { maxRequests: 200, windowMs: DAY }
+    ]
+  },
+  fred: {
+    free: [{ maxRequests: 100, windowMs: MINUTE }],
+    unknown: [{ maxRequests: 100, windowMs: MINUTE }]
+  },
+  apify: {
+    free: [{ maxRequests: 50, windowMs: DAY }],
+    starter: [{ maxRequests: 500, windowMs: DAY }],
+    scale: [{ maxRequests: 2_000, windowMs: DAY }],
+    business: [{ maxRequests: 10_000, windowMs: DAY }],
+    enterprise: [{ maxRequests: 50_000, windowMs: DAY }],
+    unknown: [{ maxRequests: 50, windowMs: DAY }]
+  },
+  logodev: {
+    // Soft daily approximation of monthly free 500k (~16k/day).
+    free: [{ maxRequests: 10_000, windowMs: DAY }],
+    startup: [{ maxRequests: 30_000, windowMs: DAY }],
+    pro: [{ maxRequests: 100_000, windowMs: DAY }],
+    unknown: [{ maxRequests: 5_000, windowMs: DAY }]
+  },
+  tradier: {
+    sandbox: [{ maxRequests: 50, windowMs: MINUTE }],
+    live_lite: [{ maxRequests: 100, windowMs: MINUTE }],
+    live: [{ maxRequests: 120, windowMs: MINUTE }],
+    unknown: [{ maxRequests: 50, windowMs: MINUTE }]
+  },
+  pinecone: {
+    free: [{ maxRequests: 100, windowMs: MINUTE }],
+    standard: [{ maxRequests: 500, windowMs: MINUTE }],
+    enterprise: [{ maxRequests: 2_000, windowMs: MINUTE }],
+    unknown: [{ maxRequests: 100, windowMs: MINUTE }]
+  },
+  voyage: {
+    free: [{ maxRequests: 3, windowMs: MINUTE }],
+    paid: [{ maxRequests: 60, windowMs: MINUTE }],
+    unknown: [{ maxRequests: 3, windowMs: MINUTE }]
+  },
+  siliconflow: {
+    free: [{ maxRequests: 10, windowMs: MINUTE }],
+    paid: [{ maxRequests: 120, windowMs: MINUTE }],
+    unknown: [{ maxRequests: 10, windowMs: MINUTE }]
   }
 };
+
+/**
+ * Market-data / data-platform services that MUST show a plan-tier dropdown on Connections.
+ * Mirrors API_KEY_CATALOG non-LLM data rows + brokers/RAG we may store keys for.
+ * SEC User-Agent is intentionally excluded (contact string, not a tiered API plan).
+ */
+export const PLAN_TIER_REQUIRED_SERVICES: readonly string[] = [
+  "tiingo",
+  "massive",
+  "fmp",
+  "twelvedata",
+  "finnhub",
+  "alphavantage",
+  "marketstack",
+  "roic",
+  "filingapi",
+  "fintechstudios",
+  "marketaux",
+  "earningscalls",
+  "rapidapi",
+  "fred",
+  "apify",
+  "logodev",
+  "tradier",
+  "pinecone",
+  "voyage",
+  "siliconflow"
+] as const;
 
 /** Normalize API key service / rate-limit provider names to TIER_OPTIONS keys. */
 export function normalizePlanTierServiceId(service: string): string {
@@ -198,14 +375,16 @@ export function normalizePlanTierServiceId(service: string): string {
   if (raw === "twelve-data" || raw === "twelve_data") return "twelvedata";
   if (raw === "fintech-studios" || raw === "fintech_studios" || raw === "powerintell") return "fintechstudios";
   if (raw === "filing-api" || raw === "filing_api") return "filingapi";
-  if (raw === "earnings-calls" || raw === "earnings_calls") return "earningscalls";
+  if (raw === "earnings-calls" || raw === "earnings_calls" || raw === "earningscallsdev") return "earningscalls";
   if (raw === "rapid-api" || raw === "rapid_api") return "rapidapi";
+  if (raw === "logo_dev" || raw === "logo-dev") return "logodev";
+  if (raw === "polygon" || raw === "polygon_io") return "massive";
   return raw;
 }
 
 /** Services that show a plan-tier dropdown next to the key field. */
 export function servicesWithPlanTierUi(): ReadonlySet<string> {
-  return new Set(Object.keys(TIER_OPTIONS));
+  return new Set([...Object.keys(TIER_OPTIONS), ...PLAN_TIER_REQUIRED_SERVICES]);
 }
 
 export function planTierOptionsForService(service: string): PlanTierOption[] | null {
@@ -227,6 +406,7 @@ export function defaultPlanTierForService(service: string): string {
   if (opts.some((o) => o.id === "free")) return "free";
   if (opts.some((o) => o.id === "basic")) return "basic";
   if (opts.some((o) => o.id === "preview")) return "preview";
+  if (opts.some((o) => o.id === "sandbox")) return "sandbox";
   return opts[0]!.id;
 }
 
@@ -284,6 +464,28 @@ export function isRetiredMarketDataService(service: string): boolean {
   const id = normalizePlanTierServiceId(service);
   // Keep in sync with retired-direct-vendors + Connections health intentional OFF.
   return id === "fmp" || id === "quiverquant" || id === "quiver" || id === "unusual_whales";
+}
+
+/**
+ * Services that must never show a plan-tier dropdown (LLM keys, contact strings).
+ * Used by tests to lock the catalog policy.
+ */
+export function isNonPlanTierService(service: string): boolean {
+  const id = normalizePlanTierServiceId(service);
+  if (id === "sec_edgar_user_agent" || id === "sec_edgar") return true;
+  const llm = new Set([
+    "openai",
+    "anthropic",
+    "xai",
+    "gemini",
+    "mistral",
+    "deepseek",
+    "moonshot",
+    "kimi",
+    "openrouter",
+    "meta"
+  ]);
+  return llm.has(id);
 }
 
 // ── Process-wide plan-tier lookup (operator / local key store) ───────────────

@@ -4263,11 +4263,8 @@ function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
   if (explicitDailyPct) delete merged.maxDailyNotional;
   else if (explicitDailyNotional) delete merged.maxDailyPctOfNav;
   if ((merged.maxOrderNotional ?? 0) > 100_000) merged.maxOrderNotional = 100_000;
-  // FMP product modules retired on ST — coerce OFF (mirror db-profiles.mergePolicy).
-  merged.fmpRealTimeDataEnabled = false;
-  merged.fmpMacroDataEnabled = false;
-  merged.fmpEventsDataEnabled = false;
-  merged.fmpFundamentalsDataEnabled = false;
+  // FMP module toggles are user-selectable (owner 2026-08-06); defaults remain false.
+  // Direct FMP HTTP stays hard-blocked in fmp-common until that ban is lifted.
   return merged;
 }
 

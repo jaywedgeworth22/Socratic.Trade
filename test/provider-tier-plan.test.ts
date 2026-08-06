@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   defaultPlanTierForService,
+  isNonPlanTierService,
   isRetiredMarketDataService,
   isValidPlanTierForService,
+  PLAN_TIER_REQUIRED_SERVICES,
   planTierOptionsForService,
   quotaWindowsForPlan,
   rateLimitProviderName
@@ -29,10 +31,16 @@ describe("provider-tier-plan mapping", () => {
     expect(isValidPlanTierForService("tiingo", "enterprise")).toBe(false);
   });
 
-  it("does not attach plan tiers to LLM keys", () => {
+  it("does not attach plan tiers to LLM keys (RAG hosts may still have tiers)", () => {
     expect(planTierOptionsForService("openrouter")).toBeNull();
-    expect(planTierOptionsForService("pinecone")).toBeNull();
-    expect(planTierOptionsForService("voyage")).toBeNull();
+    expect(planTierOptionsForService("anthropic")).toBeNull();
+    expect(planTierOptionsForService("openai")).toBeNull();
+    expect(planTierOptionsForService("pinecone")?.map((o) => o.id)).toEqual(
+      expect.arrayContaining(["free", "standard", "unknown"])
+    );
+    expect(planTierOptionsForService("voyage")?.map((o) => o.id)).toEqual(
+      expect.arrayContaining(["free", "paid", "unknown"])
+    );
   });
 
   it("maps tiingo free vs power to documented quota windows", () => {
@@ -64,6 +72,36 @@ describe("provider-tier-plan mapping", () => {
     );
     expect(quotaWindowsForPlan("roic", "free")).toEqual([{ maxRequests: 300, windowMs: DAY }]);
     expect(quotaWindowsForPlan("roic", "individual")).toEqual([{ maxRequests: 10_000, windowMs: DAY }]);
+  });
+
+  it("exposes plan tiers + quota windows for every required market-data service", () => {
+    for (const service of PLAN_TIER_REQUIRED_SERVICES) {
+      const opts = planTierOptionsForService(service);
+      expect(opts, `missing TIER_OPTIONS for ${service}`).toBeTruthy();
+      expect((opts ?? []).length, service).toBeGreaterThanOrEqual(2);
+      expect(isValidPlanTierForService(service, defaultPlanTierForService(service))).toBe(true);
+      const def = defaultPlanTierForService(service);
+      const windows = quotaWindowsForPlan(service, def);
+      // Massive starter is unlimited ([]) — free/unknown still have windows.
+      expect(windows, `missing TIER_QUOTA_WINDOWS for ${service}/${def}`).toBeDefined();
+    }
+    expect(isNonPlanTierService("openrouter")).toBe(true);
+    expect(isNonPlanTierService("sec_edgar_user_agent")).toBe(true);
+    expect(isNonPlanTierService("tiingo")).toBe(false);
+  });
+
+  it("has richer paid ladder for tiingo, twelvedata, marketaux, rapidapi", () => {
+    expect(planTierOptionsForService("tiingo")?.map((o) => o.id)).toEqual(
+      expect.arrayContaining(["free", "power", "commercial", "unknown"])
+    );
+    expect(planTierOptionsForService("twelvedata")?.map((o) => o.id)).toEqual(
+      expect.arrayContaining(["free", "grow", "pro", "ultra"])
+    );
+    expect(planTierOptionsForService("apify")?.map((o) => o.id)).toEqual(
+      expect.arrayContaining(["free", "starter", "scale", "business"])
+    );
+    expect(quotaWindowsForPlan("rapidapi", "basic")?.some((w) => w.windowMs === DAY)).toBe(true);
+    expect(quotaWindowsForPlan("logodev", "startup")?.[0]?.maxRequests).toBeGreaterThan(10_000);
   });
 
   it("normalizes alpha-vantage provider name to alphavantage service", () => {

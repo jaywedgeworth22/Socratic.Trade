@@ -117,9 +117,12 @@ export function ApiKeysCard() {
         and similar data providers deepen the scan — without them the app still uses free floors (e.g. Yahoo).{" "}
         <strong className="font-semibold text-[color:var(--con-muted)]">Direct FMP and QuiverQuant are retired</strong>{" "}
         here (Congress.Trade owns that class of data). Market data, positions, and guardrails work without optional
-        keys; autonomous proposals do not. For market-data keys, pick your{" "}
-        <strong className="font-semibold text-[color:var(--con-muted)]">plan tier</strong> so free vs paid quotas match
-        what you pay for.
+        keys; autonomous proposals do not. For <strong className="font-semibold text-[color:var(--con-muted)]">every
+        market-data / data-platform key</strong> (Tiingo, Massive, ROIC, Twelve, Finnhub, Marketstack, FilingAPI,
+        EarningsCalls, RapidAPI, Apify, Logo.dev, FRED, …), set the{" "}
+        <strong className="font-semibold text-[color:var(--con-muted)]">plan tier</strong> dropdown to the plan you
+        actually pay for — rate limits and transcript depth follow that choice (free-safe until you declare a paid
+        plan). LLM keys do not use plan tiers.
       </p>
 
       {loadError && (

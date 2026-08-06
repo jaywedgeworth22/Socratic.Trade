@@ -304,7 +304,18 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
   // (it goes through politeFetchJson, which knows nothing about this module) — this entry defines
   // the budget so the window math and any future call site are correct on day one, but wiring the
   // actual call site is separate work.
-  marketstack: [{ maxRequests: 3, windowMs: DAY }]
+  marketstack: [{ maxRequests: 3, windowMs: DAY }],
+  // Free-safe defaults when plan tier is unset (Connections tier raises these via provider-tier-plan).
+  fintechstudios: [{ maxRequests: 50, windowMs: DAY }],
+  marketaux: [{ maxRequests: 80, windowMs: DAY }],
+  earningscalls: [{ maxRequests: 8, windowMs: DAY }],
+  rapidapi: [
+    { maxRequests: 30, windowMs: MINUTE },
+    { maxRequests: 200, windowMs: DAY }
+  ],
+  fred: [{ maxRequests: 100, windowMs: MINUTE }],
+  apify: [{ maxRequests: 50, windowMs: DAY }],
+  logodev: [{ maxRequests: 5_000, windowMs: DAY }]
 };
 
 /** Env-overridable effective windows for a provider. `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`
