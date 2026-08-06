@@ -8,6 +8,7 @@ import { LANE_WAITS, withAccountMutation } from "./account-mutation";
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
 import { runMarketScanFreshnessIfDue } from "./market-scan-freshness";
+import { runHealthLaneReprobeIfDue } from "./health-lane-reprobe";
 import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getInternalSetting, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
 import { isEarningsCallsRefreshDue, refreshEarningsCallsTranscriptsIfDue } from "./earningscalls-transcripts";
 import { isRoicTranscriptRefreshDue, refreshRoicTranscriptsIfDue } from "./web-sources/roic-transcripts";
@@ -535,6 +536,11 @@ async function tick(): Promise<void> {
   // free-safe 5/min so the raised paid default can't 429-storm. No-op until due; fully self-guarded.
   void journalLane("provider-tier-check", {}, () => runProviderTierCheckIfDue())
     .catch((err) => console.error("[scheduler] provider-tier check error:", err));
+
+  // Re-open hard-STOPPED Connections health lanes on a 3–6h cadence (or at known
+  // quota reset). Prevents "red forever until an agent SSHs" — owner 2026-08-06.
+  void journalLane("health-lane-reprobe", {}, () => runHealthLaneReprobeIfDue())
+    .catch((err) => console.error("[scheduler] health-lane-reprobe error:", err));
 
   // Cloudflare R2 free-tier watchdog (owner directive 2026-07-30: never pace >70%
   // of the 10 GiB / 1M Class A / 10M Class B monthly free tier). Cadence-gated

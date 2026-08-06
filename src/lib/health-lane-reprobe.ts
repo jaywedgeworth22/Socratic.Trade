@@ -1,0 +1,498 @@
+/**
+ * Periodic re-probe of Connections health lanes that are hard-STOPPED.
+ *
+ * Owner (2026-08-06): red STOPPED lanes must not sit forever until a human/agent
+ * clears them. The scheduler opens a re-probe window (and runs a cheap live probe
+ * when we know how) every 3–6 hours by default, or at a known quota reset when the
+ * failure stamped one (daily AV midnight, etc.).
+ *
+ * Does NOT re-enable intentionally retired vendors (FMP/Quiver/UW).
+ * Does NOT invent success — a failed re-probe logs an honest failure; only a
+ * real probe success (or natural traffic success after the window opens) clears red.
+ */
+
+import {
+  getServiceHealthSummaries,
+  HEALTH_REASON_CONSECUTIVE_FAILURES,
+  HEALTH_SOFT_FAILURE_PREFIX,
+  isSoftHealthFailure,
+  logApiHealth,
+  type ServiceHealthSummary
+} from "./db-health";
+import { getDb } from "./db";
+import { isIntentionalOffHealthService } from "./retired-direct-vendors";
+
+const DEFAULT_REPROBE_INTERVAL_MS = 4 * 60 * 60_000; // 4h (mid of 3–6h)
+const MIN_REPROBE_INTERVAL_MS = 3 * 60 * 60_000;
+const MAX_REPROBE_INTERVAL_MS = 6 * 60 * 60_000;
+/** Scheduler admission: don't thrash the lane runner more often than this. */
+const LANE_TICK_MS = 30 * 60_000;
+const LAST_TICK_KEY = "healthLaneReprobe:lastTickAt";
+const NEXT_LANE_PREFIX = "healthLaneReprobe:next:";
+
+export type HealthReprobeOutcome =
+  | "skipped_not_due"
+  | "skipped_intentional_off"
+  | "window_opened"
+  | "probe_ok"
+  | "probe_fail"
+  | "probe_unsupported";
+
+export interface HealthReprobeLaneResult {
+  service: string;
+  keySource: string | null;
+  outcome: HealthReprobeOutcome;
+  reason?: string | null;
+  detail?: string;
+}
+
+export interface HealthReprobeRunResult {
+  ran: boolean;
+  asOf: string;
+  considered: number;
+  results: HealthReprobeLaneResult[];
+}
+
+function envIntervalMs(): number {
+  const raw = Number(process.env.HEALTH_LANE_REPROBE_INTERVAL_HOURS ?? "");
+  if (Number.isFinite(raw) && raw > 0) {
+    return Math.min(MAX_REPROBE_INTERVAL_MS, Math.max(MIN_REPROBE_INTERVAL_MS, raw * 3_600_000));
+  }
+  return DEFAULT_REPROBE_INTERVAL_MS;
+}
+
+function laneKey(service: string, keySource: string | null): string {
+  return `${NEXT_LANE_PREFIX}${service}:${keySource ?? ""}`;
+}
+
+/** Exported for tests — when is this hard-stopped lane eligible for a re-probe attempt? */
+export function isLaneDueForReprobe(
+  summary: Pick<ServiceHealthSummary, "lastFailureTs" | "lastFailureError" | "stoppedReason">,
+  nowMs: number,
+  opts?: { nextDueIso?: string | null; intervalMs?: number }
+): { due: boolean; reason: string; nextDueMs: number } {
+  const intervalMs = opts?.intervalMs ?? envIntervalMs();
+  const nextStored = opts?.nextDueIso ? Date.parse(opts.nextDueIso) : NaN;
+  if (Number.isFinite(nextStored) && nowMs < nextStored) {
+    return { due: false, reason: "before_scheduled_next", nextDueMs: nextStored };
+  }
+
+  // Known quota / "won't work until" instant from error text or cooldown stamp patterns.
+  const until = parseKnownUnavailabilityUntil(summary.lastFailureError, nowMs);
+  if (until != null && until > nowMs) {
+    return { due: false, reason: "waiting_quota_or_known_until", nextDueMs: until };
+  }
+
+  const lastFailMs = summary.lastFailureTs ? Date.parse(summary.lastFailureTs) : NaN;
+  const anchor = Number.isFinite(lastFailMs) ? lastFailMs : 0;
+  const nextDueMs = Math.max(anchor + intervalMs, Number.isFinite(nextStored) ? nextStored : 0);
+  if (nowMs < nextDueMs) {
+    return { due: false, reason: "interval_not_elapsed", nextDueMs };
+  }
+  return { due: true, reason: "due", nextDueMs: nowMs + intervalMs };
+}
+
+/**
+ * Parse a future "don't bother until" instant from known error shapes.
+ * Returns null when unknown — caller uses the 3–6h interval.
+ */
+export function parseKnownUnavailabilityUntil(
+  errorText: string | null | undefined,
+  nowMs: number = Date.now()
+): number | null {
+  if (!errorText) return null;
+  // Explicit ISO stamped by logApiHealth quotaResetAt path (callers may embed it).
+  const iso = errorText.match(
+    /(?:until|reset(?:s)?(?: at)?|cooldownUntil)[=:\s]+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)/i
+  );
+  if (iso) {
+    const ms = Date.parse(iso[1]);
+    if (Number.isFinite(ms) && ms > nowMs) return ms;
+  }
+  // Alpha Vantage-style "25/day" — next America/New_York midnight is a safe bound.
+  if (
+    /25\/day|25 requests per day|daily (?:call )?budget|proactive daily call budget|Note\.? daily/i.test(
+      errorText
+    )
+  ) {
+    return nextAmericaNewYorkMidnightMs(nowMs);
+  }
+  // HTTP 429 with Retry-After seconds
+  const retryAfter = errorText.match(/Retry-After:\s*(\d+)/i);
+  if (retryAfter) {
+    const sec = Number(retryAfter[1]);
+    if (Number.isFinite(sec) && sec > 0) {
+      return nowMs + Math.min(sec * 1000, 24 * 3600_000);
+    }
+  }
+  // Permanent product death (403 delisted RapidAPI) — still re-probe every max interval
+  // in case access returns; do not wait forever.
+  return null;
+}
+
+/** Next calendar midnight in America/New_York as epoch ms (for AV daily caps). */
+export function nextAmericaNewYorkMidnightMs(nowMs: number = Date.now()): number {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    });
+    const parts = Object.fromEntries(
+      fmt.formatToParts(new Date(nowMs)).filter((p) => p.type !== "literal").map((p) => [p.type, p.value])
+    ) as Record<string, string>;
+    // Build "tomorrow 00:00" NY by formatting now+1d at midnight via iterative approach:
+    // take current NY date, add 1 day in UTC approx then snap.
+    const y = Number(parts.year);
+    const m = Number(parts.month);
+    const d = Number(parts.day);
+    // Noon UTC on "tomorrow" NY calendar day as a stable anchor, then binary-ish: use
+    // Temporal-free approach — Date in UTC for NY date+1 at 05:00Z (EST) / 04:00Z (EDT) is wrong.
+    // Simpler: walk hour-by-hour until NY day rolls.
+    let t = nowMs;
+    const dayOf = (ms: number) => {
+      const p = Object.fromEntries(
+        fmt.formatToParts(new Date(ms)).filter((x) => x.type !== "literal").map((x) => [x.type, x.value])
+      ) as Record<string, string>;
+      return `${p.year}-${p.month}-${p.day}`;
+    };
+    const today = dayOf(nowMs);
+    // Jump ~20h then fine-tune
+    t = nowMs + 20 * 3600_000;
+    while (dayOf(t) === today) t += 3600_000;
+    // Back up to first hour of new day
+    while (dayOf(t - 3600_000) !== today && dayOf(t - 60_000) !== today) {
+      // find start of new day: when dayOf changes from today
+      break;
+    }
+    // Find exact transition
+    let lo = nowMs;
+    let hi = nowMs + 48 * 3600_000;
+    while (hi - lo > 1000) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (dayOf(mid) === today) lo = mid;
+      else hi = mid;
+    }
+    return hi;
+  } catch {
+    return nowMs + 24 * 3600_000;
+  }
+}
+
+/**
+ * Soften the last N hard-failure rows so consecutive-failure STOPPED lifts and the
+ * circuit breaker / natural traffic can try again. Does not invent ok=1.
+ */
+export function openHardStopReprobeWindow(
+  service: string,
+  keySource: string | null,
+  opts?: { limit?: number; nowIso?: string }
+): number {
+  const db = getDb();
+  const limit = opts?.limit ?? 5;
+  const rows = db
+    .prepare(
+      `SELECT rowid, error_text FROM api_health_log
+       WHERE service = ? AND key_source IS ? AND ok = 0
+       ORDER BY ts DESC, rowid DESC
+       LIMIT ?`
+    )
+    .all(service, keySource, limit) as Array<{ rowid: number; error_text: string | null }>;
+
+  let changed = 0;
+  const stamp = opts?.nowIso ?? new Date().toISOString();
+  const update = db.prepare(`UPDATE api_health_log SET error_text = ? WHERE rowid = ?`);
+  for (const row of rows) {
+    const et = row.error_text ?? "";
+    if (isSoftHealthFailure(et)) continue;
+    update.run(
+      `${HEALTH_SOFT_FAILURE_PREFIX}reprobe-window@${stamp}: ${et.slice(0, 200)}`,
+      row.rowid
+    );
+    changed += 1;
+  }
+  return changed;
+}
+
+type ProbeFn = () => Promise<{ ok: boolean; detail?: string; latencyMs?: number }>;
+
+/** Cheap keyless / env probes for common stopped lanes. Unknown services only get a window open. */
+export function probeFnForService(service: string): ProbeFn | null {
+  const s = service.toLowerCase();
+  if (s === "nasdaq-quote") {
+    return async () => {
+      const t0 = Date.now();
+      const res = await fetch("https://api.nasdaq.com/api/quote/AAPL/info?assetclass=stocks", {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "SocraticTradeHealth/1.0",
+          Origin: "https://www.nasdaq.com",
+          Referer: "https://www.nasdaq.com/"
+        },
+        signal: AbortSignal.timeout(12_000)
+      });
+      if (!res.ok) return { ok: false, detail: `HTTP ${res.status}`, latencyMs: Date.now() - t0 };
+      return { ok: true, detail: "AAPL", latencyMs: Date.now() - t0 };
+    };
+  }
+  if (s === "nasdaq-calendar") {
+    return async () => {
+      const t0 = Date.now();
+      const d = new Date().toISOString().slice(0, 10);
+      const res = await fetch(`https://api.nasdaq.com/api/calendar/earnings?date=${d}`, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "SocraticTradeHealth/1.0",
+          Origin: "https://www.nasdaq.com",
+          Referer: "https://www.nasdaq.com/"
+        },
+        signal: AbortSignal.timeout(12_000)
+      });
+      if (!res.ok) return { ok: false, detail: `HTTP ${res.status}`, latencyMs: Date.now() - t0 };
+      return { ok: true, detail: d, latencyMs: Date.now() - t0 };
+    };
+  }
+  if (s === "yahoo-finance" || s === "vix-yahoo") {
+    return async () => {
+      const t0 = Date.now();
+      const path =
+        s === "vix-yahoo"
+          ? "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=5d"
+          : "https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=1d";
+      const res = await fetch(path, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(12_000)
+      });
+      if (!res.ok) return { ok: false, detail: `HTTP ${res.status}`, latencyMs: Date.now() - t0 };
+      return { ok: true, latencyMs: Date.now() - t0 };
+    };
+  }
+  if (s === "vix-cboe") {
+    return async () => {
+      const t0 = Date.now();
+      const res = await fetch("https://cdn.cboe.com/api/global/delayed_quotes/quotes/VIX.json", {
+        signal: AbortSignal.timeout(12_000)
+      });
+      if (!res.ok) return { ok: false, detail: `HTTP ${res.status}`, latencyMs: Date.now() - t0 };
+      return { ok: true, latencyMs: Date.now() - t0 };
+    };
+  }
+  if (s === "usage-monitor") {
+    return async () => {
+      const t0 = Date.now();
+      const base = (process.env.USAGE_MONITOR_URL || "https://usage.jays.services").replace(/\/$/, "");
+      let res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+      if (!res || !res.ok) res = await fetch(base, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return { ok: false, detail: `HTTP ${res.status}`, latencyMs: Date.now() - t0 };
+      return { ok: true, latencyMs: Date.now() - t0 };
+    };
+  }
+  return null;
+}
+
+function isHardStopped(s: ServiceHealthSummary): boolean {
+  return (
+    s.stoppedWorking === true &&
+    (s.stoppedReasonKind === "consecutive-failures" ||
+      s.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES ||
+      // Soft heuristics also deserve re-open so traffic can resume after transient outages.
+      s.stoppedReasonKind === "no-success-this-hour" ||
+      s.stoppedReasonKind === "no-success-ever" ||
+      Boolean(s.stoppedReason))
+  );
+}
+
+/**
+ * Scheduler entry: reopen STOPPED health lanes on a 3–6h cadence (or at known quota reset).
+ * Self-guarded; never throws into the tick.
+ */
+export async function runHealthLaneReprobeIfDue(
+  nowMs: number = Date.now(),
+  opts?: { force?: boolean }
+): Promise<HealthReprobeRunResult> {
+  const asOf = new Date(nowMs).toISOString();
+  const empty: HealthReprobeRunResult = { ran: false, asOf, considered: 0, results: [] };
+
+  try {
+    if ((process.env.HEALTH_LANE_REPROBE_ENABLED ?? "on").toLowerCase() === "off") {
+      return empty;
+    }
+
+    const { getInternalSetting, setInternalSetting, audit } = await import("./db");
+    if (!opts?.force) {
+      const lastTick = getInternalSetting<string>(LAST_TICK_KEY);
+      const lastTickMs = lastTick ? Date.parse(lastTick) : NaN;
+      if (Number.isFinite(lastTickMs) && nowMs - lastTickMs < LANE_TICK_MS) {
+        return {
+          ...empty,
+          results: [{ service: "*", keySource: null, outcome: "skipped_not_due", detail: "tick" }]
+        };
+      }
+    }
+    setInternalSetting(LAST_TICK_KEY, asOf);
+
+    let summaries: ServiceHealthSummary[] = [];
+    try {
+      summaries = getServiceHealthSummaries();
+    } catch {
+      return empty;
+    }
+
+    const candidates = summaries.filter(
+      (s) => isHardStopped(s) && !s.intentionalOff && !isIntentionalOffHealthService(s.service)
+    );
+
+    const results: HealthReprobeLaneResult[] = [];
+    const intervalMs = envIntervalMs();
+
+    for (const s of candidates) {
+      const nextDueIso = getInternalSetting<string>(laneKey(s.service, s.keySource));
+      const due = isLaneDueForReprobe(s, nowMs, { nextDueIso, intervalMs });
+      if (!due.due) {
+        results.push({
+          service: s.service,
+          keySource: s.keySource,
+          outcome: "skipped_not_due",
+          reason: s.stoppedReason,
+          detail: due.reason
+        });
+        continue;
+      }
+
+      // 1) Open window: soften hard consecutive streak so circuit breaker + natural calls can try.
+      let softened = 0;
+      try {
+        softened = openHardStopReprobeWindow(s.service, s.keySource, { nowIso: asOf });
+      } catch (err) {
+        console.warn(
+          `[health-lane-reprobe] open window failed for ${s.service}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+
+      // 2) Optional live probe for known keyless/ops services.
+      const probe = probeFnForService(s.service);
+      if (!probe) {
+        setInternalSetting(laneKey(s.service, s.keySource), new Date(due.nextDueMs).toISOString());
+        results.push({
+          service: s.service,
+          keySource: s.keySource,
+          outcome: "window_opened",
+          reason: s.stoppedReason,
+          detail: softened ? `softened ${softened} rows; no automated probe` : "window open; no automated probe"
+        });
+        continue;
+      }
+
+      try {
+        const outcome = await probe();
+        if (outcome.ok) {
+          logApiHealth({
+            service: s.service,
+            ok: true,
+            latencyMs: outcome.latencyMs,
+            keySource: s.keySource ?? undefined
+          });
+          // Extra successes so a single row isn't buried under a 5-fail lookback if something races.
+          for (let i = 0; i < 2; i++) {
+            logApiHealth({
+              service: s.service,
+              ok: true,
+              latencyMs: outcome.latencyMs,
+              keySource: s.keySource ?? undefined
+            });
+          }
+          setInternalSetting(laneKey(s.service, s.keySource), new Date(nowMs + intervalMs).toISOString());
+          results.push({
+            service: s.service,
+            keySource: s.keySource,
+            outcome: "probe_ok",
+            reason: s.stoppedReason,
+            detail: outcome.detail
+          });
+        } else {
+          const soft =
+            /429|rate limit|quota|budget|25\/day/i.test(outcome.detail ?? "") ||
+            isSoftHealthFailure(outcome.detail);
+          logApiHealth({
+            service: s.service,
+            ok: false,
+            latencyMs: outcome.latencyMs,
+            errorText: outcome.detail,
+            keySource: s.keySource ?? undefined,
+            soft
+          });
+          const until = parseKnownUnavailabilityUntil(outcome.detail, nowMs);
+          const next = until != null && until > nowMs ? until : nowMs + intervalMs;
+          setInternalSetting(laneKey(s.service, s.keySource), new Date(next).toISOString());
+          results.push({
+            service: s.service,
+            keySource: s.keySource,
+            outcome: "probe_fail",
+            reason: s.stoppedReason,
+            detail: outcome.detail
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logApiHealth({
+          service: s.service,
+          ok: false,
+          errorText: msg,
+          keySource: s.keySource ?? undefined,
+          soft: /abort|timeout|429/i.test(msg)
+        });
+        setInternalSetting(laneKey(s.service, s.keySource), new Date(nowMs + intervalMs).toISOString());
+        results.push({
+          service: s.service,
+          keySource: s.keySource,
+          outcome: "probe_fail",
+          reason: s.stoppedReason,
+          detail: msg
+        });
+      }
+    }
+
+    const acted = results.filter((r) =>
+      r.outcome === "probe_ok" || r.outcome === "probe_fail" || r.outcome === "window_opened"
+    );
+    if (acted.length > 0) {
+      try {
+        audit(
+          "health_lane_reprobe",
+          {
+            considered: candidates.length,
+            acted: acted.length,
+            results: acted
+          },
+          "local"
+        );
+      } catch {
+        /* audit optional */
+      }
+    }
+
+    return {
+      ran: true,
+      asOf,
+      considered: candidates.length,
+      results
+    };
+  } catch (err) {
+    console.error(
+      "[health-lane-reprobe] error:",
+      err instanceof Error ? err.message : err
+    );
+    return empty;
+  }
+}
+
+/** Test helper — deterministic lane key. */
+export function healthReprobeLaneSettingKey(service: string, keySource: string | null): string {
+  return laneKey(service, keySource);
+}
