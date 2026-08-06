@@ -22,6 +22,7 @@ import {
 } from "../db";
 import { normalizeSymbol } from "../money";
 import { envFlagOn } from "../rag/env-flag";
+import { resolveSourceBool } from "../source-settings";
 import {
   eligibleMaterialTriggerUserIds,
   enqueueMaterialEventsForUsersTx,
@@ -834,10 +835,9 @@ function assertEightKIngestLease(leaseGuard?: VectorStoreLeaseGuard): void {
   leaseGuard?.assertOwnership();
 }
 
-/** Whether full 8-K body ingestion is enabled (default OFF). */
+/** Whether full 8-K body ingestion is enabled (default OFF). Settings / Infisical. */
 export function eightKFullBodyEnabled(): boolean {
-  const v = String(process.env.WEB_SOURCE_SEC8K_FULL_BODY ?? "off").trim().toLowerCase();
-  return ["1", "true", "on", "yes"].includes(v);
+  return resolveSourceBool("WEB_SOURCE_SEC8K_FULL_BODY");
 }
 
 /**

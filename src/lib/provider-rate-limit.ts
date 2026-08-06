@@ -302,7 +302,20 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
   // window matches the published unit better than inventing ~3/day. NOTE: history.ts's
   // fetchMarketstack does not yet call admitProviderRequests (politeFetchJson only) — this entry
   // defines the budget shape for when that call site is wired.
-  marketstack: [{ maxRequests: 100, windowMs: MONTH }]
+  marketstack: [{ maxRequests: 100, windowMs: MONTH }],
+  // Free-safe defaults when plan tier is unset (Connections tier raises these via provider-tier-plan).
+  // Caps below are placeholders until re-verified on vendor sites — prefer plan tier / env.
+  fintechstudios: [{ maxRequests: 50, windowMs: DAY }],
+  marketaux: [{ maxRequests: 80, windowMs: DAY }],
+  earningscalls: [{ maxRequests: 8, windowMs: DAY }],
+  rapidapi: [
+    { maxRequests: 30, windowMs: MINUTE },
+    { maxRequests: 200, windowMs: DAY }
+  ],
+  fred: [{ maxRequests: 100, windowMs: MINUTE }],
+  apify: [{ maxRequests: 50, windowMs: DAY }],
+  logodev: [{ maxRequests: 5_000, windowMs: DAY }]
+
 };
 
 /** Env-overridable effective windows for a provider. `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`

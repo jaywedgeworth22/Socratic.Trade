@@ -36,6 +36,7 @@ import {
 } from "../operation-lease";
 import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { activeEmbeddingProvider } from "../vector-db";
+import { resolveSourceNumber } from "../source-settings";
 import { loadCikMap } from "./sec8k";
 import { parseFilingHtml } from "./sec-parser";
 import * as fs from "fs";
@@ -95,7 +96,7 @@ const EDGAR_DATA_BASE = "https://data.sec.gov";
 // SEC_FILING_INGEST_TTL_HOURS (e.g. 24) so the capped per-run ingest runs daily instead.
 const DEFAULT_FILING_INGEST_TTL_HOURS = 7 * 24;
 function filingIngestTtlMs(): number {
-  const hours = Number(process.env.SEC_FILING_INGEST_TTL_HOURS ?? DEFAULT_FILING_INGEST_TTL_HOURS);
+  const hours = resolveSourceNumber("SEC_FILING_INGEST_TTL_HOURS");
   return (Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_FILING_INGEST_TTL_HOURS) * 60 * 60_000;
 }
 const ATTEMPT_KEY = "webSource:sec10k:lastAttempt";
@@ -715,8 +716,8 @@ function isFreeTier(): boolean {
 }
 
 function maxFilingsPerRunFromEnv(): number {
-  const parsed = Number(process.env.SEC_FILING_RAG_MAX_PER_RUN);
-  if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  const n = resolveSourceNumber("SEC_FILING_RAG_MAX_PER_RUN");
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
   return isFreeTier() ? DEFAULT_MAX_FILINGS_PER_RUN : DEFAULT_PAID_MAX_FILINGS_PER_RUN;
 }
 
