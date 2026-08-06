@@ -47,7 +47,7 @@ const SETTINGS_TOC: ReadonlyArray<{ id: string; label: string }> = [
   { id: "sharing", label: "Sharing" },
   { id: "learning-review", label: "Learning review" },
   { id: "scan-shape", label: "Scan shape" },
-  { id: "fmp-features", label: "FMP (retired)" },
+  { id: "data-sources", label: "Data sources" },
   { id: "confirmation", label: "Confirmation" },
   { id: "boot", label: "Boot" },
   { id: "you", label: "You" },
@@ -259,8 +259,11 @@ export default function SettingsPage() {
         <div id="scan-shape" className={SECTION_SCROLL_MT}>
           <ScanShapeCard />
         </div>
-        <div id="fmp-features" className={SECTION_SCROLL_MT}>
-          <FmpFeaturesCard />
+        {/* id data-sources is canonical; fmp-features kept as alias for old deep-links */}
+        <div id="data-sources" className={SECTION_SCROLL_MT}>
+          <div id="fmp-features" className="contents">
+            <DataSourcesCard />
+          </div>
         </div>
         {/* requireTypedConfirmation is a USER-level policy field
             (USER_LEVEL_POLICY_FIELDS in db-profiles, promoted 2026-07-10): the
@@ -673,60 +676,104 @@ function YouCard() {
   );
 }
 
-// ── All accounts: FMP Features (retired for product use) ─────────────────────
+// ── All accounts: Data sources (provider-neutral) ────────────────────────────
+//
+// Replaces the old FMP-only feature toggles (owner 2026-08-06). ST does not elevate one
+// vendor. Keys, plan tiers, and enablement live on Connections; this card explains the
+// capability lanes and where to configure each.
 
-function FmpFeaturesCard() {
-  const { snapshot } = useConsoleData();
-  if (!snapshot) return null;
+const DATA_SOURCE_LANES: ReadonlyArray<{
+  title: string;
+  how: string;
+  providers: string;
+}> = [
+  {
+    title: "Quotes & real-time price",
+    how: "Connected broker first, then free/delayed floors and keyed quote providers.",
+    providers: "Broker · Nasdaq delayed · Yahoo · Tiingo · Twelve Data · ROIC.ai"
+  },
+  {
+    title: "Fundamentals & ratios",
+    how: "Multi-source cascade fills PE/EPS/margins/etc. Missing cells stay blank — never fabricated.",
+    providers: "Yahoo · Finnhub · ROIC.ai · SEC XBRL · FilingAPI · Twelve Data"
+  },
+  {
+    title: "Price history & technicals",
+    how: "Local flat files when present, then Massive → ROIC → Tradier → Tiingo → Marketstack → Yahoo.",
+    providers: "Local files · Massive · ROIC.ai · Tiingo · Marketstack · Yahoo"
+  },
+  {
+    title: "Macro & market regime",
+    how: "Rates, VIX, breadth, and regime inputs for Guardrails / Macro.",
+    providers: "FRED · CBOE · Treasury · Massive internals · free public series"
+  },
+  {
+    title: "News, events & sentiment",
+    how: "Headlines and calendars for evidence packs; scarce paid news budgets stay optional.",
+    providers: "Alpaca/Massive news · MarketAux · Fintech Studios · economic calendar"
+  },
+  {
+    title: "Earnings transcripts (RAG)",
+    how: "Full-call text for proposals when a paid/entitled key is present. Free preview APIs stay gated.",
+    providers: "ROIC.ai (preferred when entitled) · EarningsCalls.dev · not direct FMP on ST"
+  },
+  {
+    title: "SEC filings (RAG)",
+    how: "10-K / 10-Q / 8-K bodies and highlight abstracts — no paid vendor key required.",
+    providers: "SEC EDGAR (free, rate-limited by User-Agent)"
+  },
+  {
+    title: "Congressional / alt-data latency",
+    how: "Not owned by Socratic.Trade product code.",
+    providers: "Congress.Trade only · direct FMP / Quiver / Unusual Whales retired on ST"
+  }
+];
 
-  // Direct FMP is retired in Socratic.Trade (owner 2026-08-04). Defaults are false; toggles
-  // stay visible as read-only OFF so existing policies don't look "on" and operators know
-  // where FMP-class latency lives (Congress.Trade), not ST Connections.
+function DataSourcesCard() {
   return (
     <Card
-      title="Financial Modeling Prep (FMP) — retired"
-      action={<Chip tone="muted">OFF</Chip>}
+      title="Data sources"
+      action={
+        <a
+          href="/console/connections#api-keys"
+          className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] underline-offset-2 hover:underline"
+          title="Open Connections to add provider keys and plan tiers."
+        >
+          Manage keys →
+        </a>
+      }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Direct FMP access is retired for Socratic.Trade product use. Fundamentals and market
-        enrichment come from the multi-source cascade (Yahoo, Finnhub, ROIC, SEC, …). FMP-class
-        latency probes and congressional alt-data live on{" "}
-        <strong className="font-semibold text-[color:var(--con-muted)]">Congress.Trade</strong>
-        {" "}— not here. Policy toggles default off and are disabled.
+        No single vendor is special. The app fills each <strong className="font-semibold text-[color:var(--con-muted)]">capability lane</strong>{" "}
+        from a cascade of free floors plus any keys you attach. On{" "}
+        <a href="/console/connections#api-keys" className="font-semibold text-[color:var(--con-accent)] underline-offset-2 hover:underline">
+          Connections
+        </a>
+        , paste each provider&apos;s API key and select its <strong className="font-semibold text-[color:var(--con-muted)]">plan tier</strong>{" "}
+        so rate limits match what you pay for (free-safe until you declare a paid plan).
       </p>
+
       <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 opacity-70">
-          <div>
-            <div className="text-[length:var(--con-fs-sm)] font-semibold">Real-Time & Index Data</div>
-            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Retired — not called from this app.</p>
+        {DATA_SOURCE_LANES.map((lane) => (
+          <div
+            key={lane.title}
+            className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-2.5 py-2"
+          >
+            <div className="text-[length:var(--con-fs-sm)] font-semibold text-[color:var(--con-ink)]">{lane.title}</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{lane.how}</p>
+            <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              <span className="font-semibold text-[color:var(--con-muted)]">Sources: </span>
+              {lane.providers}
+            </p>
           </div>
-          <Toggle checked={false} onChange={() => {}} disabled label="Real-Time Data" />
-        </div>
-
-        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 opacity-70">
-          <div>
-            <div className="text-[length:var(--con-fs-sm)] font-semibold">Macro & Commodities</div>
-            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Retired — not called from this app.</p>
-          </div>
-          <Toggle checked={false} onChange={() => {}} disabled label="Macro Data" />
-        </div>
-
-        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 opacity-70">
-          <div>
-            <div className="text-[length:var(--con-fs-sm)] font-semibold">Events & News</div>
-            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Retired — not called from this app.</p>
-          </div>
-          <Toggle checked={false} onChange={() => {}} disabled label="Events Data" />
-        </div>
-
-        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 opacity-70">
-          <div>
-            <div className="text-[length:var(--con-fs-sm)] font-semibold">Deep Fundamentals</div>
-            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Retired — multi-source cascade instead of FMP.</p>
-          </div>
-          <Toggle checked={false} onChange={() => {}} disabled label="Fundamentals Data" />
-        </div>
+        ))}
       </div>
+
+      <p className="mt-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        Legacy per-vendor policy flags (including old FMP real-time / macro / events / fundamentals switches)
+        stay hard-off in code and are no longer product controls. Prefer Connections keys + plan tiers over
+        vendor-named Settings toggles.
+      </p>
     </Card>
   );
 }

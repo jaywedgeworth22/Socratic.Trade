@@ -525,8 +525,10 @@ describe("resolveProviderQuota", () => {
     expect(resolveProviderQuota("filingapi")).toEqual([{ maxRequests: 45, windowMs: 86_400_000 }]);
   });
 
-  it("returns the built-in roic window (10000/day)", () => {
-    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 10000, windowMs: 86_400_000 }]);
+  it("returns the built-in roic free-safe window (300/day)", () => {
+    // Paid individual (10k/day) is selected via Connections plan tier, not the hard default.
+    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 300, windowMs: 86_400_000 }]);
+    expect(resolveProviderQuota("roic", "individual")).toEqual([{ maxRequests: 10_000, windowMs: 86_400_000 }]);
   });
 
   it("returns the built-in marketstack window (3/day, approximating its 100/month free tier)", () => {
@@ -758,9 +760,9 @@ describe("RequestQuota (sliding-window, fake clock)", () => {
     expect(quota.admit("filingapi", "k", 100)).toBe(0); // day's budget already spent
   });
 
-  it("admits up to roic's 10000/day default and denies once the day's budget is spent", () => {
+  it("admits up to roic's free-safe 300/day default and denies once the day's budget is spent", () => {
     const quota = new RequestQuota(new FakeClock());
-    expect(quota.admit("roic", "k", 15000)).toBe(10000);
+    expect(quota.admit("roic", "k", 15000)).toBe(300);
     expect(quota.admit("roic", "k", 15000)).toBe(0);
   });
 

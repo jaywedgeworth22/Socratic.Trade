@@ -293,8 +293,10 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
   // resolveProviderQuota("filingapi") returned undefined (unlimited), so that call site's "~50/day
   // free tier — admit at most one symbol-bundle per reservation unit" comment enforced nothing.
   filingapi: [{ maxRequests: 45, windowMs: DAY }],
-  // ROIC.ai individual subscription: 10,000/day window for paid accounts (overridable via PROVIDER_QUOTA_ROIC_PER_DAY).
-  roic: [{ maxRequests: 10000, windowMs: DAY }],
+  // ROIC.ai free-safe default. Paid individual/professional raise this via Connections plan tier
+  // (provider-tier-plan.ts) or PROVIDER_QUOTA_ROIC_PER_DAY. Do NOT default to 10k — that burns
+  // free keys and misleads when plan tier is unset.
+  roic: [{ maxRequests: 300, windowMs: DAY }],
   // Marketstack's free tier is 100 req/MONTH, not a daily cap — this module only models rolling
   // minute/hour/day windows, so approximate the monthly budget as a conservative perDay window
   // (100/30 ≈ 3) rather than adding a MONTH window shape used nowhere else. NOTE: unlike

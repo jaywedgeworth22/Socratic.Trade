@@ -199,23 +199,13 @@ export function ApiKeysCard() {
                               disabled={busy !== null || retired || entry.source === "none"}
                               onChange={(e) => {
                                 const next = e.target.value;
-                                if (entry.source === "user" || entry.source === "env") {
-                                  // Env-only keys still need a stored row to hold plan_tier —
-                                  // tier-only POST requires a user key. When source is env with no
-                                  // user row, prompt add-key path.
-                                  if (entry.source === "env" && !entry.updatedAt) {
-                                    toast.push(
-                                      "warn",
-                                      "Add your own key first",
-                                      "Plan tier is stored next to your key. Paste a key, then set the plan — or replace with the same server key value if you want a local row."
-                                    );
-                                    setEditing(entry.service);
-                                    return;
-                                  }
-                                  void onPlanTierChange(entry, next);
-                                } else {
+                                if (entry.source === "none") {
                                   setEditing(entry.service);
+                                  return;
                                 }
+                                // User key or server env key: tier-only POST is enough
+                                // (env path stores a non-secret plan marker).
+                                void onPlanTierChange(entry, next);
                               }}
                               aria-label={`${entry.label} plan tier`}
                             >

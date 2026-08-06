@@ -182,8 +182,9 @@ const API_KEY_CATALOG = [
     label: "ROIC.ai",
     category: "Market data",
     required: false,
-    unlocks: "Company profile, fundamentals ratios, and earnings-call transcript pages.",
-    docsUrl: "https://roic.ai"
+    unlocks:
+      "Deep fundamentals, ratios, price history, and full earnings-call transcripts (RAG). Paste your key and set plan tier (Free vs Individual/Professional) so daily quotas match what you pay for.",
+    docsUrl: "https://www.roic.ai/api"
   },
   {
     service: "filingapi",
@@ -376,12 +377,16 @@ export async function POST(request: NextRequest) {
     const hasKey = typeof apiKey === "string" && apiKey.trim().length > 0;
     const hasTierUpdate = planTier !== undefined;
 
-    // Tier-only update: no secret re-paste required when a key already exists.
+    // Tier-only update: no secret re-paste when a user key exists, OR when a server env key
+    // is already serving this service (plan tier attaches to that env credential).
     if (!hasKey && hasTierUpdate) {
       const updated = setUserApiKeyPlanTier(userId, canonical, planTier === "" ? null : planTier);
       if (!updated) {
         return NextResponse.json(
-          { error: "No stored key for this service — paste an apiKey when setting planTier for the first time." },
+          {
+            error:
+              "No key for this service — paste an apiKey, or ensure a server env key exists before setting planTier alone."
+          },
           { status: 400 }
         );
       }
