@@ -13,6 +13,10 @@ enum MobileAPIError: Error, LocalizedError {
         case .unauthorized:
             return "Your session expired. Sign in again."
         case .serverError(let statusCode, let message):
+            // Cloudflare edge codes when the origin (socratictrade.com backend) is unreachable.
+            if (521...523).contains(statusCode) {
+                return "Socratic Trade servers are unreachable right now (Cloudflare \(statusCode)). Try again in a few minutes."
+            }
             if let message, !message.isEmpty {
                 return "\(message) (\(statusCode))"
             }
@@ -229,13 +233,19 @@ struct MobileAPIClient {
     }
 
     private static func serverMessage(from data: Data?) -> String? {
-        guard
-            let data,
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return nil
+        guard let data, !data.isEmpty else { return nil }
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return object["error"] as? String ?? object["message"] as? String
         }
-        return object["error"] as? String ?? object["message"] as? String
+        // Cloudflare often returns plain text like "error code: 522" when origin is down.
+        if let text = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty,
+           text.count < 200,
+           !text.hasPrefix("<") {
+            return text
+        }
+        return nil
     }
 }
 

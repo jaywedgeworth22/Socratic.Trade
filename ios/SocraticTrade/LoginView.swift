@@ -252,10 +252,16 @@ private final class WebAuthSessionManager {
 
 private final class WebAuthContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: { $0.isKeyWindow }) ?? ASPresentationAnchor()
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        if let keyWindow = scenes.flatMap(\.windows).first(where: \.isKeyWindow) {
+            return keyWindow
+        }
+        if let scene = scenes.first {
+            // UIWindow.init() is deprecated in iOS 26 — always anchor to a window scene.
+            return scene.windows.first ?? UIWindow(windowScene: scene)
+        }
+        // Running app should always have a scene; avoid deprecated UIWindow().
+        preconditionFailure("No UIWindowScene available for web auth presentation")
     }
 }
 
