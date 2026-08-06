@@ -156,11 +156,16 @@ export async function computeSpyBenchmark(
   fills?: FillEvent[]
 ): Promise<BenchmarkComparison | null> {
   if (!equityCurve || equityCurve.length < 2) return null;
-  // Refuse the synthetic paper curve (100 + realized) — it has no cash/positionsValue and a fake base.
-  const hasRealSnapshot = equityCurve.some(
+  // Refuse synthetic paper curves (`syntheticPaperCurve` uses equity = 100 + realized with no cash
+  // fields). IMPORTANT: do not let a single live tip (which has cash) "upgrade" a synthetic
+  // history into a real TWR — that made $100-base fill curves + $100k tip read as +tens of %
+  // "account return" on paper/sandbox accounts. Require ≥2 real snapshot points.
+  const realCurve = equityCurve.filter(
     (p) => typeof p.cash === "number" || typeof p.positionsValue === "number"
   );
-  if (!hasRealSnapshot) return null;
+  if (realCurve.length < 2) return null;
+  // Prefer the real-snapshot sub-curve (includes a live tip when present).
+  equityCurve = realCurve;
   let bars;
   try {
     bars = await fetchDailyOHLC("SPY", now, userId);

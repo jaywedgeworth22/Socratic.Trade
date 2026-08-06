@@ -546,7 +546,7 @@ function BucketCard({
           <div className="con-num mt-0.5">{hasAny && typeof winRate === "number" ? fmtPct(winRate, 0) : EM_DASH}</div>
         </div>
         <div>
-          <div className="con-card-title" title="Raw realized return per closed trade in this bucket, not benchmark-relative. The separate SPY panel below handles benchmark/excess return.">Avg return / closed trade</div>
+          <div className="con-card-title" title="Capital-weighted realized return across closed lots (sum of P&amp;L ÷ sum of entry notional). Not the same as account NAV change — open positions and cash are excluded. Unweighted trade averages were retired because small round-trips dominated. The SPY panel below is the account equity time-weighted return.">Avg return / closed capital</div>
           <div className="con-num mt-0.5" title="Raw realized return per closed trade, based on entry and exit prices. It is not adjusted for SPY or market beta.">
             {hasAny && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}
           </div>

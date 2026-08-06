@@ -300,6 +300,8 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 
+- **2026-08-05 — GROK — IN PROGRESS — Fix inflated account % return (synthetic paper curve + live tip TWR; isAllCash cash-first; capital-weighted closed-lot return).** Branch `grok/fix-account-return-pct`. Owner: Sandbox/Alpaca Paper/etc showed ~+50% despite ~$100k start and slight drawdown.
+
 - **[Socratic.Trade][GROK] Data sources overhaul (matrix, FMP OFF, soft health, tiers, provenance, ROIC transcripts) — IN PR 2026-08-05.** Branch `grok/data-sources-overhaul`. CT FMP latency OFF: Congress.Trade PR #1417.
 - **[Socratic.Trade][GROK] Non-FMP data sources STOPPED fix (soft limits + Nasdaq UA) — COMMITTED on branch 2026-08-05 (branch `grok/data-sources-overhaul`, not yet merged).** Soft-classify 429/daily-cap (no hard STOPPED); Nasdaq BROWSER_UA; AV soft exhaustion; VIX/RapidAPI/usage-monitor soft semantics. Rollout: `docs/rollouts/2026-08-05-soft-health-and-nasdaq-ua.md`.
 

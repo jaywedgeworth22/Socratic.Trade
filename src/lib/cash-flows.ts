@@ -55,11 +55,13 @@ function materialityThreshold(priorEquity: number): number {
 /** True when the snapshot is essentially all cash (no meaningful open positions). */
 function isAllCash(p: CurvePoint): boolean {
   const threshold = materialityThreshold(p.equity);
-  if (typeof p.positionsValue === "number" && Number.isFinite(p.positionsValue)) {
-    return Math.abs(p.positionsValue) < threshold;
-  }
+  // Prefer cash ≈ equity. positionsValue has been wrong/double-counted in the past; when cash
+  // says the book is fully liquid, treat it as all-cash even if positionsValue is noisy.
   if (typeof p.cash === "number" && Number.isFinite(p.cash)) {
     return Math.abs(p.cash - p.equity) <= Math.max(FLOW_MATERIALITY_MIN_USD, 0.01 * p.equity);
+  }
+  if (typeof p.positionsValue === "number" && Number.isFinite(p.positionsValue)) {
+    return Math.abs(p.positionsValue) < threshold;
   }
   return false;
 }
@@ -114,13 +116,27 @@ export function inferExternalCashFlows(
       continue;
     }
 
-    if (typeof prev.cash !== "number" || typeof cur.cash !== "number") continue;
-
+    // Count absolute trade notional in the gap (used by missing-cash and residual guards).
+    let tradeNotionalAbs = 0;
     let tradeCash = 0;
     for (const f of sortedFills) {
       if (f.t <= prev.timestampMs) continue;
       if (f.t > cur.timestampMs) break;
+      tradeNotionalAbs += Math.abs(f.notional);
       tradeCash += f.side === "sell" || f.side === "cover" ? f.notional : -f.notional;
+    }
+
+    // Missing cash metadata: only invent a transfer when BOTH sides look flat (no positions)
+    // AND there was essentially no trading — otherwise mark-to-market would be misread as ACH.
+    if (typeof prev.cash !== "number" || typeof cur.cash !== "number") {
+      const prevFlat =
+        typeof prev.positionsValue === "number" ? Math.abs(prev.positionsValue) < threshold : true;
+      const curFlat =
+        typeof cur.positionsValue === "number" ? Math.abs(cur.positionsValue) < threshold : true;
+      if (prevFlat && curFlat && tradeNotionalAbs < threshold && Math.abs(deltaEquity) >= threshold) {
+        flows.set(dates[i], round2(deltaEquity));
+      }
+      continue;
     }
 
     const deltaCash = cur.cash - prev.cash;
