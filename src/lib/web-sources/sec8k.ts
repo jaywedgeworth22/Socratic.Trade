@@ -834,10 +834,12 @@ function assertEightKIngestLease(leaseGuard?: VectorStoreLeaseGuard): void {
   leaseGuard?.assertOwnership();
 }
 
-/** Whether full 8-K body ingestion is enabled (default OFF). */
+/** Whether full 8-K body ingestion is enabled (default OFF). Settings / Infisical. */
 export function eightKFullBodyEnabled(): boolean {
-  const v = String(process.env.WEB_SOURCE_SEC8K_FULL_BODY ?? "off").trim().toLowerCase();
-  return ["1", "true", "on", "yes"].includes(v);
+  // Lazy require avoids circular import at module load (sec8k ↔ source-settings ↔ db).
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { resolveSourceBool } = require("../source-settings") as typeof import("../source-settings");
+  return resolveSourceBool("WEB_SOURCE_SEC8K_FULL_BODY");
 }
 
 /**

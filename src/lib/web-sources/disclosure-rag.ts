@@ -28,7 +28,14 @@ import { envFlagOn } from "../rag/env-flag";
  * silently no-op with e.g. `=true`.
  */
 export function disclosureRagEnabled(): boolean {
-  return envFlagOn("RAG_EMBED_DISCLOSURES", false);
+  try {
+    // Settings override then env (source-settings).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { resolveSourceBool } = require("../source-settings") as typeof import("../source-settings");
+    return resolveSourceBool("RAG_EMBED_DISCLOSURES");
+  } catch {
+    return envFlagOn("RAG_EMBED_DISCLOSURES", false);
+  }
 }
 
 // ── Text builders ────────────────────────────────────────────────────────────

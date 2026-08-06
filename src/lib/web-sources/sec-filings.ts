@@ -95,7 +95,15 @@ const EDGAR_DATA_BASE = "https://data.sec.gov";
 // SEC_FILING_INGEST_TTL_HOURS (e.g. 24) so the capped per-run ingest runs daily instead.
 const DEFAULT_FILING_INGEST_TTL_HOURS = 7 * 24;
 function filingIngestTtlMs(): number {
-  const hours = Number(process.env.SEC_FILING_INGEST_TTL_HOURS ?? DEFAULT_FILING_INGEST_TTL_HOURS);
+  let hours = DEFAULT_FILING_INGEST_TTL_HOURS;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { resolveSourceNumber } = require("../source-settings") as typeof import("../source-settings");
+    hours = resolveSourceNumber("SEC_FILING_INGEST_TTL_HOURS");
+  } catch {
+    const raw = Number(process.env.SEC_FILING_INGEST_TTL_HOURS ?? DEFAULT_FILING_INGEST_TTL_HOURS);
+    if (Number.isFinite(raw) && raw > 0) hours = raw;
+  }
   return (Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_FILING_INGEST_TTL_HOURS) * 60 * 60_000;
 }
 const ATTEMPT_KEY = "webSource:sec10k:lastAttempt";
@@ -650,8 +658,15 @@ function isFreeTier(): boolean {
 }
 
 function maxFilingsPerRunFromEnv(): number {
-  const parsed = Number(process.env.SEC_FILING_RAG_MAX_PER_RUN);
-  if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { resolveSourceNumber } = require("../source-settings") as typeof import("../source-settings");
+    const n = resolveSourceNumber("SEC_FILING_RAG_MAX_PER_RUN");
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  } catch {
+    const parsed = Number(process.env.SEC_FILING_RAG_MAX_PER_RUN);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
   return isFreeTier() ? DEFAULT_MAX_FILINGS_PER_RUN : DEFAULT_PAID_MAX_FILINGS_PER_RUN;
 }
 
