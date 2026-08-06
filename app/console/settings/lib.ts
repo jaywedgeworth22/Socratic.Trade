@@ -42,6 +42,42 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+// ── Source / data-plane feature settings (per-user overrides of Infisical knobs) ─
+
+export interface SourceFeatureRow {
+  id: string;
+  group: string;
+  label: string;
+  description: string;
+  type: "boolean" | "number" | "string";
+  defaultValue: boolean | number | string;
+  min?: number;
+  max?: number;
+  advanced?: boolean;
+  caveat?: string;
+  value: boolean | number | string;
+  source: "user" | "env" | "default";
+}
+
+export interface SourceFeaturesResponse {
+  ok: boolean;
+  groups: Record<string, { title: string; blurb: string }>;
+  settings: SourceFeatureRow[];
+}
+
+export function fetchSourceFeatures(): Promise<SourceFeaturesResponse> {
+  return request<SourceFeaturesResponse>("/api/settings/source-features");
+}
+
+export function patchSourceFeatures(
+  settings: Record<string, boolean | number | string | null>
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>("/api/settings/source-features", {
+    method: "PATCH",
+    body: JSON.stringify({ settings })
+  });
+}
+
 // ── Broker connections ───────────────────────────────────────────────────────
 
 /** Where the browser must go to start Robinhood OAuth (full-page redirect —

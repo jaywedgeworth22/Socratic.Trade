@@ -8,8 +8,12 @@ app; this doc records the *vendor facts* so agents stop re-deriving (and
 re-misinterpreting) them.
 
 Verified 2026-07-10 against live vendor pages (headless-rendered where noted),
-plus owner corrections. Trading-app integration facts verified against this repo
-and prod `api_health_log` evidence the same day.
+plus owner corrections. **Re-verified plan-tier quotas 2026-08-06** from live
+vendor pages (ROIC, Twelve Data `pricing.md`, Marketstack, Massive, Alpha
+Vantage premium ladder, Tiingo matrix) after owner note that agents often invent
+worse quota facts than the public docs — see "2026-08-06 plan-tier research"
+below. Trading-app integration facts verified against this repo and prod
+`api_health_log` evidence the same day.
 
 **Scope, extended 2026-07-10:** the table directly below covers the seven core
 quote/fundamentals/history vendors. Everything past the "Upgrade cheat-sheet"
@@ -29,17 +33,40 @@ in place when a fact changes.
 | **Tiingo** | 50 req/hr, 1,000/day, 500 unique symbols/mo; **News API not included** (every news call 403s) | **Power $30/mo** | **$300/yr (2 months free)** — owner-verified 2026-07-10; the $499/yr on their site is the separate *commercial* license | 10,000 req/hr, 100,000 req/day, News API. **Fundamentals are NOT included** — separate contact-sales add-on on every tier |
 | **Massive** (ex-Polygon, rebranded 2025-10-30) | 5 calls/min, EOD only, 2 yr history | **Stocks Starter $29/mo** — **we already pay this** | $288/yr ($24/mo effective) | Unlimited API calls, 15-min delayed, 5 yr history, WS aggregates. Real-time + trades/quotes + financial ratios = Advanced $199/mo |
 | **FMP** | 250 calls/day, EOD | **Starter $22/mo billed annually** ($264/yr) — **our active plan** | Premium $59/mo annual; Ultimate $149/mo annual | Starter: 300 calls/min, 20 GB/30d, real-time US quotes, annual-only fundamentals. Premium: quarterly/full fundamentals, 750/min, 50 GB. **Earnings-call transcripts require Ultimate** (3,000/min, 150 GB); display/redistribution also requires a separate agreement |
-| **Twelve Data** | 8 credits/min, 800/day | Grow $79/mo | $792/yr ($66/mo) | 377 credits/min, no daily cap. Credits = endpoint weight × symbols (fundamentals cost 100 credits/symbol — poor value for us). Real WebSocket starts at Pro $229/mo |
+| **Twelve Data** | 8 credits/min, 800/day | Grow **from $29/mo** (55 credits) | Annual −17% | Grow SKUs: 55 / 144 / 377 credits/min (no daily). Pro from $99 (610+). Ultra from $329 (2,584+). Credits = endpoint weight × symbols (fundamentals cost 100 credits/symbol — poor value for us). Full WS starts at Pro |
 | **Finnhub** | 60 calls/min (generous), US-only | **All-In-One $3,500/mo** — annual-only ($42,000/yr) | n/a | No affordable paid step exists. Stay free |
 | **Alpha Vantage** | Nominally 25 req/day — **but enforced PER IP**, so key rotation from one box is useless (proven in prod 2026-07-10: exactly 25 OKs, then all 6 pool keys instantly rejected) | $49.99/mo (75 req/min) | $499/yr ($41.58/mo, "2 months off") | Higher rate limits, no daily cap. Total overlap with FMP+Finnhub for us. Skip |
 | **Yahoo Finance** | Keyless, free, no SLA — unofficial endpoints, can throttle/block anytime | n/a | n/a | Floor of the cascade, never a contract |
 
 Sources: tiingo.com/pricing (+ owner-verified annual), massive.com/pricing (Stripe
 plan payload embedded in page), site.financialmodelingprep.com/pricing-plans
-(rendered; monthly toggle would not switch), twelvedata.com/pricing (+ support
-articles 5194820, 5203360), finnhub.io/pricing (rendered), alphavantage.co/premium
-(+ /support for the 25/day statement — per-IP enforcement is NOT documented there;
-it is our own prod-observed fact).
+(rendered; monthly toggle would not switch), twelvedata.com/pricing +
+**twelvedata.com/pricing.md** (agent-readable ladder, 2026-08-06), finnhub.io/pricing
+(rendered), alphavantage.co/premium (+ /support for the 25/day statement — per-IP
+enforcement is NOT documented there; it is our own prod-observed fact),
+**roic.ai/pricing** (2026-08-06), **marketstack.com/pricing** (2026-08-06).
+
+## 2026-08-06 plan-tier research (Connections dropdowns)
+
+Owner direction: plan tiers must be researched on each site's docs; owner often
+finds better quota facts than agents assume. Do **not** invent daily caps when the
+vendor publishes per-minute or monthly units. Code map:
+`src/lib/provider-tier-plan.ts` + free-safe `RATE_QUOTAS` in `provider-rate-limit.ts`.
+
+| Provider | Verified tiers (2026-08-06) | Free-safe app default | Notes / traps corrected this pass |
+|---|---|---|---|
+| **ROIC** | Free: **5 req/min**, 2 transcript quarters, 2 yr history · Individual **$29**: **300 req/min**, **20** transcript quarters · Professional **$89**: unlimited RPM, all quarters · Enterprise custom | **5/min** (was wrongly 300/day then 10k/day) | No public "Starter" SKU — removed invented tier. Transcript depth 2/20/all (app caps "all" at 40/symbol/run). Source: https://www.roic.ai/pricing |
+| **Twelve Data** | Basic free 8/min + 800/day · Grow 55 ($29) / 144 ($49) / 377 ($79) · Pro 610 ($99) / 987 ($149) / 1597 ($229) · Ultra 2584 ($329) / 4181 ($499) / 10946 ($999) | 8/min + 800/day | Family ids `grow`/`pro`/`ultra` map to **floor** of that family; exact SKUs `grow_377` etc. for what you actually pay. Source: https://twelvedata.com/pricing.md |
+| **Marketstack** | Free 100/mo · Basic 10k/mo ($9.99) · Professional 100k/mo ($49.99) · Business 500k/mo ($149.99) | **100 / 30d** rolling | Was approximating ~3/day — use monthly window matching vendor. Source: https://marketstack.com/pricing |
+| **Massive** | Stocks Basic free 5/min · Starter $29 unlimited · Developer $79 unlimited · Advanced $199 unlimited | 5/min | Added Developer tier. Source: https://massive.com/pricing |
+| **Alpha Vantage** | Free 25/day (per-IP observed) · Premium 75 / 150 / 300 / 600 / 1200 per min ($49.99…$249.99 monthly; annual 2 mo off) | 25/day | Full ladder in dropdown; `premium` = entry 75/min. Source: https://www.alphavantage.co/premium/ |
+| **Tiingo** | Free 50/hr 1k/day · Power 10k/hr 100k/day ($30 or $300/yr individual) · commercial contact-sales | free windows | Unchanged; commercial not a self-serve RPM ladder on the public matrix. Source: tiingo.com/about/pricing |
+| **Finnhub** | Free **60/min** (app paces 50) · All-In-One ~$3.5k/mo only jump | 50/min | **Do not invent** paid RPM (e.g. 900/300) without dashboard/docs receipt — `all_in_one` tier is unlimited in map; set env when confirmed |
+| **FilingAPI / Marketaux / FintechStudios / EarningsCalls / RapidAPI** | Partial | free-safe placeholders | Not fully re-fetched this pass — hints say re-verify; paid = env override, no invented high daily |
+
+**Process rule (binding):** before changing a tier number in code, open the vendor
+page (or paste owner receipt) and date the citation in this file. Prefer the
+vendor's unit (min / hour / month) over converted approximations.
 
 ## Traps already hit once (do not re-learn these)
 
@@ -68,6 +95,13 @@ it is our own prod-observed fact).
    that job belongs to tiingo/brokers here.
 6. **Finnhub has no middle tier.** Free (60/min) then $3,500/mo. Never budget for
    "Finnhub paid".
+7. **ROIC free is 5/min, not a daily invent.** Agents previously coded 10k/day then
+   300/day free-safe — both wrong. Pricing page is requests/minute + transcript
+   quarter depth. Individual is 300/min and 20 quarters, not "10k/day".
+8. **Twelve Data Grow is not "377".** 377 is one Grow SKU ($79); the family starts at
+   55 credits/min ($29). Using 377 as the default Grow map over-admits lower SKUs.
+9. **Marketstack is monthly.** Dividing by 30 for a daily hard default under-uses
+   paid plans and mislabels free (100/mo ≠ 3/day in the vendor UI).
 
 ## What we run today (2026-07-10)
 
@@ -130,15 +164,15 @@ more providers were added since and is corrected here): `provider-rate-limit.ts`
 SEPARATE `RATE_QUOTAS` windowed-budget map (see the RapidAPI section above for
 why the nine RapidAPI-hosted lanes use their own, third, budget mechanism
 instead) now covers six: `twelvedata`, `tiingo`, `fmp`, and (added 2026-08-02)
-`filingapi` (45/day), `roic` (200/day placeholder), `marketstack` (3/day,
-approximating its 100-req/MONTH free tier). For `filingapi`/`roic` this cap is
-ACTIVE immediately — see trap #12 above: both providers already called
-`admitProviderRequests` believing a quota existed, so defining one here closes
-a real enforcement gap. `marketstack` is different: `history.ts`'s
-`fetchMarketstack` doesn't call `admitProviderRequests` at all (it goes
-through `politeFetchJson`, unrelated to this module) — the new entry defines
-the correct budget shape for whenever that call site is wired, but does not
-by itself throttle marketstack calls today.
+`filingapi` (45/day), `roic` (**5/min** free-safe, 2026-08-06 vendor verify —
+was briefly 200/day then 300/day invents), `marketstack` (**100 / 30d month**
+window, not 3/day). For `filingapi`/`roic` this cap is ACTIVE immediately —
+see trap #12 above: both providers already called `admitProviderRequests`
+believing a quota existed, so defining one here closes a real enforcement gap.
+`marketstack` is different: `history.ts`'s `fetchMarketstack` doesn't call
+`admitProviderRequests` at all (it goes through `politeFetchJson`, unrelated
+to this module) — the entry defines the correct budget shape for whenever that
+call site is wired, but does not by itself throttle marketstack calls today.
 
 **`tradier`, `fred`, `fintechstudios`, and `logodev` still have NEITHER a
 `HARD_DEFAULTS` pacing entry NOR a `RATE_QUOTAS` budget entry.** Nothing

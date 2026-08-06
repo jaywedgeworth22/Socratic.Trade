@@ -14,7 +14,7 @@
  *  Sub-sections live in sibling modules (delivery/danger/help/sharing/
  *  learning-review) with their fetch helpers in ./lib. */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import type { NotificationEventType } from "@/lib/types";
@@ -36,6 +36,11 @@ import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
 import { LearningReviewCard } from "./learning-review";
 import { DataSharingCard } from "./sharing";
+import {
+  fetchSourceFeatures,
+  patchSourceFeatures,
+  type SourceFeatureRow
+} from "./lib";
 
 /** Sticky jump-chip targets for the long Settings page (UX PR-B4).
  *  Ids are also hash deep-link anchors — keep in sync with the wrappers below
@@ -676,60 +681,61 @@ function YouCard() {
   );
 }
 
-// ── All accounts: Data sources (provider-neutral) ────────────────────────────
+// ── All accounts: Data sources + per-user feature knobs ──────────────────────
 //
-// Replaces the old FMP-only feature toggles (owner 2026-08-06). ST does not elevate one
-// vendor. Keys, plan tiers, and enablement live on Connections; this card explains the
-// capability lanes and where to configure each.
+// Owner 2026-08-06: FMP module toggles stay visible (even if disproportionate for
+// barely-active FMP). SEC / RAG / transcript / web-source knobs that used to be
+// Infisical-only are selectable here (user override → env → default).
 
-const DATA_SOURCE_LANES: ReadonlyArray<{
-  title: string;
-  how: string;
-  providers: string;
-}> = [
-  {
-    title: "Quotes & real-time price",
-    how: "Connected broker first, then free/delayed floors and keyed quote providers.",
-    providers: "Broker · Nasdaq delayed · Yahoo · Tiingo · Twelve Data · ROIC.ai"
-  },
-  {
-    title: "Fundamentals & ratios",
-    how: "Multi-source cascade fills PE/EPS/margins/etc. Missing cells stay blank — never fabricated.",
-    providers: "Yahoo · Finnhub · ROIC.ai · SEC XBRL · FilingAPI · Twelve Data"
-  },
-  {
-    title: "Price history & technicals",
-    how: "Local flat files when present, then Massive → ROIC → Tradier → Tiingo → Marketstack → Yahoo.",
-    providers: "Local files · Massive · ROIC.ai · Tiingo · Marketstack · Yahoo"
-  },
-  {
-    title: "Macro & market regime",
-    how: "Rates, VIX, breadth, and regime inputs for Guardrails / Macro.",
-    providers: "FRED · CBOE · Treasury · Massive internals · free public series"
-  },
-  {
-    title: "News, events & sentiment",
-    how: "Headlines and calendars for evidence packs; scarce paid news budgets stay optional.",
-    providers: "Alpaca/Massive news · MarketAux · Fintech Studios · economic calendar"
-  },
-  {
-    title: "Earnings transcripts (RAG)",
-    how: "Full-call text for proposals when a paid/entitled key is present. Free preview APIs stay gated.",
-    providers: "ROIC.ai (preferred when entitled) · EarningsCalls.dev · not direct FMP on ST"
-  },
-  {
-    title: "SEC filings (RAG)",
-    how: "10-K / 10-Q / 8-K bodies and highlight abstracts — no paid vendor key required.",
-    providers: "SEC EDGAR (free, rate-limited by User-Agent)"
-  },
-  {
-    title: "Congressional / alt-data latency",
-    how: "Not owned by Socratic.Trade product code.",
-    providers: "Congress.Trade only · direct FMP / Quiver / Unusual Whales retired on ST"
-  }
-];
+const GROUP_ORDER = ["fmp", "sec", "web_sources", "transcripts", "rag", "enrichment"] as const;
 
 function DataSourcesCard() {
+  const toast = useToast();
+  const [rows, setRows] = useState<SourceFeatureRow[] | null>(null);
+  const [groups, setGroups] = useState<Record<string, { title: string; blurb: string }>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await fetchSourceFeatures();
+      setRows(data.settings);
+      setGroups(data.groups);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(err instanceof ConsoleApiError ? err.message : "Could not load source settings.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const byGroup = useMemo(() => {
+    const map = new Map<string, SourceFeatureRow[]>();
+    for (const row of rows ?? []) {
+      if (row.advanced && !showAdvanced) continue;
+      const list = map.get(row.group) ?? [];
+      list.push(row);
+      map.set(row.group, list);
+    }
+    return GROUP_ORDER.filter((g) => map.has(g)).map((g) => [g, map.get(g)!] as const);
+  }, [rows, showAdvanced]);
+
+  const saveOne = async (id: string, value: boolean | number | string | null) => {
+    setBusy(id);
+    try {
+      await patchSourceFeatures({ [id]: value });
+      await load();
+      toast.push("pos", "Source setting saved", id);
+    } catch (err) {
+      toast.push("neg", "Could not save", err instanceof ConsoleApiError ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <Card
       title="Data sources"
@@ -744,36 +750,123 @@ function DataSourcesCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        No single vendor is special. The app fills each <strong className="font-semibold text-[color:var(--con-muted)]">capability lane</strong>{" "}
-        from a cascade of free floors plus any keys you attach. On{" "}
+        Per-user feature knobs for data planes that used to be hidden in Infisical. Values you set here
+        override server env for your account; leave unset to follow env/default. API keys and plan tiers
+        still live on{" "}
         <a href="/console/connections#api-keys" className="font-semibold text-[color:var(--con-accent)] underline-offset-2 hover:underline">
           Connections
         </a>
-        , paste each provider&apos;s API key and select its <strong className="font-semibold text-[color:var(--con-muted)]">plan tier</strong>{" "}
-        so rate limits match what you pay for (free-safe until you declare a paid plan).
+        .
       </p>
 
-      <div className="flex flex-col gap-2">
-        {DATA_SOURCE_LANES.map((lane) => (
-          <div
-            key={lane.title}
-            className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-2.5 py-2"
-          >
-            <div className="text-[length:var(--con-fs-sm)] font-semibold text-[color:var(--con-ink)]">{lane.title}</div>
-            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{lane.how}</p>
-            <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              <span className="font-semibold text-[color:var(--con-muted)]">Sources: </span>
-              {lane.providers}
-            </p>
-          </div>
-        ))}
+      {loadError && (
+        <p className="mb-3 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+          {loadError}{" "}
+          <button type="button" className="font-semibold underline" onClick={() => void load()}>
+            Retry
+          </button>
+        </p>
+      )}
+
+      {rows === null && !loadError && (
+        <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading source settings…</p>
+      )}
+
+      <div className="mb-3 flex items-center gap-2">
+        <Toggle
+          checked={showAdvanced}
+          onChange={setShowAdvanced}
+          label="Show advanced knobs"
+        />
+        <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Multi-query, HyDE, SEC worker, FMP rights, etc.
+        </span>
       </div>
 
-      <p className="mt-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Legacy per-vendor policy flags (including old FMP real-time / macro / events / fundamentals switches)
-        stay hard-off in code and are no longer product controls. Prefer Connections keys + plan tiers over
-        vendor-named Settings toggles.
-      </p>
+      <div className="flex flex-col gap-4">
+        {byGroup.map(([groupId, list]) => {
+          const meta = groups[groupId] ?? { title: groupId, blurb: "" };
+          return (
+            <div key={groupId} className="rounded-control border border-[color:var(--con-line)] p-2.5">
+              <div className="text-[length:var(--con-fs-sm)] font-semibold">{meta.title}</div>
+              {meta.blurb && (
+                <p className="mt-0.5 mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{meta.blurb}</p>
+              )}
+              <div className="flex flex-col gap-2">
+                {list.map((row) => (
+                  <div
+                    key={row.id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-control px-1.5 py-1 hover:bg-[color:var(--con-surface-2)]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[length:var(--con-fs-sm)] font-semibold">{row.label}</span>
+                        <Chip
+                          tone={row.source === "user" ? "pos" : row.source === "env" ? "accent" : "muted"}
+                          title={
+                            row.source === "user"
+                              ? "You overrode this for your account"
+                              : row.source === "env"
+                                ? "Following server Infisical/env"
+                                : "Catalog default"
+                          }
+                        >
+                          {row.source}
+                        </Chip>
+                        {row.advanced && (
+                          <Chip tone="muted" title="Advanced">
+                            adv
+                          </Chip>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{row.description}</p>
+                      {row.caveat && (
+                        <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">{row.caveat}</p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {row.type === "boolean" ? (
+                        <Toggle
+                          checked={Boolean(row.value)}
+                          disabled={busy !== null}
+                          onChange={(on) => void saveOne(row.id, on)}
+                          label={row.label}
+                        />
+                      ) : row.type === "number" ? (
+                        <RawNumInput
+                          className="w-24"
+                          value={String(row.value)}
+                          emptyValue={Number(row.defaultValue) || 0}
+                          min={row.min}
+                          max={row.max}
+                          disabled={busy === row.id}
+                          onValueChange={(n) => {
+                            // Debounce-ish: only persist when value actually changes (avoids
+                            // intermediate keystrokes that equal the previous commit after parse).
+                            if (Number.isFinite(n) && n !== Number(row.value)) void saveOne(row.id, n);
+                          }}
+                          aria-label={row.label}
+                        />
+                      ) : null}
+                      {row.source === "user" && (
+                        <button
+                          type="button"
+                          className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] underline-offset-2 hover:underline"
+                          disabled={busy !== null}
+                          onClick={() => void saveOne(row.id, null)}
+                          title="Clear your override; fall back to env/default"
+                        >
+                          reset
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </Card>
   );
 }

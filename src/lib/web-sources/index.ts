@@ -51,6 +51,7 @@ import {
   refreshCongressAnalytics
 } from "./congress-analytics";
 import { scoreCongressSignal } from "../congress-score";
+import { resolveSourceBool } from "../source-settings";
 import { isFilingIngestDue, refreshFilingBodies } from "./sec-filings";
 import { disclosureRagEnabled, embedDisclosures } from "./disclosure-rag";
 import { getFmpTranscriptStatus, type FmpTranscriptStatus } from "./fmp-transcripts";
@@ -95,24 +96,24 @@ export type {
   RefreshFmpTranscriptsResult
 } from "./fmp-transcripts";
 
-/** Whether the congress connector is enabled (default on; disable with WEB_SOURCE_CONGRESS=off). */
+/** Whether the congress connector is enabled (default on; Settings / WEB_SOURCE_CONGRESS=off). */
 function congressEnabled(): boolean {
-  return (process.env.WEB_SOURCE_CONGRESS ?? "on").toLowerCase() !== "off";
+  return resolveSourceBool("WEB_SOURCE_CONGRESS");
 }
 
-/** Whether the SEC insider connector is enabled (default on; disable with WEB_SOURCE_INSIDER=off). */
+/** Whether the SEC insider connector is enabled (default on; Settings / WEB_SOURCE_INSIDER=off). */
 function insiderEnabled(): boolean {
-  return (process.env.WEB_SOURCE_INSIDER ?? "on").toLowerCase() !== "off";
+  return resolveSourceBool("WEB_SOURCE_INSIDER");
 }
 
-/** Whether the FINRA short-volume connector is enabled (default on; disable with WEB_SOURCE_FINRA=off). */
+/** Whether the FINRA short-volume connector is enabled (default on; Settings / WEB_SOURCE_FINRA=off). */
 function finraEnabled(): boolean {
-  return (process.env.WEB_SOURCE_FINRA ?? "on").toLowerCase() !== "off";
+  return resolveSourceBool("WEB_SOURCE_FINRA");
 }
 
-/** Whether the SEC 8-K connector is enabled (default on; disable with WEB_SOURCE_SEC8K=off). */
+/** Whether the SEC 8-K connector is enabled (default on; Settings / WEB_SOURCE_SEC8K=off). */
 function eightKEnabled(): boolean {
-  return (process.env.WEB_SOURCE_SEC8K ?? "on").toLowerCase() !== "off";
+  return resolveSourceBool("WEB_SOURCE_SEC8K");
 }
 
 // Guard against overlapping refreshes: the scheduler fires this fire-and-forget
