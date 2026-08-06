@@ -52,18 +52,25 @@ describe("provider-tier-plan mapping", () => {
     );
   });
 
-  it("maps marketstack basic to ~333/day and marks FMP retired", () => {
-    expect(quotaWindowsForPlan("marketstack", "basic")).toEqual([{ maxRequests: 333, windowMs: DAY }]);
+  it("maps marketstack to monthly vendor caps and marks FMP retired", () => {
+    const MONTH = 30 * DAY;
+    expect(quotaWindowsForPlan("marketstack", "basic")).toEqual([{ maxRequests: 10_000, windowMs: MONTH }]);
+    expect(quotaWindowsForPlan("marketstack", "free")).toEqual([{ maxRequests: 100, windowMs: MONTH }]);
+    expect(quotaWindowsForPlan("marketstack", "professional")).toEqual([
+      { maxRequests: 100_000, windowMs: MONTH }
+    ]);
     expect(isRetiredMarketDataService("fmp")).toBe(true);
     expect(isRetiredMarketDataService("tiingo")).toBe(false);
   });
 
-  it("maps ROIC free vs individual quotas and plan options", () => {
+  it("maps ROIC free vs individual to documented per-minute caps (not invented daily)", () => {
     expect(planTierOptionsForService("roic")?.map((o) => o.id)).toEqual(
-      expect.arrayContaining(["free", "starter", "individual", "professional", "unknown"])
+      expect.arrayContaining(["free", "individual", "professional", "enterprise", "unknown"])
     );
-    expect(quotaWindowsForPlan("roic", "free")).toEqual([{ maxRequests: 300, windowMs: DAY }]);
-    expect(quotaWindowsForPlan("roic", "individual")).toEqual([{ maxRequests: 10_000, windowMs: DAY }]);
+    expect(planTierOptionsForService("roic")?.map((o) => o.id)).not.toContain("starter");
+    expect(quotaWindowsForPlan("roic", "free")).toEqual([{ maxRequests: 5, windowMs: MINUTE }]);
+    expect(quotaWindowsForPlan("roic", "individual")).toEqual([{ maxRequests: 300, windowMs: MINUTE }]);
+    expect(quotaWindowsForPlan("roic", "professional")).toEqual([]);
   });
 
   it("normalizes alpha-vantage provider name to alphavantage service", () => {
@@ -104,13 +111,15 @@ describe("resolveProviderQuota uses plan tier when env knobs unset", () => {
     }
   });
 
-  it("uses grow tier minute credits for twelvedata", () => {
+  it("uses grow family floor (55) and exact grow_377 SKU for twelvedata", () => {
     delete process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN;
     delete process.env.TWELVEDATA_CREDITS_PER_MIN;
     const grow = resolveProviderQuota("twelvedata", "grow")!;
-    expect(grow.find((w) => w.windowMs === MINUTE)?.maxRequests).toBe(377);
-    // Grow has no daily cap in the tier map
+    // Family id maps to floor of Grow (55) — not the top SKU 377 — free-safe when SKU unknown.
+    expect(grow.find((w) => w.windowMs === MINUTE)?.maxRequests).toBe(55);
     expect(grow.find((w) => w.windowMs === DAY)).toBeUndefined();
+    const grow377 = resolveProviderQuota("twelvedata", "grow_377")!;
+    expect(grow377.find((w) => w.windowMs === MINUTE)?.maxRequests).toBe(377);
   });
 });
 

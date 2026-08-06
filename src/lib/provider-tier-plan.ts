@@ -25,19 +25,30 @@ export interface PlanTierOption {
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
+/** Marketstack (and similar) publish monthly request caps — 30d rolling window approximates the vendor month. */
+const MONTH = 30 * DAY;
 
-/** Canonical service ids match API_KEY_CATALOG / normalizeApiKeyService. */
+/**
+ * Canonical service ids match API_KEY_CATALOG / normalizeApiKeyService.
+ *
+ * Quota labels/windows MUST come from live vendor docs (or owner receipts), not memory.
+ * Re-verify when pricing changes; cite date + URL in docs/market-data-provider-pricing.md.
+ * Last research pass: 2026-08-06.
+ */
 const TIER_OPTIONS: Record<string, PlanTierOption[]> = {
+  // https://www.tiingo.com/about/pricing — free vs Power; commercial is contact-sales / separate license.
   tiingo: [
-    { id: "free", label: "Free", hint: "50/hr · 1,000/day · news not included" },
-    { id: "power", label: "Power", hint: "10k/hr · 100k/day · News API" },
+    { id: "free", label: "Free / Starter", hint: "50/hr · 1,000/day · news not included" },
+    { id: "power", label: "Power (individual)", hint: "10k/hr · 100k/day · $30/mo or $300/yr" },
     { id: "unknown", label: "Unknown", hint: "Use free-safe caps until you confirm" }
   ],
+  // https://massive.com/pricing — Stocks Basic/Starter/Developer/Advanced (2026-08-06).
   massive: [
-    { id: "free", label: "Free", hint: "5 calls/min · EOD · 2 yr history" },
-    { id: "starter", label: "Stocks Starter", hint: "Unlimited REST · 15m delayed · 5 yr" },
-    { id: "advanced", label: "Advanced", hint: "Real-time + ratios (higher plan)" },
-    { id: "unknown", label: "Unknown" }
+    { id: "free", label: "Stocks Basic (free)", hint: "5 calls/min · EOD · 2 yr history" },
+    { id: "starter", label: "Stocks Starter", hint: "Unlimited REST · 15m delayed · 5 yr · $29/mo" },
+    { id: "developer", label: "Stocks Developer", hint: "Unlimited REST · trades · 10 yr · $79/mo" },
+    { id: "advanced", label: "Stocks Advanced", hint: "Unlimited · real-time + ratios · $199/mo" },
+    { id: "unknown", label: "Unknown", hint: "Use free-safe 5/min until you confirm" }
   ],
   // FMP is retired for ST product use — options remain for CT/admin archaeology only.
   fmp: [
@@ -47,61 +58,86 @@ const TIER_OPTIONS: Record<string, PlanTierOption[]> = {
     { id: "ultimate", label: "Ultimate", hint: "Transcripts (CT only)" },
     { id: "unknown", label: "Unknown" }
   ],
+  // https://twelvedata.com/pricing.md — each named tier has multiple credit SKUs; pick the SKU you pay for.
+  // "grow" / "pro" / "ultra" alone map to the FLOOR of that family (free-safe if you only know the family).
   twelvedata: [
-    { id: "free", label: "Free / Basic", hint: "8 credits/min · 800/day" },
-    { id: "grow", label: "Grow", hint: "377 credits/min · no daily cap" },
-    { id: "pro", label: "Pro", hint: "WebSocket + higher credits" },
-    { id: "unknown", label: "Unknown" }
+    { id: "free", label: "Basic (free)", hint: "8 credits/min · 800/day" },
+    { id: "grow", label: "Grow (floor 55)", hint: "55 credits/min · no daily · from $29 — pick exact SKU if higher" },
+    { id: "grow_55", label: "Grow 55", hint: "$29/mo · 55 API credits/min" },
+    { id: "grow_144", label: "Grow 144", hint: "$49/mo · 144 credits/min" },
+    { id: "grow_377", label: "Grow 377", hint: "$79/mo · 377 credits/min" },
+    { id: "pro", label: "Pro (floor 610)", hint: "610 credits/min · from $99" },
+    { id: "pro_610", label: "Pro 610", hint: "$99/mo · 610 credits/min" },
+    { id: "pro_987", label: "Pro 987", hint: "$149/mo · 987 credits/min" },
+    { id: "pro_1597", label: "Pro 1597", hint: "$229/mo · 1,597 credits/min" },
+    { id: "ultra", label: "Ultra (floor 2584)", hint: "2,584 credits/min · from $329" },
+    { id: "ultra_2584", label: "Ultra 2584", hint: "$329/mo · 2,584 credits/min" },
+    { id: "ultra_4181", label: "Ultra 4181", hint: "$499/mo · 4,181 credits/min" },
+    { id: "ultra_10946", label: "Ultra 10946", hint: "$999/mo · 10,946 credits/min" },
+    { id: "unknown", label: "Unknown", hint: "Use Basic free-safe caps until you confirm" }
   ],
+  // Free 60/min documented widely; All-In-One is the only self-serve jump (~$3.5k) — exact paid RPM not trusted here.
   finnhub: [
-    { id: "free", label: "Free", hint: "60 calls/min US-only — stay here" },
-    { id: "all_in_one", label: "All-In-One", hint: "$3,500/mo — almost never justified" },
-    { id: "unknown", label: "Unknown" }
+    { id: "free", label: "Free", hint: "60 calls/min (app paces at 50 free-safe)" },
+    {
+      id: "all_in_one",
+      label: "All-In-One",
+      hint: "~$3,500/mo — set PROVIDER_QUOTA_* / dashboard limits; do not assume RPM"
+    },
+    { id: "unknown", label: "Unknown", hint: "Use free-safe 50/min" }
   ],
+  // https://www.alphavantage.co/premium/ — free 25/day (per IP observed); premium ladder, no daily cap.
   alphavantage: [
-    { id: "free", label: "Free", hint: "25/day per IP (not per key)" },
-    { id: "premium", label: "Premium", hint: "75/min · no daily cap" },
-    { id: "unknown", label: "Unknown" }
+    { id: "free", label: "Free", hint: "25/day per IP (not per key) · no premium endpoints" },
+    { id: "premium", label: "Premium 75 (entry)", hint: "75/min · $49.99/mo · no daily cap" },
+    { id: "premium_75", label: "Premium 75", hint: "75/min · $49.99/mo" },
+    { id: "premium_150", label: "Premium 150", hint: "150/min · $99.99/mo" },
+    { id: "premium_300", label: "Premium 300", hint: "300/min · $149.99/mo" },
+    { id: "premium_600", label: "Premium 600", hint: "600/min · $199.99/mo" },
+    { id: "premium_1200", label: "Premium 1200", hint: "1,200/min · $249.99/mo" },
+    { id: "unknown", label: "Unknown", hint: "Use free 25/day until you confirm" }
   ],
+  // https://marketstack.com/pricing — monthly request caps (2026-08-06).
   marketstack: [
-    { id: "free", label: "Free", hint: "100 req/mo ≈ 3/day" },
-    { id: "basic", label: "Basic", hint: "10,000 req/mo" },
-    { id: "professional", label: "Professional", hint: "Higher volume + intraday" },
-    { id: "business", label: "Business", hint: "Statements + long history" },
-    { id: "unknown", label: "Unknown" }
+    { id: "free", label: "Free", hint: "100 req/month · EOD · 1 yr history" },
+    { id: "basic", label: "Basic", hint: "10,000 req/mo · $9.99 · IEX intraday" },
+    { id: "professional", label: "Professional", hint: "100,000 req/mo · $49.99 · real-time" },
+    { id: "business", label: "Business", hint: "500,000 req/mo · $149.99 · statements" },
+    { id: "unknown", label: "Unknown", hint: "Use free 100/mo until you confirm" }
   ],
-  // Align with https://www.roic.ai/pricing — free is low request + short transcript history;
-  // paid individual/professional unlock deep fundamentals + full transcript archive.
+  // https://www.roic.ai/pricing — Free 5/min · Individual $29 300/min · Professional $89 unlimited (2026-08-06).
+  // No "Starter" SKU on the public matrix — that was an invented tier; use individual.
   roic: [
-    { id: "free", label: "Free", hint: "~300 req/day · ~2 quarters transcripts" },
-    { id: "starter", label: "Starter / Plus", hint: "Higher daily quota · longer transcript history" },
-    { id: "individual", label: "Individual", hint: "Paid individual ~10k/day · full-text transcripts" },
-    { id: "professional", label: "Professional", hint: "Highest request budget · all transcript history" },
-    { id: "unknown", label: "Unknown", hint: "Use free-safe caps until you confirm" }
+    { id: "free", label: "Free", hint: "5 req/min · 2 quarters transcripts · 2 yr history" },
+    { id: "individual", label: "Individual", hint: "$29/mo · 300 req/min · 20 quarters transcripts" },
+    { id: "professional", label: "Professional", hint: "$89/mo · unlimited RPM · all transcript quarters" },
+    { id: "enterprise", label: "Enterprise", hint: "Custom · unlimited · commercial terms" },
+    { id: "unknown", label: "Unknown", hint: "Use free-safe 5/min until you confirm" }
   ],
+  // Caps not re-fetched this pass — keep free-safe placeholders; mark unknown.
   filingapi: [
-    { id: "free", label: "Free", hint: "~50 req/day (app uses 45)" },
-    { id: "paid", label: "Paid", hint: "Higher daily cap (set when confirmed)" },
+    { id: "free", label: "Free", hint: "~50 req/day (app free-safe 45) — re-verify on vendor site" },
+    { id: "paid", label: "Paid", hint: "Set PROVIDER_QUOTA_FILINGAPI_* when confirmed" },
     { id: "unknown", label: "Unknown" }
   ],
   fintechstudios: [
-    { id: "free", label: "Free", hint: "$0 marketing free plan" },
-    { id: "pro", label: "Pro", hint: "Self-serve Pro credits" },
+    { id: "free", label: "Free", hint: "$0 marketing free plan — re-verify credits" },
+    { id: "pro", label: "Pro", hint: "Self-serve Pro — set env quota when confirmed" },
     { id: "unknown", label: "Unknown" }
   ],
   marketaux: [
-    { id: "free", label: "Free", hint: "~100 req/day" },
-    { id: "paid", label: "Paid", hint: "Higher daily budget" },
+    { id: "free", label: "Free", hint: "~100 req/day placeholder — re-verify on marketaux.com" },
+    { id: "paid", label: "Paid", hint: "Higher daily budget — set env when confirmed" },
     { id: "unknown", label: "Unknown" }
   ],
   earningscalls: [
-    { id: "preview", label: "Preview / trial", hint: "Limited preview entitlement" },
-    { id: "paid", label: "Paid", hint: "Full transcript access" },
+    { id: "preview", label: "Preview / trial", hint: "Limited / 250-char style preview — not full text" },
+    { id: "paid", label: "Paid full-text", hint: "Confirm plan + clear preview_blocked after upgrade" },
     { id: "unknown", label: "Unknown" }
   ],
   rapidapi: [
-    { id: "basic", label: "Basic", hint: "Marketplace Basic / free-ish caps" },
-    { id: "pro", label: "Pro", hint: "Higher RapidAPI plan" },
+    { id: "basic", label: "Basic", hint: "Per-API marketplace Basic — often ~1k/hr platform, not full vendor text" },
+    { id: "pro", label: "Pro", hint: "Higher RapidAPI plan for that API product" },
     { id: "unknown", label: "Unknown" }
   ]
 };
@@ -131,8 +167,19 @@ const TIER_QUOTA_WINDOWS: Record<string, Record<string, RateWindowHint[]>> = {
       { maxRequests: 8, windowMs: MINUTE },
       { maxRequests: 800, windowMs: DAY }
     ],
-    grow: [{ maxRequests: 377, windowMs: MINUTE }],
-    pro: [{ maxRequests: 800, windowMs: MINUTE }],
+    // Family floors (free-safe if you only know "Grow"/"Pro"/"Ultra" without the credit SKU).
+    grow: [{ maxRequests: 55, windowMs: MINUTE }],
+    grow_55: [{ maxRequests: 55, windowMs: MINUTE }],
+    grow_144: [{ maxRequests: 144, windowMs: MINUTE }],
+    grow_377: [{ maxRequests: 377, windowMs: MINUTE }],
+    pro: [{ maxRequests: 610, windowMs: MINUTE }],
+    pro_610: [{ maxRequests: 610, windowMs: MINUTE }],
+    pro_987: [{ maxRequests: 987, windowMs: MINUTE }],
+    pro_1597: [{ maxRequests: 1_597, windowMs: MINUTE }],
+    ultra: [{ maxRequests: 2_584, windowMs: MINUTE }],
+    ultra_2584: [{ maxRequests: 2_584, windowMs: MINUTE }],
+    ultra_4181: [{ maxRequests: 4_181, windowMs: MINUTE }],
+    ultra_10946: [{ maxRequests: 10_946, windowMs: MINUTE }],
     unknown: [
       { maxRequests: 8, windowMs: MINUTE },
       { maxRequests: 800, windowMs: DAY }
@@ -145,47 +192,55 @@ const TIER_QUOTA_WINDOWS: Record<string, Record<string, RateWindowHint[]>> = {
     ultimate: [{ maxRequests: 2900, windowMs: MINUTE }],
     unknown: [{ maxRequests: 240, windowMs: DAY }]
   },
+  // Vendor publishes monthly caps — use 30d rolling window (not invented daily divisions).
   marketstack: {
-    free: [{ maxRequests: 3, windowMs: DAY }],
-    basic: [{ maxRequests: 333, windowMs: DAY }],
-    professional: [{ maxRequests: 1_000, windowMs: DAY }],
-    business: [{ maxRequests: 3_000, windowMs: DAY }],
-    unknown: [{ maxRequests: 3, windowMs: DAY }]
+    free: [{ maxRequests: 100, windowMs: MONTH }],
+    basic: [{ maxRequests: 10_000, windowMs: MONTH }],
+    professional: [{ maxRequests: 100_000, windowMs: MONTH }],
+    business: [{ maxRequests: 500_000, windowMs: MONTH }],
+    unknown: [{ maxRequests: 100, windowMs: MONTH }]
   },
+  // ROIC: requests/minute + transcript depth (quarters) live on pricing page — not daily invents.
   roic: {
-    free: [{ maxRequests: 300, windowMs: DAY }],
-    starter: [{ maxRequests: 2_000, windowMs: DAY }],
-    individual: [{ maxRequests: 10_000, windowMs: DAY }],
-    professional: [{ maxRequests: 50_000, windowMs: DAY }],
-    unknown: [{ maxRequests: 300, windowMs: DAY }]
+    free: [{ maxRequests: 5, windowMs: MINUTE }],
+    individual: [{ maxRequests: 300, windowMs: MINUTE }],
+    // empty = unlimited RPM from tier (Professional / Enterprise on pricing page).
+    professional: [],
+    enterprise: [],
+    unknown: [{ maxRequests: 5, windowMs: MINUTE }]
   },
   filingapi: {
     free: [{ maxRequests: 45, windowMs: DAY }],
-    paid: [{ maxRequests: 500, windowMs: DAY }],
+    // paid not re-verified — leave open so env/UM must set real caps rather than inventing 500/day.
+    paid: [],
     unknown: [{ maxRequests: 45, windowMs: DAY }]
   },
   marketaux: {
     free: [{ maxRequests: 80, windowMs: DAY }],
-    paid: [{ maxRequests: 1_000, windowMs: DAY }],
+    paid: [],
     unknown: [{ maxRequests: 80, windowMs: DAY }]
   },
-  // Finnhub / Alpha Vantage / Massive mainly pace via HARD_DEFAULTS (per-min), not RATE_QUOTAS.
-  // Still expose free-safe day caps for alphavantage so admit sites can use them later.
   alphavantage: {
     free: [{ maxRequests: 25, windowMs: DAY }],
     premium: [{ maxRequests: 75, windowMs: MINUTE }],
+    premium_75: [{ maxRequests: 75, windowMs: MINUTE }],
+    premium_150: [{ maxRequests: 150, windowMs: MINUTE }],
+    premium_300: [{ maxRequests: 300, windowMs: MINUTE }],
+    premium_600: [{ maxRequests: 600, windowMs: MINUTE }],
+    premium_1200: [{ maxRequests: 1_200, windowMs: MINUTE }],
     unknown: [{ maxRequests: 25, windowMs: DAY }]
   },
   finnhub: {
     free: [{ maxRequests: 50, windowMs: MINUTE }],
-    all_in_one: [{ maxRequests: 300, windowMs: MINUTE }],
+    // Do not invent All-In-One RPM — empty means no tier window; HARD_DEFAULTS/env apply.
+    all_in_one: [],
     unknown: [{ maxRequests: 50, windowMs: MINUTE }]
   },
   massive: {
     free: [{ maxRequests: 5, windowMs: MINUTE }],
-    // Unlimited REST on paid starter — empty array means "no windowed budget from tier"
-    // (resolveProviderQuota treats empty tier base as unlimited unless RATE_QUOTAS/env add windows).
+    // Unlimited REST on paid Stocks Starter/Developer/Advanced.
     starter: [],
+    developer: [],
     advanced: [],
     unknown: [{ maxRequests: 5, windowMs: MINUTE }]
   }
@@ -261,17 +316,22 @@ export function apiKeyServiceForRateLimitProvider(provider: string): string {
 
 /**
  * How many completed fiscal quarters of earnings transcripts a declared ROIC plan should
- * attempt per symbol (scheduler + refresh). Free is intentionally shallow; paid goes deep.
+ * attempt per symbol (scheduler + refresh).
+ *
+ * From https://www.roic.ai/pricing (2026-08-06): Free = 2 quarters, Individual = 20 quarters,
+ * Professional/Enterprise = all available. App caps "all" at 40 per symbol per run so one
+ * refresh cannot request unbounded history in a single pass.
  */
 export function roicTranscriptQuartersForPlan(tier: string | null | undefined): number {
   switch ((tier ?? "unknown").toLowerCase()) {
     case "professional":
-      return 8;
+    case "enterprise":
+      return 40;
     case "individual":
-      return 6;
+      return 20;
+    // Legacy stored value from an invented "starter" tier — treat as free-safe depth.
     case "starter":
     case "plus":
-      return 4;
     case "free":
     case "unknown":
     default:

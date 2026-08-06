@@ -2,6 +2,10 @@
 
 - **2026-08-05 — GROK — IN PROGRESS — Multi-period TWR: split at each deposit/withdrawal, chain account+SPY sub-period returns (branch `grok/twr-subperiod-spy-chain`).** Owner: $100 for 10d then $10 for 100d must be separate regimes geometrically linked.
 
+## Active (GROK 2026-08-06)
+
+- **Plan-tier research** (`grok/plan-tier-research`): correcting Connections quota maps from live vendor docs (ROIC 5/min free, Twelve Grow floor 55, Marketstack monthly, AV premium ladder). Rollout: `docs/rollouts/2026-08-06-plan-tier-research.md`. Owner: do not invent limits — re-verify on site.
+
 ## 2026-08-05 GROK — account return % fix
 
 - **2026-08-05 — GROK — IN PROGRESS — Fix inflated account % return (synthetic paper curve + live tip TWR; isAllCash cash-first; capital-weighted closed-lot return).** Branch `grok/fix-account-return-pct`. Owner: Sandbox/Alpaca Paper/etc showed ~+50% despite ~$100k start and slight drawdown.

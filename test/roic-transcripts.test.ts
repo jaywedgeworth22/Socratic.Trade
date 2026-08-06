@@ -75,9 +75,11 @@ describe("roic-transcripts", () => {
     expect(roicV3Identifiers("NYSE:IBM")).toEqual(["NYSE:IBM"]);
   });
 
-  it("roicTranscriptQuartersForPlan maps free vs individual", () => {
+  it("roicTranscriptQuartersForPlan maps vendor depths (2 / 20 / all-capped)", () => {
+    // https://www.roic.ai/pricing — Free 2 quarters, Individual 20, Professional all (app cap 40).
     expect(roicTranscriptQuartersForPlan("free")).toBe(2);
-    expect(roicTranscriptQuartersForPlan("individual")).toBe(6);
-    expect(roicTranscriptQuartersForPlan("professional")).toBe(8);
+    expect(roicTranscriptQuartersForPlan("individual")).toBe(20);
+    expect(roicTranscriptQuartersForPlan("professional")).toBe(40);
+    expect(roicTranscriptQuartersForPlan("enterprise")).toBe(40);
   });
 });
