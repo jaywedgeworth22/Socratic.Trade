@@ -95,15 +95,15 @@ const GLOSSARY: GlossaryGroup[] = [
       },
       {
         term: "Green team (strategist)",
-        aliases: "proposer bull llmModel",
+        aliases: "proposer bull llmModel green team",
         definition:
-          "The LLM that writes trade proposals from the scan evidence and your written strategy instructions. Its model is the 'Strategist' pick in LLM models."
+          "The LLM that writes trade proposals from the scan evidence and your written strategy instructions. Its model is the 'Green Team' pick under Strategy → Models."
       },
       {
         term: "Red team (reviewer)",
-        aliases: "bear reviewer redTeamLlmModel debate",
+        aliases: "bear reviewer redTeamLlmModel debate red team",
         definition:
-          "An adversarial second model that argues against high-conviction ideas before they reach you (or the broker). A veto or downgrade is recorded with the proposal. Optional — blank means the strategist model reviews itself."
+          "An adversarial second model that reviews every risk-adding opening at its final size, fact-checking the rationale against the same evidence the Green Team saw. A veto or half-size downgrade is recorded with the proposal. Blank = not configured — openings route to human approval instead of auto-executing (it never silently self-reviews)."
       },
       {
         term: "Conviction",
@@ -169,7 +169,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "Connected account",
         aliases: "broker connection robinhood alpaca",
         definition:
-          "A brokerage login this app can read and trade through (Robinhood via OAuth, Alpaca via API keys). Disconnecting removes the connection from this app only — nothing changes at the broker."
+          "A brokerage login this app can read and trade through (Robinhood via OAuth, Alpaca via API keys, Tradier via access token). Disconnecting removes the connection from this app only — nothing changes at the broker."
       },
       {
         term: "Active account",
@@ -181,7 +181,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "THIS ACCOUNT vs ALL YOUR ACCOUNTS",
         aliases: "settings scope user-level account-level",
         definition:
-          "The two tags on this Settings page. THIS ACCOUNT settings follow the account (tax treatment, models, guardrails). ALL YOUR ACCOUNTS settings follow you (connections, API keys, notifications, scan shape) and overlay every account."
+          "The two storage scopes for configuration. THIS ACCOUNT settings follow the account and live where you configure the account itself — Strategy (models, prompt, weights) and Guardrails (caps, protective stops, tax treatment, rulebook). ALL YOUR ACCOUNTS settings follow you (connections, API keys, notifications, scan shape, learning review, typed confirmation) and overlay every account — they live on Connections and Settings."
       },
       {
         term: "Preset (profile)",
@@ -261,7 +261,7 @@ export function HelpGlossaryCard() {
                 {group.group}
                 <span className="font-normal text-[color:var(--con-faint)]">· {group.entries.length}</span>
               </summary>
-              <dl className="mb-2 flex flex-col divide-y divide-[color:var(--con-line)] rounded-lg border border-[color:var(--con-line)]">
+              <dl className="mb-2 flex flex-col divide-y divide-[color:var(--con-line)] rounded-control border border-[color:var(--con-line)]">
                 {group.entries.map((entry) => (
                   <div
                     key={entry.term}

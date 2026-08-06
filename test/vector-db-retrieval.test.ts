@@ -1,10 +1,94 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { buildExtraFilters, defaultMinScore, isWithinAsOf, matchToChunk, rerankMatches } from "../src/lib/vector-db";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+process.env.DATABASE_URL = `file:${join(tmpdir(), `socratic-vector-retrieval-${randomUUID()}.db`)}`;
+
+const {
+  activeEmbeddingProvider,
+  activeRerankModel,
+  activeRerankProvider,
+  buildExtraFilters,
+  defaultMinScore,
+  filterMatchesForTranscriptRights,
+  isWithinAsOf,
+  matchToChunk,
+  rankPool,
+  rerankMatches
+} = await import("../src/lib/vector-db");
 
 describe("buildExtraFilters", () => {
-  it("is empty with no options", () => {
+  beforeEach(() => vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "on"));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("is empty with no options while transcript storage/display rights are confirmed", () => {
     expect(buildExtraFilters()).toEqual({});
     expect(buildExtraFilters({})).toEqual({});
+  });
+  it("excludes transcripts from broad and explicit retrieval when rights are unconfirmed", () => {
+    vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "off");
+    // Broad queries preserve server-side recall for legacy vectors that lack doc_type; the
+    // post-fetch guard below removes transcripts before ranking/prompt injection.
+    expect(buildExtraFilters()).toEqual({});
+
+    const mixed = buildExtraFilters({ docType: ["10-k", "earnings-transcript"] }).doc_type as { $in: string[] };
+    expect(new Set(mixed.$in)).toEqual(new Set(["10-k", "10-K"]));
+    expect(buildExtraFilters({ docType: ["earnings-transcript"] })).toEqual({
+      doc_type: { $eq: "__earnings_transcript_rights_unconfirmed__" }
+    });
+
+    const legacy = { id: "legacy", metadata: { source: "sec-edgar" } };
+    const filing = { id: "filing", metadata: { doc_type: "10-k" } };
+    const transcript = { id: "transcript", metadata: { doc_type: "EARNINGS-TRANSCRIPT" } };
+    expect(filterMatchesForTranscriptRights([legacy, filing, transcript])).toEqual([legacy, filing]);
+  });
+  it("leaves broad transcript matches available while rights are confirmed", async () => {
+    const { activateFmpTranscriptRightsGeneration } = await import("../src/lib/web-sources/fmp-transcripts");
+    activateFmpTranscriptRightsGeneration();
+    const matches = [{ id: "transcript", metadata: { doc_type: "earnings-transcript" } }];
+    expect(filterMatchesForTranscriptRights(matches)).toBe(matches);
+  });
+  it("keeps transcripts blocked when the env flag is on but the durable rights gate is revoked", async () => {
+    const {
+      activateFmpTranscriptRightsGeneration
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+    activateFmpTranscriptRightsGeneration();
+    getDb().prepare(`
+      UPDATE fmp_transcript_rights_gate
+      SET generation = generation + 1, status = 'revoked', updated_at = ?
+      WHERE singleton = 1
+    `).run(new Date().toISOString());
+
+    expect(buildExtraFilters({ docType: ["earnings-transcript"] })).toEqual({
+      doc_type: { $eq: "__earnings_transcript_rights_unconfirmed__" }
+    });
+    expect(buildExtraFilters({ source: "fmp-earnings-transcript" })).toEqual({
+      source: { $eq: "__fmp_transcript_rights_unconfirmed__" }
+    });
+    const matches = [{ id: "transcript", metadata: { doc_type: "earnings-transcript", source: "fmp-earnings-transcript" } }];
+    expect(filterMatchesForTranscriptRights(matches)).toEqual([]);
+  });
+  it("admits only the active generation of FMP-derived decision memory", async () => {
+    const {
+      activateFmpTranscriptRightsGeneration,
+      captureFmpTranscriptRightsGeneration
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    activateFmpTranscriptRightsGeneration();
+    const generation = captureFmpTranscriptRightsGeneration()!.generation;
+    const current = {
+      id: "current-derived",
+      metadata: { fmp_derived: true, fmp_rights_generation: generation }
+    };
+    const stale = {
+      id: "stale-derived",
+      metadata: { fmp_derived: true, fmp_rights_generation: generation - 1 }
+    };
+
+    expect(filterMatchesForTranscriptRights([current, stale])).toEqual([current]);
+    vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "off");
+    expect(filterMatchesForTranscriptRights([current, stale])).toEqual([]);
   });
   it("matches doc_type across casings (stored values are inconsistent: '10-K' vs '8-k')", () => {
     // Each requested type expands to original + lower + upper, deduped — so a lowercase filter still
@@ -18,6 +102,14 @@ describe("buildExtraFilters", () => {
   it("builds section / source clauses unchanged", () => {
     expect(buildExtraFilters({ section: "risk_factors" })).toEqual({ section: { $eq: "risk_factors" } });
     expect(buildExtraFilters({ source: "sec-8k" })).toEqual({ source: { $eq: "sec-8k" } });
+  });
+  it("builds an exact connected-account memory filter and fails closed when its id is absent", () => {
+    expect(buildExtraFilters({ accountScope: "exact", connectedAccountId: "account-a" })).toEqual({
+      connected_account_id: { $eq: "account-a" }
+    });
+    expect(buildExtraFilters({ accountScope: "exact" })).toEqual({
+      connected_account_id: { $eq: "__missing_connected_account__" }
+    });
   });
   it("ignores an empty docType array", () => {
     expect(buildExtraFilters({ docType: [] })).toEqual({});
@@ -99,6 +191,42 @@ describe("rerankMatches", () => {
     const voyage = fakeVoyage(() => ({ data: [{ index: 1 }, { index: 0 }] }));
     const out = await rerankMatches(voyage, "q", matches, 2);
     expect(matchToChunk(out[0]).relevanceScore).toBeUndefined();
+  });
+});
+
+describe("independent rerank routing", () => {
+  it("lets an explicit rerank provider differ from the embedding provider", async () => {
+    const previousEmbed = process.env.RAG_EMBED_PROVIDER;
+    const previousRerank = process.env.RAG_RERANK_PROVIDER;
+    const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
+    const previousSiliconFlowKey = process.env.SILICONFLOW_API_KEY;
+    process.env.RAG_EMBED_PROVIDER = "siliconflow";
+    process.env.RAG_RERANK_PROVIDER = "openrouter";
+    process.env.SILICONFLOW_API_KEY = "sf-key";
+    process.env.OPENROUTER_API_KEY = "or-key";
+    try {
+      expect(activeEmbeddingProvider()).toBe("siliconflow");
+      expect(activeRerankProvider()).toBe("openrouter");
+      expect(activeRerankModel()).toBe("cohere/rerank-v3.5");
+    } finally {
+      if (previousEmbed === undefined) delete process.env.RAG_EMBED_PROVIDER; else process.env.RAG_EMBED_PROVIDER = previousEmbed;
+      if (previousRerank === undefined) delete process.env.RAG_RERANK_PROVIDER; else process.env.RAG_RERANK_PROVIDER = previousRerank;
+      if (previousOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
+      if (previousSiliconFlowKey === undefined) delete process.env.SILICONFLOW_API_KEY; else process.env.SILICONFLOW_API_KEY = previousSiliconFlowKey;
+    }
+  });
+});
+
+describe("corpus-wide lexical candidate floors", () => {
+  it("does not apply a dense cosine floor to an independently recalled lexical candidate", async () => {
+    const lexicalOnly = {
+      id: "lexical-only",
+      score: 0,
+      metadata: { text: "exact accession evidence", retrieval_sources: ["lexical"] }
+    };
+    const dense = { id: "dense", score: 0.8, metadata: { text: "semantic evidence" } };
+    const ordered = await rankPool([dense, lexicalOnly], "accession", 2, { minScore: 0.5 });
+    expect(ordered.map((match) => match.id)).toEqual(["dense", "lexical-only"]);
   });
 });
 

@@ -4,7 +4,7 @@
  *  No interpolation, no fabricated baselines — fewer than two points renders
  *  a sentence instead of a chart. Buckets are never overlaid on one axis. */
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { EquityCurvePoint } from "@/lib/types";
 import { fmtExact, fmtMoney, fmtPct, fmtSignedMoney } from "../lib/format";
 
@@ -12,7 +12,7 @@ const W = 640;
 const H = 140;
 const PAD = 6;
 
-export function EquityChart({ points, label }: { points: EquityCurvePoint[]; label: string }) {
+export const EquityChart = memo(function EquityChart({ points, label }: { points: EquityCurvePoint[]; label: string }) {
   const data = useMemo(
     () =>
       points
@@ -32,8 +32,19 @@ export function EquityChart({ points, label }: { points: EquityCurvePoint[]; lab
 
   const tMin = data[0].t;
   const tMax = data[data.length - 1].t;
-  const vMin = Math.min(...data.map((d) => d.v));
-  const vMax = Math.max(...data.map((d) => d.v));
+  let vMin = data.reduce((min, d) => (d.v < min ? d.v : min), Infinity);
+  let vMax = data.reduce((max, d) => (d.v > max ? d.v : max), -Infinity);
+  // A near-flat curve (e.g. equity barely moved) would otherwise fill the whole
+  // vertical range with noise, making a trivial wiggle look like a big swing.
+  // Enforce a floor of ±0.5% around the data's own midpoint — real values are
+  // never altered, only how much vertical room the axis gives them.
+  const mean = data.reduce((sum, d) => sum + d.v, 0) / data.length;
+  const minSpan = (Math.abs(mean) || Math.abs(data[data.length - 1].v) || 1) * 0.01;
+  if (vMax - vMin < minSpan) {
+    const center = (vMax + vMin) / 2;
+    vMin = center - minSpan / 2;
+    vMax = center + minSpan / 2;
+  }
   const vSpan = vMax - vMin || 1;
   const tSpan = tMax - tMin || 1;
 
@@ -74,4 +85,4 @@ export function EquityChart({ points, label }: { points: EquityCurvePoint[]; lab
       </figcaption>
     </figure>
   );
-}
+});

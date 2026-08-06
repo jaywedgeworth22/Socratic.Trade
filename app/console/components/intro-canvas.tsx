@@ -1,11 +1,17 @@
 "use client";
 
-/** First-load splash: a candlestick chart that waves, breaks apart, reassembles
- *  into SOCRATIC / TRADE (ticking left + waving), then shrinks into the top-left
- *  logo which keeps ticking. Pure Canvas, responsive, any background. Plays once
- *  per tab session; skipped for prefers-reduced-motion. Click to dismiss. */
+/** First-load splash: a candlestick chart that waves, breaks apart, and the candles
+ *  fly straight up into the top-left header logo, which keeps ticking. Pure Canvas,
+ *  responsive, any background. Plays once per tab session; skipped for
+ *  prefers-reduced-motion. Click to dismiss. The original middle act — assembling a
+ *  large centered SOCRATIC / TRADE wordmark before a second flight to the header —
+ *  is preserved behind CENTER_WORDMARK_STEP below. Phase handoff to the header
+ *  chrome (hide the real logo until the candles assemble it, mobile brand row
+ *  reveal/slide-away) goes through ../ui/intro-bus.ts. */
 
 import { useEffect, useRef, useState } from "react";
+import { sampleCells, buildTickerUnits, TICKER_GREENS, TICKER_REDS, WORDMARK_AR } from "../ui/candle-ticker";
+import { setIntroPhase } from "../ui/intro-bus";
 
 type Cell = { nx: number; ntop: number; nh: number };
 type Geo = { x: number; bt: number; bb: number; wt: number; wb: number; bw: number; col?: string; up?: boolean };
@@ -13,6 +19,7 @@ type Model = {
   M: number;
   candleAt: (j: number, t: number, L: Layout) => Geo;
   layout: (vw: number, vh: number) => Layout;
+  LIFT: number; // when the first candle breaks off the chart and starts moving up
   END: number;
 };
 type Layout = {
@@ -22,10 +29,53 @@ type Layout = {
   sizeScale: number;
 };
 
+// CENTER_WORDMARK_STEP — the intro originally had a middle act: the candles first
+// assembled into a large centered SOCRATIC / TRADE wordmark (wave ripple, short
+// hold), then flew a second leg into the header logo. Owner cut it 2026-07-08
+// because it made the intro too long; candles now fly chart -> header directly.
+// All of the middle act's code is kept live below — flip this to true to restore
+// the original three-act sequence. (Typed `boolean`, not literal `false`, so
+// TypeScript/ESLint don't flag the preserved branch as unreachable.)
+const CENTER_WORDMARK_STEP: boolean = false;
+
 // shared across mounts so the loading->loaded transition doesn't restart it
 let introStart: number | null = null;
 let introDone = false;
 let MODEL: Model | null = null;
+
+// Cross-session cache of the real header logo's measured TOP (viewport px), one
+// value per breakpoint bucket ("d" = >=lg desktop bar, "m" = <lg mobile brand row).
+// The real logo's y depends on whether a RealityBanner (~32px, non-live accounts)
+// sits above the bar — and that is unknowable while the console is still on its
+// loading screen (no snapshot => no banner => the bar isn't even mounted yet). So
+// on a first-ever visit the fallback can only guess the no-banner offset; but once
+// the intro has landed on the real logo even once, we remember its top and prime
+// the fallback with it next time, so the wordmark assembles exactly where it ends
+// up (no "assemble high, then drop when the page loads"). localStorage (not
+// session) so it survives across the new tab/session that actually replays the
+// intro. Stale entries (account switched live<->paper) self-heal: the per-frame
+// re-measure glides to the real logo and re-caches. Clamped to a sane range.
+const HDR_Y_KEY = "st.introHdrY";
+function readCachedHeaderTop(bucket: "d" | "m"): number | undefined {
+  try {
+    const raw = localStorage.getItem(HDR_Y_KEY);
+    if (!raw) return undefined;
+    const v = (JSON.parse(raw) as Record<string, unknown>)?.[bucket];
+    return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 400 ? v : undefined;
+  } catch { return undefined; }
+}
+function writeCachedHeaderTop(bucket: "d" | "m", y: number) {
+  try {
+    const raw = localStorage.getItem(HDR_Y_KEY);
+    const o = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    o[bucket] = Math.round(y);
+    localStorage.setItem(HDR_Y_KEY, JSON.stringify(o));
+  } catch { /* ignore */ }
+}
+// The eased landing box, persisted at module scope so a loading->loaded remount
+// (which re-runs the effect) does NOT reset it to null and SNAP to the newly
+// mounted real logo — it keeps easing smoothly from wherever the candles were.
+let introCurHeader: { x: number; y: number; w: number; h: number } | null = null;
 
 function buildModel(): Model {
   const mulberry32 = (a: number) => () => {
@@ -41,34 +91,8 @@ function buildModel(): Model {
     return m + s * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   };
 
-  const off = document.createElement("canvas");
-  const octx = off.getContext("2d", { willReadFrequently: true })!;
-  function sampleCells(text: string, fontPx: number, tracking: number, pitch: number) {
-    const font = `700 ${fontPx}px Arial, "Helvetica Neue", sans-serif`;
-    octx.font = font;
-    const widths = [...text].map((ch) => (ch === " " ? fontPx * 0.45 : octx.measureText(ch).width));
-    const total = widths.reduce((a, b) => a + b, 0) + tracking * (text.length - 1);
-    const padX = Math.ceil(fontPx * 0.35), H = Math.ceil(fontPx * 1.5);
-    off.width = Math.ceil(total) + padX * 2; off.height = H;
-    octx.clearRect(0, 0, off.width, off.height);
-    octx.fillStyle = "#fff"; octx.textBaseline = "alphabetic"; octx.font = font;
-    let x = padX; const topY = Math.round(fontPx * 1.1);
-    for (let i = 0; i < text.length; i++) { if (text[i] !== " ") octx.fillText(text[i], x, topY); x += widths[i] + tracking; }
-    const img = octx.getImageData(0, 0, off.width, off.height).data, W = off.width;
-    let x0 = W, x1 = 0, y0 = H, y1 = 0;
-    for (let yy = 0; yy < H; yy++) for (let xx = 0; xx < W; xx++) {
-      if (img[(yy * W + xx) * 4 + 3] > 128) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (yy < y0) y0 = yy; if (yy > y1) y1 = yy; }
-    }
-    const cells: { cx: number; top: number; h: number }[] = [];
-    const half = Math.floor((pitch - 4) / 2);
-    for (let cx = x0 + 2; cx < x1; cx += pitch) {
-      const colv: number[] = [];
-      for (let yy = 0; yy < H; yy++) { let s = 0, n = 0; for (let xx = cx; xx < cx + pitch - 4 && xx < W; xx++) { s += img[(yy * W + xx) * 4 + 3]; n++; } colv.push(n ? s / n / 255 : 0); }
-      let yy = 0;
-      while (yy < H) { if (colv[yy] > 0.42) { const s = yy; while (yy < H && colv[yy] > 0.42) yy++; if (yy - s >= Math.round(fontPx * 0.03)) cells.push({ cx: cx - x0 + half, top: s - y0, h: yy - s }); } else yy++; }
-    }
-    return { cells, w: x1 - x0, h: y1 - y0 };
-  }
+  // sampleCells is the shared letter sampler from candle-ticker.ts — the single
+  // source used by both this splash and the persistent HeaderLogo.
 
   const SOC = sampleCells("SOCRATIC", 200, 10, 15), TRD = sampleCells("TRADE", 200, 10, 15);
   const gap = 200 * 0.34, blockW = Math.max(SOC.w, TRD.w), blockH = SOC.h + gap + TRD.h;
@@ -102,7 +126,7 @@ function buildModel(): Model {
     const wv = WAMP * (0.6 * Math.sin(2 * Math.PI * 1.5 * u - t * 1.6) + 0.4 * Math.sin(2 * Math.PI * 2.6 * u - t * 1.05 + 0.7));
     return Math.max(0.02, Math.min(0.98, trend + wob + wv));
   };
-  const G = ["#0e9358", "#12a565", "#18b271"], RDc = ["#c22648", "#d3365a", "#dd4076"];
+  const G = TICKER_GREENS, RDc = TICKER_REDS;
   const BL: number[] = [], FD: number[] = [], AR: number[] = [], WX2: number[] = [], WY2: number[] = [], P4s: number[] = [], P4e: number[] = [], WX4: number[] = [], WY4: number[] = [], INFRAC: number[] = [], INCOL: string[] = [];
   for (let j = 0; j < M; j++) {
     BL.push(rnd(1.2, 2.6)); FD.push(rnd(2.6, 3.3)); AR.push(BL[j] + FD[j]);
@@ -112,17 +136,23 @@ function buildModel(): Model {
     const o = chartPrice(j, BL[j]), c = chartPrice(Math.min(j + 1, M), BL[j]), mag = Math.min(1, Math.abs(c - o) / 0.12);
     INFRAC.push(0.34 + 0.6 * mag); INCOL.push((c < o ? G : RDc)[Math.min(2, Math.floor(mag * 3))]);
   }
-  const T2B = Math.max(...AR), T3 = T2B + 0.75, T4 = T3 + 2.25, END = T4 + 1.6;
+  // END: fade begins right after the candles land on the header logo — the
+  // persistent HeaderLogo owns the forever-tick, so the overlay hands off at once
+  // instead of holding and double-drawing the wordmark. Landing is T2B (all candles
+  // arrived) on the direct path, or T4 (end of the second flight) with the center
+  // wordmark act enabled. T3/T4 only shape the center-wordmark timeline.
+  const T2B = Math.max(...AR), T3 = T2B + 0.75, T4 = T3 + 2.25;
+  const END = (CENTER_WORDMARK_STEP ? T4 : T2B) + 0.2;
+  // LIFT: the earliest candle breakaway — the moment candles start moving up. The
+  // solid backdrop holds until here, then dissolves so the console reveals behind
+  // the rising candles.
+  const LIFT = Math.min(...BL);
 
-  // Header ticker: a small green-biased price walk of P candle "units" (color + body
-  // fraction + vertical offset), matching the approved candle-tick reference. Each header
-  // column shows one unit; the pattern marches one column left per second, so neighbouring
-  // columns differ — a lively, varied red/green ticker, never one big block of each color.
-  const P = 12, hr = mulberry32(9);
-  const hgauss = (m: number, sd: number) => { let u = 0, v = 0; while (!u) u = hr(); while (!v) v = hr(); return m + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
-  const hprice: number[] = [0]; for (let i = 0; i < P; i++) hprice.push(hprice[hprice.length - 1] + hgauss(0.16, 0.9));
-  const hrets = hprice.slice(1).map((v, i) => v - hprice[i]), hmx = Math.max(...hrets.map(Math.abs)) || 1;
-  const UNITS = hrets.map((r) => { const up = r >= 0, mag = Math.abs(r) / hmx; return { col: (up ? G : RDc)[Math.min(2, Math.floor(mag * 3))], frac: 0.4 + 0.45 * mag, off: up ? 0.3 : 0.62 }; });
+  // Header ticker units — the shared green-biased walk from candle-ticker.ts, so the
+  // splash's final ticker and the persistent HeaderLogo march through the identical
+  // colours. Each header column shows one unit; the pattern marches one column left
+  // per second (see headerTick), so neighbouring columns differ — never a solid block.
+  const UNITS = buildTickerUnits(), P = UNITS.length;
   const hxKey = (nx: number) => Math.round(nx * 1000);
   const uniqHx = [...new Set(HEADER.map((c) => hxKey(c.nx)))].sort((a, b) => a - b);
   const hColMap = new Map(uniqHx.map((v, i) => [v, i]));
@@ -132,11 +162,30 @@ function buildModel(): Model {
     const portrait = vh > vw;
     const stackW = Math.min(portrait ? vw * 0.9 : vw * 0.8, vh * STACK_AR * 0.62), stackH = stackW / STACK_AR;
     const cm = Math.max(18, vw * 0.03);
-    const pad = Math.max(14, vw * 0.014), logoH = Math.min(Math.max(vh * 0.05, 24), 42, (vw - 2 * pad) / HEADER_AR);
+    // Fallback header box, used until the real logo can be measured (the shell may
+    // still be on its loading screen for the whole flight — owner hit this on prod).
+    // It must match the REAL landing target's geometry per viewport so a late mount
+    // is a small glide, not a jump. x/w follow the real logo's responsive formula;
+    // the TOP (y) is primed from the cross-session cache (the real logo's last
+    // measured top, which already includes any RealityBanner offset) and falls back
+    // to the no-banner WITHIN-bar offset when we've never measured it:
+    //  - <lg (1024): the MobileBrandRow wordmark — SAME height formula as shell.tsx
+    //    (clamp(16..34, 88% of width / WORDMARK_AR)), centered in its rowH=logoH+20
+    //    row => 10px below the bar top when no banner.
+    //  - >=lg: the bar HeaderLogo — 18px tall at the left edge of the centered
+    //    max-w-[1400px] px-4 bar; the ~43px control row centers the 18px logo at
+    //    ~20px below the bar top when no banner (py-2 + (43-18)/2).
+    let header: Layout["header"];
+    if (vw < 1024) {
+      const lh = Math.max(16, Math.min(34, Math.round((vw * 0.88) / WORDMARK_AR)));
+      header = { x: (vw - lh * HEADER_AR) / 2, y: readCachedHeaderTop("m") ?? 10, w: lh * HEADER_AR, h: lh };
+    } else {
+      header = { x: Math.max(16, (vw - 1400) / 2 + 16), y: readCachedHeaderTop("d") ?? 20, w: 18 * HEADER_AR, h: 18 };
+    }
     return {
       portrait, stackW, stackH, stackX: (vw - stackW) / 2, stackY: (vh - stackH) * 0.46,
       chart: { x0: cm, x1: vw - cm, midY: vh * (portrait ? 0.42 : 0.5), amp: vh * (portrait ? 0.34 : 0.4) },
-      header: { x: pad, y: pad, w: logoH * HEADER_AR, h: logoH }, sizeScale: stackW / blockW,
+      header, sizeScale: stackW / blockW,
     };
   };
   const chartGeom = (j: number, t: number, L: Layout): Geo => {
@@ -170,14 +219,26 @@ function buildModel(): Model {
   };
   // HEADER: discrete per-second candlestick ticker — each column shows its own varied unit
   // and the pattern marches one column left per second (never one big block of red/green).
+  // The march is anchored where landing completes (T2B direct / T4 with center wordmark);
+  // the modulo handles negative offsets, so early-landing candles tick before the anchor.
+  const TICK_T0 = CENTER_WORDMARK_STEP ? T4 : T2B;
   const headerTick = (s: Geo, j: number, t: number) => {
-    const u = UNITS[(((HCOL[j] + Math.floor(t - T4)) % P) + P) % P];
+    const u = UNITS[(((HCOL[j] + Math.floor(t - TICK_T0)) % P) + P) % P];
     const wh = s.wb - s.wt, frac = HSHORT[j] ? Math.max(u.frac, 0.82) : u.frac, bh = Math.max(1.4, wh * frac);
     s.bt = s.wt + (wh - bh) * u.off; s.bb = s.bt + bh; s.col = u.col;
   };
   const candleAt = (j: number, t: number, L: Layout): Geo => {
-    if (t < BL[j]) { const g = chartGeom(j, t, L); g.col = g.up ? "#18b271" : "#d3365a"; return g; }
-    const stack = { ...stackGeom(j, L), col: INCOL[j] }, header = { ...headerGeom(j, L), col: INCOL[j] };
+    if (t < BL[j]) { const g = chartGeom(j, t, L); g.col = g.up ? "#059669" : "#dc2626"; return g; }
+    const header = { ...headerGeom(j, L), col: INCOL[j] };
+    if (!CENTER_WORDMARK_STEP) {
+      // Direct path: each candle flies chart -> header logo in one leg, then ticks.
+      if (t < AR[j]) { const g = chartGeom(j, BL[j], L); return { ...fly((t - BL[j]) / FD[j], g, header, WX2[j], WY2[j], L.stackW), col: INCOL[j] }; }
+      headerTick(header, j, t);
+      return header;
+    }
+    // Preserved center-wordmark path: chart -> big centered stack (ripple + hold) ->
+    // second flight to the header logo -> tick.
+    const stack = { ...stackGeom(j, L), col: INCOL[j] };
     if (t < AR[j]) { const g = chartGeom(j, BL[j], L); return { ...fly((t - BL[j]) / FD[j], g, stack, WX2[j], WY2[j], L.stackW), col: INCOL[j] }; }
     let s: Geo;
     if (t < T3) s = { ...stack };
@@ -186,7 +247,7 @@ function buildModel(): Model {
     if (t < T4) waveRipple(s, t, L); else headerTick(s, j, t);
     return s;
   };
-  return { M, candleAt, layout, END };
+  return { M, candleAt, layout, LIFT, END };
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -199,17 +260,20 @@ export function ConsoleIntro() {
   const [hidden, setHidden] = useState(introDone);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const bgRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (introDone) return;
     // deferred so we never call setState synchronously inside the effect body
-    const hide = () => { introDone = true; queueMicrotask(() => setHidden(true)); };
+    // (hide also settles the intro-bus phase: whether the splash finished or
+    // never played, the header may now show the brand logo)
+    const hide = () => { introDone = true; setIntroPhase("done"); queueMicrotask(() => setHidden(true)); };
     let sessionShown = false;
     try { sessionShown = sessionStorage.getItem("st.introShown") === "1"; } catch { /* ignore */ }
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (sessionShown || reduce) { hide(); return; }
 
-    const canvas = canvasRef.current, wrap = wrapRef.current;
+    const canvas = canvasRef.current, wrap = wrapRef.current, bg = bgRef.current;
     if (!canvas || !wrap) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) { hide(); return; }
@@ -218,7 +282,21 @@ export function ConsoleIntro() {
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let VW = 0, VH = 0, L = model.layout(1, 1), raf = 0, fading = false, done = false, fadeTimer = 0;
-    const resize = () => { VW = window.innerWidth; VH = window.innerHeight; canvas.width = VW * dpr; canvas.height = VH * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); L = model.layout(VW, VH); };
+    // The intro's final candles land on the REAL top-bar brand logo so the splash
+    // hands off seamlessly into it. We measure [data-brand-logo] (in the DOM behind
+    // this overlay) and use its viewport rect as the header box; until it exists
+    // (e.g. still loading) we fall back to the small computed top-left box.
+    let headerBox: { x: number; y: number; w: number; h: number } | null = null;
+    const measureHeader = () => {
+      // Several [data-brand-logo] instances can exist (the desktop bar logo is
+      // display:none below lg; the mobile brand row is lg:hidden) — land on the
+      // first VISIBLE one, not just the first in the DOM.
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-brand-logo]"))) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 2 && r.height > 2) { headerBox = { x: r.left, y: r.top, w: r.width, h: r.height }; return; }
+      }
+    };
+    const resize = () => { VW = window.innerWidth; VH = window.innerHeight; canvas.width = VW * dpr; canvas.height = VH * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); L = model.layout(VW, VH); measureHeader(); };
     resize();
     window.addEventListener("resize", resize);
 
@@ -228,22 +306,85 @@ export function ConsoleIntro() {
       hide();
     };
     const skip = () => { if (!fading) startFade(); };
-    const startFade = () => { fading = true; if (wrap) { wrap.style.opacity = "0"; } fadeTimer = window.setTimeout(finish, 720); };
+    // startFade doubles as the "landed" signal: whether the candles finished
+    // assembling the logo naturally or the user skipped, this is the moment the
+    // real header logo may appear underneath the fading overlay.
+    const startFade = () => { fading = true; setIntroPhase("landed"); if (wrap) { wrap.style.opacity = "0"; } fadeTimer = window.setTimeout(finish, 720); };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" || e.key === "Enter" || e.key === " ") skip(); };
     wrap.addEventListener("click", skip);
     window.addEventListener("keydown", onKey);
+    // The splash is definitely playing: the header hides its brand logo until
+    // the candles assemble it (setIntroPhase("landed") in startFade).
+    setIntroPhase("playing");
 
+    let dissolved = false;
+    // The landing box (introCurHeader, module-scoped) eases toward its target
+    // (measured logo, else the layout fallback) instead of snapping, so a header
+    // that mounts mid-flight or post-landing (slow first load) glides the
+    // wordmark into place — and survives the loading->loaded remount.
+    let lastNow: number | null = null;
+    // Last real-logo top written to the cross-session cache (rounded px); avoids a
+    // localStorage write every frame — only persist when the measured top changes.
+    let cachedWriteY = -1;
+    // While the page is still loading there's no logo to hand off to, so the
+    // ticking wordmark simply stays up — it doubles as branded loading chrome
+    // (the overlay is transparent after LIFT, so the loading/error screen shows
+    // through beneath it). This backstop exists only for pages that never mount
+    // a logo at all (e.g. the error shell): fade out eventually rather than
+    // living forever. Keep it LONG — a short grace re-creates the owner-reported
+    // "logo vanishes then reappears" gap on slow first loads. Click/Esc skips
+    // instantly regardless.
+    const MEASURE_WAIT = 45;
     const loop = (now: number) => {
       if (introStart == null) introStart = now;
       const t = (now - introStart) / 1000;
+      const dt = lastNow == null ? 0.016 : Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
+      // Solid backdrop holds until the first candle lifts off, then dissolves so the
+      // console/page reveals behind the rising candles (the canvas stays opaque).
+      if (!dissolved && t >= model.LIFT) { dissolved = true; if (bg) bg.style.opacity = "0"; }
+      // Re-measure the real logo EVERY frame (not just once) so the eased landing tracks its
+      // FINAL geometry. The mobile brand row mounts its logo at a placeholder height and then
+      // resizes to a width-scaled clamp (up to ~40% taller on wider phones/tablets); freezing
+      // the first, smaller measurement made the assembled wordmark land narrow and then POP to
+      // the larger real logo at handoff. measureHeader() keeps the previous box when no visible
+      // logo is found, so this stays safe before the top bar has mounted.
+      measureHeader();
+      const target = headerBox ?? L.header; // real logo box, else viewport-matched fallback
+      // Persist the real logo's top so the NEXT intro (a fresh tab/session) primes its
+      // fallback with it and assembles the wordmark exactly where it ends up — including
+      // any RealityBanner offset the loading screen can't know in advance.
+      if (headerBox) {
+        const ry = Math.round(headerBox.y);
+        if (ry !== cachedWriteY) { cachedWriteY = ry; writeCachedHeaderTop(VW < 1024 ? "m" : "d", ry); }
+      }
+      let cur: { x: number; y: number; w: number; h: number };
+      if (introCurHeader) {
+        const a = 1 - Math.exp(-dt * 10);
+        cur = {
+          x: introCurHeader.x + (target.x - introCurHeader.x) * a,
+          y: introCurHeader.y + (target.y - introCurHeader.y) * a,
+          w: introCurHeader.w + (target.w - introCurHeader.w) * a,
+          h: introCurHeader.h + (target.h - introCurHeader.h) * a
+        };
+      } else {
+        cur = { ...target };
+      }
+      introCurHeader = cur;
+      L.header = cur;
       ctx.clearRect(0, 0, VW, VH);
       for (let j = 0; j < model.M; j++) {
-        const c = model.candleAt(j, t, L); const col = c.col || "#18b271";
+        const c = model.candleAt(j, t, L); const col = c.col || "#059669";
         ctx.strokeStyle = col; ctx.lineWidth = Math.max(1, c.bw * 0.26); ctx.lineCap = "round";
         ctx.beginPath(); ctx.moveTo(c.x, c.wt); ctx.lineTo(c.x, c.wb); ctx.stroke();
         ctx.fillStyle = col; const bh = Math.max(1.4, c.bb - c.bt); roundRect(ctx, c.x - c.bw / 2, c.bt, c.bw, bh, Math.min(2, c.bw * 0.25)); ctx.fill();
       }
-      if (!fading && t > model.END) startFade();
+      // Natural fade waits until the REAL logo exists and the glide has settled on
+      // it — revealing the persistent logo under a wordmark that's elsewhere (or
+      // under nothing at all, on a slow first load) caused a visible pop/gap.
+      // User skip (click/Escape) still fades immediately via skip().
+      const settled = !!headerBox && Math.abs(cur.x - headerBox.x) < 2 &&
+        Math.abs(cur.y - headerBox.y) < 2 && Math.abs(cur.w - headerBox.w) < 2;
+      if (!fading && t > model.END && (settled || t > model.END + MEASURE_WAIT)) startFade();
       if (!done) raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -256,9 +397,12 @@ export function ConsoleIntro() {
     <div
       ref={wrapRef}
       aria-hidden
-      style={{ position: "fixed", inset: 0, zIndex: 200, background: "#0b1018", transition: "opacity .7s ease", cursor: "pointer" }}
+      style={{ position: "fixed", inset: 0, zIndex: 200, background: "transparent", transition: "opacity .7s ease", cursor: "pointer" }}
     >
-      <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "100%" }} />
+      {/* Solid theme backdrop that covers the page until the candles lift off, then
+          dissolves (opacity → 0) to reveal the console behind the rising candles. */}
+      <div ref={bgRef} style={{ position: "absolute", inset: 0, background: "var(--con-bg)", transition: "opacity .9s ease" }} />
+      <canvas ref={canvasRef} style={{ position: "relative", display: "block", width: "100%", height: "100%" }} />
     </div>
   );
 }

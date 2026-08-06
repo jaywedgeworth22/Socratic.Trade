@@ -14,8 +14,32 @@ beforeAll(() => {
 
 const mocks = vi.hoisted(() => ({
   politeFetchText: vi.fn(),
-  storeDocument: vi.fn().mockResolvedValue({ attempted: 1, indexed: 1 })
+  hasIngestTextBudget: vi.fn().mockReturnValue(true),
+  insertSecArtifact: vi.fn(),
+  storeDocument: vi.fn().mockResolvedValue({
+    attempted: 1,
+    indexed: 1,
+    documentComplete: true,
+    managedCommitProof: { commitId: "test:sec8k", attemptToken: "test:sec8k" }
+  })
 }));
+
+vi.mock("../src/lib/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/db")>();
+  return { managedVectorLedgerAuthority: vi.fn(),
+    ...actual,
+    insertSecArtifact: mocks.insertSecArtifact,
+    runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
+  };
+});
+
+vi.mock("../src/lib/db-vector-commits", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/db-vector-commits")>();
+  return { managedVectorLedgerAuthority: vi.fn(),
+    ...actual,
+    runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
+  };
+});
 
 vi.mock("../src/lib/web-sources/http", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/web-sources/http")>();
@@ -24,7 +48,17 @@ vi.mock("../src/lib/web-sources/http", async (importOriginal) => {
 
 vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
-  return { ...actual, storeDocument: mocks.storeDocument };
+  return {
+    ...actual,
+    managedVectorLedgerAuthority: vi.fn(),
+    hasIngestTextBudget: mocks.hasIngestTextBudget,
+    storeDocument: async (...args: Parameters<typeof actual.storeDocument>) => {
+      const result = await mocks.storeDocument(...args);
+      return result?.documentComplete === true
+        ? { ...result, managedCommitProof: result.managedCommitProof ?? { commitId: "test:sec8k", attemptToken: "test:sec8k" } }
+        : result;
+    }
+  };
 });
 
 import { hasIngestedAccession } from "../src/lib/db";
@@ -44,6 +78,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   delete process.env.WEB_SOURCE_SEC8K_FULL_BODY;
   mocks.politeFetchText.mockResolvedValue(SAMPLE_HTML);
+  mocks.hasIngestTextBudget.mockReturnValue(true);
+  mocks.insertSecArtifact.mockImplementation(() => undefined);
+  mocks.storeDocument.mockResolvedValue({
+    attempted: 1,
+    indexed: 1,
+    documentComplete: true,
+    managedCommitProof: { commitId: "test:sec8k", attemptToken: "test:sec8k" }
+  });
 });
 
 describe("eightKFullBodyEnabled (default-off corpus-enablement flag)", () => {
@@ -68,11 +110,41 @@ describe("ingestEightKBody (full-body ingest path when the flag is on)", () => {
       EVENT.filingUrl,
       expect.objectContaining({ headers: expect.any(Object) })
     );
-    expect(mocks.storeDocument).toHaveBeenCalledTimes(1);
+    // Full 8-K body + extractive document-summary abstract (trade highlights).
+    expect(mocks.storeDocument).toHaveBeenCalledTimes(2);
     const [doc] = mocks.storeDocument.mock.calls[0]!;
     expect(doc).toMatchObject({ ticker: "AAPL", doc_type: "8-k", source: "sec-8k" });
+    const abstractDoc = mocks.storeDocument.mock.calls[1]![0] as { doc_type?: string; source?: string };
+    expect(abstractDoc).toMatchObject({ doc_type: "document-summary", source: "document-summarizer" });
     // Recorded in ingested_accessions so a second call for the same accession is skipped.
     expect(hasIngestedAccession(EVENT.accession, "8-K-body")).toBe(true);
+  });
+
+  it("mirrors committed 8-K body chunks into document_chunks_fts (source=sec-8k)", async () => {
+    const event: EightKEvent = { ...EVENT, accession: `0000320193-26-fts-${randomUUID().slice(0, 8)}` };
+    const { getDb } = await import("../src/lib/db");
+    const result = await ingestEightKBody(event);
+    expect(result.completed).toBe(true);
+    expect(result.skipped).toBe(false);
+
+    const rows = getDb()
+      .prepare(
+        `SELECT content_hash, symbol, source, accession FROM document_chunks_fts
+         WHERE source = ? AND accession = ? AND symbol = ?`
+      )
+      .all("sec-8k", event.accession, event.symbol) as Array<{
+      content_hash: string;
+      symbol: string;
+      source: string;
+      accession: string;
+    }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.source).toBe("sec-8k");
+      expect(row.accession).toBe(event.accession);
+      expect(row.symbol).toBe("AAPL");
+      expect(row.content_hash.length).toBeGreaterThan(0);
+    }
   });
 
   it("skips a filing whose accession was already ingested (de-dup gate)", async () => {
@@ -96,6 +168,77 @@ describe("ingestEightKBody (full-body ingest path when the flag is on)", () => {
     expect(result.error).toMatch(/fetch failed/);
     expect(mocks.storeDocument).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["partial cardinality", { attempted: 2, indexed: 1, documentComplete: false }],
+    ["text budget", { attempted: 2, indexed: 1, budgetSkipped: 1, documentComplete: false }],
+    ["write-unit budget", { attempted: 2, indexed: 1, writeUnitBudgetSkipped: 1, documentComplete: false }],
+    ["unconfigured provider", { attempted: 2, indexed: 0, unconfigured: true, documentComplete: false }],
+    ["empty document", { attempted: 0, indexed: 0, documentComplete: false }]
+  ])("leaves the accession retryable after a no-error %s result", async (_label, stored) => {
+    const event = { ...EVENT, accession: `0000320193-26-${randomUUID().slice(0, 6)}` };
+    mocks.storeDocument.mockResolvedValueOnce(stored);
+
+    const result = await ingestEightKBody(event);
+
+    expect(result).toMatchObject({ skipped: true, chunks: stored.indexed });
+    expect(hasIngestedAccession(event.accession, "8-K-body")).toBe(false);
+  });
+
+  it("accepts an exact previously committed occurrence set without another provider write", async () => {
+    const event = { ...EVENT, accession: `0000320193-26-${randomUUID().slice(0, 6)}` };
+    mocks.storeDocument.mockResolvedValueOnce({
+      attempted: 2,
+      indexed: 0,
+      skipped: true,
+      reusedCommitted: true,
+      documentComplete: true
+    });
+
+    const result = await ingestEightKBody(event);
+
+    expect(result).toEqual({ skipped: false, chunks: 2, completed: true });
+    expect(hasIngestedAccession(event.accession, "8-K-body")).toBe(true);
+  });
+
+  it("stops after the HTML fetch when the RAG lease is lost", async () => {
+    const event = { ...EVENT, accession: `lease-fetch-${randomUUID()}` };
+    let lost = false;
+    mocks.politeFetchText.mockImplementationOnce(async () => {
+      lost = true;
+      return SAMPLE_HTML;
+    });
+    const guard = {
+      assertOwnership: vi.fn(() => {
+        if (lost) throw new Error("test 8-k fetch lease lost");
+      })
+    };
+
+    await expect(ingestEightKBody(event, Date.now(), guard)).rejects.toThrow(
+      "test 8-k fetch lease lost"
+    );
+    expect(mocks.insertSecArtifact).not.toHaveBeenCalled();
+    expect(mocks.storeDocument).not.toHaveBeenCalled();
+  });
+
+  it("stops after the artifact insert when the RAG lease is lost", async () => {
+    const event = { ...EVENT, accession: `lease-artifact-${randomUUID()}` };
+    let ownershipChecks = 0;
+    const guard = {
+      assertOwnership: vi.fn(() => {
+        ownershipChecks += 1;
+        // The eighth check is immediately after insertSecArtifact; once lost, every catch-path
+        // recheck must continue to fail rather than convert cancellation into a warning.
+        if (ownershipChecks >= 8) throw new Error("test 8-k artifact lease lost");
+      })
+    };
+
+    await expect(ingestEightKBody(event, Date.now(), guard)).rejects.toThrow(
+      "test 8-k artifact lease lost"
+    );
+    expect(ownershipChecks).toBeGreaterThanOrEqual(8);
+    expect(mocks.storeDocument).not.toHaveBeenCalled();
+  });
 });
 
 describe("ingestEightKBodies (batch path called from refreshEightK when the flag is on)", () => {
@@ -109,6 +252,32 @@ describe("ingestEightKBodies (batch path called from refreshEightK when the flag
     expect(result.ingested).toBe(2);
     expect(result.skipped).toBe(0);
     expect(result.errors).toEqual([]);
-    expect(mocks.storeDocument).toHaveBeenCalledTimes(2);
+    // 2 full bodies + 2 highlight abstracts
+    expect(mocks.storeDocument).toHaveBeenCalledTimes(4);
+  });
+
+  it("stops before fetching the tail after capacity is exhausted and returns every deferred accession", async () => {
+    const events: EightKEvent[] = [
+      { ...EVENT, accession: `capacity-a-${randomUUID()}` },
+      { ...EVENT, accession: `capacity-b-${randomUUID()}` },
+      { ...EVENT, accession: `capacity-c-${randomUUID()}` }
+    ];
+    mocks.storeDocument.mockResolvedValueOnce({
+      attempted: 2,
+      indexed: 0,
+      unconfigured: true,
+      documentComplete: false
+    });
+
+    const result = await ingestEightKBodies(events);
+
+    expect(result).toMatchObject({
+      attempted: 1,
+      ingested: 0,
+      capacityExhausted: true,
+      deferredAccessions: events.map((event) => event.accession)
+    });
+    expect(mocks.politeFetchText).toHaveBeenCalledTimes(1);
+    expect(mocks.storeDocument).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { Card } from "../ui/primitives";
+import { DecisionTraceIllustration } from "./decision-trace-illustration";
+import { landingPageEnabled } from "@/lib/landing-page";
 
 export const metadata: Metadata = {
   title: { absolute: "Socratic Trade" },
@@ -85,6 +88,7 @@ const STEPS: Array<{ n: number; title: string; detail: string }> = [
 ];
 
 export default function WelcomePage() {
+  if (!landingPageEnabled()) notFound();
   return (
     <>
       {/* JSON-LD structured data */}
@@ -119,7 +123,7 @@ export default function WelcomePage() {
           {/* ── Hero ───────────────────────────────────────────────────────── */}
           <section className="text-center space-y-6">
             <h1 className="text-4xl font-bold tracking-tight text-fg sm:text-5xl">
-              Socratic.Trade is an autonomy desk for market decisions
+              Socratic Trade is an autonomy desk for market decisions
             </h1>
             <p className="mx-auto max-w-2xl text-lg text-muted leading-relaxed">
               It watches markets, forms a thesis, can act under delegated authority, and leaves a
@@ -170,6 +174,18 @@ export default function WelcomePage() {
                 </li>
               ))}
             </ol>
+          </section>
+
+          {/* ── Decision trace illustration ────────────────────────────────── */}
+          <section className="space-y-6">
+            <div className="space-y-2 text-center">
+              <h2 className="text-xl font-semibold text-fg">What a decision trace looks like</h2>
+              <p className="mx-auto max-w-2xl text-sm text-muted leading-relaxed">
+                A stylized example of the receipt Socratic Trade leaves behind for every proposal:
+                who argued for it, who argued against it, and what the policy gate did.
+              </p>
+            </div>
+            <DecisionTraceIllustration />
           </section>
 
           {/* ── Strategy overview link ─────────────────────────────────────── */}

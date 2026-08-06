@@ -1,11 +1,13 @@
 import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 import type { AccountReadiness } from "@/lib/dashboard";
+import type { PositionStopPlan } from "@/lib/db";
 import type { MacroData } from "@/lib/macro";
 import type { MacroDerivedMetrics } from "@/lib/macro-metrics";
 import type { MarketSignals } from "@/lib/market-signals";
 import type { MarketNewsItem } from "@/lib/market-signals/massive";
-import type { RegimeStat, ThesisStat } from "@/lib/performance";
+import type { RedTeamEfficacy, RegimeStat, ThesisStat } from "@/lib/performance";
 import type { TaxSummary } from "@/lib/tax";
+import type { FmpTranscriptStatus } from "@/lib/web-sources/fmp-transcripts";
 import type {
     BrokerageAccount,
     ConnectedAccount,
@@ -22,7 +24,7 @@ import type {
     StrategyProfile,
     StrategyRunRow,
     TradeProposal,
-    TradingPolicy, MarketQuote } from "@/lib/types";
+    TradingPolicy, MarketQuote, OptionPosition } from "@/lib/types";
 export type { AuditFeedItem, SymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 
 export interface AuditEvent {
@@ -36,7 +38,13 @@ export interface AuditEvent {
 export interface StrategyDecision {
   runId: string;
   createdAt?: string;
-  status: "completed" | "failed";
+  status:
+    | "completed"
+    | "failed"
+    | "skipped"
+    | "skipped_budget"
+    | "skipped_market_closed"
+    | "skipped_broker_unhealthy";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
@@ -60,18 +68,33 @@ export interface DashboardSnapshot {
   accounts: BrokerageAccount[];
   accountReadiness?: AccountReadiness;
   connectedAccounts: ConnectedAccount[];
+  /** Per-account run-state projection for the account switcher. `runDuringExtendedHours` is
+   *  optional (older payloads predate it): deriveStateInfo treats undefined as "can't know" and
+   *  skips the market-open/paused split rather than mislabeling an extended-hours account. */
+  connectedAccountPolicies?: Record<
+    string,
+    Pick<TradingPolicy, "systemState" | "strategyAuthority"> & Partial<Pick<TradingPolicy, "runDuringExtendedHours">>
+  >;
   portfolio?: Portfolio;
+  portfolioReadError?: string;
   positions: EquityPosition[];
+  options?: OptionPosition[];
   symbolMetaBySymbol: Record<string, DashboardSymbolMeta>;
+  /** Per-position stop PLAN (LLM-chosen stop TYPE, persisted at fill time), keyed by symbol — see
+   *  StopPlanStyle/position_stop_plans. Absent entry = "default" (account's own precedence). */
+  stopPlanBySymbol?: Record<string, PositionStopPlan>;
   livePortfolio?: Portfolio;
   livePositions?: EquityPosition[];
+  liveOptions?: OptionPosition[];
   paperPortfolio?: Portfolio;
   paperPositions?: EquityPosition[];
+  paperOptions?: OptionPosition[];
   orders: EquityOrder[];
   audit: AuditEvent[];
   auditFeed: DashboardAuditFeedItem[];
   unifiedFeed: UnifiedActivityGroup[];
   latestStrategyRun?: StrategyDecision;
+  latestScan?: MarketScan;
   dailyStats: { orderCount: number; openingOrderCount: number; notional: number };
   strategyRuns: StrategyRunRow[];
   pendingProposals: PendingProposal[];
@@ -82,11 +105,16 @@ export interface DashboardSnapshot {
     insider: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
     finra?: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number; asOf?: string };
     sec8k?: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
+    earningsTranscripts?: FmpTranscriptStatus;
     technical?: { enabled: boolean; source: "tradingview" | "computed"; fetchedAt?: string; recordCount: number; due: boolean; ttlMs: number; secretConfigured: boolean };
   };
   smartMoney?: {
     congress: Array<{ symbol: string; member: string; chamber: string; side: "buy" | "sell"; amountLow?: number; amountHigh?: number; tradedAt: string; disclosedAt?: string }>;
     insider: Array<{ symbol: string; owner: string; buyTx: number; sellTx: number; filedAt: string }>;
+    /** Cached congress-score go/no-go verdict (pass/fail + stats); null when never evaluated.
+     *  Nested here alongside the other smart-money congress data to match the server payload
+     *  (src/lib/dashboard.ts). */
+    congressScoreVerdict?: import("@/lib/congress-score-gate").CongressScoreVerdictRead | null;
   };
   marketSession?: string;
   /** Backend macro/market-regime board (FRED macro + derived metrics + free market-wide signals). */
@@ -101,6 +129,16 @@ export interface DashboardSnapshot {
     news?: MarketNewsItem[];
   };
   performance?: PerformanceSummary;
+  redTeamEfficacy?: RedTeamEfficacy & {
+    /** Opening Bear vetoes routed to the Socratic override path. */
+    overrideVetoes: number;
+    /** Opening Bear vetoes whose Socratic override actually applied. */
+    appliedOverrideVetoes: number;
+    /** Blocking vetoes + override-path vetoes; survived Red Team reviews are not persisted here. */
+    vetoDecisions: number;
+    /** appliedOverrideVetoes / vetoDecisions (%), 0 when no veto decisions exist. */
+    overrideSharePct: number;
+  };
   thesisScorecard?: ThesisStat[];
   regimeScorecard?: RegimeStat[];
   tax?: TaxSummary;

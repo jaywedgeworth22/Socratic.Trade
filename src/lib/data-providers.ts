@@ -1,33 +1,67 @@
 // Market enrichment: fundamentals (P/E) + analyst-consensus sentiment layered on top of
 // the NASDAQ screener scan.
 //
-// Provider cascade (first non-null value wins per field):
-//   1. Finnhub           — news sentiment, analyst recs, profile, basic financials (FINNHUB_API_KEY)
-//   2. FMP stable API    — P/E (ratios-ttm), analyst grades-consensus             (FMP_API_KEY)
-//   3. Yahoo Finance     — sector, industry, P/E, EPS, div yield, analyst rating  (no key needed)
+// Fundamentals come from a COLLECTION of providers (first non-null wins per field), e.g.:
+//   Finnhub, Tiingo, ROIC.ai, SEC XBRL, Yahoo Finance, Nasdaq, SimFin, Wisesheets, …
+// Congress.Trade fundamentals/analyst read-back is opt-in only (default OFF).
 //
-// Each keyed provider is only instantiated when its env key is set. Yahoo Finance is always
-// the final real tier — no API key required, uses session crumb auth.
+// Owner 2026-08-04: FMP, QuiverQuant, and Unusual Whales are NEVER called from this app.
+// Congressional disclosures/analytics come from Congress.Trade; fundamentals do not default there.
+//
+// A quota-scarce RapidAPI-hosted FAILOVER tier (Mboum Finance, YH Finance 15, Alpha Vantage's
+// RapidAPI transport) is registered AFTER Yahoo Finance, gated on RAPIDAPI_KEY — see the doc
+// comment on SteadyApiEnrichmentProvider / AlphaVantageRapidApiEnrichmentProvider below and
+// rapidapi-quota.ts for the persisted daily-budget mechanism that keeps it safe.
 
 import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import {
-  congressReadsEnabled,
   congressFundamentalsEnabled,
-  getAppAFundamentals,
-  getAppAAnalyst,
-  type AppAFundamental,
-  type AppAAnalyst,
-} from "./congress-trade-client";
-import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
+  getCongressTradeClient
+} from "./api-clients/congress";
+import type { FundamentalRow, AnalystRow } from "@jaywedgeworth22/congress-trading-shared";
+
+export type AppAFundamentalRow = FundamentalRow & { source?: string | null };
+export type AppAAnalystRow = AnalystRow & { source?: string | null };
+import type { EnrichmentSources } from "./types";
+
+import {
+  cancelUndispatchedProviderReservation,
+  hasDataPoolConsent,
+  markProviderDispatchStarted,
+  reserveProviderDispatch,
+  resolveAlpacaMarketData,
+  resolveAlphaVantageKeyPool,
+  resolveApiKeyWithSource,
+  settleProviderDispatch,
+  type ApiKeySource
+} from "./db";
 import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
 import { apiCircuitBreakerShouldSkip, CircuitOpenError } from "./api-circuit-breaker";
+import { expiresAtRespectingMarketClose } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
+import { resolveQuiverApiKey } from "./quiver-provider";
+import { isDirectVendorAccessAllowed } from "./retired-direct-vendors";
+import { NasdaqCalendarEnrichmentProvider } from "./nasdaq-calendar-provider";
+import { WisesheetsEnrichmentProvider, resolveWisesheetsApiKey } from "./wisesheets-provider";
+import { SimFinEnrichmentProvider, resolveSimFinApiKey } from "./simfin-provider";
+import { MarketauxEnrichmentProvider, resolveMarketauxApiKey } from "./marketaux-provider";
 import { getStreamedHeadlines } from "./streams/news-store";
-import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
+import { BROWSER_UA, politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
+import { withProviderLimit, admitProviderRequests, refundProviderRequests, resetProviderQuotaState, resolveProviderQuota, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
+import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage, millisUntilNextAlphaVantageDailyReset, tryReserveAlphaVantageCalls, refundAlphaVantageCalls, alphaVantageDailyCallBudget } from "./alpha-vantage-key-pool";
+import { tryReserveRapidApiCalls, refundRapidApiCalls, type RapidApiProviderKey } from "./rapidapi-quota";
+import {
+  arbitrateFieldObservation,
+  dedupeUpstreamFamilies,
+  type FieldObservation,
+  type FieldObservationCandidate,
+  type ProviderFailureReceipt,
+  type UpstreamFamilyCandidate
+} from "./evidence-facts";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
 // Data fetched with a user's own stored key is scoped to that user (private) or
@@ -93,6 +127,8 @@ export interface AnalystRatingDetail {
   label: string;   // Strong Buy / Buy / Hold / Sell / Strong Sell
   counts?: { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number };
   mean?: number;   // analyst mean (1–5) when the source reports one instead of counts
+  /** Canonical upstream source family, so re-published consensus is blended once. */
+  upstreamFamily?: string;
 }
 
 export interface SymbolEnrichment {
@@ -112,6 +148,7 @@ export interface SymbolEnrichment {
   volume?: number;
   dividendYield?: number; // annual dividend yield %
   eps?: number;           // earnings per share (TTM)
+  sharesOutstanding?: number;
   companyName?: string;
   pbRatio?: number;
   shortPercentOfFloat?: number;
@@ -147,10 +184,26 @@ export interface SymbolEnrichment {
   targetHigh?: number;
   targetLow?: number;
   targetMedian?: number;
+  returnOnEquity?: number;
+  returnOnAssets?: number;
+  revenueGrowth?: number;
+  freeCashFlowYield?: number;
+  grossProfitMargin?: number;
+  congressTradesQuiver?: number;
+  insiderTradesQuiver?: number;
+  govContractsQuiver?: number;
+  lobbyingQuiver?: number;
+  patentsQuiver?: number;
   // Which provider supplied each scalar field (filled by the cascade).
-  sources?: Partial<Record<EnrichmentSourcedField, string>>;
+  sources?: Partial<EnrichmentSources>;
   // Each provider's own analyst read, keyed by provider name (for the Rating tooltip).
   analystBySource?: Record<string, AnalystRatingDetail>;
+  /** Per-field evidence receipts; scalar fields above remain the compatibility surface. */
+  fieldObservations?: EnrichmentFieldObservations;
+  /** Provider failures retained alongside successful fields instead of collapsed to empty output. */
+  providerFailures?: Record<string, ProviderFailureReceipt>;
+  // Per-field specific 'asOf' dates (e.g. from FMP fundamentals that carry their own 'date').
+  fieldDates?: Partial<Record<keyof EnrichmentSources, string>>;
 }
 
 export type EnrichmentSourcedField =
@@ -177,6 +230,7 @@ export type EnrichmentSourcedField =
   | "insiderSentiment"
   | "fcfYield"
   | "debtToEquity"
+  | "sharesOutstanding"
   | "epsGrowth"
   | "senateTrades"
   | "daysToEarnings"
@@ -186,7 +240,23 @@ export type EnrichmentSourcedField =
   | "targetMean"
   | "targetHigh"
   | "targetLow"
-  | "targetMedian";
+  | "targetMedian"
+  | "returnOnEquity"
+  | "returnOnAssets"
+  | "revenueGrowth"
+  | "freeCashFlowYield"
+  | "grossProfitMargin"
+  | "congressTradesQuiver"
+  | "insiderTradesQuiver"
+  | "govContractsQuiver"
+  | "lobbyingQuiver"
+  | "patentsQuiver"
+  /** First-wins array of headline strings; stamped for store/UI provenance (not score-arbitrated). */
+  | "headlines";
+
+export type EnrichmentFieldObservations = Partial<
+  Record<EnrichmentSourcedField, FieldObservation<unknown>>
+>;
 
 /** Per-run hint the cascade passes to paid providers when the short-circuit is on.
  *  `coveredFields[symbol]` is the set of `SymbolEnrichment` keys a free upstream
@@ -212,6 +282,23 @@ export interface MarketEnrichmentProvider {
    *  "paid" providers receive a coverage hint so they can skip redundant sub-calls
    *  for symbols a free upstream (App A) already covered. */
   costTier?: "free" | "paid";
+  /** Opt-in: this provider's quota is SCARCE enough that dispatching it against symbols a
+   *  cheaper source already covered is self-defeating (e.g. YH Finance 15's real cap is 100
+   *  requests per MONTH). Setting this — together with a non-empty `suppliesFields` — moves the
+   *  provider out of the cascade's single concurrent wave into a SECOND wave that runs only after
+   *  the free/cheap providers have resolved, and only over the symbols still missing at least one
+   *  of the fields this provider can actually supply. See CascadingEnrichmentProvider.enrich and
+   *  `scarceEnrichmentGateEnabled()`. Providers without this flag keep today's behavior exactly
+   *  (dispatched concurrently over the full batch). */
+  quotaScarce?: boolean;
+  /** The `SymbolEnrichment` keys this provider is CAPABLE of supplying. Load-bearing only for a
+   *  `quotaScarce` provider: the wave-two gate compares this against what wave one actually filled
+   *  per symbol, so a scarce provider is never spent on a symbol where it could not add anything.
+   *  Declaring it wider than reality only costs calls; declaring it NARROWER than reality can lose
+   *  data (a field it uniquely supplies would never trigger a call) — so keep it in sync with the
+   *  provider's parser. A `quotaScarce` provider with this unset/empty is treated as ungated (it
+   *  stays in wave one) rather than silently never running. */
+  suppliesFields?: readonly (keyof SymbolEnrichment)[];
   /** Credential lane this provider instance actually runs on ("user" | "env").
    *  When set, the circuit breaker only trips this provider when the health lane
    *  matching BOTH its service AND this key source is hard-stopped — so a dead
@@ -232,6 +319,42 @@ function flagEnabled(value: string | undefined): boolean {
 function enrichmentShortCircuitEnabled(): boolean {
   // Needs the fundamentals tier (it supplies the coverage hint), not just price reads.
   return flagEnabled(process.env.ENRICHMENT_SHORT_CIRCUIT_ENABLED) && congressFundamentalsEnabled();
+}
+
+/**
+ * Per-symbol coverage gate for `quotaScarce` providers — DEFAULT ON, and scoped strictly to
+ * providers that opt in via `quotaScarce` + `suppliesFields`. Today that is only the RapidAPI
+ * failover tier (Mboum / YH Finance 15 / Alpha Vantage-RapidAPI / Insiders / TwelveData-RapidAPI),
+ * which is new and currently spends a MONTHLY-backed quota on whichever symbols happen to be
+ * cache-misses first with no regard for whether the free keyless Yahoo scrape already supplied
+ * that exact data. Every pre-existing provider is unaffected (they never set the flag), so
+ * defaulting this ON has no regression surface for them. Set
+ * `ENRICHMENT_SCARCE_TIER_GATE_ENABLED=0` to restore the old all-providers-in-one-concurrent-wave
+ * behavior for the scarce tier too.
+ */
+export function scarceEnrichmentGateEnabled(): boolean {
+  const raw = process.env.ENRICHMENT_SCARCE_TIER_GATE_ENABLED;
+  if (raw === undefined || raw.trim() === "") return true;
+  return flagEnabled(raw);
+}
+
+/**
+ * Free-first field-demand planner — DEFAULT ON.
+ *
+ * Wave A: free/keyless/broker-bundled providers (`costTier !== "paid"`) over the full batch.
+ * Wave B: paid non-scarce providers only for symbols that still have a coverage gap, with a
+ *         `coveredFields` hint so they can skip redundant sub-calls.
+ * Wave C: scarce RapidAPI failover (existing `quotaScarce` gate) for remaining field gaps.
+ *
+ * When a free-wave provider throws, it is retried once before the paid wave so a transient
+ * timeout/429 does not permanently suppress the keyless floor for that scan.
+ *
+ * Set `ENRICHMENT_FREE_FIRST_ENABLED=0` to restore the prior single concurrent non-scarce wave.
+ */
+export function freeFirstEnrichmentEnabled(): boolean {
+  const raw = process.env.ENRICHMENT_FREE_FIRST_ENABLED;
+  if (raw === undefined || raw.trim() === "") return true;
+  return flagEnabled(raw);
 }
 
 // ── Analyst scoring helpers ───────────────────────────────────────────────────
@@ -263,11 +386,6 @@ export function analystScoreFromMean(mean: number): number {
 }
 
 const DEFAULT_TTL_MS = 6 * 60 * 60_000; // fundamentals move slowly; cache 6h
-// Cover the default scan candidate set so every row the dashboard displays is
-// enriched — otherwise symbols that climb in rank after enrichment would render
-// blank. The 6h cache means only the first run is heavy.
-const DEFAULT_MAX_SYMBOLS = 30;
-const MAX_SYMBOLS_CAP = 50;
 const CONCURRENCY = 5;
 const cache = new Map<string, { expiresAt: number; data: SymbolEnrichment }>();
 const originalSet = cache.set.bind(cache);
@@ -349,83 +467,254 @@ export function alpacaSnapshotTtlMs(): number {
   return Number.isFinite(value) && value >= 0 ? value : DEFAULT_ALPACA_SNAPSHOT_TTL_MS;
 }
 
+// Providers enrich EVERY symbol they're asked for — the scan's candidate list (top-N ranked
+// + event outliers + all held positions) IS the budget. A fixed provider-side cap starved
+// whatever the scan appended past it (all-dash Fundamentals for the owner's own positions,
+// prod 2026-07-09), and any hard ceiling recreates that bug the day the account outgrows it
+// (owner ruling 2026-07-09: no hard cap — >50 positions is a supported future).
+// FMP_MAX_SYMBOLS stays as an EXPLICIT operator throttle for quota thrift — unclamped,
+// because a silently-clamped override is a cage, not a setting. Quota realities live where
+// they belong: the per-provider pacers in provider-rate-limit.ts, TwelveData's credit
+// window, Alpha Vantage's daily key pool, and the 6h fundamentals cache above.
 function maxSymbols(): number {
-  const value = Number(process.env.FMP_MAX_SYMBOLS ?? process.env.MARKET_SCAN_LIMIT ?? DEFAULT_MAX_SYMBOLS);
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_MAX_SYMBOLS;
-  return Math.min(value, MAX_SYMBOLS_CAP);
+  const explicit = Number(process.env.FMP_MAX_SYMBOLS);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.floor(explicit);
+  return Number.POSITIVE_INFINITY;
+}
+
+// Collision-resistant, one-way credential lane identity. It is now persisted in the durable
+// dispatch ledger, so a 32-bit process-local hash is insufficient: an accidental collision could
+// conflate unrelated account quotas. The literal key is never logged or stored.
+export async function apiKeyFingerprint(apiKey: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(apiKey)
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+// Short negative-cache TTL for symbols a rate-limited provider returns no usable data for, so they
+// don't sit at the FRONT of `misses` forever starving lower-ranked symbols of a scarce free-tier
+// budget. Default 30 min: long enough to rotate a no-data symbol out for several scans, short enough
+// that a symbol which later gains coverage isn't suppressed for long.
+const DEFAULT_PROVIDER_NEGATIVE_TTL_MS = 30 * 60_000;
+function providerNegativeTtlMs(): number {
+  const value = Number(process.env.PROVIDER_NEGATIVE_TTL_MS ?? DEFAULT_PROVIDER_NEGATIVE_TTL_MS);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_PROVIDER_NEGATIVE_TTL_MS;
+  return value;
+}
+
+// How many outbound requests one enriched symbol costs a quota'd provider — passed to the request
+// quota (which budgets in REQUESTS, not symbols). Only providers in RATE_QUOTAS need this: tiingo
+// fires up to 3 sub-calls/symbol (iex, daily, [news]); twelvedata costs 1 credit/symbol; fmp fires
+// 2 unconditional (profile + insider) plus up to 3 conditional (ratios-ttm, grades-consensus,
+// price-target-consensus). Non-quota'd providers (finnhub, yahoo, alpha-vantage) are paced instead
+// and never consult this.
+export function callsPerSymbol(
+  provider: string,
+  opts?: { dropExtra?: boolean; skipPe?: boolean; skipConsensus?: boolean; wantTargets?: boolean }
+): number {
+  switch (provider) {
+    case "tiingo": return opts?.dropExtra ? 2 : 3;  // iex, daily, [news]
+    // 2 unconditional (profile + insider) + ratios-ttm (unless skipPe) + grades-consensus (unless
+    // skipConsensus) + price-target-consensus (only when wantTargets). Mirrors the fetch-path
+    // conditions one-for-one; range 2..5. The caller MUST derive skipPe/skipConsensus/wantTargets
+    // from the SAME skipFlagsFor(symbol) + wantTargets formula it dispatches with, so reservation
+    // equals dispatch per symbol.
+    case "fmp": return 2 + (opts?.skipPe ? 0 : 1) + (opts?.skipConsensus ? 0 : 1) + (opts?.wantTargets ? 1 : 0);
+    default: return 1;                               // twelvedata (1 credit/symbol)
+  }
+}
+
+/** Test-only compatibility shim: the unified request quota replaced the old per-provider window
+ *  gates, so resetting "the Twelve Data window" now just clears the shared quota state. */
+export function __resetTwelveDataWindowForTests(): void {
+  resetProviderQuotaState();
+}
+
+export interface FetchWithRetryGuard {
+  /** Synchronous durable-ownership assertion run at every transport and telemetry boundary. */
+  assertActive: () => void;
+  /** Optional cancellation signal used to interrupt an internal 429 backoff. */
+  signal?: AbortSignal;
+}
+
+function assertFetchWithRetryGuard(guard: FetchWithRetryGuard | undefined): void {
+  if (!guard) return;
+  if (guard.signal?.aborted) {
+    throw guard.signal.reason instanceof Error ? guard.signal.reason : new Error("Provider request cancelled.");
+  }
+  guard.assertActive();
+}
+
+async function guardedFetchBackoff(delayMs: number, guard: FetchWithRetryGuard | undefined): Promise<void> {
+  assertFetchWithRetryGuard(guard);
+  if (delayMs <= 0) return;
+  const signal = guard?.signal;
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    assertFetchWithRetryGuard(guard);
+    return;
+  }
+  const abortSignal = signal;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(finish, delayMs);
+    function finish() {
+      abortSignal.removeEventListener("abort", abort);
+      resolve();
+    }
+    function abort() {
+      clearTimeout(timer);
+      abortSignal.removeEventListener("abort", abort);
+      reject(abortSignal.reason instanceof Error ? abortSignal.reason : new Error("Provider request cancelled."));
+    }
+    abortSignal.addEventListener("abort", abort, { once: true });
+    if (abortSignal.aborted) abort();
+  });
+  assertFetchWithRetryGuard(guard);
 }
 
 // One retry on HTTP 429 (rate limit) with a short backoff before giving up.
-async function fetchWithRetry(
+/**
+ * Central tracked provider request boundary. Exported for provider-specific modules that live
+ * outside this file (for example, earnings-transcript ingestion) so they inherit the same circuit
+ * breaker, secret-scrubbed health logging, and usage.jays.services call-volume telemetry.
+ *
+ * Callers that reserve an exact provider quota should pass `retries: 0` and implement any retry as
+ * another invocation of this function. That way every actual upstream attempt is independently
+ * reserved and metered instead of hiding an uncounted retry inside one logical call.
+ */
+export async function fetchWithRetry(
   url: string,
   init: RequestInit,
   options: {
     retries?: number;
     backoffMs?: number;
+    /**
+     * Optional health/circuit lane when it must be narrower than the billable provider name.
+     * `service` remains the usage-attribution provider; omitting this preserves legacy behavior.
+     */
+    healthService?: string;
     service?: string;
     keySource?: string;
     userId?: string;
     deferSuccessLog?: boolean;
+    /**
+     * Defer successful provider-call telemetry until the caller validates an HTTP-success body.
+     * Failure responses and transport errors remain recorded here. The caller must record exactly
+     * one success or failure usage event after validating each deferred successful response.
+     */
+    deferSuccessUsage?: boolean;
     suppressHealthStatuses?: number[];
+    /**
+     * HTTP statuses that still write an ok=false health row but as soft/expected-limit (do not
+     * count toward hard consecutive-failure STOPPED). HTTP 429 is always soft regardless of this
+     * list. Use for provider-specific "not entitled / unsubscribed" shapes (e.g. RapidAPI 403).
+     */
+    softHealthStatuses?: number[];
+    /**
+     * Optional durable-operation fence. When ownership is lost, the transport result/error is
+     * propagated without writing health or provider-call telemetry for the successor's operation.
+     */
+    guard?: FetchWithRetryGuard;
+    /** Lease-independent durable attempt hooks. They run immediately around the actual global
+     * fetch call, before any post-response ownership assertion can suppress usage truth. */
+    durableAttempt?: {
+      onDispatch: () => void;
+      onResponse?: (response: Response) => void;
+      onTransportError?: (error: unknown) => void;
+    };
+    // This provider's own API key (if any) — scrubbed out of any errorText logged below so
+    // a leaked query-param or echoed-back value never reaches api_health_log verbatim.
+    apiKey?: string;
   } = {}
 ): Promise<Response> {
   const retries = options.retries ?? 1;
   const backoffMs = options.backoffMs ?? 600;
+  const healthService = options.healthService ?? options.service;
+  assertFetchWithRetryGuard(options.guard);
   // Per-credential-lane circuit breaker: short-circuit a call whose (service, keySource) lane is
   // currently backed off (recently stopped working). Thrown BEFORE the fetch so no health row is
   // written for the skip (which would self-perpetuate the trip); providers catch the rejection and
   // degrade to the next tier exactly like a real fetch failure.
-  if (options.service) {
-    const breaker = apiCircuitBreakerShouldSkip(options.service, options.keySource ?? null);
-    if (breaker.skip) throw new CircuitOpenError(options.service, options.keySource ?? null, breaker.reason);
+  if (healthService) {
+    const breaker = apiCircuitBreakerShouldSkip(healthService, options.keySource ?? null);
+    if (breaker.skip) throw new CircuitOpenError(healthService, options.keySource ?? null, breaker.reason);
   }
   const start = Date.now();
   try {
     for (let attempt = 0; ; attempt++) {
-      const response = await fetch(url, init);
+      assertFetchWithRetryGuard(options.guard);
+      options.durableAttempt?.onDispatch();
+      let response: Response;
+      try {
+        response = await fetch(url, init);
+      } catch (error) {
+        options.durableAttempt?.onTransportError?.(error);
+        throw error;
+      }
+      options.durableAttempt?.onResponse?.(response);
+      // A transport may settle after its caller's durable lease has moved. Fence the response before
+      // any health/provider ledger and before deciding whether an internal retry should run.
+      assertFetchWithRetryGuard(options.guard);
       if (response.status === 429 && attempt < retries) {
-        if (options.service) {
-          logApiHealth({
-            service: options.service,
-            ok: false,
-            latencyMs: Date.now() - start,
-            errorText: "HTTP 429 (rate limited, retrying)",
-            keySource: options.keySource,
-            userId: options.userId,
-          });
-        }
-        await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
+        // Do NOT write a health row for intermediate 429 retries — each retry would otherwise
+        // look like a hard failure and five rapid 429s painted the lane red STOPPED even when
+        // the eventual attempt (or the next symbol) succeeded. Final 429 is logged below as soft.
+        await guardedFetchBackoff(backoffMs * (attempt + 1), options.guard);
         continue;
       }
       // When deferSuccessLog is set, skip the auto-success row so the caller can log
       // after validating the response body (e.g. providers that embed errors in HTTP 200).
       // HTTP failure rows are still written here regardless of the flag.
       const suppressHealth = !response.ok && (options.suppressHealthStatuses ?? []).includes(response.status);
-      if (options.service && !(response.ok && options.deferSuccessLog) && !suppressHealth) {
+      if (healthService && !(response.ok && options.deferSuccessLog) && !suppressHealth) {
+        assertFetchWithRetryGuard(options.guard);
+        // HTTP 429 (and any status the caller opts into via softHealthStatuses) is an expected
+        // limit, not a broken integration — soft so consecutive-failure STOPPED / circuit stay off.
+        const softStatuses = new Set([429, ...(options.softHealthStatuses ?? [])]);
+        const soft = !response.ok && softStatuses.has(response.status);
         logApiHealth({
-          service: options.service,
+          service: healthService,
           ok: response.ok,
           latencyMs: Date.now() - start,
-          errorText: response.ok ? undefined : `HTTP ${response.status}`,
+          errorText: response.ok ? undefined : scrubProviderErrorText(`HTTP ${response.status}`, options.apiKey),
           keySource: options.keySource,
           userId: options.userId,
+          soft,
         });
       }
       // Call-volume telemetry: one logical market-data call per fetchWithRetry invocation
       // (no-op unless the usage monitor is configured; never throws).
-      if (options.service) recordProviderCall(options.service, { ok: response.ok, keySource: options.keySource, userId: options.userId });
+      if (options.service && !options.durableAttempt && !(response.ok && options.deferSuccessUsage)) {
+        assertFetchWithRetryGuard(options.guard);
+        recordProviderCall(options.service, { ok: response.ok, keySource: options.keySource, userId: options.userId });
+      }
       return response;
     }
   } catch (err) {
-    if (options.service) {
+    // If this was an abort/lost-ownership race, the guard throws here and deliberately bypasses all
+    // failure telemetry. This check also catches a transport error that won the Promise race just
+    // before the lease signal itself became observable.
+    assertFetchWithRetryGuard(options.guard);
+    if (healthService) {
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      // err.cause carries the actual network-layer failure (ECONNREFUSED, DNS, etc.) that
+      // "fetch failed" alone omits — append it (truncated) before scrubbing so the health
+      // row is diagnosable without also leaking a URL-embedded API key.
+      const errorText = scrubProviderErrorText(appendErrorCause(rawMessage, err), options.apiKey);
+      assertFetchWithRetryGuard(options.guard);
       logApiHealth({
-        service: options.service,
+        service: healthService,
         ok: false,
         latencyMs: Date.now() - start,
-        errorText: err instanceof Error ? err.message : String(err),
+        errorText,
         keySource: options.keySource,
         userId: options.userId,
       });
+    }
+    if (options.service && !options.durableAttempt) {
+      assertFetchWithRetryGuard(options.guard);
       recordProviderCall(options.service, { ok: false, keySource: options.keySource, userId: options.userId });
     }
     throw err;
@@ -517,6 +806,7 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
     }
     if (misses.length === 0) return result;
 
+    const client = getCongressTradeClient();
     await Promise.all(
       misses.map(async (symbol) => {
         // Track whether EITHER read failed at the transport level (timeout/5xx/401 →
@@ -527,32 +817,52 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
         // Bound the pull to the freshness window: rowIsFresh discards anything older than
         // CONGRESS_TRADE_MAX_STALE_DAYS, so there's no point downloading the full history.
         const fromDate = new Date(now - congressMaxStaleMs()).toISOString().slice(0, 10);
-        const [funds, analysts] = await Promise.all([
-          getAppAFundamentals(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AppAFundamental[]; }),
-          getAppAAnalyst(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AppAAnalyst[]; }),
+        // Usage-only telemetry (never cost — App A is a cross-app cache, not a billed provider):
+        // mirrors the ok/fail split fetchWithRetry records for every other keyed provider, so
+        // Congress.Trade shows up in the Usage Monitor's call-volume view instead of staying
+        // invisible. Recorded per underlying HTTP call (fundamentals/analyst), not per symbol
+        // batch, matching how recordProviderCall is used everywhere else in this file.
+        const [fundamentals, analyst] = await Promise.all([
+          congressFundamentalsEnabled()
+            ? client.getFundamentals(symbol, { from: fromDate })
+                .then((r) => { recordProviderCall(this.name, { service: "fundamentals", ok: true, userId: this.userId }); return r; })
+                .catch(() => { transportError = true; recordProviderCall(this.name, { service: "fundamentals", ok: false, userId: this.userId }); return [] as FundamentalRow[]; })
+            : Promise.resolve([] as FundamentalRow[]),
+          congressFundamentalsEnabled()
+            ? client.getAnalyst(symbol, { from: fromDate })
+                .then((r) => { recordProviderCall(this.name, { service: "analyst", ok: true, userId: this.userId }); return r; })
+                .catch(() => { transportError = true; recordProviderCall(this.name, { service: "analyst", ok: false, userId: this.userId }); return [] as AnalystRow[]; })
+            : Promise.resolve([] as AnalystRow[]),
         ]);
+
+        // Do NOT log a synthetic health failure here: the shared getCongressTradeClient()
+        // fetch wrapper already records a `congress.trade` logApiHealth({ ok: false }) for
+        // every failed HTTP/transport call. Adding a per-symbol failure on top would
+        // double-count into the last-N health window and trip the enrichment circuit
+        // breaker earlier than the real upstream request count warrants. The transportError
+        // flag below is retained solely to gate negative-caching.
         // App A may return multiple fresh rows from different sources; merge the LATEST
         // non-null value per field across all of them (rows are date-ascending), so a
         // partial latest row doesn't discard a field an earlier fresh row supplied.
-        const freshFunds = funds.filter((r) => rowIsFresh(r, now));
-        const freshAnalysts = analysts.filter((r) => rowIsFresh(r, now));
-        const latestFund = <K extends keyof AppAFundamental>(
+        const freshFunds = fundamentals.filter((r) => rowIsFresh(r, now));
+        const freshAnalysts = analyst.filter((r) => rowIsFresh(r, now));
+        const latestFund = <K extends keyof FundamentalRow>(
           key: K,
-          valid: (v: NonNullable<AppAFundamental[K]>) => boolean = () => true
-        ): NonNullable<AppAFundamental[K]> | undefined => {
+          valid: (v: NonNullable<FundamentalRow[K]>) => boolean = () => true
+        ): NonNullable<FundamentalRow[K]> | undefined => {
           for (let i = freshFunds.length - 1; i >= 0; i--) {
             const v = freshFunds[i][key];
-            if (v != null && valid(v as NonNullable<AppAFundamental[K]>)) return v as NonNullable<AppAFundamental[K]>;
+            if (v != null && valid(v as NonNullable<FundamentalRow[K]>)) return v as NonNullable<FundamentalRow[K]>;
           }
           return undefined;
         };
-        const latestAnalyst = <K extends keyof AppAAnalyst>(
+        const latestAnalyst = <K extends keyof AnalystRow>(
           key: K,
-          valid: (v: NonNullable<AppAAnalyst[K]>) => boolean = () => true
-        ): NonNullable<AppAAnalyst[K]> | undefined => {
+          valid: (v: NonNullable<AnalystRow[K]>) => boolean = () => true
+        ): NonNullable<AnalystRow[K]> | undefined => {
           for (let i = freshAnalysts.length - 1; i >= 0; i--) {
             const v = freshAnalysts[i][key];
-            if (v != null && valid(v as NonNullable<AppAAnalyst[K]>)) return v as NonNullable<AppAAnalyst[K]>;
+            if (v != null && valid(v as NonNullable<AnalystRow[K]>)) return v as NonNullable<AnalystRow[K]>;
           }
           return undefined;
         };
@@ -585,7 +895,7 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
           // the counts it came from), rather than mixing a rating from one source with
           // counts from another.
           for (let i = freshAnalysts.length - 1; i >= 0; i--) {
-            const a = freshAnalysts[i];
+            const a = freshAnalysts[i] as AppAAnalystRow;
             const counts = {
               strongBuy: a.strongBuy ?? 0,
               buy: a.buy ?? 0,
@@ -665,13 +975,18 @@ function withHealthLane(provider: MarketEnrichmentProvider, source: ApiKeySource
 export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider {
   const providers: MarketEnrichmentProvider[] = [];
   const finnhub = resolveApiKeyWithSource("finnhub", userId);
-  const alphaVantage = resolveApiKeyWithSource("alphavantage", userId);
-  const fmp = resolveApiKeyWithSource("fmp", userId);
+  const alphaVantage = resolveAlphaVantageKeyPool(userId);
+  // FMP key may still resolve from env/DB, but direct FMP is retired — never register it.
+  // Fundamentals come from the multi-provider cascade below (not FMP, not App A by default).
+  const roic = resolveApiKeyWithSource("roic", userId);
   const fintech = resolveApiKeyWithSource("fintechstudios", userId);
-  const intrinio = resolveApiKeyWithSource("intrinio", userId);
   const tiingo = resolveApiKeyWithSource("tiingo", userId);
   const twelvedata = resolveApiKeyWithSource("twelvedata", userId);
   const massive = resolveApiKeyWithSource("massive", userId);
+  // Single shared operator credential for all three RapidAPI-hosted providers below (Mboum
+  // Finance, YH Finance 15, Alpha Vantage RapidAPI transport) — no per-user variant, matching how
+  // the owner provisioned it (one RAPIDAPI_KEY env var covers every RapidAPI-hosted product).
+  const rapidApiKey = resolveRapidApiKey();
   // Alpaca MARKET DATA: own key (individual) → operator's paper key (shared) for background/tenants.
   // Trading is unaffected (alpaca.ts resolves Alpaca strictly per-user).
   const alpacaData = resolveAlpacaMarketData(userId);
@@ -689,10 +1004,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // self-skips when either Alpaca key is absent — then the delayed sources fill these
   // fields in exactly the same order they would today.
   if (alpacaData.apiKey && alpacaData.secretKey) providers.push(withHealthLane(new AlpacaSnapshotEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId), alpacaData.source));
-  // Tier 1.5 — Congress.Trade cross-app cache (fundamentals/analyst only, no price).
-  // Gated by its OWN flag (CONGRESS_TRADE_FUNDAMENTALS_ENABLED), separate from the
-  // price/history reads, so enabling price cache-aside doesn't silently give App A
-  // precedence over the direct fundamentals providers. Default-OFF.
+  // Tier 1.5 — Congress.Trade fundamentals/analyst cache-aside (opt-in, default OFF).
+  // Owner: fundamentals should come from the multi-source cascade (Finnhub/ROIC/SEC/Yahoo/…),
+  // not App A. Enable CONGRESS_TRADE_FUNDAMENTALS_ENABLED only as an extra peer tier.
+  // Separate from price/history CONGRESS_TRADE_READS_ENABLED.
   if (congressFundamentalsEnabled()) providers.push(new CongressTradeEnrichmentProvider(userId));
   // Tier 2 — DELAYED quotes + fundamentals, in availability order (unchanged relative ordering).
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
@@ -702,7 +1017,14 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // (This is delayed/averaged fundamentals — e.g. average_volume — not a real-time quote,
   // so it stays in the delayed tier rather than next to the Alpaca snapshot.)
   if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider(userId));
-  if (intrinio.key) providers.push(withHealthLane(new IntrinioEnrichmentProvider(intrinio.key, intrinio.source, userId), intrinio.source));
+  // Keyless Nasdaq quote/summary/holdings — free-wave redundancy beside Yahoo (no crumb handshake).
+  // Seated just before Yahoo so both participate in wave A; first-wins still prefers earlier paid
+  // tiers when they filled a field.
+  providers.push(new NasdaqQuoteEnrichmentProvider());
+  providers.push(new YahooFinanceEnrichmentProvider());
+  // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
+  // Finnhub/AV so it supplies headlines/sentiment quickly and prevents rate limit exhaustion.
+  if (alpacaData.apiKey && alpacaData.secretKey) providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId), alpacaData.source));
   if (tiingo.key) providers.push(withHealthLane(new TiingoEnrichmentProvider(tiingo.key, tiingo.source, userId), tiingo.source));
   if (fintech.key) providers.push(withHealthLane(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId), fintech.source));
   if (finnhub.key) providers.push(withHealthLane(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId), finnhub.source));
@@ -710,24 +1032,107 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
   if (alpacaData.apiKey) providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId), alpacaData.source));
-  if (alphaVantage.key) providers.push(withHealthLane(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId), alphaVantage.source));
-  if (fmp.key) providers.push(withHealthLane(new FmpEnrichmentProvider(fmp.key, fmp.source, userId), fmp.source));
+  // AV supplies NEWS_SENTIMENT (sentiment/headlines) plus, as of 2026-08-02, a market-wide
+  // EARNINGS_CALENDAR fallback for daysToEarnings (see AlphaVantageEnrichmentProvider.enrich).
+  // When Alpaca news is already configured (the availability check above — apiKey presence), it
+  // fully covers sentiment/headlines but NOT daysToEarnings — so this dedup, unchanged from
+  // before that addition, still means a scan with Alpaca news configured never gets AV's
+  // daysToEarnings fallback either. Left AS-IS for this pass: whether that trade is still correct
+  // is a registration-order/dedup call for the integration pass to make with full cross-provider
+  // context (e.g. whether a free calendar source, such as the Nasdaq calendar provider from the
+  // same round, already covers daysToEarnings for free) — see the round-2 rollout note.
+  //
+  // Skip registering AV in the current condition so it stops appearing in `source` attribution
+  // (which is derived from providers that actually ran) and stops producing a daily quota alert
+  // for fields nothing consumes.
+  if (alphaVantage.keys.length > 0 && !alpacaData.apiKey) {
+    providers.push(withHealthLane(new AlphaVantageEnrichmentProvider(alphaVantage.keys, alphaVantage.source, userId), alphaVantage.source));
+  } else if (alphaVantage.keys.length > 0) {
+    console.log("[data-providers] Alpha Vantage deregistered: Alpaca news already covers NEWS_SENTIMENT");
+  }
+  // Marketaux: a genuine per-article sentiment model (not a keyword-scored proxy), so it's seated
+  // right after AV's own model-based NEWS_SENTIMENT rather than down with the keyword-proxy tiers.
+  // Key-gated on MARKETAUX_API_KEY (process.env only). Declares quotaScarce (free tier 100 req/day)
+  // + suppliesFields, so the free-first planner's wave gate only spends it on symbols still
+  // missing headlines/sentiment after the free wave resolved.
+  const marketauxKey = resolveMarketauxApiKey();
+  if (marketauxKey) providers.push(withHealthLane(new MarketauxEnrichmentProvider(marketauxKey), "env"));
+  // FMP EnrichmentProvider deliberately NOT registered (owner 2026-08-04). Class remains for
+  // tests / dead-code reference; requestFmp + enrich() are hard-blocked.
+  if (roic.key) providers.push(withHealthLane(new RoicAiEnrichmentProvider(roic.key, roic.source, userId), roic.source));
   // Massive REST: REAL second short-interest source (FINRA short interest / free float) for the
   // Yahoo-vs-Massive disagreement cross-check. Supplies ONLY the carrier shortPercentOfFloatSecondary
   // (no price/fundamentals), so ordering doesn't affect first-wins fields. Registered only when a
   // MASSIVE_API_KEY is present AND massiveShortInterestEnabled() (default ON) — inert otherwise.
   if (massive.key && massiveShortInterestEnabled()) providers.push(withHealthLane(new MassiveEnrichmentProvider(massive.key, massive.source, userId), massive.source));
-  // SEC EDGAR XBRL: keyless, default-OFF. Fills debtToEquity from authoritative SEC filings.
+  // SEC EDGAR XBRL: keyless, default-ON. Fills debtToEquity from authoritative SEC filings.
   // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
-  // data supersedes Yahoo's scraped values when enabled.
+  // data supersedes Yahoo's scraped values. Set SEC_XBRL_ENRICHMENT_ENABLED=0 to disable.
   if (secXbrlEnrichmentEnabled()) providers.push(new SecXbrlEnrichmentProvider());
+  // FilingAPI.dev (FILINGAPI / FILINGAPI_KEY): company sector/industry, earnings calendar,
+  // insider summary — scarce free-tier (50/day) so wave-C only.
+  const filingApi = resolveApiKeyWithSource("filingapi", userId);
+  if (filingApi.key) {
+    providers.push(withHealthLane(new FilingApiEnrichmentProvider(filingApi.key, filingApi.source, userId), filingApi.source));
+  }
+  // Wisesheets + SimFin: two new (2026-08-02) free/keyed fundamentals "second opinions" layered
+  // on top of FMP/roic/SEC-XBRL above, both key-gated on their own env var (process.env only,
+  // mirror QuiverEnrichmentProvider) and both self-contained (no shared provider-rate-limit.ts
+  // budget — each paces itself). Wisesheets declares quotaScarce (launched 2026-07-24, no track
+  // record yet, 5,000 req/mo) so the free-first planner only spends it on genuine coverage gaps;
+  // SimFin does not (2 req/sec, no monthly cap) so it stays in the ordinary first-wins wave.
+  const wisesheetsKey = resolveWisesheetsApiKey();
+  if (wisesheetsKey) providers.push(withHealthLane(new WisesheetsEnrichmentProvider(wisesheetsKey), "env"));
+  const simFinKey = resolveSimFinApiKey();
+  if (simFinKey) providers.push(withHealthLane(new SimFinEnrichmentProvider(simFinKey), "env"));
   // Opt-in Robinhood option-chain tier (near-the-money IV + put/call ratio). Default OFF and inert
   // unless Robinhood MCP is connected — a long-TTL, low-frequency source with its own cache. Seated
   // late so it only fills the options-specific fields nothing else supplies.
   if (robinhoodOptionsEnrichmentEnabled() && robinhoodMcpDataEnabled()) {
     providers.push(new RobinhoodOptionsEnrichmentProvider(userId));
   }
-  providers.push(new YahooFinanceEnrichmentProvider());
+  // QuiverQuant: RETIRED as a direct ST producer (owner 2026-08-04). Congressional data comes
+  // from Congress.Trade (CONGRESS_TRADE_AS_CONGRESS_SOURCE). resolveQuiverApiKey() always
+  // returns undefined; keep the check so a future regression re-enabling the key still fails closed.
+  const quiverKey = resolveQuiverApiKey();
+  if (quiverKey) {
+    console.warn("[data-providers] QuiverQuant key present but direct access is retired; not registering quiverquant");
+  }
+  // Keyless Nasdaq earnings-calendar backfill for daysToEarnings — registered after every paid
+  // per-symbol source (Yahoo/FMP/FilingApi/ROIC) that already fills this field cheaper in one call,
+  // so it only spends its own (market-wide-per-date, not per-symbol) calls on genuine gaps — the
+  // context.coveredFields short-circuit inside NasdaqCalendarEnrichmentProvider.enrich already
+  // enforces this at the per-symbol level regardless of registration order. Fully keyless/self-
+  // gating (NASDAQ_CALENDAR_ENRICHMENT_ENABLED, default ON) — see nasdaq-calendar-provider.ts.
+  providers.push(new NasdaqCalendarEnrichmentProvider());
+  // Tier LAST — RapidAPI-hosted FAILOVER redundancy for the free scrape above (see the big doc
+  // comment on the provider classes + rapidapi-quota.ts). Dormant unless RAPIDAPI_KEY is set.
+  // Scarce providers (Mboum / YH15 / AV-RapidAPI / Insiders / TwelveData-RapidAPI) declare
+  // `quotaScarce` + `suppliesFields` so the free-first planner's wave C only spends them on
+  // symbols still missing those fields. FMP-RapidAPI is retired with direct FMP (owner 2026-08-04).
+  if (rapidApiKey) {
+    // Mboum first (owner: prioritize by lowest disclosed RapidAPI-listing latency, 1663ms vs YH
+    // Finance 15's 1757ms) — near-identical, so this is a tie-break, not a meaningful difference.
+    providers.push(withHealthLane(
+      new SteadyApiEnrichmentProvider("mboum-finance", "mboum-finance.p.rapidapi.com", "", "symbol", "symbol", false, rapidApiKey, "env", userId),
+      "env"
+    ));
+    providers.push(withHealthLane(
+      new SteadyApiEnrichmentProvider("yahoo-finance15", "yahoo-finance15.p.rapidapi.com", "/api", "ticker", "ticker", true, rapidApiKey, "env", userId),
+      "env"
+    ));
+    providers.push(withHealthLane(new AlphaVantageRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    // FmpRapidApiEnrichmentProvider intentionally not registered — same retirement as native FMP.
+    providers.push(withHealthLane(new InsidersRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    providers.push(withHealthLane(new TwelveDataRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    // Additional RapidAPI free-tier failover lanes. Working Pricing page (verified):
+    //   real-time-finance-data: https://rapidapi.com/letscrape-6bRBa3QguO5/api/real-time-finance-data/pricing
+    // yh-finance / seeking-alpha hub listings currently return API not found (delisted);
+    // providers stay as scarce failover if a key gains access.
+    providers.push(withHealthLane(new YhFinanceApiDojoEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    providers.push(withHealthLane(new RealTimeFinanceDataEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    providers.push(withHealthLane(new SeekingAlphaRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+  }
   // Opt-in active circuit breaker: skip a lane whose db-health lane is currently `stoppedWorking`,
   // re-probing only after the backoff window. Default OFF so it can't silently black out a
   // currently-working provider. When off, the raw provider list runs exactly as before.
@@ -836,6 +1241,8 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
   // a keyless/default-OFF provider that returns nothing for a scan (budget timeout, no CIK, no aligned
   // fact) must not appear in the source string just because it was registered.
   private contributingNames = new Set<string>();
+  /** Most recent coverage report from enrich(); also mirrored via enrichment-coverage module. */
+  private lastCoverageReport: import("./enrichment-coverage").EnrichmentCoverageReport | null = null;
 
   constructor(private readonly providers: MarketEnrichmentProvider[]) {
     this.name = providers.map((p) => p.name).join("+");
@@ -846,31 +1253,171 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
     return this.providers.map((p) => p.name).filter((n) => this.contributingNames.has(n));
   }
 
+  /** Coverage summary from the most recent enrich() call on this instance. */
+  get coverageReport(): import("./enrichment-coverage").EnrichmentCoverageReport | null {
+    return this.lastCoverageReport;
+  }
+
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     this.contributingNames = new Set();
+    this.lastCoverageReport = null;
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean);
     // Each provider's result set, paired with its name, kept in REGISTRATION order
     // so the first-wins merge below is unchanged regardless of how we fetched.
-    const run = (p: MarketEnrichmentProvider, syms: string[], context?: EnrichmentContext) =>
+    type ProviderRun = { name: string; data: Record<string, SymbolEnrichment>; failure?: ProviderFailureReceipt };
+    const run = (p: MarketEnrichmentProvider, syms: string[], context?: EnrichmentContext): Promise<ProviderRun> =>
       p
         .enrich(syms, context)
         .then((data) => ({ name: p.name, data }))
-        .catch(() => ({ name: p.name, data: {} as Record<string, SymbolEnrichment> }));
+        .catch((error) => ({
+          name: p.name,
+          data: {} as Record<string, SymbolEnrichment>,
+          failure: {
+            source: p.name,
+            upstreamFamily: p.name,
+            fetchedAt: new Date().toISOString(),
+            status: "failed" as const,
+            errorKind: error instanceof Error ? error.name : "unknown"
+          }
+        }));
 
-    let results: Array<{ name: string; data: Record<string, SymbolEnrichment> }>;
-    if (enrichmentShortCircuitEnabled()) {
-      // Short-circuit: ONLY the Congress.Trade tier feeds the coverage hint, so await
-      // just it first, then run EVERY other provider (free AND paid) in parallel. Paid
-      // providers use the per-symbol hint to skip only the redundant SUB-calls (e.g.
-      // FMP's ratios-ttm + grades-consensus when App A already has P/E + analyst) while
-      // STILL fetching the fields they uniquely supply — insider/senate, news/sentiment,
-      // quotes. No whole provider is skipped, so no field is lost; only duplicate upstream
-      // calls are eliminated. Crucially, paid providers are NOT serialized behind
-      // unrelated free tiers (Yahoo/Alpaca/SEC) — only behind the single App A read.
-      const congressProvider = this.providers.find((p) => p.name === "congress.trade");
+    // ── Wave split ────────────────────────────────────────────────────────────
+    // FREE-FIRST (default ON):
+    //   Wave A = free/keyless (`costTier !== "paid"`) over the full batch (+ one retry on throw).
+    //   Wave B = paid non-scarce providers only for symbols still missing coverage-gap fields.
+    //   Wave C = scarce RapidAPI failover for remaining suppliesFields gaps.
+    // LEGACY (ENRICHMENT_FREE_FIRST_ENABLED=0):
+    //   Wave one = every non-scarce provider concurrently; wave two = scarce gate only.
+    const gateOn = scarceEnrichmentGateEnabled();
+    const freeFirstOn = freeFirstEnrichmentEnabled();
+    const isGatedScarce = (p: MarketEnrichmentProvider): boolean =>
+      gateOn && p.quotaScarce === true && (p.suppliesFields?.length ?? 0) > 0;
+    const isFreeTier = (p: MarketEnrichmentProvider): boolean => p.costTier !== "paid";
+
+    const freeIndexes: number[] = [];
+    const paidIndexes: number[] = [];
+    const scarceIndexes: number[] = [];
+    const legacyWaveOneIndexes: number[] = [];
+    this.providers.forEach((p, i) => {
+      if (isGatedScarce(p)) {
+        scarceIndexes.push(i);
+        return;
+      }
+      legacyWaveOneIndexes.push(i);
+      if (isFreeTier(p)) freeIndexes.push(i);
+      else paidIndexes.push(i);
+    });
+
+    // Positional, so the first-wins merge precedence below is registration order regardless of
+    // which wave a provider ran in (and regardless of duplicate provider names).
+    const results: ProviderRun[] = this.providers.map((p) => ({ name: p.name, data: {} }));
+
+    const {
+      collectFilledFields,
+      symbolHasCoverageGap,
+      buildEnrichmentCoverageReport
+    } = await import("./enrichment-coverage");
+
+    const buildFilledBySymbol = (providerIndexes: number[]): Map<string, Set<string>> => {
+      const filledBySymbol = new Map<string, Set<string>>();
+      for (const symbol of normalized) {
+        filledBySymbol.set(symbol, collectFilledFields(results, symbol, providerIndexes));
+      }
+      return filledBySymbol;
+    };
+
+    const coveredFieldsFrom = (filledBySymbol: Map<string, Set<string>>): Record<string, ReadonlySet<string>> => {
+      const coveredFields: Record<string, ReadonlySet<string>> = {};
+      for (const [symbol, filled] of filledBySymbol) coveredFields[symbol] = filled;
+      return coveredFields;
+    };
+
+    if (freeFirstOn) {
+      // ── Wave A: free / keyless / RapidAPI-free-tier ─────────────────────────
+      const freeProviders = freeIndexes.map((i) => this.providers[i]);
+      let freeRuns: ProviderRun[];
+      if (enrichmentShortCircuitEnabled()) {
+        // App A still leads the free wave when short-circuit is on (coverage hint for paid).
+        const congressProvider = freeProviders.find((p) => p.name === "congress.trade");
+        const appAResult = congressProvider
+          ? await run(congressProvider, normalized)
+          : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> } satisfies ProviderRun;
+        const otherFree = freeProviders.filter((p) => p.name !== "congress.trade");
+        const otherResults = await Promise.all(otherFree.map((p) => run(p, normalized)));
+        const byName = new Map<string, ProviderRun>();
+        for (const r of [appAResult, ...otherResults]) byName.set(r.name, r);
+        freeRuns = freeProviders.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
+      } else {
+        freeRuns = await Promise.all(freeProviders.map((p) => run(p, normalized)));
+      }
+      freeIndexes.forEach((providerIndex, k) => {
+        results[providerIndex] = freeRuns[k];
+      });
+
+      // One retry for free providers that threw — transient 429/timeout must not permanently
+      // suppress the keyless floor before paid/scarce failover runs.
+      const retryIndexes = freeIndexes.filter((providerIndex) => results[providerIndex].failure);
+      if (retryIndexes.length > 0) {
+        const retries = await Promise.all(
+          retryIndexes.map(async (providerIndex) => ({
+            providerIndex,
+            run: await run(this.providers[providerIndex], normalized)
+          }))
+        );
+        for (const { providerIndex, run: providerRun } of retries) {
+          // Keep the retry only when it recovered; otherwise preserve the original failure receipt.
+          if (!providerRun.failure) results[providerIndex] = providerRun;
+        }
+      }
+
+      // ── Wave B: paid non-scarce, gap-only ───────────────────────────────────
+      if (paidIndexes.length > 0) {
+        const filledAfterFree = buildFilledBySymbol(freeIndexes);
+        const gapSymbols = normalized.filter((symbol) =>
+          symbolHasCoverageGap(filledAfterFree.get(symbol) ?? new Set())
+        );
+        if (gapSymbols.length > 0) {
+          const coveredFields = coveredFieldsFrom(filledAfterFree);
+          // Analyst-source hint from App A when present (same semantics as short-circuit).
+          const analystSource: Record<string, string> = {};
+          const congressIdx = freeIndexes.find((i) => this.providers[i].name === "congress.trade");
+          if (congressIdx !== undefined) {
+            for (const s of gapSymbols) {
+              const e = results[congressIdx].data[s];
+              const srcKey = e?.analystBySource ? Object.keys(e.analystBySource)[0] : undefined;
+              if (srcKey) analystSource[s] = srcKey;
+            }
+          }
+          const paidContext: EnrichmentContext = { coveredFields, analystSource };
+          const paidRuns = await Promise.all(
+            paidIndexes.map((providerIndex) => {
+              const provider = this.providers[providerIndex];
+              const fields = provider.suppliesFields;
+              const targets =
+                fields && fields.length > 0
+                  ? gapSymbols.filter((symbol) => {
+                      const filled = filledAfterFree.get(symbol);
+                      return fields.some((field) => !filled?.has(field as string));
+                    })
+                  : gapSymbols;
+              if (targets.length === 0) {
+                return Promise.resolve({ name: provider.name, data: {} } as ProviderRun);
+              }
+              return run(provider, targets, paidContext);
+            })
+          );
+          paidIndexes.forEach((providerIndex, k) => {
+            results[providerIndex] = paidRuns[k];
+          });
+        }
+      }
+    } else if (enrichmentShortCircuitEnabled()) {
+      // Legacy short-circuit: App A first, then every other non-scarce provider in parallel.
+      const waveOneProviders = legacyWaveOneIndexes.map((i) => this.providers[i]);
+      const congressProvider = waveOneProviders.find((p) => p.name === "congress.trade");
       const appAResult = congressProvider
         ? await run(congressProvider, normalized)
-        : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> };
+        : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> } satisfies ProviderRun;
       const appA = appAResult.data;
       const coveredFields: Record<string, ReadonlySet<string>> = {};
       const analystSource: Record<string, string> = {};
@@ -878,53 +1425,131 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         const e = appA[s];
         if (e) {
           coveredFields[s] = new Set(Object.keys(e));
-          // App A keys its analyst entry under the upstream provider it came from, so the
-          // single key here IS that source. A paid provider uses it to skip its own
-          // consensus sub-call only when App A's analyst is genuinely its data.
           const srcKey = e.analystBySource ? Object.keys(e.analystBySource)[0] : undefined;
           if (srcKey) analystSource[s] = srcKey;
         }
       }
       const context: EnrichmentContext = { coveredFields, analystSource };
-      const otherProviders = this.providers.filter((p) => p.name !== "congress.trade");
+      const otherProviders = waveOneProviders.filter((p) => p.name !== "congress.trade");
       const otherResults = await Promise.all(
         otherProviders.map((p) => run(p, normalized, p.costTier === "paid" ? context : undefined))
       );
-      // Reassemble in registration order so the merge precedence is identical.
-      const byName = new Map<string, Record<string, SymbolEnrichment>>();
-      for (const r of [appAResult, ...otherResults]) byName.set(r.name, r.data);
-      results = this.providers.map((p) => ({ name: p.name, data: byName.get(p.name) ?? {} }));
+      const byName = new Map<string, ProviderRun>();
+      for (const r of [appAResult, ...otherResults]) byName.set(r.name, r);
+      const waveOneRuns = waveOneProviders.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
+      legacyWaveOneIndexes.forEach((providerIndex, k) => {
+        results[providerIndex] = waveOneRuns[k];
+      });
     } else {
-      // Default: run every provider over every symbol in parallel.
-      results = await Promise.all(this.providers.map((p) => run(p, normalized)));
+      // Legacy default: every non-scarce provider over every symbol in parallel.
+      const waveOneRuns = await Promise.all(
+        legacyWaveOneIndexes.map((i) => run(this.providers[i], normalized))
+      );
+      legacyWaveOneIndexes.forEach((providerIndex, k) => {
+        results[providerIndex] = waveOneRuns[k];
+      });
+    }
+
+    if (scarceIndexes.length > 0) {
+      // Prior waves' actual fills. A provider that threw contributed `{}`, so its fields read as
+      // NOT covered and the scarce tier can still step in — failure must never suppress failover.
+      const priorIndexes = freeFirstOn
+        ? [...freeIndexes, ...paidIndexes]
+        : legacyWaveOneIndexes;
+      const filledBySymbol = buildFilledBySymbol(priorIndexes);
+      const coveredFields = coveredFieldsFrom(filledBySymbol);
+      const scarceContext: EnrichmentContext = { coveredFields };
+      const scarceRuns = await Promise.all(
+        scarceIndexes.map(async (providerIndex) => {
+          const provider = this.providers[providerIndex];
+          const fields = provider.suppliesFields ?? [];
+          const gaps = normalized.filter((symbol) => {
+            const filled = filledBySymbol.get(symbol);
+            return fields.some((field) => !filled?.has(field as string));
+          });
+          if (gaps.length === 0) return { providerIndex, run: { name: provider.name, data: {} } as ProviderRun };
+          return { providerIndex, run: await run(provider, gaps, scarceContext) };
+        })
+      );
+      for (const { providerIndex, run: providerRun } of scarceRuns) results[providerIndex] = providerRun;
     }
     const merged: Record<string, SymbolEnrichment> = {};
 
     for (const symbol of normalized) {
       const base: SymbolEnrichment = {};
-      const sources: Partial<Record<EnrichmentSourcedField, string>> = {};
+      const sources: Partial<EnrichmentSources> = {};
+      const fieldDates: Partial<Record<keyof EnrichmentSources, string>> = {};
+      const fieldObservations: EnrichmentFieldObservations = {};
+      const providerFailures: Record<string, ProviderFailureReceipt> = {};
+      const scalarCandidates: Partial<Record<EnrichmentSourcedField, FieldObservationCandidate<unknown>[]>> = {};
+      const cascadeFetchedAt = new Date().toISOString();
+      let currentRecord: SymbolEnrichment | undefined;
+      let currentRegistrationOrder = 0;
       const analystBySource: Record<string, AnalystRatingDetail> = {};
       // Which provider supplied the SURVIVING entry for each analyst source-key (last
       // writer wins, mirroring Object.assign). Used to credit contributors only after
       // de-dupe — a provider whose entry is overwritten by a same-source provider
       // supplied no final value and must not appear in MarketScan.source.
       const analystKeyOwner: Record<string, string> = {};
+      const analystKeyOrder: Record<string, number> = {};
+      let analystRegistrationOrder = 0;
 
-      const takeScalar = <K extends keyof SymbolEnrichment>(
+      const takeScalar = <K extends EnrichmentSourcedField>(
         field: K,
         sourceName: string,
         value: SymbolEnrichment[K] | undefined
       ) => {
-        if (base[field] === undefined && value !== undefined) {
+        const supplied = currentRecord?.fieldObservations?.[field] as FieldObservation<SymbolEnrichment[K]> | undefined;
+        // Empty arrays/strings are not real fills — e.g. headlines: [] must not first-win and
+        // block a scarce failover that has real headlines (see enrichment-scarce-tier-gate test).
+        // Align with enrichment-coverage.isFilledEnrichmentValue.
+        const usableValue =
+          value !== undefined &&
+          value !== null &&
+          !(Array.isArray(value) && value.length === 0) &&
+          !(typeof value === "string" && value.trim().length === 0);
+        if (usableValue || supplied) {
+          // Always stamp source + asOf + fetchedAt (never leave asOf blank when we have a value).
+          // Provider fieldDates / fieldObservations win when present; else cascade clock.
+          // Capability / preference notes: source-capability-matrix.ts
+          const resolvedValue = usableValue ? value : supplied?.value;
+          const asOf =
+            supplied?.asOf ??
+            currentRecord?.fieldDates?.[field] ??
+            (field === "asOf" && typeof resolvedValue === "string" ? resolvedValue : undefined) ??
+            supplied?.observedAt ??
+            (field === "asOf" ? undefined : currentRecord?.asOf) ??
+            cascadeFetchedAt;
+          const observation: FieldObservation<unknown> = {
+            ...supplied,
+            value: resolvedValue,
+            source: supplied?.source ?? sourceName,
+            upstreamFamily: supplied?.upstreamFamily ?? sourceName,
+            observedAt: supplied?.observedAt ?? (field === "asOf" ? undefined : currentRecord?.asOf),
+            fetchedAt: supplied?.fetchedAt ?? cascadeFetchedAt,
+            asOf,
+            status: supplied?.status ?? "ok"
+          };
+          const candidates: FieldObservationCandidate<unknown>[] = scalarCandidates[field] ?? [];
+          candidates.push({
+            observation,
+            providerName: sourceName,
+            registrationOrder: currentRegistrationOrder
+          });
+          scalarCandidates[field] = candidates;
+        }
+        if (base[field] === undefined && usableValue) {
           base[field] = value;
-          this.contributingNames.add(sourceName);
-          if (field in EMPTY_SOURCED) sources[field as EnrichmentSourcedField] = sourceName;
+          sources[field] = sourceName;
         }
       };
 
-      for (const { name, data } of results) {
+      for (const [registrationOrder, { name, data, failure }] of results.entries()) {
+        currentRegistrationOrder = registrationOrder;
+        if (failure) providerFailures[name] = failure;
         const r = data[symbol];
         if (!r) continue;
+        currentRecord = r;
         takeScalar("price", name, r.price);
         takeScalar("bid", name, r.bid);
         takeScalar("ask", name, r.ask);
@@ -962,10 +1587,24 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("targetHigh", name, r.targetHigh);
         takeScalar("targetLow", name, r.targetLow);
         takeScalar("targetMedian", name, r.targetMedian);
-        if (!base.headlines?.length && r.headlines?.length) {
-          base.headlines = r.headlines;
-          this.contributingNames.add(name);
-        }
+        takeScalar("returnOnEquity", name, r.returnOnEquity);
+        takeScalar("returnOnAssets", name, r.returnOnAssets);
+        takeScalar("revenueGrowth", name, r.revenueGrowth);
+        takeScalar("freeCashFlowYield", name, r.freeCashFlowYield);
+        takeScalar("grossProfitMargin", name, r.grossProfitMargin);
+        takeScalar("congressTradesQuiver", name, r.congressTradesQuiver);
+        takeScalar("insiderTradesQuiver", name, r.insiderTradesQuiver);
+        takeScalar("govContractsQuiver", name, r.govContractsQuiver);
+        takeScalar("lobbyingQuiver", name, r.lobbyingQuiver);
+        takeScalar("patentsQuiver", name, r.patentsQuiver);
+        // sharesOutstanding was in EMPTY_SOURCED / EnrichmentSourcedField but never takeScalar'd —
+        // providers (e.g. SEC XBRL, Wisesheets) returned it and applyEnrichment could carry it, yet
+        // cascade merge dropped it and never wrote source/asOf into symbol_field_latest.
+        takeScalar("sharesOutstanding", name, r.sharesOutstanding);
+        // Headlines: first-wins array (takeScalar also first-wins on base[field] === undefined).
+        // Stamping source + observation time so the durable store never records source=unknown.
+        // See source-capability-matrix.ts data point "headlines" for provider preference notes.
+        takeScalar("headlines", name, r.headlines);
         // Collect every provider's analyst read. Defer crediting it as a contributor:
         // if its entry is overwritten by a same-source provider that runs later (same
         // analystBySource key), it supplied no FINAL value. Track the last writer per key.
@@ -973,8 +1612,51 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
           for (const [k, v] of Object.entries(r.analystBySource)) {
             analystBySource[k] = v;
             analystKeyOwner[k] = name;
+            analystKeyOrder[k] = analystRegistrationOrder++;
           }
         }
+      }
+
+      // Preserve legacy first-wins behavior when no provider exposes metadata (the
+      // deterministic tie-breaker is registration order), while allowing explicit
+      // field receipts to prefer a fresher, more reliable, or more direct fact.
+      for (const field of Object.keys(EMPTY_SOURCED) as EnrichmentSourcedField[]) {
+        const candidates = scalarCandidates[field] ?? [];
+        const selected = arbitrateFieldObservation(field, candidates);
+        if (selected) {
+          (base as Record<string, unknown>)[field] = selected.observation.value;
+          sources[field] = selected.providerName;
+          fieldObservations[field] = selected.observation;
+          this.contributingNames.add(selected.providerName);
+          continue;
+        }
+        const unavailable = candidates.find((candidate) => candidate.observation.status !== "ok" && candidate.observation.status !== "stale");
+        fieldObservations[field] = unavailable?.observation ?? {
+          source: "enrichment-cascade",
+          upstreamFamily: "enrichment-cascade",
+          fetchedAt: cascadeFetchedAt,
+          status: Object.keys(providerFailures).length === results.length ? "failed" : "no_match"
+        };
+      }
+
+      // A source can republish the same upstream analyst consensus under a different
+      // display key. Keep one deterministic (last registered) read per upstream family
+      // before blending, so a redistribution cannot count as a second analyst vote.
+      const analystFamilyCandidates: UpstreamFamilyCandidate<{ detail: AnalystRatingDetail; owner: string }>[] =
+        Object.entries(analystBySource).map(([key, detail]) => ({
+          key,
+          upstreamFamily: detail.upstreamFamily ?? key,
+          value: { detail, owner: analystKeyOwner[key] },
+          registrationOrder: analystKeyOrder[key] ?? 0
+        }));
+      const dedupedAnalysts = dedupeUpstreamFamilies(analystFamilyCandidates);
+      for (const key of Object.keys(analystBySource)) {
+        delete analystBySource[key];
+        delete analystKeyOwner[key];
+      }
+      for (const candidate of dedupedAnalysts) {
+        analystBySource[candidate.key] = candidate.value.detail;
+        analystKeyOwner[candidate.key] = candidate.value.owner;
       }
 
       // A "congress.trade"-keyed entry is a SOURCE-UNKNOWN blended aggregate (App A's
@@ -995,6 +1677,13 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         base.analystRating = labelFromAnalystScore(blended);
         base.analystBySource = analystBySource;
         sources.analystRating = Object.keys(analystBySource).length > 1 ? "blended" : Object.keys(analystBySource)[0];
+        fieldObservations.analystRating = {
+          value: base.analystRating,
+          source: sources.analystRating,
+          upstreamFamily: "analyst-consensus",
+          fetchedAt: cascadeFetchedAt,
+          status: "ok"
+        };
         // Credit only the providers whose analyst entry SURVIVED the de-dupe.
         for (const owner of new Set(Object.values(analystKeyOwner))) this.contributingNames.add(owner);
       }
@@ -1007,6 +1696,16 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       if (typeof avSentiment === "number") {
         base.sentiment = avSentiment;
         sources.sentiment = "alpha-vantage";
+        const avReceipt = results.find((res) => res.name === "alpha-vantage")?.data[symbol]?.fieldObservations?.sentiment;
+        fieldObservations.sentiment = {
+          ...avReceipt,
+          value: avSentiment,
+          source: avReceipt?.source ?? "alpha-vantage",
+          upstreamFamily: avReceipt?.upstreamFamily ?? "alpha-vantage",
+          observedAt: avReceipt?.observedAt,
+          fetchedAt: avReceipt?.fetchedAt ?? cascadeFetchedAt,
+          status: avReceipt?.status ?? "ok"
+        };
         this.contributingNames.add("alpha-vantage");
       }
 
@@ -1027,6 +1726,16 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
           base.shortInterestDisagreement =
             `Short interest disagreement: ${primarySrc} ${base.shortPercentOfFloat.toFixed(1)}% vs ` +
             `massive ${base.shortPercentOfFloatSecondary.toFixed(1)}% (${delta.toFixed(1)}pp apart).`;
+          if (fieldObservations.shortPercentOfFloat) {
+            fieldObservations.shortPercentOfFloat = {
+              ...fieldObservations.shortPercentOfFloat,
+              conflict: {
+                kind: "value_disagreement",
+                summary: base.shortInterestDisagreement,
+                competingSources: [primarySrc, "massive"]
+              }
+            };
+          }
           this.contributingNames.add("massive");
         }
       }
@@ -1034,13 +1743,66 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       delete base.shortPercentOfFloatSecondary;
 
       base.sources = sources;
+      base.fieldObservations = fieldObservations;
+      if (Object.keys(providerFailures).length > 0) base.providerFailures = providerFailures;
       merged[symbol] = base;
     }
+
+    const fetchedAtNow = new Date().toISOString();
+    const recordsToSave: import("./db-fundamentals").HistoricalFundamentalRecord[] = [];
+    for (const [symbol, enrichment] of Object.entries(merged)) {
+      if (!enrichment.fieldObservations) continue;
+      for (const [field, obs] of Object.entries(enrichment.fieldObservations)) {
+        if (typeof obs.value === "number") {
+          const effectiveTs = obs.asOf ?? obs.observedAt ?? obs.effectiveAt ?? obs.fetchedAt;
+          if (effectiveTs) {
+            recordsToSave.push({
+              symbol,
+              field,
+              value: obs.value,
+              provider: obs.source,
+              effectiveAt: effectiveTs,
+              fetchedAt: obs.fetchedAt ?? fetchedAtNow
+            });
+          }
+        }
+      }
+    }
+
+    // Dynamic import (not require) so eslint no-require-imports stays clean and unit
+    // tests that only partially mock db modules can still no-op when the module is absent.
+    // Persist BOTH: append-only numeric history AND shared per-field latest (with its own
+    // as_of + fetched_at on every field). The latest store is what interactive scans and
+    // other users read when strategy_run audits omit the full MarketScan.
+    void import("./db-fundamentals")
+      .then((mod) => {
+        if (typeof mod.recordHistoricalFundamentals === "function" && recordsToSave.length > 0) {
+          mod.recordHistoricalFundamentals(recordsToSave);
+        }
+        if (typeof mod.recordsFromEnrichmentMap === "function" && typeof mod.upsertSymbolFieldLatest === "function") {
+          const latest = mod.recordsFromEnrichmentMap(merged, fetchedAtNow);
+          if (latest.length > 0) mod.upsertSymbolFieldLatest(latest);
+        }
+      })
+      .catch(() => {
+        // Silently ignored when db modules are partially mocked in unit tests
+      });
+
+    // Persist a field-by-field coverage report for admin/ops (filled / winning source /
+    // missing). buildEnrichmentCoverageReport also mirrors into the module-level last-report slot.
+    try {
+      this.lastCoverageReport = buildEnrichmentCoverageReport(merged, this.activeSources);
+    } catch {
+      this.lastCoverageReport = null;
+    }
+
     return merged;
   }
 }
 
-// Marker set so takeScalar only stamps fields that are actually sourced (not headlines/analyst).
+// Marker set so takeScalar / arbitration covers every EnrichmentSourcedField.
+// analystRating is blended after the loop (not first-wins); still listed so arbitration can
+// surface no_match when no provider contributed. Prefer source ranks: source-capability-matrix.ts.
 const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   price: true,
   bid: true,
@@ -1074,7 +1836,19 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   targetMean: true,
   targetHigh: true,
   targetLow: true,
-  targetMedian: true
+  targetMedian: true,
+  returnOnEquity: true,
+  returnOnAssets: true,
+  revenueGrowth: true,
+  sharesOutstanding: true,
+  freeCashFlowYield: true,
+  grossProfitMargin: true,
+  congressTradesQuiver: true,
+  insiderTradesQuiver: true,
+  govContractsQuiver: true,
+  lobbyingQuiver: true,
+  patentsQuiver: true,
+  headlines: true
 };
 
 // ── Webull unofficial quote bridge (opt-in, market-data only) ────────────────
@@ -1089,8 +1863,12 @@ export function webullUnofficialEnabled(): boolean {
   return ["1", "true", "on", "yes"].includes(String(process.env.WEBULL_UNOFFICIAL_ENABLED ?? "").trim().toLowerCase());
 }
 
+/** SEC EDGAR XBRL debt/equity enrichment — DEFAULT ON (keyless). Set
+ *  `SEC_XBRL_ENRICHMENT_ENABLED=0` to disable. */
 export function secXbrlEnrichmentEnabled(): boolean {
-  return ["1", "true", "on", "yes"].includes(String(process.env.SEC_XBRL_ENRICHMENT_ENABLED ?? "").trim().toLowerCase());
+  const raw = process.env.SEC_XBRL_ENRICHMENT_ENABLED;
+  if (raw === undefined || raw.trim() === "") return true;
+  return flagEnabled(raw);
 }
 
 /**
@@ -1155,10 +1933,12 @@ export function finnhubDropRecommendationEnabled(): boolean {
   return flagEnabled(process.env.FINNHUB_DROP_RECOMMENDATION);
 }
 
+// Default 20 is deliberate (unofficial scraping endpoint; burst-sensitive), but the env
+// override is unclamped — an operator raising it is making an explicit decision.
 function webullUnofficialMaxSymbols(): number {
   const value = Number(process.env.WEBULL_UNOFFICIAL_MAX_SYMBOLS ?? DEFAULT_WEBULL_UNOFFICIAL_MAX);
   if (!Number.isFinite(value) || value <= 0) return DEFAULT_WEBULL_UNOFFICIAL_MAX;
-  return Math.min(value, MAX_SYMBOLS_CAP);
+  return Math.floor(value);
 }
 
 function webullUnofficialTimeoutMs(): number {
@@ -1232,15 +2012,19 @@ export class WebullUnofficialEnrichmentProvider implements MarketEnrichmentProvi
 
     const python = process.env.WEBULL_UNOFFICIAL_PYTHON || "python3";
     const script = process.env.WEBULL_UNOFFICIAL_SCRIPT || `${process.cwd()}/scripts/webull_unofficial_quote.py`;
+    // Usage-only telemetry (never cost — no billed API key, just an unofficial local script): one
+    // call per enrich() invocation, matching the single execFile dispatch below (not per symbol).
     try {
       const stdout = await runWebullUnofficialScript(python, script, misses, webullUnofficialTimeoutMs());
       const payload = JSON.parse(stdout || "{}") as Record<string, unknown>;
       for (const symbol of misses) {
         const data = parseWebullUnofficialQuote(payload[symbol]);
-        cache.set(`${this.name}:${symbol}`, { expiresAt: now + ttlMs(), data });
+        cache.set(`${this.name}:${symbol}`, { expiresAt: expiresAtRespectingMarketClose(new Date(now), ttlMs()), data });
         result[symbol] = data;
       }
+      recordProviderCall(this.name, { service: "quote", ok: true });
     } catch {
+      recordProviderCall(this.name, { service: "quote", ok: false });
       for (const symbol of misses) result[symbol] = {};
     }
     return result;
@@ -1598,7 +2382,8 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
           }
           result[symbol] = data;
         }
-      } catch {
+      } catch (error) {
+        console.warn(`[${this.name}] Failed to fetch quotes for ${chunk.join(",")}:`, error);
         for (const symbol of chunk) result[symbol] = {};
       }
     }
@@ -1654,6 +2439,164 @@ export function parseAlpacaSnapshot(snap: AlpacaSnapshot | undefined | null): Sy
   };
 }
 
+// ── Nasdaq.com public quote/summary (no API key) ─────────────────────────────
+// Keyless JSON endpoints used by nasdaq.com (same family as the delayed screener in
+// market.ts). Complements Yahoo when the crumb handshake fails or Yahoo rate-limits.
+//
+// UA must look like a real browser: live-verified 2026-08-05 that the prior contactable
+// "compatible; SocraticTrade/1.0" bot UA hangs/times out against api.nasdaq.com while a
+// Chrome desktop UA returns 200 on the same host+path. BROWSER_UA is shared with macro/VIX
+// and the web-sources scrapers for the same reason.
+const NASDAQ_QUOTE_UA = BROWSER_UA;
+
+/** Parse `/api/quote/{sym}/info` + `/api/quote/{sym}/summary` (+ optional holdings). */
+export function parseNasdaqQuoteInfo(payload: unknown): SymbolEnrichment {
+  const data = (payload as { data?: Record<string, unknown> } | undefined)?.data;
+  if (!data) return {};
+  const companyName = typeof data.companyName === "string" && data.companyName.trim()
+    ? data.companyName.replace(/\s+Common Stock\s*$/i, "").trim()
+    : undefined;
+  const pd = (data.primaryData ?? {}) as Record<string, unknown>;
+  const price = parseRapidApiNumberString(pd.lastSalePrice);
+  const intradayChangePct = parseRapidApiNumberString(pd.percentageChange);
+  const volume = parseRapidApiNumberString(pd.volume);
+  let fiftyTwoWeekHigh: number | undefined;
+  let fiftyTwoWeekLow: number | undefined;
+  const range = ((data.keyStats as Record<string, unknown> | undefined)?.fiftyTwoWeekHighLow as
+    | { value?: string }
+    | undefined)?.value;
+  if (typeof range === "string" && range.includes("-")) {
+    const parts = range.split(/\s*-\s*/).map((part) => parseRapidApiNumberString(part.trim()));
+    if (typeof parts[0] === "number") fiftyTwoWeekLow = parts[0];
+    if (typeof parts[1] === "number") fiftyTwoWeekHigh = parts[1];
+  }
+  return {
+    ...(companyName !== undefined && companyName && { companyName }),
+    ...(price !== undefined && price > 0 && { price }),
+    ...(intradayChangePct !== undefined && { intradayChangePct }),
+    ...(volume !== undefined && volume >= 0 && { volume }),
+    ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+    ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
+  };
+}
+
+export function parseNasdaqQuoteSummary(payload: unknown): SymbolEnrichment {
+  const summaryData = (payload as { data?: { summaryData?: Record<string, { value?: string }> } } | undefined)
+    ?.data?.summaryData;
+  if (!summaryData) return {};
+  const sector = summaryData.Sector?.value?.trim() || undefined;
+  const industry = summaryData.Industry?.value?.trim() || undefined;
+  const yieldRaw = parseRapidApiNumberString(summaryData.Yield?.value);
+  const targetMean = parseRapidApiNumberString(summaryData.OneYrTarget?.value);
+  let fiftyTwoWeekHigh: number | undefined;
+  let fiftyTwoWeekLow: number | undefined;
+  const range = summaryData.FiftTwoWeekHighLow?.value; // Nasdaq's typo in the wire key
+  if (typeof range === "string" && range.includes("/")) {
+    const parts = range.split("/").map((part) => parseRapidApiNumberString(part.replace(/[$,]/g, "").trim()));
+    // Wire format is High/Low
+    if (typeof parts[0] === "number") fiftyTwoWeekHigh = parts[0];
+    if (typeof parts[1] === "number") fiftyTwoWeekLow = parts[1];
+  }
+  return {
+    ...(sector !== undefined && { sector }),
+    ...(industry !== undefined && { industry }),
+    ...(yieldRaw !== undefined && yieldRaw >= 0 && { dividendYield: yieldRaw }),
+    ...(targetMean !== undefined && targetMean > 0 && { targetMean }),
+    ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+    ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
+  };
+}
+
+export function parseNasdaqInstitutionalHoldings(payload: unknown): SymbolEnrichment {
+  const ownership = (payload as {
+    data?: { ownershipSummary?: { SharesOutstandingPCT?: { value?: string } } };
+  } | undefined)?.data?.ownershipSummary;
+  const pct = parseRapidApiNumberString(ownership?.SharesOutstandingPCT?.value);
+  return pct !== undefined && pct >= 0 ? { institutionOwnershipPct: pct } : {};
+}
+
+export class NasdaqQuoteEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "nasdaq-quote";
+  readonly costTier = "free" as const;
+  readonly configured = true;
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = cache.get(`nasdaq-quote:${symbol}`);
+      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const data = await this.fetchSymbol(symbol);
+            if (Object.keys(data).length > 0) {
+              cache.set(`nasdaq-quote:${symbol}`, { expiresAt: now + ttlMs(), data });
+            }
+            result[symbol] = data;
+          } catch (error) {
+            console.warn(`[${this.name}] Failed to fetch quote for ${symbol}:`, error);
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(path: string): Promise<unknown> {
+    return withProviderLimit(this.name, async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        const res = await fetchWithRetry(
+          `https://api.nasdaq.com${path}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+            headers: {
+              Accept: "application/json,text/plain,*/*",
+              "User-Agent": NASDAQ_QUOTE_UA,
+              Origin: "https://www.nasdaq.com",
+              Referer: "https://www.nasdaq.com/"
+            }
+          },
+          { service: this.name, retries: 1 }
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+  }
+
+  private async fetchSymbol(symbol: string): Promise<SymbolEnrichment> {
+    // BRK.B works on Nasdaq's API; BRK-B does not — keep dots.
+    const enc = encodeURIComponent(symbol);
+    const [infoRes, summaryRes, holdingsRes] = await Promise.allSettled([
+      this.getJson(`/api/quote/${enc}/info?assetclass=stocks`),
+      this.getJson(`/api/quote/${enc}/summary?assetclass=stocks`),
+      this.getJson(`/api/company/${enc}/institutional-holdings`)
+    ]);
+    const merged: SymbolEnrichment = {};
+    if (infoRes.status === "fulfilled") Object.assign(merged, parseNasdaqQuoteInfo(infoRes.value));
+    if (summaryRes.status === "fulfilled") Object.assign(merged, parseNasdaqQuoteSummary(summaryRes.value));
+    if (holdingsRes.status === "fulfilled") Object.assign(merged, parseNasdaqInstitutionalHoldings(holdingsRes.value));
+    return merged;
+  }
+}
+
 // ── Yahoo Finance provider (no API key required) ─────────────────────────────
 // Uses Yahoo Finance session-crumb auth to call v10/finance/quoteSummary.
 // Provides: sector, industry, P/E, EPS, dividend yield, and analyst rating.
@@ -1662,9 +2605,14 @@ interface YfCreds { cookie: string; crumb: string; expiresAt: number; }
 let yfCreds: YfCreds | null = null;
 const YF_CRUMB_TTL_MS = 55 * 60_000; // 55 min (crumbs expire ~1 hr)
 const YF_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
+// A single failed cookie/crumb handshake otherwise blanks the ENTIRE Yahoo enrichment batch
+// for every symbol this run — retry once after this short backoff before giving up.
+const YF_CREDS_RETRY_BACKOFF_MS = 500;
 
 class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "yahoo-finance";
+  /** Keyless floor — always free-wave under the free-first planner. */
+  readonly costTier = "free" as const;
   readonly configured = true;
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1684,7 +2632,8 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
 
     let creds: YfCreds;
     try { creds = await this.getCreds(); } catch (err) {
-      logApiHealth({ service: this.name, ok: false, errorText: err instanceof Error ? err.message : String(err) });
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      logApiHealth({ service: this.name, ok: false, errorText: scrubProviderErrorText(appendErrorCause(rawMessage, err)) });
       return result;
     }
 
@@ -1709,6 +2658,17 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     const now = Date.now();
     if (yfCreds && yfCreds.expiresAt > now) return yfCreds;
 
+    try {
+      return await this.fetchCreds(now);
+    } catch {
+      // One retry with a short backoff — a transient network blip or momentary 429 on the
+      // handshake shouldn't blank Yahoo enrichment for every symbol this run.
+      await new Promise((resolve) => setTimeout(resolve, YF_CREDS_RETRY_BACKOFF_MS));
+      return await this.fetchCreds(Date.now());
+    }
+  }
+
+  private async fetchCreds(now: number): Promise<YfCreds> {
     const cookieRes = await fetch("https://fc.yahoo.com", {
       headers: { "user-agent": YF_UA },
       redirect: "follow"
@@ -1737,98 +2697,131 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     const modules =
       "summaryDetail,defaultKeyStatistics,financialData,assetProfile,calendarEvents,institutionOwnership,majorHoldersBreakdown";
     const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=${modules}&crumb=${encodeURIComponent(creds.crumb)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    try {
-      const res = await fetchWithRetry(url, {
-        headers: { "user-agent": YF_UA, "Cookie": creds.cookie, "accept": "application/json" },
-        cache: "no-store",
-        signal: controller.signal
-      }, { service: this.name });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json() as { quoteSummary?: { result?: Array<Record<string, unknown>> } };
-      const r = json?.quoteSummary?.result?.[0] as Record<string, unknown> | undefined;
-      if (!r) return {};
-
-      const sd = (r.summaryDetail ?? {}) as Record<string, { raw?: number }>;
-      const ks = (r.defaultKeyStatistics ?? {}) as Record<string, { raw?: number }>;
-      const fd = (r.financialData ?? {}) as Record<string, { raw?: number } | string>;
-      const ap = (r.assetProfile ?? {}) as Record<string, unknown>;
-      const ce = (r.calendarEvents ?? {}) as Record<string, unknown>;
-      const io = (r.institutionOwnership ?? {}) as Record<string, unknown>;
-      const mh = (r.majorHoldersBreakdown ?? {}) as Record<string, { raw?: number }>;
-
-      const rawPe = (sd.trailingPE as { raw?: number })?.raw;
-      const rawDiv = (sd.trailingAnnualDividendYield as { raw?: number })?.raw;
-      const rawEps = (ks.trailingEps as { raw?: number })?.raw;
-      const rawRecMean = (fd.recommendationMean as { raw?: number })?.raw;
-      const rawPb = (ks.priceToBook as { raw?: number })?.raw;
-      const rawShortFloat = (ks.shortPercentOfFloat as { raw?: number })?.raw;
-      const rawBeta = (ks.beta as { raw?: number })?.raw;
-      const raw52High = (sd.fiftyTwoWeekHigh as { raw?: number })?.raw;
-      const raw52Low = (sd.fiftyTwoWeekLow as { raw?: number })?.raw;
-      const rawDebtToEquity = (fd.debtToEquity as { raw?: number })?.raw;
-      const rawEarningsGrowth = (fd.earningsGrowth as { raw?: number })?.raw;
-      const rawFcf = (fd.freeCashflow as { raw?: number })?.raw;
-      const rawMarketCap = (sd.marketCap as { raw?: number })?.raw;
-
-      const peRatio = typeof rawPe === "number" && rawPe > 0 ? rawPe : undefined;
-      // Yahoo returns yield as decimal fraction (0.0036 = 0.36%); store as percentage points.
-      const dividendYield = typeof rawDiv === "number" && rawDiv >= 0 ? Math.round(rawDiv * 10000) / 100 : undefined;
-      const eps = typeof rawEps === "number" ? rawEps : undefined;
-      const pbRatio = typeof rawPb === "number" && rawPb > 0 ? rawPb : undefined;
-      const shortPercentOfFloat = typeof rawShortFloat === "number" && rawShortFloat >= 0 ? Math.round(rawShortFloat * 10000) / 100 : undefined;
-      const beta = typeof rawBeta === "number" ? rawBeta : undefined;
-      const fiftyTwoWeekHigh = typeof raw52High === "number" ? raw52High : undefined;
-      const fiftyTwoWeekLow = typeof raw52Low === "number" ? raw52Low : undefined;
-      const debtToEquity = typeof rawDebtToEquity === "number" ? rawDebtToEquity : undefined;
-      const epsGrowth = typeof rawEarningsGrowth === "number" ? rawEarningsGrowth : undefined;
-      let fcfYield: number | undefined;
-      if (typeof rawFcf === "number" && typeof rawMarketCap === "number" && rawMarketCap > 0) {
-        fcfYield = Math.round((rawFcf / rawMarketCap) * 10000) / 100;
+    // The new prod egress IP gets HTTP 429 from Yahoo on a cold/parallel burst; gate through
+    // the shared per-provider pacer (provider-rate-limit.ts) so requests stay gently paced
+    // instead of firing CONCURRENCY-wide. The AbortController/timeout is armed INSIDE the
+    // pacer callback so the 8s HTTP timeout starts counting at actual dispatch time, not
+    // when this call joins the queue — otherwise queue wait eats into the timeout.
+    const res = await withProviderLimit(this.name, async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        return await fetchWithRetry(url, {
+          headers: { "user-agent": YF_UA, "Cookie": creds.cookie, "accept": "application/json" },
+          cache: "no-store",
+          signal: controller.signal
+        }, { service: this.name });
+      } finally {
+        clearTimeout(timeout);
       }
-      const sector = typeof ap.sector === "string" && ap.sector ? ap.sector : undefined;
-      const industry = typeof ap.industry === "string" && ap.industry ? ap.industry : undefined;
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json() as { quoteSummary?: { result?: Array<Record<string, unknown>> } };
+    const r = json?.quoteSummary?.result?.[0] as Record<string, unknown> | undefined;
+    if (!r) return {};
 
-      // Next-earnings signal: calendarEvents.earnings.earningsDate is an array of {raw:<unix seconds>}
-      // ranges (sometimes a single point, sometimes a lo/hi window). Take the EARLIEST future date
-      // and convert to whole calendar days out. Undefined when there is no future date — never 0/guess.
-      const daysToEarnings = parseDaysToEarnings(ce);
+    const sd = (r.summaryDetail ?? {}) as Record<string, { raw?: number }>;
+    const ks = (r.defaultKeyStatistics ?? {}) as Record<string, { raw?: number }>;
+    const fd = (r.financialData ?? {}) as Record<string, { raw?: number } | string>;
+    const ap = (r.assetProfile ?? {}) as Record<string, unknown>;
+    const ce = (r.calendarEvents ?? {}) as Record<string, unknown>;
+    const io = (r.institutionOwnership ?? {}) as Record<string, unknown>;
+    const mh = (r.majorHoldersBreakdown ?? {}) as Record<string, { raw?: number }>;
 
-      // Institutional ownership %: prefer majorHoldersBreakdown.institutionsPercentHeld (0–1 fraction);
-      // fall back to summing institutionOwnership.ownershipList[].pctHeld. Stored as 0–100 percentage.
-      const institutionOwnershipPct = parseInstitutionOwnershipPct(mh, io);
+    const rawPe = (sd.trailingPE as { raw?: number })?.raw;
+    const rawDiv = (sd.trailingAnnualDividendYield as { raw?: number })?.raw;
+    const rawEps = (ks.trailingEps as { raw?: number })?.raw;
+    const rawRecMean = (fd.recommendationMean as { raw?: number })?.raw;
+    const rawPb = (ks.priceToBook as { raw?: number })?.raw;
+    const rawShortFloat = (ks.shortPercentOfFloat as { raw?: number })?.raw;
+    const rawBeta = (ks.beta as { raw?: number })?.raw;
+    const raw52High = (sd.fiftyTwoWeekHigh as { raw?: number })?.raw;
+    const raw52Low = (sd.fiftyTwoWeekLow as { raw?: number })?.raw;
+    const rawDebtToEquity = (fd.debtToEquity as { raw?: number })?.raw;
+    const rawEarningsGrowth = (fd.earningsGrowth as { raw?: number })?.raw;
+    const rawFcf = (fd.freeCashflow as { raw?: number })?.raw;
+    const rawMarketCap = (sd.marketCap as { raw?: number })?.raw;
+    // FREE tier gap-fills (owner directive 2026-08-01): the financialData module is already
+    // fetched — map the analyst price-target block and revenue growth so these fields
+    // populate without FMP/congress.trade (both were the only prior sources; FMP's key is
+    // suspended and targets are otherwise paid-only).
+    const rawTargetMean = (fd.targetMeanPrice as { raw?: number })?.raw;
+    const rawTargetHigh = (fd.targetHighPrice as { raw?: number })?.raw;
+    const rawTargetLow = (fd.targetLowPrice as { raw?: number })?.raw;
+    const rawTargetMedian = (fd.targetMedianPrice as { raw?: number })?.raw;
+    const rawRevenueGrowth = (fd.revenueGrowth as { raw?: number })?.raw;
 
-      // Analyst rating comes from the 1–5 recommendation mean → blended by the cascade.
-      let analystBySource: Record<string, AnalystRatingDetail> | undefined;
-      if (typeof rawRecMean === "number" && rawRecMean > 0) {
-        const score = analystScoreFromMean(rawRecMean);
-        analystBySource = {
-          [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), mean: Math.round(rawRecMean * 100) / 100 }
-        };
-      }
-
-      return {
-        ...(peRatio !== undefined && { peRatio }),
-        ...(dividendYield !== undefined && { dividendYield }),
-        ...(eps !== undefined && { eps }),
-        ...(sector !== undefined && { sector }),
-        ...(industry !== undefined && { industry }),
-        ...(pbRatio !== undefined && { pbRatio }),
-        ...(shortPercentOfFloat !== undefined && { shortPercentOfFloat }),
-        ...(beta !== undefined && { beta }),
-        ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
-        ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow }),
-        ...(debtToEquity !== undefined && { debtToEquity }),
-        ...(epsGrowth !== undefined && { epsGrowth }),
-        ...(fcfYield !== undefined && { fcfYield }),
-        ...(daysToEarnings !== undefined && { daysToEarnings }),
-        ...(institutionOwnershipPct !== undefined && { institutionOwnershipPct }),
-        ...(analystBySource !== undefined && { analystBySource })
-      };
-    } finally {
-      clearTimeout(timeout);
+    const peRatio = typeof rawPe === "number" && rawPe > 0 ? rawPe : undefined;
+    // Yahoo returns yield as decimal fraction (0.0036 = 0.36%); store as percentage points.
+    const dividendYield = typeof rawDiv === "number" && rawDiv >= 0 ? Math.round(rawDiv * 10000) / 100 : undefined;
+    const eps = typeof rawEps === "number" ? rawEps : undefined;
+    const pbRatio = typeof rawPb === "number" && rawPb > 0 ? rawPb : undefined;
+    const shortPercentOfFloat = typeof rawShortFloat === "number" && rawShortFloat >= 0 ? Math.round(rawShortFloat * 10000) / 100 : undefined;
+    const beta = typeof rawBeta === "number" ? rawBeta : undefined;
+    const fiftyTwoWeekHigh = typeof raw52High === "number" ? raw52High : undefined;
+    const fiftyTwoWeekLow = typeof raw52Low === "number" ? raw52Low : undefined;
+    const debtToEquity = typeof rawDebtToEquity === "number" ? rawDebtToEquity : undefined;
+    const epsGrowth = typeof rawEarningsGrowth === "number" ? rawEarningsGrowth : undefined;
+    let fcfYield: number | undefined;
+    if (typeof rawFcf === "number" && typeof rawMarketCap === "number" && rawMarketCap > 0) {
+      fcfYield = Math.round((rawFcf / rawMarketCap) * 10000) / 100;
     }
+    // Positive-only targets (a 0/negative is a "no value" sentinel, matching the congress.trade
+    // and FMP parsers — never let a bad target win first-wins).
+    const targetMean = typeof rawTargetMean === "number" && rawTargetMean > 0 ? rawTargetMean : undefined;
+    const targetHigh = typeof rawTargetHigh === "number" && rawTargetHigh > 0 ? rawTargetHigh : undefined;
+    const targetLow = typeof rawTargetLow === "number" && rawTargetLow > 0 ? rawTargetLow : undefined;
+    const targetMedian = typeof rawTargetMedian === "number" && rawTargetMedian > 0 ? rawTargetMedian : undefined;
+    // Yahoo returns revenue growth as a decimal fraction (0.094 = 9.4%); store percentage
+    // points like dividendYield.
+    const revenueGrowth = typeof rawRevenueGrowth === "number" ? normalizePercent(rawRevenueGrowth) : undefined;
+    const sector = typeof ap.sector === "string" && ap.sector ? ap.sector : undefined;
+    const industry = typeof ap.industry === "string" && ap.industry ? ap.industry : undefined;
+
+    // Next-earnings signal: calendarEvents.earnings.earningsDate is an array of {raw:<unix seconds>}
+    // ranges (sometimes a single point, sometimes a lo/hi window). Take the EARLIEST future date
+    // and convert to whole calendar days out. Undefined when there is no future date — never 0/guess.
+    const daysToEarnings = parseDaysToEarnings(ce);
+
+    // Institutional ownership %: prefer majorHoldersBreakdown.institutionsPercentHeld (0–1 fraction);
+    // fall back to summing institutionOwnership.ownershipList[].pctHeld. Stored as 0–100 percentage.
+    const institutionOwnershipPct = parseInstitutionOwnershipPct(mh, io);
+
+    // Analyst rating comes from the 1–5 recommendation mean → blended by the cascade.
+    let analystBySource: Record<string, AnalystRatingDetail> | undefined;
+    if (typeof rawRecMean === "number" && rawRecMean > 0) {
+      const score = analystScoreFromMean(rawRecMean);
+      analystBySource = {
+        [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), mean: Math.round(rawRecMean * 100) / 100 }
+      };
+    }
+
+    return {
+      ...(peRatio !== undefined && { peRatio }),
+      ...(dividendYield !== undefined && { dividendYield }),
+      ...(eps !== undefined && { eps }),
+      ...(sector !== undefined && { sector }),
+      ...(industry !== undefined && { industry }),
+      ...(pbRatio !== undefined && { pbRatio }),
+      ...(shortPercentOfFloat !== undefined && { shortPercentOfFloat }),
+      ...(beta !== undefined && { beta }),
+      ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+      ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow }),
+      ...(debtToEquity !== undefined && { debtToEquity }),
+      ...(epsGrowth !== undefined && { epsGrowth }),
+      ...(fcfYield !== undefined && { fcfYield }),
+      // market.ts treats fcfYield and freeCashFlowYield as aliases downstream; emit both so
+      // the coverage report and any direct freeCashFlowYield consumer see the free value too.
+      ...(fcfYield !== undefined && { freeCashFlowYield: fcfYield }),
+      ...(targetMean !== undefined && { targetMean }),
+      ...(targetHigh !== undefined && { targetHigh }),
+      ...(targetLow !== undefined && { targetLow }),
+      ...(targetMedian !== undefined && { targetMedian }),
+      ...(revenueGrowth !== undefined && { revenueGrowth }),
+      ...(daysToEarnings !== undefined && { daysToEarnings }),
+      ...(institutionOwnershipPct !== undefined && { institutionOwnershipPct }),
+      ...(analystBySource !== undefined && { analystBySource })
+    };
   }
 }
 
@@ -1892,10 +2885,74 @@ export function parseInstitutionOwnershipPct(
 
 // ── Finnhub provider ─────────────────────────────────────────────────────────
 
+// ── /calendar/earnings fallback for `daysToEarnings` (2026-08-02) ────────────────────────────
+// Live-verified against Finnhub's own docs (finnhub.io/docs/api/earnings-calendar, pulled
+// 2026-08-02 via the embedded `window.docSchema` OpenAPI-shaped blob the docs page ships — no key
+// needed to read the schema itself). A bare unauthenticated GET to the real endpoint confirmed it's
+// live: `curl https://finnhub.io/api/v1/calendar/earnings?...` → HTTP 401
+// `{"error":"Please use an API key."}`, i.e. the path is real and not a docs typo. The endpoint
+// takes a `from`/`to` date range and an OPTIONAL `symbol` filter — the docs show BOTH an example
+// without `symbol` (`/calendar/earnings?from=2025-08-01&to=2025-08-10`, the whole market's
+// releases in that window) and one with it (`&symbol=AAPL`, a multi-year per-company history).
+// Same reasoning as the AV EARNINGS_CALENDAR fallback above: ONE market-wide call (omit `symbol`)
+// covers every symbol the cascade could ever ask about this TTL window, instead of spending one of
+// Finnhub's per-symbol sub-calls per miss the way company-news/quote/etc. do below.
+//
+// Finnhub's docs schema tags this endpoint `"freeTier": "1 month of historical earnings and new
+// updates"` — read conservatively as: a market-wide (no `symbol`) pull on the free plan is good for
+// roughly a 30-day window, not the multi-year span the `symbol=`-filtered example implies. This
+// fetches exactly that ~30-day FORWARD window (refreshed daily, so it keeps rolling ahead) rather
+// than a longer horizon that might silently come back truncated/empty on the free tier — unlike AV
+// (paid-adjacent, scarce 25/day budget, wider 3-month horizon), Finnhub's free tier is generous
+// (60/min) so this is a genuinely useful ADDITIONAL near-term source, not a scarce-budget fallback.
+//
+// Response shape (EarningsCalendar/EarningRelease definitions, live-verified from the same schema
+// pull): `{ "earningsCalendar": [ { "date": "2020-01-28", "symbol": "AAPL", "hour": "amc",
+// "quarter": 1, "year": 2020, "epsActual": 4.99, "epsEstimate": 4.5474, "revenueActual": ...,
+// "revenueEstimate": ... }, ... ] }`.
+const FINNHUB_EARNINGS_CALENDAR_TTL_MS = 24 * 60 * 60_000; // one authoritative market-wide pull/day is plenty
+const FINNHUB_EARNINGS_CALENDAR_WINDOW_DAYS = 30; // matches Finnhub's documented free-tier window
+interface FinnhubEarningsCalendarCache {
+  expiresAt: number;
+  bySymbol: Map<string, number>; // symbol -> earliest report date (epoch ms, UTC midnight)
+}
+let finnhubEarningsCalendarCache: FinnhubEarningsCalendarCache | null = null;
+
+/** True when `json` has the documented `{ earningsCalendar: [...] }` shape — the cheap way to tell
+ *  a real data pull apart from an error page/HTML/unexpected format change. Never guess-parse
+ *  anything else (an empty `earningsCalendar` array still passes this check — a quiet reporting
+ *  window is a valid, non-error response and must cache normally, not as a failure). */
+export function looksLikeFinnhubEarningsCalendar(json: unknown): json is { earningsCalendar: unknown[] } {
+  return !!json && typeof json === "object" && Array.isArray((json as Record<string, unknown>).earningsCalendar);
+}
+
+/**
+ * Parses Finnhub's `/calendar/earnings` response into symbol -> earliest report date (epoch ms,
+ * UTC midnight). Returns an EMPTY map (never throws, never fabricates) for anything that doesn't
+ * match the documented shape. Keeps the EARLIEST date when a symbol appears more than once (e.g.
+ * the window spans two reports for the same company, or a duplicate row).
+ */
+export function parseFinnhubEarningsCalendar(json: unknown): Map<string, number> {
+  const bySymbol = new Map<string, number>();
+  if (!looksLikeFinnhubEarningsCalendar(json)) return bySymbol;
+  for (const row of json.earningsCalendar) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const symbol = typeof r.symbol === "string" ? normalizeSymbol(r.symbol) : "";
+    const dateStr = typeof r.date === "string" ? r.date : "";
+    if (!symbol || !dateStr) continue;
+    const ts = Date.parse(`${dateStr}T00:00:00Z`);
+    if (!Number.isFinite(ts)) continue;
+    const existing = bySymbol.get(symbol);
+    if (existing === undefined || ts < existing) bySymbol.set(symbol, ts);
+  }
+  return bySymbol;
+}
+
 export function isTransientError(error: unknown): boolean {
   if (!error) return false;
   const message = error instanceof Error ? error.message : String(error);
-  if (/\b429\b|rate limit|too many requests/i.test(message)) return true;
+  if (/\b429\b|rate limit|too many requests|quota|reservation|denied/i.test(message)) return true;
   if (/\btimeout\b|abort|network|fetch|conn|socket|eai_again|dns|504|502|503/i.test(message)) return true;
   return false;
 }
@@ -1904,6 +2961,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "finnhub";
   readonly costTier = "paid" as const;
   readonly configured = true;
+  readonly suppliesFields = ["sentiment", "headlines", "peRatio", "analystBySource", "sector", "industry", "companyName", "volume", "dividendYield", "eps"] as const;
   private readonly base = "https://finnhub.io/api/v1";
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;
@@ -1917,7 +2975,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     this.keySource = keySource;
   }
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
@@ -1940,142 +2998,257 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     const toDate = new Date(now).toISOString().split("T")[0];
     const fromDate = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
-      const chunk = misses.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async (symbol) => {
-          try {
-            // Run all Finnhub calls in parallel per symbol. When FINNHUB_DROP_RECOMMENDATION is on we skip
-            // issuing the `stock/recommendation` HTTP call entirely (4 calls/symbol instead of 5); recRaw
-            // resolves to null so no analyst rating is derived from Finnhub and the cascade backstops it.
-            const recCall = dropRecommendation
-              ? Promise.resolve(null)
-              : this.getJson(`${this.base}/stock/recommendation?symbol=${symbol}&token=${this.apiKey}`);
-            const [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw] = await Promise.allSettled([
-              this.getJson(`${this.base}/company-news?symbol=${symbol}&from=${fromDate}&to=${toDate}&token=${this.apiKey}`),
-              this.getJson(`${this.base}/quote?symbol=${symbol}&token=${this.apiKey}`),
-              recCall,
-              this.getJson(`${this.base}/stock/profile2?symbol=${symbol}&token=${this.apiKey}`),
-              this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`)
-            ]);
+    // Finnhub (60/min free) is NOT quota-capped here: each symbol fires separate per-symbol calls, so the
+    // PACER (withProviderLimit minIntervalMs, provider-rate-limit.ts) spaces them under the per-minute cap
+    // while still covering EVERY symbol over time — scan-size-agnostic without dropping coverage. Only
+    // providers with a hard windowed cap you can't space around (twelvedata batch credits, tiingo 50/hour)
+    // go through admitProviderRequests(). See RATE_QUOTAS for the pacer-vs-quota rationale.
+    if (misses.length > 0) {
+      for (let i = 0; i < misses.length; i += CONCURRENCY) {
+        const chunk = misses.slice(i, i + CONCURRENCY);
+        await Promise.all(
+          chunk.map(async (symbol) => {
+            try {
+              // Run all Finnhub calls in parallel per symbol. When FINNHUB_DROP_RECOMMENDATION is on we skip
+              // issuing the `stock/recommendation` HTTP call entirely (4 calls/symbol instead of 5); recRaw
+              // resolves to null so no analyst rating is derived from Finnhub and the cascade backstops it.
+              const recCall = dropRecommendation
+                ? Promise.resolve(null)
+                : this.getJson(`${this.base}/stock/recommendation?symbol=${symbol}&token=${this.apiKey}`);
+              const [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw] = await Promise.allSettled([
+                this.getJson(`${this.base}/company-news?symbol=${symbol}&from=${fromDate}&to=${toDate}&token=${this.apiKey}`),
+                this.getJson(`${this.base}/quote?symbol=${symbol}&token=${this.apiKey}`),
+                recCall,
+                this.getJson(`${this.base}/stock/profile2?symbol=${symbol}&token=${this.apiKey}`),
+                this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`)
+              ]);
 
-            // News → headlines + fallback sentiment
-            let headlines: string[] = [];
-            let sentiment: number | undefined;
-            if (newsRaw.status === "fulfilled" && Array.isArray(newsRaw.value)) {
-              headlines = (newsRaw.value as Array<{ headline: string }>).slice(0, 5).map((n) => n.headline).filter(Boolean);
-              if (headlines.length > 0) sentiment = scoreHeadlines(headlines);
-            }
-
-            // Quote → volume
-            let volume: number | undefined;
-            if (quoteRaw.status === "fulfilled") {
-              const q = quoteRaw.value as Record<string, unknown>;
-              if (typeof q?.v === "number" && q.v > 0) volume = q.v;
-            }
-
-            // Analyst recommendations → 0–100 score + label + counts (blended by the cascade)
-            let analystBySource: Record<string, AnalystRatingDetail> | undefined;
-            if (recRaw.status === "fulfilled" && Array.isArray(recRaw.value) && (recRaw.value as Record<string, unknown>[]).length > 0) {
-              const latest = (recRaw.value as Record<string, unknown>[])[0];
-              const counts = {
-                strongBuy: num(latest.strongBuy),
-                buy: num(latest.buy),
-                hold: num(latest.hold),
-                sell: num(latest.sell),
-                strongSell: num(latest.strongSell)
-              };
-              const score = analystScoreFromCounts(counts);
-              if (score !== undefined) {
-                analystBySource = { [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), counts } };
+              // News → headlines + fallback sentiment
+              let headlines: string[] = [];
+              let sentiment: number | undefined;
+              if (newsRaw.status === "fulfilled" && Array.isArray(newsRaw.value)) {
+                headlines = (newsRaw.value as Array<{ headline: string }>).slice(0, 5).map((n) => n.headline).filter(Boolean);
+                if (headlines.length > 0) sentiment = scoreHeadlines(headlines);
               }
-            }
 
-            // Company profile → sector + industry + company name
-            let sector: string | undefined;
-            let industry: string | undefined;
-            let companyName: string | undefined;
-            if (profileRaw.status === "fulfilled") {
-              const profile = profileRaw.value as Record<string, unknown>;
-              if (profile?.finnhubIndustry) { sector = String(profile.finnhubIndustry); industry = String(profile.finnhubIndustry); }
-              if (profile?.sector) sector = String(profile.sector);
-              if (typeof profile?.name === "string" && profile.name.trim()) companyName = profile.name.trim();
-            }
+              // Quote → volume
+              let volume: number | undefined;
+              if (quoteRaw.status === "fulfilled") {
+                const q = quoteRaw.value as Record<string, unknown>;
+                if (typeof q?.v === "number" && q.v > 0) volume = q.v;
+              }
 
-            // Basic financials → P/E, dividend yield, EPS, average volume
-            let peRatio: number | undefined;
-            let dividendYield: number | undefined;
-            let eps: number | undefined;
-            let volumeFromMetric: number | undefined;
-            if (metricRaw.status === "fulfilled") {
-              const metric = (metricRaw.value as { metric?: Record<string, unknown> })?.metric ?? {};
-              const pe = metric.peBasicExclExtraTTM ?? metric.peTTM;
-              if (typeof pe === "number" && pe > 0) peRatio = pe;
-              const dy = metric.dividendYieldIndicatedAnnual ?? metric.dividendYieldAnnual;
-              if (typeof dy === "number" && dy >= 0) dividendYield = dy;
-              const epsVal = metric.epsBasicExclExtraItemsTTM ?? metric.epsAnnual;
-              if (typeof epsVal === "number") eps = epsVal;
-              // Average trading volume in millions (10-day avg preferred, fall back to 3-month).
-              const avgVolM = metric["10DayAverageTradingVolume"] ?? metric["3MonthAverageTradingVolume"];
-              if (typeof avgVolM === "number" && avgVolM > 0) volumeFromMetric = Math.round(avgVolM * 1_000_000);
-            }
+              // Analyst recommendations → 0–100 score + label + counts (blended by the cascade)
+              let analystBySource: Record<string, AnalystRatingDetail> | undefined;
+              if (recRaw.status === "fulfilled" && Array.isArray(recRaw.value) && (recRaw.value as Record<string, unknown>[]).length > 0) {
+                const latest = (recRaw.value as Record<string, unknown>[])[0];
+                const counts = {
+                  strongBuy: num(latest.strongBuy),
+                  buy: num(latest.buy),
+                  hold: num(latest.hold),
+                  sell: num(latest.sell),
+                  strongSell: num(latest.strongSell)
+                };
+                const score = analystScoreFromCounts(counts);
+                if (score !== undefined) {
+                  analystBySource = { [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), counts } };
+                }
+              }
 
-            // Prefer the current session volume; fall back to metric average when session volume is 0 (e.g. after hours).
-            const resolvedVolume = (volume && volume > 0 ? volume : undefined) ?? volumeFromMetric;
-            const data: SymbolEnrichment = {
-              ...(sentiment !== undefined && { sentiment }),
-              ...(headlines.length > 0 && { headlines }),
-              ...(peRatio !== undefined && { peRatio }),
-              ...(analystBySource !== undefined && { analystBySource }),
-              ...(sector !== undefined && { sector }),
-              ...(industry !== undefined && { industry }),
-              ...(companyName !== undefined && { companyName }),
-              ...(resolvedVolume !== undefined && { volume: resolvedVolume }),
-              ...(dividendYield !== undefined && { dividendYield }),
-              ...(eps !== undefined && { eps })
-            };
+              // Company profile → sector + industry + company name
+              let sector: string | undefined;
+              let industry: string | undefined;
+              let companyName: string | undefined;
+              if (profileRaw.status === "fulfilled") {
+                const profile = profileRaw.value as Record<string, unknown>;
+                if (profile?.finnhubIndustry) { sector = String(profile.finnhubIndustry); industry = String(profile.finnhubIndustry); }
+                if (profile?.sector) sector = String(profile.sector);
+                if (typeof profile?.name === "string" && profile.name.trim()) companyName = profile.name.trim();
+              }
 
-            const promises = [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw];
-            const allRejected = promises.every((p) => p.status === "rejected");
-            const hasTransientError = promises.some(
-              (p) => p.status === "rejected" && isTransientError(p.reason)
-            );
-            const isEmpty = Object.keys(data).length === 0;
+              // Basic financials → P/E, dividend yield, EPS, average volume
+              let peRatio: number | undefined;
+              let dividendYield: number | undefined;
+              let eps: number | undefined;
+              let volumeFromMetric: number | undefined;
+              if (metricRaw.status === "fulfilled") {
+                const metric = (metricRaw.value as { metric?: Record<string, unknown> })?.metric ?? {};
+                const pe = metric.peBasicExclExtraTTM ?? metric.peTTM;
+                if (typeof pe === "number" && pe > 0) peRatio = pe;
+                const dy = metric.dividendYieldIndicatedAnnual ?? metric.dividendYieldAnnual;
+                if (typeof dy === "number" && dy >= 0) dividendYield = dy;
+                const epsVal = metric.epsBasicExclExtraItemsTTM ?? metric.epsAnnual;
+                if (typeof epsVal === "number") eps = epsVal;
+                // Average trading volume in millions (10-day avg preferred, fall back to 3-month).
+                const avgVolM = metric["10DayAverageTradingVolume"] ?? metric["3MonthAverageTradingVolume"];
+                if (typeof avgVolM === "number" && avgVolM > 0) volumeFromMetric = Math.round(avgVolM * 1_000_000);
+              }
 
-            if (allRejected || hasTransientError || isEmpty) {
-              console.warn(
-                `[data-providers] Finnhub enrichment for ${symbol} skipped caching: ` +
-                `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
+              // Prefer the current session volume; fall back to metric average when session volume is 0 (e.g. after hours).
+              const resolvedVolume = (volume && volume > 0 ? volume : undefined) ?? volumeFromMetric;
+              const data: SymbolEnrichment = {
+                ...(sentiment !== undefined && { sentiment }),
+                ...(headlines.length > 0 && { headlines }),
+                ...(peRatio !== undefined && { peRatio }),
+                ...(analystBySource !== undefined && { analystBySource }),
+                ...(sector !== undefined && { sector }),
+                ...(industry !== undefined && { industry }),
+                ...(companyName !== undefined && { companyName }),
+                ...(resolvedVolume !== undefined && { volume: resolvedVolume }),
+                ...(dividendYield !== undefined && { dividendYield }),
+                ...(eps !== undefined && { eps })
+              };
+
+              const promises = [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw];
+              const allRejected = promises.every((p) => p.status === "rejected");
+              const hasTransientError = promises.some(
+                (p) => p.status === "rejected" && isTransientError(p.reason)
               );
-            } else {
-              writeEnrichmentCache(cacheKey, symbol, this.scope, this.userId, data, now + ttlMs());
+              const isEmpty = Object.keys(data).length === 0;
+
+              if (allRejected || hasTransientError || isEmpty) {
+                console.warn(
+                  `[data-providers] Finnhub enrichment for ${symbol} skipped caching: ` +
+                  `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
+                );
+              } else {
+                writeEnrichmentCache(cacheKey, symbol, this.scope, this.userId, data, now + ttlMs());
+              }
+              result[symbol] = data;
+            } catch {
+              result[symbol] = {}; // empty; later cascade tiers can still fill gaps.
             }
-            result[symbol] = data;
-          } catch {
-            result[symbol] = {}; // empty; later cascade tiers can still fill gaps.
-          }
-        })
-      );
+          })
+        );
+      }
     }
+
+    // ── /calendar/earnings fallback for daysToEarnings ──────────────────────────────────────
+    // Independent of the per-symbol loop above and of any per-symbol cache hit/miss for the REST
+    // of the Finnhub row: ONE market-wide call backed by a shared module-level cache (see the
+    // module doc comment above), applied to EVERY symbol in this batch still missing
+    // daysToEarnings — including a symbol just served from this provider's OWN per-symbol row
+    // cache, since that row predates this field and never had it written into it (mirrors the
+    // Alpha Vantage EARNINGS_CALENDAR fallback's same deliberate decoupling from its own row cache).
+    if (this.needsEarningsCalendar(normalized, context, result)) {
+      await this.ensureEarningsCalendar(now);
+      this.applyEarningsCalendar(normalized, context, now, result);
+    }
+
     return result;
   }
 
-  private async getJson(url: string): Promise<unknown> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-    try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json();
-    } finally {
-      clearTimeout(timeout);
+  /** True when at least one symbol in `symbols` is missing `daysToEarnings` AND a free upstream
+   *  hasn't already covered it (context.coveredFields) — the gate for whether it's worth even
+   *  checking/refreshing the shared calendar cache this call. */
+  private needsEarningsCalendar(
+    symbols: string[],
+    context: EnrichmentContext | undefined,
+    result: Record<string, SymbolEnrichment>
+  ): boolean {
+    return symbols.some((symbol) => this.symbolNeedsDaysToEarnings(symbol, context, result));
+  }
+
+  private symbolNeedsDaysToEarnings(
+    symbol: string,
+    context: EnrichmentContext | undefined,
+    result: Record<string, SymbolEnrichment>
+  ): boolean {
+    if (result[symbol]?.daysToEarnings !== undefined) return false;
+    if (context?.coveredFields?.[symbol]?.has("daysToEarnings")) return false;
+    return true;
+  }
+
+  /** Fills `daysToEarnings` from the shared market-wide calendar cache (never re-fetches — see
+   *  ensureEarningsCalendar) for every symbol that still needs it, without disturbing any other
+   *  field already present on `result[symbol]` (e.g. a per-symbol cache hit's companyName). */
+  private applyEarningsCalendar(
+    symbols: string[],
+    context: EnrichmentContext | undefined,
+    now: number,
+    result: Record<string, SymbolEnrichment>
+  ): void {
+    const bySymbol = finnhubEarningsCalendarCache?.bySymbol;
+    if (!bySymbol || bySymbol.size === 0) return;
+    for (const symbol of symbols) {
+      if (!this.symbolNeedsDaysToEarnings(symbol, context, result)) continue;
+      const reportDateMs = bySymbol.get(symbol);
+      if (reportDateMs === undefined) continue;
+      // Reuses alphaVantageDaysToEarnings's day-math (whole UTC calendar days, clamped, never
+      // fabricated for a past date) rather than re-implementing an equivalent — three sources now
+      // feed this SAME field (Yahoo/AV/Finnhub) and a subtly different rounding rule between them
+      // would make the countdown disagree depending on which one wins first-wins on a given day.
+      const daysToEarnings = alphaVantageDaysToEarnings(reportDateMs, now);
+      if (daysToEarnings === undefined) continue; // stale/past calendar entry — never fabricated
+      result[symbol] = { ...(result[symbol] ?? {}), daysToEarnings };
     }
+  }
+
+  /**
+   * Refreshes the shared market-wide earnings calendar at most once per
+   * FINNHUB_EARNINGS_CALENDAR_TTL_MS on success, or providerNegativeTtlMs() after a failed/
+   * unusable attempt, so a scan that calls enrich() many times per minute never dispatches more
+   * than ~1 of these per day. Unlike the AV fallback, there's no shared daily budget/key-pool to
+   * reserve from here — Finnhub's free tier is a generous 60/min (see the module doc comment
+   * above), so this instance's own apiKey/pacer (this.getJson) is all that's needed.
+   */
+  private async ensureEarningsCalendar(now: number): Promise<void> {
+    if (finnhubEarningsCalendarCache && finnhubEarningsCalendarCache.expiresAt > now) return;
+    try {
+      const from = new Date(now).toISOString().split("T")[0];
+      const to = new Date(now + FINNHUB_EARNINGS_CALENDAR_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split("T")[0];
+      // No `symbol=` param — the market-wide mode (see the module doc comment above) so this ONE
+      // call covers every symbol the cascade could ever ask about this TTL window, not just this batch.
+      const json = await this.getJson(`${this.base}/calendar/earnings?from=${from}&to=${to}&token=${this.apiKey}`);
+      if (looksLikeFinnhubEarningsCalendar(json)) {
+        finnhubEarningsCalendarCache = {
+          expiresAt: now + FINNHUB_EARNINGS_CALENDAR_TTL_MS,
+          bySymbol: parseFinnhubEarningsCalendar(json)
+        };
+      } else {
+        // Not the documented shape — an error page/HTML/unrecognized format change. Never
+        // guess-parse it. Keep whatever calendar we already had (a transient rejection shouldn't
+        // discard a still-useful snapshot) and back off before retrying sooner than the full TTL.
+        finnhubEarningsCalendarCache = {
+          expiresAt: now + providerNegativeTtlMs(),
+          bySymbol: finnhubEarningsCalendarCache?.bySymbol ?? new Map()
+        };
+      }
+    } catch {
+      finnhubEarningsCalendarCache = {
+        expiresAt: now + providerNegativeTtlMs(),
+        bySymbol: finnhubEarningsCalendarCache?.bySymbol ?? new Map()
+      };
+    }
+  }
+
+  private async getJson(url: string): Promise<unknown> {
+    // Finnhub's free tier is 60 req/min; the 5-wide symbol chunking above fires 5
+    // endpoints/symbol, so gate actual dispatch through the shared per-provider pacer
+    // (see provider-rate-limit.ts) instead of bursting 25-wide per chunk. The
+    // AbortController/timeout is armed INSIDE the pacer callback so the 6s HTTP timeout
+    // starts counting at actual dispatch time, not when this call joins the queue —
+    // otherwise queue wait eats into the timeout and every request dispatched after ~6s
+    // arrives already aborted.
+    const response = await withProviderLimit(this.name, async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+      try {
+        return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, apiKey: this.apiKey });
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
   }
 }
 
 // ── FMP stable API provider ───────────────────────────────────────────────────
-// Supplies P/E (ratios-ttm) and analyst consensus (grades-consensus).
-// Sector/industry/headlines are not available on the free plan.
+// Stable FMP company-data lane. Company profile + insider activity are always
+// requested for a cold symbol; ratios/analyst/targets remain coverage-aware.
 
 /** Opt-in: fetch FMP price-target-consensus (an extra call per symbol; not on every key tier). */
 export function fmpPriceTargetsEnabled(): boolean {
@@ -2101,6 +3274,8 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    // Owner 2026-08-04: never call FMP from this app (even if constructed in tests/scripts).
+    if (!isDirectVendorAccessAllowed("fmp")) return {};
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
@@ -2145,30 +3320,68 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
       } else misses.push(symbol);
     }
 
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
-      const chunk = misses.slice(i, i + CONCURRENCY);
+    if (misses.length === 0) return result;
+
+    // UNIFORM request quota (provider-rate-limit.ts RATE_QUOTAS): fmp = 290/min account-wide (Starter
+    // is 300/min; 290 leaves headroom). Unlike tiingo/twelvedata, FMP's per-symbol cost is VARIABLE —
+    // 2..5 requests depending on this symbol's skip flags — so we budget per symbol, not scan-uniform.
+    // Build a plan per miss (same skipFlagsFor + wantTargets formula the fetch path uses, so reservation
+    // == dispatch), admit the total, then greedily take a best-first prefix of WHOLE symbols and defer
+    // the rest best-effort (the cascade + shared 6h cache cover them; coverage accretes across scans).
+    const targetsEnabled = fmpPriceTargetsEnabled(); // read once per scan
+    const plans = misses.map((symbol) => {
+      const { skipPe, skipConsensus, skipTargets } = skipFlagsFor(symbol);
+      const wantTargets = targetsEnabled && !skipTargets;
+      const cost = callsPerSymbol("fmp", { skipPe, skipConsensus, wantTargets });
+      return { symbol, skipPe, skipConsensus, wantTargets, cost };
+    });
+    const credKey = await apiKeyFingerprint(this.apiKey);
+    const totalWanted = plans.reduce((n, p) => n + p.cost, 0);
+    const allowed = admitProviderRequests("fmp", credKey, totalWanted);
+    // Greedy best-first prefix walk: misses arrive best-first, so take whole symbols in order until the
+    // next one doesn't fit, then defer it AND everything after it (preserves priority; mirrors tiingo's
+    // slice tail). `remaining` after the walk is the sub-symbol leftover admit() over-reserved.
+    let remaining = allowed;
+    const toQuery: typeof plans = [];
+    for (const p of plans) {
+      if (p.cost <= remaining) { toQuery.push(p); remaining -= p.cost; }
+      else break;
+    }
+    refundProviderRequests("fmp", credKey, remaining); // hand back the sub-symbol remainder
+    for (const p of plans.slice(toQuery.length)) result[p.symbol] = {}; // deferred; not queried/cached this run
+    if (toQuery.length === 0) return result; // no minute budget left — best-effort only
+
+    for (let i = 0; i < toQuery.length; i += CONCURRENCY) {
+      const chunk = toQuery.slice(i, i + CONCURRENCY);
       await Promise.all(
-        chunk.map(async (symbol) => {
+        chunk.map(async (plan) => {
+          // Reuse the reserved plan flags (do NOT recompute) so dispatch == reservation exactly.
+          const { symbol, skipPe, skipConsensus, wantTargets } = plan;
           // Coverage hint (short-circuit only): when a free upstream (App A) already
           // supplied P/E, analyst consensus, or price targets for this symbol, skip the
-          // matching FMP SUB-call — but always keep fetching insider/senate, which App A
-          // never supplies, so nothing FMP uniquely provides is lost. (Same flags are
-          // applied to cache hits above.)
-          const { skipPe, skipConsensus, skipTargets } = skipFlagsFor(symbol);
-          // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
-          // and not on every key tier. When off, targets stay undefined and ride null downstream.
-          const wantTargets = fmpPriceTargetsEnabled() && !skipTargets;
-          const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw] = await Promise.allSettled([
+          // matching FMP SUB-call — but always keep fetching FMP profile + insider data.
+          // (Same flags are
+          // applied to cache hits above.) skipTargets is folded into wantTargets already.
+          const skipTargets = !wantTargets;
+          const [peRaw, consensusRaw, profileRaw, insiderRaw, targetRaw] = await Promise.allSettled([
             skipPe
               ? Promise.resolve(undefined)
-              : this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
+              : this.getJson(`${this.base}/ratios-ttm?symbol=${encodeURIComponent(symbol)}`),
             skipConsensus
               ? Promise.resolve(undefined)
-              : this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`),
-            this.getJson(`https://financialmodelingprep.com/api/v4/insider-trading?symbol=${symbol}&apikey=${this.apiKey}`, false),
-            this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`, false),
+              : this.getJson(`${this.base}/grades-consensus?symbol=${encodeURIComponent(symbol)}`),
+            this.getJson(`${this.base}/profile?symbol=${encodeURIComponent(symbol)}`),
+            this.getJson(
+              `${this.base}/insider-trading/search?symbol=${encodeURIComponent(symbol)}&page=0&limit=100`,
+              false,
+              [402, 403]
+            ),
             wantTargets
-              ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`, false)
+              ? this.getJson(
+                  `${this.base}/price-target-consensus?symbol=${encodeURIComponent(symbol)}`,
+                  false,
+                  [402, 403]
+                )
               : Promise.resolve(undefined)
             // NOTE: FMP does NOT provide short interest — there is no /short_interest (or equivalent)
             // endpoint (verified via FMP's API docs + official MCP surface, 2026-07). A second
@@ -2176,9 +3389,69 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           ]);
 
           let peRatio: number | undefined;
+          let pbRatio: number | undefined;
+          let debtToEquity: number | undefined;
+          let returnOnEquity: number | undefined;
+          let returnOnAssets: number | undefined;
+          let grossProfitMargin: number | undefined;
+          let ratiosDividendYield: number | undefined;
+          let peDate: string | undefined;
           if (peRaw.status === "fulfilled" && Array.isArray(peRaw.value)) {
-            const pe = Number((peRaw.value as Array<Record<string, unknown>>)[0]?.priceToEarningsRatioTTM);
-            if (Number.isFinite(pe) && pe > 0) peRatio = pe;
+            const row = (peRaw.value as Array<Record<string, unknown>>)[0];
+            const finite = (value: unknown) => {
+              const parsed = Number(value);
+              return Number.isFinite(parsed) ? parsed : undefined;
+            };
+            const percent = (value: unknown) => {
+              const parsed = finite(value);
+              return parsed === undefined ? undefined : Math.round(parsed * 10_000) / 100;
+            };
+            const pe = finite(row?.priceToEarningsRatioTTM);
+            const pb = finite(row?.priceToBookRatioTTM);
+            if (pe !== undefined && pe > 0) peRatio = pe;
+            if (pb !== undefined && pb > 0) pbRatio = pb;
+            debtToEquity = finite(row?.debtToEquityRatioTTM ?? row?.debtEquityRatioTTM);
+            returnOnEquity = percent(row?.returnOnEquityTTM);
+            returnOnAssets = percent(row?.returnOnAssetsTTM);
+            grossProfitMargin = percent(row?.grossProfitMarginTTM);
+            ratiosDividendYield = percent(row?.dividendYieldTTM);
+            if (typeof row?.date === "string") peDate = row.date;
+          }
+
+          // Stable company profile -> identity + durable operating/market facts. This
+          // replaces the duplicate per-symbol Senate call (Congress.Trade is the
+          // congressional system of record) without increasing the baseline call count.
+          let companyName: string | undefined;
+          let sector: string | undefined;
+          let industry: string | undefined;
+          let beta: number | undefined;
+          let dividendYield: number | undefined = ratiosDividendYield;
+          let fiftyTwoWeekHigh: number | undefined;
+          let fiftyTwoWeekLow: number | undefined;
+          if (profileRaw.status === "fulfilled" && Array.isArray(profileRaw.value)) {
+            const row = (profileRaw.value as Array<Record<string, unknown>>)[0];
+            if (row) {
+              const clean = (value: unknown) =>
+                typeof value === "string" && value.trim() ? value.trim() : undefined;
+              const finite = (value: unknown) => {
+                const parsed = Number(value);
+                return Number.isFinite(parsed) ? parsed : undefined;
+              };
+              companyName = clean(row.companyName);
+              sector = clean(row.sector);
+              industry = clean(row.industry);
+              beta = finite(row.beta);
+              const lastDividend = finite(row.lastDividend ?? row.lastDiv);
+              const profilePrice = finite(row.price);
+              if (lastDividend !== undefined && lastDividend >= 0 && profilePrice !== undefined && profilePrice > 0) {
+                dividendYield = Math.round((lastDividend / profilePrice) * 10_000) / 100;
+              }
+              const range = clean(row.range)?.match(/^\s*([\d.]+)\s*-\s*([\d.]+)\s*$/);
+              if (range) {
+                fiftyTwoWeekLow = finite(range[1]);
+                fiftyTwoWeekHigh = finite(range[2]);
+              }
+            }
           }
 
           // Analyst grades-consensus → 0–100 score + label + counts (blended by the cascade).
@@ -2208,7 +3481,9 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             let sells = 0;
             for (const trade of trades.slice(0, 100)) {
               const type = String(trade.transactionType || "").toLowerCase();
-              const acqDisp = String(trade.acquistionOrDisposition || "").toLowerCase();
+              const acqDisp = String(
+                trade.acquisitionOrDisposition ?? trade.acquistionOrDisposition ?? ""
+              ).toLowerCase();
               if (type.includes("buy") || type.includes("purchase") || acqDisp === "a") buys++;
               else if (type.includes("sell") || type.includes("sale") || acqDisp === "d") sells++;
             }
@@ -2216,18 +3491,6 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             if (total > 0) {
               insiderSentiment = Math.round((buys / total) * 100);
             }
-          }
-
-          let senateTrades: number | undefined;
-          if (senateRaw.status === "fulfilled" && Array.isArray(senateRaw.value)) {
-            const trades = senateRaw.value as Array<Record<string, unknown>>;
-            let net = 0;
-            for (const trade of trades.slice(0, 100)) {
-              const type = String(trade.type || "").toLowerCase();
-              if (type.includes("purchase")) net++;
-              else if (type.includes("sale")) net--;
-            }
-            if (trades.length > 0) senateTrades = net;
           }
 
           // Price-target-consensus → numeric targets. FMP stable shape:
@@ -2250,18 +3513,63 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             }
           }
 
+          const fieldDates: Partial<Record<keyof EnrichmentSources, string>> = {};
+          if (peDate) {
+            if (peRatio !== undefined) fieldDates.peRatio = peDate;
+            if (pbRatio !== undefined) fieldDates.pbRatio = peDate;
+            if (debtToEquity !== undefined) fieldDates.debtToEquity = peDate;
+            if (returnOnEquity !== undefined) fieldDates.returnOnEquity = peDate;
+            if (returnOnAssets !== undefined) fieldDates.returnOnAssets = peDate;
+            if (grossProfitMargin !== undefined) fieldDates.grossProfitMargin = peDate;
+            if (ratiosDividendYield !== undefined) fieldDates.dividendYield = peDate;
+          }
+
           const data: SymbolEnrichment = {
             ...(peRatio !== undefined && { peRatio }),
+            ...(pbRatio !== undefined && { pbRatio }),
+            ...(debtToEquity !== undefined && { debtToEquity }),
+            ...(returnOnEquity !== undefined && { returnOnEquity }),
+            ...(returnOnAssets !== undefined && { returnOnAssets }),
+            ...(grossProfitMargin !== undefined && { grossProfitMargin }),
             ...(analystBySource !== undefined && { analystBySource }),
+            ...(companyName !== undefined && { companyName }),
+            ...(sector !== undefined && { sector }),
+            ...(industry !== undefined && { industry }),
+            ...(beta !== undefined && { beta }),
+            ...(dividendYield !== undefined && { dividendYield }),
+            ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+            ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow }),
             ...(insiderSentiment !== undefined && { insiderSentiment }),
-            ...(senateTrades !== undefined && { senateTrades }),
             ...(targetMean !== undefined && { targetMean }),
             ...(targetHigh !== undefined && { targetHigh }),
             ...(targetLow !== undefined && { targetLow }),
-            ...(targetMedian !== undefined && { targetMedian })
+            ...(targetMedian !== undefined && { targetMedian }),
+            ...(Object.keys(fieldDates).length > 0 && { fieldDates })
           };
 
-          const promises = [peRaw, consensusRaw, insiderRaw, senateRaw];
+          // Breaker-skip refund: only the sub-calls we ACTUALLY dispatched count (skipped conditional
+          // slots are Promise.resolve(undefined) → "fulfilled", never a real request). When every
+          // dispatched sub-call rejected with CircuitOpenError the breaker threw before any request left
+          // the process — nothing was spent upstream, so hand back this symbol's reservation and don't
+          // cache. The per-service breaker gates all sub-calls of a symbol together, so a partial-symbol
+          // breaker skip can't occur. Mirrors tiingo's `if (breakerSkipped) refund(perSymbol)`.
+          const madeCalls = [
+            ...(skipPe ? [] : [peRaw]),
+            ...(skipConsensus ? [] : [consensusRaw]),
+            profileRaw,
+            insiderRaw,
+            ...(wantTargets ? [targetRaw] : [])
+          ];
+          const breakerSkipped = madeCalls.length > 0 && madeCalls.every(
+            (p) => p.status === "rejected" && p.reason instanceof CircuitOpenError
+          );
+          if (breakerSkipped) {
+            refundProviderRequests("fmp", credKey, plan.cost);
+            result[symbol] = data; // leave a miss to retry once the breaker closes; do NOT cache
+            return;
+          }
+
+          const promises = [peRaw, consensusRaw, profileRaw, insiderRaw];
           const allRejected = promises.every((p) => p.status === "rejected");
           const hasTransientError = promises.some((p) => p.status === "rejected" && isTransientError(p.reason));
           const isEmpty = Object.keys(data).length === 0;
@@ -2283,7 +3591,8 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
               );
             }
           } else {
-            writeEnrichmentCache("fmp", symbol, this.scope, this.userId, data, now + ttlMs());
+            // 14-day TTL to preserve hoarded FMP data and avoid 403s on the free tier.
+            writeEnrichmentCache("fmp", symbol, this.scope, this.userId, data, now + 14 * 24 * 60 * 60 * 1000);
           }
           result[symbol] = data;
         })
@@ -2293,22 +3602,90 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   private async getJson(url: string, logHealth = true, suppressStatuses?: number[]): Promise<unknown> {
+    const operation = (() => {
+      try {
+        return new URL(url).pathname.split("/").filter(Boolean).at(-1) ?? "request";
+      } catch {
+        return "request";
+      }
+    })();
+    const reservation = reserveProviderDispatch({
+      provider: "fmp",
+      operation: `enrichment-${operation}`,
+      credentialRef: await apiKeyFingerprint(this.apiKey),
+      userId: this.userId ?? "local",
+      units: 1,
+      estimatedCostUsd: 0,
+      maxEstimatedCostUsdPer24h: 0,
+      windows: (resolveProviderQuota("fmp") ?? []).map((window) => ({
+        maxUnits: window.maxRequests,
+        windowMs: window.windowMs
+      }))
+    });
+    if (!reservation.admitted) throw new Error(`FMP durable ${reservation.reason} reservation denied.`);
+    let dispatched = false;
+    let settled = false;
+    let classificationAttempted = false;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
       const response = await fetchWithRetry(
         url,
-        { cache: "no-store", signal: controller.signal },
+        {
+          cache: "no-store",
+          signal: controller.signal,
+          // Header authentication keeps the credential out of URLs, thrown
+          // errors, proxy logs, and upstream diagnostics.
+          headers: { apikey: this.apiKey }
+        },
         {
           service: this.name,
           keySource: this.keySource,
           userId: this.userId,
+          // retries: 0 — each of the up-to-5 endpoints reserves exactly one request in the quota above;
+          // a built-in 429 retry would emit a second UNCOUNTED call and blow past the 290/min reservation
+          // (headroom is only 10). Same rationale as tiingo/twelvedata's getJson.
+          retries: 0,
+          durableAttempt: {
+            onDispatch: () => {
+              markProviderDispatchStarted(reservation.attemptId);
+              dispatched = true;
+            },
+            onResponse: (received) => {
+              if (!received.ok) {
+                classificationAttempted = true;
+                settleProviderDispatch(reservation.attemptId, "failed", {
+                  outcomeCode: `http-${received.status}`
+                });
+                settled = true;
+              }
+            },
+            onTransportError: (error) => {
+              classificationAttempted = true;
+              settleProviderDispatch(reservation.attemptId, "failed", {
+                outcomeCode: error instanceof Error ? error.name : "transport-error"
+              });
+              settled = true;
+            }
+          },
           // An explicit suppress list wins; otherwise fall back to the old logHealth behavior (403 only).
           suppressHealthStatuses: suppressStatuses ?? (logHealth ? undefined : [403])
         }
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json();
+      const payload = await response.json();
+      classificationAttempted = true;
+      settleProviderDispatch(reservation.attemptId, "succeeded", {
+        outcomeCode: "validated-json"
+      });
+      settled = true;
+      return payload;
+    } catch (error) {
+      if (!dispatched) cancelUndispatchedProviderReservation(reservation.attemptId, "pre-dispatch-failure");
+      else if (!settled && !classificationAttempted) settleProviderDispatch(reservation.attemptId, "failed", {
+        outcomeCode: error instanceof SyntaxError ? "invalid-json" : "response-failure"
+      });
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -2385,7 +3762,7 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
             // empty row for the full TTL and suppress the cross-check until expiry. A 404 (no row for
             // this ticker) is a "fulfilled" empty result and DOES cache (a real, stable "no data").
             if (shortRaw.status === "fulfilled" && floatRaw.status === "fulfilled") {
-              writeEnrichmentCache("massive", symbol, this.scope, this.userId, data, now + massiveShortInterestTtlMs());
+              writeEnrichmentCache("massive", symbol, this.scope, this.userId, data, expiresAtRespectingMarketClose(new Date(now), massiveShortInterestTtlMs()));
             }
             result[symbol] = data;
           } catch {
@@ -2422,13 +3799,90 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
   }
 }
 
-// ── Alpha Vantage provider ───────────────────────────────────────────────────
+// ── ROIC.ai provider ──────────────────────────────────────────────────────────
 
-export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
-  readonly name = "alpha-vantage";
+/** Maps a ROIC.ai `/v2/company/profile/{sym}` row (snake_case) into SymbolEnrichment.
+ *  Ratios endpoint paths historically 404'd on free keys — profile alone still fills
+ *  company/sector/industry/dividend/short-interest/price when present. */
+export function parseRoicProfile(profile: unknown, now: number = Date.now()): SymbolEnrichment {
+  const p = (Array.isArray(profile) ? profile[0] : profile) as Record<string, unknown> | undefined;
+  if (!p || typeof p !== "object") return {};
+
+  const companyName = firstString(p, ["company_name", "companyName", "name"]);
+  const sector = firstString(p, ["sector"]);
+  const industry = firstString(p, ["industry"]);
+  const price = firstNumber(p, ["price"]);
+  const dividendYield = firstNumber(p, ["dividend_yield", "dividendYield"]);
+  const shortPercentOfFloat = firstNumber(p, [
+    "short_shares_outstanding_percentage",
+    "shortPercentOfFloat",
+    "short_percent_of_float"
+  ]);
+  const institutionOwnershipPct = firstNumber(p, [
+    "percentage_held_by_institutions",
+    "institutionOwnershipPct"
+  ]);
+
+  let daysToEarnings: number | undefined;
+  const earningsRaw = firstString(p, ["earnings_date", "earningsDate"]);
+  if (earningsRaw) {
+    const ts = Date.parse(earningsRaw);
+    if (Number.isFinite(ts) && ts > now) {
+      daysToEarnings = Math.max(0, Math.ceil((ts - now) / 86_400_000));
+    }
+  }
+
+  return {
+    ...(companyName !== undefined && { companyName }),
+    ...(sector !== undefined && { sector }),
+    ...(industry !== undefined && { industry }),
+    ...(price !== undefined && price > 0 && { price }),
+    ...(dividendYield !== undefined && dividendYield >= 0 && { dividendYield: normalizePercent(dividendYield) }),
+    ...(shortPercentOfFloat !== undefined && shortPercentOfFloat >= 0 && { shortPercentOfFloat: normalizePercent(shortPercentOfFloat) }),
+    ...(institutionOwnershipPct !== undefined && institutionOwnershipPct >= 0 && {
+      institutionOwnershipPct: normalizePercent(institutionOwnershipPct)
+    }),
+    ...(daysToEarnings !== undefined && { daysToEarnings })
+  };
+}
+
+export function parseRoicRatios(ratios: unknown): SymbolEnrichment {
+  const r = (Array.isArray(ratios) ? ratios[0] : ratios) as Record<string, unknown> | undefined;
+  if (!r || typeof r !== "object") return {};
+  const peRatio = firstNumber(r, ["peRatio", "pe", "pe_ratio"]);
+  const pbRatio = firstNumber(r, ["pbRatio", "pb", "pb_ratio", "priceToBook"]);
+  const eps = firstNumber(r, ["eps"]);
+  const returnOnEquity = firstNumber(r, ["roe", "returnOnEquity", "return_on_equity"]);
+  const debtToEquity = firstNumber(r, ["debtToEquity", "debt_to_equity"]);
+  return {
+    ...(peRatio !== undefined && peRatio > 0 && { peRatio }),
+    ...(pbRatio !== undefined && pbRatio > 0 && { pbRatio }),
+    ...(eps !== undefined && { eps }),
+    ...(returnOnEquity !== undefined && { returnOnEquity: normalizePercent(returnOnEquity) }),
+    ...(debtToEquity !== undefined && debtToEquity >= 0 && { debtToEquity })
+  };
+}
+
+export class RoicAiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "roic";
   readonly costTier = "paid" as const;
   readonly configured = true;
-  private readonly base = "https://www.alphavantage.co/query";
+  readonly suppliesFields = [
+    "companyName",
+    "sector",
+    "industry",
+    "price",
+    "dividendYield",
+    "shortPercentOfFloat",
+    "institutionOwnershipPct",
+    "daysToEarnings",
+    "peRatio",
+    "pbRatio",
+    "eps",
+    "returnOnEquity",
+    "debtToEquity"
+  ] as const;
+  private readonly base = "https://api.roic.ai/v2";
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;
 
@@ -2441,7 +3895,307 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
     this.keySource = keySource;
   }
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("roic", symbol, this.userId, consented, now);
+      if (cached) {
+        result[symbol] = cached.data;
+      } else {
+        misses.push(symbol);
+      }
+    }
+
+    if (misses.length === 0) return result;
+
+    const credKey = `${this.keySource}:${this.userId ?? ""}`;
+    // Profile is the reliable free-tier endpoint; ratios paths currently 404 — reserve 1/symbol
+    // for the profile call (ratios are best-effort and do not block admission).
+    const allowed = admitProviderRequests("roic", credKey, misses.length);
+    if (!allowed) return result;
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const covered = context?.coveredFields?.[symbol];
+            const needProfile =
+              !covered ||
+              !covered.has("companyName") ||
+              !covered.has("sector") ||
+              !covered.has("industry") ||
+              !covered.has("dividendYield") ||
+              !covered.has("shortPercentOfFloat") ||
+              !covered.has("price");
+            const needRatios =
+              !covered ||
+              !covered.has("peRatio") ||
+              !covered.has("pbRatio") ||
+              !covered.has("eps") ||
+              !covered.has("returnOnEquity") ||
+              !covered.has("debtToEquity");
+
+            const [profileRes, ratiosRes] = await Promise.allSettled([
+              needProfile
+                ? fetchWithRetry(
+                    `${this.base}/company/profile/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(this.apiKey)}`,
+                    {},
+                    { service: "roic", keySource: this.keySource, userId: this.userId, suppressHealthStatuses: [404, 429] }
+                  )
+                : Promise.resolve(undefined),
+              needRatios
+                ? fetchWithRetry(
+                    `${this.base}/financial-ratios/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(this.apiKey)}`,
+                    {},
+                    { service: "roic", keySource: this.keySource, userId: this.userId, retries: 0, suppressHealthStatuses: [404, 429] }
+                  )
+                : Promise.resolve(undefined),
+            ]);
+
+            const profile =
+              profileRes.status === "fulfilled" && profileRes.value?.ok
+                ? await profileRes.value.json()
+                : undefined;
+            const ratios =
+              ratiosRes.status === "fulfilled" && ratiosRes.value?.ok
+                ? await ratiosRes.value.json()
+                : undefined;
+
+            const item: SymbolEnrichment = {
+              ...parseRoicProfile(profile, now),
+              ...parseRoicRatios(ratios)
+            };
+
+            if (Object.keys(item).length > 0) {
+              result[symbol] = item;
+              // Raised from a 30-min TTL to the fundamentals-tier 6h norm (matches ttlMs() used by
+              // the other providers on this file) — ROIC profile/ratio data moves as slowly as any
+              // other fundamentals source, so the tighter TTL was just needless quota burn.
+              writeEnrichmentCache("roic", symbol, this.scope, this.userId, item, expiresAtRespectingMarketClose(new Date(now), ttlMs()));
+            }
+          } catch (err) {
+            console.warn(`[roic] failed enrichment for ${symbol}:`, err);
+          }
+        })
+      );
+    }
+
+    return result;
+  }
+}
+
+// ── Alpha Vantage provider ───────────────────────────────────────────────────
+
+// ── EARNINGS_CALENDAR fallback for `daysToEarnings` (corp-actions reallocation, 2026-08-02) ──
+// Live-verified against https://www.alphavantage.co/documentation/#earnings-calendar AND a real
+// call (`apikey=demo`) to the actual endpoint the same day: EARNINGS_CALENDAR is NOT premium (no
+// premium-label on its doc heading — unlike TIME_SERIES_DAILY_ADJUSTED/TIME_SERIES_INTRADAY,
+// which ARE premium-gated and stay out of scope; see docs/market-data-provider-pricing.md). It
+// returns CSV (never JSON) with header `symbol,name,reportDate,fiscalDateEnding,estimate,
+// currency,timeOfTheDay`. Critically, calling it WITHOUT a `symbol` param (AV's documented
+// default) returns the ENTIRE market's upcoming-earnings list in ONE call — a real 2026-08-02
+// pull with `horizon=3month` returned ~290KB / thousands of rows for a bare `demo` key — so this
+// fetches the whole market ONCE and matches symbols against it client-side, instead of spending
+// one of AV's ~23-25/day budget PER SYMBOL the way NEWS_SENTIMENT does. That keeps this feature's
+// incremental cost at ~1 call/day (see EARNINGS_CALENDAR_TTL_MS below), reserved out of the SAME
+// daily budget/key pool as NEWS_SENTIMENT via tryReserveAlphaVantageCalls/the pool (never a
+// second, uncounted quota).
+const EARNINGS_CALENDAR_TTL_MS = 24 * 60 * 60_000; // one authoritative market-wide pull/day is plenty
+interface AlphaVantageEarningsCalendarCache {
+  expiresAt: number;
+  bySymbol: Map<string, number>; // symbol -> earliest reportDate (epoch ms, UTC midnight)
+}
+let avEarningsCalendarCache: AlphaVantageEarningsCalendarCache | null = null;
+
+/** True when `text` starts with the documented EARNINGS_CALENDAR CSV header — the cheap way to
+ *  tell a real data pull apart from AV's quota/error text, which is NOT valid CSV in this shape
+ *  (confirmed live 2026-08-02: a demo-key call throttled by AV's own anti-abuse behavior returned
+ *  a non-CSV body for this same endpoint). Never guess-parse an unrecognized body. */
+export function looksLikeAlphaVantageEarningsCalendarCsv(text: string): boolean {
+  const firstLine = text.split(/\r?\n/, 1)[0]?.trim().toLowerCase() ?? "";
+  return firstLine.startsWith("symbol,name,reportdate");
+}
+
+/**
+ * Minimal CSV line splitter handling double-quoted fields with embedded commas — AV's company
+ * names sometimes have them (e.g. `"BOISE CASCADE, L.L.C."`, confirmed in a live 2026-08-02 pull)
+ * — and doubled-quote escapes (`""`). AV's calendar rows are always single physical lines; no
+ * embedded newlines inside a quoted field were observed.
+ */
+function splitAlphaVantageCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false;
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      fields.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  fields.push(cur);
+  return fields;
+}
+
+/**
+ * Parses AV's market-wide EARNINGS_CALENDAR CSV into symbol -> earliest reportDate (epoch ms).
+ * Returns an EMPTY map (never throws, never fabricates) for anything that doesn't match the
+ * documented header shape. When a symbol appears more than once (e.g. the horizon window spans
+ * two upcoming quarters), keeps the EARLIEST reportDate.
+ */
+export function parseAlphaVantageEarningsCalendar(csvText: string): Map<string, number> {
+  const bySymbol = new Map<string, number>();
+  if (!csvText || !looksLikeAlphaVantageEarningsCalendarCsv(csvText)) return bySymbol;
+  const lines = csvText.split(/\r?\n/).filter((l) => l.length > 0);
+  if (lines.length < 2) return bySymbol; // header only / empty
+  const header = splitAlphaVantageCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const symbolIdx = header.indexOf("symbol");
+  const dateIdx = header.indexOf("reportdate");
+  if (symbolIdx === -1 || dateIdx === -1) return bySymbol; // unexpected shape — never guess
+  for (let i = 1; i < lines.length; i++) {
+    const cols = splitAlphaVantageCsvLine(lines[i]);
+    const symbol = cols[symbolIdx]?.trim().toUpperCase();
+    const dateStr = cols[dateIdx]?.trim();
+    if (!symbol || !dateStr) continue;
+    const ts = Date.parse(`${dateStr}T00:00:00Z`);
+    if (!Number.isFinite(ts)) continue;
+    const existing = bySymbol.get(symbol);
+    if (existing === undefined || ts < existing) bySymbol.set(symbol, ts);
+  }
+  return bySymbol;
+}
+
+/** Whole calendar days from `now` to `reportDateMs` (UTC midnight-to-midnight), clamped so a
+ *  same-day report reads as 0 and a genuinely past date (stale calendar entry) returns undefined
+ *  — never a fabricated/placeholder value. Mirrors parseDaysToEarnings' day-granularity
+ *  convention (see its doc comment above) so the two sources feeding this SAME SymbolEnrichment
+ *  field can't disagree by an off-by-one rounding rule depending on which one wins first-wins. */
+export function alphaVantageDaysToEarnings(reportDateMs: number, now: number = Date.now()): number | undefined {
+  const nowMidnightUtc = Math.floor(now / 86_400_000) * 86_400_000;
+  const days = Math.round((reportDateMs - nowMidnightUtc) / 86_400_000);
+  return days >= 0 ? days : undefined;
+}
+
+export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "alpha-vantage";
+  readonly costTier = "paid" as const;
+  readonly configured = true;
+  // NEWS_SENTIMENT (sentiment/headlines) plus a market-wide EARNINGS_CALENDAR fallback for
+  // daysToEarnings (see enrich()/ensureEarningsCalendar below). Declaring this lets the cascade's
+  // paid (Wave B) coverage-gap targeting dispatch this scarce provider only for symbols still
+  // missing at least one of these three fields after the free wave runs (CascadingEnrichmentProvider.
+  // enrich's paidIndexes.map — see EnrichmentContext's doc comment) — the same mechanism the
+  // RapidAPI failover tier (AlphaVantageRapidApiEnrichmentProvider below) already relies on,
+  // reused here rather than inventing a second gating path.
+  readonly suppliesFields = ["sentiment", "headlines", "daysToEarnings"] as const;
+  private readonly base = "https://www.alphavantage.co/query";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+  private readonly pool: AlphaVantageKeyPool;
+  // Guards the all-exhausted health-log row so ONE enrich() call across many symbol chunks
+  // logs at most once, not once per chunk/symbol. Reset at the top of every enrich() call.
+  private allExhaustedLogged = false;
+
+  /**
+   * `apiKeyOrKeys` accepts either a single key — kept for backward compatibility with existing
+   * single-key call sites/tests (e.g. `new AlphaVantageEnrichmentProvider("test-key")`) — or the
+   * full key list from `resolveAlphaVantageKeyPool`. `pool` is injectable for tests (each test
+   * constructs and passes its own instance so exhaustion state never leaks between tests). When
+   * omitted (the production path, e.g. `getEnrichmentProvider()`), the pool is resolved via
+   * `getPoolForKeys(keys)` (alpha-vantage-key-pool.ts): a registry keyed by the exact SET of keys,
+   * so a per-user stored key and the scheduler's env-key pool get DISTINCT, coexisting pool
+   * instances instead of one construction's key set wholesale-replacing another's rotation/
+   * exhaustion state on a single shared singleton (see `getPoolForKeys`'s doc comment for the
+   * incident this replaces). Two constructions with the SAME key set still share one pool
+   * instance, so `AlphaVantageKeyPool.configure`'s idempotent value-diff (see its own doc comment)
+   * keeps exhaustion memory intact across the per-scan provider reconstruction.
+   */
+  constructor(
+    apiKeyOrKeys: string | string[],
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string,
+    pool?: AlphaVantageKeyPool
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+    const keys = Array.isArray(apiKeyOrKeys) ? apiKeyOrKeys : [apiKeyOrKeys];
+    if (pool) {
+      this.pool = pool;
+      this.pool.configure(keys);
+    } else {
+      this.pool = getPoolForKeys(keys);
+    }
+  }
+
+  /** Logs the "entire key pool exhausted" health row AT MOST ONCE per `enrich()` call — shared by
+   *  both the once-per-chunk gate and the per-symbol dispatch-time gate below (see their call
+   *  sites for why exhaustion can newly appear at either checkpoint). */
+  private logAllExhaustedOnce(): void {
+    if (this.allExhaustedLogged) return;
+    this.allExhaustedLogged = true;
+    const total = this.pool.size();
+    const now = Date.now();
+    // This is a daily-quota exhaustion, not a transient connection failure — it cannot clear
+    // before Alpha Vantage's own daily reset, so tell logApiHealth exactly when that is instead
+    // of letting the generic 6h cooldown re-alert the operator every 6h for one still-ongoing
+    // outage (confirmed prod pattern: 1:31 AM and 8:02 AM alerts for the same exhausted key pool).
+    const quotaResetAt = new Date(now + millisUntilNextAlphaVantageDailyReset(now)).toISOString();
+    logApiHealth({
+      service: this.name,
+      ok: false,
+      // Expected free-tier daily cap — soft so the lane is DEGRADED yellow, not red STOPPED.
+      soft: true,
+      errorText: `Alpha Vantage: entire key pool exhausted for today (${total}/${total} keys hit the 25/day cap)`,
+      keySource: this.keySource,
+      userId: this.userId,
+      quotaResetAt
+    });
+  }
+
+  /**
+   * Same alert semantics/plumbing as `logAllExhaustedOnce` (quotaResetAt, api_health_log row) —
+   * and shares its `allExhaustedLogged` once-per-`enrich()`-call guard, so whichever exhaustion
+   * signal fires first this call (this proactive self-imposed budget, or AV's own reactive
+   * daily-cap message) wins and the other never double-alerts the operator for one ongoing
+   * outage. Fired when `tryReserveAlphaVantageCalls` admits 0 while misses remain — i.e. this
+   * app's own persisted daily ceiling ran out, distinct from AV itself having rejected a key.
+   */
+  private logBudgetExhaustedOnce(): void {
+    if (this.allExhaustedLogged) return;
+    this.allExhaustedLogged = true;
+    const now = Date.now();
+    const quotaResetAt = new Date(now + millisUntilNextAlphaVantageDailyReset(now)).toISOString();
+    const budget = alphaVantageDailyCallBudget();
+    logApiHealth({
+      service: this.name,
+      ok: false,
+      soft: true,
+      errorText: `Alpha Vantage: proactive daily call budget exhausted (self-limited to ${budget}/day, PROVIDER_QUOTA_ALPHA_VANTAGE_PER_DAY)`,
+      keySource: this.keySource,
+      userId: this.userId,
+      quotaResetAt
+    });
+  }
+
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
@@ -2455,38 +4209,164 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
       else misses.push(symbol);
     }
 
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
-      const chunk = misses.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async (symbol) => {
-          try {
-            const url = `${this.base}?function=NEWS_SENTIMENT&tickers=${symbol}&apikey=${this.apiKey}`;
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 6000);
-            let payload: Record<string, unknown>;
-            try {
-              // deferSuccessLog: true — don't mark 200 healthy until body validates;
-              // Alpha Vantage embeds quota/error messages in HTTP 200 responses.
-              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
-              if (!response.ok) throw new Error(`HTTP ${response.status}`);
-              payload = await response.json() as Record<string, unknown>;
+    this.allExhaustedLogged = false;
 
-              if (payload && (payload.Note || payload.Information || payload["Error Message"])) {
-                const msg = String(payload.Note || payload.Information || payload["Error Message"]);
-                logApiHealth({ service: this.name, ok: false, errorText: `Alpha Vantage API warning/error: ${msg}`, keySource: this.keySource, userId: this.userId });
-                throw new Error(`Alpha Vantage API warning/error: ${msg}`);
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      // All-exhausted fast-fail, checked once per CONCURRENCY-sized chunk BEFORE dispatching any
+      // network call: a scan that finds every pool key already capped skips the remaining
+      // per-symbol fetch loop entirely instead of paying N x 1.1s of guaranteed-fail serial-paced
+      // latency and writing N near-identical api_health_log rows per scan cycle — the exact prod
+      // pattern this pool is meant to fix (2026-07-09 grounding: 9-19 wasted failures/minute).
+      if (this.pool.allExhausted(now)) {
+        this.logAllExhaustedOnce();
+        for (let j = i; j < misses.length; j++) result[misses[j]] = {};
+        break;
+      }
+
+      const chunk = misses.slice(i, i + CONCURRENCY);
+
+      // Proactive, self-imposed daily budget (default 23/day — see alpha-vantage-key-pool.ts),
+      // checked BEFORE dispatching any call in this chunk, same spot/shape as the reactive
+      // allExhausted() fast-fail above. AV's real 25/day cap is enforced per source IP, not per
+      // key, so this app self-limits below it instead of relying purely on AV's own rejection —
+      // see the module doc comment on tryReserveAlphaVantageCalls for why this must be persisted
+      // rather than an in-memory window. Symbols beyond the admitted count are left unenriched
+      // exactly like the allExhausted() skip path above (result[symbol] = {}).
+      const admitted = tryReserveAlphaVantageCalls(chunk.length, now);
+      if (admitted < chunk.length) {
+        for (let j = admitted; j < chunk.length; j++) result[chunk[j]] = {};
+        if (admitted === 0) {
+          this.logBudgetExhaustedOnce();
+          for (let j = i + chunk.length; j < misses.length; j++) result[misses[j]] = {};
+          break;
+        }
+      }
+      const dispatchable = chunk.slice(0, admitted);
+
+      await Promise.all(
+        dispatchable.map(async (symbol) => {
+          let dispatchKey: string | undefined;
+          let keyIndex = 0;
+          let dispatchedToNetwork = false;
+          try {
+            // deferSuccessLog: true — don't mark 200 healthy until body validates;
+            // Alpha Vantage embeds quota/error messages in HTTP 200 responses. Free tier is
+            // ~1 req/sec — gate through the shared per-provider pacer (provider-rate-limit.ts)
+            // so this stays strictly serial instead of bursting CONCURRENCY-wide. The pool's
+            // CURRENT key is read INSIDE the pacer callback (as close to actual dispatch time
+            // as possible, not captured once at construction) so a rotation triggered by an
+            // earlier symbol in the same chunk/batch is honored by later symbols once the
+            // strictly-serial pacer gets to them. The AbortController/timeout is armed in the
+            // same callback so the 6s HTTP timeout starts counting at actual dispatch time, not
+            // when this call joins the (strictly-serial, so potentially long) queue.
+            const response = await withProviderLimit(this.name, async () => {
+              // Per-symbol re-check AT DISPATCH TIME (in addition to the once-per-chunk gate
+              // above): every symbol in this CONCURRENCY-sized chunk starts together, but the
+              // alpha-vantage pacer forces effectively serial dispatch (concurrency: 1 in
+              // provider-rate-limit.ts's HARD_DEFAULTS) — so by the time THIS symbol's turn to
+              // actually reach the network arrives, an earlier symbol in the SAME chunk may have
+              // just exhausted the last live key. Without this check, `currentKey()` below would
+              // still happily hand back the earliest-to-recover (but still dead) key — it only
+              // returns undefined for an empty pool, never for an all-exhausted one — so every
+              // remaining queued symbol in the chunk would dispatch one more guaranteed-fail call.
+              if (this.pool.allExhausted(Date.now())) {
+                this.logAllExhaustedOnce();
+                throw new Error("Alpha Vantage: key pool exhausted");
               }
-              logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
-            } finally {
-              clearTimeout(timeout);
+              const current = this.pool.currentKey(Date.now());
+              // Shouldn't happen — the allExhausted() gate above already skips this chunk when
+              // every key is capped — but never dispatch a request with no key to attach.
+              if (!current) throw new Error("Alpha Vantage: key pool exhausted");
+              dispatchKey = current.key;
+              keyIndex = current.index;
+              const url = `${this.base}?function=NEWS_SENTIMENT&tickers=${symbol}&apikey=${dispatchKey}`;
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 6000);
+              try {
+                return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, {
+                  service: this.name,
+                  keySource: this.keySource,
+                  userId: this.userId,
+                  deferSuccessLog: true,
+                  apiKey: dispatchKey,
+                  // Exact-quota reserver (fetchWithRetry's own contract): a built-in 429 retry
+                  // would re-dispatch under the SAME daily-budget reservation — one reserved
+                  // call must never cost two real AV calls when the headroom is only 25-23=2.
+                  retries: 0,
+                  // Marks the reserved proactive-budget call (see tryReserveAlphaVantageCalls
+                  // above) as actually spent the instant it reaches the real network — fires
+                  // right before fetchWithRetry's own `fetch()` call, i.e. AFTER the per-
+                  // credential circuit breaker and the allExhausted()/no-key throws above have
+                  // already had their chance to skip this call without ever touching AV. The
+                  // catch block below refunds the reservation when this never flips true.
+                  // Passing durableAttempt makes this call self-recording: fetchWithRetry
+                  // suppresses its default recordProviderCall on both paths for durable
+                  // callers, so the usage-monitor call-volume row is written here instead
+                  // (exactly one per invocation, matching the pre-budget telemetry).
+                  durableAttempt: {
+                    onDispatch: () => { dispatchedToNetwork = true; },
+                    onResponse: (r) => {
+                      recordProviderCall(this.name, { ok: r.ok, keySource: this.keySource, userId: this.userId });
+                    },
+                    onTransportError: () => {
+                      recordProviderCall(this.name, { ok: false, keySource: this.keySource, userId: this.userId });
+                    },
+                  }
+                });
+              } finally {
+                clearTimeout(timeout);
+              }
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json() as Record<string, unknown>;
+            // Non-secret key-index tag for health-log visibility (see connections-health / the
+            // ops snapshot) — only shown once the pool actually has >1 key, so a single-key
+            // deployment's log text is byte-identical to before this feature existed.
+            const keyTag = this.pool.size() > 1 ? ` [key ${keyIndex + 1}/${this.pool.size()}]` : "";
+
+            if (payload && (payload.Note || payload.Information || payload["Error Message"])) {
+              const rawMsg = String(payload.Note || payload.Information || payload["Error Message"]);
+              // Alpha Vantage's own quota/error text has been observed echoing the caller's
+              // API key (e.g. referencing the request URL) — scrub every pool key (not just the
+              // one that dispatched this call) before it ever reaches api_health_log / the ops
+              // snapshot.
+              const msg = scrubProviderErrorTextForPool(rawMsg, this.pool.allKeys());
+              // Discriminator: ONLY the genuine daily-cap message ("detected your api key")
+              // means this key is dead until the next reset. The transient per-second burst
+              // warning shares the same "25 requests per day" upsell text but never contains
+              // that phrase — leave the sticky key in place for it; the existing 1.1s pacer is
+              // what actually addresses that case.
+              const isDailyCap = isAlphaVantageDailyCapMessage(rawMsg);
+              if (dispatchKey && isDailyCap) {
+                this.pool.markExhausted(dispatchKey);
+              }
+              // Daily-cap and rate-limit-shaped AV body errors are expected free-tier behavior,
+              // not a broken key — soft so five of them cannot paint the lane red STOPPED.
+              logApiHealth({
+                service: this.name,
+                ok: false,
+                soft: isDailyCap || /\b25 requests per day\b|rate limit|Thank you for using Alpha Vantage/i.test(rawMsg),
+                errorText: `Alpha Vantage API warning/error${keyTag}: ${msg}`,
+                keySource: this.keySource,
+                userId: this.userId,
+                ...(isDailyCap
+                  ? { quotaResetAt: new Date(Date.now() + millisUntilNextAlphaVantageDailyReset(Date.now())).toISOString() }
+                  : {})
+              });
+              throw new Error(`Alpha Vantage API warning/error: ${msg}`);
             }
+            // Same [key i/N] tag on the success row too (stored in errorText, the only free-form
+            // field logApiHealth offers) — for symmetry when diagnosing which key served a given
+            // request. logApiHealth only feeds api_health_error_patterns when !ok, so this never
+            // creates a spurious error-pattern row.
+            logApiHealth({ service: this.name, ok: true, errorText: keyTag ? `key ${keyIndex + 1}/${this.pool.size()}` : undefined, keySource: this.keySource, userId: this.userId });
 
             let sentiment: number | undefined;
             let headlines: string[] = [];
 
             if (payload && Array.isArray(payload.feed)) {
               const feed = payload.feed as Array<Record<string, unknown>>;
-              
+
               // Extract headlines
               headlines = feed
                 .slice(0, 5)
@@ -2496,7 +4376,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
               // Calculate average sentiment score from ticker_sentiment
               let scoreSum = 0;
               let scoreCount = 0;
-              
+
               for (const item of feed.slice(0, 20)) { // look at top 20 news items
                 const tickerArr = Array.isArray(item.ticker_sentiment) ? item.ticker_sentiment : [];
                 const targetTicker = tickerArr.find((t: { ticker?: string }) => t.ticker === symbol);
@@ -2525,8 +4405,770 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
             writeEnrichmentCache("alphavantage", symbol, this.scope, this.userId, data, now + ttlMs());
             result[symbol] = data;
           } catch {
+            // This symbol's reserved proactive-budget call never reached the real network
+            // (reactive key-pool exhaustion discovered mid-chunk, a per-credential circuit-
+            // breaker skip, or any other throw before dispatch) — give the budget back so a
+            // genuinely-skipped call doesn't silently shrink today's remaining quota. A call
+            // that DID reach the network (dispatchedToNetwork === true) is never refunded here,
+            // even though it went on to fail/error — it already spent AV's real quota.
+            if (!dispatchedToNetwork) refundAlphaVantageCalls(1);
             result[symbol] = {};
           }
+        })
+      );
+    }
+
+    // ── EARNINGS_CALENDAR fallback for daysToEarnings ───────────────────────────────────────
+    // Independent of the per-symbol NEWS_SENTIMENT loop above: this is ONE market-wide call (not
+    // one per miss), backed by a shared module-level cache, and only attempted when at least one
+    // symbol in THIS batch still lacks daysToEarnings after everything above (a free upstream's
+    // coverage hint, or this run's own cache/sentiment fetch, which never sets it) — see
+    // ensureEarningsCalendar's own TTL/budget gate for why repeated enrich() calls don't
+    // re-dispatch it every time.
+    if (this.needsEarningsCalendar(normalized, context, result)) {
+      await this.ensureEarningsCalendar(now);
+      this.applyEarningsCalendar(normalized, context, now, result);
+    }
+
+    return result;
+  }
+
+  /** True when at least one symbol in `symbols` is missing `daysToEarnings` AND a free upstream
+   *  hasn't already covered it (context.coveredFields) — the gate for whether it's worth even
+   *  checking/refreshing the shared calendar cache this call. */
+  private needsEarningsCalendar(
+    symbols: string[],
+    context: EnrichmentContext | undefined,
+    result: Record<string, SymbolEnrichment>
+  ): boolean {
+    return symbols.some((symbol) => this.symbolNeedsDaysToEarnings(symbol, context, result));
+  }
+
+  private symbolNeedsDaysToEarnings(
+    symbol: string,
+    context: EnrichmentContext | undefined,
+    result: Record<string, SymbolEnrichment>
+  ): boolean {
+    if (result[symbol]?.daysToEarnings !== undefined) return false;
+    if (context?.coveredFields?.[symbol]?.has("daysToEarnings")) return false;
+    return true;
+  }
+
+  /** Fills `daysToEarnings` from the shared market-wide calendar cache (never re-fetches — see
+   *  ensureEarningsCalendar) for every symbol that still needs it, without disturbing any other
+   *  field already present on `result[symbol]` (e.g. a NEWS_SENTIMENT cache hit's headlines). */
+  private applyEarningsCalendar(
+    symbols: string[],
+    context: EnrichmentContext | undefined,
+    now: number,
+    result: Record<string, SymbolEnrichment>
+  ): void {
+    const bySymbol = avEarningsCalendarCache?.bySymbol;
+    if (!bySymbol || bySymbol.size === 0) return;
+    for (const symbol of symbols) {
+      if (!this.symbolNeedsDaysToEarnings(symbol, context, result)) continue;
+      const reportDateMs = bySymbol.get(symbol);
+      if (reportDateMs === undefined) continue;
+      const daysToEarnings = alphaVantageDaysToEarnings(reportDateMs, now);
+      if (daysToEarnings === undefined) continue; // stale/past calendar entry — never fabricated
+      result[symbol] = { ...(result[symbol] ?? {}), daysToEarnings };
+    }
+  }
+
+  /**
+   * Refreshes the shared market-wide earnings calendar at most once per EARNINGS_CALENDAR_TTL_MS
+   * on success, or providerNegativeTtlMs() after a failed/unusable attempt (see the module doc
+   * comment above the cache declaration) — so a scan that calls enrich() many times per minute
+   * never dispatches more than ~1 of these per day. Reserves exactly 1 call from the SAME daily
+   * budget/key pool NEWS_SENTIMENT draws from (tryReserveAlphaVantageCalls/this.pool — never a
+   * second, uncounted quota), and shares the same genuine-daily-cap detection/rotation and
+   * secret-scrub-before-logging behavior as the NEWS_SENTIMENT path above, since both dispatch
+   * against the same AV key(s).
+   */
+  private async ensureEarningsCalendar(now: number): Promise<void> {
+    if (avEarningsCalendarCache && avEarningsCalendarCache.expiresAt > now) return;
+
+    if (this.pool.allExhausted(now)) {
+      this.logAllExhaustedOnce();
+      return;
+    }
+    const admitted = tryReserveAlphaVantageCalls(1, now);
+    if (admitted <= 0) {
+      this.logBudgetExhaustedOnce();
+      return;
+    }
+
+    let dispatchedToNetwork = false;
+    let dispatchKey: string | undefined;
+    let keyIndex = 0;
+    try {
+      const body = await withProviderLimit(this.name, async () => {
+        if (this.pool.allExhausted(Date.now())) {
+          this.logAllExhaustedOnce();
+          throw new Error("Alpha Vantage: key pool exhausted");
+        }
+        const current = this.pool.currentKey(Date.now());
+        if (!current) throw new Error("Alpha Vantage: key pool exhausted");
+        dispatchKey = current.key;
+        keyIndex = current.index;
+        // No `symbol=` param — the market-wide default (see the module doc comment above) so
+        // this ONE call covers every symbol the cascade could ever ask about, not just this batch.
+        const url = `${this.base}?function=EARNINGS_CALENDAR&horizon=3month&apikey=${dispatchKey}`;
+        const controller = new AbortController();
+        // Larger timeout than the per-symbol NEWS_SENTIMENT call (6s) — this is a market-wide
+        // pull (~hundreds of KB, live-verified 2026-08-02), not a single-symbol news feed.
+        const timeout = setTimeout(() => controller.abort(), 12_000);
+        try {
+          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, {
+            service: this.name,
+            keySource: this.keySource,
+            userId: this.userId,
+            deferSuccessLog: true,
+            apiKey: dispatchKey,
+            retries: 0,
+            durableAttempt: {
+              onDispatch: () => { dispatchedToNetwork = true; },
+              onResponse: (r) => {
+                recordProviderCall(this.name, { ok: r.ok, keySource: this.keySource, userId: this.userId });
+              },
+              onTransportError: () => {
+                recordProviderCall(this.name, { ok: false, keySource: this.keySource, userId: this.userId });
+              },
+            }
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return await response.text();
+        } finally {
+          clearTimeout(timeout);
+        }
+      });
+
+      if (looksLikeAlphaVantageEarningsCalendarCsv(body)) {
+        avEarningsCalendarCache = { expiresAt: now + EARNINGS_CALENDAR_TTL_MS, bySymbol: parseAlphaVantageEarningsCalendar(body) };
+        logApiHealth({ service: this.name, ok: true, errorText: "EARNINGS_CALENDAR refresh", keySource: this.keySource, userId: this.userId });
+      } else {
+        // Not the documented CSV shape — a quota/warning message or an unrecognized format
+        // change. Never guess-parse it. Keep whatever calendar data we already had (a transient
+        // rejection shouldn't discard yesterday's still-useful snapshot) and back off before
+        // retrying.
+        const msg = scrubProviderErrorTextForPool(body.slice(0, 500), this.pool.allKeys());
+        if (dispatchKey && isAlphaVantageDailyCapMessage(body)) {
+          this.pool.markExhausted(dispatchKey);
+        }
+        const keyTag = this.pool.size() > 1 ? ` [key ${keyIndex + 1}/${this.pool.size()}]` : "";
+        logApiHealth({
+          service: this.name,
+          ok: false,
+          errorText: `Alpha Vantage EARNINGS_CALENDAR warning/error${keyTag}: ${msg}`,
+          keySource: this.keySource,
+          userId: this.userId
+        });
+        avEarningsCalendarCache = { expiresAt: now + providerNegativeTtlMs(), bySymbol: avEarningsCalendarCache?.bySymbol ?? new Map() };
+      }
+    } catch {
+      // Same refund contract as the NEWS_SENTIMENT loop above: only give the reservation back
+      // when the call never actually reached the network.
+      if (!dispatchedToNetwork) refundAlphaVantageCalls(1);
+      avEarningsCalendarCache = { expiresAt: now + providerNegativeTtlMs(), bySymbol: avEarningsCalendarCache?.bySymbol ?? new Map() };
+    }
+  }
+}
+
+// ── RapidAPI-hosted enrichment providers (Mboum Finance, YH Finance 15, Alpha Vantage OVERVIEW) ──
+// Three additional REDUNDANT/FAILOVER sources for the SAME fundamentals fields the free keyless
+// Yahoo scrape (registered last, unconditionally, above) already fills reasonably well — added for
+// extra throughput against a single shared RapidAPI subscription (owner: "request as often as we
+// want almost" for data this app already gets elsewhere; NOT new fields — see the 2026-07-19
+// rollout note's MVP SCOPE). All three are dormant unless RAPIDAPI_KEY is set (resolveRapidApiKey /
+// getEnrichmentProvider), and each self-limits to a tiny persisted daily call budget
+// (rapidapi-quota.ts) far below its real plan cap: Mboum's and YH Finance 15's real limits are
+// MONTHLY (500/mo and 100/mo respectively, NOT daily), so a naive per-scan dispatch against a
+// normal watchlist could exhaust an entire MONTH's quota in one run — the persisted budget divides
+// that monthly cap into a small daily allowance instead. See rapidapi-quota.ts's module doc comment
+// for the exact numbers/provenance and the combined 900/day safety ceiling across all three.
+//
+// Ordering (see getEnrichmentProvider): all three are registered AFTER YahooFinanceEnrichmentProvider
+// — first-wins per field (takeScalar) means they only actually WIN a field the free scrape (and
+// every earlier paid tier) left empty for that symbol. This deliberately makes them a deep failover
+// tier rather than competing with the free source for fields it already covers well.
+
+export function resolveRapidApiKey(): string | undefined {
+  const key = (process.env.RAPIDAPI_KEY ?? "").trim();
+  return key || undefined;
+}
+
+/** Mboum Finance and YH Finance 15 (RapidAPI's own listing describes both as fronting the same
+ *  "steadyapi.com" backend) return every numeric quote field as a FORMATTED STRING ("$333.74",
+ *  "+0.48", "+0.14%", "63,407,283") rather than a JSON number. Strips "$", ",", "%", and a leading
+ *  "+" before parsing. Returns undefined for anything that doesn't parse to a finite number (never
+ *  fabricates 0). */
+export function parseRapidApiNumberString(raw: unknown): number | undefined {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : undefined;
+  if (typeof raw !== "string") return undefined;
+  const cleaned = raw.replace(/[$,%\s]/g, "").replace(/^\+/, "");
+  if (!cleaned) return undefined;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Shared RapidAPI HTTP helper: attaches the `x-rapidapi-host`/`x-rapidapi-key` headers every
+ * RapidAPI-hosted product requires (auth via HEADERS, never a query param — see SECRET HANDLING in
+ * the 2026-07-19 rollout note), goes through the same fetchWithRetry telemetry/circuit-breaker/
+ * health-log boundary every other provider in this file uses, and scrubs the key out of any error
+ * text via fetchWithRetry's own `apiKey` scrub param.
+ *
+ * `dispatchTracker`, when passed, is flipped true the instant the real network `fetch()` is about
+ * to fire (fetchWithRetry's `durableAttempt.onDispatch`) — mirroring AlphaVantageEnrichmentProvider's
+ * `dispatchedToNetwork` pattern above, so a caller's persisted-budget reservation is refunded ONLY
+ * when the call never actually reached the network (a circuit-breaker skip, etc.), never when it
+ * reached the network and merely failed/errored (that already spent real RapidAPI quota). Passing a
+ * tracker switches usage-monitor call-volume telemetry to durable self-recording (matching AV's
+ * `durableAttempt` contract — fetchWithRetry suppresses its own default `recordProviderCall` for any
+ * durable caller), so it is recorded explicitly in `onResponse`/`onTransportError` below instead.
+ */
+async function rapidApiGetJson(
+  host: string,
+  path: string,
+  apiKey: string,
+  options: { service: string; keySource: ApiKeySource; userId?: string; timeoutMs?: number },
+  dispatchTracker?: { dispatched: boolean }
+): Promise<unknown> {
+  // Gated through the shared per-provider pacer (provider-rate-limit.ts — see the
+  // mboum-finance/yahoo-finance15/alpha-vantage-rapidapi HARD_DEFAULTS entries) so requests stay
+  // within each host's real Basic-tier rate limit (1 req/sec for the steadyapi hosts, 5 req/min for
+  // Alpha Vantage's RapidAPI plan) instead of bursting CONCURRENCY-wide. The AbortController/timeout
+  // is armed INSIDE the pacer callback, same as YahooFinanceEnrichmentProvider/
+  // AlphaVantageEnrichmentProvider above, so the timeout starts counting at actual dispatch time,
+  // not when this call joins the (potentially long, strictly-serial) pacer queue.
+  const response = await withProviderLimit(options.service, async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 8000);
+    try {
+      return await fetchWithRetry(
+        `https://${host}${path}`,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+          headers: { "x-rapidapi-host": host, "x-rapidapi-key": apiKey }
+        },
+        {
+          service: options.service,
+          keySource: options.keySource,
+          userId: options.userId,
+          apiKey,
+          // retries: 0 — every caller here reserves exactly one unit via tryReserveRapidApiCalls
+          // before invoking this helper (see fetchWithRetry's own doc comment on this convention,
+          // and the AlphaVantageEnrichmentProvider call sites above). A built-in 429 retry would
+          // fire a second real fetch() against the RapidAPI host while the persisted daily budget
+          // only ever gets decremented by 1, silently letting a single admitted reservation spend
+          // two real upstream calls right when the scarce monthly-backed quota is closest to empty.
+          retries: 0,
+          // 403 = typically unsubscribed/not-entitled on RapidAPI hub (seeking-alpha delisted,
+          // plan gap). Soft so it degrades yellow instead of hard STOPPED; 401 stays hard (bad key).
+          softHealthStatuses: [403],
+          durableAttempt: {
+            onDispatch: () => { if (dispatchTracker) dispatchTracker.dispatched = true; },
+            onResponse: (r) => recordProviderCall(options.service, { ok: r.ok, keySource: options.keySource, userId: options.userId }),
+            onTransportError: () => recordProviderCall(options.service, { ok: false, keySource: options.keySource, userId: options.userId })
+          }
+        }
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return await response.json();
+}
+
+interface SteadyApiQuoteBody {
+  symbol?: string;
+  companyName?: string;
+  primaryData?: { lastSalePrice?: string; netChange?: string; percentageChange?: string; volume?: string };
+  keyStats?: { fiftyTwoWeekHighLow?: { value?: string } };
+}
+
+/** Parses the shared Mboum/YH-Finance-15 quote response shape into the price-family + companyName
+ *  + 52-week-range fields. Every numeric leaf is a formatted string — see parseRapidApiNumberString.
+ *  Tolerant of a missing/malformed body: returns {} rather than throwing, so one odd response never
+ *  takes down the whole symbol's enrichment. */
+export function parseSteadyApiQuote(payload: unknown): SymbolEnrichment {
+  const body = (payload as { body?: SteadyApiQuoteBody } | undefined)?.body;
+  if (!body) return {};
+  const pd = body.primaryData ?? {};
+  const price = parseRapidApiNumberString(pd.lastSalePrice);
+  const intradayChangePct = parseRapidApiNumberString(pd.percentageChange);
+  const volume = parseRapidApiNumberString(pd.volume);
+  const companyName = typeof body.companyName === "string" && body.companyName ? body.companyName : undefined;
+
+  let fiftyTwoWeekHigh: number | undefined;
+  let fiftyTwoWeekLow: number | undefined;
+  const range = body.keyStats?.fiftyTwoWeekHighLow?.value;
+  if (typeof range === "string" && range.includes("-")) {
+    // Split only on a "-" with whitespace on both sides (the observed separator, e.g.
+    // "201.50 - 334.68"), not on a bare "-" — a naive `split("-")` would mis-tokenize a
+    // negative bound (e.g. "-5.00 - 10.00") into 3 parts and silently misassign lo/hi.
+    const parts = range.split(/\s+-\s+/).map((part) => parseRapidApiNumberString(part.trim()));
+    const [lo, hi] = parts;
+    if (typeof lo === "number") fiftyTwoWeekLow = lo;
+    if (typeof hi === "number") fiftyTwoWeekHigh = hi;
+  }
+
+  return {
+    ...(price !== undefined && price > 0 && { price }),
+    ...(intradayChangePct !== undefined && { intradayChangePct }),
+    ...(volume !== undefined && volume >= 0 && { volume }),
+    ...(companyName !== undefined && { companyName }),
+    ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+    ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
+  };
+}
+
+/** Tolerant extraction of sector/industry from the "asset-profile" module response — the ONLY
+ *  module name confirmed live against either host (multi-module and other module names are
+ *  explicitly UNCONFIRMED — see the 2026-07-19 rollout note). The exact wrapper shape around
+ *  `{sector, industry}` was only directly observed on the YH Finance 15 host; this scans several
+ *  plausible nesting levels (bare, `.body`, `.assetProfile`, `.body.assetProfile`) rather than
+ *  assuming one, so a shape difference on the Mboum host degrades to {} instead of throwing. */
+export function parseSteadyApiAssetProfile(payload: unknown): SymbolEnrichment {
+  const root = payload as Record<string, unknown> | undefined;
+  if (!root) return {};
+  const bodyRec = root.body as Record<string, unknown> | undefined;
+  const candidates: Array<Record<string, unknown> | undefined> = [
+    root,
+    bodyRec,
+    root.assetProfile as Record<string, unknown> | undefined,
+    bodyRec?.assetProfile as Record<string, unknown> | undefined
+  ];
+  for (const candidate of candidates) {
+    const sector = typeof candidate?.sector === "string" && candidate.sector ? candidate.sector : undefined;
+    const industry = typeof candidate?.industry === "string" && candidate.industry ? candidate.industry : undefined;
+    if (sector || industry) {
+      return { ...(sector !== undefined && { sector }), ...(industry !== undefined && { industry }) };
+    }
+  }
+  return {};
+}
+
+/**
+ * Shared implementation for Mboum Finance and YH Finance 15 — RapidAPI's own listing describes both
+ * as fronting the same "steadyapi.com" backend, and their confirmed response shapes are byte-
+ * identical (2026-07-19 ground truth). Only the host, the "/api" path prefix (YH Finance 15 only),
+ * and the quote endpoint's symbol query-param name (`symbol` vs `ticker`) differ between the two.
+ *
+ * MVP-narrow by design: only the confirmed "quote" (price-family + companyName + 52-week range)
+ * and "asset-profile" (sector/industry) calls are made — up to 2 requests/symbol, EACH gated by
+ * this provider's own tiny persisted daily budget (rapidapi-quota.ts) before it dispatches. A
+ * symbol that doesn't clear the budget gate is simply left unenriched by this provider this run and
+ * falls through to whatever else in the cascade can fill it (the free Yahoo scrape, in practice).
+ */
+export class SteadyApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly configured = true;
+  readonly costTier = "paid" as const;
+  // Quota-scarce: YH Finance 15's Basic tier is 100 requests per MONTH (Mboum ~500/month), so this
+  // lane must only ever be spent on symbols the free keyless Yahoo scrape (and every earlier tier)
+  // left with a real gap. See the cascade's wave-two gate in CascadingEnrichmentProvider.enrich.
+  readonly quotaScarce = true;
+  // Exactly the keys parseSteadyApiQuote + parseSteadyApiAssetProfile can produce — keep in sync
+  // with those two parsers (a field omitted here would never trigger a call and would be lost).
+  readonly suppliesFields = [
+    "price",
+    "intradayChangePct",
+    "volume",
+    "companyName",
+    "fiftyTwoWeekHigh",
+    "fiftyTwoWeekLow",
+    "sector",
+    "industry"
+  ] as const;
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+  // Mboum's modules-endpoint param name is UNCONFIRMED (only Mboum's OWN quote endpoint —
+  // `symbol=` — and the sibling YH Finance host's modules endpoint — `ticker=` — were directly
+  // tested; see the rollout note). Rather than hardcode a guess, the first modules call this
+  // process makes tries `initialModuleParam`; if that response yields neither sector nor industry,
+  // it retries ONCE with the other param name and remembers whichever one worked for the rest of
+  // this process's lifetime (cheap to re-learn after a restart — this is a low-volume failover
+  // source, and `moduleParamConfirmed` skips the guesswork entirely on the host where it's known).
+  private resolvedModuleParam: string | undefined;
+
+  constructor(
+    readonly name: RapidApiProviderKey,
+    private readonly host: string,
+    private readonly apiPathPrefix: string,
+    private readonly quoteSymbolParam: string,
+    private readonly initialModuleParam: string,
+    private readonly moduleParamConfirmed: boolean,
+    private readonly apiKey: string,
+    keySource: ApiKeySource,
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache(this.name, symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(chunk.map((symbol) => this.enrichOne(symbol, context, now, result)));
+    }
+    return result;
+  }
+
+  private async enrichOne(
+    symbol: string,
+    context: EnrichmentContext | undefined,
+    now: number,
+    result: Record<string, SymbolEnrichment>
+  ): Promise<void> {
+    // Short-circuit coverage hint (see EnrichmentContext doc comment): only skip the modules call
+    // when a free upstream already filled BOTH fields it would supply. The quote call has no such
+    // skip — App A's coverage hint never includes price-family fields, so checking would be a no-op.
+    const covered = context?.coveredFields?.[symbol];
+    const wantModules = !covered || !covered.has("sector") || !covered.has("industry");
+
+    let quoteData: SymbolEnrichment = {};
+    const quoteAdmitted = tryReserveRapidApiCalls(this.name, 1, now) > 0;
+    if (quoteAdmitted) {
+      const tracker = { dispatched: false };
+      try {
+        const payload = await rapidApiGetJson(
+          this.host,
+          `${this.apiPathPrefix}/v1/markets/quote?${this.quoteSymbolParam}=${encodeURIComponent(symbol)}&type=STOCKS`,
+          this.apiKey,
+          { service: this.name, keySource: this.keySource, userId: this.userId },
+          tracker
+        );
+        quoteData = parseSteadyApiQuote(payload);
+      } catch {
+        if (!tracker.dispatched) refundRapidApiCalls(this.name, 1, now);
+      }
+    }
+
+    const moduleData = wantModules ? await this.fetchAssetProfile(symbol, now) : {};
+
+    const merged: SymbolEnrichment = { ...quoteData, ...moduleData };
+    if (Object.keys(merged).length > 0) {
+      writeEnrichmentCache(this.name, symbol, this.scope, this.userId, merged, now + ttlMs());
+    }
+    result[symbol] = merged;
+  }
+
+  private async fetchAssetProfile(symbol: string, now: number): Promise<SymbolEnrichment> {
+    const firstParam = this.resolvedModuleParam ?? this.initialModuleParam;
+    const params = this.moduleParamConfirmed || this.resolvedModuleParam
+      ? [firstParam]
+      : [firstParam, this.otherParam(firstParam)];
+
+    for (const param of params) {
+      const admitted = tryReserveRapidApiCalls(this.name, 1, now) > 0;
+      if (!admitted) return {};
+      const tracker = { dispatched: false };
+      try {
+        const payload = await rapidApiGetJson(
+          this.host,
+          `${this.apiPathPrefix}/v1/markets/stock/modules?${param}=${encodeURIComponent(symbol)}&module=asset-profile`,
+          this.apiKey,
+          { service: this.name, keySource: this.keySource, userId: this.userId },
+          tracker
+        );
+        const parsed = parseSteadyApiAssetProfile(payload);
+        if (Object.keys(parsed).length > 0) {
+          this.resolvedModuleParam = param; // remember what worked — skip the guesswork next time
+          return parsed;
+        }
+        // Reached the network and got a response, but neither sector nor industry was present —
+        // worth trying the other param name once on an unconfirmed host before giving up.
+      } catch {
+        if (!tracker.dispatched) refundRapidApiCalls(this.name, 1, now);
+      }
+    }
+    return {};
+  }
+
+  private otherParam(param: string): string {
+    return param === "symbol" ? "ticker" : "symbol";
+  }
+}
+
+function alphaVantageOverviewErrorMessage(payload: unknown): string | undefined {
+  const p = payload as Record<string, unknown> | undefined;
+  if (!p) return undefined;
+  const raw = p.Note || p.Information || p["Error Message"];
+  return typeof raw === "string" && raw ? raw : undefined;
+}
+
+function avOverviewNumber(raw: unknown): number | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === "None" || trimmed === "-") return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function avOverviewString(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  return trimmed && trimmed !== "None" ? trimmed : undefined;
+}
+
+/**
+ * Maps Alpha Vantage's OVERVIEW response into EXISTING SymbolEnrichment fundamentals fields ONLY
+ * (owner instruction: no new schema fields this pass) — restricted to fields whose scale AV's
+ * documented schema makes unambiguous, cross-checked against how YahooFinanceEnrichmentProvider
+ * already stores the SAME field so the two sources stay unit-consistent under first-wins merging:
+ *   - dividendYield: AV's `DividendYield` is a decimal fraction (e.g. "0.0068"), same convention as
+ *     Yahoo's `trailingAnnualDividendYield` — converted to percentage points (*100), matching Yahoo.
+ *   - epsGrowth: AV's `QuarterlyEarningsGrowthYOY` is also a decimal fraction, but
+ *     YahooFinanceEnrichmentProvider stores its `epsGrowth` as the RAW fraction with NO *100
+ *     conversion (see `fetchSymbol` above) — mirrored here unconverted so the two sources can't
+ *     disagree by a factor of 100 depending on which one wins first-wins for a given symbol.
+ * Deliberately SKIPS a few OVERVIEW fields that would otherwise map onto existing SymbolEnrichment
+ * properties:
+ *   - PercentInstitutions → institutionOwnershipPct: AV's documented scale for this field could not
+ *     be confirmed (unlike Yahoo's institutionOwnership, an unambiguous 0-1 fraction) — mapping it
+ *     on an unverified assumption risks silently reporting institutional ownership off by 100x.
+ *     Left unmapped until confirmed against a real response.
+ *   - ReturnOnEquityTTM/ReturnOnAssetsTTM/AnalystTargetPrice: OVERVIEW does supply these, but they're
+ *     outside the MVP field list this pass targets — kept out to hold the surface area to what was
+ *     actually scoped, not because AV lacks them.
+ *   - shortPercentOfFloat/debtToEquity/fcfYield/daysToEarnings: OVERVIEW has no equivalent field at
+ *     all (no short-interest, no leverage ratio, no FCF, no calendar) — never fabricated.
+ */
+export function parseAlphaVantageOverview(payload: Record<string, unknown>): SymbolEnrichment {
+  const peRatio = avOverviewNumber(payload.PERatio);
+  const dividendYieldRaw = avOverviewNumber(payload.DividendYield);
+  const eps = avOverviewNumber(payload.EPS);
+  const sector = avOverviewString(payload.Sector);
+  const industry = avOverviewString(payload.Industry);
+  const pbRatio = avOverviewNumber(payload.PriceToBookRatio);
+  const beta = avOverviewNumber(payload.Beta);
+  const fiftyTwoWeekHigh = avOverviewNumber(payload["52WeekHigh"]);
+  const fiftyTwoWeekLow = avOverviewNumber(payload["52WeekLow"]);
+  const epsGrowthRaw = avOverviewNumber(payload.QuarterlyEarningsGrowthYOY);
+
+  const strongBuy = avOverviewNumber(payload.AnalystRatingStrongBuy);
+  const buy = avOverviewNumber(payload.AnalystRatingBuy);
+  const hold = avOverviewNumber(payload.AnalystRatingHold);
+  const sell = avOverviewNumber(payload.AnalystRatingSell);
+  const strongSell = avOverviewNumber(payload.AnalystRatingStrongSell);
+  let analystBySource: Record<string, AnalystRatingDetail> | undefined;
+  if ([strongBuy, buy, hold, sell, strongSell].some((v) => typeof v === "number")) {
+    const counts = { strongBuy: strongBuy ?? 0, buy: buy ?? 0, hold: hold ?? 0, sell: sell ?? 0, strongSell: strongSell ?? 0 };
+    const score = analystScoreFromCounts(counts);
+    if (score !== undefined) {
+      analystBySource = { "alpha-vantage-rapidapi": { score: Math.round(score), label: labelFromAnalystScore(score), counts } };
+    }
+  }
+
+  return {
+    ...(peRatio !== undefined && peRatio > 0 && { peRatio }),
+    ...(dividendYieldRaw !== undefined && dividendYieldRaw >= 0 && { dividendYield: Math.round(dividendYieldRaw * 10000) / 100 }),
+    ...(eps !== undefined && { eps }),
+    ...(sector !== undefined && { sector }),
+    ...(industry !== undefined && { industry }),
+    ...(pbRatio !== undefined && pbRatio > 0 && { pbRatio }),
+    ...(beta !== undefined && { beta }),
+    ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+    ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow }),
+    ...(epsGrowthRaw !== undefined && { epsGrowth: epsGrowthRaw }),
+    ...(analystBySource !== undefined && { analystBySource })
+  };
+}
+
+/**
+ * Parse Alpha Vantage NEWS_SENTIMENT feed (native or RapidAPI — byte-identical shape) into
+ * sentiment 0–100 + up to 5 headlines. Shared by the RapidAPI failover lane.
+ */
+export function parseAlphaVantageNewsSentiment(
+  payload: Record<string, unknown>,
+  symbol: string
+): Pick<SymbolEnrichment, "sentiment" | "headlines"> {
+  if (!payload || !Array.isArray(payload.feed)) return {};
+  const feed = payload.feed as Array<Record<string, unknown>>;
+  const headlines = feed
+    .slice(0, 5)
+    .map((item) => (typeof item.title === "string" ? item.title.trim() : ""))
+    .filter(Boolean);
+
+  let scoreSum = 0;
+  let scoreCount = 0;
+  for (const item of feed.slice(0, 20)) {
+    const tickerArr = Array.isArray(item.ticker_sentiment) ? item.ticker_sentiment : [];
+    const targetTicker = tickerArr.find((t: { ticker?: string }) => t.ticker === symbol);
+    if (targetTicker && typeof targetTicker.ticker_sentiment_score === "string") {
+      const score = Number(targetTicker.ticker_sentiment_score);
+      if (Number.isFinite(score)) {
+        scoreSum += score;
+        scoreCount++;
+      }
+    } else if (typeof item.overall_sentiment_score === "number" && Number.isFinite(item.overall_sentiment_score)) {
+      // Fallback when ticker_sentiment is absent (some RapidAPI responses only carry overall).
+      scoreSum += item.overall_sentiment_score;
+      scoreCount++;
+    }
+  }
+
+  const sentiment =
+    scoreCount > 0
+      ? Math.max(0, Math.min(100, Math.round(50 + (scoreSum / scoreCount) * 100)))
+      : undefined;
+
+  return {
+    ...(sentiment !== undefined && { sentiment }),
+    ...(headlines.length > 0 && { headlines })
+  };
+}
+
+/**
+ * Alpha Vantage via RapidAPI (host alpha-vantage.p.rapidapi.com) — a DIFFERENT credential/transport
+ * from the native AlphaVantageEnrichmentProvider above (query-param `apikey=`, own key pool, 25/day
+ * native per-source-IP cap). This lane authenticates via the x-rapidapi-host/x-rapidapi-key headers
+ * instead, and its real quota shape is a flat 500/day (RapidAPI dashboard, owner-confirmed) + 5
+ * req/min — nothing like the native key-pool's daily cap, so it gets its OWN persisted budget
+ * (rapidapi-quota.ts) rather than sharing tryReserveAlphaVantageCalls. Confirmed byte-identical JSON
+ * shape to native (2026-07-19 ground truth). Wires OVERVIEW (fundamentals) plus NEWS_SENTIMENT
+ * (headlines/sentiment) when the coveredFields hint still shows those gaps — so Alpaca/Yahoo news
+ * winners do not burn this quota.
+ */
+export class AlphaVantageRapidApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "alpha-vantage-rapidapi";
+  readonly costTier = "paid" as const;
+  readonly configured = true;
+  // Quota-scarce (500/day shared against the 900/day combined ceiling) — gated into the cascade's
+  // second wave so it is never spent on a symbol every field it supplies is already filled for.
+  readonly quotaScarce = true;
+  // Keep in sync with parseAlphaVantageOverview + parseAlphaVantageNewsSentiment.
+  readonly suppliesFields = [
+    "peRatio",
+    "dividendYield",
+    "eps",
+    "sector",
+    "industry",
+    "pbRatio",
+    "beta",
+    "fiftyTwoWeekHigh",
+    "fiftyTwoWeekLow",
+    "epsGrowth",
+    "analystBySource",
+    "sentiment",
+    "headlines"
+  ] as const;
+  private readonly host = "alpha-vantage.p.rapidapi.com";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(private readonly apiKey: string, keySource: ApiKeySource = "env", private readonly userId?: string) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache(this.name, symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    const overviewFields = [
+      "peRatio", "dividendYield", "eps", "sector", "industry", "pbRatio", "beta",
+      "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "epsGrowth", "analystBySource"
+    ] as const;
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          const covered = context?.coveredFields?.[symbol];
+          const needOverview = !covered || overviewFields.some((f) => !covered.has(f));
+          const needNews = !covered || !covered.has("sentiment") || !covered.has("headlines");
+          if (!needOverview && !needNews) {
+            result[symbol] = {};
+            return;
+          }
+
+          const merged: SymbolEnrichment = {};
+
+          if (needOverview) {
+            const admitted = tryReserveRapidApiCalls("alpha-vantage-rapidapi", 1, now) > 0;
+            if (admitted) {
+              const tracker = { dispatched: false };
+              try {
+                const payload = await rapidApiGetJson(
+                  this.host,
+                  `/query?function=OVERVIEW&symbol=${encodeURIComponent(symbol)}`,
+                  this.apiKey,
+                  { service: this.name, keySource: this.keySource, userId: this.userId },
+                  tracker
+                );
+                const errorMessage = alphaVantageOverviewErrorMessage(payload);
+                if (errorMessage) {
+                  logApiHealth({
+                    service: this.name,
+                    ok: false,
+                    errorText: scrubProviderErrorText(`Alpha Vantage (RapidAPI) API warning/error: ${errorMessage}`, this.apiKey),
+                    keySource: this.keySource,
+                    userId: this.userId
+                  });
+                  throw new Error("Alpha Vantage (RapidAPI) API warning/error");
+                }
+                Object.assign(merged, parseAlphaVantageOverview(payload as Record<string, unknown>));
+              } catch {
+                if (!tracker.dispatched) refundRapidApiCalls("alpha-vantage-rapidapi", 1, now);
+              }
+            }
+          }
+
+          if (needNews) {
+            const admitted = tryReserveRapidApiCalls("alpha-vantage-rapidapi", 1, now) > 0;
+            if (admitted) {
+              const tracker = { dispatched: false };
+              try {
+                const payload = await rapidApiGetJson(
+                  this.host,
+                  `/query?function=NEWS_SENTIMENT&tickers=${encodeURIComponent(symbol)}&limit=50`,
+                  this.apiKey,
+                  { service: this.name, keySource: this.keySource, userId: this.userId },
+                  tracker
+                );
+                if (payload && typeof payload === "object") {
+                  const errMsg = alphaVantageOverviewErrorMessage(payload);
+                  if (errMsg) throw new Error(errMsg);
+                  Object.assign(merged, parseAlphaVantageNewsSentiment(payload as Record<string, unknown>, symbol));
+                }
+              } catch {
+                if (!tracker.dispatched) refundRapidApiCalls("alpha-vantage-rapidapi", 1, now);
+              }
+            }
+          }
+
+          if (Object.keys(merged).length > 0) {
+            writeEnrichmentCache(this.name, symbol, this.scope, this.userId, merged, now + ttlMs());
+          }
+          result[symbol] = merged;
         })
       );
     }
@@ -2598,6 +5240,8 @@ export function scoreHeadlines(headlines: string[]): number {
 export function clearEnrichmentCache(): void {
   cache.clear();
   yfCreds = null;
+  avEarningsCalendarCache = null;
+  finnhubEarningsCalendarCache = null;
 }
 
 export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvider {
@@ -2707,152 +5351,6 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
   }
 }
 
-// ── Intrinio provider ─────────────────────────────────────────────────────────
-// Real-time delayed quotes + company fundamentals from Intrinio v2 API.
-// 14-day trial covers prices/realtime, companies, and data_point endpoints.
-
-export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
-  readonly name = "intrinio";
-  readonly costTier = "paid" as const;
-  readonly configured = true;
-  private readonly base = "https://api-v2.intrinio.com";
-  private readonly scope: CacheScope;
-  private readonly keySource: ApiKeySource;
-
-  constructor(
-    private readonly apiKey: string,
-    keySource: ApiKeySource = "env",
-    private readonly userId?: string
-  ) {
-    this.scope = cacheScopeForKeySource(keySource, userId);
-    this.keySource = keySource;
-  }
-
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
-    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
-    if (normalized.length === 0) return {};
-
-    const now = Date.now();
-    const consented = hasDataPoolConsent(this.userId ?? "local");
-    const result: Record<string, SymbolEnrichment> = {};
-    const misses: string[] = [];
-
-    for (const symbol of normalized) {
-      const cached = readEnrichmentCache("intrinio", symbol, this.userId, consented, now);
-      if (cached) result[symbol] = cached.data;
-      else misses.push(symbol);
-    }
-
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
-      const chunk = misses.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async (symbol) => {
-          try {
-            const k = this.apiKey;
-            const [realtimeRaw, companyRaw, peRaw, epsRaw, divRaw, hiRaw, loRaw] = await Promise.allSettled([
-              this.getJson(`${this.base}/securities/${symbol}/prices/realtime?api_key=${k}`),
-              this.getJson(`${this.base}/companies/${symbol}?api_key=${k}`),
-              this.getJson(`${this.base}/securities/${symbol}/data_point/pe_ratio?api_key=${k}`),
-              this.getJson(`${this.base}/securities/${symbol}/data_point/eps_basic?api_key=${k}`),
-              this.getJson(`${this.base}/securities/${symbol}/data_point/dividend_yield?api_key=${k}`),
-              this.getJson(`${this.base}/securities/${symbol}/data_point/52_week_high?api_key=${k}`),
-              this.getJson(`${this.base}/securities/${symbol}/data_point/52_week_low?api_key=${k}`)
-            ]);
-
-            let price: number | undefined;
-            let bid: number | undefined;
-            let ask: number | undefined;
-            let volume: number | undefined;
-            let intradayChangePct: number | undefined;
-            let asOf: string | undefined;
-
-            if (realtimeRaw.status === "fulfilled" && realtimeRaw.value && typeof realtimeRaw.value === "object") {
-              const rt = realtimeRaw.value as Record<string, unknown>;
-              const last = firstNumber(rt, ["last_price", "close_price", "adj_close_price"]);
-              if (last && last > 0) price = last;
-              const b = firstNumber(rt, ["bid_price"]);
-              if (b && b > 0) bid = b;
-              const a = firstNumber(rt, ["ask_price"]);
-              if (a && a > 0) ask = a;
-              const v = firstNumber(rt, ["market_volume", "exchange_volume"]);
-              if (v && v > 0) volume = v;
-              const chg = firstNumber(rt, ["change_percent"]);
-              if (typeof chg === "number") intradayChangePct = chg;
-              if (typeof rt.last_time === "string") asOf = rt.last_time;
-            }
-
-            let companyName: string | undefined;
-            let sector: string | undefined;
-            let industry: string | undefined;
-
-            if (companyRaw.status === "fulfilled" && companyRaw.value && typeof companyRaw.value === "object") {
-              const co = companyRaw.value as Record<string, unknown>;
-              companyName = firstString(co, ["name", "legal_name"]);
-              // Intrinio nests sector/industry differently depending on plan
-              sector = firstString(co, ["sector"]);
-              if (!sector && co.industry_template && typeof co.industry_template === "object") {
-                sector = firstString(co.industry_template as Record<string, unknown>, ["sector", "name"]);
-              }
-              industry = firstString(co, ["industry_category"]);
-            }
-
-            const peRatio = peRaw.status === "fulfilled" && typeof peRaw.value === "number" && peRaw.value > 0 ? peRaw.value : undefined;
-            const eps = epsRaw.status === "fulfilled" && typeof epsRaw.value === "number" ? epsRaw.value : undefined;
-            let dividendYield: number | undefined;
-            if (divRaw.status === "fulfilled" && typeof divRaw.value === "number" && divRaw.value >= 0) {
-              dividendYield = divRaw.value <= 1 ? normalizePercent(divRaw.value) : divRaw.value;
-            }
-            const fiftyTwoWeekHigh = hiRaw.status === "fulfilled" && typeof hiRaw.value === "number" && hiRaw.value > 0 ? hiRaw.value : undefined;
-            const fiftyTwoWeekLow = loRaw.status === "fulfilled" && typeof loRaw.value === "number" && loRaw.value > 0 ? loRaw.value : undefined;
-
-            const data: SymbolEnrichment = {
-              ...(price !== undefined && { price }),
-              ...(bid !== undefined && { bid }),
-              ...(ask !== undefined && { ask }),
-              ...(volume !== undefined && { volume }),
-              ...(intradayChangePct !== undefined && { intradayChangePct }),
-              ...(asOf !== undefined && { asOf }),
-              ...(companyName !== undefined && { companyName }),
-              ...(sector !== undefined && { sector }),
-              ...(industry !== undefined && { industry }),
-              ...(peRatio !== undefined && { peRatio }),
-              ...(eps !== undefined && { eps }),
-              ...(dividendYield !== undefined && { dividendYield }),
-              ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
-              ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
-            };
-
-            const allRejected = [realtimeRaw, companyRaw, peRaw, epsRaw, divRaw, hiRaw, loRaw].every((p) => p.status === "rejected");
-            const hasTransientErr = [realtimeRaw, companyRaw, peRaw, epsRaw, divRaw, hiRaw, loRaw].some(
-              (p) => p.status === "rejected" && isTransientError(p.reason)
-            );
-
-            if (!allRejected && !hasTransientErr && Object.keys(data).length > 0) {
-              writeEnrichmentCache("intrinio", symbol, this.scope, this.userId, data, now + ttlMs());
-            }
-            result[symbol] = data;
-          } catch {
-            result[symbol] = {};
-          }
-        })
-      );
-    }
-    return result;
-  }
-
-  private async getJson(url: string): Promise<unknown> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json();
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-}
-
 // ── Tiingo provider ───────────────────────────────────────────────────────────
 // Free plan: IEX real-time quotes, ticker meta (company name), and news.
 
@@ -2881,25 +5379,53 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
 
+    // Namespace the cache by news-drop mode: a TIINGO_DROP_NEWS row has no headlines/sentiment, so it
+    // must NOT be served once the flag is turned back off (mirrors finnhub's "finnhub-norec" keying).
+    const dropNews = flagEnabled(process.env.TIINGO_DROP_NEWS);
+    const cacheKey = dropNews ? "tiingo-nonews" : "tiingo";
+
     for (const symbol of normalized) {
-      const cached = readEnrichmentCache("tiingo", symbol, this.userId, consented, now);
+      const cached = readEnrichmentCache(cacheKey, symbol, this.userId, consented, now);
       if (cached) result[symbol] = cached.data;
       else misses.push(symbol);
     }
 
     const headers = { "Authorization": `Token ${this.apiKey}`, "Accept": "application/json" };
+    if (misses.length === 0) return result;
 
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
-      const chunk = misses.slice(i, i + CONCURRENCY);
+    // UNIFORM request quota (provider-rate-limit.ts RATE_QUOTAS): tiingo = 50/hour + 1000/day, and each
+    // symbol costs `perSymbol` requests (iex + daily [+ news]). admit() returns how many REQUESTS fit
+    // right now; we query floor(that / perSymbol) best-first symbols and defer the rest best-effort.
+    // Scan-size-agnostic + per-credential; never stalls. (Owner's Tiingo dashboard showed hourly at
+    // -10/50 — an unpaced 30-symbol scan fires ~90 requests and 403s.)
+    const perSymbol = callsPerSymbol("tiingo", { dropExtra: dropNews });
+    const credKey = await apiKeyFingerprint(this.apiKey);
+    const allowedRequests = admitProviderRequests("tiingo", credKey, misses.length * perSymbol);
+    const symbolsAllowed = Math.floor(allowedRequests / perSymbol);
+    // admit() budgets in REQUESTS but we only dispatch whole symbols — hand back the partial remainder
+    // (e.g. 50/hour leaves 2 after 16×3) so those phantom reservations don't drain the daily window or
+    // block the last symbols of a later scan.
+    refundProviderRequests("tiingo", credKey, allowedRequests - symbolsAllowed * perSymbol);
+    const toQuery = misses.slice(0, symbolsAllowed);
+    for (const symbol of misses.slice(symbolsAllowed)) result[symbol] = {}; // deferred; not queried this run
+    if (toQuery.length === 0) return result; // no hourly budget left — best-effort only
+    const negativeCache = (symbol: string) => {
+      writeEnrichmentCache(cacheKey, symbol, this.scope, this.userId, {}, now + providerNegativeTtlMs());
+      result[symbol] = {};
+    };
+
+    for (let i = 0; i < toQuery.length; i += CONCURRENCY) {
+      const chunk = toQuery.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
           try {
             const ticker = symbol.toLowerCase();
-            const [iexRaw, metaRaw, newsRaw] = await Promise.allSettled([
+            const tiingoCalls = [
               this.getJson(`https://api.tiingo.com/iex/${ticker}?token=${this.apiKey}`, headers),
-              this.getJson(`https://api.tiingo.com/tiingo/daily/${ticker}?token=${this.apiKey}`, headers),
-              this.getJson(`https://api.tiingo.com/tiingo/news?tickers=${ticker}&limit=5&token=${this.apiKey}`, headers)
-            ]);
+              this.getJson(`https://api.tiingo.com/tiingo/daily/${ticker}?token=${this.apiKey}`, headers)
+            ];
+            if (!dropNews) tiingoCalls.push(this.getJson(`https://api.tiingo.com/tiingo/news?tickers=${ticker}&limit=5&token=${this.apiKey}`, headers));
+            const [iexRaw, metaRaw, newsRaw = { status: "rejected" as const, reason: new Error("news skipped") }] = await Promise.allSettled(tiingoCalls);
 
             let price: number | undefined;
             let bid: number | undefined;
@@ -2953,15 +5479,29 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
               ...(sentiment !== undefined && { sentiment })
             };
 
-            const allRejected = [iexRaw, metaRaw, newsRaw].every((p) => p.status === "rejected");
-            const hasTransientErr = [iexRaw, metaRaw, newsRaw].some(
+            // Only the calls we actually made count (news is a synthetic "rejected" when dropped).
+            const madeCalls = dropNews ? [iexRaw, metaRaw] : [iexRaw, metaRaw, newsRaw];
+            const allRejected = madeCalls.every((p) => p.status === "rejected");
+            const hasTransientErr = madeCalls.some(
               (p) => p.status === "rejected" && isTransientError(p.reason)
+            );
+            // The circuit breaker throws BEFORE any request is sent, so a breaker-skipped symbol never
+            // touched the upstream — refund its quota reservation and never negative-cache it.
+            const breakerSkipped = allRejected && madeCalls.some(
+              (p) => p.status === "rejected" && p.reason instanceof CircuitOpenError
             );
 
             if (!allRejected && !hasTransientErr && Object.keys(data).length > 0) {
-              writeEnrichmentCache("tiingo", symbol, this.scope, this.userId, data, now + ttlMs());
+              writeEnrichmentCache(cacheKey, symbol, this.scope, this.userId, data, now + ttlMs());
+              result[symbol] = data;
+            } else if (!allRejected && !hasTransientErr) {
+              negativeCache(symbol); // provider RESPONDED with no usable data — rotate out; don't burn budget
+            } else {
+              // All sub-calls FAILED (transient 429/5xx, a 401/403 credential/plan error, or a breaker
+              // skip). Don't poison the cache — leave the symbol a miss to retry once the issue clears.
+              if (breakerSkipped) refundProviderRequests("tiingo", credKey, perSymbol);
+              result[symbol] = data;
             }
-            result[symbol] = data;
           } catch {
             result[symbol] = {};
           }
@@ -2975,7 +5515,9 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers }, { service: this.name, keySource: this.keySource, userId: this.userId });
+      // retries: 0 — the quota reserves exactly one request per endpoint, so a built-in 429 retry
+      // would emit a second uncounted call and re-break the 50/hour cap this gate enforces.
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers }, { service: this.name, keySource: this.keySource, userId: this.userId, retries: 0, suppressHealthStatuses: [404] });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -3021,25 +5563,56 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
 
     if (misses.length === 0) return result;
 
-    // Batch all misses in one request (Twelve Data supports comma-separated symbols).
-    // Chunk at 120 symbols (API limit) in case the scan is very large.
-    const BATCH_SIZE = 120;
-    for (let i = 0; i < misses.length; i += BATCH_SIZE) {
-      const batch = misses.slice(i, i + BATCH_SIZE);
+    // Free-tier CREDIT budget, not symbol count, is the real ceiling: Twelve Data's /quote endpoint
+    // charges ONE credit PER SYMBOL in a comma-separated batch, and the free Basic tier allows only
+    // ~8 credits/minute. The old code sent up to 120 symbols in a single call = 120 credits at once,
+    // which instantly 429s the whole call (observed: 100% failure in prod). So cap a call to at most
+    // `creditsPerMin` symbols (default 8) and make exactly ONE call per enrich() covering the
+    // highest-priority misses (the scan passes candidates best-first). The per-provider pacer
+    // (provider-rate-limit.ts, twelvedata default now 1 call / 60s) then keeps concurrent-account
+    // scans from stacking past the per-minute credit budget. Symbols beyond the budget are left
+    // best-effort — the enrichment cascade fills them from other providers and the shared cache
+    // covers repeats, so coverage accretes across the hourly scans instead of failing outright.
+    // UNIFORM request quota (provider-rate-limit.ts RATE_QUOTAS): twelvedata = 8 credits/min + 800/day,
+    // 1 credit per symbol. admit() returns how many fit RIGHT NOW under both windows — scan-size-agnostic
+    // (works for any number of tickers) and per-credential — and the rest defer best-effort (the cascade
+    // + shared cache cover them; coverage accretes across scans). Never blocks/stalls the scan.
+    const credKey = await apiKeyFingerprint(this.apiKey);
+    const symbolsAllowed = admitProviderRequests(this.name, credKey, misses.length);
+    const toQuery = misses.slice(0, symbolsAllowed);
+    const skipped = misses.length - toQuery.length;
+    for (const symbol of misses.slice(symbolsAllowed)) result[symbol] = {}; // deferred; not queried this run
+    if (toQuery.length === 0) return result; // no budget left this window — best-effort only
+    if (skipped > 0) {
+      // Deliberately NOT a logApiHealth(ok:true) row: that would inflate the success ratio and keep
+      // the circuit breaker from ever seeing a genuinely dead Twelve Data lane. Debug-only; the real
+      // call's ok/fail is logged below.
+      console.debug(`[data-providers] TwelveData quota: queried ${toQuery.length}/${misses.length} symbols (${skipped} deferred this scan)`);
+    }
+    for (const batch of [toQuery]) {
       try {
         const url = `https://api.twelvedata.com/quote?symbol=${batch.join(",")}&apikey=${this.apiKey}&country=US`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        let raw: unknown;
-        try {
-          // deferSuccessLog: true — Twelve Data embeds errors in HTTP 200 responses
-        // (e.g. {"status":"error","message":"Invalid API key"}); log only after body validates.
-          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          raw = await response.json();
-        } finally {
-          clearTimeout(timeout);
-        }
+        // `batch` is already capped to the per-minute credit budget above, so this single request
+        // costs at most that many credits. The pacer (provider-rate-limit.ts, twelvedata = 60s
+        // serial) spaces successive calls a full minute apart so concurrent-account scans can't sum
+        // past the budget. The AbortController/timeout is armed INSIDE the pacer callback so the 10s
+        // HTTP timeout starts counting at actual dispatch time, not when this call joins the
+        // (strictly-serial) queue — otherwise queue wait eats into the timeout.
+        const response = await withProviderLimit(this.name, async () => {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 10000);
+          try {
+            // deferSuccessLog: true — Twelve Data embeds errors in HTTP 200 responses
+            // (e.g. {"status":"error","message":"Invalid API key"}); log only after body validates.
+            // retries: 0 — the quota reserved exactly one batch call; a 429 retry would spend a second,
+            // uncounted round of credits and re-break the per-minute budget this gate enforces.
+            return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true, retries: 0 });
+          } finally {
+            clearTimeout(timeout);
+          }
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const raw: unknown = await response.json();
 
         if (!raw || typeof raw !== "object") continue;
 
@@ -3055,7 +5628,6 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           logApiHealth({ service: this.name, ok: false, errorText: `TwelveData API error: ${msg}`, keySource: this.keySource, userId: this.userId });
           continue;
         }
-        logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         if (typeof rawObj.symbol === "string") {
           // Single-symbol response
           quoteMap[rawObj.symbol as string] = rawObj;
@@ -3067,12 +5639,40 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           }
         }
 
+        // Short negative-cache for a symbol Twelve Data returned NO usable data for (not in the
+        // response, an error row, or all-empty fields). Without this it would stay at the FRONT of
+        // `misses` every scan and permanently starve lower-ranked symbols of the tiny credit budget
+        // (they'd be deferred forever). A short TTL rotates it out for a few scans so others get a
+        // turn; it's per-provider so other providers still enrich the symbol.
+        const negativeCache = (symbol: string) => {
+          writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, {}, now + providerNegativeTtlMs());
+          result[symbol] = {};
+        };
+        // Tracked across the batch so an ALL-transient batch (mis-sized credit budget, upstream
+        // outage) can be flagged below — the ok:true logged above only reflects the outer HTTP
+        // 200/JSON-parse success, not whether any embedded per-symbol data was actually usable.
+        let anyUsableSymbolData = false;
+        let anyEmbeddedTransientError = false;
         for (const symbol of batch) {
           const q = quoteMap[symbol];
-          if (!q) continue;
-          // Skip error responses
+          if (!q) {
+            negativeCache(symbol); // Twelve Data didn't return this symbol at all
+            continue;
+          }
+          // Skip error responses. A per-symbol code of 429 (rate limit) or 5xx (upstream hiccup) is
+          // TRANSIENT, not "this symbol has no data" — same convention as the whole-request error path
+          // above (continues without caching) and the App A provider's transportError flag. Negative-
+          // caching it would suppress a high-priority symbol for the full negative TTL over a condition
+          // that clears on its own. Permanent rows (400/403 plan-restricted/404 not-found, or an error
+          // with no code) still rotate out via the negative cache so they don't starve the credit budget.
           if (q.code || q.status === "error" || q.message) {
-            result[symbol] = {};
+            const code = Number(q.code);
+            if (code === 429 || code >= 500) {
+              result[symbol] = {}; // transient — retry next scan, no cache write
+              anyEmbeddedTransientError = true;
+            } else {
+              negativeCache(symbol);
+            }
             continue;
           }
 
@@ -3109,11 +5709,37 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
 
           if (Object.keys(data).length > 0) {
             writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, data, now + ttlMs());
+            result[symbol] = data;
+            anyUsableSymbolData = true;
+          } else {
+            negativeCache(symbol); // returned a row but no usable fields — rotate it out briefly
           }
-          result[symbol] = data;
+        }
+
+        // Log exactly ONE health row for this batch, deferred until after per-symbol validation. If the
+        // whole batch surfaced embedded transient errors (429/5xx inside the HTTP 200 body) and produced
+        // NO usable symbol data, log only the failure — logging ok:true here (reflecting only the outer
+        // HTTP/JSON success) AND ok:false below for the same batch would pair them up, and getLaneHealth's
+        // circuit breaker trips only when the LAST 5 rows are all failures: alternating success/failure
+        // rows for repeated all-transient batches would never reach that state, defeating the point of
+        // this health signal. A partial batch (at least one usable symbol) still logs ok:true.
+        if (!anyUsableSymbolData && anyEmbeddedTransientError) {
+          logApiHealth({
+            service: this.name,
+            ok: false,
+            errorText: "TwelveData batch: no usable symbol data, embedded transient error(s) (429/5xx) in HTTP 200 body",
+            keySource: this.keySource,
+            userId: this.userId
+          });
+        } else {
+          logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         }
       } catch (err) {
-        if (isTransientError(err)) {
+        // A tripped circuit breaker throws before any request is sent, so the batch's admitted credits
+        // never reached Twelve Data — hand them back so the breaker cooldown doesn't also drain the
+        // local per-minute/day budget and keep the lane deferred after it half-opens.
+        if (err instanceof CircuitOpenError) refundProviderRequests(this.name, credKey, batch.length);
+        else if (isTransientError(err)) {
           console.warn("[data-providers] TwelveData transient error:", err instanceof Error ? err.message : err);
         }
         for (const symbol of batch) {
@@ -3126,11 +5752,11 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
   }
 }
 
-// ── SEC EDGAR XBRL company-facts provider (keyless, default-OFF) ─────────────
+// ── SEC EDGAR XBRL company-facts provider (keyless, DEFAULT ON) ──────────────
 // Fills debtToEquity from authoritative SEC 10-K filings via the public
 // companyfacts API (https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json).
 // Polite 300 ms inter-symbol delay per SEC fair-access guidance.
-// Enable with: SEC_XBRL_ENRICHMENT_ENABLED=on
+// Disable with: SEC_XBRL_ENRICHMENT_ENABLED=0
 
 const SEC_XBRL_TTL_MS = 24 * 60 * 60_000; // 24h — filings move slowly
 const SEC_XBRL_DELAY_MS = 300; // polite inter-request delay
@@ -3151,7 +5777,7 @@ const secXbrlInFlight = new Set<string>();
 /** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity (from debt-specific concepts).
  *  EPS is intentionally NOT returned — see the note below (annual SEC EPS ≠ TTM).
  *  Pure function — no I/O. Safe to call with any unknown input; never throws. */
-export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
+export function parseCompanyFacts(json: unknown): { debtToEquity?: number; revenueGrowth?: number } {
   try {
     if (!json || typeof json !== "object") return {};
     const root = json as Record<string, unknown>;
@@ -3161,7 +5787,7 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
     if (!gaap || typeof gaap !== "object") return {};
     const concepts = gaap as Record<string, unknown>;
 
-    type Fact = { end: string; val: number; form?: string; filed?: string };
+    type Fact = { start?: string; end: string; val: number; form?: string; filed?: string };
 
     // Helper: extract entries array for a concept + unit (keeping form + filed date).
     function getEntries(concept: string, unit: string): Fact[] {
@@ -3181,6 +5807,7 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
         const form = typeof r.form === "string" ? r.form : undefined;
         if (!form || !SEC_XBRL_PERIODIC_FORMS.has(form)) continue;
         out.push({
+          start: typeof r.start === "string" ? r.start : undefined,
           end: r.end,
           val: r.val,
           form,
@@ -3297,7 +5924,47 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
       }
     }
 
-    return debtToEquity !== undefined ? { debtToEquity } : {};
+    // ── revenueGrowth: fiscal-year-over-fiscal-year % change from full-year 10-K revenue facts ──
+    // Restricted to true ANNUAL-duration entries (350–380 day span) tagged on a 10-K/10-K/A so a
+    // same-concept quarterly or YTD-cumulative duration (XBRL tags both under the identical concept
+    // name, distinguished only by start/end) can never be mistaken for the full fiscal year — that
+    // ambiguity is why this stays annual-only rather than attempting a TTM figure from quarterly facts.
+    // Free-tier best-effort: SEC-XBRL sits after FMP/roic in the cascade, so this only matters for
+    // symbols neither paid provider covered; one fiscal year's growth is a reasonable free stand-in for
+    // the TTM figure a paid provider would supply.
+    function annualEntries(concept: string): Fact[] {
+      return getEntries(concept, "USD").filter((e) => {
+        if (e.form !== "10-K" && e.form !== "10-K/A") return false;
+        if (!e.start) return false;
+        const days = (Date.parse(e.end) - Date.parse(e.start)) / 86_400_000;
+        return Number.isFinite(days) && days >= 350 && days <= 380;
+      });
+    }
+    let revenueGrowth: number | undefined;
+    const revenueEntries = (() => {
+      // Prefer the pure Revenues concept; fall back to the post-ASC-606 concept some filers tag instead.
+      const primary = annualEntries("Revenues");
+      return primary.length > 0 ? primary : annualEntries("RevenueFromContractWithCustomerExcludingAssessedTax");
+    })();
+    const latestRevenue = latestEntry(revenueEntries);
+    if (latestRevenue !== undefined) {
+      // Prior fiscal year: the annual entry ending 340–390 days before the latest one (tolerates fiscal
+      // calendars that don't fall on exact 365-day boundaries).
+      const priorCandidates = revenueEntries.filter((e) => {
+        if (e.end >= latestRevenue.end) return false;
+        const gapDays = (Date.parse(latestRevenue.end) - Date.parse(e.end)) / 86_400_000;
+        return Number.isFinite(gapDays) && gapDays >= 340 && gapDays <= 390;
+      });
+      const prior = latestEntry(priorCandidates);
+      if (prior !== undefined && prior.val > 0) {
+        revenueGrowth = Math.round(((latestRevenue.val - prior.val) / prior.val) * 100 * 100) / 100;
+      }
+    }
+
+    const out: { debtToEquity?: number; revenueGrowth?: number } = {};
+    if (debtToEquity !== undefined) out.debtToEquity = debtToEquity;
+    if (revenueGrowth !== undefined) out.revenueGrowth = revenueGrowth;
+    return out;
   } catch {
     return {};
   }
@@ -3305,6 +5972,7 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
 
 export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "sec-xbrl";
+  readonly costTier = "free" as const;
   readonly configured = true;
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -3377,8 +6045,12 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
         const data = parseCompanyFacts(json);
         cache.set(cacheKey, { expiresAt: now + SEC_XBRL_TTL_MS, data });
         result[symbol] = data;
+        // Usage-only telemetry (never cost — SEC EDGAR is free/keyless): recorded once per
+        // successful companyfacts fetch, mirroring the other keyless providers in this file.
+        recordProviderCall(this.name, { service: "companyfacts", ok: true });
       } catch {
         // best-effort — this symbol falls through to the next provider
+        recordProviderCall(this.name, { service: "companyfacts", ok: false });
       } finally {
         secXbrlInFlight.delete(symbol);
       }
@@ -3394,5 +6066,818 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
     // could flip a symbol's winning source after enrich() resolved, making the cascade merge order
     // timing-dependent. The spread decouples the returned value from those post-race mutations.
     return { ...result };
+  }
+}
+
+// ── RapidAPI: Financial Modeling Prep ────────────────────────────────────────
+// RETIRED (owner 2026-08-04): never call FMP (native or RapidAPI-hosted) from
+// Socratic.Trade. Class kept as a no-op so imports/tests that construct it stay stable.
+
+export class FmpRapidApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "fmp-rapidapi";
+  readonly costTier = "free" as const;
+  readonly configured = true;
+  readonly quotaScarce = false;
+
+  constructor(
+    _apiKey: string,
+    _keySource: ApiKeySource = "env",
+    _userId?: string
+  ) {}
+
+  async enrich(_symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    return {};
+  }
+}
+
+// ── RapidAPI: Insiders ───────────────────────────────────────────────────────
+
+export class InsidersRapidApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "insiders-rapidapi";
+  readonly costTier = "free" as const;
+  readonly configured = true;
+  readonly quotaScarce = true; // Use sparingly — wave-two only when insiderSentiment is still empty.
+  readonly suppliesFields = ["insiderSentiment"] as const;
+  private readonly base = "https://insiders.p.rapidapi.com";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("insiders-rapidapi", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    const CONCURRENCY = 3;
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          const admitted = tryReserveRapidApiCalls("insiders-rapidapi", 1, now) > 0;
+          if (!admitted) { result[symbol] = {}; return; }
+          try {
+            const raw = await this.getJson(`${this.base}/gedetailedtinsiders/${encodeURIComponent(symbol)}?timeframe=1y`);
+            
+            let insiderSentiment: number | undefined;
+            if (raw && typeof raw === "object" && Array.isArray((raw as any).transactions)) {
+              let buys = 0;
+              let sells = 0;
+              
+              const txns = (raw as any).transactions;
+              for (const group of txns) {
+                if (Array.isArray(group.transactions)) {
+                  for (const trade of group.transactions) {
+                    const type = String(trade.transactionLabel || "").toLowerCase();
+                    const code = String(trade.transactionAcquiredDisposedCode || "").toLowerCase();
+                    if (type.includes("buy") || type.includes("purchase") || code === "a") buys++;
+                    else if (type.includes("sell") || type.includes("sale") || code === "d") sells++;
+                  }
+                }
+              }
+              const total = buys + sells;
+              if (total > 0) {
+                insiderSentiment = Math.round((buys / total) * 100);
+              }
+            }
+
+            const data: SymbolEnrichment = {
+              ...(insiderSentiment !== undefined && { insiderSentiment })
+            };
+
+            writeEnrichmentCache("insiders-rapidapi", symbol, this.scope, this.userId, data, now + ttlMs());
+            result[symbol] = data;
+          } catch (err) {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(url: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetchWithRetry(
+        url,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+          headers: {
+            "x-rapidapi-host": "insiders.p.rapidapi.com",
+            "x-rapidapi-key": this.apiKey
+          }
+        },
+        {
+          service: this.name,
+          keySource: this.keySource,
+          userId: this.userId,
+          softHealthStatuses: [403],
+        }
+      );
+      if (response.status === 404) return { transactions: [] };
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+// ── RapidAPI: Twelve Data ────────────────────────────────────────────────────
+
+export class TwelveDataRapidApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "twelvedata-rapidapi";
+  readonly costTier = "free" as const;
+  readonly configured = true;
+  readonly quotaScarce = true; // Use sparingly — wave-two only when 52w range is still empty.
+  readonly suppliesFields = ["fiftyTwoWeekHigh", "fiftyTwoWeekLow"] as const;
+  private readonly base = "https://twelve-data1.p.rapidapi.com";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("twelvedata-rapidapi", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    const CONCURRENCY = 3;
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          const admitted = tryReserveRapidApiCalls("twelvedata-rapidapi", 1, now) > 0;
+          if (!admitted) { result[symbol] = {}; return; }
+          try {
+            const raw = await this.getJson(`${this.base}/quote?symbol=${encodeURIComponent(symbol)}&interval=1day`);
+            
+            let fiftyTwoWeekHigh: number | undefined;
+            let fiftyTwoWeekLow: number | undefined;
+            
+            if (raw && typeof raw === "object") {
+              const fiftyTwo = (raw as any).fifty_two_week;
+              if (fiftyTwo) {
+                const high = Number(fiftyTwo.high);
+                const low = Number(fiftyTwo.low);
+                if (Number.isFinite(high) && high > 0) fiftyTwoWeekHigh = high;
+                if (Number.isFinite(low) && low > 0) fiftyTwoWeekLow = low;
+              }
+            }
+
+            const data: SymbolEnrichment = {
+              ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+              ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
+            };
+
+            writeEnrichmentCache("twelvedata-rapidapi", symbol, this.scope, this.userId, data, now + ttlMs());
+            result[symbol] = data;
+          } catch (err) {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(url: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetchWithRetry(
+        url,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+          headers: {
+            "x-rapidapi-host": "twelve-data1.p.rapidapi.com",
+            "x-rapidapi-key": this.apiKey
+          }
+        },
+        {
+          service: this.name,
+          keySource: this.keySource,
+          userId: this.userId,
+          softHealthStatuses: [403],
+        }
+      );
+      if (response.status === 404) return {};
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+// ── FilingAPI.dev (FILINGAPI) ────────────────────────────────────────────────
+// https://filingapi.dev — X-API-Key header (company/calendar); some routes also
+// accept ?api_key=. Free tier ~50 req/day → scarce wave-C only.
+
+export function parseFilingApiCompany(payload: unknown): SymbolEnrichment {
+  const row = payload as Record<string, unknown> | undefined;
+  if (!row || typeof row !== "object") return {};
+  const ticker = firstString(row, ["ticker", "symbol"]);
+  const sector = firstString(row, ["sector"]);
+  const industry = firstString(row, ["industry"]);
+  const companyName = firstString(row, ["company_name", "companyName", "name"]) ?? ticker;
+  return {
+    ...(companyName !== undefined && { companyName }),
+    ...(sector !== undefined && { sector }),
+    ...(industry !== undefined && { industry })
+  };
+}
+
+export function parseFilingApiEarningsCalendar(
+  payload: unknown,
+  symbol: string,
+  now: number = Date.now()
+): Pick<SymbolEnrichment, "daysToEarnings"> {
+  const earnings = (payload as { earnings?: Array<Record<string, unknown>> } | undefined)?.earnings;
+  if (!Array.isArray(earnings) || earnings.length === 0) return {};
+  const upper = symbol.toUpperCase();
+  const future = earnings
+    .filter((e) => String(e.symbol ?? "").toUpperCase() === upper && typeof e.date === "string")
+    .map((e) => Date.parse(String(e.date)))
+    .filter((ts) => Number.isFinite(ts) && ts >= now - 12 * 3_600_000)
+    .sort((a, b) => a - b);
+  if (future.length === 0) return {};
+  const days = Math.max(0, Math.ceil((future[0] - now) / 86_400_000));
+  return { daysToEarnings: days };
+}
+
+/** Map FilingAPI insider summary → 0–100 insiderSentiment (50 = neutral). */
+export function parseFilingApiInsiderSummary(payload: unknown): Pick<SymbolEnrichment, "insiderSentiment"> {
+  const row = payload as Record<string, unknown> | undefined;
+  if (!row || typeof row !== "object") return {};
+  const sellRatio = firstNumber(row, ["sell_ratio", "sellRatio"]);
+  const signal = firstString(row, ["signal"]);
+  let score: number | undefined;
+  if (sellRatio !== undefined) {
+    score = Math.max(5, Math.min(95, Math.round(50 - (sellRatio - 0.5) * 80)));
+  } else if (signal === "net_selling") {
+    score = 30;
+  } else if (signal === "net_buying") {
+    score = 70;
+  }
+  return score !== undefined ? { insiderSentiment: score } : {};
+}
+
+export class FilingApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "filingapi";
+  readonly costTier = "paid" as const;
+  readonly configured = true;
+  readonly quotaScarce = true;
+  readonly suppliesFields = ["companyName", "sector", "industry", "daysToEarnings", "insiderSentiment"] as const;
+  private readonly base = "https://filingapi.dev";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache(this.name, symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    const credKey = `${this.keySource}:${this.userId ?? ""}`;
+    // ~50/day free tier — admit at most one symbol-bundle per reservation unit.
+    const allowed = admitProviderRequests(this.name, credKey, misses.length);
+    if (!allowed) return result;
+    const work = misses.slice(0, allowed);
+
+    for (let i = 0; i < work.length; i += CONCURRENCY) {
+      const chunk = work.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const covered = context?.coveredFields?.[symbol];
+            const needCompany =
+              !covered || !covered.has("companyName") || !covered.has("sector") || !covered.has("industry");
+            const needEarnings = !covered || !covered.has("daysToEarnings");
+            const needInsiders = !covered || !covered.has("insiderSentiment");
+            const [companyRes, earningsRes, insiderRes] = await Promise.allSettled([
+              needCompany ? this.getJson(`/v1/company/${encodeURIComponent(symbol)}`) : Promise.resolve(undefined),
+              needEarnings
+                ? this.getJson(`/v1/calendar/earnings?ticker=${encodeURIComponent(symbol)}`)
+                : Promise.resolve(undefined),
+              needInsiders
+                ? this.getJson(`/v1/insiders/${encodeURIComponent(symbol)}/summary?api_key=${encodeURIComponent(this.apiKey)}`)
+                : Promise.resolve(undefined)
+            ]);
+            const merged: SymbolEnrichment = {
+              ...(companyRes.status === "fulfilled" ? parseFilingApiCompany(companyRes.value) : {}),
+              ...(earningsRes.status === "fulfilled"
+                ? parseFilingApiEarningsCalendar(earningsRes.value, symbol, now)
+                : {}),
+              ...(insiderRes.status === "fulfilled" ? parseFilingApiInsiderSummary(insiderRes.value) : {})
+            };
+            if (Object.keys(merged).length > 0) {
+              writeEnrichmentCache(this.name, symbol, this.scope, this.userId, merged, now + 6 * 60 * 60_000);
+            }
+            result[symbol] = merged;
+          } catch {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(path: string): Promise<unknown> {
+    return withProviderLimit(this.name, async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        const res = await fetchWithRetry(
+          `${this.base}${path}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+            headers: {
+              Accept: "application/json",
+              "X-API-Key": this.apiKey
+            }
+          },
+          { service: this.name, keySource: this.keySource, userId: this.userId, apiKey: this.apiKey, retries: 0 }
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+  }
+}
+
+// ── RapidAPI: Yahoo Finance (API Dojo) ───────────────────────────────────────
+// Hub listing currently API-not-found (delisted); host still answers 403 if unsubscribed.
+// Host: yh-finance.p.rapidapi.com
+
+function yahooChartRaw(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value && typeof value === "object" && "raw" in (value as object)) {
+    const raw = (value as { raw?: unknown }).raw;
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  }
+  return undefined;
+}
+
+export function parseYhFinanceApiDojoSummary(payload: unknown): SymbolEnrichment {
+  const root = payload as Record<string, unknown> | undefined;
+  if (!root) return {};
+  const quoteType = (root.quoteType ?? {}) as Record<string, unknown>;
+  const summaryProfile = (root.summaryProfile ?? {}) as Record<string, unknown>;
+  const summaryDetail = (root.summaryDetail ?? {}) as Record<string, unknown>;
+  const defaultKeyStatistics = (root.defaultKeyStatistics ?? {}) as Record<string, unknown>;
+  const financialData = (root.financialData ?? {}) as Record<string, unknown>;
+  const priceNode = (root.price ?? {}) as Record<string, unknown>;
+
+  const companyName =
+    firstString(quoteType, ["longName", "shortName"]) ??
+    firstString(priceNode, ["longName", "shortName"]);
+  const sector = firstString(summaryProfile, ["sector"]);
+  const industry = firstString(summaryProfile, ["industry"]);
+  const price = yahooChartRaw(priceNode.regularMarketPrice) ?? yahooChartRaw(financialData.currentPrice);
+  const changePct = yahooChartRaw(priceNode.regularMarketChangePercent);
+  const volume = yahooChartRaw(priceNode.regularMarketVolume);
+  const peRatio = yahooChartRaw(summaryDetail.trailingPE) ?? yahooChartRaw(defaultKeyStatistics.trailingPE);
+  const dividendYieldRaw = yahooChartRaw(summaryDetail.dividendYield);
+  const beta = yahooChartRaw(summaryDetail.beta) ?? yahooChartRaw(defaultKeyStatistics.beta);
+  const fiftyTwoWeekHigh = yahooChartRaw(summaryDetail.fiftyTwoWeekHigh);
+  const fiftyTwoWeekLow = yahooChartRaw(summaryDetail.fiftyTwoWeekLow);
+  const shortPct = yahooChartRaw(defaultKeyStatistics.shortPercentOfFloat);
+  const targetMean = yahooChartRaw(financialData.targetMeanPrice);
+  const eps = yahooChartRaw(defaultKeyStatistics.trailingEps);
+  const pbRatio = yahooChartRaw(defaultKeyStatistics.priceToBook);
+  const roe = yahooChartRaw(financialData.returnOnEquity);
+
+  let analystBySource: Record<string, AnalystRatingDetail> | undefined;
+  const recMean = yahooChartRaw(financialData.recommendationMean);
+  if (recMean !== undefined && recMean > 0) {
+    const score = analystScoreFromMean(recMean);
+    analystBySource = {
+      "yh-finance-apidojo": {
+        score: Math.round(score),
+        label: labelFromAnalystScore(score),
+        mean: Math.round(recMean * 100) / 100
+      }
+    };
+  }
+
+  return {
+    ...(companyName !== undefined && { companyName }),
+    ...(sector !== undefined && { sector }),
+    ...(industry !== undefined && { industry }),
+    ...(price !== undefined && price > 0 && { price }),
+    ...(changePct !== undefined && { intradayChangePct: Math.abs(changePct) <= 1 ? changePct * 100 : changePct }),
+    ...(volume !== undefined && volume >= 0 && { volume }),
+    ...(peRatio !== undefined && peRatio > 0 && { peRatio }),
+    ...(dividendYieldRaw !== undefined && dividendYieldRaw >= 0 && { dividendYield: normalizePercent(dividendYieldRaw) }),
+    ...(beta !== undefined && { beta }),
+    ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+    ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow }),
+    ...(shortPct !== undefined && shortPct >= 0 && { shortPercentOfFloat: normalizePercent(shortPct) }),
+    ...(targetMean !== undefined && targetMean > 0 && { targetMean }),
+    ...(eps !== undefined && { eps }),
+    ...(pbRatio !== undefined && pbRatio > 0 && { pbRatio }),
+    ...(roe !== undefined && { returnOnEquity: normalizePercent(roe) }),
+    ...(analystBySource !== undefined && { analystBySource })
+  };
+}
+
+export class YhFinanceApiDojoEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "yh-finance-apidojo";
+  readonly costTier = "paid" as const;
+  readonly configured = true;
+  readonly quotaScarce = true;
+  readonly suppliesFields = [
+    "companyName", "sector", "industry", "price", "intradayChangePct", "volume",
+    "peRatio", "dividendYield", "beta", "fiftyTwoWeekHigh", "fiftyTwoWeekLow",
+    "shortPercentOfFloat", "targetMean", "eps", "pbRatio", "returnOnEquity", "analystBySource"
+  ] as const;
+  private readonly host = "yh-finance.p.rapidapi.com";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(private readonly apiKey: string, keySource: ApiKeySource = "env", private readonly userId?: string) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache(this.name, symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          const admitted = tryReserveRapidApiCalls("yh-finance-apidojo", 1, now) > 0;
+          if (!admitted) { result[symbol] = {}; return; }
+          const tracker = { dispatched: false };
+          try {
+            const payload = await rapidApiGetJson(
+              this.host,
+              `/stock/v2/get-summary?symbol=${encodeURIComponent(symbol)}&region=US`,
+              this.apiKey,
+              { service: this.name, keySource: this.keySource, userId: this.userId },
+              tracker
+            );
+            const data = parseYhFinanceApiDojoSummary(payload);
+            if (Object.keys(data).length > 0) {
+              writeEnrichmentCache(this.name, symbol, this.scope, this.userId, data, now + ttlMs());
+            }
+            result[symbol] = data;
+          } catch {
+            if (!tracker.dispatched) refundRapidApiCalls("yh-finance-apidojo", 1, now);
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+}
+
+// ── RapidAPI: Real-Time Finance Data ─────────────────────────────────────────
+// Pricing: https://rapidapi.com/letscrape-6bRBa3QguO5/api/real-time-finance-data/pricing
+// Host: real-time-finance-data.p.rapidapi.com (confirmed 200 with stock-quote + stock-news)
+
+export function parseRealTimeFinanceQuote(payload: unknown): SymbolEnrichment {
+  const data = (payload as { data?: Record<string, unknown> } | undefined)?.data;
+  if (!data) return {};
+  const companyName = firstString(data, ["name"]);
+  const price = firstNumber(data, ["price"]);
+  const changePct = firstNumber(data, ["change_percent", "changePercent"]);
+  const volume = firstNumber(data, ["volume"]);
+  return {
+    ...(companyName !== undefined && { companyName }),
+    ...(price !== undefined && price > 0 && { price }),
+    ...(changePct !== undefined && { intradayChangePct: changePct }),
+    ...(volume !== undefined && volume >= 0 && { volume })
+  };
+}
+
+export function parseRealTimeFinanceNews(payload: unknown): Pick<SymbolEnrichment, "headlines" | "sentiment"> {
+  const news = (payload as { data?: { news?: Array<Record<string, unknown>> } } | undefined)?.data?.news;
+  if (!Array.isArray(news) || news.length === 0) return {};
+  const headlines = news
+    .slice(0, 5)
+    .map((n) => firstString(n, ["article_title", "title"]) ?? "")
+    .filter(Boolean);
+  if (headlines.length === 0) return {};
+  return { headlines, sentiment: scoreHeadlines(headlines) };
+}
+
+export class RealTimeFinanceDataEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "real-time-finance-data";
+  readonly costTier = "paid" as const;
+  readonly configured = true;
+  readonly quotaScarce = true;
+  readonly suppliesFields = ["companyName", "price", "intradayChangePct", "volume", "headlines", "sentiment"] as const;
+  private readonly host = "real-time-finance-data.p.rapidapi.com";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(private readonly apiKey: string, keySource: ApiKeySource = "env", private readonly userId?: string) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache(this.name, symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          const covered = context?.coveredFields?.[symbol];
+          const needQuote =
+            !covered ||
+            !covered.has("price") ||
+            !covered.has("companyName") ||
+            !covered.has("intradayChangePct") ||
+            !covered.has("volume");
+          const needNews = !covered || !covered.has("headlines") || !covered.has("sentiment");
+          const merged: SymbolEnrichment = {};
+
+          if (needQuote) {
+            const admitted = tryReserveRapidApiCalls("real-time-finance-data", 1, now) > 0;
+            if (admitted) {
+              const tracker = { dispatched: false };
+              try {
+                const payload = await rapidApiGetJson(
+                  this.host,
+                  `/stock-quote?symbol=${encodeURIComponent(symbol)}`,
+                  this.apiKey,
+                  { service: this.name, keySource: this.keySource, userId: this.userId },
+                  tracker
+                );
+                Object.assign(merged, parseRealTimeFinanceQuote(payload));
+              } catch {
+                if (!tracker.dispatched) refundRapidApiCalls("real-time-finance-data", 1, now);
+              }
+            }
+          }
+
+          if (needNews) {
+            const admitted = tryReserveRapidApiCalls("real-time-finance-data", 1, now) > 0;
+            if (admitted) {
+              const tracker = { dispatched: false };
+              try {
+                const payload = await rapidApiGetJson(
+                  this.host,
+                  `/stock-news?symbol=${encodeURIComponent(symbol)}`,
+                  this.apiKey,
+                  { service: this.name, keySource: this.keySource, userId: this.userId },
+                  tracker
+                );
+                Object.assign(merged, parseRealTimeFinanceNews(payload));
+              } catch {
+                if (!tracker.dispatched) refundRapidApiCalls("real-time-finance-data", 1, now);
+              }
+            }
+          }
+
+          if (Object.keys(merged).length > 0) {
+            writeEnrichmentCache(this.name, symbol, this.scope, this.userId, merged, now + ttlMs());
+          }
+          result[symbol] = merged;
+        })
+      );
+    }
+    return result;
+  }
+}
+
+// ── RapidAPI: Seeking Alpha (API Dojo) ───────────────────────────────────────
+// Hub listing currently API-not-found (delisted); host still answers 403 if unsubscribed.
+// Host: seeking-alpha.p.rapidapi.com
+
+export function parseSeekingAlphaKeyStats(payload: unknown): SymbolEnrichment {
+  const root = payload as Record<string, unknown> | undefined;
+  if (!root) return {};
+  // Tolerate several nesting shapes RapidAPI SA products have used over time.
+  const candidates: Array<Record<string, unknown> | undefined> = [
+    root,
+    root.data as Record<string, unknown> | undefined,
+    (root.data as { attributes?: Record<string, unknown> } | undefined)?.attributes,
+    Array.isArray(root.data) ? (root.data[0] as Record<string, unknown>) : undefined
+  ];
+  for (const row of candidates) {
+    if (!row) continue;
+    const peRatio = firstNumber(row, ["peRatio", "pe_ratio", "priceEarningsRatio", "pe"]);
+    const eps = firstNumber(row, ["eps", "earningsPerShare", "diluted_eps"]);
+    const dividendYield = firstNumber(row, ["dividendYield", "div_yield", "yield"]);
+    const beta = firstNumber(row, ["beta"]);
+    const companyName = firstString(row, ["companyName", "name", "company"]);
+    const sector = firstString(row, ["sector"]);
+    const industry = firstString(row, ["industry"]);
+    if (
+      peRatio !== undefined ||
+      eps !== undefined ||
+      dividendYield !== undefined ||
+      beta !== undefined ||
+      companyName ||
+      sector ||
+      industry
+    ) {
+      return {
+        ...(companyName !== undefined && { companyName }),
+        ...(sector !== undefined && { sector }),
+        ...(industry !== undefined && { industry }),
+        ...(peRatio !== undefined && peRatio > 0 && { peRatio }),
+        ...(eps !== undefined && { eps }),
+        ...(dividendYield !== undefined && dividendYield >= 0 && { dividendYield: normalizePercent(dividendYield) }),
+        ...(beta !== undefined && { beta })
+      };
+    }
+  }
+  return {};
+}
+
+export function parseSeekingAlphaArticles(payload: unknown): Pick<SymbolEnrichment, "headlines" | "sentiment"> {
+  const root = payload as Record<string, unknown> | undefined;
+  if (!root) return {};
+  const list =
+    (Array.isArray(root.data) ? root.data : undefined) ??
+    (Array.isArray(root.articles) ? root.articles : undefined) ??
+    ((root.data as { articles?: unknown } | undefined)?.articles as unknown[] | undefined) ??
+    [];
+  if (!Array.isArray(list) || list.length === 0) return {};
+  const headlines = list
+    .slice(0, 5)
+    .map((item) => {
+      const row = item as Record<string, unknown>;
+      const attrs = (row.attributes ?? row) as Record<string, unknown>;
+      return firstString(attrs, ["title", "article_title"]) ?? "";
+    })
+    .filter(Boolean);
+  if (headlines.length === 0) return {};
+  return { headlines, sentiment: scoreHeadlines(headlines) };
+}
+
+export class SeekingAlphaRapidApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "seeking-alpha-rapidapi";
+  readonly costTier = "paid" as const;
+  readonly configured = true;
+  readonly quotaScarce = true;
+  readonly suppliesFields = [
+    "companyName", "sector", "industry", "peRatio", "eps", "dividendYield", "beta", "headlines", "sentiment"
+  ] as const;
+  private readonly host = "seeking-alpha.p.rapidapi.com";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(private readonly apiKey: string, keySource: ApiKeySource = "env", private readonly userId?: string) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache(this.name, symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          const covered = context?.coveredFields?.[symbol];
+          const needStats =
+            !covered ||
+            !covered.has("peRatio") ||
+            !covered.has("eps") ||
+            !covered.has("sector") ||
+            !covered.has("companyName");
+          const needNews = !covered || !covered.has("headlines") || !covered.has("sentiment");
+          const merged: SymbolEnrichment = {};
+
+          if (needStats) {
+            const admitted = tryReserveRapidApiCalls("seeking-alpha-rapidapi", 1, now) > 0;
+            if (admitted) {
+              const tracker = { dispatched: false };
+              try {
+                const payload = await rapidApiGetJson(
+                  this.host,
+                  `/symbols/get-key-stats?symbol=${encodeURIComponent(symbol)}`,
+                  this.apiKey,
+                  { service: this.name, keySource: this.keySource, userId: this.userId },
+                  tracker
+                );
+                Object.assign(merged, parseSeekingAlphaKeyStats(payload));
+              } catch {
+                if (!tracker.dispatched) refundRapidApiCalls("seeking-alpha-rapidapi", 1, now);
+              }
+            }
+          }
+
+          if (needNews) {
+            const admitted = tryReserveRapidApiCalls("seeking-alpha-rapidapi", 1, now) > 0;
+            if (admitted) {
+              const tracker = { dispatched: false };
+              try {
+                const payload = await rapidApiGetJson(
+                  this.host,
+                  `/articles/list?symbol=${encodeURIComponent(symbol)}&size=5`,
+                  this.apiKey,
+                  { service: this.name, keySource: this.keySource, userId: this.userId },
+                  tracker
+                );
+                Object.assign(merged, parseSeekingAlphaArticles(payload));
+              } catch {
+                if (!tracker.dispatched) refundRapidApiCalls("seeking-alpha-rapidapi", 1, now);
+              }
+            }
+          }
+
+          if (Object.keys(merged).length > 0) {
+            writeEnrichmentCache(this.name, symbol, this.scope, this.userId, merged, now + ttlMs());
+          }
+          result[symbol] = merged;
+        })
+      );
+    }
+    return result;
   }
 }

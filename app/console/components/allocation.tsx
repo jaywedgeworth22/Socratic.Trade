@@ -134,7 +134,7 @@ export function AllocationCard({ snapshot }: { snapshot: DashboardSnapshot }) {
           {segments.map((s) => (
             <div
               key={`${s.kind}-${s.label}`}
-              className="con-row rounded-md px-1.5 py-1.5"
+              className="con-row rounded-control px-1.5 py-1.5"
               title={`${s.detail ?? s.label} ${fmtPct(s.pct, 1)} of the account's total value.`}
             >
               <div className="flex items-baseline justify-between gap-3 text-[length:var(--con-fs-sm)]">

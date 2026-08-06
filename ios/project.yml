@@ -1,0 +1,86 @@
+# Project Format: Xcode 26.3-compatible (objectVersion / preferredProjectObjectVersion = 100).
+# XcodeGen 2.46 still emits objectVersion 77 for xcodeVersion 26.3; after `xcodegen generate`
+# re-apply objectVersion=100 and preferredProjectObjectVersion=100 in project.pbxproj
+# (matches Congress.Trade + Usage-Monitor). Do not leave 77 (UI shows Xcode 16).
+
+name: Socratic Trade
+
+options:
+  bundleIdPrefix: trade.socratic
+  deploymentTarget:
+    iOS: "26.0"
+  groupSortPosition: top
+  xcodeVersion: "26.3"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    INFOPLIST_KEY_CFBundleDisplayName: "Socratic Trade"
+    INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.finance"
+
+targets:
+  SocraticTrade:
+    type: application
+    platform: iOS
+    sources:
+      - path: SocraticTrade
+        excludes:
+          - README.md
+          - Info.plist
+          - SocraticTrade.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: trade.socratic.app
+        DEVELOPMENT_TEAM: CC8UTF7ATG
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: SocraticTrade/SocraticTrade.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_NAME: "Socratic Trade"
+    info:
+      path: SocraticTrade/Info.plist
+      properties:
+        CFBundleDisplayName: Socratic Trade
+        LSApplicationCategoryType: public.app-category.finance
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleURLTypes:
+          - CFBundleURLName: trade.socratic.app
+            CFBundleURLSchemes:
+              - socratictrade
+    entitlements:
+      path: SocraticTrade/SocraticTrade.entitlements
+      properties:
+        com.apple.developer.applesignin:
+          - Default
+
+  SocraticTradeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SocraticTradeTests
+    dependencies:
+      - target: SocraticTrade
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: trade.socratic.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  SocraticTrade:
+    build:
+      targets:
+        SocraticTrade: all
+        SocraticTradeTests: [test]
+    test:
+      targets:
+        - SocraticTradeTests

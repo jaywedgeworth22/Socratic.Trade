@@ -66,7 +66,17 @@ export interface CongressAnalytics {
   cluster?: boolean; // appears in App A's cluster-buys (many members → same ticker)
   clusterMemberCount?: number;
   topMemberScore?: number; // 0–100 best member-quality among the ticker's cluster members
-  topMemberScoreSource?: "realized_skill" | "activity_prominence";
+  /** Prefer realized_skill_filing (copy-trade since disclosure); trade = politician timing; activity = volume proxy. */
+  topMemberScoreSource?: "realized_skill_filing" | "realized_skill_trade" | "realized_skill" | "activity_prominence";
+  /** Raw skill stats for the winning cluster member (from App A dual performance). */
+  topMemberFilerId?: string;
+  topMemberFilingAvgExcess?: number | null;
+  topMemberFilingWinRate?: number | null;
+  topMemberFilingScoredCount?: number;
+  topMemberFilingAvgAnnualizedExcess?: number | null;
+  topMemberTradeAvgExcess?: number | null;
+  topMemberTradeWinRate?: number | null;
+  topMemberTradeScoredCount?: number;
   /** App A composite conviction score 0–100; null = too thin (< 3 resolved-side trades). */
   convictionScore?: number | null;
   /** Direction the conviction score points: "BUY" or "SELL". null = no directional signal. */

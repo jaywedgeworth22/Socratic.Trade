@@ -67,7 +67,7 @@ export function AssistantMarkdown({ children }: { children: string }) {
             const isBlock = typeof cls === "string" && cls.includes("language-");
             if (isBlock) {
               return (
-                <code className="con-mono block overflow-x-auto rounded-md bg-[color:var(--con-surface-3)] p-2 text-[12px]" {...props}>
+                <code className="con-mono block overflow-x-auto rounded-control bg-[color:var(--con-surface-3)] p-2 text-[length:var(--con-fs-sm)]" {...props}>
                   {kids}
                 </code>
               );

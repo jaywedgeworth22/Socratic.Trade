@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: Request) {
   const userId = resolveRequestUserId(request);
-  const services = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek"] as const;
+  const services = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "moonshot"] as const;
   const providers: Record<string, boolean> = {};
   for (const service of services) providers[service] = Boolean(resolveLlmCredential(service, userId).key);
   return NextResponse.json({ providers });

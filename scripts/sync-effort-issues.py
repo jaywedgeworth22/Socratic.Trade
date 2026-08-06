@@ -72,10 +72,10 @@ Reconciliation
     made beyond the initial list. Existing issues are only updated when
     something actually changed.
   - Never deletes issues. An item that disappears from the board (row
-    removed/merged into another) leaves its mirrored issue in place,
-    untouched, with whatever state it last had — a human can close it
-    manually if desired. This script does not guess intent for vanished
-    rows.
+    removed/reworded) becomes an orphan: if that mirrored issue is still
+    OPEN, close it and set `state:completed` so stale in-progress/planned
+    mirrors cannot accumulate after board hygiene. Already-closed orphans
+    are left untouched.
   - Hand-made issues without the `effort-key` marker are ignored entirely
     (never edited, never closed, never relabeled).
 
@@ -178,7 +178,16 @@ SECTION_KEYWORDS = [
 ]
 
 PLACEHOLDER_RE = re.compile(
-    r"^\(?\s*(none|n/?a\b.*|seeded empty.*|add rows here.*|record the.*|see rollout notes.*)\s*\)?\.?$",
+    r"^\(?\s*(none|n/?a\b.*|seeded empty.*|add rows here.*)\s*\)?\.?$",
+    re.IGNORECASE,
+)
+# Broad imperative prefixes only count as empty-section scaffolding when
+# PARENTHESIZED (e.g. "(record the effort here ...)"); a bare "Record the ..."
+# / "See rollout notes ..." is a real effort row. Kept identical to
+# scripts/effort-log-union-merge.py so the two tools never disagree about what
+# is a placeholder vs a real row.
+PLACEHOLDER_PARENS_RE = re.compile(
+    r"^\(\s*(record the.*|see rollout notes.*)\s*\)\.?$",
     re.IGNORECASE,
 )
 
@@ -249,7 +258,7 @@ def parse_board(text: str) -> list[BoardItem]:
                 items.append(current_item)
                 current_item = None
             content = bullet_match.group(1).strip()
-            if PLACEHOLDER_RE.match(content):
+            if PLACEHOLDER_RE.match(content) or PLACEHOLDER_PARENS_RE.match(content):
                 continue  # "(none)" etc. — not a real item.
             current_item = BoardItem(bucket=current_bucket, first_line=content)
             continue
@@ -283,7 +292,11 @@ def http_request(
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req) as resp:
+        # Explicit socket timeout: the default (None) lets a stalled connection
+        # hang the job forever, squatting the single socratic-ci runner and
+        # blocking the whole CI queue (seen twice on 2026-07-29, both runs
+        # had to be cancelled manually after 10+ min stuck in this call).
+        with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read()
             return resp.status, (json.loads(raw) if raw else {}), dict(resp.headers)
     except urllib.error.HTTPError as e:
@@ -300,6 +313,11 @@ class RateLimitBudgetExhausted(Exception):
 
 
 def _rate_limited(status: int, payload: dict | list, headers: dict[str, str]) -> bool:
+    # 502/503/504 are transient gateway/timeouts (seen as GitHub "couldn't respond
+    # in time" 504s during large board syncs). Treat them like rate limits so the
+    # bounded retry budget can absorb a blip instead of failing the whole run.
+    if status in (502, 503, 504):
+        return True
     if status not in (403, 429):
         return False
     message = str(payload.get("message", "")).lower() if isinstance(payload, dict) else ""
@@ -307,6 +325,7 @@ def _rate_limited(status: int, payload: dict | list, headers: dict[str, str]) ->
         "rate limit" in message
         or "abuse" in message
         or "temporarily blocked" in message
+        or "couldn't respond" in message
         or _retry_after_seconds(headers) is not None
     )
 
@@ -473,10 +492,39 @@ def reconcile(items: list[BoardItem], client: GitHubClient, repo: str, ref: str,
         return stats
 
     orphaned = [k for k in by_key if k not in seen_keys]
+    orphan_closed = 0
+    orphan_left = 0
+    for key in orphaned:
+        issue = by_key[key]
+        number = issue["number"]
+        if issue.get("state") != "open":
+            orphan_left += 1
+            continue
+        # Open orphan = board row removed/reworded while the mirror stayed open.
+        # Close it under state:completed so hygiene actually clears the Issues UI.
+        current_labels = issue_label_names(issue)
+        preserved = {
+            l for l in current_labels if l != MIRROR_LABEL and not l.startswith("state:")
+        }
+        fields = {
+            "state": "closed",
+            "labels": sorted({MIRROR_LABEL, "state:completed"} | preserved),
+        }
+        client.update_issue(number, fields)
+        print(
+            f"closed orphan issue #{number} (board row removed/reworded) "
+            f"as state:completed: {(issue.get('title') or '')[:80]}"
+        )
+        stats["closed"] += 1
+        stats["updated"] += 1
+        orphan_closed += 1
     if orphaned:
-        print(f"note: {len(orphaned)} previously-mirrored issue(s) no longer match a board row "
-              f"(row removed/reworded) — left untouched: "
-              f"{', '.join('#' + str(by_key[k]['number']) for k in orphaned)}")
+        print(
+            f"note: {len(orphaned)} previously-mirrored issue(s) no longer match a board row "
+            f"(row removed/reworded) — closed_open={orphan_closed} "
+            f"already_closed_left={orphan_left}: "
+            f"{', '.join('#' + str(by_key[k]['number']) for k in orphaned)}"
+        )
 
     return stats
 

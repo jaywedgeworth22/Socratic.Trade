@@ -13,6 +13,7 @@
  * Network-free: mocks Pinecone/Voyage exactly like test/rag-retrieval-eval.test.ts (hoisted vi.fn
  * clients, no real fetch).
  */
+import { pinRagQualityFlagsOff } from "./rag-test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -24,6 +25,8 @@ const mocks = vi.hoisted(() => {
     listIndexes: vi.fn(),
     embed: vi.fn(),
     rerank: vi.fn(),
+    /** When false, Voyage client has no rerank method so mock-client rerank admission is off. */
+    voyageClientHasRerank: true as boolean,
     resolveApiKey: vi.fn(),
     audit: vi.fn(),
     isOverLlmBudget: vi.fn()
@@ -38,7 +41,9 @@ vi.mock("@pinecone-database/pinecone", () => ({
 
 vi.mock("voyageai", () => ({
   VoyageAIClient: vi.fn(function VoyageAIClient() {
-    return { embed: mocks.embed, rerank: mocks.rerank };
+    const client: { embed: typeof mocks.embed; rerank?: typeof mocks.rerank } = { embed: mocks.embed };
+    if (mocks.voyageClientHasRerank) client.rerank = mocks.rerank;
+    return client;
   })
 }));
 
@@ -60,6 +65,7 @@ const ENV_KEYS = [
   "VOYAGE_API_KEY",
   "PINECONE_INDEX_READY_WAIT_MS",
   "VECTOR_ENABLE_RERANK",
+  "RAG_RERANK_PROVIDER",
   "HYBRID_RETRIEVAL",
   "VECTOR_MIN_SCORE",
   "RAG_RUN_BUDGET_ENABLED",
@@ -71,10 +77,12 @@ function resetEnv() {
   for (const key of ENV_KEYS) delete process.env[key];
 }
 
-async function freshVectorDb() {
+async function freshVectorDb(opts?: { voyageClientHasRerank?: boolean }) {
   vi.resetModules();
   vi.clearAllMocks();
   resetEnv();
+  // When false, Voyage client omits rerank so allowMockClient cannot hide missing rerank credentials.
+  mocks.voyageClientHasRerank = opts?.voyageClientHasRerank ?? true;
   process.env.PINECONE_API_KEY = "pinecone-test";
   process.env.VOYAGE_API_KEY = "voyage-test";
   process.env.PINECONE_INDEX_READY_WAIT_MS = "0";
@@ -105,6 +113,7 @@ const HEALTHY_MATCH = {
 
 describe("typed retrieval-status receipt (RetrievalStatus)", () => {
   beforeEach(() => {
+  pinRagQualityFlagsOff();
     resetEnv();
   });
   afterEach(() => {
@@ -208,6 +217,40 @@ describe("typed retrieval-status receipt (RetrievalStatus)", () => {
       }
     });
     expect(chunks.length).toBeGreaterThan(0); // degrade skips rerank/hybrid only, never core recall
+    expect(status).toBe("degraded");
+  });
+
+  it("rerank route unavailable + clean zero-match -> no_memory (not degraded)", async () => {
+    // Explicit rerank provider configured without credentials, and the Voyage mock client lacks
+    // rerank so mock-client admission cannot paper over the missing credential. Dense recall still
+    // succeeds with zero matches — that is a real empty lookup, not a quality degrade.
+    const { retrieveContextDetailed } = await freshVectorDb({ voyageClientHasRerank: false });
+    process.env.VECTOR_ENABLE_RERANK = "on";
+    process.env.RAG_RERANK_PROVIDER = "openrouter";
+    // openrouter credential absent (resolveApiKey only returns pinecone/voyage).
+    mocks.query.mockResolvedValue({ matches: [] });
+    let status: string | undefined;
+    const chunks = await retrieveContextDetailed("query", "AAPL", 3, "local", {
+      onStatus: (s) => {
+        status = s;
+      }
+    });
+    expect(chunks).toEqual([]);
+    expect(status).toBe("no_memory");
+  });
+
+  it("rerank route unavailable + non-empty recall -> degraded", async () => {
+    const { retrieveContextDetailed } = await freshVectorDb({ voyageClientHasRerank: false });
+    process.env.VECTOR_ENABLE_RERANK = "on";
+    process.env.RAG_RERANK_PROVIDER = "openrouter";
+    mocks.query.mockResolvedValue({ matches: [HEALTHY_MATCH] });
+    let status: string | undefined;
+    const chunks = await retrieveContextDetailed("query", "AAPL", 3, "local", {
+      onStatus: (s) => {
+        status = s;
+      }
+    });
+    expect(chunks.map((c) => c.id)).toEqual(["chunk-1"]);
     expect(status).toBe("degraded");
   });
 

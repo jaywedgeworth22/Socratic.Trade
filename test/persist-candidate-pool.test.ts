@@ -27,6 +27,7 @@
  * Mocking pattern mirrors test/rag-multi-query-retrieval.test.ts / test/rag-retrieval-eval.test.ts
  * (full Pinecone/Voyage mock, no live network, `audit` mocked so we can assert on its call args).
  */
+import { pinRagQualityFlagsOff } from "./rag-test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -77,6 +78,7 @@ function candidatePoolCalls() {
 
 describe("retrieveContextDetailed: RAG_PERSIST_CANDIDATE_POOL wiring", () => {
   beforeEach(() => {
+  pinRagQualityFlagsOff();
     vi.resetModules();
     vi.clearAllMocks();
 
@@ -106,13 +108,13 @@ describe("retrieveContextDetailed: RAG_PERSIST_CANDIDATE_POOL wiring", () => {
 
   it("flag OFF (default/unset): never calls audit('rag_candidate_pool', ...) — byte-identical audit-call count and returned chunks", async () => {
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
-    mocks.query.mockResolvedValue({
+    mocks.query.mockResolvedValueOnce({
       matches: [
         { id: "a", score: 0.9, metadata: { text: "AAPL earnings", userId: "local", scope: "shared" } },
         { id: "b", score: 0.8, metadata: { text: "AAPL revenue", userId: "local", scope: "shared" } },
         { id: "low", score: 0.1, metadata: { text: "barely related", userId: "local", scope: "shared" } }
       ]
-    });
+    }).mockResolvedValueOnce({ matches: [] });
 
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
     const result = await retrieveContextDetailed("AAPL earnings", "AAPL", 2, "local", { minScore: 0.5 });
@@ -244,14 +246,14 @@ describe("retrieveContextDetailed: RAG_PERSIST_CANDIDATE_POOL wiring", () => {
   it("flag ON: two id-less matches (one in the final slice, one not) get distinct `used` flags instead of colliding on key \"\"", async () => {
     process.env.RAG_PERSIST_CANDIDATE_POOL = "on";
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
-    mocks.query.mockResolvedValue({
+    mocks.query.mockResolvedValueOnce({
       matches: [
         // No `id` field at all — both would key on the literal empty string "" if the capture
         // block didn't scope a synthetic per-position key the way the #822 fusion code does.
         { score: 0.9, metadata: { text: "id-less kept", userId: "local", scope: "shared" } },
         { score: 0.8, metadata: { text: "id-less not kept", userId: "local", scope: "shared" } }
       ]
-    });
+    }).mockResolvedValueOnce({ matches: [] });
 
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
     const result = await retrieveContextDetailed("q", "AAPL", 1, "local", { minScore: 0.5 });
@@ -321,5 +323,29 @@ describe("retrieveContextDetailed: RAG_PERSIST_CANDIDATE_POOL wiring", () => {
     const calls = candidatePoolCalls();
     expect(calls.length).toBe(1);
     expect((calls[0]![1] as any).queryHash).toBe(hashQuery("a stable query string"));
+  });
+
+  it("review fix: an observability-capture throw never breaks retrieval — v1's capture block is wrapped in its own try/catch (defense in depth)", async () => {
+    process.env.RAG_PERSIST_CANDIDATE_POOL = "on";
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+    mocks.query.mockResolvedValue({
+      matches: [
+        { id: "a", score: 0.9, metadata: { text: "AAPL earnings report", userId: "local", scope: "shared" } },
+        { id: "b", score: 0.8, metadata: { text: "AAPL revenue update", userId: "local", scope: "shared" } }
+      ]
+    });
+    // Force the v1 capture block to throw: recordCandidatePool is the last call it makes, so
+    // making IT throw exercises the try/catch around the whole block.
+    mocks.audit.mockImplementation((kind: string) => {
+      if (kind === "rag_candidate_pool") throw new Error("simulated capture failure");
+    });
+
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+    const result = await retrieveContextDetailed("AAPL earnings", "AAPL", 2, "local");
+
+    // Retrieval succeeded and returned the full, correct chunk set despite the capture throwing.
+    expect(result.map((c) => c.id)).toEqual(["a", "b"]);
+    expect(result[0]!.text).toBe("AAPL earnings report");
+    expect(result[1]!.text).toBe("AAPL revenue update");
   });
 });

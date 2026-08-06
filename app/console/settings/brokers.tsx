@@ -10,16 +10,18 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ConnectedAccount, TaxationType } from "@/lib/types";
 import { activateAccount, ConsoleApiError } from "../lib/api";
-import { realityForAccount } from "../lib/derive";
+import { deriveStateInfo, realityForAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Sheet } from "../ui/sheet";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
+import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle, Pencil, Check, X, Info } from "lucide-react";
 import {
   connectAlpacaAccount,
-  connectTestAccount,
+  connectTradierAccount,
   disconnectAccount,
   fetchRobinhoodHealth,
+  renameAccount,
   syncRobinhoodAccount,
   ROBINHOOD_OAUTH_START_URL,
   type RobinhoodMcpHealth
@@ -33,8 +35,8 @@ function brokerName(broker: ConnectedAccount["broker"]): string {
       return "Alpaca MCP";
     case "robinhood":
       return "Robinhood";
-    case "test":
-      return "Test Account";
+    case "tradier":
+      return "Tradier";
     default:
       return broker;
   }
@@ -73,7 +75,12 @@ export function BrokerAccountsCard() {
   const [busy, setBusy] = useState<string | null>(null);
   const [rhHealth, setRhHealth] = useState<RobinhoodMcpHealth | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<ConnectedAccount | null>(null);
+  const [capabilitiesAccount, setCapabilitiesAccount] = useState<ConnectedAccount | null>(null);
   const [alpacaOpen, setAlpacaOpen] = useState(false);
+  const [tradierOpen, setTradierOpen] = useState(false);
+  // Inline rename of an account's cosmetic display name. `renaming` holds the id being edited
+  // and the working input value; the broker account number is never touched by this.
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
 
   // Best-effort Robinhood OAuth health — decides whether "Connect Robinhood"
   // starts OAuth or just re-syncs, and flags rows that need a reconnect.
@@ -122,7 +129,11 @@ export function BrokerAccountsCard() {
   const rhAuthed = Boolean(rhHealth?.configured && rhHealth?.authenticated && rhHealth?.ok);
   const rhNeedsReconnect = (account: ConnectedAccount) =>
     account.broker === "robinhood" && rhHealth !== null && !rhAuthed;
-  const hasTestAccount = accounts.some((account) => account.broker === "test");
+  // Exactly one account carries isActive — hoist it as the "Currently Loaded"
+  // account; everything else lists under "Other Accounts". Same isActive flag,
+  // no server/query change.
+  const loaded = accounts.find((account) => account.isActive);
+  const others = accounts.filter((account) => !account.isActive);
 
   const connectRobinhood = () => {
     if (rhAuthed) {
@@ -148,28 +159,214 @@ export function BrokerAccountsCard() {
     }
   };
 
-  const connectTest = async () => {
-    setBusy("test");
+  const saveRename = async (account: ConnectedAccount) => {
+    const next = renaming?.value.trim() ?? "";
+    if (!next || next === account.label) {
+      setRenaming(null);
+      return;
+    }
+    setBusy(account.id);
     try {
-      const result = await connectTestAccount();
+      await renameAccount(account.id, next);
       await refresh();
-      toast.push(
-        "pos",
-        result.label ?? "Test Account - Local Mock Paper Account added",
-        "It stays inactive until you make it active. It uses local simulated fills and cannot reach real money."
-      );
+      setRenaming(null);
+      toast.push("pos", "Account renamed", `Now shown as "${next}".`);
     } catch (error) {
-      toast.push("neg", "Could not add test account", error instanceof ConsoleApiError ? error.message : String(error));
+      toast.push("neg", "Could not rename", error instanceof ConsoleApiError ? error.message : String(error));
     } finally {
       setBusy(null);
     }
+  };
+
+  // One row renderer, reused for the loaded account and each "Other" account so
+  // the two sections stay identical in look and behavior.
+  const renderAccountRow = (account: ConnectedAccount) => {
+    const r = realityForAccount(account);
+    const needsReconnect = rhNeedsReconnect(account);
+    const isCurrentLoaded = account.isActive;
+    const stateInfo = isCurrentLoaded && snapshot?.policy ? deriveStateInfo(snapshot.policy) : null;
+
+    const pendingCount = isCurrentLoaded
+      ? (snapshot.pendingProposals ?? []).length
+      : (snapshot.pendingProposals ?? []).filter(
+          (p) => (p as { proposal?: { accountId?: string }; accountId?: string }).proposal?.accountId === account.id || (p as { accountId?: string }).accountId === account.id
+        ).length;
+
+    const accountTypeWord = account.taxationType
+      ? (TAXATION_WORD[account.taxationType] ?? account.taxationType)
+      : r.tone === "paper"
+      ? "Paper"
+      : "Taxable";
+
+    return (
+      <div
+        key={account.id}
+        tabIndex={0}
+        className="rounded-control border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)] flex flex-col gap-1.5"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            {renaming?.id === account.id ? (
+              <div className="flex min-w-0 items-center gap-1.5">
+                <TextInput
+                  autoFocus
+                  aria-label="Account name"
+                  value={renaming.value}
+                  maxLength={120}
+                  disabled={busy !== null}
+                  onChange={(e) => setRenaming({ id: account.id, value: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveRename(account);
+                    if (e.key === "Escape") setRenaming(null);
+                  }}
+                  className="h-7 w-44 max-w-full"
+                />
+                <button
+                  type="button"
+                  aria-label="Save name"
+                  disabled={busy !== null}
+                  onClick={() => void saveRename(account)}
+                  className="text-[color:var(--con-pos)] hover:opacity-80 disabled:opacity-50"
+                  title="Save the new name"
+                >
+                  <Check className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Cancel rename"
+                  disabled={busy !== null}
+                  onClick={() => setRenaming(null)}
+                  className="text-[color:var(--con-faint)] hover:opacity-80 disabled:opacity-50"
+                  title="Cancel"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
+                  {account.label || brokerName(account.broker)}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Rename account"
+                  disabled={busy !== null}
+                  onClick={() => setRenaming({ id: account.id, value: account.label || "" })}
+                  className="shrink-0 text-[color:var(--con-faint)] hover:text-[color:var(--con-fg)] disabled:opacity-50"
+                  title="Rename this account's display name. The broker account number is not affected."
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+              </>
+            )}
+            {needsReconnect && (
+              <Chip tone="warn" title="The Robinhood OAuth session is missing or expired, so this app can't reach the broker for this account until you reconnect.">
+                reconnect needed
+              </Chip>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)]">
+              {stateInfo ? (
+                <Chip tone={stateInfo.tone} title={stateInfo.detail}>
+                  {stateInfo.label}
+                </Chip>
+              ) : (
+                <Chip tone="muted">
+                  {account.isActive ? "Loaded" : "Inactive"}
+                </Chip>
+              )}
+              {pendingCount > 0 && (
+                <Chip tone="warn" title={`${pendingCount} pending trade proposal(s) awaiting your review.`}>
+                  {pendingCount} pending proposal{pendingCount === 1 ? "" : "s"}
+                </Chip>
+              )}
+            </div>
+            {needsReconnect && (
+              <Btn
+                size="sm"
+                variant="primary"
+                disabled={busy !== null}
+                onClick={() => {
+                  window.location.href = ROBINHOOD_OAUTH_START_URL;
+                }}
+                title="Re-run Robinhood's OAuth sign-in to restore this connection."
+              >
+                Reconnect
+              </Btn>
+            )}
+            {!account.isActive && (
+              <Btn
+                size="sm"
+                variant="outline"
+                disabled={busy !== null}
+                title="Load this account — the whole console rescopes to it."
+                onClick={async () => {
+                  setBusy(account.id);
+                  let reloading = false;
+                  try {
+                    await activateAccount(account.id);
+                    reloading = true;
+                    window.location.reload();
+                  } catch (error) {
+                    toast.push("neg", "Could not load", error instanceof ConsoleApiError ? error.message : String(error));
+                  } finally {
+                    if (!reloading) setBusy(null);
+                  }
+                }}
+              >
+                {busy === account.id ? "Loading…" : r.tone === "paper" ? (
+                  <>
+                    Load <Chip tone="paper" className="ml-1 inline-flex items-center px-1.5 py-0 text-[10px] leading-tight uppercase font-semibold">PAPER</Chip>
+                  </>
+                ) : r.tone === "live" ? (
+                  <>
+                    Load <LiveTag />
+                  </>
+                ) : (
+                  "Load"
+                )}
+              </Btn>
+            )}
+            <Btn
+              size="sm"
+              variant="outline"
+              onClick={() => setCapabilitiesAccount(account)}
+              title="Inspect trading capabilities and operational features for this connection."
+            >
+              Capabilities
+            </Btn>
+            <Btn
+              size="sm"
+              variant="dangerOutline"
+              disabled={busy !== null}
+              onClick={() => setConfirmRemove(account)}
+              title="Remove this connection (and its stored credentials) from this app. The broker account itself is untouched — open positions and resting orders stay at the broker."
+            >
+              Disconnect
+            </Btn>
+          </div>
+        </div>
+        <p
+          className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+          title="Broker, environment, account tail, and tax treatment."
+        >
+          {`${brokerName(account.broker)} · ${account.environment}`}
+          {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
+          {` · ${accountTypeWord}`}
+        </p>
+      </div>
+    );
   };
 
   return (
     <Card
       title="Broker connections"
       action={
-        <div className="flex gap-2">
+        // flex-wrap + justify-end: three connect buttons don't fit beside the title on
+        // phone widths — wrapping keeps them on-canvas instead of forcing the whole
+        // page to scroll horizontally (390px viewport regression).
+        <div className="flex flex-wrap justify-end gap-2">
           <Btn
             size="sm"
             variant="outline"
@@ -195,21 +392,17 @@ export function BrokerAccountsCard() {
           <Btn
             size="sm"
             variant="outline"
-            disabled={busy !== null || hasTestAccount}
-            onClick={() => void connectTest()}
-            title={
-              hasTestAccount
-                ? "A Test Account - Local Mock Paper Account already exists. It is only used if you make it active."
-                : "Add a local mock paper account for simulated learning trades. It is not selected automatically and cannot reach real money."
-            }
+            disabled={busy !== null}
+            onClick={() => setTradierOpen(true)}
+            title="Link a Tradier account with an access token. Choose Sandbox (paper) or Production (live)."
           >
-            {busy === "test" ? "Adding..." : hasTestAccount ? "Test Account Added" : "Add Test Account"}
+            Connect Tradier
           </Btn>
         </div>
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Connections apply to your whole login. Exactly one account is active at a time; the whole console is scoped to
+        Connections apply to your whole login. Exactly one account is loaded at a time; the whole console is scoped to
         that account, including its authority, strategy, and decision history.
       </p>
 
@@ -219,125 +412,39 @@ export function BrokerAccountsCard() {
           through the broker&apos;s own sign-in, Alpaca through an API key pair.
         </p>
       ) : (
-        <div className="flex flex-col gap-2">
-          {accounts.map((account) => {
-            const r = realityForAccount(account);
-            const caps = account.capabilities;
-            const needsReconnect = rhNeedsReconnect(account);
-            return (
-              <div
-                key={account.id}
-                tabIndex={0}
-                className="rounded-lg border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
-                      {account.label || brokerName(account.broker)}
-                    </span>
-                    {account.broker === "test" && (
-                      <Chip tone="paper" title="Local mock paper account: simulated fills only, no broker login, no real money.">
-                        local mock
-                      </Chip>
-                    )}
-                    <Chip tone={r.tone} title={r.clarification}>
-                      {r.word} · {r.phrase}
-                    </Chip>
-                    {account.isActive && (
-                      <Chip tone="accent" title="The whole console — balances, guardrails, approvals, run state — is currently scoped to this account.">
-                        active
-                      </Chip>
-                    )}
-                    {needsReconnect && (
-                      <Chip tone="warn" title="The Robinhood OAuth session is missing or expired, so this app can't reach the broker for this account until you reconnect.">
-                        reconnect needed
-                      </Chip>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {needsReconnect && (
-                      <Btn
-                        size="sm"
-                        variant="primary"
-                        disabled={busy !== null}
-                        onClick={() => {
-                          window.location.href = ROBINHOOD_OAUTH_START_URL;
-                        }}
-                        title="Re-run Robinhood's OAuth sign-in to restore this connection."
-                      >
-                        Reconnect
-                      </Btn>
-                    )}
-                    {!account.isActive && (
-                      <Btn
-                        size="sm"
-                        variant="outline"
-                        disabled={busy !== null}
-                        title="Make this the active account. Everything in the console rescopes to it."
-                        onClick={async () => {
-                          setBusy(account.id);
-                          try {
-                            await activateAccount(account.id);
-                            await refresh();
-                            toast.push("info", "Active account switched");
-                          } catch (error) {
-                            toast.push("neg", "Could not switch", error instanceof ConsoleApiError ? error.message : String(error));
-                          } finally {
-                            setBusy(null);
-                          }
-                        }}
-                      >
-                        {busy === account.id ? "Switching…" : r.tone === "live" ? (
-                          <>
-                            Make active <LiveTag />
-                          </>
-                        ) : (
-                          "Make active"
-                        )}
-                      </Btn>
-                    )}
-                    <Btn
-                      size="sm"
-                      variant="dangerOutline"
-                      disabled={busy !== null}
-                      onClick={() => setConfirmRemove(account)}
-                      title="Remove this connection (and its stored credentials) from this app. The broker account itself is untouched — open positions and resting orders stay at the broker."
-                    >
-                      Disconnect
-                    </Btn>
-                  </div>
-                </div>
-                <p
-                  className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                  title="Broker, environment, account tail, tax treatment, and what the broker last said this account may trade."
-                >
-                  {account.broker === "test" ? "Local Mock Paper Account" : `${brokerName(account.broker)} · ${account.environment}`}
-                  {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
-                  {account.taxationType ? ` · ${TAXATION_WORD[account.taxationType] ?? account.taxationType}` : ""}
-                  {account.broker === "test"
-                    ? " — simulated fills for learning; excluded from real-account wash-sale contribution"
-                    : caps
-                    ? ` — broker allows: stocks ${caps.equityTrading ? "yes" : "no"} · shorting ${caps.shortSelling ? "yes" : "no"} · options ${caps.optionsTrading ? `level ${caps.optionsLevel ?? "?"}` : "no"} · margin ${caps.marginEnabled ? "yes" : "no"}`
-                    : " — capabilities not confirmed by the broker yet: everything reads as off"}
-                </p>
-              </div>
-            );
-          })}
+        <div className="flex flex-col gap-4">
+          <section>
+            <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Currently Loaded Account</h3>
+            {loaded ? (
+              renderAccountRow(loaded)
+            ) : (
+              <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                No account loaded — select one below.
+              </p>
+            )}
+          </section>
+          <section>
+            <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Other Accounts</h3>
+            {others.length > 0 ? (
+              <div className="flex flex-col gap-2">{others.map(renderAccountRow)}</div>
+            ) : (
+              <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                No other accounts. Use the buttons above to connect one.
+              </p>
+            )}
+          </section>
         </div>
       )}
 
       <div className="mt-4 border-t border-[color:var(--con-line)] pt-3">
         <div className="mb-2 flex items-center justify-between gap-3">
-          <h3 className="text-[length:var(--con-fs-sm)] font-semibold">Broker roadmap</h3>
-          <Chip tone="muted" title="Visible planning list only. These buttons stay disabled until real broker gateways exist.">
-            not wired yet
-          </Chip>
+          <h3 className="text-[length:var(--con-fs-sm)] font-semibold">Future Brokers</h3>
         </div>
         <div className="grid gap-2 lg:grid-cols-3">
           {BROKER_ROADMAP.map((broker) => (
             <div
               key={broker.name}
-              className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3"
+              className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3"
               title={broker.detail}
             >
               <div className="flex items-start justify-between gap-2">
@@ -347,19 +454,15 @@ export function BrokerAccountsCard() {
               <p className="mt-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
                 {broker.detail}
               </p>
-              <Btn
-                size="sm"
-                variant="ghost"
-                disabled
-                className="mt-2"
-                title={`Connect ${broker.name} is disabled because no ${broker.name} broker gateway exists in this app yet.`}
-              >
-                Connect unavailable
-              </Btn>
             </div>
           ))}
         </div>
       </div>
+
+      <CapabilitiesSheet
+        account={capabilitiesAccount}
+        onClose={() => setCapabilitiesAccount(null)}
+      />
 
       {/* Disconnect confirm — explicit about what is and is not affected. */}
       <Sheet
@@ -376,15 +479,15 @@ export function BrokerAccountsCard() {
               stay exactly where they are; this app just stops seeing and managing them.
             </p>
             {realityForAccount(confirmRemove).tone === "live" && (
-              <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+              <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
                 This is a brokerage connection. After disconnecting, any app-managed stop rules for its
                 positions stop running — only broker-held orders keep protecting them.
               </p>
             )}
             {confirmRemove.isActive && (
               <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
-                This is the ACTIVE account. Disconnecting it rescopes the console to the next active account, if one
-                remains.
+                This is the currently loaded account. Disconnecting it rescopes the console to the next loaded account,
+                if one remains.
               </p>
             )}
             <div className="flex justify-end gap-2">
@@ -409,6 +512,15 @@ export function BrokerAccountsCard() {
         onClose={() => setAlpacaOpen(false)}
         onConnected={async () => {
           setAlpacaOpen(false);
+          await refresh();
+        }}
+      />
+
+      <TradierConnectSheet
+        open={tradierOpen}
+        onClose={() => setTradierOpen(false)}
+        onConnected={async () => {
+          setTradierOpen(false);
           await refresh();
         }}
       />
@@ -559,3 +671,228 @@ function AlpacaConnectSheet({
     </Sheet>
   );
 }
+
+// ── Tradier connect (single access token) ────────────────────────────────────
+
+function TradierConnectSheet({
+  open,
+  onClose,
+  onConnected
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConnected: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [label, setLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [environment, setEnvironment] = useState<"paper" | "live">("paper");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [taxationType, setTaxationType] = useState<"" | TaxationType>("");
+  const [busy, setBusy] = useState(false);
+
+  const isLive = environment === "live";
+
+  const submit = async () => {
+    if (!apiKey.trim()) {
+      toast.push("warn", "Access token is required");
+      return;
+    }
+    setBusy(true);
+    try {
+      await connectTradierAccount({
+        label: label.trim() || undefined,
+        apiKey: apiKey.trim(),
+        environment,
+        accountNumber: accountNumber.trim() || undefined,
+        taxationType: taxationType || undefined
+      });
+      toast.push(
+        "pos",
+        "Tradier account connected",
+        isLive ? "Connected as a Tradier production (live) account." : "Connected as a Tradier sandbox (paper) account."
+      );
+      setLabel("");
+      setApiKey("");
+      setEnvironment("paper");
+      setAccountNumber("");
+      setTaxationType("");
+      await onConnected();
+    } catch (error) {
+      toast.push("neg", "Could not connect", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet open={open} onClose={onClose} title="Connect Tradier">
+      <div className="flex flex-col gap-3">
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Paste the access token from your Tradier dashboard. A sandbox token only authenticates
+          against Tradier&apos;s sandbox and a production token only against the live API, so you
+          choose the environment explicitly — currently reading as{" "}
+          <span className={isLive ? "font-bold text-[color:var(--con-accent)]" : "font-bold text-[color:var(--con-paper)]"}>
+            {isLive ? "Tradier Production (LIVE — Real Money)" : "Tradier Sandbox (Paper — NOT Real Money)"}
+          </span>
+          . The token is stored server-side and never shown again.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Label (optional)" hint="A name you'll recognize in the account switcher." htmlFor="trd-label">
+            <TextInput
+              id="trd-label"
+              value={label}
+              placeholder="Sandbox, Brokerage, etc"
+              onChange={(e) => setLabel(e.target.value)}
+              title="Display name for this connection inside the app."
+            />
+          </Field>
+          <Field label="Environment" hint="Sandbox = paper (no real money); Production = live." htmlFor="trd-env">
+            <Select
+              id="trd-env"
+              value={environment}
+              onChange={(e) => setEnvironment(e.target.value === "live" ? "live" : "paper")}
+              title="Which Tradier venue this token authenticates against."
+            >
+              <option value="paper">Sandbox (paper)</option>
+              <option value="live">Production (live)</option>
+            </Select>
+          </Field>
+          <Field label="Access token" hint="A single Bearer token — no secret." htmlFor="trd-key">
+            <TextInput
+              id="trd-key"
+              type="password"
+              value={apiKey}
+              autoComplete="off"
+              placeholder="Tradier access token"
+              onChange={(e) => setApiKey(e.target.value)}
+              title="The access token from Tradier. Sent once to the server, never echoed back."
+            />
+          </Field>
+          <Field label="Account number (optional)" hint="Leave blank to use the token's account." htmlFor="trd-acct">
+            <TextInput
+              id="trd-acct"
+              value={accountNumber}
+              placeholder="e.g. VA12345678"
+              onChange={(e) => setAccountNumber(e.target.value)}
+              title="Your Tradier account number. Optional — the profile is probed on first use."
+            />
+          </Field>
+          <Field
+            label="Tax treatment (optional)"
+            hint="IRAs zero the estimated tax rates and skip the per-account wash-sale guard."
+            htmlFor="trd-tax"
+          >
+            <Select
+              id="trd-tax"
+              value={taxationType}
+              onChange={(e) => setTaxationType(e.target.value as "" | TaxationType)}
+              title="How gains in this account are taxed — drives the tax estimates and wash-sale handling."
+            >
+              <option value="">not set</option>
+              <option value="taxable">taxable brokerage</option>
+              <option value="roth_ira">Roth IRA</option>
+              <option value="traditional_ira">traditional IRA</option>
+            </Select>
+          </Field>
+        </div>
+        {isLive && (
+          <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+            <LiveTag /> A production Tradier token trades <span className="font-semibold">real capital</span>. Orders can
+            reach real money only when policy, approval, and risk gates allow them.
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Btn variant="ghost" onClick={onClose} title="Close without connecting.">
+            Cancel
+          </Btn>
+          <Btn
+            variant="primary"
+            disabled={busy}
+            onClick={() => void submit()}
+            title="Validate and store this connection server-side."
+          >
+            {busy ? "Connecting…" : isLive ? (
+              <>
+                Connect <LiveTag />
+              </>
+            ) : "Connect Sandbox"}
+          </Btn>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+// ── Capabilities Modal Sheet ──────────────────────────────────────────────────
+
+function CapabilitiesSheet({
+  account,
+  onClose
+}: {
+  account: ConnectedAccount | null;
+  onClose: () => void;
+}) {
+  if (!account) return null;
+  const caps = account.capabilities;
+  return (
+    <Sheet
+      open={account !== null}
+      onClose={onClose}
+      title={`${brokerName(account.broker)} Capabilities`}
+    >
+      <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Operational capabilities and order execution features for account{" "}
+          <span className="font-semibold text-[color:var(--con-fg)]">
+            {account.label || brokerName(account.broker)}
+          </span>
+          {account.accountNumber ? ` (··${account.accountNumber.slice(-4)})` : ""}.
+        </p>
+
+        <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="font-medium flex items-center gap-1.5"><Briefcase className="size-4 text-[color:var(--con-accent)]" /> Stock Trading</span>
+            <Chip tone={caps?.equityTrading !== false ? "pos" : "muted"}>
+              {caps?.equityTrading !== false ? "Connected" : "Disabled"}
+            </Chip>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+            <span className="font-medium flex items-center gap-1.5"><ArrowDown className="size-4 text-[color:var(--con-accent)]" /> Short Selling</span>
+            <Chip tone={caps?.shortSelling ? "pos" : "muted"}>
+              {caps?.shortSelling ? "Enabled" : "Disabled"}
+            </Chip>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+            <span className="font-medium flex items-center gap-1.5"><Zap className="size-4 text-[color:var(--con-accent)]" /> Options Trading</span>
+            <Chip tone={caps?.optionsTrading ? "pos" : "muted"}>
+              {caps?.optionsTrading ? `Level ${caps.optionsLevel ?? "?"}` : "Disabled"}
+            </Chip>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+            <span className="font-medium flex items-center gap-1.5"><Scale className="size-4 text-[color:var(--con-accent)]" /> Margin Account</span>
+            <Chip tone={caps?.marginEnabled ? "pos" : "muted"}>
+              {caps?.marginEnabled ? "Enabled" : "Cash Only"}
+            </Chip>
+          </div>
+        </div>
+
+        <div className="rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] flex flex-col gap-1.5">
+          <span className="font-semibold text-[color:var(--con-fg)]">Gateway Status</span>
+          <p className="text-[color:var(--con-muted)]">
+            {caps
+              ? "Broker capabilities confirmed via live API probe."
+              : "Gateway connected. Capabilities default to standard equity trading until initial execution probe."}
+          </p>
+        </div>
+
+        <div className="flex justify-end mt-2">
+          <Btn variant="primary" onClick={onClose}>
+            Done
+          </Btn>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+

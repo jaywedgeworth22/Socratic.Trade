@@ -32,6 +32,25 @@ beforeAll(() => {
       created_at TEXT NOT NULL
     );
     CREATE INDEX idx_chat_turns_user ON chat_turns (user_id, created_at);
+
+    -- Pre-managed-commit shape: the table already exists, but migration-era columns such as
+    -- lease_expires_at do not. Baseline DDL must not create an index on those columns before the
+    -- ordered migrations have a chance to add them.
+    CREATE TABLE vector_ingest_commits (
+      id TEXT PRIMARY KEY,
+      tenant_scope TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      accession TEXT NOT NULL,
+      content_version TEXT NOT NULL,
+      parser_revision TEXT NOT NULL,
+      embed_revision TEXT NOT NULL,
+      expected_vectors INTEGER NOT NULL,
+      state TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      committed_at TEXT
+    );
   `);
   raw
     .prepare(
@@ -57,6 +76,19 @@ describe("migrating a pre-existing (pre-#333) database", () => {
       (i) => i.name
     );
     expect(indexes).toContain("idx_chat_turns_user_client");
+
+    const vectorCols = (db.prepare("PRAGMA table_info(vector_ingest_commits)").all() as Array<{ name: string }>).map(
+      (c) => c.name
+    );
+    expect(vectorCols).toEqual(expect.arrayContaining([
+      "document_key",
+      "retrieval_metadata_version",
+      "attempt_token",
+      "lease_expires_at",
+      "provider_authority",
+      "ledger_authority",
+      "vector_namespace"
+    ]));
 
     // Pre-existing rows survive the migration untouched.
     const legacy = db

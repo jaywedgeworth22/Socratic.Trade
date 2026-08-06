@@ -7,7 +7,12 @@
  *  recent orders), a plain-language signal summary, the eleven backend-derived
  *  metric tiles, the seven-factor score breakdown, analyst ratings + price
  *  targets, deep fundamentals, evidence bulletins, and per-field data-source
- *  provenance. Everything degrades honestly: no history → a sentence, no
+ *  provenance. When the last scan DIDN'T know the symbol (e.g. a recently
+ *  traded or held name outside the scan universe), it falls back to an
+ *  on-demand single-symbol fetch over /api/quote for the fundamentals/analyst
+ *  tiles — only the composite score, factor breakdown, and signal summary stay
+ *  scan-only, since those rank the symbol against the scan's candidate
+ *  universe. Everything degrades honestly: no history → a sentence, no
  *  quote → em dashes and a notice, never a crash or a fabricated number. */
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -17,7 +22,7 @@ import { cx, fmtMoney, fmtPct, EM_DASH } from "../lib/format";
 import { Chip } from "./primitives";
 import { useSymbolDrawer } from "./symbol-drawer";
 import { TickerLogo } from "./ticker-logo";
-import { deriveForView, preferFreshQuote, toQuoteView, withProvenance } from "./drilldown-data";
+import { deriveForView, hasEnrichedData, preferFreshQuote, toQuoteView, toQuoteViewFromEnrichment, withProvenance, type QuoteView } from "./drilldown-data";
 import {
   AnalystSection,
   DerivedTilesSection,
@@ -61,6 +66,46 @@ function useHistory(symbol: string, enabled: boolean): HistoryState {
         const bars = (json.bars ?? []).filter((b) => typeof b.close === "number" && Number.isFinite(b.close));
         if (cancelled) return;
         setState(bars.length >= 2 ? { status: "ready", bars } : { status: "empty" });
+      } catch {
+        if (!cancelled) setState({ status: "error" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, enabled]);
+
+  return state;
+}
+
+type EnrichmentState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "empty" }
+  | { status: "error" }
+  | { status: "ready"; view: QuoteView };
+
+/** On-demand single-symbol quote+fundamentals fetch (/api/quote), used ONLY when the
+ *  last market scan didn't know the symbol at all — e.g. a recently traded or held
+ *  name outside the scan universe. Never fetched when the scan already has the symbol. */
+function useOnDemandEnrichment(symbol: string, enabled: boolean): EnrichmentState {
+  const [state, setState] = useState<EnrichmentState>(() => (enabled ? { status: "loading" } : { status: "idle" }));
+
+  useEffect(() => {
+    if (!enabled) {
+      setState({ status: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setState({ status: "loading" });
+    (async () => {
+      try {
+        const res = await fetch(`/api/quote?symbol=${encodeURIComponent(symbol)}`);
+        if (!res.ok) throw new Error(`quote ${res.status}`);
+        const json: Record<string, unknown> = await res.json();
+        if (cancelled) return;
+        const view = toQuoteViewFromEnrichment(symbol, json);
+        setState(hasEnrichedData(view) ? { status: "ready", view } : { status: "empty" });
       } catch {
         if (!cancelled) setState({ status: "error" });
       }
@@ -164,7 +209,7 @@ function PriceHistoryChart({ bars }: { bars: HistoryBar[] }) {
       </div>
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        className="h-auto w-full rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)]"
+        className="h-auto w-full rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)]"
         role="img"
         aria-label={`Daily closes from ${fmtMoney(first)} to ${fmtMoney(last)}`}
       >
@@ -199,6 +244,7 @@ export function SymbolDrilldownSheet({
   quote?: MarketQuote;
 }) {
   const { snapshot } = useConsoleData();
+  const { updateDrawerTitle } = useSymbolDrawer();
   const normalized = symbol.trim().toUpperCase();
   const history = useHistory(normalized, true);
 
@@ -207,7 +253,28 @@ export function SymbolDrilldownSheet({
   const fullQuote = preferFreshQuote(override, resolveFullQuote(scan?.topCandidates, normalized));
   const usingOverride = override !== undefined && fullQuote === override;
   const summaryQuote = resolveQuote(scan?.quotesBySymbol, normalized);
-  const view = useMemo(() => toQuoteView(fullQuote, summaryQuote ?? undefined), [fullQuote, summaryQuote]);
+  const scanView = useMemo(() => toQuoteView(fullQuote, summaryQuote ?? undefined), [fullQuote, summaryQuote]);
+  // The last scan didn't know this symbol at all (e.g. a recently traded or held name
+  // outside the scan universe) — fetch minimal live enrichment for it on demand.
+  // Factor scores + signals stay scan-only (see the content block below); everything
+  // else here degrades honestly through hasEnrichedData.
+  const enrichment = useOnDemandEnrichment(normalized, scanView === null);
+  const onDemandView = enrichment.status === "ready" ? enrichment.view : null;
+  // Best-available view for the price line / score chip / sector line / footer below.
+  const view = scanView ?? onDemandView;
+  const companyName = resolveDrilldownCompanyName(scanView, onDemandView);
+
+  // The drawer title is created when the ticker is clicked, before an out-of-scan
+  // symbol's on-demand identity exists. Refresh only the matching open drawer once
+  // the provider response supplies the issuer name; the aria-label guard prevents a
+  // late response from renaming a newer drawer.
+  useEffect(() => {
+    if (!companyName) return;
+    updateDrawerTitle(
+      `${normalized} details`,
+      <SymbolDrilldownTitle symbol={normalized} companyName={companyName} />
+    );
+  }, [companyName, normalized, updateDrawerTitle]);
 
   const position = snapshot?.positions?.find((p) => p.symbol.trim().toUpperCase() === normalized);
   const pending = useMemo(
@@ -238,7 +305,11 @@ export function SymbolDrilldownSheet({
   const dayChangePct = scanChangePct ?? historyChangePct;
   const dayChangeTitle =
     scanChangePct !== undefined && view
-      ? withProvenance("Intraday % change captured by the last market scan.", view, "intradayChangePct")
+      ? withProvenance(
+          scanView ? "Intraday % change captured by the last market scan." : "Intraday % change from an on-demand fetch.",
+          view,
+          "intradayChangePct"
+        )
       : "Last daily close vs the previous daily close, from the price history.";
 
   const derived = view ? deriveForView(view, lastBar?.volume) : null;
@@ -253,7 +324,11 @@ export function SymbolDrilldownSheet({
             title={
               view
                 ? withProvenance(
-                    usingOverride ? "Latest price from the scan currently on screen." : "Latest price known to the last market scan.",
+                    usingOverride
+                      ? "Latest price from the scan currently on screen."
+                      : scanView
+                        ? "Latest price known to the last market scan."
+                        : "Latest price from an on-demand fetch (this symbol wasn't in the last market scan).",
                     view,
                     "price"
                   )
@@ -324,21 +399,43 @@ export function SymbolDrilldownSheet({
         {/* Your exposure — account truth, available even when the scan didn't know the symbol */}
         <ExposureSection symbol={normalized} position={position} pending={pending} orders={recentOrders} />
 
-        {view && derived ? (
+        {scanView && derived ? (
           <>
-            <SignalSummarySection view={view} derived={derived} />
-            <DerivedTilesSection view={view} derived={derived} />
-            <FactorSection view={view} />
-            <AnalystSection view={view} />
-            <FundamentalsSection view={view} />
-            <EvidenceSection view={view} />
-            <SourcesSection view={view} />
+            <SignalSummarySection view={scanView} derived={derived} />
+            <DerivedTilesSection view={scanView} derived={derived} />
+            <FactorSection view={scanView} />
+            <AnalystSection view={scanView} />
+            <FundamentalsSection view={scanView} />
+            <EvidenceSection view={scanView} />
+            <SourcesSection view={scanView} />
+          </>
+        ) : enrichment.status === "loading" ? (
+          <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
+            {normalized} wasn&apos;t in the last market scan — fetching live fundamentals for it now…
+          </p>
+        ) : onDemandView && derived ? (
+          <>
+            {/* Factor scores + signals genuinely require a scan run (they rank this symbol
+                against the candidate universe) — everything else here is real, on-demand data. */}
+            <DerivedTilesSection view={onDemandView} derived={derived} />
+            <AnalystSection view={onDemandView} />
+            <FundamentalsSection view={onDemandView} />
+            <EvidenceSection view={onDemandView} />
+            <SourcesSection view={onDemandView} />
+            <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
+              {"Factor scores and signals come from scan runs — run a scan that includes "}
+              {normalized}
+              {" for those."}
+            </p>
           </>
         ) : (
           <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
-            {normalized} wasn&apos;t in the last market scan, so fundamentals, factor scores, and signals aren&apos;t
-            available yet. The chart and your account data above are still real. Run a scan that includes {normalized}{" "}
-            to fill this in.
+            {/* Explicit {" "} after the symbol: the literal space here was dropped at runtime
+                (observed "LRCXwasn't" in prod) — same idiom as the second occurrence below. */}
+            {normalized}
+            {" wasn't in the last market scan, so fundamentals, factor scores, and signals aren't available yet. The chart and your account data above are still real. Run a scan that includes "}
+            {normalized}
+            {" to fill this in."}
           </p>
         )}
 
@@ -347,12 +444,22 @@ export function SymbolDrilldownSheet({
             className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
             title="When this symbol's quote data was captured. The chart above refreshes independently from free daily history."
           >
-            Quote data from {usingOverride ? "the scan currently on screen" : "the last market scan"} (
+            Quote data from {usingOverride ? "the scan currently on screen" : scanView ? "the last market scan" : "a live on-demand fetch"} (
             {new Date(view.asOf).toLocaleString()}).
           </p>
         )}
     </div>
   );
+}
+
+/** Resolve the identity rendered in the drawer header. The scan remains first
+ * choice; on-demand identity fills the header for symbols outside that scan. */
+export function resolveDrilldownCompanyName(
+  scanView: QuoteView | null,
+  onDemandView: QuoteView | null
+): string | undefined {
+  const name = scanView?.companyName ?? onDemandView?.companyName;
+  return name?.trim() || undefined;
 }
 
 function SymbolDrilldownTitle({ symbol, companyName }: { symbol: string; companyName?: string }) {

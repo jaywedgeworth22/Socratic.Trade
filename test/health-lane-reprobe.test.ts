@@ -1,0 +1,114 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { resetDbForTesting } from "../src/lib/db";
+import {
+  isLaneDueForReprobe,
+  parseKnownUnavailabilityUntil,
+  openHardStopReprobeWindow,
+  healthReprobeLaneSettingKey,
+} from "../src/lib/health-lane-reprobe";
+import {
+  logApiHealth,
+  getServiceHealthSummaries,
+  HEALTH_REASON_CONSECUTIVE_FAILURES,
+} from "../src/lib/db-health";
+
+describe("health-lane-reprobe", () => {
+  let dir: string;
+  let prevDb: string | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), `health-reprobe-${randomUUID()}-`));
+    prevDb = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = `file:${join(dir, "test.db")}`;
+    process.env.HEALTH_LANE_REPROBE_ENABLED = "on";
+    resetDbForTesting();
+  });
+
+  afterEach(() => {
+    resetDbForTesting();
+    if (prevDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = prevDb;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it("parseKnownUnavailabilityUntil honors Retry-After and AV daily language", () => {
+    const now = Date.parse("2026-08-06T15:00:00.000Z");
+    const ra = parseKnownUnavailabilityUntil("HTTP 429 Retry-After: 120", now);
+    expect(ra).toBe(now + 120_000);
+
+    const daily = parseKnownUnavailabilityUntil("Note daily API call limit 25/day", now);
+    expect(daily).toBeGreaterThan(now);
+    expect(daily! - now).toBeLessThanOrEqual(48 * 3600_000);
+
+    expect(parseKnownUnavailabilityUntil("random boom", now)).toBeNull();
+  });
+
+  it("isLaneDueForReprobe waits for interval after last failure", () => {
+    const now = Date.parse("2026-08-06T12:00:00.000Z");
+    const lastFail = new Date(now - 1 * 3600_000).toISOString(); // 1h ago
+    const notDue = isLaneDueForReprobe(
+      { lastFailureTs: lastFail, lastFailureError: "HTTP 500", stoppedReason: HEALTH_REASON_CONSECUTIVE_FAILURES },
+      now,
+      { intervalMs: 4 * 3600_000 }
+    );
+    expect(notDue.due).toBe(false);
+    expect(notDue.reason).toBe("interval_not_elapsed");
+
+    const due = isLaneDueForReprobe(
+      {
+        lastFailureTs: new Date(now - 5 * 3600_000).toISOString(),
+        lastFailureError: "HTTP 500",
+        stoppedReason: HEALTH_REASON_CONSECUTIVE_FAILURES
+      },
+      now,
+      { intervalMs: 4 * 3600_000 }
+    );
+    expect(due.due).toBe(true);
+  });
+
+  it("openHardStopReprobeWindow softens hard failures so consecutive stop lifts", () => {
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({
+        service: "nasdaq-quote",
+        ok: false,
+        errorText: `HTTP 500 boom-${i}`,
+        keySource: undefined
+      });
+    }
+    const before = getServiceHealthSummaries().find((s) => s.service === "nasdaq-quote");
+    expect(before?.stoppedWorking).toBe(true);
+    expect(before?.stoppedReason).toBe(HEALTH_REASON_CONSECUTIVE_FAILURES);
+
+    const n = openHardStopReprobeWindow("nasdaq-quote", null);
+    expect(n).toBe(5);
+
+    const after = getServiceHealthSummaries().find((s) => s.service === "nasdaq-quote");
+    // Soft failures no longer count as hard consecutive stop
+    expect(after?.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES).toBe(false);
+  });
+
+  it("isLaneDueForReprobe waits for known quota until", () => {
+    const now = Date.parse("2026-08-06T12:00:00.000Z");
+    const until = new Date(now + 6 * 3600_000).toISOString();
+    const r = isLaneDueForReprobe(
+      {
+        lastFailureTs: new Date(now - 10 * 3600_000).toISOString(),
+        lastFailureError: `daily budget exhausted until=${until}`,
+        stoppedReason: HEALTH_REASON_CONSECUTIVE_FAILURES
+      },
+      now,
+      { intervalMs: 4 * 3600_000 }
+    );
+    expect(r.due).toBe(false);
+    expect(r.reason).toBe("waiting_quota_or_known_until");
+    expect(healthReprobeLaneSettingKey("alpha-vantage", "env")).toContain("alpha-vantage");
+  });
+});

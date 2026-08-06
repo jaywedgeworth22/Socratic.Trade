@@ -28,6 +28,7 @@ import {
   enqueueDueJob,
   failDueJob,
   getDueJobStats,
+  getConnectedAccount,
   getPolicy,
   getSkippedCounterfactualByRunSymbol,
   getSkippedCounterfactualByRunSymbolHorizon,
@@ -50,7 +51,7 @@ import { buildLlmRequestBody, extractLlmText, llmAuthHeaders } from "./llm-call"
 import { humanizeLlmError } from "./llm-errors";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
-import { extractLlmUsage, recordLlmUsage } from "./llm-usage";
+import { extractLlmUsage, providerRequestIdFromPayload, recordLlmUsage } from "./llm-usage";
 import { addTradingDays } from "./market-calendar";
 import { normalizeSymbol } from "./money";
 import { withLlmGeneration } from "./observability";
@@ -66,8 +67,35 @@ import {
   type NormalizedDailyBar
 } from "./outcome-horizons";
 import { calculatePnl, type ClosedLot } from "./performance";
+import {
+  containPromptDataTree,
+  scanForInjectionAttempts,
+  type UntrustedPromptField
+} from "./prompt-safety";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { FillEvent, OrderSide, SocraticDecisionCase, SocraticOutcomeHorizonRow } from "./types";
+
+/** Collect string leaves under a path for advisory injection scanning (bounded). */
+function flattenPromptScanFields(value: unknown, path: string, out: UntrustedPromptField[] = [], depth = 0): UntrustedPromptField[] {
+  if (out.length >= 24 || depth > 6) return out;
+  if (typeof value === "string") {
+    if (value.trim()) out.push({ name: path, text: value });
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length && out.length < 24; i++) {
+      flattenPromptScanFields(value[i], `${path}[${i}]`, out, depth + 1);
+    }
+    return out;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (out.length >= 24) break;
+      flattenPromptScanFields(child, path ? `${path}.${key}` : key, out, depth + 1);
+    }
+  }
+  return out;
+}
 
 const DAY_MS = 86_400_000;
 const DEFAULT_CASE_LIMIT = 25;
@@ -275,7 +303,7 @@ async function measureCase(
   let realizedLot: ClosedLot | undefined;
   let note: string | undefined;
 
-  if (decisionCase.status === "placed") {
+  if (decisionCase.status === "placed" || decisionCase.status === "filled") {
     const fills = listFillEventsByProposalId(decisionCase.proposalId ?? decisionCase.id, ctx.userId).filter(
       (fill) => normalizeSymbol(fill.symbol) === symbol
     );
@@ -397,7 +425,7 @@ async function measureCase(
 
   const allHorizonsTerminal = outcomes.length === 4;
   const okRows = outcomes.filter((row) => row.resolution === "ok");
-  if (decisionCase.status !== "placed" && allHorizonsTerminal) {
+  if (decisionCase.status !== "placed" && decisionCase.status !== "filled" && allHorizonsTerminal) {
     const headline = pickHeadlineRow(okRows);
     if (headline && typeof headline.returnPct === "number") {
       return {
@@ -719,7 +747,10 @@ async function generatePostMortemLessons(
   const outcome = decisionCase.outcome;
   if (!outcome) return { written: false, skippedReason: "no_outcome" };
 
-  const userContent = JSON.stringify({
+  // #838: fence untrusted persisted model text (thesis/rationale/dissent/evidence/coach notes)
+  // the same way strategy-tuning and framework-review do — quarantine instruction-like spans
+  // and keep advisory receipts; never block generation.
+  const rawUserPayload = {
     symbol: decisionCase.symbol,
     side: decisionCase.side,
     status: decisionCase.status,
@@ -732,7 +763,33 @@ async function generatePostMortemLessons(
     evidence: decisionCase.evidence.slice(0, 6).map((item) => ({ kind: item.kind, title: item.title, summary: truncate(item.summary, 300) })),
     coachNotes: decisionCase.coachNotes.slice(-5),
     realizedOutcome: outcome
-  });
+  };
+  const contained = containPromptDataTree(rawUserPayload, "unknown", "outcomePostMortem");
+  const injectionFindings = scanForInjectionAttempts(
+    flattenPromptScanFields(contained.value, "outcomePostMortem").slice(0, 24)
+  );
+  if (contained.receipts.length > 0 || injectionFindings.length > 0) {
+    audit(
+      "outcome_postmortem_prompt_safety",
+      {
+        decisionId: decisionCase.id,
+        symbol: decisionCase.symbol,
+        containment: contained.receipts.slice(0, 12).map(({ path, result }) => ({
+          path,
+          status: result.status,
+          patterns: result.findings.map((f) => f.pattern)
+        })),
+        injectionFindings: injectionFindings.slice(0, 12).map((f) => ({
+          name: f.name,
+          pattern: f.pattern,
+          excerpt: f.excerpt.slice(0, 240)
+        }))
+      },
+      userId,
+      decisionCase.connectedAccountId
+    );
+  }
+  const userContent = JSON.stringify(contained.value);
 
   const text = llmOverride
     ? await llmOverride({ systemPrompt: LESSON_SYSTEM_PROMPT, userContent })
@@ -764,21 +821,47 @@ async function generatePostMortemLessons(
     decisionCase.connectedAccountId
   );
 
-  // Route each lesson through the shared learned-context ingestion (origin 'autonomous'): the
-  // fail-closed classifier decides fact-vs-risk tier; risk-tier lessons land in the approval inbox.
+  // Route each lesson as PORTFOLIO-scoped learned context so paper and live accounts both
+  // contribute to model/task comparison (owner 2026-08-04: an account is an account; paper is
+  // first-class learning evidence unless a definite paper-exclusive cause applies — that
+  // exception is enforced by the daily Learning Review, not by scoping lessons away).
+  // A historical case without a connected account may still write with unknown environment;
+  // we only refuse when we cannot identify a user at all (userId is required by ingestLearned).
+  const lessonAccount = decisionCase.connectedAccountId
+    ? getConnectedAccount(decisionCase.connectedAccountId, userId)
+    : undefined;
+  const accountEnvironment = lessonAccount?.environment ?? null;
+  if (decisionCase.connectedAccountId && !lessonAccount) {
+    // Account id was stamped but the row is gone — still write the lesson, but audit so we
+    // notice orphaned provenance. Do not drop model/task evidence for missing account metadata.
+    audit(
+      "learned_context.account_provenance_missing",
+      { userId, decisionId: decisionCase.id, connectedAccountId: decisionCase.connectedAccountId, note: "wrote portfolio lesson with null environment" },
+      userId,
+      decisionCase.connectedAccountId
+    );
+  }
+
   for (const { lesson, direction } of parsed.lessons) {
     try {
+      const envNote = accountEnvironment ? ` on a ${accountEnvironment} broker account` : "";
       await ingestLearned(
         userId,
         {
           kind: "decision",
           subject: `decision_lesson:${decisionCase.symbol ?? "portfolio"}:${decisionCase.thesisTag ?? "untagged"}`,
-          value: `${lesson} (direction: ${direction}; from the ${decisionCase.symbol ?? "portfolio"} ${decisionCase.status} decision, outcome ${outcome.status})`,
+          value: `${lesson} (direction: ${direction}; from the ${decisionCase.symbol ?? "portfolio"} ${decisionCase.status} decision${envNote}, outcome ${outcome.status})`,
           symbol: decisionCase.symbol,
           source: "inferred",
           confidence: 0.55
         },
-        "autonomous"
+        "autonomous",
+        {
+          // No connectedAccountId → learningScope defaults to "portfolio" (cross-account).
+          // Keep paper/live on accountEnvironment for Learning Review attribution only.
+          ...(accountEnvironment ? { accountEnvironment } : {}),
+          learningScope: "portfolio"
+        }
       );
     } catch (err) {
       console.warn("[outcome-engine] ingestLearned for lesson failed:", err instanceof Error ? err.message : String(err));
@@ -797,14 +880,18 @@ async function generatePostMortemLessons(
  * single well-defined "this run's downgrade" to hand it. It always re-reads the owner's persisted
  * (undowngraded) policy — same behavior as before the usage-budget downgrade existed.
  */
-async function callLessonLlm(userId: string, userContent: string): Promise<string | undefined> {
+export async function callLessonLlm(userId: string, userContent: string): Promise<string | undefined> {
   const policy = getPolicy(userId);
   const { url, key, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(
     policy,
     userId,
     "https://api.openai.com/v1/chat/completions"
   );
-  if (!key) return undefined;
+  // No-defaults / rotation-sentinel safety net: resolveLlmEndpoint maps an unconfigured OR "__rotate__"
+  // model to "" outside a strategy run (rotation is resolved only inside runStrategyOnce), so a blank
+  // model with a present key must be treated as unconfigured — skip cleanly rather than POST model:""
+  // (which 400s on every post-mortem lesson call). Same contract as strategy-tuning's local-rules gate.
+  if (!key || !model) return undefined;
 
   const body = buildLlmRequestBody(
     { provider, transport },
@@ -813,7 +900,11 @@ async function callLessonLlm(userId: string, userContent: string): Promise<strin
       systemPrompt: LESSON_SYSTEM_PROMPT,
       userContent,
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection,
-      reasoningEffort: policy.llmReasoningEffort
+      reasoningEffort: policy.llmReasoningEffort,
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "outcome-postmortem"
     }
   );
 
@@ -841,7 +932,7 @@ async function callLessonLlm(userId: string, userContent: string): Promise<strin
         return { text: undefined };
       }
       const payload = await response.json();
-      recordLlmUsage({ userId, provider, model, context: "outcome-postmortem", keySource, keyRef, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId, provider, model, context: "outcome-postmortem", keySource, keyRef, connectedAccountId: policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(provider, payload), ...extractLlmUsage(payload) });
       const text = extractLlmText(payload);
       return { text: typeof text === "string" ? text : undefined };
     }

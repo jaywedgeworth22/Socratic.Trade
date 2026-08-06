@@ -24,7 +24,7 @@ import { buildLlmRequestBody, extractLlmText, llmAuthHeaders, type LlmJsonSchema
 import { isOverLlmBudget } from "../llm-budget";
 import { resolveLlmEndpoint } from "../llm-provider";
 import { LLM_TIMEOUT_MS } from "../llm-request";
-import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "../llm-usage";
 import { getPolicy } from "../db";
 import { envFlagOn } from "./env-flag";
 
@@ -43,7 +43,9 @@ export function hydeEnabled(): boolean {
   return envFlagOn("RAG_HYDE", false);
 }
 
-/** Cheap default model for HyDE passage drafting; overridable via RAG_HYDE_MODEL. */
+/** Cheap default model for HyDE passage drafting; overridable via RAG_HYDE_MODEL. Deliberately
+ * remains GPT-5.4 Mini instead of a GPT-5.6 tier: this is short retrieval-query synthesis, and Mini
+ * is both sufficient and currently cheaper than 5.6 Luna. */
 const DEFAULT_HYDE_MODEL = "gpt-5.4-mini";
 
 function hydeModel(): string {
@@ -221,7 +223,11 @@ export async function generateHydePassages(
         systemPrompt: HYDE_SYSTEM_PROMPT,
         userContent,
         schema: HYDE_SCHEMA,
-        maxOutputTokens: HYDE_MAX_OUTPUT_TOKENS
+        maxOutputTokens: HYDE_MAX_OUTPUT_TOKENS,
+        userId,
+        keyRef: endpoint.keyRef,
+        service: "rag",
+        feature: "rag-hyde"
       }
     );
 
@@ -252,6 +258,8 @@ export async function generateHydePassages(
         context: "rag-hyde",
         keySource: endpoint.keySource,
         keyRef: endpoint.keyRef,
+        connectedAccountId: opts.connectedAccountId,
+        providerRequestId: providerRequestIdFromPayload(endpoint.provider, payload),
         ...extractLlmUsage(payload)
       });
     } catch {

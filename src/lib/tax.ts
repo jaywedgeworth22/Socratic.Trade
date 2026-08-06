@@ -1,7 +1,7 @@
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getPolicy, listConnectedAccounts, listFillEvents } from "./db";
 import { normalizeSymbol } from "./money";
-import { getClosedLotsDetailed, getOpenLots, type ClosedLot, type PrefetchedFills } from "./performance";
+import { getClosedLotsDetailed, getOpenLots, type ClosedLot, type PrefetchedFills, type PrefetchedPnl } from "./performance";
 import type { FillEvent, FillSource, TaxSettings, TaxationType } from "./types";
 
 const MS_PER_DAY = 86_400_000;
@@ -116,14 +116,15 @@ export function getWashSaleLockProvenance(
   now = new Date(),
   userId: string = "local",
   prefetched?: PrefetchedFills,
-  minLossUsd?: number
+  minLossUsd?: number,
+  prefetchedPnl?: PrefetchedPnl
 ): WashSaleLockMap {
   const locked: WashSaleLockMap = new Map();
   const cutoff = now.getTime() - WASH_WINDOW_DAYS * MS_PER_DAY;
   // Optional materiality floor (taxSettings.washSaleMinLossUsd): losses smaller than this do
   // NOT contribute a lockout. Default undefined/<=0 = every loss locks (original behavior).
   const lossFloor = typeof minLossUsd === "number" && Number.isFinite(minLossUsd) && minLossUsd > 0 ? minLossUsd : 0;
-  for (const lot of getClosedLotsDetailed(accountNumber, source, userId, prefetched)) {
+  for (const lot of getClosedLotsDetailed(accountNumber, source, userId, prefetched, prefetchedPnl)) {
     if (lot.pnl >= 0 || lot.side !== "long" || !lot.exitAt || !lot.symbol) continue;
     if (lossFloor > 0 && Math.abs(lot.pnl) < lossFloor) continue;
     const exitT = new Date(lot.exitAt).getTime();
@@ -148,9 +149,10 @@ export function getWashSaleLockedSymbols(
   now = new Date(),
   userId: string = "local",
   prefetched?: PrefetchedFills,
-  minLossUsd?: number
+  minLossUsd?: number,
+  prefetchedPnl?: PrefetchedPnl
 ): Set<string> {
-  return new Set(getWashSaleLockProvenance(accountNumber, source, now, userId, prefetched, minLossUsd).keys());
+  return new Set(getWashSaleLockProvenance(accountNumber, source, now, userId, prefetched, minLossUsd, prefetchedPnl).keys());
 }
 
 export interface AccountTaxContext {
@@ -260,7 +262,8 @@ export function getTaxSummary(
   settings?: Partial<TaxSettings>,
   now = new Date(),
   userId: string = "local",
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  prefetchedPnl?: PrefetchedPnl
 ): TaxSummary {
   const tax = resolveTaxSettings(settings);
   const taxYear = now.getFullYear();
@@ -268,8 +271,8 @@ export function getTaxSummary(
   // `detectWashSales` read here reuses the same array instead of a third SELECT for the same source.
   const prefetchedSourceFills = source === "live" ? prefetched?.liveFills : source === "paper" ? prefetched?.paperFills : undefined;
   const fills = prefetchedSourceFills ?? listFillEvents(accountNumber, source, 500, userId);
-  const closedLots = getClosedLotsDetailed(accountNumber, source, userId, prefetched);
-  const openLotsRaw = getOpenLots(accountNumber, source, userId, prefetched);
+  const closedLots = getClosedLotsDetailed(accountNumber, source, userId, prefetched, prefetchedPnl);
+  const openLotsRaw = getOpenLots(accountNumber, source, userId, prefetched, prefetchedPnl);
 
   const washSales = detectWashSales(fills, closedLots, taxYear);
   const disallowedKeys = new Set(washSales.map((w) => `${w.symbol}:${w.soldAt}`));
@@ -339,7 +342,7 @@ export function getTaxSummary(
     estimatedTaxLiability: Number((estimatedShortTermTax + estimatedLongTermTax).toFixed(2)),
     washSales,
     lockedSymbols: tax.washSaleGuard
-      ? Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId, prefetched, tax.washSaleMinLossUsd))
+      ? Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId, prefetched, tax.washSaleMinLossUsd, prefetchedPnl))
       : [],
     openLots,
     harvestCandidates,

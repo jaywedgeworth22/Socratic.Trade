@@ -8,8 +8,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
-import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
-import { DEFAULT_OPENAI_MODEL, llmFetch, isReasoningModel } from "../llm-request";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "../llm-usage";
+import { applyOpenRouterClassifierEnrichment } from "../llm-call";
+import { llmFetch, reasoningCapabilityForModel, withLlmRequestBounds } from "../llm-request";
+import type { LlmReasoningEffort } from "../types";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
 
@@ -23,10 +25,13 @@ export interface LlmUsageOpts {
 }
 
 /** The chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
-export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
+export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "openrouter";
 
-/** Sum usage across the (possibly multi-step) tool loop and record one ledger row. */
-function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: string, prompt: number, completion: number, saw: boolean): void {
+/** Sum usage across the (possibly multi-step) tool loop and record one ledger row.
+ *  `providerRequestId` is only meaningful when the loop made exactly ONE provider request
+ *  (the ledger row is a per-run aggregate; a single generation id can only verify a single
+ *  call's cost, so multi-step runs pass undefined rather than a misleading partial id). */
+function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: string, prompt: number, completion: number, saw: boolean, providerRequestId?: string): void {
   if (!opts.userId) return;
   recordLlmUsage({
     userId: opts.userId,
@@ -36,7 +41,8 @@ function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: stri
     keySource: opts.keySource ?? "user",
     keyRef: opts.keyRef,
     promptTokens: saw ? prompt : undefined,
-    completionTokens: saw ? completion : undefined
+    completionTokens: saw ? completion : undefined,
+    providerRequestId
   });
 }
 
@@ -252,7 +258,7 @@ export class MockLLM implements ChatLLM {
       const lead = result?.blocked
         ? `I've drafted this order but it can't proceed as-is — ${(result.warnings ?? []).join("; ")}.`
         : `I've prepared a draft order for your review — it won't go through until you confirm.` +
-          ` (Account: ${result.account_label}${result.is_real ? "" : " — simulated, not a real broker"}.)`;
+          ` (Account: ${result.account_label}${result.is_real ? "" : " — broker paper account"}.)`;
       return { text: `${lead}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
     }
 
@@ -268,7 +274,7 @@ export class MockLLM implements ChatLLM {
       return {
         text: `${lines.join("\n")}\n\n${DISCLAIMER}`,
         toolCalls,
-        citations: chunks.map((c: any) => ({ source: c.source, chunk_id: c.chunk_id, as_of: c.as_of, url: c.url }))
+        citations: chunks.map((c: any) => ({ source: c.source, chunk_id: c.chunk_id, evidence_ref: c.evidence_ref, as_of: c.as_of, url: c.url }))
       };
     }
 
@@ -340,7 +346,13 @@ async function defaultTransport(body: any, apiKey: string): Promise<any> {
 
 /** Real Anthropic Messages API tool loop (server-side only). */
 export class AnthropicLLM implements ChatLLM {
-  constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport, private usage: LlmUsageOpts = {}) {}
+  constructor(
+    private apiKey: string,
+    private model: string,
+    private transport: Transport = defaultTransport,
+    private usage: LlmUsageOpts = {},
+    private reasoningEffort?: LlmReasoningEffort
+  ) {}
 
   get modelName(): string {
     return this.model;
@@ -378,10 +390,15 @@ export class AnthropicLLM implements ChatLLM {
             [{ type: "text", text: system }];
 
     for (let step = 0; step < MAX_STEPS; step++) {
-      const resp = await this.transport(
-        { model: this.model, max_tokens: 1024, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) },
-        this.apiKey
-      );
+      const baseBody = { model: this.model, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) };
+      const requestBody = reasoningCapabilityForModel(this.model)
+        ? withLlmRequestBounds(baseBody, "anthropic-messages", {
+            model: this.model,
+            maxOutputTokens: 1024,
+            reasoningEffort: this.reasoningEffort
+          })
+        : { ...baseBody, max_tokens: 1024 };
+      const resp = await this.transport(requestBody, this.apiKey);
       const u = extractLlmUsage(resp);
       if (u.promptTokens !== undefined || u.completionTokens !== undefined) {
         sawUsage = true;
@@ -413,7 +430,7 @@ export class AnthropicLLM implements ChatLLM {
       .filter((c) => c.name === "get_quote" && c.result && !c.result.error)
       .map((c) => ({ source: "get_quote", as_of: c.result.as_of }));
     for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
-      for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of, url: chunk.url });
+      for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, evidence_ref: chunk.evidence_ref, as_of: chunk.as_of, url: chunk.url });
     }
     recordChatUsage(this.usage, "anthropic", this.model, promptTokens, completionTokens, sawUsage);
     return { text: withDisclaimer(text), toolCalls, citations };
@@ -442,7 +459,7 @@ async function defaultOpenAITransport(body: any, apiKey: string): Promise<any> {
  * injectable-transport approach as AnthropicLLM so it is fully testable offline.
  *
  * Tool calling follows the OpenAI function-calling protocol (tools/tool_calls).
- * CHAT_LLM_MODEL defaults to the app's current OpenAI default when CHAT_LLM=openai.
+ * CHAT_LLM_MODEL is required when CHAT_LLM=openai; the app never silently chooses a model.
  */
 export class OpenAILLM implements ChatLLM {
   constructor(
@@ -452,7 +469,8 @@ export class OpenAILLM implements ChatLLM {
     private usage: LlmUsageOpts = {},
     // OpenAI-compatible provider serving this model (xAI/Gemini/Mistral/DeepSeek all share this tool loop),
     // recorded on the usage ledger so cost is attributed to the right provider, not always "openai".
-    private provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek" = "openai"
+    private provider: OpenAiCompatProvider = "openai",
+    private reasoningEffort?: LlmReasoningEffort
   ) {}
 
   get modelName(): string {
@@ -489,28 +507,43 @@ export class OpenAILLM implements ChatLLM {
 
     const toolCalls: ToolCall[] = [];
     let text = "";
-
-    // OpenAI's reasoning models (gpt-5 / o-series) REJECT `max_tokens` ("use max_completion_tokens
-    // instead") and spend part of the budget on hidden reasoning, so they need both the renamed
-    // param and a higher cap to leave room for a visible answer. Other providers (and OpenAI's
-    // classic models) keep `max_tokens`. Gated on provider too so we never send the OpenAI-only param
-    // to an OpenAI-compatible endpoint (xAI/Gemini/Mistral).
-    const tokenCap =
-      this.provider === "openai" && isReasoningModel(this.model)
-        ? { max_completion_tokens: 4096 }
-        : { max_tokens: 1024 };
+    const generationIds: string[] = [];
 
     for (let step = 0; step < MAX_STEPS; step++) {
+      const baseBody: Record<string, any> = {
+        model: this.model,
+        messages,
+        ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
+      };
+      if (this.provider === "openrouter") {
+        // Shared classifier enrichment (user + flat trace) — replaces the old hand-built bare
+        // `metadata` object this path used to duplicate alongside llm-call.ts. Fail-open: an
+        // enrichment error degrades to an un-enriched request, never a failed chat call.
+        applyOpenRouterClassifierEnrichment(baseBody, {
+          userId: this.usage.userId,
+          keyRef: this.usage.keyRef,
+          service: "chat",
+          feature: this.usage.context ?? "chat"
+        });
+      } else if (this.usage.userId) {
+        if (this.provider === "openai" || this.provider === "deepseek" || this.provider === "gemini") {
+          baseBody.user = this.usage.userId;
+        }
+      }
+      const requestBody = reasoningCapabilityForModel(this.model)
+        ? withLlmRequestBounds(baseBody, "chat-completions", {
+            model: this.model,
+            maxOutputTokens: 1024,
+            reasoningEffort: this.reasoningEffort
+          })
+        : { ...baseBody, max_tokens: 1024 };
       const resp = await this.transport(
-        {
-          model: this.model,
-          ...tokenCap,
-          messages,
-          ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
-        },
+        requestBody,
         this.apiKey
       );
 
+      const genId = providerRequestIdFromPayload(this.provider, resp);
+      if (genId) generationIds.push(genId);
       const u = extractLlmUsage(resp);
       if (u.promptTokens !== undefined || u.completionTokens !== undefined) {
         sawUsage = true;
@@ -552,9 +585,17 @@ export class OpenAILLM implements ChatLLM {
       .filter((c) => c.name === "get_quote" && c.result && !c.result.error)
       .map((c) => ({ source: "get_quote", as_of: c.result.as_of }));
     for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
-      for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of, url: chunk.url });
+      for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, evidence_ref: chunk.evidence_ref, as_of: chunk.as_of, url: chunk.url });
     }
-    recordChatUsage(this.usage, this.provider, this.model, promptTokens, completionTokens, sawUsage);
+    recordChatUsage(
+      this.usage,
+      this.provider,
+      this.model,
+      promptTokens,
+      completionTokens,
+      sawUsage,
+      generationIds.length === 1 ? generationIds[0] : undefined
+    );
     return { text: text || DISCLAIMER, toolCalls, citations };
   }
 }
@@ -566,11 +607,19 @@ export class OpenAILLM implements ChatLLM {
  * and share the OpenAILLM chat/completions tool loop, differing only by base URL + key.
  */
 export function chatProviderForModel(model: string): ChatProvider {
-  if (/^claude/i.test(model)) return "anthropic";
-  if (/^grok/i.test(model)) return "xai";
-  if (/^gemini/i.test(model)) return "gemini";
-  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) return "mistral";
-  if (/^deepseek/i.test(model)) return "deepseek";
+  const trimmed = model?.trim() ?? "";
+  if (/^openrouter\//i.test(trimmed)) return "openrouter";
+
+  let name = trimmed;
+  if (name.includes("/")) {
+    name = name.split("/").pop() || name;
+  }
+  if (/^claude/i.test(name)) return "anthropic";
+  if (/^grok/i.test(name)) return "xai";
+  if (/^gemini/i.test(name)) return "gemini";
+  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(name)) return "mistral";
+  if (/^deepseek/i.test(name)) return "deepseek";
+  if (/(kimi|moonshot)/i.test(name)) return "moonshot";
   return "openai";
 }
 
@@ -582,16 +631,23 @@ function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {  if (prov
   if (provider === "gemini")
     return process.env.GEMINI_API_URL?.trim() || "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
   if (provider === "mistral") return process.env.MISTRAL_API_URL?.trim() || "https://api.mistral.ai/v1/chat/completions";
+  if (provider === "openrouter") return process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
   if (provider === "deepseek") return process.env.DEEPSEEK_API_URL?.trim() || "https://api.deepseek.com/v1/chat/completions";
+  if (provider === "moonshot") return process.env.MOONSHOT_API_URL?.trim() || "https://api.moonshot.cn/v1/chat/completions";
   return process.env.OPENAI_CHAT_URL?.trim() || "https://api.openai.com/v1/chat/completions";
 }
 
 /** Build an OpenAI-style transport bound to a specific provider base URL (Bearer auth). The thrown
  *  error names the provider so the UI can render it in plain English (see humanizeLlmError). */
 function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenAITransport {  return async (body: any, apiKey: string) => {
+    const headers: Record<string, string> = { "content-type": "application/json", authorization: `Bearer ${apiKey}` };
+    if (provider === "openrouter") {
+      headers["HTTP-Referer"] = "https://socratictrade.com";
+      headers["X-Title"] = "Socratic.Trade";
+    }
     const res = await llmFetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      headers,
       body: JSON.stringify(body)
     });
     if (!res.ok) {
@@ -612,7 +668,7 @@ function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenA
 export function llmForModel(
   model: string,
   userId?: string,
-  opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}
+  opts: { transport?: Transport; openAITransport?: OpenAITransport; reasoningEffort?: LlmReasoningEffort } = {}
 ): ChatLLM {
   const trimmed = model?.trim();
   if (!trimmed || trimmed.toLowerCase() === "mock") return new MockLLM();
@@ -620,11 +676,15 @@ export function llmForModel(
   const { key, source, keyRef } = resolveLlmCredential(provider, userId);
   if (!key) return new MockLLM();
   const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+  // Strip the `openrouter/` prefix before passing the model ID to the API; OpenRouter
+  // expects the bare model name (e.g. "openai/gpt-4o"), and the strategy path already
+  // normalises this (resolveLlmEndpoint in llm-provider.ts — see that file's model strip).
+  const modelForApi = provider === "openrouter" ? trimmed.replace(/^openrouter\//i, "") : trimmed;
   if (provider === "anthropic") {
-    return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage);
+    return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
   }
   const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl(provider), provider);
-  return new OpenAILLM(key, trimmed, transport, usage, provider);
+  return new OpenAILLM(key, modelForApi, transport, usage, provider, opts.reasoningEffort);
 }
 
 /**
@@ -632,20 +692,32 @@ export function llmForModel(
  * env key as a flag-gated failover (see resolveLlmCredential), and usage is attributed to `userId`.
  * Passing no userId resolves the operator (`local`) key — preserves single-operator behaviour.
  */
-export function getLLM(userId?: string, opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}): ChatLLM {
+export function getLLM(userId?: string, opts: { transport?: Transport; openAITransport?: OpenAITransport; reasoningEffort?: LlmReasoningEffort } = {}): ChatLLM {
   const chatLlm = process.env.CHAT_LLM;
-  if (chatLlm === "anthropic") {
+  // No hardcoded chat model default (owner 2026-07-07): the env-default chat path requires an
+  // explicit CHAT_LLM_MODEL. Without it, fall through to MockLLM rather than silently pick a model.
+  const chatModel = process.env.CHAT_LLM_MODEL?.trim();
+  if (chatLlm === "anthropic" && chatModel) {
     const { key, source, keyRef } = resolveLlmCredential("anthropic", userId);
     if (key) {
       const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
-      return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", opts.transport ?? defaultTransport, usage);
+      return new AnthropicLLM(key, chatModel, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
     }
   }
-  if (chatLlm === "openai") {
+  if (chatLlm === "openai" && chatModel) {
     const { key, source, keyRef } = resolveLlmCredential("openai", userId);
     if (key) {
       const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
-      return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? DEFAULT_OPENAI_MODEL, opts.openAITransport ?? defaultOpenAITransport, usage);
+      return new OpenAILLM(key, chatModel, opts.openAITransport ?? defaultOpenAITransport, usage, "openai", opts.reasoningEffort);
+    }
+  }
+  if (chatLlm === "openrouter" && chatModel) {
+    const { key, source, keyRef } = resolveLlmCredential("openrouter", userId);
+    if (key) {
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+      const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl("openrouter"), "openrouter");
+      const modelForApi = chatModel.replace(/^openrouter\//i, "");
+      return new OpenAILLM(key, modelForApi, transport, usage, "openrouter", opts.reasoningEffort);
     }
   }
   return new MockLLM();

@@ -4,6 +4,41 @@ Decision aid for the sovereign-design question **"which model tier + budget runs
 strategist ('Manager') loop?"** The owner asked for a cross-provider options list (not
 Anthropic-only) and a way to evaluate how each performs — including DeepSeek for cost.
 
+## 2026-07-13 current OpenAI policy
+
+## 2026-07-22 rotation availability behavior
+
+When Green or Red is set to rotation, the server now intersects the credential-resolvable curated
+pool with OpenRouter's account-filtered `GET /api/v1/models/user` response before choosing a slot.
+This prevents a disabled account model such as Claude Fable 5 from being selected by rotation. A
+temporary availability-check failure fails rotation closed with an actionable retry message; it does
+not silently fall back to another provider or to the other team. Explicit model selections preserve
+the existing fail-closed behavior, so an unavailable Red model produces a human-review receipt rather
+than being replaced by Green. The account model list is cached in-process for five minutes.
+
+Today's production-schema benchmark successfully called all three GPT-5.6 API IDs (artifact:
+`docs/benchmarks/2026-07-13-gpt-5-6-benchmark.md`). The official catalog positions Sol for complex
+professional work, Terra for intelligence/cost balance, and Luna for cost-sensitive high volume.
+All three expose `none | low | medium | high | xhigh | max` reasoning.
+
+| OpenAI option | $ in / out per 1M | Recommended use | Effort |
+|---|---:|---|---|
+| GPT-5.6 Sol | 5 / 30 | Red Team; consequential strategy/learning review; difficult manual deep dives | Medium Green/Coach; **High Red/review** |
+| GPT-5.6 Terra | 2.5 / 15 | **Green Team** and balanced Coach; Red/review when Sol cost is not justified | **Medium Green/Coach**; High Red/review |
+| GPT-5.6 Luna | 1 / 6 | High-volume Coach/synthesis; cost-sensitive Green | Low Coach; Medium Green; prefer Terra/Sol for Red/review |
+| GPT-5.4 Mini | 0.75 / 4.5 | Lowest-cost model still advisable as a complete Green seat | Low Coach; Medium Green; High Red/review if deliberately used |
+| GPT-5.4 Nano | 0.20 / 1.25 | Extraction, classification, routing, mechanical summaries | Low; **not advisable as the sole Green or Red seat** |
+
+Catalog decision: remove full GPT-5.4 and GPT-5.5 from curated selectors because Terra and Sol are
+same-price current successors. Keep stored/custom legacy IDs callable so existing policy does not
+break. Keep Mini and Nano: despite its newer generation, Luna is more expensive than both. The app
+has no model defaults; these are role recommendations shown before an explicit choice. Terra's Green
+and Sol's Red recommendation chips are provisional until realized account-scoped outcomes establish
+superiority.
+
+The broader cross-provider analysis below remains useful, but this section supersedes its older
+OpenAI rows and any paper-only evaluation wording.
+
 > **Pricing is as of July 2026 and moves often — re-verify at the provider's pricing page before
 > committing a budget.** Anthropic figures are from the bundled `claude-api` model reference;
 > others are from web search (sources at the bottom). $ = USD per **1M tokens** (input / output).
@@ -18,8 +53,11 @@ Anthropic-only) and a way to evaluate how each performs — including DeepSeek f
 | Anthropic | Claude Sonnet 5 | 3 (2 intro→08-31) | 15 (10 intro) | 1M | adaptive | native Anthropic path |
 | Anthropic | Claude Haiku 4.5 | 1 | 5 | 200K | — | native Anthropic path |
 | Anthropic | Claude Fable 5 | 10 | 50 | 1M | always-on | native Anthropic path (premium; likely overkill here) |
-| **OpenAI** | GPT-5.5 | 5 | 30 | — | effort knob | **OpenAI path (default — this is what the loop uses today)** |
-| OpenAI | GPT-5.4 | 2.50 | 15 | — | effort knob | OpenAI path |
+| **OpenAI** | GPT-5.6 Sol | 5 | 30 | 1.05M | none → max | OpenAI path; explicit model choice |
+| OpenAI | GPT-5.6 Terra | 2.50 | 15 | 1.05M | none → max | OpenAI path; explicit model choice |
+| OpenAI | GPT-5.6 Luna | 1 | 6 | 1.05M | none → max | OpenAI path; explicit model choice |
+| OpenAI | GPT-5.4 Mini | 0.75 | 4.50 | — | effort knob | OpenAI path; retained lower-cost option |
+| OpenAI | GPT-5.4 Nano | 0.20 | 1.25 | — | effort knob | OpenAI path; mechanical tasks only |
 | **Google** | Gemini 3.1 Pro | 2 | 12 | (200K tier) | thinking | OpenAI-compatible endpoint (base-URL swap) |
 | Google | Gemini 3.5 Flash | 1.50 | 9 | — | thinking | OpenAI-compatible endpoint |
 | Google | Gemini 3 Flash Preview | 0.50 | 3 | — | thinking | OpenAI-compatible endpoint |
@@ -51,7 +89,9 @@ incl. reasoning):
 | DeepSeek V4 Pro (promo) | ~$0.014 | ~$8 |
 | Gemini 3.1 Pro | ~$0.13 | ~$78 |
 | Claude Sonnet 5 (intro) | ~$0.11 | ~$66 |
-| GPT-5.5 | ~$0.32 | ~$190 |
+| GPT-5.6 Luna | ~$0.06 | ~$38 |
+| GPT-5.6 Terra | ~$0.16 | ~$95 |
+| GPT-5.6 Sol | ~$0.32 | ~$190 |
 | Claude Opus 4.8 | ~$0.28 | ~$168 |
 
 Takeaway: at this run frequency, **even the most expensive option is ~$150–200/mo**, and the cheapest
@@ -88,18 +128,18 @@ each performs" from a guess into an experiment:
      pricing. The balanced default.
    - **DeepSeek V4 Pro** — the cost play the owner flagged; frontier-ish reasoning at ~$0.01/run.
      Verify schema adherence + ToS/data-residency first.
-   - **GPT-5.5 or Gemini 3.1 Pro** — a third independent lineage so you're not comparing two similar
+   - **GPT-5.6 Terra or Gemini 3.1 Pro** — a third independent lineage so you're not comparing two similar
      models; pick by whichever you trust more on structured output.
-2. **Run all three in paper mode** over the same universe/period (rotate the strategist model per run
-   or per account), and let the **Results page's per-model breakdown** rank them on *realized* outcomes
-   — the only metric that matters for a trader.
+2. **Run attributed comparative rotation** on a deliberately selected broker account over enough
+   outcomes. Paper-account results remain isolated unless independently corroborated by live data;
+   the Results page and model/source receipts rank concrete serving models within that scope.
 3. **Promote the winner** to the live Manager role; keep a cheaper model (DeepSeek V4 Flash / Grok 4.1
    Fast) as the scout/pre-filter tier if you add a two-stage loop later.
 
-**If you want a single default today without the A/B:** **Claude Sonnet 5** — best balance of reasoning,
-structured-output reliability, and cost for this role, and it's already wired natively. Reserve
-**Opus 4.8 / Fable 5** for if the soak shows the strategist is under-reasoning on hard setups (they cost
-more per run but the absolute monthly delta is small at this volume).
+**If you want explicit OpenAI picks today without the comparison:** Terra/Medium for Green and
+Sol/High for Red; Luna/Low for Coach. These are starting priors, not defaults or realized-performance
+claims. Claude Sonnet 5 remains the strongest established cross-provider balanced candidate in the
+older benchmark set.
 
 **Budget to set:** at 20 runs/day, **$25–200/mo** covers any single-model choice; **$300/mo** comfortably
 covers a 3-model A/B plus headroom. Set the ceiling where you're comfortable and the frequency/tier can
@@ -130,7 +170,11 @@ scale into it.
 ### Sources (July 2026)
 - Anthropic: bundled `claude-api` model reference (Opus 4.8 $5/$25, Sonnet 5 $3/$15 intro $2/$10, Haiku 4.5 $1/$5, Fable 5 $10/$50).
 - DeepSeek: [api-docs.deepseek.com/quick_start/pricing](https://api-docs.deepseek.com/quick_start/pricing)
-- OpenAI: [developers.openai.com/api/docs/pricing](https://developers.openai.com/api/docs/pricing)
+- OpenAI: [model catalog](https://developers.openai.com/api/docs/models),
+  [GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna),
+  [GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra),
+  [GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol), and
+  [pricing](https://developers.openai.com/api/docs/pricing)
 - Google Gemini: [ai.google.dev/gemini-api/docs/pricing](https://ai.google.dev/gemini-api/docs/pricing)
 - xAI Grok: [x.ai/api](https://x.ai/api)
 - Alibaba Qwen: [alibabacloud.com/help/en/model-studio/billing-for-model-studio](https://www.alibabacloud.com/help/en/model-studio/billing-for-model-studio)

@@ -12,11 +12,11 @@
 #   bash scripts/litestream-restore-drill.sh
 #
 # Env vars (or have them in ~/apps/trading-live/.env.local):
-#   LITESTREAM_S3_BUCKET, LITESTREAM_S3_ENDPOINT,
-#   LITESTREAM_S3_ACCESS_KEY_ID, LITESTREAM_S3_SECRET_ACCESS_KEY
+#   AWS_S3_BUCKET_NAME, AWS_S3_ENDPOINT,
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 # Optional:
 #   RESTORE_PITR_TIMESTAMP   Point-in-time restore target (ISO 8601, e.g. 2026-07-01T12:00:00Z)
-#   LITESTREAM_S3_REGION     (default: auto, for Cloudflare R2)
+#   AWS_REGION               (default: auto, for Cloudflare R2)
 set -euo pipefail
 
 # -- Config ----------------------------------------------------------------------
@@ -32,15 +32,15 @@ if [[ -n "${RESTORE_PITR_TIMESTAMP:-}" ]]; then
 fi
 
 # -- Load credentials -----------------------------------------------------------
-if [[ -z "${LITESTREAM_S3_BUCKET:-}" && -f /Users/jay/apps/trading-live/.env.local ]]; then
+if [[ -z "${AWS_S3_BUCKET_NAME:-}" && -f /Users/jay/apps/trading-live/.env.local ]]; then
   set -a
-  eval "$(grep -E '^LITESTREAM_' /Users/jay/apps/trading-live/.env.local)"
+  eval "$(grep -E '^AWS_' /Users/jay/apps/trading-live/.env.local)"
   set +a
 fi
 
-: "${LITESTREAM_S3_BUCKET?Required: LITESTREAM_S3_BUCKET}"
-: "${LITESTREAM_S3_ACCESS_KEY_ID?Required: LITESTREAM_S3_ACCESS_KEY_ID}"
-: "${LITESTREAM_S3_SECRET_ACCESS_KEY?Required: LITESTREAM_S3_SECRET_ACCESS_KEY}"
+: "${AWS_S3_BUCKET_NAME?Required: AWS_S3_BUCKET_NAME}"
+: "${AWS_ACCESS_KEY_ID?Required: AWS_ACCESS_KEY_ID}"
+: "${AWS_SECRET_ACCESS_KEY?Required: AWS_SECRET_ACCESS_KEY}"
 
 # -- Pre-flight -----------------------------------------------------------------
 echo "=== Litestream Restore Drill ==="

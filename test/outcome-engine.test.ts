@@ -9,9 +9,11 @@ beforeAll(() => {
 });
 
 // Capture every vector-memory re-index (the lifecycle hook) without Pinecone/Voyage credentials.
-const storeContextsCalls: Array<{ documents: Array<{ text: string }>; options?: { dedupKeyPrefix?: string } }> = [];
+const storeContextsCalls: Array<{ documents: Array<{ text: string }>; options?: { dedupKeyPrefix?: string; scope?: string } }> = [];
 vi.mock("../src/lib/vector-db", () => ({
-  storeContexts: async (documents: Array<{ text: string }>, _userId?: string, options?: { dedupKeyPrefix?: string }) => {
+  getCurrentVectorProviderAuthority: async () => "provider:test",
+  managedVectorLedgerAuthority: () => "ledger:test",
+  storeContexts: async (documents: Array<{ text: string }>, _userId?: string, options?: { dedupKeyPrefix?: string; scope?: string }) => {
     storeContextsCalls.push({ documents, options });
     return { attempted: documents.length, indexed: documents.length };
   }
@@ -40,13 +42,44 @@ const SPY_BARS: OHLCBar[] = [
 const NOW = Date.parse("2026-06-20T00:00:00.000Z");
 
 describe("outcome engine — the outcome writer", () => {
+  it("includes filled decision cases in outcome-coverage denominators", async () => {
+    const userId = `oe-filled-coverage-${randomUUID()}`;
+    const { getSocraticOutcomeCoverage, upsertSocraticDecisionCase } = await import("../src/lib/db");
+    upsertSocraticDecisionCase({
+      userId,
+      proposalId: `filled-${randomUUID()}`,
+      symbol: "EXE",
+      side: "buy",
+      status: "filled",
+      authority: "decide",
+      thesis: "Value-Quality",
+      rationale: "Filled-case coverage regression.",
+      action: "BUY EXE $4"
+    });
+
+    expect(getSocraticOutcomeCoverage(userId)).toMatchObject({ totalMeasurable: 1, open: 1 });
+  });
+
   it("matures a PLACED decision: joins the fill + closed lot, writes multi-horizon outcome, receipts, re-indexes", async () => {
+    // Clear cross-test capture so every() assertions only see this case's re-index calls.
+    storeContextsCalls.length = 0;
     const userId = `oe-placed-${randomUUID()}`;
-    const { insertFillEvent, listAudit, upsertSocraticDecisionCase, getSocraticDecisionCase } = await import("../src/lib/db");
+    const { insertFillEvent, listAudit, upsertConnectedAccount, upsertSocraticDecisionCase, getSocraticDecisionCase } = await import("../src/lib/db");
     const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    const connectedAccountId = randomUUID();
+    upsertConnectedAccount({
+      id: connectedAccountId,
+      userId,
+      broker: "test",
+      environment: "paper",
+      accountNumber: "acct",
+      label: "Outcome fixture",
+      isActive: true
+    });
 
     upsertSocraticDecisionCase({
       userId,
+      connectedAccountId,
       runId: "run-1",
       proposalId: "prop-1",
       accountNumber: "acct",
@@ -153,14 +186,24 @@ describe("outcome engine — the outcome writer", () => {
       call.documents.some((doc) => doc.text.includes("1w +15%") && doc.text.includes("(repeat) Momentum breakouts"))
     );
     expect(reindexed).toBe(true);
-    expect(storeContextsCalls.every((call) => call.options?.dedupKeyPrefix === "socratic-decision")).toBe(true);
+    expect(storeContextsCalls.some((call) => call.options?.dedupKeyPrefix === "socratic-decision")).toBe(true);
+    expect(storeContextsCalls.every((call) => call.options?.scope === "private")).toBe(true);
 
-    // Lesson routed through ingestLearned (origin 'autonomous'): lands as a live fact row or,
-    // if the fail-closed classifier escalates, as a pending approval row — never silently dropped.
+    // Lesson routed through ingestLearned (origin 'autonomous'): portfolio-scoped so paper
+    // model/task evidence is available on every account, with paper provenance retained.
+    // If the fail-closed classifier escalates, it may land as a pending row instead.
     const { listLearnedContext, listPendingLearnedContext } = await import("../src/lib/db");
-    const learned = listLearnedContext(userId).some((row) => row.subject.startsWith("decision_lesson:AAPL"));
-    const pending = listPendingLearnedContext(userId).length > 0;
-    expect(learned || pending).toBe(true);
+    const learnedRow = listLearnedContext(userId).find((row) => row.subject.startsWith("decision_lesson:AAPL"));
+    const pending = listPendingLearnedContext(userId);
+    if (learnedRow) {
+      expect(learnedRow.learningScope).toBe("portfolio");
+      expect(learnedRow.connectedAccountId).toBeNull();
+      expect(learnedRow.accountEnvironment).toBe("paper");
+    } else {
+      expect(pending.length).toBeGreaterThan(0);
+      expect(pending[0]?.learningScope).toBe("portfolio");
+      expect(pending[0]?.accountEnvironment).toBe("paper");
+    }
 
     // Idempotent: a terminal case is not re-measured on the next cadence run.
     const second = await matureSocraticDecisionOutcomes(userId, {
@@ -437,5 +480,32 @@ describe("counterfactual materializer — multi-horizon rows on skipped candidat
     expect(coverage.unresolvable).toBe(1);
     expect(coverage.pending).toBe(0);
     expect(coverage.disclosure).toContain("unresolvable");
+  });
+});
+
+describe("callLessonLlm — empty-model guard (rotation sentinel / no-defaults)", () => {
+  it("returns undefined and makes NO fetch when the model resolves empty but a key is present", async () => {
+    const userId = `oe-lesson-nomodel-${randomUUID()}`;
+    const { setPolicy, upsertUserApiKey } = await import("../src/lib/db");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+    const { callLessonLlm } = await import("../src/lib/outcome-engine");
+
+    // Key present (so the old `if (!key)` guard would fall through and POST model:"" → 400 on every
+    // post-mortem lesson call), but the model resolves to "" because the persisted policy carries the
+    // run-scoped rotation sentinel, which resolveLlmEndpoint maps to "" OUTSIDE a strategy run (rotation
+    // resolves only inside runStrategyOnce). The guard must treat the blank model as unconfigured and
+    // skip cleanly — never issue a request.
+    upsertUserApiKey(userId, "openrouter", "sk-test", "test");
+    setPolicy({ ...DEFAULT_POLICY, llmModel: "__rotate__" }, userId);
+
+    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const result = await callLessonLlm(userId, JSON.stringify({ probe: true }));
+      expect(result).toBeUndefined();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -20,6 +20,7 @@ const base: MacroData = {
   wtiOil: "$75.00",
   housingStarts: "1.3M",
   consumerSentiment: "75.0",
+  nonfarmPayrollsChangeK: "+180K",
   vix: "15.00",
   vix3m: "17.00",
   asOf: "2026-06-16"

@@ -14,6 +14,8 @@ export interface ChatQuote {
 
 export interface KbChunk {
   chunk_id: string;
+  /** Stable evidence ref for this exact retrieved chunk; safe to expose without query/prompt text. */
+  evidence_ref?: string;
   text: string;
   source: string;
   as_of?: string;
@@ -57,6 +59,7 @@ export interface ChatDraft {
 
 export interface Citation {
   source: string;
+  evidence_ref?: string;
   chunk_id?: string;
   as_of?: string;
   url?: string;
@@ -110,4 +113,15 @@ export interface ChatReply {
   promptVersion: string;
   /** Model that produced this reply (so the UI can tag the message without a refetch). */
   model?: string;
+  /**
+   * When coach/chat durable-learning capture fired on this turn (strategy directive or URL lesson),
+   * a short receipt describing what was written or queued. Optional — older clients ignore it.
+   */
+  learningCapture?: {
+    kind: "directive" | "url";
+    tier: "fact" | "risk" | "strategy-directive" | null;
+    pendingId: string | null;
+    writtenId: string | null;
+    receipt: string;
+  } | null;
 }

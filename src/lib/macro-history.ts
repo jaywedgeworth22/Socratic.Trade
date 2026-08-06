@@ -6,6 +6,7 @@
  */
 
 import { resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { expiresAtRespectingMarketClose } from "./market-hours";
 
 const FRED_OBS_URL = "https://api.stlouisfed.org/fred/series/observations";
 const POINTS = 90; // ~4–5 months of daily observations
@@ -112,7 +113,7 @@ export async function fetchMacroHistory(now: number = Date.now(), userId?: strin
   // Only cache a non-empty result, so a cold-start FRED hiccup self-heals on the next poll
   // instead of caching an empty trends panel for 12h.
   if (Object.keys(data).length > 0) {
-    writeMacroHistoryCache(scope, userId, data, now + CACHE_TTL_MS);
+    writeMacroHistoryCache(scope, userId, data, expiresAtRespectingMarketClose(new Date(now), CACHE_TTL_MS));
   }
   return data;
 }

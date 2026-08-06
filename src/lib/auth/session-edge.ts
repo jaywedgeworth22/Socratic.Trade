@@ -10,16 +10,22 @@ import { decodeSessionToken } from "./session-token";
 /** Auth.js v5 session cookie names, in preference order. */
 const SESSION_COOKIE_NAMES = ["__Secure-authjs.session-token", "authjs.session-token"] as const;
 
+export interface VerifiedSessionIdentity {
+  email: string;
+  /** Explicit login callback time in milliseconds; unlike JWT iat, this is not rolled on refresh. */
+  loginAt?: number;
+}
+
 /**
  * Extracts and verifies the Auth.js session JWT from the request cookies.
  * Returns the verified email string, or null if no valid session is present.
  *
  * Only callable when AUTH_SECRET is set (callers should check first).
  */
-export async function getSessionEmail(
+export async function getSessionIdentity(
   cookieHeader: string | null,
   authSecret: string
-): Promise<string | null> {
+): Promise<VerifiedSessionIdentity | null> {
   if (!cookieHeader || !authSecret) return null;
 
   // Parse the cookie header into a name→value map.
@@ -57,12 +63,21 @@ export async function getSessionEmail(
   try {
     const payload = await decodeSessionToken({ token, secret: authSecret, salt });
     const email = payload?.email;
+    const loginAt = payload?.loginAt;
     if (typeof email === "string" && email.includes("@")) {
-      return email.trim().toLowerCase();
+      return {
+        email: email.trim().toLowerCase(),
+        ...(typeof loginAt === "number" && Number.isFinite(loginAt) ? { loginAt } : {})
+      };
     }
     return null;
   } catch {
     // Invalid/expired token — not a valid session.
     return null;
   }
+}
+
+/** Back-compatible email-only view for callers that do not need deletion-generation binding. */
+export async function getSessionEmail(cookieHeader: string | null, authSecret: string): Promise<string | null> {
+  return (await getSessionIdentity(cookieHeader, authSecret))?.email ?? null;
 }

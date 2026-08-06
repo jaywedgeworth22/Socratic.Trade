@@ -3,6 +3,7 @@ import { listMobileCommands, mobileControlCatalog, mobileReadiness } from "@/lib
 import { resolveRequestUser } from "@/lib/request-user";
 import { listAlerts } from "@/lib/alerts";
 import { listWatchlist } from "@/lib/watchlist";
+import { isWorkingOrderState } from "@/lib/broker-held-orders";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -28,13 +29,15 @@ export async function GET(request: Request) {
       maxOrderNotional: snapshot.policy.maxOrderNotional,
       maxOrderPctOfNav: snapshot.policy.maxOrderPctOfNav,
       maxDailyNotional: snapshot.policy.maxDailyNotional,
-      maxDailyOrders: snapshot.policy.maxDailyOrders
+      maxDailyPctOfNav: snapshot.policy.maxDailyPctOfNav,
+      maxDailyOrders: snapshot.policy.maxDailyOrders,
+      requireTypedConfirmation: snapshot.policy.requireTypedConfirmation !== false
     },
     marketSession: snapshot.marketSession,
     scheduler: snapshot.scheduler,
     portfolio: snapshot.portfolio,
     positions: snapshot.positions,
-    orders: snapshot.orders,
+    orders: snapshot.orders.filter(o => isWorkingOrderState(o.state)),
     pendingProposals: snapshot.pendingProposals,
     dailyStats: snapshot.dailyStats,
     performance: snapshot.performance,

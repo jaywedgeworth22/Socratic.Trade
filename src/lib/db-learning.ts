@@ -34,11 +34,47 @@ export function listAudit(
   }));
 }
 
+export interface AuditEventRow {
+  id: string;
+  createdAt: string;
+  kind: string;
+  payload: unknown;
+  connectedAccountId?: string;
+}
+
+/** Newer of two audit rows by `createdAt` (undefined-safe). For call sites that must judge
+ *  freshness across two different audit KINDS, either of which can independently hold the
+ *  most recent evidence (e.g. a scheduled `market_scan` vs an LLM `strategy_run`). */
+export function newerAuditEntry(a: AuditEventRow | undefined, b: AuditEventRow | undefined): AuditEventRow | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(b.createdAt) > Date.parse(a.createdAt) ? b : a;
+}
+
+/** Stamp-only sibling of latestAuditByKind: id + created_at, payload NEVER read. Use this for
+ *  staleness gates that run on a cadence — the payload of market_scan/strategy_run rows is
+ *  multi-MB, and reading it just to compare a timestamp was the 2026-08-02 prod wedge's every-
+ *  tick cost. Served by idx_audit_events_kind_user_created as a pure index seek. */
+export function latestAuditStampByKind(
+  kind: string,
+  userId: string = "local",
+  connectedAccountId?: string
+): { id: string; createdAt: string } | undefined {
+  const row = (connectedAccountId
+    ? getDb()
+      .prepare("SELECT id, created_at FROM audit_events WHERE kind = ? AND user_id = ? AND connected_account_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(kind, userId, connectedAccountId)
+    : getDb()
+      .prepare("SELECT id, created_at FROM audit_events WHERE kind = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(kind, userId)) as { id: string; created_at: string } | undefined;
+  return row ? { id: row.id, createdAt: row.created_at } : undefined;
+}
+
 export function latestAuditByKind(
   kind: string,
   userId: string = "local",
   connectedAccountId?: string
-): { id: string; createdAt: string; kind: string; payload: unknown; connectedAccountId?: string } | undefined {
+): AuditEventRow | undefined {
   const row = (connectedAccountId
     ? getDb()
       .prepare("SELECT id, connected_account_id, created_at, kind, payload FROM audit_events WHERE kind = ? AND user_id = ? AND connected_account_id = ? ORDER BY created_at DESC LIMIT 1")
@@ -97,6 +133,53 @@ export function listAuditByKind(
     payload: JSON.parse(row.payload),
     connectedAccountId: row.connected_account_id ?? undefined
   }));
+}
+
+/**
+ * Fast count of recent audit events of a specific kind, without loading JSON payloads.
+ * Used for real-time error rate gating (e.g. order_placement_uncertain checks).
+ */
+export function countRecentAuditEvents(
+  kind: string,
+  connectedAccountId: string,
+  minutes: number,
+  userId: string = "local"
+): number {
+  const sinceIso = new Date(Date.now() - minutes * 60000).toISOString();
+  
+  const row = getDb().prepare(
+    `SELECT COUNT(*) as count 
+     FROM audit_events 
+     WHERE kind = ? AND user_id = ? AND (connected_account_id = ? OR connected_account_id IS NULL)
+     AND created_at >= ?`
+  ).get(kind, userId, connectedAccountId, sinceIso) as { count: number };
+  
+  return row.count;
+}
+
+/**
+ * Recent audit rows of ANY of `kinds` created at/after `sinceIso`, newest first. One IN-query
+ * (not N listAuditByKind calls) so the daily learning review's system-history digest — the set of
+ * execution-failure kinds it checks lesson evidence against — is a single cheap read.
+ */
+export function listAuditByKindsSince(
+  kinds: string[],
+  sinceIso: string,
+  userId: string = "local",
+  limit = 200
+): Array<{ id: string; createdAt: string; kind: string; payload: unknown }> {
+  if (kinds.length === 0) return [];
+  const placeholders = kinds.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT id, created_at, kind, payload
+       FROM audit_events
+       WHERE user_id = ? AND kind IN (${placeholders}) AND created_at >= ?
+       ORDER BY created_at DESC
+       LIMIT ?`
+    )
+    .all(userId, ...kinds, sinceIso, limit) as Array<{ id: string; created_at: string; kind: string; payload: string }>;
+  return rows.map((row) => ({ id: row.id, createdAt: row.created_at, kind: row.kind, payload: JSON.parse(row.payload) }));
 }
 
 export interface SignalSnapshotAuditRow {
@@ -661,6 +744,39 @@ export function listMaturedSkippedCounterfactuals(
 }
 
 /**
+ * Unbiased recent matured counterfactuals for source/factor evaluation. Unlike the dashboard helper
+ * above, this orders by decision time rather than return, so negative outcomes cannot fall out of a
+ * top-return slice and make a provider look better than it was. Multiple horizons remain explicit;
+ * analysis callers choose one deterministically for each (run, symbol).
+ */
+export function listRecentMaturedSkippedCounterfactuals(
+  userId: string = "local",
+  limit = 500,
+  connectedAccountId?: string
+): SkippedCounterfactualRow[] {
+  const rows = (connectedAccountId
+    ? getDb()
+        .prepare(
+          `SELECT *
+           FROM skipped_candidate_counterfactuals
+           WHERE user_id = ? AND status = 'matured' AND connected_account_id = ?
+           ORDER BY snapshot_at DESC, horizon_days ASC
+           LIMIT ?`
+        )
+        .all(userId, connectedAccountId, limit)
+    : getDb()
+        .prepare(
+          `SELECT *
+           FROM skipped_candidate_counterfactuals
+           WHERE user_id = ? AND status = 'matured'
+           ORDER BY snapshot_at DESC, horizon_days ASC
+           LIMIT ?`
+        )
+        .all(userId, limit)) as RawSkippedCounterfactualRow[];
+  return rows.map(toSkippedCounterfactualRow);
+}
+
+/**
  * The MATURED counterfactual row for one (runId, symbol) veto key — the precise join input
  * for the Red Team efficacy scorecard. Unlike joining against `listMaturedSkippedCounterfactuals`
  * (a return_pct-DESC top slice), a keyed lookup can never drop the low/negative-return rows —
@@ -699,6 +815,13 @@ interface RawLearnedContextRow {
   risk_tier: string;
   confidence: number;
   contributor_user_id: string | null;
+  connected_account_id: string | null;
+  account_environment: string | null;
+  learning_scope: string;
+  transfer_state: string;
+  regime?: string | null;
+  thesis_tag?: string | null;
+  dominant_factor?: string | null;
   asserted_at: string;
   superseded_by: string | null;
   expires_at: string | null;
@@ -718,6 +841,13 @@ export function mapLearnedContext(row: RawLearnedContextRow): LearnedContextRow 
     riskTier: row.risk_tier as LearnedContextRow["riskTier"],
     confidence: row.confidence,
     contributorUserId: row.contributor_user_id,
+    connectedAccountId: row.connected_account_id,
+    accountEnvironment: row.account_environment as LearnedContextRow["accountEnvironment"],
+   learningScope: row.learning_scope as LearnedContextRow["learningScope"],
+    transferState: row.transfer_state as LearnedContextRow["transferState"],
+    regime: row.regime ?? null,
+    thesisTag: row.thesis_tag ?? null,
+    dominantFactor: row.dominant_factor ?? null,
     assertedAt: row.asserted_at,
     supersededBy: row.superseded_by,
     expiresAt: row.expires_at
@@ -728,8 +858,10 @@ export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow 
   getDb()
     .prepare(
       `INSERT INTO learned_context
-        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id, asserted_at, superseded_by, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id,
+         connected_account_id, account_environment, learning_scope, transfer_state, regime, thesis_tag, dominant_factor,
+         asserted_at, superseded_by, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       row.id,
@@ -744,6 +876,13 @@ export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow 
       row.riskTier,
       row.confidence,
       row.contributorUserId,
+      row.connectedAccountId,
+      row.accountEnvironment,
+      row.learningScope,
+      row.transferState,
+      row.regime ?? null,
+      row.thesisTag ?? null,
+      row.dominantFactor ?? null,
       row.assertedAt,
       row.supersededBy,
       row.expiresAt
@@ -755,16 +894,22 @@ export function findLiveLearnedContextBySubject(
   userId: string,
   kind: string,
   subject: string,
-  symbol: string | null
+  symbol: string | null,
+  connectedAccountId: string | null = null,
+  learningScope: LearnedContextRow["learningScope"] = "portfolio"
 ): LearnedContextRow | null {
   const row = getDb()
     .prepare(
       `SELECT * FROM learned_context
        WHERE user_id = ? AND kind = ? AND subject = ? AND ((symbol IS NULL AND ? IS NULL) OR symbol = ?)
+         AND learning_scope = ?
+         AND ((connected_account_id IS NULL AND ? IS NULL) OR connected_account_id = ?)
          AND superseded_by IS NULL
        ORDER BY asserted_at DESC LIMIT 1`
     )
-    .get(userId, kind, subject, symbol, symbol) as RawLearnedContextRow | undefined;
+    .get(userId, kind, subject, symbol, symbol, learningScope, connectedAccountId, connectedAccountId) as
+      | RawLearnedContextRow
+      | undefined;
   return row ? mapLearnedContext(row) : null;
 }
 
@@ -776,7 +921,8 @@ export function findLiveLearnedContextBySubject(
 export function listLearnedContextForDecision(
   userId: string,
   symbols: string[],
-  includeShared = false
+  includeShared = false,
+  connectedAccountId?: string
 ): LearnedContextRow[] {
   const nowIso = new Date().toISOString();
   const normalizedSymbols = new Set(symbols.map((s) => s.toUpperCase()));
@@ -796,6 +942,23 @@ export function listLearnedContextForDecision(
         .all(userId) as RawLearnedContextRow[]);
   return rows
     .map(mapLearnedContext)
+    .filter((r) => {
+      if (r.learningScope === "legacy") return false;
+      if (r.userId === userId) {
+        if (r.learningScope === "portfolio") return true;
+        if (r.learningScope === "research") return r.transferState === "validated";
+        // Per-user pooling (owner directive, 2026-07-23): NULL connectedAccountId = new per-user
+        // pooled lessons. Non-NULL = legacy account-scoped — include them for backward compat
+        // when no specific account filter is requested, or when they match the requested account.
+        return r.connectedAccountId === null ||
+          (connectedAccountId === undefined ? true : r.connectedAccountId === connectedAccountId);
+      }
+      if (!includeShared || r.scope !== "shared") return false;
+      // Shared portfolio facts retain the user's explicit sharing behavior. Account-derived rows
+      // never cross a user/account boundary; shared research must pass transfer validation first.
+      return r.learningScope === "portfolio" ||
+        (r.learningScope === "research" && r.transferState === "validated");
+    })
     .filter((r) => r.expiresAt === null || r.expiresAt > nowIso)
     .filter((r) => r.symbol === null || normalizedSymbols.has(r.symbol.toUpperCase()));
 }
@@ -809,6 +972,19 @@ export function listLearnedContext(userId: string): LearnedContextRow[] {
 
 export function supersedeLearnedContext(oldId: string, newId: string): void {
   getDb().prepare("UPDATE learned_context SET superseded_by = ? WHERE id = ?").run(newId, oldId);
+}
+
+/**
+ * Set an expiry on a live learned_context row (the daily learning review's 'expire' verdict:
+ * "was true, no longer is"). Expired rows stop informing decisions via the existing
+ * `expiresAt` filter in listLearnedContextForDecision but remain in the table for provenance —
+ * softer than deleteLearnedContext. Ownership-scoped; returns false on a no-op.
+ */
+export function expireLearnedContext(id: string, userId: string, expiresAtIso: string = new Date().toISOString()): boolean {
+  const result = getDb()
+    .prepare("UPDATE learned_context SET expires_at = ? WHERE id = ? AND user_id = ?")
+    .run(expiresAtIso, id, userId);
+  return result.changes > 0;
 }
 
 /**
@@ -837,18 +1013,49 @@ export interface IngestedAccessionRow {
 /** Return true if this (accession, docType) pair has already been embedded. */
 export function hasIngestedAccession(accession: string, docType: string): boolean {
   const row = getDb()
+    .prepare("SELECT 1 FROM sec_filings WHERE accession = ? AND form = ? AND status = 'complete'")
+    .get(accession, docType);
+  if (row != null) return true;
+
+  const legacyRow = getDb()
     .prepare("SELECT 1 FROM ingested_accessions WHERE accession = ? AND doc_type = ?")
     .get(accession, docType);
-  return row != null;
+  return legacyRow != null;
 }
 
 /** Record a successfully-ingested accession so it is never re-embedded. */
 export function insertIngestedAccession(accession: string, docType: string, ticker: string, chunkCount: number): void {
+  const now = new Date().toISOString();
   getDb()
     .prepare(
       "INSERT OR IGNORE INTO ingested_accessions (accession, doc_type, ticker, indexed_at, chunk_count) VALUES (?, ?, ?, ?, ?)"
     )
-    .run(accession, docType, ticker, new Date().toISOString(), chunkCount);
+    .run(accession, docType, ticker, now, chunkCount);
+
+  // Preserve the original SEC filed_at/accepted_at from the scraper (if the row already
+  // exists) rather than overwriting every field via insertSecFiling, which sets both
+  // to 'now' from this code path.  The clearCache admin route (§ reindex-10k/route.ts)
+  // orders the latest-10-per-form query by sec_filings.filed_at to match the set that
+  // refreshFilingBodies will refetch from SEC, so losing the real SEC dates would make
+  // the cache-clearing query select the wrong accessions and leave cleared-but-not-rebuilt
+  // filings permanently missing from the vector store.
+  const existing = getSecFiling(accession);
+  if (existing) {
+    getDb().prepare(
+      "UPDATE sec_filings SET status = 'complete', chunk_count = ?, updated_at = ? WHERE accession = ?"
+    ).run(chunkCount, now, accession);
+  } else {
+    insertSecFiling({
+      accession,
+      cik: "",
+      ticker,
+      form: docType,
+      filedAt: now,
+      acceptedAt: now,
+      status: "complete",
+      chunkCount,
+    });
+  }
 }
 
 /** List all ingested accessions (admin/diagnostic). */
@@ -958,11 +1165,42 @@ export interface ChunkCoverageRow {
 
 export function getChunkCoverage(): ChunkCoverageRow[] {
   const rows = getDb()
-    .prepare(
-      "SELECT symbol, COUNT(*) as chunk_count, MAX(created_at) as latest_at FROM document_chunks GROUP BY symbol ORDER BY chunk_count DESC"
-    )
+    .prepare(`
+      SELECT symbol, COUNT(*) as chunk_count, MAX(created_at) as latest_at
+      FROM (
+        SELECT symbol, content_hash, created_at FROM chunk_occurrences
+        UNION ALL
+        SELECT symbol, content_hash, created_at FROM document_chunks
+        WHERE content_hash NOT IN (SELECT DISTINCT content_hash FROM chunk_occurrences)
+      )
+      GROUP BY symbol
+      ORDER BY chunk_count DESC
+    `)
     .all() as Array<{ symbol: string; chunk_count: number; latest_at: string }>;
   return rows.map((r) => ({ symbol: r.symbol, chunkCount: r.chunk_count, latestAt: r.latest_at }));
+}
+
+export interface ChunkSourceBreakdownRow {
+  symbol: string;
+  source: string;
+  chunkCount: number;
+}
+
+export function getChunkSourceBreakdown(): ChunkSourceBreakdownRow[] {
+  const rows = getDb()
+    .prepare(`
+      SELECT symbol, source, COUNT(*) as chunk_count
+      FROM (
+        SELECT symbol, source, content_hash FROM chunk_occurrences
+        UNION ALL
+        SELECT symbol, source, content_hash FROM document_chunks
+        WHERE content_hash NOT IN (SELECT DISTINCT content_hash FROM chunk_occurrences)
+      )
+      WHERE source NOT LIKE '________-____-____-____-____________#c%'
+      GROUP BY symbol, source
+    `)
+    .all() as Array<{ symbol: string; source: string; chunk_count: number }>;
+  return rows.map((r) => ({ symbol: r.symbol, source: r.source, chunkCount: r.chunk_count }));
 }
 
 // ── learned_context_pending CRUD (risk-tier confirmation queue; userId-scoped) ──
@@ -980,10 +1218,15 @@ interface RawLearnedContextPendingRow {
   source: string;
   origin: string;
   risk_tier: string;
+  connected_account_id: string | null;
+  account_environment: string | null;
+  learning_scope: string;
+  transfer_state: string;
   classifier_reason: string | null;
   created_at: string;
   status: string;
   resolved_at: string | null;
+  review_note: string | null;
 }
 
 function mapLearnedContextPending(row: RawLearnedContextPendingRow): LearnedContextPendingRow {
@@ -998,10 +1241,15 @@ function mapLearnedContextPending(row: RawLearnedContextPendingRow): LearnedCont
     source: row.source,
     origin: row.origin as LearnedContextPendingRow["origin"],
     riskTier: row.risk_tier as LearnedContextPendingRow["riskTier"],
+    connectedAccountId: row.connected_account_id,
+    accountEnvironment: row.account_environment as LearnedContextPendingRow["accountEnvironment"],
+    learningScope: row.learning_scope as LearnedContextPendingRow["learningScope"],
+    transferState: row.transfer_state as LearnedContextPendingRow["transferState"],
     classifierReason: row.classifier_reason,
     createdAt: row.created_at,
     status: row.status as LearnedContextPendingRow["status"],
-    resolvedAt: row.resolved_at
+    resolvedAt: row.resolved_at,
+    reviewNote: row.review_note
   };
 }
 
@@ -1009,8 +1257,10 @@ export function insertPendingLearnedContext(row: LearnedContextPendingRow): Lear
   getDb()
     .prepare(
       `INSERT INTO learned_context_pending
-        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, classifier_reason, created_at, status, resolved_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier,
+         connected_account_id, account_environment, learning_scope, transfer_state,
+         classifier_reason, created_at, status, resolved_at, review_note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       row.id,
@@ -1023,10 +1273,15 @@ export function insertPendingLearnedContext(row: LearnedContextPendingRow): Lear
       row.source,
       row.origin,
       row.riskTier,
+      row.connectedAccountId,
+      row.accountEnvironment,
+      row.learningScope,
+      row.transferState,
       row.classifierReason,
       row.createdAt,
       row.status,
-      row.resolvedAt
+      row.resolvedAt,
+      row.reviewNote ?? null
     );
   return row;
 }
@@ -1066,4 +1321,245 @@ export function setPendingLearnedContextStatus(
     .prepare("UPDATE learned_context_pending SET status = ?, resolved_at = ? WHERE id = ? AND user_id = ?")
     .run(status, resolvedAt, id, userId);
   return result.changes > 0;
+}
+
+/**
+ * Ownership-scoped write of the daily Learning Review's "defer" explanation. Deliberately does NOT
+ * touch `status`/`resolved_at` — a defer verdict leaves the item exactly as pending (the human queue
+ * is unchanged); this only attaches the reviewer's note so the queue UI can show it. Returns true
+ * only when a row owned by `userId` was actually updated.
+ */
+export function setPendingLearnedContextReviewNote(id: string, userId: string, note: string): boolean {
+  const result = getDb()
+    .prepare("UPDATE learned_context_pending SET review_note = ? WHERE id = ? AND user_id = ?")
+    .run(note, id, userId);
+  return result.changes > 0;
+}
+
+// ── RAG Backfill P1 (Identity and Manifest) Types & CRUD ──
+
+export interface SecFiling {
+  accession: string;
+  cik: string;
+  ticker: string;
+  form: string;
+  filedAt: string;
+  acceptedAt: string;
+  reportPeriod?: string;
+  fy?: string;
+  fp?: string;
+  amendmentParent?: string;
+  supersededBy?: string;
+  status: string;
+  chunkCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SecArtifact {
+  accession: string;
+  sequence: number;
+  documentName: string;
+  sha256: string;
+  type: string;
+  byteCount: number;
+  rawUri: string;
+  parserVersion: string;
+  createdAt: string;
+}
+
+export interface ChunkOccurrence {
+  vectorId: string;
+  contentHash: string;
+  symbol: string;
+  source: string;
+  accession: string;
+  sequence?: number;
+  documentName?: string;
+  section: string;
+  ordinal: number;
+  acceptedAt: string;
+  createdAt: string;
+}
+
+export function insertSecFiling(filing: Omit<SecFiling, "createdAt" | "updatedAt">): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(`
+      INSERT INTO sec_filings (
+        accession, cik, ticker, form, filed_at, accepted_at, report_period, fy, fp,
+        amendment_parent, superseded_by, status, chunk_count, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(accession) DO UPDATE SET
+        cik = excluded.cik,
+        ticker = excluded.ticker,
+        form = excluded.form,
+        filed_at = excluded.filed_at,
+        accepted_at = excluded.accepted_at,
+        report_period = excluded.report_period,
+        fy = excluded.fy,
+        fp = excluded.fp,
+        amendment_parent = excluded.amendment_parent,
+        superseded_by = excluded.superseded_by,
+        status = excluded.status,
+        chunk_count = excluded.chunk_count,
+        updated_at = ?
+    `)
+    .run(
+      filing.accession,
+      filing.cik,
+      filing.ticker,
+      filing.form,
+      filing.filedAt,
+      filing.acceptedAt,
+      filing.reportPeriod || null,
+      filing.fy || null,
+      filing.fp || null,
+      filing.amendmentParent || null,
+      filing.supersededBy || null,
+      filing.status,
+      filing.chunkCount,
+      now,
+      now,
+      now
+    );
+}
+
+export function getSecFiling(accession: string): SecFiling | null {
+  const row = getDb()
+    .prepare(`
+      SELECT accession, cik, ticker, form, filed_at, accepted_at, report_period, fy, fp,
+             amendment_parent, superseded_by, status, chunk_count, created_at, updated_at
+      FROM sec_filings WHERE accession = ?
+    `)
+    .get(accession) as any;
+  if (!row) return null;
+  return {
+    accession: row.accession,
+    cik: row.cik,
+    ticker: row.ticker,
+    form: row.form,
+    filedAt: row.filed_at,
+    acceptedAt: row.accepted_at,
+    reportPeriod: row.report_period || undefined,
+    fy: row.fy || undefined,
+    fp: row.fp || undefined,
+    amendmentParent: row.amendment_parent || undefined,
+    supersededBy: row.superseded_by || undefined,
+    status: row.status,
+    chunkCount: row.chunk_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function updateSecFilingStatus(accession: string, status: string, chunkCount?: number): void {
+  const now = new Date().toISOString();
+  if (chunkCount !== undefined) {
+    getDb()
+      .prepare("UPDATE sec_filings SET status = ?, chunk_count = ?, updated_at = ? WHERE accession = ?")
+      .run(status, chunkCount, now, accession);
+  } else {
+    getDb()
+      .prepare("UPDATE sec_filings SET status = ?, updated_at = ? WHERE accession = ?")
+      .run(status, now, accession);
+  }
+}
+
+export function insertSecArtifact(artifact: Omit<SecArtifact, "createdAt">): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(`
+      INSERT INTO sec_artifacts (
+        accession, sequence, document_name, sha256, type, byte_count, raw_uri, parser_version, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(accession, sequence, document_name) DO UPDATE SET
+        sha256 = excluded.sha256,
+        type = excluded.type,
+        byte_count = excluded.byte_count,
+        raw_uri = excluded.raw_uri,
+        parser_version = excluded.parser_version
+    `)
+    .run(
+      artifact.accession,
+      artifact.sequence,
+      artifact.documentName,
+      artifact.sha256,
+      artifact.type,
+      artifact.byteCount,
+      artifact.rawUri,
+      artifact.parserVersion,
+      now
+    );
+}
+
+export function listSecArtifacts(accession: string): SecArtifact[] {
+  const rows = getDb()
+    .prepare(`
+      SELECT accession, sequence, document_name, sha256, type, byte_count, raw_uri, parser_version, created_at
+      FROM sec_artifacts WHERE accession = ? ORDER BY sequence ASC
+    `)
+    .all(accession) as any[];
+  return rows.map((r) => ({
+    accession: r.accession,
+    sequence: r.sequence,
+    documentName: r.document_name,
+    sha256: r.sha256,
+    type: r.type,
+    byteCount: r.byte_count,
+    rawUri: r.raw_uri,
+    parserVersion: r.parser_version,
+    createdAt: r.created_at,
+  }));
+}
+
+export function insertChunkOccurrences(occurrences: ChunkOccurrence[]): void {
+  if (occurrences.length === 0) return;
+  const stmt = getDb().prepare(`
+    INSERT OR IGNORE INTO chunk_occurrences (
+      vector_id, content_hash, symbol, source, accession, sequence, document_name, section, ordinal, accepted_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertMany = getDb().transaction((rows: ChunkOccurrence[]) => {
+    for (const o of rows) {
+      stmt.run(
+        o.vectorId,
+        o.contentHash,
+        o.symbol,
+        o.source,
+        o.accession,
+        o.sequence ?? null,
+        o.documentName ?? null,
+        o.section,
+        o.ordinal,
+        o.acceptedAt,
+        o.createdAt
+      );
+    }
+  });
+  insertMany(occurrences);
+}
+
+export function insertDocumentChunkFts(
+  contentHash: string,
+  symbol: string,
+  source: string,
+  accession: string,
+  text: string
+): void {
+  const db = getDb();
+  // FTS5 is a virtual table — INSERT OR REPLACE does not deduplicate on content_hash.
+  // Delete the existing row for THIS occurrence identity (symbol+source+accession+hash) before
+  // inserting, so a retry/re-run stays idempotent. Deliberately NOT keyed on content_hash alone:
+  // identical boilerplate shared across filings/symbols must keep one lexical row per occurrence,
+  // because retrieval filters document_chunks_fts by symbol (a global delete would silently make
+  // the earlier symbol/accession unreachable through FTS).
+  db.prepare(`
+    DELETE FROM document_chunks_fts
+    WHERE content_hash = ? AND symbol = ? AND source = ? AND accession = ?
+  `).run(contentHash, symbol, source, accession);
+  db.prepare(`
+    INSERT INTO document_chunks_fts (content_hash, symbol, source, accession, text)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(contentHash, symbol, source, accession, text);
 }

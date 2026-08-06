@@ -34,11 +34,11 @@ type LangfuseTracing = {
 };
 
 declare global {
-  // eslint-disable-next-line no-var
+   
   var __tradingObservabilityStarted: boolean | undefined;
-  // eslint-disable-next-line no-var
+   
   var __tradingObservabilitySdk: unknown | undefined;
-  // eslint-disable-next-line no-var
+   
   var __tradingObservabilityWarned: boolean | undefined;
 }
 
@@ -103,7 +103,7 @@ export async function withLlmGeneration<T>(options: LlmGenerationOptions<T>, run
           generation = startObservation(
             options.name,
             {
-              model: options.model,
+              model: options.model.includes("/") ? options.model.slice(options.model.indexOf("/") + 1) : options.model,
               input: redactForTelemetry(options.input),
               metadata: observationMetadata
             },

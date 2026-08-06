@@ -78,7 +78,7 @@ function CongressRow({ t }: { t: CongressTrade }) {
   const band = amountBand(t.amountLow, t.amountHigh);
   const buy = t.side === "buy";
   return (
-    <div className="con-row flex items-center gap-2 rounded-md px-2 py-1.5 text-[length:var(--con-fs-sm)]">
+    <div className="con-row flex items-center gap-2 rounded-control px-2 py-1.5 text-[length:var(--con-fs-sm)]">
       <Chip tone={buy ? "pos" : "neg"} title={`A disclosed ${buy ? "purchase" : "sale"} by a member of Congress.`}>
         {buy ? "BUY" : "SELL"}
       </Chip>
@@ -109,7 +109,7 @@ function InsiderRow({ f }: { f: InsiderFiling }) {
   const tone = net > 0 ? "pos" : net < 0 ? "neg" : "muted";
   const word = net > 0 ? "BUY" : net < 0 ? "SELL" : "MIXED";
   return (
-    <div className="con-row flex items-center gap-2 rounded-md px-2 py-1.5 text-[length:var(--con-fs-sm)]">
+    <div className="con-row flex items-center gap-2 rounded-control px-2 py-1.5 text-[length:var(--con-fs-sm)]">
       <Chip tone={tone} title={`Net open-market direction across this insider's recent Form 4 filings: ${f.buyTx} buy / ${f.sellTx} sell transactions.`}>
         {word}
       </Chip>

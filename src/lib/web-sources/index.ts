@@ -51,8 +51,10 @@ import {
   refreshCongressAnalytics
 } from "./congress-analytics";
 import { scoreCongressSignal } from "../congress-score";
+import { resolveSourceBool } from "../source-settings";
 import { isFilingIngestDue, refreshFilingBodies } from "./sec-filings";
 import { disclosureRagEnabled, embedDisclosures } from "./disclosure-rag";
+import { getFmpTranscriptStatus, type FmpTranscriptStatus } from "./fmp-transcripts";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
 export type { CongressAnalytics, CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
@@ -65,6 +67,7 @@ export {
   getTechnicalDataset,
   getTechnicalSignals,
   getTechnicalStatus,
+  getTechnicalWatchlist,
   recordTradingViewSignal,
   refreshTechnical,
   setTechnicalWatchlist,
@@ -75,25 +78,42 @@ export {
 export type { TechnicalSignal, TechnicalSource, TradingViewWebhookPayload } from "./technical";
 export { refreshFilingBodies, isFilingIngestDue } from "./sec-filings";
 export type { FilingRef, IngestResult, RefreshFilingBodiesResult } from "./sec-filings";
+export {
+  fmpTranscriptStorageRightsConfirmed,
+  fmpTranscriptsEnabled,
+  getFmpTranscriptCapability,
+  getFmpTranscriptStatus,
+  isFmpTranscriptRefreshDue,
+  refreshFmpTranscripts
+} from "./fmp-transcripts";
+export type {
+  FmpTranscriptCapability,
+  FmpTranscriptCapabilityObservation,
+  FmpTranscriptBody,
+  FmpTranscriptObservation,
+  FmpTranscriptRef,
+  FmpTranscriptStatus,
+  RefreshFmpTranscriptsResult
+} from "./fmp-transcripts";
 
-/** Whether the congress connector is enabled (default on; disable with WEB_SOURCE_CONGRESS=off). */
+/** Whether the congress connector is enabled (default on; Settings / WEB_SOURCE_CONGRESS=off). */
 function congressEnabled(): boolean {
-  return (process.env.WEB_SOURCE_CONGRESS ?? "on").toLowerCase() !== "off";
+  return resolveSourceBool("WEB_SOURCE_CONGRESS");
 }
 
-/** Whether the SEC insider connector is enabled (default on; disable with WEB_SOURCE_INSIDER=off). */
+/** Whether the SEC insider connector is enabled (default on; Settings / WEB_SOURCE_INSIDER=off). */
 function insiderEnabled(): boolean {
-  return (process.env.WEB_SOURCE_INSIDER ?? "on").toLowerCase() !== "off";
+  return resolveSourceBool("WEB_SOURCE_INSIDER");
 }
 
-/** Whether the FINRA short-volume connector is enabled (default on; disable with WEB_SOURCE_FINRA=off). */
+/** Whether the FINRA short-volume connector is enabled (default on; Settings / WEB_SOURCE_FINRA=off). */
 function finraEnabled(): boolean {
-  return (process.env.WEB_SOURCE_FINRA ?? "on").toLowerCase() !== "off";
+  return resolveSourceBool("WEB_SOURCE_FINRA");
 }
 
-/** Whether the SEC 8-K connector is enabled (default on; disable with WEB_SOURCE_SEC8K=off). */
+/** Whether the SEC 8-K connector is enabled (default on; Settings / WEB_SOURCE_SEC8K=off). */
 function eightKEnabled(): boolean {
-  return (process.env.WEB_SOURCE_SEC8K ?? "on").toLowerCase() !== "off";
+  return resolveSourceBool("WEB_SOURCE_SEC8K");
 }
 
 // Guard against overlapping refreshes: the scheduler fires this fire-and-forget
@@ -215,6 +235,23 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
         `Congress.Trade conviction input/pre-cap: ${a.convictionDirection} ${a.convictionScore}/100${a.convictionFallback ? " (proxy inputs)" : ""}`
       );
     }
+    if (typeof a.topMemberScore === "number" && a.topMemberScore > 0) {
+      const src = a.topMemberScoreSource ?? "unknown";
+      const parts: string[] = [`Congress member skill: ${a.topMemberScore}/100 (${src})`];
+      if (typeof a.topMemberFilingAvgExcess === "number") {
+        parts.push(`filing avgExcess ${(a.topMemberFilingAvgExcess * 100).toFixed(1)}% vs SPX`);
+      }
+      if (typeof a.topMemberFilingWinRate === "number") {
+        parts.push(`filing winRate ${(a.topMemberFilingWinRate * 100).toFixed(0)}%`);
+      }
+      if (typeof a.topMemberFilingScoredCount === "number") {
+        parts.push(`n=${a.topMemberFilingScoredCount}`);
+      }
+      if (typeof a.topMemberTradeAvgExcess === "number") {
+        parts.push(`trade-date avgExcess ${(a.topMemberTradeAvgExcess * 100).toFixed(1)}% (context)`);
+      }
+      entry.bulletins.push(parts.join(", "));
+    }
     if ((a.conflictCount ?? 0) > 0) {
       entry.bulletins.push(`Congress committee-sector overlap context: ${a.conflictCount} disclosure${a.conflictCount === 1 ? "" : "s"}, legalConclusion:false`);
     }
@@ -268,6 +305,7 @@ export function getWebSourcesStatus(): {
   insider: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
   finra: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number; asOf?: string };
   sec8k: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
+  earningsTranscripts: FmpTranscriptStatus;
   technical: { enabled: boolean; source: "tradingview" | "computed"; fetchedAt?: string; recordCount: number; due: boolean; ttlMs: number; secretConfigured: boolean };
 } {
   const congress = getCongressDataset();
@@ -308,6 +346,7 @@ export function getWebSourcesStatus(): {
       due: isEightKRefreshDue(),
       ttlMs: eightKTtlMs()
     },
+    earningsTranscripts: getFmpTranscriptStatus(),
     technical: getTechnicalStatus()
   };
 }

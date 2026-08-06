@@ -71,28 +71,11 @@ npm run dev
 
 For one-off local development, open `http://127.0.0.1:3000`.
 
-On the host machine, prefer the PM2-managed previews:
-
-- Production deployed app: `https://socratictrade.com` -> `http://localhost:4000` (`~/apps/trading-live`, pm2 `trading`)
-- Main integration/review beta: `https://trading-beta.jays.services` -> `http://localhost:4001` (`~/Code/Agentic Trading`, pm2 `trading-main`)
-- Codex live preview: `https://codex.jays.services` -> `http://localhost:4101` (`~/apps/trading-codex`, pm2 `trading-codex`)
-
-Do not create a second dev/beta hostname for this lane; use `trading-beta.jays.services`.
-
-Bootstrap or repair those PM2 previews with:
-
-```bash
-bash scripts/setup-agent-previews.sh
-```
-
-For older disposable Codex sessions, the legacy pinned launcher is still available:
-
-```bash
-npm run dev:codex
-```
-
-Open `http://127.0.0.1:3001`. The legacy Codex launcher frees only port `3001` and
-retries there if Next initially falls back to another port.
+Previews are **retired** (owner decision, 2026-07-08): there are no per-agent PM2 `next dev`
+lanes and no `*.jays.services` preview hostnames. Production is the only hosted environment
+(`https://socratictrade.com`, Coolify app `socratic-trade-prod` — see `docs/deployment.md`).
+To see in-progress edits, run `npm run dev` in your own worktree and open
+`http://localhost:3000`; the `verify` CI gate covers integrated behavior.
 
 If the UI appears as plain, unstyled HTML, the dev server is likely serving stale
 `.next` assets after a build. Stop the old listener only on the port your agent
@@ -109,6 +92,11 @@ OPENAI_API_URL=...               # optional: override to use an OpenAI-compatibl
 ROBINHOOD_ADAPTER=mock           # "mock"/unset means Robinhood disconnected; "mcp" enables real Robinhood MCP
 DATABASE_URL=file:./data/app.db
 ENCRYPTION_KEY=...               # optional 64-char hex key; used for stored API keys
+# Optional, default-off Usage Monitor bridge for the fixed primary user's
+# Gemini/DeepSeek keys; requires its own exact-path Infisical writer identity.
+INFISICAL_ST_PRIMARY_WRITER_ENABLED=false
+INFISICAL_ST_PRIMARY_WRITER_CLIENT_ID=...
+INFISICAL_ST_PRIMARY_WRITER_CLIENT_SECRET=...
 MARKET_SCAN_LIMIT=30
 MARKET_SCAN_CACHE_TTL_MS=300000
 MARKET_SCAN_EVENT_RESERVE=8
@@ -127,7 +115,7 @@ FINNHUB_API_KEY=...
 
 # Optional: Financial Modeling Prep (adds P/E + analyst consensus; Finnhub preferred).
 FMP_API_KEY=...
-FMP_MAX_SYMBOLS=15               # cap enriched candidates per scan (free-tier quota friendly)
+FMP_MAX_SYMBOLS=15               # optional explicit enrichment throttle (free-tier quota thrift); unset, the FULL scan candidate list is enriched — no cap
 NEWS_CACHE_TTL_MS=21600000       # enrichment cache TTL (default 6h)
 
 # Optional: Alpha Vantage NEWS_SENTIMENT enrichment.
@@ -163,8 +151,9 @@ ALPACA_PAPER_API_KEY=...
 ALPACA_PAPER_SECRET_KEY=...
 
 # Optional/future provider keys routed through the per-user key system as it lands.
+# Tradier price history is sourced from your connected Tradier BROKER account (Settings ->
+# Accounts) instead of a separate key here — connect a Tradier account to enable it.
 MARKETSTACK_API_KEY=...
-TRADIER_API_KEY=...
 MASSIVE_API_KEY=...
 MASSIVE_REST_MAX_CALLS_PER_MINUTE=5 # Massive Basic quota guard; excess calls fall back/skip
 MASSIVE_HISTORY_ENABLED=on          # set off to reserve Massive only for breadth/news
@@ -232,15 +221,9 @@ or open `/api/auth/robinhood/start` to complete consent. The app stores OAuth
 state, the registered client, and refreshable tokens in the local SQLite
 settings table.
 
-For production behind the Cloudflare tunnel, the default is to leave
-`ROBINHOOD_MCP_REDIRECT_URI` blank; the app will use `x-forwarded-host`,
-`NEXT_PUBLIC_SITE_URL`, or `https://socratictrade.com` for
-`/api/auth/robinhood/callback`. If Robinhood rejects the public callback during
-the logged-in consent step, a same-machine operator can instead set
-`ROBINHOOD_MCP_REDIRECT_URI=http://localhost:4000/api/auth/robinhood/callback`
-and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=on`. Public app login still starts
-the flow; only Robinhood's provider callback returns through localhost, and the
-state-bound callback redirects back to the public site after token storage.
+For production behind the Cloudflare tunnel, see the definitive **[Robinhood Connection Guide](docs/robinhood-connection-guide.md)** for step-by-step instructions on connecting via SSH tunnel, maintaining background tokens, or registering an official static Robinhood Partner Client ID for 1-click web login.
+
+If Robinhood rejects the public callback during the logged-in consent step, a same-machine operator sets `ROBINHOOD_MCP_REDIRECT_URI=http://localhost:4000/api/auth/robinhood/callback` and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=on`. Public app login still starts the flow; only Robinhood's provider callback returns through localhost, and the state-bound callback redirects back to the public site after token storage.
 
 ## Tests
 

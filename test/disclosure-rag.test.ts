@@ -19,12 +19,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
-  return { ...actual, storeContexts: mocks.storeContexts };
+  return { ...actual, managedVectorLedgerAuthority: vi.fn(), storeContexts: mocks.storeContexts };
 });
 
 vi.mock("../src/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/db")>();
-  return { ...actual, audit: vi.fn().mockResolvedValue(undefined) };
+  return { managedVectorLedgerAuthority: vi.fn(), ...actual, audit: vi.fn().mockResolvedValue(undefined) };
 });
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────

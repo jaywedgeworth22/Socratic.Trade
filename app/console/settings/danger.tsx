@@ -25,6 +25,7 @@ interface DeletionBlockers {
   placingProposals: number;
   pendingReconciliationFills: number;
   activeMobileCommands: number;
+  activeReplacements: number;
 }
 
 interface DeletionPreview {
@@ -47,7 +48,7 @@ const ACK_ITEMS: Array<{ key: string; label: string }> = [
 ];
 
 function blockerCount(b: DeletionBlockers): number {
-  return b.runningStrategyRuns + b.placingProposals + b.pendingReconciliationFills + b.activeMobileCommands;
+  return b.runningStrategyRuns + b.placingProposals + b.pendingReconciliationFills + b.activeMobileCommands + b.activeReplacements;
 }
 
 function recordTotal(preview: DeletionPreview): number {
@@ -174,7 +175,7 @@ export function AccountDeletionCard() {
       ) : (
         <div className="mt-3 flex flex-col gap-3">
           {/* Scope preview */}
-          <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed">
+          <div className="rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold text-[color:var(--con-fg)]">In scope for {preview.email ?? preview.userId}:</span>
               <span className="con-num text-[color:var(--con-muted)]" title="Sum of the per-table row counts the server reported for this user.">
@@ -208,12 +209,13 @@ export function AccountDeletionCard() {
           </div>
 
           {blocked && (
-            <p className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-warn)]">
+            <p className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-warn)]">
               Deletion is blocked until trading activity settles: {preview.blockers.runningStrategyRuns} running
               strategy run(s), {preview.blockers.placingProposals} placing proposal(s),{" "}
-              {preview.blockers.pendingReconciliationFills} fill(s) pending broker reconciliation, and{" "}
-              {preview.blockers.activeMobileCommands} in-flight mobile command(s). Preparing (below) stops the strategy;
-              in-flight work must drain on its own.
+              {preview.blockers.pendingReconciliationFills} fill(s) pending broker reconciliation,{" "}
+              {preview.blockers.activeMobileCommands} in-flight mobile command(s), and{" "}
+              {preview.blockers.activeReplacements} active order replacement(s). Preparing (below)
+              stops the strategy; in-flight work must drain on its own.
             </p>
           )}
 
@@ -239,7 +241,7 @@ export function AccountDeletionCard() {
                 {ackItems.map((item) => (
                   <label
                     key={item.key}
-                    className="con-row flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-[length:var(--con-fs-xs)] leading-relaxed"
+                    className="con-row flex cursor-pointer items-start gap-2 rounded-control px-1.5 py-1 text-[length:var(--con-fs-xs)] leading-relaxed"
                     title="The server refuses deletion unless every acknowledgement is explicitly checked."
                   >
                     <input
@@ -254,7 +256,7 @@ export function AccountDeletionCard() {
               </div>
 
               {/* Typed ritual — destructive, so it gets the red frame. */}
-              <div className="rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)] p-3">
+              <div className="rounded-control border border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)] p-3">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field
                     label="Type your signed-in email"

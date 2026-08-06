@@ -7,7 +7,7 @@ import {
   computeDiff,
   type FieldDef
 } from "../app/console/lib/policy-diff";
-import { ALL_DEFS, PANIC_BRAKE, STOPS_PLUMBING } from "../app/console/guardrails/field-defs";
+import { ALL_DEFS, PANIC_BRAKE, PROTECTIVE_STOPS } from "../app/console/guardrails/field-defs";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { TradingPolicy } from "../src/lib/types";
 
@@ -35,7 +35,7 @@ describe("console guardrails: protective-toggle loosening direction (Codex findi
   });
 
   it("declares DISABLING broker-held brackets as the loosening", () => {
-    const def = STOPS_PLUMBING.find((d) => d.path === "brokerBracketsEnabled")!;
+    const def = PROTECTIVE_STOPS.find((d) => d.path === "brokerBracketsEnabled")!;
     expect(def.looserWhen).toBe("off");
     expect(classify(def, true, false)).toBe("looser");
     expect(classify(def, false, true)).toBe("tighter");
@@ -121,6 +121,20 @@ describe("console guardrails: cleared-field honesty (Codex finding 9)", () => {
     expect(classify(defByPath("maxOrderNotional"), undefined, 250)).toBe("tighter");
   });
 
+  it("classifies a LOWERED universe floor as looser (widens the universe), a raised one as tighter", () => {
+    // Regression: a prior version returned `up ? looser : tighter` for BOTH looserWhen cases, so
+    // lowering a "down" floor (e.g. min share price $5 -> $3) was mislabeled "Locks Down" when it
+    // actually lets MORE names into the universe.
+    const minPrice = defByPath("universeFloor.minPrice");
+    expect(minPrice.looserWhen).toBe("down");
+    expect(classify(minPrice, 5, 3)).toBe("looser"); // $5 -> $3: wider universe
+    expect(classify(minPrice, 3, 5)).toBe("tighter"); // $3 -> $5: narrower universe
+    expect(classify(defByPath("universeFloor.minDollarVolume"), 1_000_000, 500_000)).toBe("looser");
+    // A regular "up" cap is unaffected: raising it still loosens.
+    expect(classify(defByPath("maxGrossExposurePct"), 80, 90)).toBe("looser");
+    expect(classify(defByPath("maxGrossExposurePct"), 90, 80)).toBe("tighter");
+  });
+
   it("seeds whole-replaced nested parents in the PUT body so sibling floors survive", () => {
     const def = defByPath("universeFloor.minPrice");
     const diff = computeDiff(policy, { "universeFloor.minPrice": null }, [def]);
@@ -132,6 +146,39 @@ describe("console guardrails: cleared-field honesty (Codex finding 9)", () => {
     // replaces universeFloor wholesale rather than deep-merging it.
     expect(patch.universeFloor.minMarketCapUsd).toBe(policy.universeFloor?.minMarketCapUsd);
     expect(patch.universeFloor.minDollarVolume).toBe(policy.universeFloor?.minDollarVolume);
+  });
+});
+
+describe("console guardrails: configurable daily cap mode", () => {
+  const money = defByPath("maxDailyNotional");
+  const percent = defByPath("maxDailyPctOfNav");
+
+  it("builds an exclusive percent-mode patch from the Guardrails draft", () => {
+    const fixedPolicy = { ...policy, maxDailyNotional: 1_000, maxDailyPctOfNav: undefined };
+    const diff = computeDiff(
+      fixedPolicy,
+      { maxDailyNotional: null, maxDailyPctOfNav: 20 },
+      [money, percent]
+    );
+
+    expect(buildPatch(diff, fixedPolicy)).toMatchObject({
+      maxDailyNotional: null,
+      maxDailyPctOfNav: 20
+    });
+  });
+
+  it("builds an exclusive fixed-dollar patch when switched back", () => {
+    const percentPolicy = { ...policy, maxDailyNotional: undefined, maxDailyPctOfNav: 20 };
+    const diff = computeDiff(
+      percentPolicy,
+      { maxDailyNotional: 250, maxDailyPctOfNav: null },
+      [money, percent]
+    );
+
+    expect(buildPatch(diff, percentPolicy)).toMatchObject({
+      maxDailyNotional: 250,
+      maxDailyPctOfNav: null
+    });
   });
 });
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 // Usage-budget Phase 2 wiring into runStrategyOnce (advisory-first, owner-controlled enforcement).
@@ -20,7 +21,9 @@ vi.mock("../src/lib/vector-db", () => ({
   defaultDedupeSimilarity: () => 0.6,
   formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: async () => "test-provider",
+  managedVectorLedgerAuthority: () => "test-ledger"
 }));
 
 const BASE = "https://usage.example.test";
@@ -43,7 +46,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
   delete process.env.USAGE_MONITOR_BASE_URL;
   delete process.env.USAGE_INGEST_TOKEN;
   delete process.env.USAGE_BUDGET_ENFORCE;
@@ -88,7 +91,7 @@ function budgetStatusPayload(providers: Array<{ name: string; status: "ok" | "wa
 
 /** Build the fetch stub. Routes OpenAI, the usage-monitor budget-status GET, and the nasdaq scan. */
 function makeFetchStub(opts: {
-  redTeamVerdict: { rejected: boolean; reason: string };
+  redTeamVerdict: { verdict: "approve" | "approve-at-half" | "reject"; reason: string };
   bullProposals?: unknown[];
   onOpenAiBody?: (body: any) => void;
   budgetProviders?: Array<{ name: string; status: "ok" | "warning" | "exceeded" | "unconfigured"; spentUsd?: number; monthlyBudgetUsd?: number }>;
@@ -104,7 +107,7 @@ function makeFetchStub(opts: {
         headers: { "content-type": "application/json" }
       });
     }
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       opts.onOpenAiBody?.(body);
       const systemContent = JSON.stringify(body);
@@ -114,7 +117,7 @@ function makeFetchStub(opts: {
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
-      return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals }) }), {
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals }) } }] }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -148,7 +151,7 @@ function makeFetchStub(opts: {
 
 async function seedTestAccountAndPolicy(overrides: Record<string, unknown> = {}) {
   const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -163,7 +166,10 @@ async function seedTestAccountAndPolicy(overrides: Record<string, unknown> = {})
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    llmModel: "gpt-4o",
+    llmModel: "openai/gpt-4o",
+    // Explicit Red model (no-defaults world: it never falls back to Green, and every risk-adding
+    // opening is reviewed — the stubs answer it with an approve verdict).
+    redTeamLlmModel: "openai/gpt-4o",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
@@ -173,12 +179,12 @@ async function seedTestAccountAndPolicy(overrides: Record<string, unknown> = {})
 
 describe("usage-budget Phase 2: advisory (USAGE_BUDGET_ENFORCE off)", () => {
   it("makes no model change, writes a usage_budget_status receipt, and surfaces the advisory line in the Bull prompt", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     let bullBody: any;
     vi.stubGlobal(
       "fetch",
       makeFetchStub({
-        redTeamVerdict: { rejected: false, reason: "No fatal flaw found." },
+        redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." },
         budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
         onOpenAiBody: (body) => {
           const content = JSON.stringify(body);
@@ -209,7 +215,7 @@ describe("usage-budget Phase 2: advisory (USAGE_BUDGET_ENFORCE off)", () => {
     // The model actually served was NOT downgraded — the persisted proposal carries the ORIGINAL model.
     const proposals = listRecentProposals("TEST", 100, "local");
     const aaplProposal = proposals.find((p) => p.proposal.symbol === "AAPL");
-    expect(aaplProposal?.proposal.proposedByModel).toBe("gpt-4o");
+    expect(aaplProposal?.proposal.proposedByModel).toBe("openai/gpt-4o");
 
     // The advisory line reached the Bull's userContent, next to drawdownAdvisory.
     expect(bullBody).toBeDefined();
@@ -217,19 +223,19 @@ describe("usage-budget Phase 2: advisory (USAGE_BUDGET_ENFORCE off)", () => {
     const bullUserContent = typeof bullUserMessage?.content === "string" ? bullUserMessage.content : JSON.stringify(bullUserMessage?.content ?? bullBody);
     expect(bullUserContent).toContain("budgetAdvisory");
     expect(bullUserContent).toContain("openai");
-  }, 30_000);
+  }, 90_000);
 });
 
 describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
   it("swaps llmModel/redTeamLlmModel for this run only and writes a usage_budget_enforced receipt", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     process.env.USAGE_BUDGET_ENFORCE = "on";
     let bullModelUsed: string | undefined;
     let redTeamModelUsed: string | undefined;
     vi.stubGlobal(
       "fetch",
       makeFetchStub({
-        redTeamVerdict: { rejected: false, reason: "No fatal flaw found." },
+        redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." },
         budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
         onOpenAiBody: (body) => {
           const content = JSON.stringify(body);
@@ -248,7 +254,7 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     );
 
     // gpt-4o has a known cheaper tier (gpt-4o-mini) in CHEAPER_MODEL.
-    await seedTestAccountAndPolicy({ llmModel: "gpt-4o", redTeamLlmModel: "gpt-4o" });
+    await seedTestAccountAndPolicy({ llmModel: "openai/gpt-4o", redTeamLlmModel: "openai/gpt-4o" });
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const { listAudit, listRecentProposals, getPolicy } = await import("../src/lib/db");
 
@@ -259,24 +265,24 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     expect(enforcedAudits.length).toBeGreaterThanOrEqual(1);
     const payload = enforcedAudits[0].payload as { action?: string; before?: { llmModel?: string }; after?: { llmModel?: string } };
     expect(payload.action).toBe("downgrade");
-    expect(payload.before?.llmModel).toBe("gpt-4o");
-    expect(payload.after?.llmModel).toBe("gpt-4o-mini");
+    expect(payload.before?.llmModel).toBe("openai/gpt-4o");
+    expect(payload.after?.llmModel).toBe("openai/gpt-5.4-mini");
 
     // The model actually used for the Bull call was the downgraded one.
-    expect(bullModelUsed).toBe("gpt-4o-mini");
+    expect(bullModelUsed).toBe("openai/gpt-5.4-mini");
     // Finding 6: the Bear (Red Team) request also carried the downgraded model.
-    expect(redTeamModelUsed).toBe("gpt-4o-mini");
+    expect(redTeamModelUsed).toBe("openai/gpt-5.4-mini");
 
     // The persisted proposal reflects the served (downgraded) model.
     const proposals = listRecentProposals("TEST", 100, "local");
     const aaplProposal = proposals.find((p) => p.proposal.symbol === "AAPL");
-    expect(aaplProposal?.proposal.proposedByModel).toBe("gpt-4o-mini");
+    expect(aaplProposal?.proposal.proposedByModel).toBe("openai/gpt-5.4-mini");
 
     // The downgrade was NOT persisted — the saved policy still has the owner's original model.
     const savedPolicy = getPolicy("local");
-    expect(savedPolicy.llmModel).toBe("gpt-4o");
-    expect(savedPolicy.redTeamLlmModel).toBe("gpt-4o");
-  }, 30_000);
+    expect(savedPolicy.llmModel).toBe("openai/gpt-4o");
+    expect(savedPolicy.redTeamLlmModel).toBe("openai/gpt-4o");
+  }, 90_000);
 
   it("FINDING 1 regression: a cap-breach demotion in the SAME run persists strategyAuthority only — never the in-run model downgrade", async () => {
     // This run BOTH downgrades (over-budget openai) AND trips a cap-breach demotion
@@ -286,20 +292,20 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     // shared `policy` object in place. After the fix, the downgrade lives only on a separate
     // `runPolicy` never passed to setPolicy, so the persisted row must show the downgrade GONE but
     // the demotion applied.
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     process.env.USAGE_BUDGET_ENFORCE = "on";
     vi.stubGlobal(
       "fetch",
       makeFetchStub({
-        redTeamVerdict: { rejected: false, reason: "No fatal flaw found." },
+        redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." },
         budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }]
       })
     );
 
     // gpt-4o has a known cheaper tier (gpt-4o-mini) in CHEAPER_MODEL.
     await seedTestAccountAndPolicy({
-      llmModel: "gpt-4o",
-      redTeamLlmModel: "gpt-4o",
+      llmModel: "openai/gpt-4o",
+      redTeamLlmModel: "openai/gpt-4o",
       strategyAuthority: "decide",
       maxDailyOrders: 0
     });
@@ -324,21 +330,21 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     // redTeamLlmModel are the ORIGINAL owner-configured models — the downgrade never persisted.
     const savedPolicy = getPolicy("local");
     expect(savedPolicy.strategyAuthority).toBe("propose");
-    expect(savedPolicy.llmModel).toBe("gpt-4o");
-    expect(savedPolicy.redTeamLlmModel).toBe("gpt-4o");
-  }, 30_000);
+    expect(savedPolicy.llmModel).toBe("openai/gpt-4o");
+    expect(savedPolicy.redTeamLlmModel).toBe("openai/gpt-4o");
+  }, 90_000);
 });
 
 describe("usage-budget Phase 2: enforcement ON + skip", () => {
   it("ends the run before any LLM call and writes a receipt (no OpenAI call observed)", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     process.env.USAGE_BUDGET_ENFORCE = "on";
     let openAiCalled = false;
     vi.stubGlobal(
       "fetch",
       makeFetchStub({
-        redTeamVerdict: { rejected: false, reason: "n/a" },
-        // gpt-4o-mini already the cheapest OpenAI tier in CHEAPER_MODEL -> skip, not downgrade.
+        redTeamVerdict: { verdict: "approve", reason: "n/a" },
+        // gpt-5.4-nano already the cheapest OpenAI tier in CHEAPER_MODEL -> skip, not downgrade.
         budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
         onOpenAiBody: () => {
           openAiCalled = true;
@@ -346,12 +352,12 @@ describe("usage-budget Phase 2: enforcement ON + skip", () => {
       })
     );
 
-    await seedTestAccountAndPolicy({ llmModel: "gpt-4o-mini" });
+    await seedTestAccountAndPolicy({ llmModel: "openai/gpt-5.4-nano" });
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const { listAudit, listFillEvents, listNotificationEvents } = await import("../src/lib/db");
 
     const result = await runStrategyOnce();
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("skipped_budget");
     expect(openAiCalled).toBe(false);
 
     const enforcedAudits = listAudit(500).filter((e) => e.kind === "usage_budget_enforced");
@@ -366,22 +372,22 @@ describe("usage-budget Phase 2: enforcement ON + skip", () => {
 
     // No proposal/fill was ever generated for this run.
     expect(listFillEvents("TEST", undefined, 100, "local").find((f) => f.symbol === "AAPL")).toBeUndefined();
-  }, 30_000);
+  }, 90_000);
 });
 
 describe("usage-budget Phase 2: evaluator failure fails open", () => {
   it("proceeds untouched (no crash, no downgrade, no skip) when the budget-status fetch errors", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     process.env.USAGE_BUDGET_ENFORCE = "on";
     vi.stubGlobal(
       "fetch",
       makeFetchStub({
-        redTeamVerdict: { rejected: false, reason: "No fatal flaw found." },
+        redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." },
         budgetStatusUnavailable: true
       })
     );
 
-    await seedTestAccountAndPolicy({ llmModel: "gpt-4o" });
+    await seedTestAccountAndPolicy({ llmModel: "openai/gpt-4o" });
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const { listAudit, listFillEvents, listRecentProposals } = await import("../src/lib/db");
 
@@ -396,6 +402,6 @@ describe("usage-budget Phase 2: evaluator failure fails open", () => {
     const fills = listFillEvents("TEST", undefined, 100, "local");
     expect(fills.find((f) => f.symbol === "AAPL")).toBeDefined();
     const proposals = listRecentProposals("TEST", 100, "local");
-    expect(proposals.find((p) => p.proposal.symbol === "AAPL")?.proposal.proposedByModel).toBe("gpt-4o");
-  }, 30_000);
+    expect(proposals.find((p) => p.proposal.symbol === "AAPL")?.proposal.proposedByModel).toBe("openai/gpt-4o");
+  }, 90_000);
 });

@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# Boot script for the PRODUCTION app on the Coolify box (socratictrade.com).
+# Coolify start_command runs this script directly; it self-wraps in
+# scripts/infisical-run.mjs, so by phase 2 the full Infisical `prod` env
+# (app secrets + AWS_*) is present.
+#
+# Phase 1 (no secrets yet): download pinned litestream + infisical CLI binaries
+#   onto the persistent volume (cached across restarts), put them on PATH, then
+#   re-exec this script under infisical-run.
+# Phase 2 (secrets injected), gated by the DB_BOOTSTRAP runtime env var:
+#   fresh (default) - start the app with whatever is in /app/data (empty on the
+#                     first boot). An empty DB has no users and no broker
+#                     accounts, so the scheduler cannot place orders. Safe to
+#                     run while the Mac production process is still live.
+#   live            - one-time restore of the production DB from the litestream
+#                     R2 replica (guarded by a marker file on the volume), then
+#                     run under `litestream replicate -exec` so PITR backup
+#                     continuity is preserved. Flip to live ONLY after the Mac
+#                     pm2 `trading` + `litestream` processes are stopped --
+#                     otherwise two schedulers trade the same broker accounts.
+#
+# Requires NIXPACKS_PKGS="gnutar gzip" on the Coolify app (tar for the release
+# tarballs; node/bash/coreutils are already in the nixpacks image).
+set -euo pipefail
+
+# Pinned BACK from 0.5.14 (2026-07-10): 0.5.14 in this container churned ~20
+# sockets/s to the R2 endpoint and held thousands of dead TCP socks (peak 16.8k
+# fds on one PID, ~715MB of pinned receive buffers), driving the kernel to
+# tcp_mem exhaustion -- every connection's receive window clamped to ~6KB, git
+# clones from GitHub trickled at ~20KB/s and died mid-transfer ("TLS unexpected
+# eof"), wedging ALL Coolify deploys on the box. All 0.5.x releases read/write
+# the same LTX replica format, so moving within 0.5.x is replica-compatible
+# (the 0.5.14 restore at cutover read history written by earlier 0.5.x).
+# Re-upgrade only after upstream fixes the socket churn.
+# Full diagnosis: docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md
+LITESTREAM_VERSION="0.5.12"
+INFISICAL_CLI_VERSION="0.43.98"  # matches the version production ran on the Mac
+
+DATA_DIR="/app/data"
+BIN_DIR="$DATA_DIR/.bin"
+DB_PATH="$DATA_DIR/app.db"
+MARKER="$DATA_DIR/.restored-from-replica"
+CONFIG="/app/litestream.coolify.yml"
+
+log() { echo "[coolify-prod-start] $*"; }
+
+# Download $1 to $2 (node is guaranteed in the image; curl is not).
+fetch() {
+  node -e '
+    const fs = require("node:fs");
+    const [url, dest] = process.argv.slice(1);
+    fetch(url, { redirect: "follow" })
+      .then((r) => { if (!r.ok) throw new Error(url + " -> HTTP " + r.status); return r.arrayBuffer(); })
+      .then((b) => fs.writeFileSync(dest, Buffer.from(b)))
+      .catch((e) => { console.error("[coolify-prod-start] download failed:", e.message); process.exit(1); });
+  ' "$1" "$2"
+}
+
+# Download a release tarball and install a single named binary into BIN_DIR.
+install_from_tarball() {
+  url="$1"; binary="$2"
+  tmp="$(mktemp -d)"
+  fetch "$url" "$tmp/pkg.tar.gz"
+  tar -xzf "$tmp/pkg.tar.gz" -C "$tmp"
+  found="$(find "$tmp" -type f -name "$binary" | head -1)"
+  if [ -z "$found" ]; then
+    log "ERROR: $binary not found in $url"
+    exit 1
+  fi
+  mv "$found" "$BIN_DIR/$binary"
+  chmod +x "$BIN_DIR/$binary"
+  rm -rf "$tmp"
+}
+
+if [ -z "${COOLIFY_PROD_PHASE2:-}" ]; then
+  mkdir -p "$BIN_DIR"
+  ARCH="$(uname -m)"
+  case "$ARCH" in
+    aarch64|arm64)
+      LITESTREAM_ARCH="arm64"
+      INFISICAL_ARCH="arm64"
+      ;;
+    *)
+      LITESTREAM_ARCH="x86_64"
+      INFISICAL_ARCH="amd64"
+      ;;
+  esac
+  # Version-aware install: BIN_DIR lives on the persistent volume, so a plain
+  # existence check would keep serving a stale cached binary forever after a
+  # version change ("litestream version" prints the bare number, e.g. 0.5.12).
+  installed_litestream="$("$BIN_DIR/litestream" version 2>/dev/null || true)"
+  if [ "$installed_litestream" != "$LITESTREAM_VERSION" ]; then
+    log "installing litestream $LITESTREAM_VERSION ($LITESTREAM_ARCH) (cached: ${installed_litestream:-none})"
+    install_from_tarball \
+      "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-${LITESTREAM_VERSION}-linux-${LITESTREAM_ARCH}.tar.gz" \
+      litestream
+  fi
+  if [ ! -x "$BIN_DIR/infisical" ]; then
+    log "installing infisical CLI $INFISICAL_CLI_VERSION ($INFISICAL_ARCH)"
+    install_from_tarball \
+      "https://github.com/Infisical/cli/releases/download/v${INFISICAL_CLI_VERSION}/cli_${INFISICAL_CLI_VERSION}_linux_${INFISICAL_ARCH}.tar.gz" \
+      infisical
+  fi
+  export PATH="$BIN_DIR:$PATH"
+  export COOLIFY_PROD_PHASE2=1
+  log "binaries ready; re-exec under infisical-run"
+  exec node scripts/infisical-run.mjs -- bash "$0" "$@"
+fi
+
+# --- phase 2: Infisical secrets are in the environment ---
+MODE="${DB_BOOTSTRAP:-fresh}"
+
+# Production exit-code contract (docs/rollouts/2026-08-02-exit0-outage-audit.md):
+# NO production code path may exit 0 spontaneously. The Coolify app runs under
+# restart=unless-stopped, which restarts ANY spontaneous exit regardless of
+# code -- but an exit 0 is always a lie in a server that must run forever: it
+# corrupts forensics and, under any future on-failure-style policy, becomes a
+# silent full outage. This supervisor gives every app exit a logged reason and
+# translates an unexplained clean exit into a non-zero code:
+#   40      = app exited 0 spontaneously (no stop signal forwarded) - always a bug
+#   41      = R2 free-tier kill-switch (src/lib/r2-usage.ts); the restart
+#             re-boots WITHOUT litestream via the marker branch below
+#   42      = R2 replication resume; the restart re-enables litestream
+#   43      = in-app exit-guard re-tagged a spontaneous process.exit(0)
+#   130/143 = graceful shutdown after a forwarded SIGINT/SIGTERM (docker stop)
+# The app is invoked as node_modules/.bin/next directly, NEVER via `npm run`:
+# in-container npm dies on SIGTERM without forwarding it to the server (proven
+# in the 2026-08-02 sandbox repro), so deploys hard-killed next-server and the
+# recorded exit codes were garbage.
+GOT_STOP_SIGNAL=""
+run_app() {
+  "$@" &
+  APP_PID=$!
+  trap 'GOT_STOP_SIGNAL=SIGTERM; log "forwarding SIGTERM to app (pid $APP_PID)"; kill -TERM "$APP_PID" 2>/dev/null || true' TERM
+  trap 'GOT_STOP_SIGNAL=SIGINT; log "forwarding SIGINT to app (pid $APP_PID)"; kill -INT "$APP_PID" 2>/dev/null || true' INT
+  set +e
+  wait "$APP_PID"
+  code=$?
+  # A trap interrupts wait with 128+N while the child is still alive (or an
+  # unreaped zombie); wait again until the real status is reaped.
+  while kill -0 "$APP_PID" 2>/dev/null; do
+    wait "$APP_PID"
+    code=$?
+  done
+  set -e
+  if [ "$code" -eq 0 ] && [ -z "$GOT_STOP_SIGNAL" ]; then
+    log "FATAL: app exited 0 spontaneously (no stop signal was forwarded)."
+    log "A clean exit is never valid in production - translating to exit 40 so every restart policy restarts us."
+    exit 40
+  fi
+  if [ -n "$GOT_STOP_SIGNAL" ]; then
+    log "app exited with code $code after forwarded $GOT_STOP_SIGNAL - propagating"
+  else
+    log "app exited with code $code - propagating"
+  fi
+  exit "$code"
+}
+
+if [ "$MODE" != "live" ]; then
+  log "DB_BOOTSTRAP=$MODE - starting WITHOUT restore/replication (empty-DB safe mode)"
+  run_app node_modules/.bin/next start
+fi
+
+if [ ! -f "$MARKER" ]; then
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  for f in "$DB_PATH" "$DB_PATH-wal" "$DB_PATH-shm"; do
+    if [ -e "$f" ]; then
+      log "moving aside pre-restore file $f"
+      mv "$f" "$f.pre-restore-$ts"
+    fi
+  done
+  log "restoring production DB from litestream replica"
+  litestream restore -config "$CONFIG" "$DB_PATH"
+  echo "$ts restored from litestream replica" > "$MARKER"
+  log "restore complete"
+fi
+
+log "DB_BOOTSTRAP=live - starting under litestream replicate"
+
+# R2 free-tier kill-switch (owner directive 2026-08-01): when the app's R2 usage
+# monitor projects >70% of the free tier it writes this marker and restarts the
+# container; while the marker exists we boot WITHOUT litestream replication so R2
+# usage stops growing. Resume: delete the marker (POST /api/admin/r2-usage/resume
+# does this + restarts) and the next boot re-enables replication.
+R2_DISABLE_MARKER="${R2_USAGE_DISABLE_MARKER:-$DATA_DIR/.litestream-r2-disabled}"
+if [ -f "$R2_DISABLE_MARKER" ]; then
+  log "R2 kill-switch marker present ($R2_DISABLE_MARKER) - starting WITHOUT litestream replication"
+  log "marker contents: $(cat "$R2_DISABLE_MARKER" 2>/dev/null | head -c 500)"
+  run_app node_modules/.bin/next start
+fi
+
+run_app litestream replicate -config "$CONFIG" -exec "node_modules/.bin/next start"

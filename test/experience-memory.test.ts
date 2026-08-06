@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   storeContexts: mocks.storeContexts,
   storeContext: async () => {},
   retrieveContext: async () => [],
@@ -146,10 +148,11 @@ describe("closed-lot write hook (recordFillFromProposal → recordClosedLotExper
     const [documents, userId, options] = mocks.storeContexts.mock.calls[0]! as unknown as [
       Array<{ text: string; metadata: Record<string, unknown> }>,
       string,
-      { dedupKeyPrefix?: string }
+      { dedupKeyPrefix?: string; scope?: string }
     ];
     expect(userId).toBe("local");
     expect(options?.dedupKeyPrefix).toBe("experience-memory");
+    expect(options?.scope).toBe("private");
     expect(documents).toHaveLength(1);
     const doc = documents[0]!;
 
@@ -332,6 +335,7 @@ describe("decision-time retrieval (retrieveDecisionExperiences)", () => {
     const result = await retrieveDecisionExperiences({
       userId: "local",
       runId,
+      connectedAccountId: "account-a",
       regime: "Risk-On",
       candidates: [{ symbol: "NVDA", sector: "Technology", dominantFactor: "momentum" }],
       asOf
@@ -343,12 +347,14 @@ describe("decision-time retrieval (retrieveDecisionExperiences)", () => {
       string,
       number,
       string,
-      { docType?: string[]; matchAllSymbols?: boolean; asOf?: string }
+      { docType?: string[]; matchAllSymbols?: boolean; asOf?: string; connectedAccountId?: string; accountScope?: string }
     ];
     expect(query).toContain("market regime Risk-On");
     expect(options.docType).toEqual(["socratic-decision", "coach-note", "lesson"]);
     expect(options.matchAllSymbols).toBe(true);
     expect(options.asOf).toBe(asOf);
+    expect(options.connectedAccountId).toBe("account-a");
+    expect(options.accountScope).toBe("exact");
 
     // Same-run neighbors (entry OR exit side) are excluded — no self-retrieval, no lookahead.
     const injectedIds = result.injected.map((ref) => ref.id);

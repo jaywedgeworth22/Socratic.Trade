@@ -21,13 +21,8 @@ concurrency:
 
 jobs:
   gitleaks:
-    # Moved off the self-hosted runner (2026-07-01): fast, generic, no
-    # production-box dependency, and was contributing to the runner queue
-    # bottleneck. Ephemeral hosted runners start clean, so the old
-    # "clean stale gitleaks installer temp files" step (needed on the
-    # persistent self-hosted box) no longer applies. Revert to
-    # `[self-hosted, trading-live]` if the account's Actions spending limit
-    # ever blocks this (Settings → Billing → Plans and usage → Spending limit).
+    # 2026-07-18: GitHub-hosted `ubuntu-latest` is not assigning runners for this repo
+    # (runner_id=0/no step logs), so the required secret scan runs on Coolify socratic-ci (trading-live Mac is often offline).
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -55,7 +50,14 @@ jobs:
           fi
       - uses: actions/checkout@v4
         with:
+          # Gitleaks must see full history: a secret added and removed in an
+          # earlier PR commit must remain scannable, as must scheduled history.
           fetch-depth: 0
+      - name: Clean stale temp gitleaks files
+        run: rm -rf /tmp/gitleaks.tmp /tmp/gitleaks* /tmp/gitleaks-*
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gitleaks-action's optional SARIF artifact upload assumes the workspace is under HOME.
+          # Coolify's runner workspace is /_work, so the upload fails after a clean scan.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"

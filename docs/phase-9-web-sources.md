@@ -1,7 +1,20 @@
 # Phase 9 - Backend Web Sources (scraped / no-free-API signals)
 
-Status: implemented 2026-06-16 (branch `web-sources`). Paper mode unchanged; these
-are read-only data ingests. No trading behavior changed.
+Status: implemented 2026-06-16 (branch `web-sources`). These are read-only data ingests; broker
+paper/live execution remains intrinsic to the connected account.
+
+## 2026-07-13 consumption update
+
+Web-source presence is no longer treated as proof of decision value. The enrichment/strategy path
+now retains per-field provenance and availability, provider failures, upstream-family deduplication,
+per-run source coverage, and decision-time leave-one-winning-provider-out score receipts. Those
+receipts join to matured realized/skipped outcomes as observational source-value telemetry. A failed
+source remains distinguishable from a neutral or no-match result.
+
+The same run timestamp is passed into filing retrieval, retrieved text is treated as untrusted data,
+and Green/Red receive the same evidence manifest. This does not make source-value estimates causal
+or complete the separate SEC corpus backfill; limitations are cataloged in
+`docs/reviews/2026-07-13-decision-evidence-architecture.md`.
 
 ## Goal
 
@@ -47,9 +60,39 @@ disclosures lets the agent act on the same names *before* the copycats pile in.
   and counts **only open-market discretionary** transactions: `P` (purchase) and
   `S` (sale). Codes `M`/`A`/`F`/`G` (option exercise, grant, tax, gift) are NOT
   trading signals and are ignored. Filings accumulate into a rolling window.
+- **`fmp-transcripts.ts`** — default-off FMP earnings-call transcript discovery and body ingest.
+  It requires both endpoint enablement and explicit storage/display-rights confirmation, uses the
+  stable dates/body endpoints with header authentication, preserves first-content-observed time for
+  point-in-time retrieval, accepts documented strict `period: "Q1".."Q4"` bodies plus numeric
+  quarters, keeps content hashes separate from ticker-period occurrences, and records typed entitlement,
+  bounded retry, quota, embedding-budget, and capability receipts without logging transcript content.
+  Fatal UTF-8 and endpoint-specific envelope validation precede green telemetry; embedded provider errors,
+  malformed/oversized bodies, and wrong endpoint rows produce one bounded redacted failure per attempt.
+  Voyage document responses are accepted only as an exact request/response bijection; malformed batches
+  fail atomically. Store errors, empty/incomplete writes, and invalid embeddings receive one priority
+  retry before cursor rotation. Guarded fetch, Pinecone bootstrap/write, notification, usage-alert, and
+  Sentry paths are awaited and re-prove the shared lease after every async boundary. Every completed
+  occurrence has a real deterministic Pinecone vector with its own ticker/accession/PIT metadata; exact
+  embeddings may be reused, but completion requires exact vector cardinality plus an atomic local
+  content/occurrence receipt transaction. Edge-safe Web Crypto SHA-256 credential identities keep
+  provider attempts and quota/cost reservations durable
+  before each network/SDK boundary and replay `succeeded`/`failed`/crash-`unknown` outcomes. Managed
+  vectors remain query-ineligible until exact provider and relational receipts agree. Transcript body
+  revisions retain distinct content-version/PIT rows instead of overwriting history. A bounded,
+  dry-run-default rights tool inventories provider ghosts plus local receipts/observations/tagged
+  derivatives and performs provider-first verified purge. Rights generations also ledger exact derived
+  chat, prompt-safety audit, decision, and framework artifacts plus unresolved derived provider work, so
+  withdrawal blocks new writes, waits for terminal external receipts, and removes only proven transcript-
+  derived state. A proven pre-upsert short circuit records `no_provider_write`; any timeout/error after
+  dispatch records `provider_write_unknown` and retains the immutable authority-bound deletion obligation.
+  Private managed-vector writes hold a durable account-operation claim from provider identity
+  through receipt commit; account erasure requires current index authority and consecutive clean provider
+  observations before deleting local evidence. Commercial rights and a genuinely shared cross-app FMP quota
+  authority remain activation gates.
 - **`index.ts`** — registry + the three entry points the app uses:
   `refreshDueWebSources()` (scheduler), `getSymbolWebSignals()` (scan overlay,
-  cache-only / no network), `collectEvidenceBulletins()`, `getWebSourcesStatus()`.
+  cache-only / no network), `collectEvidenceBulletins()`, `getWebSourcesStatus()`, plus the separately
+  paced `refreshFmpTranscripts()` corpus producer.
 
 ## Persistence + cadence
 
@@ -62,7 +105,37 @@ dataset with nothing** on a transient outage.
 
 Cost per refresh is small and bounded: Senate eFD ≈ 1 search + ≤80 PTR pages
 (capped, rate-limited 350ms); SEC ≈ 1 feed + ≤30 filings × 2 reqs (rate-limited
-250ms). Both run in the background, independent of whether autonomous trading is on.
+250ms). Both run in the background, independent of whether autonomous trading is on. FMP transcripts
+have their own exact-attempt cap, rotating demand-first symbol cursor, retry cadence, response-byte
+limits, and remain entirely inert with either opt-in disabled.
+
+### Cross-entry single-flight
+
+Manual admin requests and scheduler/background calls converge at durable operation boundaries,
+not only at the route layer. `src/lib/operation-lease.ts` stores owner-token leases in the existing
+SQLite `settings` KV and uses an immediate transaction for atomic acquisition, a TTL heartbeat for
+long work, and owner-checked release. Congress and SEC 8-K refreshes have separate dataset groups;
+Congress daily sharing has its own group; 8-K reindex, 10-K/10-Q filing ingest, and enabled FMP
+transcript ingest deliberately share the `rag-reindex` group because they spend the same
+embedding/corpus-write capacity.
+
+Contention in a background caller is a typed benign skip: it performs no provider request and does
+not advance the connector attempt/daily marker. Admin admission acquires the durable lease before
+debiting its per-admin rate budget, passes an opaque claim into the matching core function, and maps
+busy outcomes to the shared operation-guard HTTP 409 contract. The detached best-effort embedding
+started by `refreshEightK` remains detached; its summary/full-body work can continue after the
+primary dataset-refresh lease is released, preserving the established non-blocking refresh contract.
+That detached tail does not currently acquire `rag-reindex`; making it fully exclusive requires a
+durable pending/retry job or awaiting it, and remains an explicit follow-up rather than a silent claim.
+
+### Corpus re-embed purge safety
+
+The bge-m3/Voyage embedding-space migration uses `POST /api/admin/reembed` to backfill locally
+held corpus rows into the active embedding space before any legacy vectors are deleted. A
+symbol-scoped run is useful for testing or targeted repair, but it is not proof that an entire
+docType has been backfilled. `purge-legacy` must remain blocked until an unscoped docType run
+records completion under the active embed revision; scoped runs deliberately do not write
+`completedForEmbedRevision`.
 
 ## Wiring into the app
 
@@ -75,7 +148,37 @@ Cost per refresh is small and bounded: Senate eFD ≈ 1 search + ≤80 PTR pages
   as a positioning tailwind worth front-running (and SELLS as a caution), as one
   input among many — not a standalone trigger.
 - **Dashboard** — `getWebSourcesStatus()` (freshness, record counts, sources, due)
-  is on the snapshot for a health indicator.
+  is on the snapshot for a health indicator. Transcript status separately exposes the feature gate,
+  rights gate, endpoint capability, cadence, and ingested count.
+- **Strategy/Coach RAG** — transcript chunks are retrievable only while storage/display rights remain
+  confirmed. Turning future ingestion off preserves already licensed evidence; withdrawing rights
+  adds a global metadata exclusion so broad Coach/chat retrieval cannot bypass the Strategy filter.
+  New `storeDocument` writes materialize repeated content per occurrence, so they retain queryable
+  PIT/source provenance without inventing a missing vector ID. Reconcile any corpus written by the older
+  content-only shortcut before treating legacy coverage as complete. Shared/public and private/account
+  records now carry authoritative tenant scopes; local operator decision/experience memory is explicitly
+  private, and legacy account-memory markers are exact-user filtered before receipt validation, rerank,
+  candidate persistence, or prompting. Stale managed generations expand bounded provider topK using a
+  local rejected-generation upper bound and emit a typed degraded receipt when the cap can still hide
+  eligible evidence. Private and shared query tiers retain independent bounded candidate pools until
+  cross-encoder reranking so dense-score saturation in one tier cannot erase recall from the other.
+  Tenant visibility, relational receipt validity, and transcript-rights generation are enforced inside
+  every tier before its share of Voyage's 1,000-document cap is allocated; stale/ineligible records therefore
+  cannot consume quota and hide lower-scoring current evidence already returned by the provider. Multi-query
+  RRF carries those tier identities into one final fair 1,000-document cap instead of collapsing the fused
+  pool back to the single-query fetch count before reranking. Relational receipt validation batches
+  candidate IDs below SQLite's portable host-parameter ceiling; a legal six-tier provider response can
+  contain 60,000 raw IDs, so one unbounded `IN (...)` statement is not safe.
+  Transcript-derived decision memory uses an immutable rights-generation vector ID plus a durable work
+  lease bound to the exact Pinecone provider and SQLite namespace authority. Retrieval requires the
+  currently active rights generation; provider/manifest rotation fails closed. Rights withdrawal keeps
+  local receipts until provider delete/fetch/list verification is clean for multiple consecutive
+  observations, resetting the streak if an eventually-consistent vector reappears. Account deletion
+  holds the shared RAG-write lease and completes provider inventory,
+  delete, and fetch-verification before removing local vector receipts or provider keys; globally deduplicated
+  chunk text remains while any preserved shared occurrence references it, while durable local receipts recover
+  private hashes on a retry after provider deletion. Provider-only inventory and
+  erasure require the Pinecone credential but do not depend on a Voyage embedding credential.
 
 ## Configuration (env)
 
@@ -97,6 +200,14 @@ Cost per refresh is small and bounded: Senate eFD ≈ 1 search + ≤80 PTR pages
 | `WEB_SOURCE_INSIDER_WINDOW_DAYS` | 30 | rolling window kept |
 | `WEB_SOURCE_INSIDER_MAX_FILINGS` | 30 | ownership XMLs parsed per refresh |
 | `SEC_EDGAR_USER_AGENT` | generic | SEC fair-access UA (set your contact) |
+| `WEB_SOURCE_FMP_TRANSCRIPTS` | `off` | enables transcript endpoint use; still requires rights confirmation |
+| `FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED` | `off` | operator assertion that persistence, embedding, retrieval, and display are permitted |
+| `FMP_TRANSCRIPT_TTL_HOURS` | 24h | independent successful-refresh cadence |
+| `FMP_TRANSCRIPT_MAX_REQUESTS_PER_RUN` | 12 | exact cap across discovery, body requests, and retries; `0` pauses calls |
+| `FMP_TRANSCRIPT_MAX_PER_SYMBOL` | 2 | newest un-ingested fiscal periods attempted per symbol |
+| `VECTOR_ERASURE_VERIFY_ATTEMPTS` | 4 | bounded provider-absence observations before erasure may commit |
+| `VECTOR_ERASURE_VERIFY_CONSECUTIVE_CLEAN` | 3 | required consecutive clean observations; reappearance resets the streak |
+| `VECTOR_ERASURE_VERIFY_DELAY_MS` | 500 | initial delay between erasure observations (bounded exponential backoff) |
 
 ## Adding another source
 

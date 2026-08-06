@@ -5,7 +5,7 @@ import { Toaster } from "sonner";
 import { GlobalErrorToasts } from "./ui/global-error-toasts";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://socratictrade.com"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://socratictrade.com"),
   title: {
     default: "Socratic Trade",
     template: "%s · Socratic Trade"
@@ -17,11 +17,15 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: "Socratic Trade",
-    statusBarStyle: "black-translucent"
+    statusBarStyle: "default"
   },
   icons: {
-    icon: "/icon.svg",
-    apple: "/icon.svg"
+    icon: [
+      { url: "/icon.png", type: "image/png" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" }
+    ],
+    apple: [{ url: "/icons/apple-touch-icon-180.png", sizes: "180x180", type: "image/png" }]
   },
   keywords: [
     "AI trading agent",
@@ -57,7 +61,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#080b12"
+  themeColor: "#ffffff"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

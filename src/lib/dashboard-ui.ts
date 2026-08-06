@@ -1,4 +1,4 @@
-import type { EnrichmentSources, EquityPosition, MarketQuote, NotificationEvent, OrderSide } from "./types";
+import type { EnrichmentSources, EquityPosition, MarketQuote, NotificationEvent, NotificationEventType, NotificationStatus, OrderSide } from "./types";
 import type { SymbolMeta } from "./dashboard-feed";
 import { formatQuantity } from "./money";
 
@@ -29,7 +29,17 @@ const SOURCE_LABELS: Record<string, string> = {
   "sp500-universe": "S&P 500 Universe",
   "sp100-universe": "S&P 100 Universe",
   "nasdaq100-universe": "NASDAQ 100 Universe",
-  "nasdaq-composite-universe": "NASDAQ Composite Universe",
+  // The dynamic-universe source tags below are built in market.ts as `${universe}-universe`
+  // straight from the IndexUniverse config id — for the three camelCase compound ids
+  // (nasdaqComposite, nyseComposite, ftWilshire5000) that produces e.g. "nasdaqComposite-
+  // universe", which normalizeSourceKey only lowercases (never re-hyphenates) to
+  // "nasdaqcomposite-universe". A key with a hyphen between the words never matched, so these
+  // fell through to titleizeSource's raw-string fallback and rendered as "Nasdaqcomposite
+  // Universe" / "Nysecomposite Universe" / (unlabeled) "Ftwilshire5000 Universe". Keys here MUST
+  // match the id's own casing verbatim, not "properly" kebab-cased.
+  "nasdaqcomposite-universe": "NASDAQ Composite Universe",
+  "nysecomposite-universe": "NYSE Composite Universe",
+  "ftwilshire5000-universe": "FT Wilshire 5000 Universe",
   "alpaca-quotes": "Alpaca Quotes",
   "alpaca-snapshot": "Alpaca Snapshot",
   "alpaca-news": "Alpaca News",
@@ -201,9 +211,13 @@ export function receivedLabel(ts?: string): string {
 
 export function cellTitle(label: string, source?: string, asOf?: string): string {
   const parts = [label];
-  if (source) parts.push(`Source: ${friendlySource(source)}`);
-  const received = receivedLabel(asOf);
-  if (received) parts.push(received);
+  // Freshness rides provenance: no recorded source means no provider returned the
+  // field, so a "Received <time>" stamp would claim freshness for data we never got.
+  if (source) {
+    parts.push(`Source: ${friendlySource(source)}`);
+    const received = receivedLabel(asOf);
+    if (received) parts.push(received);
+  }
   return parts.join("\n");
 }
 
@@ -236,13 +250,21 @@ export function ratingTitle(candidate: MarketQuote): string {
 
 export function sentimentTitle(candidate: MarketQuote): string {
   const src = candidate.sources ?? {};
-  return typeof candidate.sentiment === "number"
-    ? cellTitle(
-        `News-tone ${candidate.sentiment}/100 (locally computed from recent Finnhub headlines using keyword scoring)` +
-          `\n\nRecent Headlines:\n${candidate.headlines?.map((headline) => `• ${headline}`).join("\n") ?? "None"}`,
-        src.sentiment
-      )
-    : "No recent news";
+  if (typeof candidate.sentiment === "number") {
+    const headlineText = candidate.headlines?.length
+      ? `\n\nRecent Headlines:\n${candidate.headlines.map((headline) => `• ${headline}`).join("\n")}`
+      : "";
+    return cellTitle(`News sentiment score ${candidate.sentiment}/100${headlineText}`, src.sentiment);
+  }
+  return "No recent news sentiment score recorded";
+}
+
+export function insiderSentimentTitle(candidate: MarketQuote): string {
+  const src = candidate.sources ?? {};
+  if (typeof candidate.insiderSentiment === "number") {
+    return cellTitle(`Insider sentiment score ${candidate.insiderSentiment}/100`, src.insiderSentiment ?? "sec-edgar");
+  }
+  return "No recent insider sentiment score recorded";
 }
 
 export function scanQuoteAsOf(candidates: MarketQuote[]): string | undefined {
@@ -256,6 +278,103 @@ export function scanQuoteAsOf(candidates: MarketQuote[]): string | undefined {
 
 export function formatShareQuantity(value?: number, symbol?: string): string {
   return formatQuantity(value, symbol);
+}
+
+/** Defensive Title-Case de-underscore/de-hyphenate fallback so a raw snake_case or kebab-case
+ *  enum value never reaches the user, even for a value not covered by an explicit label map
+ *  below. Mirrors `plainLabel` in app/console/lib/labels.ts — that file is a separate package
+ *  boundary (this is a server-shared lib and must not import from app/), so this is a small
+ *  local mirror, not a cross-import. */
+function plainEnumLabel(raw: string): string {
+  return raw
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+// ── Feed / proposal / fill statuses (decided vocabulary) ───────────────────────────────────
+
+const FEED_STATUS_LABELS: Record<string, string> = {
+  filled: "Filled",
+  partially_filled: "Partially filled",
+  pending_order: "Order pending",
+  pending_reconciliation: "Awaiting reconciliation",
+  // Terminal: broker_order_id was unusable (empty / literal "undefined") — cannot reconcile.
+  unreconcilable: "Unreconcilable",
+  pending_approval: "Awaiting approval",
+  approved: "Approved",
+  blocked: "Blocked",
+  rejected: "Rejected",
+  rejected_by_broker: "Rejected by broker",
+  pending: "Pending",
+  unknown: "Status unknown",
+  proposed: "Proposed",
+  executed: "Executed",
+  expired: "Expired",
+  failed: "Failed",
+  withdrawn: "Withdrawn",
+  placed: "Placed",
+  paper: "Paper trade",
+  completed: "Completed",
+  skipped: "Skipped",
+  // Strategy-run pre-decision skips (UX PR-A1) — never success-ish "Completed".
+  skipped_budget: "Skipped — LLM budget",
+  skipped_market_closed: "Skipped — market closed",
+  skipped_broker_unhealthy: "Skipped — broker unhealthy",
+  placing_failed: "Placement failed",
+  not_placed: "Not placed - safe to retry",
+  running: "Running"
+};
+
+/** Plain-English label for a feed/proposal/fill status string. Unknown values fall back to a
+ *  defensive Title-Case de-underscore rather than ever showing the raw enum. */
+export function feedStatusLabel(raw?: string | null): string {
+  if (!raw) return "";
+  return FEED_STATUS_LABELS[raw.toLowerCase()] ?? plainEnumLabel(raw);
+}
+
+// ── Notifications (decided vocabulary) ──────────────────────────────────────────────────────
+
+export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
+  fill: "Order filled",
+  block: "Trade blocked",
+  run_failed: "Run failed",
+  pending_approval: "Awaiting your approval",
+  kill_switch: "Kill switch",
+  price_alert: "Price alert",
+  proposal_withdrawn: "Proposal withdrawn",
+  limit_order_stale: "Stale limit order",
+  provider_degraded: "Data provider degraded",
+  budget_alert: "Budget alert",
+  learning_review: "Learning review",
+  deterministic_bear_veto: "Vetoed by Bear risk",
+  red_team_veto_override_requested: "Red Team override requested",
+  red_team_veto_overridden: "Red Team veto overridden",
+  prompt_injection_suspected: "Prompt injection suspected",
+  evidence_age_anomaly: "Evidence age anomaly",
+  storage_warning: "Storage warning",
+  autonomy_halted_on_boot: "Autonomy halted on boot",
+  option_alert: "Option alert",
+  earningscalls_entitlement_blocked: "EarningsCalls plan entitlement blocked",
+  risk_advisory: "Risk advisory",
+  protective_exit_failing: "Protective exit failing"
+};
+
+export function notificationTypeLabel(type?: string | null): string {
+  if (!type) return "";
+  return NOTIFICATION_EVENT_TYPE_LABELS[type as NotificationEventType] ?? plainEnumLabel(type);
+}
+
+const NOTIFICATION_STATUS_LABELS: Record<NotificationStatus, string> = {
+  sent: "Sent",
+  failed: "Delivery failed",
+  skipped: "Not sent"
+};
+
+export function notificationStatusLabel(status?: string | null): string {
+  if (!status) return "";
+  return NOTIFICATION_STATUS_LABELS[status as NotificationStatus] ?? plainEnumLabel(status);
 }
 
 export function formatNotificationDisplay(
@@ -279,7 +398,13 @@ export function formatNotificationDisplay(
   } else if (event.type === "block") {
     title = `${actionLabel(side)} ${symbol ?? "Proposal"} Blocked`;
   } else if (event.type === "pending_approval") {
-    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval`;
+    // Single-adversary visibility (§5.2): when the run flagged this pending approval as
+    // "Red Team review unavailable" (payload metadata flag, read defensively via asRecord), the
+    // Red-Team-unavailable signal must survive into the feed — append the indicator instead of
+    // discarding it with the generic overwrite.
+    const adversaryUnavailable = payload.adversaryUnavailable === true;
+    const humanReviewReasonTitle = stringValue(payload.humanReviewReasonTitle);
+    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval${humanReviewReasonTitle ? ` — ${humanReviewReasonTitle}` : adversaryUnavailable ? " — Red Team Unavailable" : ""}`;
   } else if (event.type === "kill_switch") {
     title = "Kill Switch Triggered";
   } else if (event.type === "run_failed") {
@@ -287,6 +412,18 @@ export function formatNotificationDisplay(
   } else if (event.type === "proposal_withdrawn") {
     const expired = stringValue(payload.source) === "expiry";
     title = `${actionLabel(side)} ${symbol ?? "Proposal"} ${expired ? "Expired" : "Withdrawn"}`;
+  } else if (event.type === "deterministic_bear_veto") {
+    title = `${actionLabel(side)} ${symbol ?? "Trade"} Vetoed by Bear Risk`;
+  } else if (event.type === "red_team_veto_override_requested") {
+    title = `Red Team Override Requested ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "red_team_veto_overridden") {
+    title = `Red Team Veto Overridden ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "prompt_injection_suspected") {
+    title = `Prompt Injection Suspected ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "evidence_age_anomaly") {
+    title = `Evidence Age Anomaly ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "option_alert") {
+    title = event.title;
   }
 
   return {
@@ -299,28 +436,57 @@ export function formatNotificationDisplay(
 }
 
 function notificationDetail(event: NotificationEvent): string {
-  const prefix = event.status === "sent" ? "Notification Sent" : event.status === "failed" ? "Notification Failed" : "Notification Skipped";
+  if (event.type === "option_alert") {
+    const payload = asRecord(event.payload);
+    return stringValue(payload.detail) || "Option alert";
+  }
+  if (
+    event.type === "deterministic_bear_veto" ||
+    event.type === "red_team_veto_override_requested" ||
+    event.type === "red_team_veto_overridden" ||
+    event.type === "prompt_injection_suspected" ||
+    event.type === "evidence_age_anomaly"
+  ) {
+    const payload = asRecord(event.payload);
+    const reason = stringValue(payload.reason) || stringValue(payload.detail);
+    return reason ? `Audit logged: ${reason}` : "Advisory audit logged";
+  }
+  const prefix = notificationStatusLabel(event.status);
   const reason = notificationReason(event.error);
   return reason ? `${prefix} - ${reason}` : prefix;
 }
 
 function notificationReason(error?: string): string | undefined {
   if (!error) return undefined;
-  if (error === "Notifications Webhook Not Configured") return "Notifications Webhook Not Configured";
+  if (error === "Notifications Webhook Not Configured") return "No notification channels enabled.";
+  if (error === "not_configured") return "Notification channel is not configured by the operator.";
+  if (error === "no_target") return "Notification channel has no delivery target.";
   if (error === "Notification type is disabled.") return "Type Disabled";
   return error;
 }
 
 function actionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Sell" : side === "buy" ? "Buy" : "Trade";
+  if (side === "sell") return "Sell";
+  if (side === "buy") return "Buy";
+  if (side === "short") return "Short";
+  if (side === "cover") return "Cover";
+  return "Trade";
 }
 
 function executedActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Sold" : side === "buy" ? "Bought" : "Traded";
+  if (side === "sell") return "Sold";
+  if (side === "buy") return "Bought";
+  if (side === "short") return "Shorted";
+  if (side === "cover") return "Covered";
+  return "Traded";
 }
 
 function paperActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Paper Sell" : side === "buy" ? "Paper Buy" : "Paper Trade";
+  if (side === "sell") return "Paper Sell";
+  if (side === "buy") return "Paper Buy";
+  if (side === "short") return "Paper Short";
+  if (side === "cover") return "Paper Cover";
+  return "Paper Trade";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -343,5 +509,5 @@ function normalizeSymbol(symbol?: string): string | undefined {
 }
 
 function normalizeSide(side?: string): OrderSide | undefined {
-  return side === "buy" || side === "sell" ? side : undefined;
+  return side === "buy" || side === "sell" || side === "short" || side === "cover" ? side : undefined;
 }

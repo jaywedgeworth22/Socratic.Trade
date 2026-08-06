@@ -88,6 +88,7 @@ export function holdingDaysBetween(entryAt?: string, exitAt?: string): number | 
 export interface ClosedLotExperienceInput {
   userId: string;
   connectedAccountId?: string;
+  accountEnvironment?: "paper" | "live";
   accountNumber: string;
   symbol: string;
   side: "long" | "short";
@@ -176,6 +177,7 @@ export function buildClosedLotExperienceDocument(input: ClosedLotExperienceInput
       timestamp: input.exitAt,
       doc_type: "socratic-decision",
       memory_kind: "experience",
+      memory_scope: "account",
       side: input.side,
       return_pct: round2(input.returnPct),
       pnl_usd: round2(input.pnl),
@@ -192,6 +194,10 @@ export function buildClosedLotExperienceDocument(input: ClosedLotExperienceInput
       ...(input.sector ? { sector: input.sector } : {}),
       ...(typeof input.confidence === "number" ? { confidence: input.confidence } : {}),
       ...(input.connectedAccountId ? { connected_account_id: input.connectedAccountId } : {}),
+      ...(input.accountEnvironment ? {
+        account_environment: input.accountEnvironment,
+        transfer_state: "not_applicable"
+      } : {}),
       ...factorMetadata
     }
   };
@@ -276,6 +282,7 @@ export async function recordClosedLotExperience(
       return buildClosedLotExperienceDocument({
         userId,
         connectedAccountId: input.connectedAccountId,
+        accountEnvironment: input.source,
         accountNumber: input.accountNumber,
         symbol: closingSymbol,
         side: lot.side ?? "long",
@@ -302,7 +309,10 @@ export async function recordClosedLotExperience(
       });
     });
 
-    return await storeContexts(documents, userId, { dedupKeyPrefix: EXPERIENCE_MEMORY_SOURCE });
+    return await storeContexts(documents, userId, {
+      dedupKeyPrefix: EXPERIENCE_MEMORY_SOURCE,
+      scope: "private"
+    });
   } catch (err) {
     // The experience write must never affect fill recording or the money path.
     console.warn(
@@ -311,6 +321,82 @@ export async function recordClosedLotExperience(
     );
     return null;
   }
+}
+
+/**
+ * Backfill/re-embed support (corpus-reembed, 2026-07-18): reconstruct EVERY historical closed-lot
+ * experience document for one account, not just the ones matching a single just-closed fill.
+ * Mirrors `recordClosedLotExperience`'s per-lot construction (entry-fill/proposal resolution,
+ * factor breakdown, risk-exit classification) but additionally resolves the EXIT fill/proposal per
+ * lot — `recordClosedLotExperience` gets those directly from its caller's `closingFill`/
+ * `closingProposal` inputs, which don't exist for a full historical replay.
+ *
+ * Deliberately does NOT touch `recordClosedLotExperience` or `buildClosedLotExperienceDocument`:
+ * this is purely additive so the live write-hook (money-path-adjacent — feeds the Bull/Bear
+ * decision prompt) keeps its exact existing behavior. Read-only: never writes to the vector store
+ * itself. Callers decide how/where to embed the returned documents.
+ */
+export async function listClosedLotExperienceDocumentsForAccount(input: {
+  userId: string;
+  connectedAccountId?: string;
+  accountEnvironment: FillSource;
+  accountNumber: string;
+}): Promise<ContextDocument[]> {
+  const [{ listFillEvents }, { calculatePnl }] = await Promise.all([
+    import("./db"),
+    import("./performance")
+  ]);
+  const fills = listFillEvents(input.accountNumber, input.accountEnvironment, 5000, input.userId);
+  const { closedLots } = calculatePnl(fills);
+
+  return closedLots
+    .filter((lot): lot is typeof lot & { exitAt: string } => Boolean(lot.exitAt))
+    .map((lot) => {
+      const symbol = normalizeSymbol(lot.symbol ?? "");
+      const wantEntrySide = lot.side === "short" ? "short" : "buy";
+      const wantExitSide = lot.side === "short" ? "cover" : "sell";
+      const entryFill = fills.find(
+        (fill) =>
+          normalizeSymbol(fill.symbol) === symbol && fill.side === wantEntrySide && fill.filledAt === lot.entryAt
+      );
+      const exitFill = fills.find(
+        (fill) =>
+          normalizeSymbol(fill.symbol) === symbol && fill.side === wantExitSide && fill.filledAt === lot.exitAt
+      );
+      const entryProposal = proposalFromFillRaw(entryFill);
+      const exitProposal = proposalFromFillRaw(exitFill);
+      const riskExit = Boolean(
+        exitProposal?.tradeThesisTag && RISK_EXIT_THESIS_TAGS.has(exitProposal.tradeThesisTag)
+      );
+      return buildClosedLotExperienceDocument({
+        userId: input.userId,
+        connectedAccountId: input.connectedAccountId,
+        accountEnvironment: input.accountEnvironment,
+        accountNumber: input.accountNumber,
+        symbol,
+        side: lot.side ?? "long",
+        returnPct: lot.returnPct,
+        pnl: lot.pnl,
+        entryAt: lot.entryAt,
+        exitAt: lot.exitAt,
+        entryRunId: lot.entryRunId,
+        exitRunId: exitFill?.runId,
+        entryProposalId: entryFill?.proposalId,
+        exitProposalId: exitFill?.proposalId,
+        thesisTag: lot.thesisTag,
+        entryMarketRegime: lot.regime,
+        sector: lot.sector,
+        confidence: lot.confidence,
+        factorBreakdown: factorBreakdownFromFillRaw(entryFill),
+        entryBreadthPct: breadthFromFillRaw(entryFill),
+        entryRationale: entryProposal?.rationale,
+        exitThesisTag: exitProposal?.tradeThesisTag,
+        exitRationale: exitProposal?.rationale,
+        riskExit,
+        mae: lot.mae,
+        mfe: lot.mfe
+      });
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -478,6 +564,7 @@ export async function retrieveDecisionExperiences(
         asOf,
         minScore: defaultMinScore(),
         connectedAccountId: input.connectedAccountId,
+        accountScope: "exact",
         runId: input.runId,
         onStatus: (s) => {
           vectorStatusRef.value = s;
@@ -486,12 +573,25 @@ export async function retrieveDecisionExperiences(
     );
     // Same-run / future-neighbor exclusion: a case this run just indexed (decision run OR exit
     // run stamped with this runId) must not be retrieved back into this run's own prompt.
-    chunks = fetched
-      .filter(
-        (chunk) =>
-          chunkMeta(chunk, "run_id") !== input.runId && chunkMeta(chunk, "exit_run_id") !== input.runId
-      )
-      .slice(0, k);
+    const eligible = fetched.filter(
+      (chunk) =>
+        chunkMeta(chunk, "run_id") !== input.runId && chunkMeta(chunk, "exit_run_id") !== input.runId
+    );
+    // Advisory usefulness re-rank (retrieval-usefulness join, handoff 4.1): doc types whose past
+    // injections preceded better matured outcomes rank somewhat higher. RANK-STABLE: the nudge is
+    // a bounded ±10% multiplier on an RRF-style positional base over the INCOMING order, so the
+    // upstream ordering semantics (similarity sort or HYBRID_RETRIEVAL's RRF-fused order) are
+    // preserved exactly when multipliers are equal (neutral prior for unseen kinds, off-switch
+    // RETRIEVAL_USEFULNESS_WEIGHTING=off). NEVER excludes a kind and NEVER fails retrieval — any
+    // error falls open to the incoming order above.
+    let ordered = eligible;
+    try {
+      const { applyRetrievalUsefulnessWeighting } = await import("./retrieval-usefulness");
+      ordered = applyRetrievalUsefulnessWeighting(eligible, input.userId);
+    } catch {
+      ordered = eligible;
+    }
+    chunks = ordered.slice(0, k);
 
     const coachingChunks = chunks.filter((chunk) => chunk.doc_type === "coach-note");
     const analogChunks = chunks.filter((chunk) => chunk.doc_type !== "coach-note");

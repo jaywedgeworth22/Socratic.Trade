@@ -7,6 +7,11 @@ the hard way.
 
 ## Before you start
 
+> [!CAUTION]
+> **CRITICAL RULE: DO NOT WORK IN `/Users/jay/Code/Socratic.Trade` (OR WHATEVER THE MAIN WORKTREE IS).**
+> That is the human owner's integration tree and the fleet's review base. If you check out your branch in the main folder, you will corrupt the review base for other agents (causing it to be drastically out-of-sync with production).
+> **You MUST `cd` into your designated agent lane (`~/apps/trading-<name>` — Claude → `trading-claude`, Codex → `trading-codex`, Antigravity → `trading-antigravity`, Cursor → `trading-cursor`, Monet → `trading-monet`, Kimi → `trading-kimi`) BEFORE doing any work.** A `pre-commit` hook is installed to block agent commits in the main folder.
+
 - `git status` and `git log -3` first. Another tool may have left uncommitted
   work in the tree — read it before editing on top of it, don't assume a clean
   base.
@@ -39,9 +44,13 @@ Before every commit/push to the GitHub repo, you MUST update the following:
    Completed (merged to `main`) → Deployed to production** as its state changes, and add new
    efforts as they are conceived. This is the owner's at-a-glance board; treat it as append-mostly
    and never delete another agent's row — correct it in place and note the correction. "Completed"
-   means merged to `main` (auto-deploys to beta/integration only); "Deployed to production" is the
-   separate owner-run release step (`~/apps/trading-live`) — do not mark it deployed unless that
-   release actually happened.
+   means merged to `main`. **As of 2026-07-10, merging to `main` AUTO-DEPLOYS to production**
+   (owner-directed): Coolify auto-deploys `socratic-trade-prod` on every push to `main`, so
+   "Completed (merged)" and "Deployed to production" now collapse — there is no separate manual deploy
+   step. The old **ANNOUNCE-THEN-DEPLOY** protocol is **RETIRED**: do NOT post deploy claims or manually
+   trigger Coolify deploys. Mechanism, verification, and rollback:
+   `docs/rollouts/2026-07-10-auto-deploy-on.md`; canonical protocol detail in
+   `/Users/jay/apps/AGENT-SYNC.md`.
 3. **`docs/rollouts/YYYY-MM-DD-short-slug.md`** — create or update a chronological rollout note detailing what was done, decisions made, what's next, exact touched files, and verification commands run. Do NOT use a single `HANDOFF.md` file, use the rollouts directory.
 4. **`PLAN.md`** — reflect any scope, timeline, or approach changes.
 5. **Phase docs (`docs/*.md`)** — update the relevant phase doc to match actual implementation state.
@@ -50,15 +59,20 @@ Before every commit/push to the GitHub repo, you MUST update the following:
 
 `AGENTS.md` is for durable repo rules and cross-file traps only. Do not put turn-specific status or a running changelog here — that is what `STATUS.md` (snapshot), `docs/EFFORT-LOG.md` (effort board), and `docs/rollouts/` (chronological) are for.
 
-## Rollout note minimums
+## Standardized Rollout & Handoff Notes
 
-- Summary: what changed.
-- Why: why it changed or what decision was made.
-- Files: exact touched paths.
-- Verification: exact commands actually run, plus notable failures if any.
-- Follow-ups: remaining work, risks, or deferred items.
-- If no code changed but an important decision or blocker was discovered, write
-  the note anyway and say that explicitly.
+To ensure the next agent (or the human owner) can pick up exactly where you left off without wasting tokens re-deriving context, every `docs/rollouts/` handoff note MUST follow this standardized template:
+
+1. **Context & Objective**: 1-2 sentences explaining *why* this work was done and what overarching goal it serves.
+2. **Changes Made**: 
+   - A high-level summary of the architectural or logical changes.
+   - A bulleted list of the exact file paths that were touched.
+3. **Decisions & Trade-offs**: Explicitly call out any design decisions, new dependencies added, or edge cases deliberately ignored. If you diverged from a design doc, explain why.
+4. **Verification State**: 
+   - Paste the exact commands run (e.g. `npm test`, `npx tsc --noEmit`).
+   - State the current build status (e.g., "Build passes, 2 tests skipped").
+5. **Next Steps & Blockers**: What exactly should the next agent do? List actionable tasks or specific blockers.
+6. **Zero-Code Findings**: If no code was changed but you did research/investigation, state the outcome of that investigation clearly.
 
 ## Verify before claiming done
 
@@ -99,33 +113,119 @@ that file directly.
 ## Hosting & dev servers (multi-agent coordination)
 
 This repo is touched by several AI tools (Claude Code, Codex, Antigravity/Gemini, Cursor).
-**Each agent works in its OWN git worktree, on its OWN branch, with its OWN PM2-hosted
-live `next dev` preview on its OWN port.** Every worktree has its own `node_modules`,
-`.next`, `data/app.db`, and `.env.local` — never assume any are shared, and never point
-one worktree's process at another's files.
+**Each agent works in its OWN git worktree, on its OWN branch** (Claude →
+`~/apps/trading-claude`, Codex → `~/apps/trading-codex`, Antigravity →
+`~/apps/trading-antigravity`, Cursor → `~/apps/trading-cursor`, Monet →
+`~/apps/trading-monet`, Kimi → `~/apps/trading-kimi` on branch `agent/kimi-lane`;
+`~/Code/Agentic Trading` is the human/integration tree). Every
+worktree has its own `node_modules`, `.next`, `data/app.db`, and `.env.local` — never
+assume any are shared, and never point one worktree's process at another's files.
 
-| Worktree | Branch | Port | Process | Public route | Owner |
-|----------|--------|------|---------|--------------|-------|
-| `~/Code/Agentic Trading` | `main` | **4001** | pm2 `trading-main` → `next dev` | `trading-beta.jays.services` | **integration / review / merges / hand-edits** (human via **Cursor**) |
-| `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
-| `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
-| `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
-| `~/apps/trading-cursor` | `agent/cursor` | **4103** | pm2 `trading-cursor` → `next dev` | `cursor.jays.services` | Cursor (background/agent mode, DeepSeek) |
-| `~/apps/trading-monet` | `agent/monet` | **4104** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
-| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `socratictrade.com` | **production** |
+**PREVIEW SERVERS ARE RETIRED — ALL OF THEM (owner decision, 2026-07-08, definitive).**
+Owner: previews were never looked at, and several sat behind Cloudflare Access that
+agents cannot pass — work spent keeping them fresh was pure waste. The end state is
+**production only**: no `*.jays.services` preview hostnames (`trading-beta`, `claude`,
+`codex`, `antigravity`, `cursor`, `monet`, `trading` — DNS records deleted), no per-agent
+PM2 `next dev` servers (ports 4001/4100-4104 — stopped and deleted from pm2), no Coolify
+preview app (`socratic-trade-preview` — deleted). **Do not start, recreate, or route to
+any of these.** Coolify's PR-preview feature was considered and deliberately NOT enabled
+(it auto-builds every PR; build bursts OOM-wedged and disk-filled the 4 GB box on
+2026-07-07/08) — revisit only on owner instruction. For that future option, notes that
+still apply: preview hostnames must be ONE level (`pr{{pr_id}}.jays.services` — two-level
+names fail CF Universal SSL; the `*.jays.services` wildcard A record was deleted by the
+owner 2026-07-09, so per-preview records would need re-creating), the Preview URL Template
+is a UI-only Coolify field, and
+`socratic-trade-prod` carries a preview-scoped `DB_BOOTSTRAP=fresh` so a PR preview can
+never restore the production DB and trade. To check
+your work: `npm run dev` locally in your own worktree + the verify CI gate.
+The old preview-provisioning scripts (`setup-agent-previews.sh`, `sync-preview-lanes.sh`,
+`sync-watchdog.sh`) and the CI workflow (`sync-previews.yml`) were deleted 2026-07-09 (all
+dead after the preview retirement; the pre-push hook they used to install is now installed
+by `scripts/land.sh`). The "Preview freshness policy" section below is historical.
 
-A parallel Coolify-based hosting migration (Hetzner box behind `jays.services`) is
-in progress for the preview lanes above — see the latest `docs/rollouts/` note for
-current status before treating it as authoritative. This table remains the source
-of truth for the local PM2/worktree setup until that migration is verified complete.
+Hosting is now Coolify on Oracle Cloud (`141.148.182.224`,
+dashboard + API `https://host.jays.services` — direct DNS, no Mac dependency; migrated
+July 2026 from Hetzner to Oracle Cloud; DB rollback path is the litestream R2 replica).
+**The dashboard moved off the apex (owner-directed): `jays.services`
+(apex) now CNAMEs to the Mac Cloudflare tunnel and does NOT reach Coolify — any tool or
+script calling `https://jays.services/api/v1/...` must use
+`https://host.jays.services/api/v1/...` instead.** The box hosts
+`socratic-trade-prod` (= `socratictrade.com`, see the production stanza below).
+**MAC RUNNER RETIRED & DELETED (OWNER DIRECTIVE, 2026-07-21):** The Mac host self-hosted runner `trading-live-mac` is permanently stopped, uninstalled, and deleted from GitHub settings. **DO NOT EVER START, RE-REGISTER, OR REFERENCE `trading-live-mac` OR `trading-live` RUNNER LABELS AGAIN.**
 
-Bootstrap / repair the integration preview and agent previews idempotently with
-`scripts/setup-agent-previews.sh`.
+**Fleet CI = GitHub-hosted only (2026-07-29):** Workflows use `ubuntu-latest`. Self-hosted Oracle/Coolify Actions runners (`socratic-ci`, `oracle-ci`, `fleet-ci-*`) are **retired** — do not reintroduce `[self-hosted, …]` labels. Production app hosting remains Coolify on Oracle Cloud (`141.148.182.224`, dashboard/API `https://host.jays.services`).
 
-`trading-beta.jays.services` is the only public beta/integration hostname for
-the 4001 main preview. Do not add or document duplicate beta hostnames.
+**Hetzner servers DELETED (owner directive, 2026-07-31):** both Hetzner boxes are gone — the old prod host (`135.181.192.190`, retired in the July Oracle migration) and the CI build server `ci-cpx32` (`77.42.35.209`, Coolify server uuid `cantpgkbuwe71n1iqzu4qel6`). There is nothing to migrate back to and no runner registrations to clean up (GitHub shows none; the fleet's `oracle-*-ci` runners for the *other* repos live on Oracle). `scripts/monitor-coolify-runners.sh` and `scripts/ops/fleet-site-watchdog.sh` were deleted the same day (both monitored dead boxes); `scripts/sync-provider-knobs.sh` defaults now point at the Oracle host but its box-env read path needs rework (app env lives in Coolify's DB, not a `/data/coolify` tree). Rollout: `docs/rollouts/2026-07-31-hetzner-servers-deleted.md`.
 
-### Preview freshness policy
+**Coolify tokens (do not mix — 2026-07-30):** `COOLIFY_SERVER_STATS` is **read-only** (website server-stats only). `COOLIFY_AGENTS` is **full** deploy/admin (agent ops / GH deploy only). Never store `COOLIFY_AGENTS` as the app's `COOLIFY_API_TOKEN`. Infisical must keep both keys; if `COOLIFY_API_TOKEN` exists for metrics it must equal the read-only stats token. **Never run bare `infisical secrets`** (it prints every value into the transcript) — use `scripts/infisical-secrets-safe.sh`. Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Secret handoff.
+**Build caveats:** the box's `concurrent_builds` is
+pinned to **1** (two parallel `next build`s OOM-wedged the old 4 GB box on 2026-07-07,
+console reboot required; unproven on the 8 GB box — loosen only deliberately), and Docker
+cleanup thresholds matter — a build burst filled the old box's disk on 2026-07-08 and
+500'd the Coolify control plane (cleanup now threshold=60%/hourly; see the prod-migration
+rollout note).
+
+**PRODUCTION IS ON COOLIFY (cut over 2026-07-07, owner-directed, MONET; verified).**
+`socratictrade.com` = Coolify app **uuid `socratic-app`** (name "Socratic.Trade", branch `main`,
+dockerfile build pack, SSH deploy-key git source). The old uuid `m1os7ijf31bg3fanil152e4b` and the
+nixpacks note are STALE — the app was recreated during the Oracle migration; API calls against the
+old uuid return a bare `{"message":...}` that is easy to misread as a permissions problem.
+**AUTO-DEPLOY IS ON (owner-directed 2026-07-10): every push to `main` auto-deploys** via the
+repo's GitHub webhook to Coolify's **manual webhook endpoint**
+(`https://host.jays.services/webhooks/source/github/events/manual`) — NOT the GitHub-App
+integration; the deploy-key source uses the manual endpoint, which validates an HMAC secret that
+must equal the app's `manual_webhook_secret_github`. **Known failure mode (bit us 2026-08-01/02):
+if those secrets drift, every main push is answered `Invalid signature`, no deployment is ever
+created, and prod silently freezes while merges pile up** — GitHub's hook page still shows green
+200s, so check the DELIVERY RESPONSE BODY (`gh api .../hooks/<id>/deliveries/<id>` →
+`.response.payload`), not the status code. Repair recipe + receipts:
+`docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md`. Verify any deploy landed with
+`bash scripts/verify-deploy-sha.sh` (asserts the live sha CONTAINS your commit). Merge == live;
+the **ANNOUNCE-THEN-DEPLOY protocol is RETIRED** — do NOT post deploy claims or manually trigger
+deploys. Rollback to manual: disable auto deploy on the app.
+Details/verification: `docs/rollouts/2026-07-10-auto-deploy-on.md`.
+`~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
+protocol detail lives in `/Users/jay/apps/AGENT-SYNC.md`. Boot path:
+`scripts/coolify-prod-start.sh` under `DB_BOOTSTRAP=live` — Infisical secrets via pinned
+in-container CLI, one-time restore via the pinned litestream (version pinned in
+`scripts/coolify-prod-start.sh`; 0.5.14 was rolled back to 0.5.12 on 2026-07-10 after its
+socket churn exhausted kernel tcp_mem and wedged all deploys — see
+`docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`) from the R2 replica
+(marker-guarded), then `litestream replicate -exec` (backup continuity lives in the
+container now; the Mac `litestream` pm2 app is stopped). SQLite lives on the persistent
+volume at `/app/data`. Rollback: restore the `socratictrade.com` CNAME to the tunnel
+(`6b807051-...cfargotunnel.com`, saved in the DNS record comment) + `pm2 start trading
+litestream` on the Mac. **Never start Mac pm2 `trading` while the Coolify app runs
+`DB_BOOTSTRAP=live`** — two schedulers would trade the same broker accounts.
+**Domain scheme correction:** app FQDNs in Coolify must be `https://<host>` — both
+Cloudflare zones run SSL mode "full" (edge connects origin :443; Traefik serves its
+default cert). An `http://` FQDN yields edge 503 ("no available server") — this bit the
+integration preview until 2026-07-07. The earlier "apps are served over http://" note
+described the abandoned tunnel transport. Details:
+`docs/rollouts/2026-07-07-prod-coolify-migration.md`.
+
+**Production exit-code contract (2026-08-02 outage; binding):** NO production code path may
+exit 0 spontaneously. The container runs `restart: unless-stopped`, which restarts ANY
+spontaneous exit **regardless of exit code** — but honors docker-API stops (`docker stop`,
+Coolify stop) by staying down; the 2026-08-02 "clean exit 0, stayed down" outage was an
+**unpaired API stop**, not a policy gap, and the 0 was fabricated by a pid-1 signal
+re-raise bug (fixed) — see `docs/rollouts/2026-08-02-exit0-outage-audit.md`. Exit-code
+map: 40 = boot-supervisor re-tag of a spontaneous clean exit; 41 = R2 kill-switch
+(restart re-boots WITHOUT litestream via marker); 42 = R2 resume; 43 = in-app exit-guard
+re-tag (`src/lib/exit-guard.ts`); 130/143 = graceful SIGINT/SIGTERM shutdown. Traps that
+must never come back: (1) `process.kill(process.pid, signal)` re-raise in a wrapper —
+pid 1 ignores default-disposition signals, so the process drains to a bogus exit 0;
+always `process.exit(128 + N)` instead. (2) `npm run <script>` in the container exec
+chain — in-container npm dies on SIGTERM **without forwarding it** to the server (proven
+by sandbox repro), so the app is hard-killed on every stop; invoke
+`node_modules/.bin/next` directly. (3) `docker events --since/--until` for post-hoc
+forensics — the daemon keeps only an in-memory ring (~256 events ≈ minutes on this box
+because healthchecks churn it); use `journalctl -u docker.service` (durable; logs
+`ShouldRestart ... hasBeenManuallyStopped=...` with the true exit status) and
+`docker inspect`/`docker logs` instead. If you stop the prod container over SSH or the
+API for ANY reason, you own starting it again — docker will not.
+
+### Preview freshness policy (RETIRED 2026-07-08 — historical; previews no longer exist)
 
 `trading-beta.jays.services` is the integration source of truth. Agent preview
 sites (`codex.jays.services`, `claude.jays.services`, and
@@ -149,9 +249,10 @@ must not silently drift behind beta after work lands.
 ### How each agent works
 - **Launch yourself in your own worktree dir** (Claude → `~/apps/trading-claude`, Codex →
   `~/apps/trading-codex`, Antigravity → `~/apps/trading-antigravity`, Monet →
-  `~/apps/trading-monet`, Cursor (background/agent mode) → `~/apps/trading-cursor`). Edit
-  only there, on your `agent/<name>` branch. Your **live in-progress edits** appear at your
-  port via HMR — open it in a browser; no refresh/rebuild needed.
+  `~/apps/trading-monet`, Cursor (background/agent mode) → `~/apps/trading-cursor`, Kimi →
+  `~/apps/trading-kimi` on branch `agent/kimi-lane`). Edit
+  only there, on your `agent/<name>` branch. To see your edits live, run `npm run dev` in
+  your own worktree (localhost; the old always-on PM2/HMR previews are retired).
 - **Do not edit in another agent's worktree, nor in the `main` integration worktree.**
 - **Land work via the landing script — never push directly to main:**
   ```bash
@@ -168,8 +269,9 @@ must not silently drift behind beta after work lands.
   is only the fallback if the scope is ever missing — `gh auth refresh -h github.com -s workflow`);
   (8) pushes your agent branch and opens a PR via `gh`.
   After a conflict or failure, fix it and re-run `land.sh` — it is idempotent.
-- **A git pre-push hook blocks direct pushes to `main`.** It is installed in every worktree
-  by `setup-agent-previews.sh` via `git config core.hooksPath scripts/githooks`. The hook:
+- **A git pre-push hook blocks direct pushes to `main`.** `scripts/land.sh` installs and
+  verifies it per-worktree on every run (it self-heals `git config core.hooksPath scripts/githooks`
+  before pushing — `core.hooksPath` is per-worktree and not inherited). The hook:
   - Refuses any push whose remote-ref is `refs/heads/main` (catches both `git push origin main`
     and `git push origin agent/foo:main`).
   - Refuses any push originating from `~/Code/Agentic Trading` (integration worktree).
@@ -241,6 +343,23 @@ canonical tags: `Socratic.Trade`, `Congress.Trade`, `API-Usage-Monitor`,
 `Congress-Trading-Shared`), `SLACK_CHANNEL_ID` (per-repo channel override). Setup and FAQ:
 `docs/slack-coordination.md`.
 
+## Delegation & model economics (fleet rule — binding for every agent)
+
+- **Teams of sub-agents are the DEFAULT for substantial work.** Decompose non-trivial tasks
+  into parallel lanes, builder+verifier pairs, review/judge panels, and landing operators
+  wherever your platform supports them. Never serialize big work out of habit; never spawn
+  agents for trivial one-step tasks. Sub-teams follow the same coordination rules as
+  top-level agents (board reservations + #agent-sync claims).
+- **Right-size the model for EVERY task, including each sub-agent you spawn:** use the
+  lowest-cost model that completes that task very effectively. Small tier = mechanical
+  edits/mirrors/greps; mid tier = the default for well-specified implementation with tests
+  and for landing operators; frontier tier ONLY for ambiguous design, money-path-subtle
+  changes, and critical adversarial verification. Escalate a tier when a cheaper model's
+  output fails verification — not preemptively.
+- **Same bar at every tier:** full gates, receipts, and board discipline apply no matter
+  which model did the work.
+- Canonical reference: `/Users/jay/apps/AGENT-SYNC.md` — "Delegation & model economics".
+
 ## Cross-file consistency traps (cheap to check, expensive to miss)
 
 - **`TradeProposal`** (`src/lib/types.ts`) requires `tradeThesisTag` and
@@ -297,6 +416,13 @@ canonical tags: `Socratic.Trade`, `Congress.Trade`, `API-Usage-Monitor`,
   not interchangeable — check `eps` to decide which one applies.
 - Tests use a temp SQLite file per run via `DATABASE_URL=file:<tmpdir>/...`
   (see `beforeAll` in test files) — don't point tests at the dev `data/app.db`.
+  Those DBs are auto-cleaned: `vitest.config.ts` points the test runtime's
+  TMPDIR/TMP/TEMP at one per-run `agentic-vitest-*` dir and `test/global-setup.ts`
+  removes it on teardown (plus sweeps `agentic-*` leftovers >6h old from the real
+  temp dir — crashed runs, pre-fix leaks). The suite used to leak every temp DB
+  forever (178k files / ~130GB on one machine). Keep new temp-file tests on the
+  `tmpdir()` / `process.env.TMPDIR` pattern so they stay inside the per-run dir;
+  never hardcode `/tmp`.
 
 ## Git author identity (GitHub email privacy)
 
@@ -398,6 +524,33 @@ paternalism that keeps creeping back in from every agent (Claude, Codex, others)
  deletion) without explicit user confirmation in the current conversation,
  even if a previous session was authorized to push.
 
+- **NEVER create a new provider API key. No agent, on any platform, ever.**
+ (Owner ruling, 2026-07-20 — binding for Claude, Codex, Antigravity/Gemini,
+ Cursor, Monet, cloud sessions, and any sub-agent they spawn.) The owner
+ maintains exactly ONE intended key per provider per app, with spend caps and
+ rate guardrails deliberately configured on that key. Agents provisioning their
+ own keys — for Socratic.Trade and Congress.Trade both — silently routed
+ production spend around those guardrails and made "which key is even in use?"
+ unanswerable. That is the failure this rule exists to prevent.
+  - Do not create, mint, rotate, or regenerate a key in ANY provider console or
+    API (OpenRouter, OpenAI, Anthropic, Pinecone, Voyage, FMP, …), and do not
+    swap in a key from another app, another workspace, or your own MCP
+    provisioning.
+  - If a key is missing, wrong, exhausted, or rejected: STOP and tell the owner
+    what you observed and which key you believe is in play (identify it by its
+    masked first-8/last-4 preview — see below — never by pasting a value). The
+    owner supplies keys via the `chmod 600` handoff in `/Users/jay/.secrets/`.
+    Waiting is always cheaper than a second key.
+  - To see WHICH key is serving without ever revealing one: the Connections page
+    (`/console/connections#api-keys`) shows the masked preview of the key that
+    actually resolves for you, and `/admin/llm-usage` breaks spend down per
+    distinct key fingerprint (`keyRef`) and per user.
+  - Trap that makes this worse: `migrateLocalEnvCredentials`
+    (`src/lib/db-api-keys.ts`) seeds the primary user's key store from env ONCE,
+    and `resolveLlmCredential` reads the DB row BEFORE env — so a key stored in
+    the DB permanently shadows `OPENROUTER_API_KEY`. Rotating the Infisical
+    secret alone changes nothing until that row is replaced via Connections.
+
 ## Cursor Cloud specific instructions
 
 These notes apply when running in the Cursor Cloud agent VM. They override the
@@ -421,6 +574,16 @@ local multi-worktree/PM2 setup and does NOT apply here.
 - Standard verification commands live in `README.md`/the "Verify before claiming
  done" section: `npm run lint`, `npx tsc --noEmit`, `npm test` (vitest), `npm run
  build`. All pass clean in this environment.
+- Node version: `.nvmrc` pins Node **24**, but the cloud VM's default `node`
+ (`/exec-daemon/node`, which wins on `PATH`) is **v22.x**, and the startup update
+ script (`npm install`) runs under it. The app installs, tests, and builds clean on
+ Node 22 — do not burn time forcing Node 24 via nvm (its bin is later on `PATH` and
+ does not persist into the update-script context).
+- `npm install` alone is sufficient. npm 11 prints an `allow-scripts` warning that
+ install scripts for `better-sqlite3`/`sharp`/`esbuild` were "not covered" — this is
+ harmless here: those native deps load from prebuilt binaries (verified
+ `require('better-sqlite3')` and `require('sharp')` both work), so no
+ `npm approve-scripts`/rebuild step is needed.
 - `npm run lint` is now configured (`eslint.config.mjs`, flat config extending
  `eslint-config-next`) and is a REQUIRED step in the `verify` CI gate. It is
  pinned to ESLint 9 (ESLint 10 is incompatible with `eslint-config-next@16`'s
@@ -446,6 +609,11 @@ When investigating **live** strategy runs, multi-account behavior, or production
 bash scripts/fetch-prod-ops-snapshot.sh
 ```
 
+When investigating **CI / Actions runner** health (queued jobs, missing labels), use the
+GitHub API directly (`gh run list`, `gh api repos/.../actions/runners`) — fleet CI is
+GitHub-hosted only. The old `scripts/monitor-coolify-runners.sh` was deleted 2026-07-31
+with the Hetzner servers it monitored.
+
 **One-time owner setup (both sides must use the same token):**
 
 1. Generate: `openssl rand -hex 32`
@@ -455,3 +623,16 @@ bash scripts/fetch-prod-ops-snapshot.sh
 
 The script calls `GET /api/ops/snapshot` (token via `x-ops-token`). See
 `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`. Rule: `.cursor/rules/ops-diagnostics.mdc`.
+
+## iOS native ship (TestFlight, no Xcode UI)
+
+Agents ship the native app without opening Xcode:
+
+```bash
+bash scripts/ios-ship-testflight.sh
+```
+
+Fleet driver + all three apps (Socratic / Congress / Usage Monitor):
+`/Users/jay/apps/ios-fleet/README.md`. Bundle ID `trade.socratic.app`, team
+`CC8UTF7ATG`. Upload needs App Store Connect app record + either Xcode session
+or `~/.secrets/appstore-connect.env` (never print secrets).

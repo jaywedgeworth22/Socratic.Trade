@@ -42,6 +42,42 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+// ── Source / data-plane feature settings (per-user overrides of Infisical knobs) ─
+
+export interface SourceFeatureRow {
+  id: string;
+  group: string;
+  label: string;
+  description: string;
+  type: "boolean" | "number" | "string";
+  defaultValue: boolean | number | string;
+  min?: number;
+  max?: number;
+  advanced?: boolean;
+  caveat?: string;
+  value: boolean | number | string;
+  source: "user" | "env" | "default";
+}
+
+export interface SourceFeaturesResponse {
+  ok: boolean;
+  groups: Record<string, { title: string; blurb: string }>;
+  settings: SourceFeatureRow[];
+}
+
+export function fetchSourceFeatures(): Promise<SourceFeaturesResponse> {
+  return request<SourceFeaturesResponse>("/api/settings/source-features");
+}
+
+export function patchSourceFeatures(
+  settings: Record<string, boolean | number | string | null>
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>("/api/settings/source-features", {
+    method: "PATCH",
+    body: JSON.stringify({ settings })
+  });
+}
+
 // ── Broker connections ───────────────────────────────────────────────────────
 
 /** Where the browser must go to start Robinhood OAuth (full-page redirect —
@@ -90,12 +126,21 @@ export function connectAlpacaAccount(body: AlpacaConnectBody): Promise<{ ok: boo
   });
 }
 
-/** POST /api/connected-accounts {broker:"test"} — creates the explicit local
- *  mock paper account. The server keeps it inactive until the user switches to it. */
-export function connectTestAccount(): Promise<{ ok: boolean; accountNumber?: string; label?: string }> {
-  return request<{ ok: boolean; accountNumber?: string; label?: string }>("/api/connected-accounts", {
+export interface TradierConnectBody {
+  label?: string;
+  apiKey: string;
+  environment: "paper" | "live";
+  accountNumber?: string;
+  taxationType?: "taxable" | "roth_ira" | "traditional_ira";
+}
+
+/** POST /api/connected-accounts {broker:"tradier", ...}. Single access token (no secret). The
+ *  environment is an explicit selector (Sandbox=paper / Production=live) — Tradier tokens carry no
+ *  PK/PA-style prefix — and the server derives the sandbox/production endpoint from it. */
+export function connectTradierAccount(body: TradierConnectBody): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>("/api/connected-accounts", {
     method: "POST",
-    body: JSON.stringify({ broker: "test" })
+    body: JSON.stringify({ broker: "tradier", ...body })
   });
 }
 
@@ -105,10 +150,25 @@ export function disconnectAccount(id: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/connected-accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+/** PATCH /api/connected-accounts/[id] {label} — rename an account's cosmetic display
+ *  name only. The broker-sourced account number and credentials are untouched. */
+export function renameAccount(id: string, label: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/connected-accounts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ label })
+  });
+}
+
 // ── API keys ─────────────────────────────────────────────────────────────────
 
 /** One catalog entry from GET /api/keys. The key VALUE is never returned by
  *  the server — only whether one resolves and where it came from. */
+export interface ApiKeyPlanTierOption {
+  id: string;
+  label: string;
+  hint?: string;
+}
+
 export interface ApiKeyEntry {
   service: string;
   label: string;
@@ -120,9 +180,21 @@ export interface ApiKeyEntry {
   configured: boolean;
   /** "user" = your stored key, "env" = the server operator's env var, "none". */
   source: "user" | "env" | "none";
+  /** Elided first-8/last-4 form of the key that ACTUALLY resolves ("sk-or-v1-...ab12") — never a
+   *  usable value. Absent for a server key when you are not the operator, and for keys too short
+   *  to elide safely. */
+  preview?: string;
   /** Set only when YOU have a stored key. */
   updatedAt?: string;
   savedLabel?: string;
+  /** UI text override (default is "key", e.g., "contact" for SEC) */
+  credentialName?: string;
+  /** Declared vendor plan tier (free/power/starter/…). Present for optional market-data keys. */
+  planTier?: string;
+  planTierOptions?: ApiKeyPlanTierOption[];
+  /** ST product retired (e.g. FMP) — show badge, disable add when CT-only. */
+  retired?: boolean;
+  retiredNote?: string;
 }
 
 export function listApiKeys(): Promise<{ keys: ApiKeyEntry[] }> {
@@ -131,10 +203,28 @@ export function listApiKeys(): Promise<{ keys: ApiKeyEntry[] }> {
 
 /** POST /api/keys — add or replace your key for a service. The value is sent
  *  once and stored server-side; it is never echoed back. */
-export function saveApiKey(service: string, apiKey: string, label?: string): Promise<{ success: boolean }> {
+export function saveApiKey(
+  service: string,
+  apiKey: string,
+  label?: string,
+  planTier?: string
+): Promise<{ success: boolean }> {
   return request<{ success: boolean }>("/api/keys", {
     method: "POST",
-    body: JSON.stringify({ service, apiKey, ...(label?.trim() ? { label: label.trim() } : {}) })
+    body: JSON.stringify({
+      service,
+      apiKey,
+      ...(label?.trim() ? { label: label.trim() } : {}),
+      ...(planTier ? { planTier } : {})
+    })
+  });
+}
+
+/** POST /api/keys with planTier only — update declared plan without re-pasting the secret. */
+export function saveApiKeyPlanTier(service: string, planTier: string): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>("/api/keys", {
+    method: "POST",
+    body: JSON.stringify({ service, planTier })
   });
 }
 
@@ -144,18 +234,10 @@ export function deleteApiKey(service: string): Promise<{ success: boolean; delet
   });
 }
 
-// ── LLM provider availability ────────────────────────────────────────────────
-
-/** GET /api/chat/providers — per-provider "a key resolves for this user"
- *  booleans (never the keys). Same check the server makes before a real call. */
-export function fetchChatProviders(): Promise<{ providers: Record<string, boolean> }> {
-  return request<{ providers: Record<string, boolean> }>("/api/chat/providers");
-}
-
 // ── Delivery channels (out-of-app alert delivery) ────────────────────────────
 
 export interface DeliveryChannelDescriptor {
-  id: "push" | "webhook" | "email" | "sms";
+  id: "push" | "pushover" | "webhook" | "email" | "sms";
   label: string;
   /** False when the server operator hasn't configured the channel's provider. */
   available: boolean;
@@ -169,14 +251,28 @@ export interface DeliveryChannelDescriptor {
 export interface DeliveryPrefs {
   channels: string[];
   pushTarget: string;
+  pushoverTarget: string;
   webhookUrl: string;
   email: string;
   phone: string;
+  /** Presence flags for per-user channel credentials (server never returns
+   *  the secret values themselves). */
+  pushoverAppTokenSet?: boolean;
+  twilioAccountSidSet?: boolean;
+  twilioAuthTokenSet?: boolean;
+  twilioFromSet?: boolean;
+  /** Write-only credential inputs: send a non-empty string to set/replace,
+   *  "" to clear, and omit (undefined) to leave the stored value untouched. */
+  pushoverAppToken?: string;
+  twilioAccountSid?: string;
+  twilioAuthToken?: string;
+  twilioFrom?: string;
 }
 
 export const EMPTY_DELIVERY_PREFS: DeliveryPrefs = {
   channels: [],
   pushTarget: "",
+  pushoverTarget: "",
   webhookUrl: "",
   email: "",
   phone: ""

@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({ retrieveContextDetailed: vi.fn() }));
 
 vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
-  return { ...actual, retrieveContextDetailed: mocks.retrieveContextDetailed };
+  return { ...actual, managedVectorLedgerAuthority: vi.fn(), retrieveContextDetailed: mocks.retrieveContextDetailed };
 });
 
 let orchestrator: typeof import("../src/lib/chat/orchestrator");
@@ -36,6 +36,7 @@ describe("buildProductionDeps().searchKnowledge — R13 provenance payload", () 
   });
 
   it("returns doc_type/section as additive keys, and NO isStale key when the flag is off", async () => {
+    process.env.RAG_CITATION_STALENESS = "off";
     mocks.retrieveContextDetailed.mockResolvedValue([
       {
         id: "AAPL-10K#c001",
@@ -59,6 +60,41 @@ describe("buildProductionDeps().searchKnowledge — R13 provenance payload", () 
     expect(chunk.section).toBe("risk_factors");
     expect(chunk.url).toBe("https://sec.gov/x");
     expect("isStale" in chunk).toBe(false); // never present when the flag is off — not even as undefined-valued key noise
+  });
+
+  it("uses immutable occurrence coordinates for id-less citation refs", async () => {
+    mocks.retrieveContextDetailed.mockResolvedValue([
+      {
+        id: "",
+        text: "Repeated boilerplate",
+        score: 0.8,
+        source: "sec-edgar",
+        doc_type: "10-k",
+        section: "MD&A",
+        metadata: {
+          accession: "0001",
+          chunk_ordinal: 3,
+          content_hash: "same-text"
+        }
+      },
+      {
+        id: "",
+        text: "Repeated boilerplate",
+        score: 0.7,
+        source: "sec-edgar",
+        doc_type: "10-k",
+        section: "Risk Factors",
+        metadata: {
+          accession: "0001",
+          chunk_ordinal: 4,
+          content_hash: "same-text"
+        }
+      }
+    ]);
+    const deps = orchestrator.buildProductionDeps();
+    const results = await deps.searchKnowledge({ query: "boilerplate", ticker: "AAPL", k: 2 }, "local");
+
+    expect(results[0]!.evidence_ref).not.toBe(results[1]!.evidence_ref);
   });
 
   // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor + near-dup

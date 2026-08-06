@@ -1,0 +1,433 @@
+import {
+  getPolicy,
+  getConnectedAccount,
+  getActiveConnectedAccount,
+  listConnectedAccounts,
+  resolveAlpacaMarketData,
+  resolveApiKeyWithSource
+} from "./db";
+import { getBrokerGateway } from "./broker";
+import { DEFAULT_POLICY } from "./defaults";
+import { AlpacaSnapshotEnrichmentProvider, fetchWithRetry } from "./data-providers";
+import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch } from "./yahoo-finance";
+import { normalizeSymbol } from "./money";
+import type { BrokerQuote, ConnectedAccount, TradingPolicy } from "./types";
+
+/**
+ * Helper to extract the first valid number from fields on an object.
+ */
+function firstNumber(obj: any, keys: string[]): number | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  for (const k of keys) {
+    const val = obj[k];
+    if (typeof val === "number" && Number.isFinite(val)) return val;
+    if (typeof val === "string") {
+      const parsed = parseFloat(val);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Default max quote age for the cascade "accept and stop" threshold.
+ *
+ * MUST stay aligned with `DEFAULT_POLICY.maxQuoteAgeSec` (120s) for real-time venues.
+ * Venue-delayed feeds (Tradier sandbox) use a different accept rule — see
+ * `resolveVenueQuoteMode` / `venuePriceAuthoritative`.
+ */
+export function cascadeFreshMaxAgeMs(maxQuoteAgeSec?: number | null): number {
+  const fromPolicy =
+    typeof maxQuoteAgeSec === "number" && Number.isFinite(maxQuoteAgeSec) && maxQuoteAgeSec > 0
+      ? maxQuoteAgeSec
+      : (DEFAULT_POLICY.maxQuoteAgeSec ?? 120);
+  return Math.max(1, fromPolicy) * 1000;
+}
+
+/**
+ * True when the quote's trade/asOf timestamp is within the cascade accept window.
+ * Missing/unparseable asOf is NEVER treated as fresh — continue the cascade.
+ * Venue-authoritative quotes are handled separately (always acceptable when priced).
+ */
+export function isQuoteFresh(
+  quote: { asOf?: string; venuePriceAuthoritative?: boolean },
+  nowMs: number,
+  maxAgeMs: number = cascadeFreshMaxAgeMs()
+): boolean {
+  if (quote.venuePriceAuthoritative) return true;
+  if (!quote.asOf) return false;
+  const asOfMs = new Date(quote.asOf).getTime();
+  if (Number.isNaN(asOfMs)) return false;
+  const ageMs = nowMs - asOfMs;
+  if (ageMs < 0) return true; // clock skew / future stamp — accept
+  return ageMs <= maxAgeMs;
+}
+
+/**
+ * Age (seconds) used by the policy staleness gate.
+ *
+ * - Real-time quotes: age of trade-time `asOf` (true market freshness).
+ * - Venue-authoritative delayed feeds (Tradier sandbox): age of `fetchedAt` (snapshot
+ *   freshness). The ~15m trade-time delay is the venue, not a broken cascade.
+ */
+export function quoteAgeSecForStalenessGate(
+  quote: { asOf?: string; venuePriceAuthoritative?: boolean; fetchedAt?: string } | undefined,
+  nowMs: number
+): { ageSec?: number; missing: boolean; venueDelayed: boolean } {
+  if (!quote) return { missing: true, venueDelayed: false };
+  const venueDelayed = quote.venuePriceAuthoritative === true;
+  const stamp = venueDelayed ? quote.fetchedAt ?? quote.asOf : quote.asOf;
+  if (!stamp) return { missing: true, venueDelayed };
+  const asOfMs = new Date(stamp).getTime();
+  if (Number.isNaN(asOfMs)) return { missing: true, venueDelayed };
+  return {
+    ageSec: Math.round((nowMs - asOfMs) / 1000),
+    missing: false,
+    venueDelayed
+  };
+}
+
+/**
+ * How this connected account should resolve execution prices.
+ *
+ * - `venue_delayed`: Tradier paper/sandbox — the paper OMS fills against Tradier's ~15m
+ *   delayed tape. Use that price; never overlay fresher Alpaca/Yahoo.
+ * - `realtime`: everything else (Alpaca paper/live, Tradier production, Robinhood, …).
+ */
+export type VenueQuoteMode = "realtime" | "venue_delayed";
+
+export function resolveVenueQuoteMode(
+  policy: Pick<TradingPolicy, "activeBroker" | "connectedAccountId"> | null | undefined,
+  userId: string
+): VenueQuoteMode {
+  if (policy?.activeBroker !== "tradier") return "realtime";
+  const acct =
+    (policy.connectedAccountId ? getConnectedAccount(policy.connectedAccountId, userId) : undefined) ??
+    getActiveConnectedAccount(userId);
+  if (acct?.broker === "tradier" && acct.environment === "paper") return "venue_delayed";
+  return "realtime";
+}
+
+function stampVenueAuthoritative(quote: BrokerQuote, fetchedAtIso: string): BrokerQuote {
+  return {
+    ...quote,
+    venuePriceAuthoritative: true,
+    fetchedAt: fetchedAtIso
+  };
+}
+
+/**
+ * Minimal policy stub so getBrokerGateway can resolve ANY of the user's connected
+ * accounts for market-data reads — not only the active trading account.
+ */
+export function policyStubForConnectedAccount(account: ConnectedAccount): TradingPolicy {
+  return {
+    ...DEFAULT_POLICY,
+    activeBroker: account.broker,
+    connectedAccountId: account.id,
+    accountNumber: account.accountNumber ?? undefined
+  };
+}
+
+/**
+ * Robust, redundant cascading quote resolver. Checks quote sources in series:
+ * 1a. Active Broker Gateway (account the user is operating)
+ * 1b. EVERY other connected broker for this user (market data only — not fill venue)
+ * 2. Alpaca Snapshots API (any Alpaca key on the user)
+ * 3. Yahoo Finance Batch API
+ * 4. Yahoo Finance Single Quote API
+ * 5. ROIC.ai Profile API
+ *
+ * Real-time venues: accept when trade-time is within `policy.maxQuoteAgeSec` (default 120s).
+ * Venue-delayed (Tradier sandbox paper): accept the *active* broker quote as authoritative
+ * whenever it has a price — do NOT overlay fresher externals for those symbols. Other
+ * connected brokers only fill symbols the active venue could not price.
+ *
+ * Market data is USER-scoped (all connected brokers share one cascade), not duplicated
+ * per trading account.
+ */
+export async function fetchFreshQuotesCascade(
+  symbols: string[],
+  userId: string,
+  accountNumber?: string,
+  connectedAccountId?: string
+): Promise<Record<string, BrokerQuote>> {
+  const nowMs = Date.now();
+  const fetchedAtIso = new Date(nowMs).toISOString();
+  const normalizedSymbols = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
+  const result: Record<string, BrokerQuote> = {};
+
+  if (normalizedSymbols.length === 0) return result;
+
+  const isTest = process.env.NODE_ENV === "test";
+  const allowExternal = !isTest || process.env.TEST_ALLOW_CASCADE_EXTERNAL === "1";
+
+  // Track the best (freshest by asOf timestamp) quote found for each symbol across all levels
+  const bestQuotes: Record<string, BrokerQuote> = {};
+  let pendingSymbols = [...normalizedSymbols];
+
+  const updateBestQuote = (symbol: string, quote: BrokerQuote) => {
+    const existing = bestQuotes[symbol];
+    if (!existing) {
+      bestQuotes[symbol] = quote;
+      return;
+    }
+    // Never demote a venue-authoritative quote in favor of a fresher external print.
+    if (existing.venuePriceAuthoritative && !quote.venuePriceAuthoritative) return;
+    if (quote.venuePriceAuthoritative && !existing.venuePriceAuthoritative) {
+      bestQuotes[symbol] = quote;
+      return;
+    }
+    // Prefer newer asOf; if equal timestamps, prefer a provider that is not an explicit delayed tag
+    const existingTime = existing.asOf ? new Date(existing.asOf).getTime() : 0;
+    const newTime = quote.asOf ? new Date(quote.asOf).getTime() : 0;
+    if (newTime > existingTime) {
+      bestQuotes[symbol] = quote;
+    }
+  };
+
+  let maxAgeMs = cascadeFreshMaxAgeMs();
+
+  const ingestBrokerQuotes = (
+    brokerQuotes: Record<string, BrokerQuote>,
+    opts: { venueDelayed: boolean; providerTag: string }
+  ) => {
+    for (const symbol of [...pendingSymbols]) {
+      const quote = brokerQuotes[symbol] ?? brokerQuotes[normalizeSymbol(symbol)];
+      if (!quote) continue;
+      const resolvedPrice = quote.price ?? (quote.bid && quote.ask ? (quote.bid + quote.ask) / 2 : undefined);
+      if (!(typeof resolvedPrice === "number" && resolvedPrice > 0)) continue;
+      let normalizedQuote: BrokerQuote = {
+        ...quote,
+        price: resolvedPrice,
+        provider: quote.provider ?? opts.providerTag
+      };
+      if (opts.venueDelayed) {
+        normalizedQuote = stampVenueAuthoritative(normalizedQuote, fetchedAtIso);
+        updateBestQuote(symbol, normalizedQuote);
+        result[symbol] = normalizedQuote;
+      } else {
+        updateBestQuote(symbol, normalizedQuote);
+        if (isQuoteFresh(normalizedQuote, nowMs, maxAgeMs)) {
+          result[symbol] = normalizedQuote;
+        }
+      }
+    }
+    pendingSymbols = pendingSymbols.filter((s) => !result[s]);
+  };
+
+  // --- LEVEL 1a: Active Broker Gateway ---
+  let venueMode: VenueQuoteMode = "realtime";
+  let activeConnectedId: string | undefined;
+  try {
+    const policy = getPolicy(userId, connectedAccountId);
+    maxAgeMs = cascadeFreshMaxAgeMs(policy.maxQuoteAgeSec);
+    venueMode = resolveVenueQuoteMode(policy, userId);
+    activeConnectedId = policy.connectedAccountId;
+    const activeAccountNum = accountNumber ?? policy.accountNumber;
+    if (activeAccountNum && policy.activeBroker) {
+      const gateway = getBrokerGateway(policy, userId);
+      const brokerQuotes = await gateway.getEquityQuotes(activeAccountNum, pendingSymbols);
+      ingestBrokerQuotes(brokerQuotes, {
+        venueDelayed: venueMode === "venue_delayed",
+        providerTag: String(policy.activeBroker)
+      });
+    }
+  } catch (error) {
+    console.warn("[quotes-cascade] Level 1a (active broker) failed:", error instanceof Error ? error.message : error);
+  }
+
+  // --- LEVEL 1b: ALL other connected brokers for this user (market-data only) ---
+  if (pendingSymbols.length > 0) {
+    try {
+      for (const account of listConnectedAccounts(userId)) {
+        if (pendingSymbols.length === 0) break;
+        if (activeConnectedId && account.id === activeConnectedId) continue;
+        if (accountNumber && account.accountNumber && account.accountNumber === accountNumber) continue;
+        if (!account.accountNumber) continue;
+        try {
+          const stub = policyStubForConnectedAccount(account);
+          const gateway = getBrokerGateway(stub, userId);
+          const brokerQuotes = await gateway.getEquityQuotes(account.accountNumber, pendingSymbols);
+          ingestBrokerQuotes(brokerQuotes, {
+            venueDelayed: false,
+            providerTag: `${account.broker}-connected`
+          });
+        } catch (err) {
+          console.warn(
+            `[quotes-cascade] Level 1b (${account.broker} ${account.id}) failed:`,
+            err instanceof Error ? err.message : err
+          );
+        }
+      }
+    } catch (error) {
+      console.warn("[quotes-cascade] Level 1b multi-broker list failed:", error instanceof Error ? error.message : error);
+    }
+  }
+
+  // On venue-delayed mode we only cascade for symbols the broker could not price at all.
+  // Fresher external quotes would mis-price paper fills against a delayed OMS.
+
+  // --- LEVEL 2: Alpaca Snapshots API ---
+  if (pendingSymbols.length > 0 && allowExternal) {
+    try {
+      const alpacaData = resolveAlpacaMarketData(userId);
+      if (alpacaData.apiKey && alpacaData.secretKey) {
+        const provider = new AlpacaSnapshotEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId);
+        const enrichment = await provider.enrich(pendingSymbols);
+        for (const symbol of pendingSymbols) {
+          const data = enrichment[symbol];
+          if (data) {
+            const resolvedPrice = data.price ?? (data.bid && data.ask ? (data.bid + data.ask) / 2 : undefined);
+            if (typeof resolvedPrice === "number" && resolvedPrice > 0) {
+              const q: BrokerQuote = {
+                symbol,
+                price: resolvedPrice,
+                bid: data.bid,
+                ask: data.ask,
+                volume: data.volume,
+                asOf: data.asOf,
+                provider: "alpaca-snapshot"
+              };
+              updateBestQuote(symbol, q);
+              if (isQuoteFresh(q, nowMs, maxAgeMs)) {
+                result[symbol] = q;
+              }
+            }
+          }
+        }
+        pendingSymbols = pendingSymbols.filter((s) => !result[s]);
+      }
+    } catch (error) {
+      console.warn("[quotes-cascade] Level 2 (Alpaca Snapshots) fetch failed:", error instanceof Error ? error.message : error);
+    }
+  }
+
+  // --- LEVEL 3: Yahoo Finance Batch API ---
+  if (pendingSymbols.length > 0 && allowExternal) {
+    try {
+      const yahooBatch = await fetchYahooFinanceQuotesBatch(pendingSymbols);
+      for (const symbol of pendingSymbols) {
+        const data = yahooBatch.get(symbol);
+        if (data) {
+          const resolvedPrice = data.price ?? (data.bid && data.ask ? (data.bid + data.ask) / 2 : undefined);
+          if (typeof resolvedPrice === "number" && resolvedPrice > 0) {
+            const q: BrokerQuote = {
+              symbol,
+              price: resolvedPrice,
+              bid: data.bid,
+              ask: data.ask,
+              volume: data.volume,
+              asOf: data.asOf,
+              provider: "yahoo-finance-batch",
+              syntheticBid: data.syntheticBid,
+              syntheticAsk: data.syntheticAsk,
+              syntheticSpread: data.syntheticSpread
+            };
+            updateBestQuote(symbol, q);
+            if (isQuoteFresh(q, nowMs, maxAgeMs)) {
+              result[symbol] = q;
+            }
+          }
+        }
+      }
+      pendingSymbols = pendingSymbols.filter((s) => !result[s]);
+    } catch (error) {
+      console.warn("[quotes-cascade] Level 3 (Yahoo Finance Batch) fetch failed:", error instanceof Error ? error.message : error);
+    }
+  }
+
+  // --- LEVEL 4: Yahoo Finance Single Quote API ---
+  if (pendingSymbols.length > 0 && allowExternal) {
+    try {
+      const singleResults = await Promise.all(
+        pendingSymbols.map(async (symbol) => [symbol, await fetchYahooFinanceQuote(symbol)] as const)
+      );
+      for (const [symbol, quote] of singleResults) {
+        if (quote) {
+          const resolvedPrice = quote.price ?? (quote.bid && quote.ask ? (quote.bid + quote.ask) / 2 : undefined);
+          if (typeof resolvedPrice === "number" && resolvedPrice > 0) {
+            const q: BrokerQuote = {
+              symbol,
+              price: resolvedPrice,
+              bid: quote.bid,
+              ask: quote.ask,
+              volume: quote.volume,
+              asOf: quote.asOf,
+              provider: "yahoo-finance-single",
+              syntheticBid: quote.syntheticBid,
+              syntheticAsk: quote.syntheticAsk,
+              syntheticSpread: quote.syntheticSpread
+            };
+            updateBestQuote(symbol, q);
+            if (isQuoteFresh(q, nowMs, maxAgeMs)) {
+              result[symbol] = q;
+            }
+          }
+        }
+      }
+      pendingSymbols = pendingSymbols.filter((s) => !result[s]);
+    } catch (error) {
+      console.warn("[quotes-cascade] Level 4 (Yahoo Finance Single Chart) fetch failed:", error instanceof Error ? error.message : error);
+    }
+  }
+
+  // --- LEVEL 5: ROIC.ai Profile API ---
+  if (pendingSymbols.length > 0 && allowExternal) {
+    try {
+      const roic = resolveApiKeyWithSource("roic", userId);
+      if (roic.key) {
+        await Promise.all(
+          pendingSymbols.map(async (symbol) => {
+            try {
+              const res = await fetchWithRetry(
+                `https://api.roic.ai/v2/company/profile/${encodeURIComponent(symbol)}?apikey=${encodeURIComponent(roic.key!)}`,
+                {},
+                { service: "roic", keySource: roic.source, userId }
+              );
+              if (res.ok) {
+                const profile = await res.json();
+                const p = Array.isArray(profile) ? profile[0] : profile;
+                if (p && typeof p === "object") {
+                  const price = firstNumber(p, ["price"]);
+                  if (typeof price === "number" && price > 0) {
+                    const q: BrokerQuote = {
+                      symbol,
+                      price,
+                      asOf: new Date().toISOString(),
+                      provider: "roic"
+                    };
+                    updateBestQuote(symbol, q);
+                    if (isQuoteFresh(q, nowMs, maxAgeMs)) {
+                      result[symbol] = q;
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn(`[quotes-cascade] Level 5 (ROIC) fetch failed for ${symbol}:`, err);
+            }
+          })
+        );
+        pendingSymbols = pendingSymbols.filter((s) => !result[s]);
+      }
+    } catch (error) {
+      console.warn("[quotes-cascade] Level 5 (ROIC) fetch failed:", error instanceof Error ? error.message : error);
+    }
+  }
+
+  // --- FALLBACK ---
+  // For any symbols that could not be resolved to a fresh quote (e.g. during market close / weekend),
+  // fall back to the freshest quote found across any level (even if older than the freshness bar).
+  // Prefer venue-authoritative when present.
+  for (const symbol of normalizedSymbols) {
+    if (!result[symbol]) {
+      const best = bestQuotes[symbol];
+      if (best) {
+        result[symbol] = best;
+      }
+    }
+  }
+
+  return result;
+}

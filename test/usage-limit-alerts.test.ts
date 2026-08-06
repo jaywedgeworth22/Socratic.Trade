@@ -54,7 +54,7 @@ describe("usage limit alerts", () => {
     expect(calls[0]?.body).toMatchObject({
       from: "alerts@example.test",
       to: ["owner@example.test"],
-      subject: "Usage limit hit: Pinecone Write Unit daily fuse"
+      subject: "[Socratic.Trade] Usage limit hit: Pinecone Write Unit daily fuse"
     });
     expect(String((calls[0]?.body as { text?: string }).text)).toContain("Inspect chunking and deduping");
 
@@ -67,5 +67,67 @@ describe("usage limit alerts", () => {
     });
     expect(listNotificationEvents(userId, 10)).toHaveLength(1);
     expect(calls).toHaveLength(1);
+  });
+
+  it("fences the real operator-email fallback during a delayed send", async () => {
+    const userId = `limit-alert-fenced-${randomUUID()}`;
+    const controller = new AbortController();
+    let active = true;
+    let requestSignal: AbortSignal | undefined;
+    let entered!: () => void;
+    let release!: () => void;
+    const fallbackEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const releaseFallback = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubEnv("RESEND_API_KEY", "rk_test");
+    vi.stubEnv("NOTIFY_EMAIL_FROM", "alerts@example.test");
+    vi.stubEnv("USAGE_LIMIT_ALERT_EMAIL", "owner@example.test");
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      requestSignal = init?.signal ?? undefined;
+      entered();
+      await releaseFallback;
+      // Ignore cancellation to prove the post-await ownership check fences the audit path.
+      return new Response("ok", { status: 200 });
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchImpl);
+
+    const { alertUsageLimitHit } = await import("../src/lib/usage-limit-alerts");
+    const { getDb } = await import("../src/lib/db");
+    const snapshot = () => ({
+      audits: getDb().prepare("SELECT kind, payload FROM audit_events ORDER BY rowid").all(),
+      notifications: getDb().prepare(
+        "SELECT type, status, payload, error FROM notification_events ORDER BY rowid"
+      ).all(),
+      settings: getDb().prepare(
+        "SELECT key, value FROM settings WHERE key LIKE 'usageLimitAlert:%' ORDER BY key"
+      ).all()
+    });
+
+    const pending = alertUsageLimitHit(
+      {
+        userId,
+        provider: "Pinecone",
+        operation: "upsert-budget",
+        limitName: "Write Unit daily fuse",
+        status: "exceeded"
+      },
+      {
+        assertActive: () => {
+          if (!active) throw new Error("lease lost during operator fallback");
+        },
+        signal: controller.signal
+      }
+    );
+
+    await fallbackEntered;
+    const rowsAtLoss = snapshot();
+    active = false;
+    controller.abort(new Error("lease lost during operator fallback"));
+    expect(requestSignal?.aborted).toBe(true);
+    release();
+
+    await expect(pending).rejects.toThrow(/lease lost/i);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(snapshot()).toEqual(rowsAtLoss);
+    expect(rowsAtLoss.audits.some((row) => (row as { kind?: string }).kind === "notify.sent")).toBe(false);
   });
 });

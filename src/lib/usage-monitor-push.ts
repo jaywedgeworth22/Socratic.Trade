@@ -1,9 +1,10 @@
 // Outbound usage telemetry → API Usage Monitor (usage.jays.services) — server-only.
 //
-// Wires App B's local usage ledgers (recordLlmUsage / recordRagUsage) and its market-data /
-// broker call paths to the monitor's ingest endpoint (`POST /api/ingest/usage`), so the monitor
-// can see providers it structurally cannot poll (Anthropic, Voyage, Robinhood) plus real
-// call-volume for the shared-quota market-data providers.
+// Wires App B's local usage ledgers (recordLlmUsage / recordRagUsage) and its paid market-data
+// call paths to the monitor's ingest endpoint (`POST /api/ingest/usage`), so the monitor can see
+// providers it structurally cannot poll (Anthropic, Voyage) plus real call-volume for shared-quota
+// market-data providers. Broker families (Alpaca/Tradier/Robinhood) are deliberately suppressed —
+// see `usage-monitor-provider-policy.ts`.
 //
 // DESIGN / SAFETY:
 //   - Default OFF: no-op unless BOTH `USAGE_MONITOR_BASE_URL` and `USAGE_INGEST_TOKEN` are set.
@@ -16,46 +17,39 @@
 //   - Health is reported via `logApiHealth({ service: "usage-monitor" })` so the operator sees the
 //     connection status without the push ever affecting trading.
 //
-// CONTRACT: the event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
-// `UsageTelemetryEventSchema` and the monitor's server-side parser
-// (`API-usage-monitor/src/lib/usage-telemetry.ts`). It is hand-rolled here rather than importing
-// `createUsageTelemetryClient` because the usageTelemetry export was added after this code
-// was written. MIGRATION: the shared package is now at ^1.2.0 which includes `createUsageTelemetryClient`;
-// swap `postBatch()` below for `createUsageTelemetryClient({ baseUrl, token }).send(events)`
-// — the event shape is already the shared contract, so only the transport changes.
+// CONTRACT: fresh outbound events use `@jaywedgeworth22/congress-trading-shared`'s strict
+// `UsageTelemetryV2EventSchema`; producer identity lives only on the v2 batch envelope.
+// (`API-usage-monitor/src/lib/usage-telemetry.ts`).
+// MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
+import { getGitSha } from "./git-sha";
+import { suppressUsageMonitorProvider } from "./usage-monitor-provider-policy";
+import {
+  createUsageTelemetryClient,
+  telemetryEventClassifier,
+  UsageTelemetryApiError,
+  UsageTelemetryV2EventSchema,
+  deriveUsageTelemetryV2IdempotencyKey,
+  type UsageTelemetryV2Event,
+  type UsageTelemetryMetricType,
+  type UsageTelemetryUnit,
+  type UsageTelemetryBillingMode,
+  type UsageTelemetryConfidence,
+} from "@jaywedgeworth22/congress-trading-shared";
 
-// ── Contract (mirrors the shared UsageTelemetryEvent) ──────────────────────────
-
-export type UsageMetricType = "usage" | "cost" | "quota" | "tier" | "health" | "balance" | "limit";
-export type UsageUnit =
-  | "request" | "call" | "token" | "credit" | "usd" | "page" | "job" | "document" | "row" | "byte";
-export type UsageBillingMode = "actual" | "estimated" | "manual";
-export type UsageConfidence = "actual" | "estimated" | "manual";
-
-export interface UsageMonitorEvent {
-  sourceApp: string;
-  environment?: string;
-  provider: string;
-  service?: string;
-  label?: string;
-  keyRef?: string;
-  billingMode?: UsageBillingMode;
-  metricType?: UsageMetricType;
-  quantity?: number;
-  unit?: UsageUnit;
-  costUsd?: number;
-  requests?: number;
-  confidence?: UsageConfidence;
-  occurredAt?: string;
-  metadata?: Record<string, string | number | boolean | null>;
-}
+// Re-export shared types under the names consumers already use.
+export type UsageMetricType = UsageTelemetryMetricType;
+export type UsageUnit = UsageTelemetryUnit;
+export type UsageBillingMode = UsageTelemetryBillingMode;
+export type UsageConfidence = UsageTelemetryConfidence;
+export type UsageMonitorEvent = UsageTelemetryV2Event;
+type UsageMonitorDraft = Omit<UsageMonitorEvent, "eventId"> & { eventId?: string };
 
 // ── Config (env-gated, server-only) ────────────────────────────────────────────
 
 const SOURCE_APP = "socratic-trade";
-const INGEST_PATH = "/api/ingest/usage";
+const PROJECT = "socratic-trade";
 const HEALTH_SERVICE = "usage-monitor";
 const MAX_BATCH = 100; // monitor ingest caps each POST at 100 events
 
@@ -87,17 +81,203 @@ function usageMonitorEnv(): string {
   return trimmedEnv("USAGE_MONITOR_ENV") ?? trimmedEnv("NODE_ENV") ?? "development";
 }
 
+/** Deployed commit sha, when the runtime exposes one (see `runtimeReleaseIdentity`'s env probe
+ *  list) — reused as the classifier `gitSha`. `undefined` (never invents a new required env var)
+ *  when none of those vars are set, e.g. local dev. */
+function classifierGitSha(): string | undefined {
+  return getGitSha();
+}
+
+/**
+ * Classifier keys (sourceApp/environment/service/feature/keyRef/gitSha/user) as a flat string map,
+ * safe to merge into a pushed event's `metadata`. Never throws — an unexpected validation failure
+ * (e.g. a caller passing a blank required field) degrades to an empty object rather than dropping
+ * the whole telemetry event.
+ */
+function classifierTelemetryMetadata(ctx: {
+  service: string;
+  feature?: string;
+  keyRef?: string;
+  userId?: string;
+}): Record<string, string> {
+  try {
+    const metadata = telemetryEventClassifier({
+      sourceApp: SOURCE_APP,
+      environment: usageMonitorEnv(),
+      service: ctx.service,
+      feature: ctx.feature,
+      keyRef: ctx.keyRef,
+      gitSha: classifierGitSha(),
+      user: ctx.userId,
+    }) as Record<string, string>;
+    // IDEMPOTENT-REPLAY STABILITY: gitSha changes on EVERY auto-deploy, and the monitor compares
+    // full event metadata when deduping an idempotency key — so a replayed ledger row rebuilt
+    // after a deploy collided ("Idempotency key collision", monitor 409) with the same key's
+    // pre-deploy content, permanently wedging the replay watermark (prod 2026-07-28..30). Every
+    // other classifier field is stable across deploys for a given ledger row; gitSha is the only
+    // volatile one, so it is deliberately excluded from the pushed event metadata. The deployed
+    // sha remains observable via /api/health and llm_usage-side telemetry, not here.
+    delete metadata.gitSha;
+    return metadata;
+  } catch (err) {
+    console.warn("[usage-monitor-push] classifier metadata build failed; pushing without it:", err instanceof Error ? err.message : String(err));
+    return {};
+  }
+}
+
 function flushDelayMs(): number {
   return numEnv("USAGE_MONITOR_FLUSH_MS", 2000);
 }
 
-function timeoutMs(): number {
-  return numEnv("USAGE_MONITOR_TIMEOUT_MS", 8000);
+// ── Circuit breaker (dead-receiver protection) ──────────────────────────────────
+//
+// The 2026-07 API-usage-monitor outage taught us that a plain capped-retry loop still POSTs on
+// every flush/replay tick forever, which is exactly the "hammer a dead endpoint" pattern that ran
+// up a 200GB Render bandwidth bill. The breaker below sits in front of every real network attempt
+// (postBatch + sendUsageMonitorBatch): after enough consecutive failures it fully suppresses
+// delivery for a backoff window (no fetch call at all, not even a fast-failing one) and only lets a
+// single "half-open" probe through once that window elapses, so a dead receiver is checked
+// occasionally instead of continuously. A success at any point fully resets it.
+
+/** Consecutive failures required before the circuit opens (suppresses delivery). */
+function breakerThreshold(): number {
+  return numEnv("USAGE_MONITOR_BREAKER_THRESHOLD", 3);
 }
+
+/** Initial open-circuit window once the breaker trips. */
+function breakerBaseMs(): number {
+  return numEnv("USAGE_MONITOR_BREAKER_BASE_MS", 30_000);
+}
+
+/** Cap on the open-circuit window — the longest we'll go between probes during a sustained outage. */
+function breakerMaxMs(): number {
+  return numEnv("USAGE_MONITOR_BREAKER_MAX_MS", 15 * 60_000);
+}
+
+/** Cap on total buffered (unsent) events across both queues; see trimBufferedEvents(). */
+function queueMaxEvents(): number {
+  return numEnv("USAGE_MONITOR_QUEUE_MAX_EVENTS", 500);
+}
+
+/** TTL for buffered events (by buffer-residency time, not occurredAt); see trimBufferedEvents(). */
+function queueTtlMs(): number {
+  return numEnv("USAGE_MONITOR_QUEUE_TTL_MS", 60 * 60_000);
+}
+
+/** Max distinct provider/service/key/user lanes held in the callVolume aggregate; see recordProviderCall(). */
+function callVolumeMaxKeys(): number {
+  return numEnv("USAGE_MONITOR_CALLVOLUME_MAX_KEYS", 2000);
+}
+
+/**
+ * Per-attempt wall-clock timeout on the LIVE push (postBatch). Without this, a monitor that accepts
+ * the TCP connection but never responds leaves `client.send` awaiting forever — the attempt never
+ * fails, so the breaker never trips and the queue never drains. That is exactly the half-up outage
+ * we just had in prod, so a bounded timeout that CONVERTS a hang into a recorded failure is load-
+ * bearing, not cosmetic. (The replay lane has its own REPLAY_SEND_TIMEOUT_MS for the same reason.)
+ */
+function pushTimeoutMs(): number {
+  return numEnv("USAGE_MONITOR_PUSH_TIMEOUT_MS", 10_000);
+}
+
+interface BreakerState {
+  consecutiveFailures: number;
+  /** Epoch ms until which delivery is suppressed. 0 means the circuit is closed. */
+  openUntil: number;
+  /** True while a single half-open probe attempt is outstanding. */
+  probing: boolean;
+}
+
+/**
+ * Gate every real delivery attempt through the breaker. Returns false (no attempt allowed) while
+ * the circuit is open; returns true when closed, or for exactly one concurrent half-open probe once
+ * the open window has elapsed. Callers that receive `true` MUST report the outcome via
+ * breakerRecordResult so `probing` doesn't leak permanently true.
+ */
+function breakerAllowsAttempt(now: number): boolean {
+  const breaker = state.breaker;
+  if (breaker.openUntil === 0 || now >= breaker.openUntil) {
+    if (breaker.openUntil !== 0 && breaker.probing) return false; // another probe already in flight
+    if (breaker.openUntil !== 0) breaker.probing = true; // half-open: this is the one allowed probe
+    return true;
+  }
+  return false; // circuit open: suppress the attempt entirely, no network call
+}
+
+/** Record the outcome of a delivery attempt that breakerAllowsAttempt permitted. */
+function breakerRecordResult(
+  ok: boolean,
+  now: number,
+  retryAfterSeconds: number | null = null
+): void {
+  const breaker = state.breaker;
+  breaker.probing = false;
+  if (ok) {
+    breaker.consecutiveFailures = 0;
+    breaker.openUntil = 0;
+    return;
+  }
+  breaker.consecutiveFailures += 1;
+  const threshold = breakerThreshold();
+  // Wave H / C1: honor server Retry-After immediately (even before threshold)
+  // so a 429/503 does not become a retry storm within the same second.
+  if (retryAfterSeconds != null && retryAfterSeconds > 0) {
+    const fromHeader = now + retryAfterSeconds * 1000;
+    const exponent = Math.min(Math.max(0, breaker.consecutiveFailures - threshold), 10);
+    const exponential = Math.min(breakerMaxMs(), breakerBaseMs() * 2 ** Math.max(0, exponent));
+    breaker.openUntil = Math.max(fromHeader, now + Math.min(exponential, breakerMaxMs()));
+    return;
+  }
+  if (breaker.consecutiveFailures < threshold) return; // below trip threshold: keep the normal cadence
+  const exponent = Math.min(breaker.consecutiveFailures - threshold, 10);
+  const backoff = Math.min(breakerMaxMs(), breakerBaseMs() * 2 ** exponent);
+  breaker.openUntil = now + backoff;
+}
+
+/**
+ * True when an item has sat in the in-memory buffer longer than the TTL. Deliberately keyed off
+ * `receivedAt` (wall-clock time the item entered THIS process's buffer) rather than the event's
+ * business `occurredAt` — a replayed/backfilled event can legitimately carry an old `occurredAt`
+ * while having just arrived here, and that must not make it look stale on arrival.
+ */
+function isStaleBuffered(receivedAt: number, ttlMs: number, now: number): boolean {
+  return now - receivedAt > ttlMs;
+}
+
+/**
+ * Bound the in-memory failure buffer so a multi-day receiver outage can't grow ST's own memory
+ * without limit. This is safe to trim aggressively: llm/rag/provider-dispatch events dropped here
+ * are still recoverable — the durable DB-backed ledgers replay them independently via
+ * usage-monitor-replay.ts. Call-volume aggregates are best-effort only (rebuilt on the next window).
+ */
+function trimBufferedEvents(now: number): void {
+  const ttlMs = queueTtlMs();
+  if (ttlMs > 0) {
+    state.queue = state.queue.filter((q) => !isStaleBuffered(q.receivedAt, ttlMs, now));
+    state.pendingQueue = state.pendingQueue.filter((p) => !isStaleBuffered(p.receivedAt, ttlMs, now));
+  }
+  const maxEvents = queueMaxEvents();
+  if (maxEvents <= 0) return;
+  let overflow = state.pendingQueue.length + state.queue.length - maxEvents;
+  if (overflow <= 0) return;
+  // Prefer dropping already-failed retries over fresh, not-yet-attempted events.
+  if (overflow > 0 && state.queue.length > 0) {
+    const drop = Math.min(overflow, state.queue.length);
+    state.queue.splice(0, drop);
+    overflow -= drop;
+  }
+  if (overflow > 0 && state.pendingQueue.length > 0) {
+    const drop = Math.min(overflow, state.pendingQueue.length);
+    state.pendingQueue.splice(0, drop);
+    overflow -= drop;
+  }
+}
+
 
 // ── State (globalThis-pinned so Next.js HMR module duplication can't split it) ──
 
 interface CallVolumeEntry {
+  windowId: string;
   provider: string;
   service?: string;
   keySource?: string;
@@ -107,18 +287,133 @@ interface CallVolumeEntry {
   failures: number;
 }
 
+interface PendingUsageEvent {
+  event: UsageMonitorDraft;
+  kind: string;
+  sourceId: string;
+  /** Wall-clock arrival time in this buffer; see isStaleBuffered(). */
+  receivedAt: number;
+}
+
+/** A fully resolved event retained for retry, paired with when it first entered the buffer. */
+interface QueuedUsageEvent {
+  event: UsageMonitorEvent;
+  receivedAt: number;
+}
+
 interface PushState {
-  queue: UsageMonitorEvent[];
+  version: number;
+  /** New events awaiting edge-safe SHA-256 delivery identity resolution. */
+  pendingQueue: PendingUsageEvent[];
+  /** Fully resolved events retained verbatim across ambiguous delivery retries. */
+  queue: QueuedUsageEvent[];
   callVolume: Map<string, CallVolumeEntry>;
   flushTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * The single in-flight live flush, or null. Serializes the SEND (not enqueues): while one flush is
+   * awaiting its POST — including a hung 10s-timeout send to a half-up receiver — a second flush must
+   * NOT start a concurrent send. This bounds a dead receiver to one outstanding POST before the
+   * breaker records the failure and opens.
+   */
+  inflightFlush: Promise<void> | null;
   /** Test seam: overrides global fetch when set. */
   fetchImpl: typeof fetch | null;
+  breaker: BreakerState;
 }
 
 const host = globalThis as unknown as { __usageMonitorPush?: PushState };
+// v5: buffered v1 events are normalized once in memory to strict v2 fields before any retry.
+// Bumping forces stale-timer cancellation and prevents an old module from sending v1 wire data.
+const STATE_VERSION = 5;
+const priorState = host.__usageMonitorPush;
+const staleState = priorState !== undefined && priorState.version !== STATE_VERSION;
+if (staleState && priorState.flushTimer) {
+  // A preserved HMR timer closes over the old module implementation. Cancel it
+  // before reusing the queue/map so the current flush logic owns every send.
+  clearTimeout(priorState.flushTimer);
+  priorState.flushTimer = null;
+}
+if (staleState) {
+  // A carried-over in-flight promise closes over the old module; drop the marker so the new module's
+  // single-flight guard isn't wedged closed forever (the old promise still self-settles harmlessly).
+  priorState!.inflightFlush = null;
+}
 const state: PushState =
-  host.__usageMonitorPush ??
-  (host.__usageMonitorPush = { queue: [], callVolume: new Map(), flushTimer: null, fetchImpl: null });
+  priorState ??
+  (host.__usageMonitorPush = {
+    version: STATE_VERSION,
+    pendingQueue: [],
+    queue: [],
+    callVolume: new Map(),
+    flushTimer: null,
+    inflightFlush: null,
+    fetchImpl: null,
+    breaker: { consecutiveFailures: 0, openUntil: 0, probing: false },
+  });
+if (priorState) normalizeRetainedQueues(priorState);
+state.version = STATE_VERSION;
+state.pendingQueue ??= [];
+state.inflightFlush ??= null;
+state.breaker ??= { consecutiveFailures: 0, openUntil: 0, probing: false };
+
+if (
+  staleState &&
+  (state.pendingQueue.length > 0 || state.queue.length > 0 || state.callVolume.size > 0)
+) {
+  scheduleFlush();
+}
+
+/**
+ * Coerce queues retained across an HMR reload into the current wrapper shapes. A pre-v4 module
+ * stored `queue` as raw UsageMonitorEvent[] and `pendingQueue` entries without `receivedAt`; the
+ * v4+ flush path reads `.event` / `.receivedAt` off every entry, so an un-migrated old-shape entry
+ * would throw or send a shapeless payload on hot-reload. Dev-only concern, but cheap to make safe.
+ * A raw event is discriminated by the absence of a nested `.event` object.
+ */
+function normalizeRetainedEvent(value: unknown): UsageMonitorDraft {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value as UsageMonitorDraft;
+  const retained = { ...(value as Record<string, unknown>) };
+  if (retained.sourceApp !== undefined && retained.sourceApp !== SOURCE_APP) {
+    return retained as UsageMonitorDraft;
+  }
+  delete retained.sourceApp;
+  if (retained.producerKeyRef === undefined && retained.keyRef !== undefined) {
+    retained.producerKeyRef = retained.keyRef;
+  }
+  delete retained.keyRef;
+  if (retained.eventId === undefined && retained.idempotencyKey !== undefined) {
+    retained.eventId = retained.idempotencyKey;
+  }
+  delete retained.idempotencyKey;
+  return retained as UsageMonitorDraft;
+}
+
+function normalizeRetainedQueues(prior: PushState): void {
+  const now = Date.now();
+  if (Array.isArray(prior.queue)) {
+    prior.queue = prior.queue.map((entry) => {
+      const wrapper = entry as Partial<QueuedUsageEvent>;
+      if (wrapper && typeof wrapper.event === "object" && wrapper.event !== null) {
+        return {
+          event: normalizeRetainedEvent(wrapper.event) as UsageMonitorEvent,
+          receivedAt: typeof wrapper.receivedAt === "number" ? wrapper.receivedAt : now,
+        };
+      }
+      // Old shape: `entry` IS the raw event.
+      return {
+        event: normalizeRetainedEvent(entry) as UsageMonitorEvent,
+        receivedAt: now,
+      };
+    });
+  }
+  if (Array.isArray(prior.pendingQueue)) {
+    prior.pendingQueue = prior.pendingQueue.map((entry) => ({
+      ...entry,
+      event: normalizeRetainedEvent(entry.event),
+      receivedAt: typeof entry.receivedAt === "number" ? entry.receivedAt : now,
+    }));
+  }
+}
 
 // ── Enqueue: discrete cost events (LLM / RAG) ──────────────────────────────────
 
@@ -127,7 +422,11 @@ const state: PushState =
  * Cost + token totals are passed in (already computed by the caller) so this module never imports
  * `llm-usage.ts` — avoids a circular import and re-computation.
  */
-export function pushLlmUsage(entry: {
+export interface LlmUsageMonitorEntry {
+  /** Stable ID of the local llm_usage row backing this delivery. */
+  sourceEventId?: string;
+  /** Stable timestamp persisted on the same local ledger row. */
+  occurredAt?: string;
   provider: string;
   model?: string;
   context?: string;
@@ -138,44 +437,69 @@ export function pushLlmUsage(entry: {
   completionTokens?: number;
   totalTokens?: number;
   costUsd?: number;
-}): void {
+  /** OpenRouter's generation id for this call (see `providerRequestIdFromPayload` in llm-usage.ts).
+   *  Undefined for every non-OpenRouter provider. */
+  providerRequestId?: string;
+}
+
+function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorDraft {
+  const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
+  return {
+    environment: usageMonitorEnv(),
+    provider: entry.provider,
+    service: "llm",
+    project: PROJECT,
+    label: entry.context,
+    producerKeyRef: entry.keyRef,
+    billingMode: "estimated",
+    metricType: hasCost ? "cost" : "usage",
+    quantity: entry.totalTokens,
+    unit: "token",
+    costUsd: hasCost ? entry.costUsd : undefined,
+    requests: 1,
+    confidence: "estimated",
+    occurredAt: entry.occurredAt ?? new Date().toISOString(),
+    providerRequestId: entry.providerRequestId,
+    metadata: cleanMetadata({
+      model: entry.model ?? null,
+      context: entry.context ?? null,
+      userId: entry.userId,
+      keySource: entry.keySource,
+      promptTokens: entry.promptTokens ?? null,
+      completionTokens: entry.completionTokens ?? null,
+      ...classifierTelemetryMetadata({ service: "llm", feature: entry.context, keyRef: entry.keyRef, userId: entry.userId }),
+    }),
+  };
+}
+
+export function pushLlmUsage(entry: LlmUsageMonitorEntry): void {
   if (!usageMonitorEnabled()) return;
   try {
-    const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
-    enqueue({
-      sourceApp: SOURCE_APP,
-      environment: usageMonitorEnv(),
-      provider: entry.provider,
-      service: "llm",
-      label: entry.context,
-      keyRef: entry.keyRef,
-      billingMode: "estimated",
-      metricType: hasCost ? "cost" : "usage",
-      quantity: entry.totalTokens,
-      unit: "token",
-      costUsd: hasCost ? entry.costUsd : undefined,
-      requests: 1,
-      confidence: "estimated",
-      occurredAt: new Date().toISOString(),
-      metadata: cleanMetadata({
-        model: entry.model ?? null,
-        context: entry.context ?? null,
-        userId: entry.userId,
-        keySource: entry.keySource,
-        promptTokens: entry.promptTokens ?? null,
-        completionTokens: entry.completionTokens ?? null,
-      }),
-    });
+    enqueuePending(llmUsageEvent(entry), "llm", entry.sourceEventId);
   } catch {
     /* telemetry must never break the caller */
   }
+}
+
+/** Build the exact deterministic event used to replay one persisted llm_usage row. */
+export async function createLlmUsageMonitorEvent(
+  entry: LlmUsageMonitorEntry & { sourceEventId: string; occurredAt: string }
+): Promise<UsageMonitorEvent> {
+  return {
+    ...llmUsageEvent(entry),
+    eventId: await telemetryIdempotencyKey("llm", entry.sourceEventId),
+  };
 }
 
 /**
  * Record one RAG (Voyage / Pinecone) op's usage/cost. Called from `recordRagUsage` after the local
  * ledger write. Cost is passed in (already computed by the caller).
  */
-export function pushRagUsage(entry: {
+export interface RagUsageMonitorEntry {
+  /** Stable ID of the local rag_usage row backing this delivery. */
+  sourceEventId?: string;
+  /** Stable timestamp persisted on the same local ledger row. */
+  occurredAt?: string;
   provider: string;
   operation: string;
   model?: string;
@@ -184,136 +508,123 @@ export function pushRagUsage(entry: {
   tokensOut?: number;
   batchCount?: number;
   costUsd?: number;
-}): void {
+  /** OpenRouter's generation id for this call (embed/rerank via `baai/bge-m3`/`cohere/rerank-v3.5`).
+   *  Undefined for Voyage/SiliconFlow/Pinecone — see `providerRequestIdFromPayload` in llm-usage.ts. */
+  providerRequestId?: string;
+}
+
+function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorDraft {
+  const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
+  const isPinecone = entry.provider === "pinecone";
+  const quantity = isPinecone
+    ? (entry.tokensIn ?? 0)
+    : (entry.tokensIn ?? 0) + (entry.tokensOut ?? 0);
+  // Voyage embed/rerank quantities are token estimates. Pinecone query/upsert quantities are
+  // Read/Write Units in tokensIn, with records kept separately in metadata.
+  const unit: UsageUnit = isPinecone ? "credit" : "token";
+  return {
+    environment: usageMonitorEnv(),
+    provider: entry.provider,
+    service: "rag",
+    project: PROJECT,
+    label: entry.operation,
+    producerKeyRef: undefined, // RAG keys are app-funded; no per-attached-key fingerprint today
+    billingMode: "estimated",
+    metricType: hasCost ? "cost" : "usage",
+    quantity: quantity > 0 ? quantity : undefined,
+    unit,
+    costUsd: hasCost ? entry.costUsd : undefined,
+    requests: 1,
+    confidence: "estimated",
+    occurredAt: entry.occurredAt ?? new Date().toISOString(),
+    providerRequestId: entry.providerRequestId,
+    metadata: cleanMetadata({
+      model: entry.model ?? null,
+      operation: entry.operation,
+      userId: entry.userId,
+      batchCount: entry.batchCount ?? null,
+      recordCount: isPinecone ? entry.tokensOut ?? null : null,
+      // Voyage/SiliconFlow bypass OpenRouter entirely (no request-side trace enrichment is
+      // possible), so this is the ONLY place their classifier context is ever recorded — sourced
+      // locally, never inferred from the provider response.
+      ...classifierTelemetryMetadata({ service: "rag", feature: entry.operation, userId: entry.userId }),
+    }),
+  };
+}
+
+export function pushRagUsage(entry: RagUsageMonitorEntry): void {
   if (!usageMonitorEnabled()) return;
   try {
-    const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
-    const isPinecone = entry.provider === "pinecone";
-    const quantity = isPinecone ? (entry.tokensIn ?? 0) : (entry.tokensIn ?? 0) + (entry.tokensOut ?? 0);
-    // Voyage embed/rerank quantities are token estimates. Pinecone query/upsert quantities are
-    // Read/Write Units in tokensIn, with records kept separately in metadata.
-    const unit: UsageUnit = isPinecone ? "credit" : "token";
-    enqueue({
-      sourceApp: SOURCE_APP,
-      environment: usageMonitorEnv(),
-      provider: entry.provider,
-      service: "rag",
-      label: entry.operation,
-      keyRef: undefined, // RAG keys are app-funded; no per-attached-key fingerprint today
-      billingMode: "estimated",
-      metricType: hasCost ? "cost" : "usage",
-      quantity: quantity > 0 ? quantity : undefined,
-      unit,
-      costUsd: hasCost ? entry.costUsd : undefined,
-      requests: 1,
-      confidence: "estimated",
-      occurredAt: new Date().toISOString(),
-      metadata: cleanMetadata({
-        model: entry.model ?? null,
-        operation: entry.operation,
-        userId: entry.userId,
-        batchCount: entry.batchCount ?? null,
-        recordCount: isPinecone ? entry.tokensOut ?? null : null,
-      }),
-    });
+    enqueuePending(ragUsageEvent(entry), "rag", entry.sourceEventId);
   } catch {
     /* telemetry must never break the caller */
   }
 }
 
-function maskAccountNumber(acc: string): string {
-  const clean = acc.trim();
-  if (clean.length <= 4) return clean;
-  return `...${clean.slice(-4)}`;
+/** Build the exact deterministic event used to replay one persisted rag_usage row. */
+export async function createRagUsageMonitorEvent(
+  entry: RagUsageMonitorEntry & { sourceEventId: string; occurredAt: string }
+): Promise<UsageMonitorEvent> {
+  return {
+    ...ragUsageEvent(entry),
+    eventId: await telemetryIdempotencyKey("rag", entry.sourceEventId),
+  };
 }
 
-/**
- * Record broker account balances and limits.
- */
-export function pushBrokerBalance(entry: {
+/** Build the exact deterministic event for one crash-durable provider dispatch outcome. */
+export async function createProviderDispatchUsageMonitorEvent(entry: {
+  sourceEventId: string;
+  occurredAt: string;
   provider: string;
+  operation: string;
+  credentialRef: string;
   userId: string;
-  accountNumber: string;
-  cash?: number;
-  buyingPower?: number;
-  equity?: number;
-}): void {
-  if (!usageMonitorEnabled()) return;
-  try {
-    const occurredAt = new Date().toISOString();
-    const maskedAcc = maskAccountNumber(entry.accountNumber);
-    if (typeof entry.cash === "number") {
-      enqueue({
-        sourceApp: SOURCE_APP,
-        environment: usageMonitorEnv(),
-        provider: entry.provider,
-        service: "broker",
-        keyRef: `${maskedAcc}:cash`,
-        billingMode: "actual",
-        metricType: "balance",
-        quantity: entry.cash,
-        unit: "usd",
-        confidence: "actual",
-        occurredAt,
-        metadata: cleanMetadata({
-          userId: entry.userId,
-          accountNumber: maskedAcc,
-          metric: "cash"
-        }),
-      });
-    }
-    if (typeof entry.buyingPower === "number") {
-      enqueue({
-        sourceApp: SOURCE_APP,
-        environment: usageMonitorEnv(),
-        provider: entry.provider,
-        service: "broker",
-        keyRef: `${maskedAcc}:buyingPower`,
-        billingMode: "actual",
-        metricType: "limit",
-        quantity: entry.buyingPower,
-        unit: "usd",
-        confidence: "actual",
-        occurredAt,
-        metadata: cleanMetadata({
-          userId: entry.userId,
-          accountNumber: maskedAcc,
-          metric: "buyingPower"
-        }),
-      });
-    }
-    if (typeof entry.equity === "number") {
-      enqueue({
-        sourceApp: SOURCE_APP,
-        environment: usageMonitorEnv(),
-        provider: entry.provider,
-        service: "broker",
-        keyRef: `${maskedAcc}:equity`,
-        billingMode: "actual",
-        metricType: "balance",
-        quantity: entry.equity,
-        unit: "usd",
-        confidence: "actual",
-        occurredAt,
-        metadata: cleanMetadata({
-          userId: entry.userId,
-          accountNumber: maskedAcc,
-          metric: "equity"
-        }),
-      });
-    }
-  } catch {
-    /* telemetry must never break the caller */
-  }
+  outcome: "succeeded" | "failed" | "unknown";
+  requests?: number;
+  estimatedCostUsd?: number;
+  actualCostUsd?: number;
+}): Promise<UsageMonitorEvent | null> {
+  // Retired broker families are never admitted to the monitor (live or replay). Callers treat
+  // null as "skip this row" while still advancing durable watermarks past it.
+  if (suppressUsageMonitorProvider(entry.provider)) return null;
+  // INVARIANT: the ledger lanes (pushLlmUsage/pushRagUsage, service "llm"/"rag") are the single
+  // external cost authority for every provider they cover — dispatch (service "provider-dispatch")
+  // is a quota/request-volume signal only, for every provider, always. entry.estimatedCostUsd /
+  // entry.actualCostUsd above still drive the LOCAL per-credential daily cost-cap fuse
+  // (reserveProviderDispatch's maxEstimatedCostUsdPer24h check in db-provider-dispatch.ts) and must
+  // stay real there — but they must never be threaded into the event pushed to the monitor below.
+  // The monitor's receiver sums cost by provider name only (it ignores `service`), so a non-zero
+  // costUsd here would double-count spend the ledger lane already reported for the same call.
+  return {
+    environment: usageMonitorEnv(),
+    provider: entry.provider,
+    service: "provider-dispatch",
+    project: PROJECT,
+    label: entry.operation,
+    producerKeyRef: entry.credentialRef,
+    billingMode: "estimated",
+    metricType: "usage",
+    unit: "request",
+    requests: entry.requests ?? 1,
+    confidence: entry.outcome === "unknown" ? "estimated" : "actual",
+    occurredAt: entry.occurredAt,
+    metadata: cleanMetadata({
+      operation: entry.operation,
+      userId: entry.userId,
+      outcome: entry.outcome,
+      unknownOutcome: entry.outcome === "unknown",
+    }),
+    eventId: await telemetryIdempotencyKey("provider-dispatch", entry.sourceEventId),
+  };
 }
 
-// ── Aggregate: market-data / broker call-volume ────────────────────────────────
+// ── Aggregate: market-data call-volume ─────────────────────────────────────────
 
 /**
- * Count one external market-data or broker API call. Called from the central `fetchWithRetry`
- * wrapper (`data-providers.ts`) and the broker choke points (`alpaca.ts`, `robinhood.ts`). This is
- * on a hot path, so it only mutates an in-memory per-provider counter — the counts are flushed as a
- * single aggregated `requests`-count event per provider per window (never one POST per call).
+ * Count one external market-data API call. Called from the central `fetchWithRetry` wrapper
+ * (`data-providers.ts`). This is on a hot path, so it only mutates an in-memory per-provider
+ * counter — the counts are flushed as a single aggregated `requests`-count event per provider per
+ * window (never one POST per call). Retired broker families are suppressed at admission.
  */
 export function recordProviderCall(
   provider: string,
@@ -322,13 +633,39 @@ export function recordProviderCall(
   if (!usageMonitorEnabled()) return;
   // Never re-count the telemetry channel's own health calls (would loop).
   if (provider === HEALTH_SERVICE) return;
+  // Retired broker families (Alpaca/Tradier/Robinhood and their subproviders) stay in trading/health
+  // but never enter the Usage Monitor feed.
+  if (suppressUsageMonitorProvider(provider)) return;
   try {
     // Key by credential lane too, so a user's own market-data key isn't conflated with shared/
     // operator quota in the monitor.
     const key = [provider, opts.service ?? "", opts.keySource ?? "", opts.userId ?? ""].join("|");
+    const existing = state.callVolume.get(key);
+    if (!existing) {
+      // Bound distinct lanes: callVolume is drained each flush, but while the breaker is open the
+      // next flush can be up to breakerMaxMs away, and high-cardinality per-user market-data keys
+      // could otherwise accumulate one entry per user for that whole window. Evict oldest-inserted
+      // lanes (Map keeps insertion order) to make room — a dropped aggregate is best-effort
+      // telemetry, and the durable ledgers don't depend on it.
+      const maxKeys = callVolumeMaxKeys();
+      while (maxKeys > 0 && state.callVolume.size >= maxKeys) {
+        const oldest = state.callVolume.keys().next().value;
+        if (oldest === undefined) break;
+        state.callVolume.delete(oldest);
+      }
+    }
     const entry =
-      state.callVolume.get(key) ??
-      { provider, service: opts.service, keySource: opts.keySource, userId: opts.userId, requests: 0, successes: 0, failures: 0 };
+      existing ??
+      {
+        windowId: randomDeliveryId(),
+        provider,
+        service: opts.service,
+        keySource: opts.keySource,
+        userId: opts.userId,
+        requests: 0,
+        successes: 0,
+        failures: 0,
+      };
     entry.requests += 1;
     if (opts.ok === true) entry.successes += 1;
     else if (opts.ok === false) entry.failures += 1;
@@ -341,108 +678,408 @@ export function recordProviderCall(
 
 // ── Queue / flush plumbing ─────────────────────────────────────────────────────
 
-function enqueue(event: UsageMonitorEvent): void {
-  state.queue.push(event);
+function enqueuePending(
+  event: UsageMonitorDraft,
+  kind: string,
+  sourceId?: string
+): void {
+  state.pendingQueue.push({
+    event,
+    kind,
+    sourceId: sourceId?.trim() || randomDeliveryId(),
+    receivedAt: Date.now(),
+  });
+  trimBufferedEvents(Date.now());
   scheduleFlush();
 }
 
-function scheduleFlush(): void {
+function scheduleFlush(delayMs = flushDelayMs()): void {
   if (state.flushTimer) return;
   const timer = setTimeout(() => {
     state.flushTimer = null;
     void flushUsageMonitor();
-  }, flushDelayMs());
+  }, delayMs);
   // Don't keep the process alive just for a pending telemetry flush.
   (timer as { unref?: () => void }).unref?.();
   state.flushTimer = timer;
 }
 
-function drainCallVolume(now: string): UsageMonitorEvent[] {
-  const events: UsageMonitorEvent[] = [];
+function drainCallVolume(now: string): PendingUsageEvent[] {
+  const events: PendingUsageEvent[] = [];
   for (const entry of state.callVolume.values()) {
     if (entry.requests <= 0) continue;
+    // Defense in depth: never flush a retired family even if a stale HMR map entry slipped in.
+    if (suppressUsageMonitorProvider(entry.provider)) continue;
     events.push({
-      sourceApp: SOURCE_APP,
-      environment: usageMonitorEnv(),
-      provider: entry.provider,
-      service: entry.service,
-      billingMode: "actual",
-      metricType: "usage",
-      unit: "request",
-      requests: entry.requests,
-      confidence: "actual",
-      occurredAt: now,
-      metadata: cleanMetadata({
-        successes: entry.successes,
-        failures: entry.failures,
-        keySource: entry.keySource ?? null,
-        userId: entry.userId ?? null,
-      }),
+      kind: "provider-call-volume",
+      // HMR can preserve a pre-upgrade global map entry without windowId.
+      sourceId: entry.windowId || randomDeliveryId(),
+      receivedAt: Date.now(),
+      event: {
+        environment: usageMonitorEnv(),
+        provider: entry.provider,
+        service: entry.service,
+        project: PROJECT,
+        billingMode: "actual",
+        metricType: "usage",
+        unit: "request",
+        requests: entry.requests,
+        confidence: "actual",
+        occurredAt: now,
+        metadata: cleanMetadata({
+          successes: entry.successes,
+          failures: entry.failures,
+          keySource: entry.keySource ?? null,
+          userId: entry.userId ?? null,
+        }),
+      },
     });
   }
   state.callVolume.clear();
   return events;
 }
 
+async function resolvePendingEvents(
+  pending: PendingUsageEvent[]
+): Promise<QueuedUsageEvent[]> {
+  return Promise.all(
+    pending.map(async ({ event, kind, sourceId, receivedAt }) => ({
+      event: {
+        ...event,
+        eventId: await telemetryIdempotencyKey(kind, sourceId),
+      },
+      receivedAt,
+    }))
+  );
+}
+
 /**
  * Flush all buffered events (discrete cost events + aggregated call-volume) to the monitor. Batched
  * at MAX_BATCH per POST. Never throws. Exported for tests and internal scheduling.
+ *
+ * Single-flight wrapper: only ONE live flush's SEND may be outstanding at a time. If a flush is
+ * already in flight (e.g. awaiting a hung 10s-timeout POST to a half-up receiver), this does NOT
+ * start a second concurrent send — it re-arms the timer so events buffered in the meantime are
+ * picked up once the current send settles. Net: at most one outstanding POST before the breaker
+ * decision, so a dead receiver can't accumulate a burst of concurrent hanging requests. Enqueues are
+ * unaffected — they still just buffer; only the SEND is serialized, and the finally-clear plus the
+ * bounded send timeout guarantee no deadlock.
  */
 export async function flushUsageMonitor(): Promise<void> {
+  if (state.inflightFlush) {
+    // A send is already outstanding — defer instead of starting a concurrent one. Re-arm so the
+    // events buffered during this window flush after the current send settles.
+    scheduleFlush();
+    return;
+  }
+  const work = flushUsageMonitorOnce();
+  state.inflightFlush = work;
+  try {
+    await work;
+  } finally {
+    state.inflightFlush = null;
+  }
+}
+
+async function flushUsageMonitorOnce(): Promise<void> {
   if (state.flushTimer) {
     clearTimeout(state.flushTimer);
     state.flushTimer = null;
   }
   if (!usageMonitorEnabled()) {
     // Drop anything buffered while disabled so it can't leak later if the env is toggled mid-process.
+    state.pendingQueue.length = 0;
     state.queue.length = 0;
     state.callVolume.clear();
     return;
   }
 
+  // Trim by TTL/cap at flush entry, not only on enqueue: an event can age past its TTL while sitting
+  // in the buffer with no new telemetry arriving, and must be dropped BEFORE it reaches the send path.
+  trimBufferedEvents(Date.now());
+
   const now = new Date().toISOString();
-  const pending = state.queue.splice(0, state.queue.length).concat(drainCallVolume(now));
+  const unresolved = state.pendingQueue
+    .splice(0, state.pendingQueue.length)
+    .concat(drainCallVolume(now));
+  let resolved: QueuedUsageEvent[];
+  try {
+    resolved = await resolvePendingEvents(unresolved);
+  } catch {
+    // Web Crypto is expected in every supported runtime. If it is temporarily
+    // unavailable, retain the original descriptors rather than sending events
+    // without their stable delivery identity.
+    state.pendingQueue.unshift(...unresolved);
+    trimBufferedEvents(Date.now());
+    scheduleFlush();
+    return;
+  }
+  const all = state.queue.splice(0, state.queue.length).concat(resolved);
+  if (all.length === 0) return;
+
+  // Quarantine schema-invalid (poison) events OUT of the buffer before sending: client.send parses
+  // the batch before any fetch, so a poison event's ZodError would otherwise be caught as a delivery
+  // failure and falsely trip the breaker — and re-fail on every flush forever. A local bad-data error
+  // is not "receiver down". Drop them (best-effort log) and only ever send/re-queue valid events.
+  const pending: QueuedUsageEvent[] = [];
+  let poisonCount = 0;
+  for (const q of all) {
+    if (isDeliverableEvent(q.event)) pending.push(q);
+    else poisonCount += 1;
+  }
+  warnPoisonDropped(poisonCount, "live-push");
   if (pending.length === 0) return;
 
   for (let i = 0; i < pending.length; i += MAX_BATCH) {
-    await postBatch(pending.slice(i, i + MAX_BATCH));
+    const batch = pending.slice(i, i + MAX_BATCH);
+    const sent = await postBatch(batch.map((q) => q.event));
+    if (!sent) {
+      // Keep the exact event objects — including explicit key + occurredAt —
+      // so an ambiguous accepted-then-disconnected response retries safely. Only deliverable events
+      // are re-queued (poison was already dropped above), so a bad-data event can't re-fail forever.
+      state.queue.unshift(...pending.slice(i));
+      trimBufferedEvents(Date.now());
+      // While the breaker is open, wait out its window instead of retrying on the short flush
+      // cadence — that's the suppression that stops a dead receiver from being hammered.
+      const now = Date.now();
+      const delay = state.breaker.openUntil > now ? state.breaker.openUntil - now : flushDelayMs();
+      scheduleFlush(delay);
+      return;
+    }
   }
 }
 
-async function postBatch(events: UsageMonitorEvent[]): Promise<void> {
+/**
+ * Record the `usage-monitor` connection result for the admin health page. BOTH the live-push
+ * (postBatch) and durable-replay (sendUsageMonitorBatch) lanes call this, so the health row reflects
+ * reality no matter which lane actually talked to the monitor. Without this in the replay lane, a
+ * replay-first failure would open the shared breaker and then suppress every later postBatch attempt
+ * for the whole backoff window — leaving the health row "healthy"/stale even though the monitor is
+ * down (the very stale-observability bug this incident was about). `logApiHealth` already swallows
+ * its own errors, but keep this best-effort so it can never break a fire-and-forget caller.
+ */
+function recordUsageMonitorHealth(ok: boolean, startedAt: number, err?: unknown): void {
+  try {
+    const errorText = ok ? undefined : err instanceof Error ? err.message : String(err);
+    // Expected receiver limits (429/503/timeouts during half-up outages) are soft so the
+    // usage-monitor lane does not paint red STOPPED forever while the local breaker already
+    // backs off pushes. Auth/schema/config errors stay hard.
+    const soft =
+      !ok &&
+      !!errorText &&
+      (/\bHTTP 429\b|\bHTTP 503\b|\brate limit|\btoo many requests|\bECONNRESET\b|\bETIMEDOUT\b|\babort(?:ed|ion)?\b|\btimeout\b/i.test(
+        errorText
+      ) ||
+        (typeof err === "object" &&
+          err != null &&
+          "status" in err &&
+          (Number((err as { status?: unknown }).status) === 429 ||
+            Number((err as { status?: unknown }).status) === 503)));
+    logApiHealth({
+      service: HEALTH_SERVICE,
+      ok,
+      latencyMs: Date.now() - startedAt,
+      ...(errorText ? { errorText } : {}),
+      soft,
+    });
+  } catch {
+    /* health recording is best-effort; never break the caller/replay path */
+  }
+}
+
+/**
+ * True when an event passes the strict shared v2 event schema — i.e. it is safe to hand to
+ * `client.send`, which parses the batch BEFORE any fetch. An event that fails here (e.g. a NaN /
+ * Infinity `quantity` that slipped past an admission guard) would throw a ZodError before the
+ * network is ever touched. That is a LOCAL data bug, not a receiver outage, so we must never let it
+ * reach the send path where its throw would be misread as a delivery failure and trip the breaker.
+ */
+function isDeliverableEvent(event: UsageMonitorEvent): boolean {
+  return UsageTelemetryV2EventSchema.safeParse(event).success;
+}
+
+/** Best-effort visibility for dropped poison events; never throws. */
+function warnPoisonDropped(count: number, lane: string): void {
+  if (count <= 0) return;
+  try {
+    console.warn(
+      `[usage-monitor-push] dropped ${count} schema-invalid telemetry event(s) from ${lane} ` +
+        `(local validation failure — not a receiver outage; breaker untouched)`
+    );
+  } catch {
+    /* logging is best-effort */
+  }
+}
+
+/** A schema-valid v2 ACK can still report a partial batch; never treat that as durable success. */
+function requireCompleteAck(
+  ack: { received: number; rejected: number },
+  expectedCount: number
+): void {
+  if (ack.received !== expectedCount || ack.rejected !== 0) {
+    throw new Error(
+      `Usage monitor acknowledged only part of the batch ` +
+        `(sent=${expectedCount}, received=${ack.received}, rejected=${ack.rejected})`
+    );
+  }
+}
+
+async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   const baseUrl = usageMonitorBaseUrl();
   const token = usageMonitorToken();
-  if (!baseUrl || !token || events.length === 0) return;
+  if (events.length === 0) return true;
+  if (!baseUrl || !token) return false;
+  if (!breakerAllowsAttempt(Date.now())) return false; // circuit open: no network call
 
   const fetchImpl = state.fetchImpl ?? fetch;
-  const url = `${baseUrl}${INGEST_PATH}`;
   const start = Date.now();
+  // Bound the attempt: a monitor that accepts the connection but never responds would otherwise
+  // leave client.send awaiting forever, so the attempt never records a failure and the breaker
+  // never trips — the half-up outage. AbortSignal converts that hang into a recorded failure.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs());
+  const timer = setTimeout(() => controller.abort(), pushTimeoutMs());
   try {
-    const res = await fetchImpl(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ events }),
-      signal: controller.signal,
-      cache: "no-store",
+    const client = createUsageTelemetryClient({
+      baseUrl,
+      token,
+      producerId: SOURCE_APP,
+      fetchImpl: (input, init) => fetchImpl(input, { ...init, signal: controller.signal }),
     });
-    logApiHealth({
-      service: HEALTH_SERVICE,
-      ok: res.ok,
-      latencyMs: Date.now() - start,
-      errorText: res.ok ? undefined : `HTTP ${res.status}`,
-    });
+    const ack = await client.send(events);
+    requireCompleteAck(ack, events.length);
+    recordUsageMonitorHealth(true, start);
+    breakerRecordResult(true, Date.now());
+    return true;
   } catch (err) {
-    logApiHealth({
-      service: HEALTH_SERVICE,
-      ok: false,
-      latencyMs: Date.now() - start,
-      errorText: err instanceof Error ? err.message : String(err),
-    });
+    recordUsageMonitorHealth(false, start, err);
+    const retryAfter =
+      err && typeof err === "object" && "retryAfterSeconds" in err
+        ? Number((err as { retryAfterSeconds?: unknown }).retryAfterSeconds)
+        : null;
+    breakerRecordResult(
+      false,
+      Date.now(),
+      Number.isFinite(retryAfter) && retryAfter != null && retryAfter >= 0 ? retryAfter : null
+    );
+    return false;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Max wall-clock for a single replay POST. Prevents a hung connection from permanently blocking the
+ * replay interval (which uses an inFlight promise guard — the promise would never settle otherwise).
+ */
+const REPLAY_SEND_TIMEOUT_MS = 30_000;
+
+/**
+ * Extract the monitor-side idempotency key named in a 409 idempotency_conflict message
+ * (`Idempotency key collision for "<key>". ...`). Null when the error isn't that contract.
+ */
+export function usageMonitorCollisionKeyFromError(err: unknown): string | null {
+  if (!(err instanceof UsageTelemetryApiError) || err.code !== "idempotency_conflict") return null;
+  const match = /Idempotency key collision for "([^"]+)"/.exec(err.message);
+  return match ? match[1] : null;
+}
+
+/**
+ * The monitor's canonical v2 persistence key for one of OUR events — needed by the replay lane
+ * to map a 409 collision key back to the exact ledger row the monitor already holds.
+ */
+export async function usageMonitorV2IdempotencyKey(eventId: string): Promise<string> {
+  return deriveUsageTelemetryV2IdempotencyKey({ producerId: SOURCE_APP, eventId });
+}
+
+/**
+ * Send a caller-owned batch and report whether the monitor acknowledged it. Unlike the live
+ * in-memory queue, this does not retain failed events: durable callers keep their ledger cursor
+ * unchanged and reconstruct the exact same idempotent payload on the next pass.
+ *
+ * Applies an AbortSignal timeout so that a connection stall cannot permanently block the caller
+ * (the replay worker's inFlight guard is never cleared if the POST promise never settles).
+ *
+ * `onIdempotencyCollision` fires (synchronously, before the false return) when the monitor
+ * rejects the whole batch with a 409 idempotency_conflict, with the exact key it named — the
+ * durable caller can then skip THAT row (the monitor already holds an event under the key) and
+ * resend the rest instead of wedging its watermark behind one poison row forever.
+ */
+async function sendReplayBatch(
+  events: UsageMonitorEvent[],
+  options?: { onIdempotencyCollision?: (idempotencyKey: string) => void }
+): Promise<boolean> {
+  if (events.length === 0) return true;
+  if (!usageMonitorEnabled()) return false;
+
+  const baseUrl = usageMonitorBaseUrl();
+  const token = usageMonitorToken();
+  if (!baseUrl || !token) return false;
+
+  // Drop schema-invalid (poison) events before the breaker check / fetch: client.send validates the
+  // batch before any network call, so a poison event is a LOCAL data bug, not a receiver outage —
+  // it must not trip the breaker. Reporting the delivery as acknowledged (return true when nothing
+  // valid remains) lets the durable caller advance its watermark past the bad row instead of
+  // re-failing it forever.
+  const deliverable = events.filter(isDeliverableEvent);
+  warnPoisonDropped(events.length - deliverable.length, "replay");
+  if (deliverable.length === 0) return true;
+
+  // Shares the live-push breaker: the replay interval fires every 60s regardless, but while the
+  // circuit is open this returns false immediately with no fetch call, so replay's fixed cadence
+  // can't turn into a second continuous hammer on top of the live queue's own backoff.
+  if (!breakerAllowsAttempt(Date.now())) return false;
+
+  const fetchImpl = state.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REPLAY_SEND_TIMEOUT_MS);
+  const start = Date.now();
+
+  try {
+    const client = createUsageTelemetryClient({
+      baseUrl,
+      token,
+      producerId: SOURCE_APP,
+      fetchImpl: (input, init) =>
+        fetchImpl(input, { ...init, signal: controller.signal }),
+    });
+    const ack = await client.send(deliverable);
+    requireCompleteAck(ack, deliverable.length);
+    // Record health from the replay lane too — if replay is the first/only lane talking to a down
+    // monitor, this is what keeps the admin health row truthful instead of stale-healthy while the
+    // shared breaker (below) suppresses the live-push lane's own health writes.
+    recordUsageMonitorHealth(true, start);
+    breakerRecordResult(true, Date.now());
+    return true;
+  } catch (err) {
+    recordUsageMonitorHealth(false, start, err);
+    const collisionKey = usageMonitorCollisionKeyFromError(err);
+    if (collisionKey && options?.onIdempotencyCollision) {
+      try {
+        options.onIdempotencyCollision(collisionKey);
+      } catch {
+        /* the collision hint is best-effort; the false return still signals failure */
+      }
+    }
+    const retryAfter =
+      err && typeof err === "object" && "retryAfterSeconds" in err
+        ? Number((err as { retryAfterSeconds?: unknown }).retryAfterSeconds)
+        : null;
+    breakerRecordResult(
+      false,
+      Date.now(),
+      Number.isFinite(retryAfter) && retryAfter != null && retryAfter >= 0 ? retryAfter : null
+    );
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function sendUsageMonitorBatch(
+  events: UsageMonitorEvent[],
+  options?: { onIdempotencyCollision?: (idempotencyKey: string) => void }
+): Promise<boolean> {
+  return sendReplayBatch(events, options);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -459,6 +1096,30 @@ function cleanMetadata(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * Delivery identity, separate from the shared five-field fallback. Source-ledger
+ * IDs make discrete events stable; a UUID allocated once per aggregate window
+ * makes same-flush provider lanes unique even though they share occurredAt.
+ */
+async function telemetryIdempotencyKey(
+  kind: string,
+  sourceId: string | undefined = randomDeliveryId()
+): Promise<string> {
+  const normalizedSourceId = sourceId?.trim() || randomDeliveryId();
+  const encoded = new TextEncoder().encode(`${kind}\0${normalizedSourceId}`);
+  const bytes = new Uint8Array(
+    await globalThis.crypto.subtle.digest("SHA-256", encoded)
+  );
+  const digest = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+  return `${SOURCE_APP}:${kind}:${digest}`;
+}
+
+function randomDeliveryId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
 // ── Test seams ─────────────────────────────────────────────────────────────────
 
 /** Inject a fetch stub for tests. Pass null to restore the real fetch. */
@@ -472,7 +1133,23 @@ export function __resetUsageMonitorState(): void {
     clearTimeout(state.flushTimer);
     state.flushTimer = null;
   }
+  state.pendingQueue.length = 0;
   state.queue.length = 0;
   state.callVolume.clear();
   state.fetchImpl = null;
+  state.inflightFlush = null;
+  state.breaker = { consecutiveFailures: 0, openUntil: 0, probing: false };
+}
+
+/** Test seam: inspect breaker + buffered-queue state without reaching into globalThis. */
+export function __usageMonitorDebugState(): {
+  breaker: { consecutiveFailures: number; openUntil: number; probing: boolean };
+  queueDepth: number;
+  callVolumeKeys: number;
+} {
+  return {
+    breaker: { ...state.breaker },
+    queueDepth: state.pendingQueue.length + state.queue.length,
+    callVolumeKeys: state.callVolume.size,
+  };
 }

@@ -7,6 +7,16 @@ updates:
       day: monday
       time: "08:00"
     open-pull-requests-limit: 5
+    # Keep the compiler and runtime declarations inside their reviewed support
+    # windows. Remove or narrow a guard only in the same PR as the migration.
+    ignore:
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
     groups:
       next-react:
         patterns:

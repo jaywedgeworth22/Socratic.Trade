@@ -25,6 +25,9 @@ import {
   type ShortVolumeRow,
   type FundamentalRow,
   type AnalystRow,
+  type SharePayload,
+  classifyTickerAlias,
+  resolveContinuousTicker,
   resolveTickerAlias,
   SecurityRefInputSchema,
   PriceSeriesSchema,
@@ -33,8 +36,18 @@ import {
   ShortVolumeRowSchema,
   FundamentalRowSchema,
   AnalystRowSchema,
+  TradeEventRowSchema,
 } from "@jaywedgeworth22/congress-trading-shared";
+import {
+  assertOperationLeaseOwnership,
+  OPERATION_LEASE_GROUPS,
+  runWithOperationLease,
+  throwIfOperationLeaseCancelled,
+  type OperationLeaseAware,
+  type OperationLeaseClaim
+} from "./operation-lease";
 import { audit, getInternalSetting, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting } from "./db";
+import { createDurableMap } from "./durable-state";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import { INDEX_UNIVERSES, symbolsForPolicyUniverse } from "./index-universes";
 import type { OHLCBar } from "./indicators";
@@ -45,6 +58,16 @@ import { getFinraDataset, getInsiderDataset, getInsiderSignals, getShortVolumeSi
 const DEFAULT_BASE_URL = "https://congress.trade";
 const DEFAULT_TIMEOUT_MS = 30_000; // App A upserts + recomputes per-trade perf anchors per call — give it room
 const LAST_DAILY_RUN_KEY = "congress-share:lastDailyRunDate";
+
+/**
+ * Module-level single-flight for the nightly batch (P2.4 / activity-feed audit §1.4).
+ * Without this, a long run can still be re-entered from the 60s scheduler tick even when the
+ * failure backoff has not yet stamped (or while the prior promise is still posting).
+ * Survives hot-reload via globalThis; cleared when the in-flight promise settles.
+ */
+const congressDailyShareInFlightHost = globalThis as unknown as {
+  __congressDailyShareInFlight?: Promise<OperationLeaseAware<CongressDailyShareSummary> | null>;
+};
 
 /**
  * Origin tag stamped on every outbound payload so the counterpart's receiver can recognize App B's
@@ -111,6 +134,100 @@ function maxClosesPerTicker(): number {
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : DEFAULT_MAX_CLOSES_PER_TICKER;
 }
 
+/** How many App A price-need tickers to pull per nightly drain (paginated on App A). */
+function priceNeedsLimit(): number {
+  const v = Number(process.env.CONGRESS_SHARE_PRICE_NEEDS_LIMIT ?? 500);
+  return Number.isFinite(v) && v > 0 ? Math.min(Math.floor(v), 2000) : 500;
+}
+
+/** App A export path for tickers still lacking history for congressional performance. */
+const PRICE_NEEDS_PATH = "/api/export/price-needs";
+
+export interface CongressPriceNeedTicker {
+  ticker: string;
+  oldestTradeDate?: string;
+  needsDeepHistory?: boolean;
+  reasons?: string[];
+}
+
+export interface CongressPriceNeedsResponse {
+  tickers: CongressPriceNeedTicker[];
+  spx?: {
+    oldestTradeDate?: string | null;
+    needsHistoryBefore?: string | null;
+  };
+  summary?: Record<string, number>;
+}
+
+/**
+ * Pull App A's list of congressional tickers that still need price/SPX history for
+ * performance-vs-S&P. Soft-fails to [] on any transport/auth error so the nightly
+ * share never aborts. Uses the same CONGRESS_TRADE_TOKEN (App A INGEST_TOKEN).
+ */
+export async function fetchCongressPriceNeeds(
+  limit: number = priceNeedsLimit(),
+  fetchImpl: typeof fetch = fetch
+): Promise<CongressPriceNeedsResponse> {
+  const empty: CongressPriceNeedsResponse = { tickers: [] };
+  const token = congressTradeToken();
+  if (!token) return empty;
+  const url = `${congressTradeBaseUrl()}${PRICE_NEEDS_PATH}?limit=${encodeURIComponent(String(limit))}`;
+  const timeoutMs = Number(process.env.CONGRESS_SHARE_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl(url, {
+      method: "GET",
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+      signal: controller.signal,
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      console.error(`[congress-share] price-needs failed: HTTP ${res.status}`);
+      return empty;
+    }
+    const body = (await res.json()) as CongressPriceNeedsResponse;
+    const tickers = Array.isArray(body?.tickers)
+      ? body.tickers
+          .filter((t) => t && typeof t.ticker === "string" && t.ticker.trim())
+          .map((t) => ({
+            ticker: normalizeSymbol(t.ticker),
+            oldestTradeDate: typeof t.oldestTradeDate === "string" ? t.oldestTradeDate : undefined,
+            needsDeepHistory: t.needsDeepHistory === true,
+            reasons: Array.isArray(t.reasons) ? t.reasons.map(String) : undefined
+          }))
+          .filter((t) => Boolean(t.ticker))
+      : [];
+    return {
+      tickers,
+      spx: body?.spx,
+      summary: body?.summary
+    };
+  } catch (err) {
+    console.error("[congress-share] price-needs error:", err instanceof Error ? err.message : err);
+    return empty;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Merge App A needs (priority) with the local base universe, cap to maxDailyTickers.
+ * Needs tickers come first so congressional performance gaps drain before fill.
+ */
+export function mergeShareUniverse(base: string[], needs: string[], max = maxDailyTickers()): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of [...needs, ...base]) {
+    const sym = normalizeSymbol(raw);
+    if (!sym || seen.has(sym)) continue;
+    seen.add(sym);
+    out.push(sym);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 /** Split an array into fixed-size chunks (for insider / short-volume rows). */
 function rowChunks<T>(rows: T[], size = MAX_ROWS_PER_POST): T[][] {
   if (rows.length === 0) return [];
@@ -159,17 +276,14 @@ export type CongressShortVol = ShortVolumeRow;
 export type CongressFundamental = FundamentalRow;
 export type CongressAnalyst = AnalystRow;
 
-export interface CongressSharePayload {
+/**
+ * Outbound share payload. Same wire shape as shared `SharePayload`; `refs` may
+ * use the local optional-field builder (`CongressRef`) before schema validation
+ * coerces them to `SecurityRefInput`.
+ */
+export type CongressSharePayload = Omit<SharePayload, "refs"> & {
   refs?: CongressRef[];
-  spx?: PriceClose[];
-  prices?: PriceSeries[];
-  insider?: InsiderRow[];
-  shortVolume?: ShortVolumeRow[];
-  fundamentals?: FundamentalRow[];
-  analyst?: AnalystRow[];
-  /** Provenance tag (defaults to APP_B_ORIGIN on send). Lets a receiver skip rows it originated. */
-  origin?: string;
-}
+};
 
 export interface CongressShareResult {
   ok: boolean;
@@ -194,13 +308,35 @@ export interface CongressShareResult {
 // ── Mappers (pure, unit-testable) ──────────────────────────────────────────────
 
 /**
- * Canonicalize a symbol for OUTBOUND rows: normalize (trim+upper) then resolve corporate-action
- * aliases via the shared map (FB->META, SQ->XYZ, ATVI->MSFT, ...). Applied to the `ticker` field of
- * every row App B sends to App A so a renamed ticker never fragments into a dead-symbol row on App A's
- * side. Well-formed non-aliased symbols (incl. share-class hyphens like BRK-B) pass through unchanged.
+ * Canonicalize a symbol for OUTBOUND IDENTITY / company-ref rows: normalize (trim+upper) then
+ * resolve corporate-action aliases via the shared map (FB->META, SQ->XYZ, ATVI->MSFT, ...). This is
+ * display/identity resolution — acquisitions fold onto the acquirer so App A does not keep a dead
+ * securities_ref row. For MARKET DATA (prices/fundamentals/analyst/insider/short-vol) use
+ * `canonicalMarketDataSymbol` instead, which drops acquisition sources so their history is never
+ * relabeled onto the acquirer. Well-formed non-aliased symbols (incl. share-class hyphens like
+ * BRK-B) pass through unchanged.
  */
 export function canonicalOutboundSymbol(symbol: string): string {
   return resolveTickerAlias(normalizeSymbol(symbol));
+}
+
+/**
+ * Canonicalize a symbol for MARKET-DATA rows (price / fundamentals / analyst / insider /
+ * short-volume). Uses the shared package's rename-vs-acquisition classification
+ * (`classifyTickerAlias` / `resolveContinuousTicker` / curated `TICKER_RENAMES` +
+ * `TICKER_ACQUISITIONS`) — do NOT hand-roll a local acquisition set.
+ *
+ * - RENAMES (FB->META, SQ->XYZ, …): fold to the current ticker (continuous series).
+ * - ACQUISITIONS (ATVI, TWX, RHT, …): return `null` so the caller DROPS the row — an acquired
+ *   ticker's numbers must never be relabeled onto the acquirer.
+ * - Non-aliased well-formed symbols pass through unchanged.
+ */
+export function canonicalMarketDataSymbol(symbol: string): string | null {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) return null;
+  const classified = classifyTickerAlias(normalized);
+  if (classified?.class === "acquisition") return null;
+  return resolveContinuousTicker(normalized);
 }
 
 /**
@@ -237,7 +373,7 @@ export function marketQuoteToFundamentals(
   q: Pick<MarketQuote, "symbol" | "peRatio" | "eps" | "beta" | "dividendYield" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow" | "fcfYield" | "debtToEquity" | "epsGrowth">,
   date: string
 ): CongressFundamental | null {
-  const ticker = canonicalOutboundSymbol(q.symbol);
+  const ticker = canonicalMarketDataSymbol(q.symbol); // renames only; drops acquired tickers
   if (!ticker) return null;
   const row: CongressFundamental = { ticker, date };
   const pe = numOrUndef(q.peRatio); if (pe !== undefined) row.peRatio = pe;
@@ -262,7 +398,7 @@ export function marketQuoteToAnalyst(
   q: Pick<MarketQuote, "symbol" | "analystRating" | "analystBySource" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian">,
   date: string
 ): CongressAnalyst | null {
-  const ticker = canonicalOutboundSymbol(q.symbol);
+  const ticker = canonicalMarketDataSymbol(q.symbol); // renames only; drops acquired tickers
   if (!ticker) return null;
   const counts = { strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0 };
   let haveCounts = false;
@@ -308,7 +444,7 @@ export function ohlcBarsToCloses(bars: OHLCBar[] | null | undefined): CongressCl
 
 /** Build a per-ticker price entry from OHLC bars. currentPrice/currentPriceDate = most recent close. */
 export function ohlcBarsToPriceEntry(symbol: string, bars: OHLCBar[] | null | undefined): CongressPrice | null {
-  const ticker = canonicalOutboundSymbol(symbol);
+  const ticker = canonicalMarketDataSymbol(symbol); // renames only; drops acquired tickers (never relabel bars onto the acquirer)
   if (!ticker) return null;
   const closes = ohlcBarsToCloses(bars);
   if (closes.length === 0) return null;
@@ -339,8 +475,10 @@ export function buildInsiderImport(): CongressInsider[] {
     const sig = signals[sym];
     const a = agg.get(sym);
     if (!sig || !a) continue;
+    const ticker = canonicalMarketDataSymbol(sym);
+    if (!ticker) continue; // acquired ticker — drop rather than relabel onto the acquirer
     out.push({
-      ticker: canonicalOutboundSymbol(sym),
+      ticker,
       date: a.date,
       sentiment: sig.insiderSentiment,
       buyFilings: sig.buyFilings,
@@ -365,7 +503,9 @@ export function buildShortVolumeImport(): CongressShortVol[] {
     if (!sig) continue;
     const date = sig.asOf ?? ds?.asOf;
     if (!date) continue;
-    out.push({ ticker: canonicalOutboundSymbol(sym), date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
+    const ticker = canonicalMarketDataSymbol(sym);
+    if (!ticker) continue; // acquired ticker — drop rather than relabel onto the acquirer
+    out.push({ ticker, date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
   }
   return out.slice(0, maxDailyTickers());
 }
@@ -414,6 +554,7 @@ export function dropInvalidShareRows(
       shortVolume: filterRows(payload.shortVolume, ShortVolumeRowSchema, "shortVolume"),
       fundamentals: filterRows(payload.fundamentals, FundamentalRowSchema, "fundamentals"),
       analyst: filterRows(payload.analyst, AnalystRowSchema, "analyst"),
+      trades: filterRows(payload.trades, TradeEventRowSchema, "trades"),
     },
     dropped,
   };
@@ -438,12 +579,20 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     insider: clean.insider?.length ?? 0,
     shortVolume: clean.shortVolume?.length ?? 0,
     fundamentals: clean.fundamentals?.length ?? 0,
-    analyst: clean.analyst?.length ?? 0
+    analyst: clean.analyst?.length ?? 0,
+    trades: clean.trades?.length ?? 0
   };
   const token = congressTradeToken();
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
   const total = sent.refs + sent.spx + sent.prices + sent.insider + sent.shortVolume + sent.fundamentals + sent.analyst;
   if (total === 0) {
+    // Distinguish a genuinely-empty input (nothing to send → legitimate skip) from a payload whose
+    // rows were ALL rejected by the shared schema. The latter is a real failure: counting it as a
+    // skip would let the daily-run marker advance and silently swallow schema/API drift until the
+    // next day. Returning skipped:false makes runCongressDailyShare count it in failedPosts.
+    if (Object.keys(dropped).length > 0) {
+      return { ok: false, skipped: false, reason: "all-rows-dropped", sent };
+    }
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 
@@ -519,10 +668,17 @@ export function chunkPrices(
 
 // ── Scan-refs forwarding (after each scan) ──────────────────────────────────────
 
-// Per-symbol throttle so frequent scans don't re-POST the same refs. globalThis-pinned so Next.js
-// HMR module duplication can't reset it (mirrors the scheduler's stop-monitor guard).
-const refGuardHost = globalThis as unknown as { __congressRefSentAt?: Map<string, number> };
-const refSentAt: Map<string, number> = refGuardHost.__congressRefSentAt ?? (refGuardHost.__congressRefSentAt = new Map());
+// Per-symbol throttle so frequent scans don't re-POST the same refs. Durable (survives a process
+// restart): the app now auto-deploys on every merge to main, and without this a redeploy would make
+// every symbol look "never shared" to the very next scan, re-POSTing refs shared minutes earlier.
+// Low stakes either way (App A's import endpoint is idempotent — worst case is redundant, harmless
+// network calls, per the module header above), so debounced (not immediate) flush is fine here.
+// Lazily created (not at module top level) — see provider-rate-limit.ts's quotaStore() for why
+// eagerly calling createDurableMap() at import time risks a circular-import TDZ crash.
+let refSentAtInstance: ReturnType<typeof createDurableMap<number>> | undefined;
+function refSentAt(): ReturnType<typeof createDurableMap<number>> {
+  return refSentAtInstance ?? (refSentAtInstance = createDurableMap<number>("congress-share-ref-throttle"));
+}
 
 /**
  * Forward the scan's candidate company refs — plus the fundamentals + analyst consensus App B just
@@ -547,7 +703,7 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
     for (const quote of scan.topCandidates ?? []) {
       const ref = marketQuoteToRef(quote);
       if (!ref) continue;
-      const sentAt = refSentAt.get(ref.ticker);
+      const sentAt = refSentAt().get(ref.ticker);
       if (sentAt !== undefined && now - sentAt < ttl) continue; // throttled
       refs.push(ref);
       if (includeFundamentals) {
@@ -558,14 +714,14 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
       }
       claimed.push(ref.ticker);
       // Optimistically claim BEFORE the await so concurrent scans don't double-POST the same ref.
-      refSentAt.set(ref.ticker, now);
+      refSentAt().set(ref.ticker, now);
       if (refs.length >= MAX_REFS_PER_POST) break;
     }
     if (refs.length === 0) return null;
     const result = await shareWithCongressTrade({ refs, fundamentals, analyst });
     if (!result.ok) {
       // Roll back the throttle so a later scan retries the failed refs (don't spam on success).
-      for (const ticker of claimed) refSentAt.delete(ticker);
+      for (const ticker of claimed) refSentAt().delete(ticker);
     }
     return result;
   } catch (err) {
@@ -576,7 +732,7 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
 
 /** Test seam: reset the in-memory scan-refs throttle. */
 export function resetCongressRefThrottle(): void {
-  refSentAt.clear();
+  refSentAt().clear();
 }
 
 // ── Nightly daily-close + S&P-500 batch ─────────────────────────────────────────
@@ -586,10 +742,16 @@ function utcDate(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
-/** True when the once-per-day batch has not yet run for `now`'s UTC date. Pure (no env gate). */
+/** True when the once-per-day batch has not yet run for `now`'s UTC date and isn't in failure backoff. Pure (no env gate). */
 export function isCongressDailyShareDue(now: number): boolean {
   const last = getInternalSetting<string>(LAST_DAILY_RUN_KEY);
-  return last !== utcDate(now);
+  if (last === utcDate(now)) return false;
+  
+  // 60-minute backoff after a failure to prevent unbounded retry storms
+  const lastFailure = getInternalSetting<number>("congress_share_last_failure_ms");
+  if (lastFailure && now - lastFailure < 60 * 60 * 1000) return false;
+  
+  return true;
 }
 
 /** Union of every user's watchlist symbols + policy-universe symbols (what this app monitors). */
@@ -663,6 +825,15 @@ export interface RunCongressDailyShareOptions {
    * Dow 30, …) plus the monitored symbols — for a broad cross-index backfill. Still capped by maxDailyTickers.
    */
   allIndexes?: boolean;
+  /**
+   * Pull App A's /api/export/price-needs and prefer those congressional tickers in the share
+   * universe (deep history for tickers flagged needsDeepHistory). When set without other symbols,
+   * the universe is needs-only (does not advance the daily marker unless also the scheduled path).
+   * The scheduled nightly path always merges a page of needs even when this is false.
+   */
+  fromAppANeeds?: boolean;
+  /** Opaque durable claim supplied by the outer admin guard; background callers omit it. */
+  operationLeaseClaim?: OperationLeaseClaim;
 }
 
 export interface CongressDailyShareSummary {
@@ -671,6 +842,7 @@ export interface CongressDailyShareSummary {
   reason?: string;
   tickers: number;
   priced: number;
+  refRows?: number;
   spxRows: number;
   insiderRows: number;
   shortVolRows: number;
@@ -680,36 +852,178 @@ export interface CongressDailyShareSummary {
   responses?: unknown[];
 }
 
+let activeDailySharePromise: Promise<OperationLeaseAware<CongressDailyShareSummary>> | null = null;
+
 /**
  * Collect the monitored universe's daily closes + the S&P-500 (^GSPC) series and POST them to App A
  * in capped chunks. Reuses the app's history cache, so a name fetched earlier in the day is free.
  * Self-guarded; safe to fire-and-forget. The scheduler calls the gated wrapper below; the admin
  * route calls this with force:true.
  */
-export async function runCongressDailyShare(options: RunCongressDailyShareOptions = {}): Promise<CongressDailyShareSummary> {
+export async function runCongressDailyShare(
+  options: RunCongressDailyShareOptions = {}
+): Promise<OperationLeaseAware<CongressDailyShareSummary>> {
+  if (activeDailySharePromise) {
+    return activeDailySharePromise;
+  }
+  
+  const promise = (async () => {
+    const now = options.now ?? Date.now();
+    const empty = {
+      tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
+      posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
+    };
+    if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
+
+    const customUniverse = Array.isArray(options.symbols) && options.symbols.length > 0;
+    if (!options.force && !customUniverse && !isCongressDailyShareDue(now)) {
+      return { ok: false, skipped: true, reason: "not-due", ...empty };
+    }
+
+    const guarded = await runWithOperationLease(
+      {
+        group: OPERATION_LEASE_GROUPS.CONGRESS_SHARE,
+        operation: "congress-share",
+        claim: options.operationLeaseClaim
+      },
+      async (claim, signal) => runCongressDailyShareUnlocked(options, claim, signal)
+    );
+    if (!guarded.acquired) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "operation-in-flight",
+        ...empty,
+        operationLease: guarded.busy
+      };
+    }
+    return guarded.value;
+  })();
+
+  activeDailySharePromise = promise;
+  try {
+    return await promise;
+  } finally {
+    activeDailySharePromise = null;
+  }
+}
+
+async function fetchNasdaqScreenerRefs(): Promise<CongressRef[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch("https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=8000&offset=0", {
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { accept: "application/json", "user-agent": "Mozilla/5.0" }
+    });
+    if (!response.ok) return [];
+    const payload = await response.json();
+    const rows = Array.isArray(payload?.data?.table?.rows) ? payload.data.table.rows : [];
+    
+    const seen = new Set<string>();
+    const refs: CongressRef[] = [];
+    
+    for (const row of rows) {
+      const rawSymbol = String(row.symbol ?? "");
+      const sym = normalizeSymbol(rawSymbol).replace(/\//g, "-");
+      const ticker = canonicalOutboundSymbol(sym);
+      if (!ticker || seen.has(ticker)) continue;
+      
+      const ref: CongressRef = { ticker, assetClass: "equity" };
+      
+      const rawName = typeof row.name === "string" ? row.name.trim() : "";
+      const cleanedName = rawName.replace(/\s*\(Representing\s*[-–—]*\s*\)\s*$/i, "").trim();
+      const companyName = cleanedName || rawName;
+      if (companyName) ref.companyName = companyName;
+      
+      if (typeof row.sector === "string" && row.sector.trim()) ref.sector = row.sector.trim();
+      if (typeof row.industry === "string" && row.industry.trim()) ref.industry = row.industry.trim();
+      
+      const marketCapStr = String(row.marketCap ?? "").replace(/[$,%\s,]/g, "");
+      const marketCap = Number(marketCapStr);
+      if (Number.isFinite(marketCap) && marketCap > 0) ref.marketCap = marketCap;
+      
+      refs.push(ref);
+      seen.add(ticker); // Avoid duplicates if screener has multiple rows mapping to same canonical ticker
+    }
+    return refs;
+  } catch (err) {
+    console.error("[congress-share] failed to fetch screener refs:", err);
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runCongressDailyShareUnlocked(
+  options: RunCongressDailyShareOptions,
+  operationLeaseClaim: OperationLeaseClaim,
+  operationLeaseSignal: AbortSignal
+): Promise<CongressDailyShareSummary> {
   const now = options.now ?? Date.now();
   const empty = {
     tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
     posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
   };
   if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
-
   const customUniverse = Array.isArray(options.symbols) && options.symbols.length > 0;
+  // Recheck after durable acquisition: another process may have completed and advanced the daily
+  // marker after this caller's cheap pre-check but before it won the lease.
   if (!options.force && !customUniverse && !isCongressDailyShareDue(now)) {
     return { ok: false, skipped: true, reason: "not-due", ...empty };
   }
+  assertOperationLeaseOwnership(operationLeaseClaim);
 
-  const baseUniverse = customUniverse
-    ? options.symbols!
-    : options.allIndexes
-      ? [...allIndexUniverseSymbols(), ...collectMonitoredSymbols()]
-      : collectMonitoredSymbols();
-  const universe = Array.from(new Set(baseUniverse.map(normalizeSymbol).filter(Boolean))).slice(0, maxDailyTickers());
+  // Congressional price-needs from App A: always consulted on scheduled runs so performance
+  // gaps drain; also when admin passes fromAppANeeds. Soft-fails to empty.
+  const shouldFetchNeeds = options.fromAppANeeds === true || !customUniverse;
+  let needsResp: CongressPriceNeedsResponse = { tickers: [] };
+  if (shouldFetchNeeds) {
+    throwIfOperationLeaseCancelled(operationLeaseSignal);
+    needsResp = await fetchCongressPriceNeeds(priceNeedsLimit());
+  }
+  const needTickers = needsResp.tickers.map((t) => t.ticker).filter(Boolean);
+  // Full history for App A-flagged deep needs (old trades) and when fullHistory is on.
+  const deepNeedSet = new Set(
+    needsResp.tickers.filter((t) => t.needsDeepHistory === true).map((t) => t.ticker)
+  );
+
+  let universe: string[];
+  if (customUniverse && !options.fromAppANeeds) {
+    // Admin targeted symbols only — do not merge App A needs (caller is explicit).
+    universe = Array.from(new Set(options.symbols!.map(normalizeSymbol).filter(Boolean))).slice(
+      0,
+      maxDailyTickers()
+    );
+  } else if (options.fromAppANeeds && !customUniverse && !options.allIndexes) {
+    // Admin/ops: App A needs only (may be empty if App A is fully covered).
+    universe = Array.from(new Set(needTickers)).slice(0, maxDailyTickers());
+  } else {
+    const base = customUniverse
+      ? options.symbols!
+      : options.allIndexes
+        ? [...allIndexUniverseSymbols(), ...collectMonitoredSymbols()]
+        : collectMonitoredSymbols();
+    // Scheduled path: needs first (priority drain), then monitored/index fill.
+    universe = mergeShareUniverse(base, needTickers);
+  }
+
+  // Treat fromAppANeeds-only as a custom universe so a manual needs drain does not
+  // advance the once-per-day marker (same rule as symbols: override).
+  const advancesDailyMarker = !customUniverse && !options.fromAppANeeds;
 
   // S&P-500 daily closes (^GSPC) — sent once per day regardless of the ticker universe.
+  // Full history when App A reports SPX gaps before oldest congressional trade, or fullHistory flag.
   let spx: CongressClose[] = [];
+  throwIfOperationLeaseCancelled(operationLeaseSignal);
   try {
     spx = ohlcBarsToCloses(await fetchDailyOHLC("^GSPC", now));
+    const spxCap =
+      options.fullHistory || needsResp.spx?.needsHistoryBefore
+        ? Number.POSITIVE_INFINITY
+        : maxClosesPerTicker();
+    if (spx.length > spxCap) spx = spx.slice(-spxCap);
   } catch (err) {
     console.error("[congress-share] SPX fetch failed:", err);
   }
@@ -717,14 +1031,19 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   const concurrency = Number(process.env.CONGRESS_SHARE_CONCURRENCY ?? 4) || 4;
   // Deep-history backfill sends each symbol's FULL series (still chunked into small POSTs); the nightly
   // run caps to the most-recent N closes (App A backfills deeper itself) to keep each POST under the wall.
-  const maxCloses = options.fullHistory ? Number.POSITIVE_INFINITY : maxClosesPerTicker();
+  // Tickers from App A price-needs with needsDeepHistory always get full history so old trade anchors fill.
+  const defaultMaxCloses = options.fullHistory ? Number.POSITIVE_INFINITY : maxClosesPerTicker();
   const capCloses = (entry: CongressPrice | null): CongressPrice | null => {
-    if (entry && entry.closes.length > maxCloses) entry.closes = entry.closes.slice(-maxCloses);
+    if (!entry) return entry;
+    const maxCloses =
+      options.fullHistory || deepNeedSet.has(entry.ticker) ? Number.POSITIVE_INFINITY : defaultMaxCloses;
+    if (entry.closes.length > maxCloses) entry.closes = entry.closes.slice(-maxCloses);
     return entry;
   };
   const perTicker = async (symbols: string[]): Promise<CongressPrice[]> =>
     (
       await mapPool(symbols, concurrency, async (symbol) => {
+        throwIfOperationLeaseCancelled(operationLeaseSignal);
         try {
           return capCloses(ohlcBarsToPriceEntry(symbol, await fetchDailyOHLC(symbol, now)));
         } catch {
@@ -741,6 +1060,7 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
     const toISO = toBusinessDay(now) ?? new Date(now).toISOString().slice(0, 10);
     const fromISO = new Date(now - years * 365 * 86_400_000).toISOString().slice(0, 10);
     let seriesBySymbol = new Map<string, OHLCBar[]>();
+    throwIfOperationLeaseCancelled(operationLeaseSignal);
     try {
       seriesBySymbol = await fetchGroupedDailyBarsRange(fromISO, toISO, { tickers: universe });
     } catch (err) {
@@ -760,14 +1080,19 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   }
 
   // App B's two highest-fit datasets for congress.trade — already cached locally, sent once/day.
-  const insider = customUniverse ? [] : buildInsiderImport();
-  const shortVolume = customUniverse ? [] : buildShortVolumeImport();
+  // Skip on targeted custom/needs-only runs so a performance backfill stays price-focused.
+  const insider = advancesDailyMarker ? buildInsiderImport() : [];
+  const shortVolume = advancesDailyMarker ? buildShortVolumeImport() : [];
+  
+  // Push company refs for the full public screener
+  const refs = await fetchNasdaqScreenerRefs();
 
   // Send each dataset as its OWN bounded POST(s) rather than one bundled megabatch: App A's per-call
   // work (upserts + per-trade perf recompute) made big combined payloads exceed the timeout, and a
   // bundled POST also let one oversized dataset abort the rest. Independent small POSTs each succeed.
   const payloads: CongressSharePayload[] = [];
   if (spx.length > 0) payloads.push({ spx });
+  for (const rows of rowChunks(refs, MAX_REFS_PER_POST)) payloads.push({ refs: rows });
   for (const rows of rowChunks(insider)) payloads.push({ insider: rows });
   for (const rows of rowChunks(shortVolume)) payloads.push({ shortVolume: rows });
   for (const prices of chunkPrices(priceEntries)) payloads.push({ prices });
@@ -775,12 +1100,15 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   const responses: unknown[] = [];
   let posts = 0;
   let failedPosts = 0;
-  const sent = { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 };
+  const sent = { refs: 0, spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 };
   for (const payload of payloads) {
+    assertOperationLeaseOwnership(operationLeaseClaim);
     const result = await shareWithCongressTrade(payload);
+    throwIfOperationLeaseCancelled(operationLeaseSignal);
     posts++;
     if (result.ok) {
       responses.push(result.response);
+      sent.refs += result.sent.refs ?? 0;
       sent.spx += result.sent.spx;
       sent.prices += result.sent.prices;
       sent.closes += result.sent.closes;
@@ -792,19 +1120,26 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   }
 
   const ok = posts > 0 && failedPosts === 0;
-  // Advance the once-per-day marker only for the real scheduled universe (not admin custom-symbol tests).
-  if (ok && !customUniverse) {
+  // Advance the once-per-day marker only for the real scheduled universe (not admin custom-symbol /
+  // fromAppANeeds-only drains).
+  if (advancesDailyMarker) {
+    assertOperationLeaseOwnership(operationLeaseClaim);
     try {
-      setInternalSetting(LAST_DAILY_RUN_KEY, utcDate(now));
+      if (ok) {
+        setInternalSetting(LAST_DAILY_RUN_KEY, utcDate(now));
+      } else {
+        setInternalSetting("congress_share_last_failure_ms", now);
+      }
     } catch (err) {
-      console.error("[congress-share] failed to persist daily-run marker:", err);
+      console.error("[congress-share] failed to persist daily-run or failure marker:", err);
     }
   }
 
   const summary: CongressDailyShareSummary = {
-    ok,
+    ok: posts === 0 && universe.length === 0 ? true : ok,
     tickers: universe.length,
     priced: priceEntries.length,
+    refRows: refs.length,
     spxRows: spx.length,
     insiderRows: insider.length,
     shortVolRows: shortVolume.length,
@@ -815,17 +1150,20 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   };
   try {
     audit("congress_share_daily", {
-      ok,
-      reason: posts === 0 ? "nothing-to-send" : undefined,
+      ok: summary.ok,
+      reason: posts === 0 ? (universe.length === 0 ? "nothing-to-send" : "nothing-to-send") : undefined,
       tickers: summary.tickers,
       priced: summary.priced,
+      refRows: summary.refRows,
       spxRows: summary.spxRows,
       insiderRows: summary.insiderRows,
       shortVolRows: summary.shortVolRows,
       posts,
       failedPosts,
       sent,
-      custom: customUniverse
+      custom: customUniverse,
+      fromAppANeeds: options.fromAppANeeds === true,
+      needsCount: needTickers.length
     });
   } catch {
     // audit is best-effort
@@ -836,12 +1174,28 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
 /**
  * Scheduler entry point: run the nightly batch at most once per UTC day, only when automatic
  * sharing is enabled. Self-guarded; returns null when disabled/not due so the tick stays clean.
+ * Single-flight + 60-minute failure backoff (see isCongressDailyShareDue) prevent retry storms.
  */
-export async function runCongressDailyShareIfDue(now: number = Date.now()): Promise<CongressDailyShareSummary | null> {
+export async function runCongressDailyShareIfDue(
+  now: number = Date.now()
+): Promise<OperationLeaseAware<CongressDailyShareSummary> | null> {
   try {
     if (!isCongressShareAutoEnabled()) return null;
     if (!isCongressDailyShareDue(now)) return null;
-    return await runCongressDailyShare({ now });
+    const existing = congressDailyShareInFlightHost.__congressDailyShareInFlight;
+    if (existing) return existing;
+    const runPromise = runCongressDailyShare({ now })
+      .catch((err) => {
+        console.error("[congress-share] daily batch error:", err);
+        return null;
+      })
+      .finally(() => {
+        if (congressDailyShareInFlightHost.__congressDailyShareInFlight === runPromise) {
+          delete congressDailyShareInFlightHost.__congressDailyShareInFlight;
+        }
+      });
+    congressDailyShareInFlightHost.__congressDailyShareInFlight = runPromise;
+    return runPromise;
   } catch (err) {
     console.error("[congress-share] daily batch error:", err);
     return null;

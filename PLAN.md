@@ -1,9 +1,900 @@
+# Active Implementation Plan
+
+> [!WARNING]
+> **Read the blockquote entries below with suspicion; some are spliced.** This file is
+> `merge=union` in `.gitattributes` (with `STATUS.md` and `docs/EFFORT-LOG.md`) so that
+> concurrent PRs do not conflict on it. Union-merge *interleaves* both sides of a
+> concurrent edit instead of raising a conflict, so an entry can end up filed under a
+> different agent's heading. There is a live example a few lines down: the
+> **2026-07-29 — Expose portfolio errors in UI (ANTIGRAVITY)** heading is followed by text
+> about `done_for_day` order history on a `cursor/pending-orders-*` branch — a different
+> agent's entry, wearing this one's title. Trust the linked `docs/rollouts/` note over the
+> heading it appears under.
+>
+> This file has also drifted from a *plan* into an append-only log (2,000+ lines). For what
+> is actually true right now, read `STATUS.md` (snapshot: state, blockers, next action) and
+> `docs/EFFORT-LOG.md` (effort board). Flagged 2026-08-01 during the Codex-review
+> remediation; the restructure is deliberately left as an owner call, since collapsing this
+> history is not something an agent should do unilaterally.
+
+> **2026-07-29 — Adjusted Day P&L for Cash Flows (ANTIGRAVITY, branch `agent/ag-day-pnl`).**
+> Updated `deriveDayPnl` to correctly handle intraday cash deposits and withdrawals by reusing the `inferExternalCashFlows` helper. The dashboard will now compute P&L correctly by netting out any cash flows, preventing the UI from misattributing cash deposits as profit. Tests and build passed. Rollout: `docs/rollouts/2026-07-29-day-pnl-cash-flow-adjusted.md`.
+
+> **2026-07-29 — Expose portfolio errors in UI (ANTIGRAVITY, branch `agent/ag-portfolio-error`).**
+> `done_for_day` history as open/working; ops `?orders=1` for live vs listed
+> diagnosis. Branch `cursor/pending-orders-open-count-0aef`. Rollout:
+> `docs/rollouts/2026-07-27-pending-orders-done-for-day.md`.
+> **2026-07-26 — Free-first enrichment cascade + coverage report (CURSOR).** Prefer
+> free/keyless + RapidAPI failover before paid native keys; coverage Admin/ops. Follow-up:
+> FilingAPI.dev, SEC XBRL default ON, RapidAPI yh-finance / real-time-finance-data /
+> seeking-alpha (pricing-page Subscribe links in rollout). Branch
+> `cursor/free-cascade-coverage-0aef`. Rollout:
+> `docs/rollouts/2026-07-26-free-cascade-coverage.md`.
+> **2026-07-27 — Dormant features readiness (CURSOR).** Substrate so remaining default-off
+> capabilities can be enabled safely: `dormantFeatures` checklist on `/api/admin/rag-coverage`,
+> `LANDING_PAGE_ENABLED` unset=ON with explicit off-switch, CSP report-uri collector, and
+> `VECTOR_EMBED_CLEAN_TEXT` bumping `embed_rev` 1→2. Do **not** flip MULTIQUERY/HyDE, ASOF_STRICT,
+> FMP dual-gate, SEC8K full body, or legacy purge without owner preconditions. Branch
+> `cursor/dormant-features-impl-1c6c`. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`.
+> **2026-07-25 — Fix vs-SPY benchmark (CURSOR).** Correct cash-flow-aware TWR vs SPY so all-cash
+> deposits/resets are not alpha and Home shows You / SPY decomposition. Branch
+> `cursor/fix-vs-spy-benchmark-9833`. Rollout: `docs/rollouts/2026-07-25-fix-vs-spy-benchmark.md`.
+> **2026-07-22 — PR #1792 typecheck repair (CODEX).** The provider-generic health-lane merge
+> resolution is now aligned with the current durable dispatch API in `28a09b84`; run hosted
+> verification, let auto-merge land it, and confirm the exact post-merge deployment receipt.
+> **2026-07-24 - RAG enablement + Exit Contract B1 + prune (CURSOR).** Safe RAG flags default ON
+> (`docs/FEATURE-ENABLEMENT-BACKLOG.md`). Exit Phase B: B1 substrate landed; B3 interim already on
+> main (#1786); B4–B6 + Phase C remain Planned. Wave-2 coaching/reflection DISCARD (branches
+> deleted). Stale no-PR origin tips pruned (19). Next: Infisical mirror if desired; Exit B4 before
+> live shorts; full verify gate on PR.
+
+> **2026-07-24 - Effort-board accuracy audit (CURSOR).** Cleared empty In Progress; corrected
+> Planned/Completed status claims against merged PRs. Active product backlog remains: RAG/feature
+> enablement (`docs/FEATURE-ENABLEMENT-BACKLOG.md`), Exit-strategy Phases B/C, and remaining
+> activity-audit P2 items that are still unmerged. Stale w2 coaching/reflection branches still exist
+> on origin without PRs if someone wants to land them.
+
+
+> **2026-07-22 — Approval Busy/red-team/UptimeRobot repair (CODEX, branch
+> `codex/trade-approval-redteam-uptime-20260722`).** Keep the per-account strategy lock as the
+> correctness fence, but retry its side-effect-free Busy response in the approval client so a user
+> does not have to race a long LLM run. Use OpenRouter's account-filtered model list before choosing
+> rotation slots; explicit unavailable model selections remain fail-closed and require owner choice.
+> Keep the external monitor on public `/api/health`; do not expose authenticated `/api/ready` just for
+> monitoring. Verify the dedicated branch with the ordered lint/tsc/test/build gate, then land via
+> `scripts/land.sh` if the owner wants deployment.
+> **2026-07-24 - Resolve open efforts + stale issue mirrors (CURSOR).** Board hygiene moves
+> already-merged In Progress rows to Completed; restores ruleset `check-pin` required alongside
+> `verify`; drains Sentry CI spam blocking runners. Four open PRs still await `verify`. RAG
+> enablement remains Planned (re-embed proof). Rollout:
+> `docs/rollouts/2026-07-24-resolve-open-efforts.md`.
+
+> **2026-07-22 — PR #1792 typecheck repair (CODEX).** The provider-generic health-lane merge
+> resolution is now aligned with the current durable dispatch API in `28a09b84`; run hosted
+> verification, let auto-merge land it, and confirm the exact post-merge deployment receipt.
+> **2026-07-23 - Unstick remaining open PRs (CURSOR).** Five open PRs (#1901/#1902/#1792/#1819/#1842)
+> refreshed onto current `main`, conflict-resolved where real, auto-merge armed. Effort board
+> corrected for already-merged rows (#1892 and related). Next: wait hosted verify → auto-merge;
+> then RAG enablement remains Planned (telemetry/eval before `RAG_CORPUS_WIDE_LEXICAL`).
+> **2026-07-24 - Unstick remaining open PRs round 2 (CURSOR).** Four open PRs
+> (#1902/#1792/#1819/#1842) rebased onto current `main` after peer force-pushes; CI/merge fixes
+> pushed; auto-merge armed. #1901/#1980/#1981 already on `main`. Effort-board stale In Progress
+> rows corrected (#1847/#1828/#1839/#1981/check-pin/which-key/retired-provider). Next: hosted
+> `verify` green → auto-merge; RAG enablement remains Planned.
+
+> **2026-07-22 — Retired-provider Usage Monitor cleanup — COMPLETED via #1901 (CURSOR note).**
+> Broker runtime retained; Usage Monitor emissions for retired broker families removed.
+> **2026-07-22 - RAG review remediation follow-up (CODEX).** PR #1892's latest review pass found
+> five correctness gaps. Keep local FTS recall active when paid rerank/hybrid budget degradation
+> trips; classify source-backed 8-K rows without a `sec_filings` join; include immutable occurrence
+> coordinates in chat evidence refs; require vector IDs or accession coordinates in golden selectors;
+> and allocate identical serialized evidence to one occurrence. Verify focused tests, TypeScript,
+> lint, then the full required gate before pushing the existing PR ref.
+
+> **2026-07-21 - RAG strategic-performance implementation (CODEX team).** Execute in ordered,
+> isolated PRs: (1) repair the managed-ingestion stale Voyage prerequisite and add a production-mode
+> OpenRouter regression; (2) add a production-path point-in-time financial retrieval evaluator; (3)
+> add a pure corpus-wide FTS5 candidate source; (4) integrate dense+lexical union before exactly one
+> rerank, using the new decoupled/default-off adaptive rerank policy and typed stage telemetry; (5)
+> align evidence manifests with exact prompt consumption and add declared-use evidence receipts;
+> (6) certify counts and evaluation gates before any legacy purge or model/infrastructure change.
+> Rerank policy + telemetry modules are locally green on `codex/rag-strategy-program-20260721`;
+> ingestion, evaluator, and lexical modules are active parallel lanes. Production re-embed remains
+> externally owned; CODEX will not launch competing corpus writes.
+> **2026-07-22 integration update:** Steps 1-6 are implemented on the current-main integration tree:
+> provider-aware managed ingestion, strict production-path/PIT evaluation, committed/current
+> tenant-safe corpus-wide FTS recall, one-pass dense+lexical fusion, independently routed/default-off
+> adaptive reranking, stage telemetry, exact consumption, structured/narrative routing, bounded parent
+> context, Pinecone hosted-inference comparison, and Turso/Assistant capability probes. Independent
+> review findings are remediated, and the final ordered local gate is green: lint (0 errors / 615
+> warnings), TypeScript, 434 files / 5,015 tests, and production build. Current-main Node 24 landing
+> verification passes TypeScript, 439 files / 5,027 tests, and production build; ready PR #1892 is
+> open. Remaining: required hosted checks, merge/auto-deploy receipt, and live exact-SHA verification.
+> Production activation stays off.
+> **2026-07-22 PR review update:** Centralize immutable id-less evidence identity so prompt
+> consumption and Socratic attribution use identical accession/section/ordinal/content/namespace/
+> tenant coordinates. Focused tests, TypeScript, scoped lint, and the final Node 24 ordered gate are
+> green (lint 0 errors / 613 warnings, TypeScript, 439 files / 5,028 tests, production build); push
+> the remediation to PR #1892 and resolve its review thread. Follow-up review now moves lexical
+> metadata predicates ahead of the bounded FTS cap, matches filing text only, and separates the
+> credentialed retrieval user from the generated isolated evaluation run id; rerun focused checks,
+> push, and resolve all three new review threads.
+> **2026-07-21 — Managed RAG ingestion authority repair (CODEX, branch `codex/rag-ingestion-gate-20260721`).**
+> Repair the stale `storeDocument` provider gate left by the Voyage SDK purge: require Pinecone
+> initialization plus the actual active embedding provider credential, while preserving the explicit
+> test-only Voyage path. Add a production-mode OpenRouter/Pinecone regression. This is a code-path
+> prerequisite only; no re-embed, purge, secret, or production operation is included.
+> **2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, branch `codex/rag-shadow-benchmarks-20260722`).** Land the default-off read-only harness only after focused test/lint/TypeScript checks. Do not add a libSQL runtime dependency or route production retrieval to Turso until an explicit shadow comparison has a configured remote target and measured recall/latency/cost receipt. Pinecone Assistant remains a pre-existing-assistant contextual-retrieval baseline; no file/corpus migration or production use follows from this work without evidence/PIT/tenant-erasure acceptance.
+> **Handoff 2026-07-22 — Robinhood cap resilience deployment.** The implementation is committed
+> (`9c208190`) and latest `origin/main` is merged (`e943e9b9`), but landing stopped in the full
+> Vitest gate because `better-sqlite3` was compiled under Node 26 while the required Node 24 runtime
+> loaded it. Rebuild dependencies under Node 24, rerun `scripts/land.sh`, then complete PR checks,
+> protected merge, Coolify SHA verification, and live Robinhood save/proposal verification. Full
+> command sequence: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
+
+> **2026-07-22 — Robinhood guardrail cap resilience (CODEX, branch
+> `codex/robinhood-cap-fix`).** Make policy saves independent of transient broker account-list
+> failures when account readiness is unchanged, while retaining verification for account selection
+> and autonomy activation. Resolve effective opening order/daily caps against current buying power
+> or NAV so oversized absolute settings cannot produce infeasible proposals; make percentage mode
+> the default for blank dual-mode settings while preserving explicit legacy dollar settings. Focused
+> regressions, lint, TypeScript, and production build are green. Full Vitest completion remains
+> pending because the repo config serializes the suite and the shared host was under concurrent load.
+> Next: land through the normal PR gate and verify the exact production SHA plus a Robinhood save.
+
+> **2026-07-22 — Usage telemetry v2 + shared-package pin-check combined landing (PR #1889).** The
+> reviewed #1890 workflow correction is subsumed into #1889 to avoid two serialized full CI cycles.
+> Keep auto-merge off until the combined final head passes hosted `gitleaks`, `check-pin`, required
+> `verify`, and zero-thread review. PRs #1890 and #1780 are closed as superseded; their branches are
+> retained. After #1889 merges, verify the exact Coolify release and one new authenticated strict-v2
+> ACK.
+> **2026-07-22 — Mobile auth exchange CSRF follow-up (CODEX, PR #1888).** Keep
+> `/api/mobile/auth/exchange` unauthenticated for the native client, but do not classify it as a
+> public-prefix early return: it must pass `checkSameOrigin` before the one-time code/verifier
+> handoff. Verify the focused middleware/route tests and required hosted gate, then merge and
+> verify the exact auto-deployed SHA.
+> **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
+> `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
+> but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per
+> workflow/ref. Verify the workflow regression, open a ready PR, arm auto-merge, and monitor the
+> queue without interrupting the three active full suites.
+
+> **2026-07-19 - Three new RapidAPI-backed enrichment providers (CLAUDE, branch
+> `claude/model-availability-session-handoff-362fd3`).** No roadmap scope change; market-data
+> redundancy only. Owner-directed: add Mboum Finance, YH Finance 15, and an Alpha Vantage
+> RapidAPI transport (OVERVIEW fundamentals) as a dormant-unless-`RAPIDAPI_KEY`-set, quota-safe
+> failover tier registered AFTER the free Yahoo scrape in `getEnrichmentProvider`. New
+> `src/lib/rapidapi-quota.ts` enforces a per-provider daily cap (Mboum 16/day, YH Finance 15
+> 3/day, AV-RapidAPI 500/day) AND a combined 900/day ceiling across all three, mirroring
+> `alpha-vantage-key-pool.ts`'s persisted budget pattern. tsc clean, lint 0 new warnings, 33 + 13
+> new tests green. Not yet landed — `scripts/land.sh` is a separate phase. Details:
+> `docs/rollouts/2026-07-19-rapidapi-yahoo-av-providers.md`.
+> **2026-07-21 - Native iOS mobile-first Phase 1 (CODEX, branch
+> `codex/mobile-first-ios-20260721`).** Implementation and review remediation are complete in the
+> isolated worktree; PR #1859 is open for protected landing. Phase 1 keeps the backend authoritative:
+> native Apple audience, read-only deletion preview/final deletion admission, immediate protective
+> mobile commands, and the final broker-placement state fence are server-side contract/safety work.
+> Google/GitHub browser authentication uses a short-lived verifier-bound opaque handoff rather
+> than a session credential in the custom callback URL.
+> Release signing
+> is configured for team `CC8UTF7ATG`; the XcodeGen spec is canonical and its
+> generated, checked-in `.xcodeproj` is direct-buildable. Deferred after landing: device/simulator interaction QA
+> on a machine with an installed
+> iOS runtime, notification/background-refresh work, and any richer Coach conversation
+> contract that requires a new server API.
+> **2026-07-22 - Usage telemetry v2 producer adoption (CODEX, branch
+> `codex/usage-telemetry-v2-20260721`).** Exact-pin shared `v2.0.0`, replace v1 wire fields with the
+> strict v2 batch/event contract, freeze and legacy-drain each existing replay watermark through a
+> high-water mark before strict-v2 cutover, preserve durable replay identity and old in-memory
+> buffer recovery, verify cold HTTPS install plus focused/full Node 24 gates, then land only after
+> the receiver's current Oracle revision has a committed exact-SHA receipt. After merge, require
+> Coolify exact-SHA health and an authenticated receiver ACK before closing.
+
+> **2026-07-20 - Corpus re-embed scoped-purge gate fix (CURSOR, branch
+> `cursor/critical-bug-management-0770`).** Critical-bug sweep found that a symbol-scoped
+> corpus re-embed could persist a full-docType completion stamp and thereby authorize
+> `purge-legacy` to delete all legacy vectors for that docType. Patch `corpus-reembed` so
+> scoped runs never stamp full-corpus completion; keep purge blocked until an unscoped run
+> completes under the active embedding revision. Focused regression added in
+> `test/corpus-reembed.test.ts`; run the ordered local gate, open PR, and do not run
+> production `purge-legacy` until this fix is live and full-corpus completion is independently
+> verified.
+> **2026-07-21 - Stop placement intent authoritative-absence fix (CURSOR,
+> branch `cursor/critical-bug-management-8edd`).** Narrow money-path repair from the hourly
+> high-severity bug scan: a broker protective-stop placement intent created before a timed-out broker
+> call must not be cleared just because a non-authoritative/live-only order list lacks the
+> `clientOrderId`. Only gateways with `ordersListIncludesTerminal === true` may treat absence as
+> confirmed-dead and place fresh; Robinhood-style lists keep the intent and skip the symbol to avoid
+> duplicate sell stops. Focused and full gates passed; PR publication/hosted checks next.
+> **2026-07-22 - RAG parent-context expansion (CODEX, branch `codex/rag-parent-expansion-20260722`).**
+> Keep child chunks as the only dense/lexical/rerank candidates. Default-off
+> `RAG_PARENT_CONTEXT_EXPANSION` maps final survivors back to their bounded parent context only
+> after ranking, deduping sibling parents deterministically and preserving child id, score, metadata,
+> and strict point-in-time semantics. The local helper and retrieval wiring are focused-test/TS/lint
+> verified; tune only after the production-path evaluator shows an evidence gain within the global
+> prompt budget. Do not alter the external corpus/re-embed train for this work.
+> **2026-07-22 — RAG evidence-consumption receipt correction (CODEX evidence sublane).** Complete locally: strategy derives durable use only from the post-containment/post-budget prompt serialization; retrieved-but-not-consumed chunks remain diagnostic-only; stable refs propagate through strategy/chat without new raw query/prompt telemetry. Next: umbrella RAG lane reviews and lands this isolated commit after its current integration sequencing.
+
+> **2026-07-21 - CI Runner Migration (Antigravity, branch `agent/antigravity-ci-fix`).** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows (`.github/workflows/*.yml`) in Socratic.Trade. The Mac self-hosted runner environment was corrupted after Hetzner failure. Scheduled to land via `scripts/land.sh` to unblock 38 pending PRs.
+> **2026-07-21 - CI queue recovery (GROK + CODEX, branch `monet/ci-runner-and-queue-fixes`).** Remove all workflow targets for absent `trading-live`; keep PR code on the two Coolify `socratic-ci` runners and trusted CI-failure reporting on `socratic-deploy`; remove smoke from PR events; keep an active required verification alive while GitHub collapses superseded pending heads; and repair the six stale current-main test assertions that would otherwise fail the first durable run. Land this dependency first, verify its exact production SHA, then drain PRs serially in review/dependency order without runner-service restarts.
+> **2026-07-21 - CI queue recovery (GROK + CODEX, branch `monet/ci-runner-and-queue-fixes`).** Remove all workflow targets for absent `trading-live`; keep PR code on the two Coolify `socratic-ci` runners and trusted CI-failure reporting on `socratic-deploy`; remove smoke from PR events; keep an active required verification alive while GitHub collapses superseded pending heads; remove synthetic production enrichment fallback data; make bracket permission side-specific; and repair the focused tests exposed by the first durable run. Land this dependency first, verify its exact production SHA, then drain PRs serially in review/dependency order without runner-service restarts.
+> **2026-07-24 - Coolify/Hetzner runners only (CURSOR, branch `cursor/coolify-runners-only-14e5`).** Owner correction: do not use GitHub-hosted Actions. CI runs on ci-cpx32 systemd runners; deploy/reviews on the Coolify prod host. Route `sentry-ci-report` off missing `socratic-deploy` onto `socratic-ci`; sudo-free `gh` + Playwright without `--with-deps`; add `scripts/monitor-coolify-runners.sh` for frequent Coolify/Hetzner health checks.
+> **2026-07-19 - Land the #1771/#1773/#1777 chain, then run the corpus re-embed to completion
+> (owner-directed pickup, multiple lanes).** Next actions, in order: (1) land **#1771**
+> (SiliconFlow bge-m3 embed-price 10x undercount fix — auto-merge armed, no open findings,
+> queued on the single-lane Hetzner CI runner); (2) land **#1773** (this session-handoff note —
+> 6 Codex P2 threads fixed and resolved this pass); (3) land **#1777** (`corpus-reembed`
+> hardening — purge-gate exploit, live-identity double-embed, and insider-Form-4 PIT fixes;
+> this is what the 2026-07-18 FLEET HOLD on `purge-legacy`/scoped re-embeds is waiting on).
+> (4) Once #1777 is live, run the full 4-docType corpus re-embed (`sec-filings`,
+> `earningscalls-transcripts`, `insider-form4`, `experience-memory`) via `POST
+> /api/admin/reembed` to completion and independently reverify via `describe-index-stats`/`GET
+> /api/admin/reembed` before ever running `purge-legacy`. **Verified 2026-07-19 (live Pinecone
+> `describe-index-stats` on `socratic-trade`): the re-embed is genuinely incomplete** — legacy
+> (Voyage) namespace ~8.7k vectors intact (no purge run), managed (bge-m3) namespace only ~1.6k
+> and growing solely via normal ingest cadence, not a completed backfill. Details:
+> `docs/rollouts/2026-07-19-monet-session-handoff.md`, `docs/rollouts/2026-07-18-corpus-reembed.md`.
+
+> **2026-07-18 - PR #1760 review closeout (CODEX, branch `codex/pr1760-review-fixes`).** Resolve all
+> four actionable review threads in an isolated Codex lane: retain both shared-package HMAC and
+> documented bearer webhook authentication, keep proposal attribution in policy namespace and align
+> the missed usage-budget assertions, and delete unsafe review/worktree artifacts. PR #1760 raced to
+> auto-merge as `b2f22ccf`; all four threads are answered/resolved and corrective PR #1761 now carries
+> the fixes on top of that exact main. Local Node 24 gates are green (lint, TypeScript, 4,837 tests,
+> build). Finish self-hosted checks, merge #1761, and production-verify the exact auto-deployed SHA.
+
+> **2026-07-18 - Admin Server Stats reliability (CODEX, branch `codex/socratic-infra-panel-reliability`).** No roadmap scope change; infrastructure observability only. Final hardening adds bounded provider JSON and Coolify normalization, validated Hetzner metric envelopes with stale-series retention, strict client-envelope validation, and the coordinated `Server Stats` naming. Focused Node 24 tests are 19/19; the independent P2 warning-expansion finding is fixed and re-review is pending. Serialize the exact-tree full gate, then publish through PR/required checks/protected merge, Coolify auto-deploy, and exact production-SHA health verification. In-app Browser QA remains unavailable because the listed browser-control runtime was not callable; local SSR smoke returned HTTP 200 with `Server Stats` content.
+> **2026-07-18 - Admin smoke memory headroom (CODEX).** Lower the CI-only Playwright Node heap
+> ceiling from 2560 MiB to 2048 MiB after the admin PR's webServer exited 137 under the 3 GiB
+> runner cap; rerun required checks and verify merge/deploy.
+
+## 2026-07-18 — Admin console shell parity (CODEX)
+
+- [x] Match the admin frame to the normal console chrome geometry and tokens.
+- [x] Keep logo/name and a functional profile popover visible on admin pages.
+- [x] Keep account scope, Start/Resume/STOP, and Run once controls absent from admin.
+- [x] Preserve admin tabs as the left rail and normalize all admin labels to title case.
+- [x] Rename the server panel to Server Stats without changing `/admin/server` or API routes.
+- [x] Keep the mobile admin header within narrow viewports by hiding the full brand at small breakpoints.
+- [x] Prevent profile-menu logout prefetch from triggering the side-effectful `/logout` GET.
+- [x] Run Node 24 lint, TypeScript, full Vitest, and production build gates.
+- [ ] Land through `scripts/land.sh`, then verify the auto-deployed production SHA and health.
+> **2026-07-18 - PR #1735 proposed-model attribution P2 (CODEX, local-only branch `codex/pr1735-proposal-attribution`).**
+> Preserve the exact policy/OpenRouter identifier for `TradeProposal.proposedByModel`, separately
+> from canonicalized usage telemetry, so approval-card primary and fallback provenance remains
+> truthful. Focused primary/fallback strategy regressions, TypeScript, and scoped lint pass; keep
+> the resulting commit local and unpushed pending owner direction.
+
+> **2026-07-18 - PR #1735 review cleanup round 2 (CODEX on `agent/ag-recovery-v48-migration`).**
+> Address the fresh Codex comments by preserving company-name display casing in securities imports
+> and restoring the missing lockfile peer dependency entries. Focused import tests and clean-install
+> dry-run are green; push back to PR #1735, resolve the threads, and let hosted checks arbitrate.
+
+> **2026-07-18 - PR #1735 verify cleanup (CODEX on `agent/ag-recovery-v48-migration`).**
+> Merged latest `origin/main` and fixed the missed attribution assertions that were still expecting
+> provider-qualified IDs after the branch canonicalized OpenRouter telemetry to bare model IDs.
+> Focused failing test set is green; push back to PR #1735 and let hosted checks arbitrate full-suite
+> readiness.
+> **2026-07-18 - PR #1736 review cleanup (CODEX on `monet/model-identity-shared`).**
+> Merged latest `origin/main`, kept the shared model-identity helper behavior, and restored
+> case-insensitive usage aggregation by using a lowercase aggregation key with case-preserving
+> display/canonical output. Focused usage-model merge tests are green; push back to PR #1736 and
+> let hosted checks arbitrate full-suite readiness.
+> **2026-07-18 - CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739).**
+> Classifier checkouts now pin the event SHA. Security deliberately keeps full history for Gitleaks.
+> Diff/YAML/actionlint checks passed; final gate and deployment follow the parent routing PR.
+
+> **2026-07-18 - CI shallow-checkout recovery (CODEX, PR #1741 integrated into PR #1739).**
+> Classify jobs compare base/head endpoint trees after shallow fetches. Security deliberately keeps
+> full history for Gitleaks. Diff/YAML/actionlint checks passed; final gate follows the parent PR.
+
+> **2026-07-18 - Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`).**
+> Route required PR checks and PR-visible helper workflows from GitHub-hosted `ubuntu-latest` to the
+> dedicated Coolify Hetzner CI lane (`[self-hosted, socratic-ci]`), recover the exited runner
+> containers through the Coolify service API, and make Gitleaks compatible with the `/_work`
+> self-hosted workspace. Bound the heavy Node jobs to a 2560 MiB heap inside the runner's 3 GiB
+> container cap so TypeScript and the Playwright build can complete. This is an
+> infrastructure unblock for the six clean/auto-merge-armed PRs whose jobs currently fail before
+> runner assignment. Keep Coolify production configured on `main` with auto-deploy enabled. After
+> this lands, rerun checks on #1728/#1733/#1735/#1736/#1737/#1738 and let auto-merge/deploy proceed.
+> Playwright gets a CI-only 600-second server-start allowance because the runner's low CPU shares are
+> intentional; local timeout remains 240 seconds. Gate bot-triggered Codex autofix jobs to same-repo
+> PR heads before a persistent runner, checkout, write token, or model secret is admitted. Compensate
+> for Coolify's same-container `restart: always` lifecycle by clearing only the ephemeral `/_work`
+> directory before each `EPHEMERAL=1` runner registration. Keep failure telemetry independent of
+> the observed CI runner by routing its short failure/schedule-only job to `socratic-deploy`. Keep
+> all other work on the dedicated CI label; reject generic-Linux routing and checkout timeouts below
+> the measured 3m31s-3m57s clean checkout duration. Reject fork PRs at job admission before CI/E2E
+> classifiers or the token-bearing package-pin check reach the persistent runner. Pin the manually
+> dispatched merge-shepherd implementation to this repository's trusted `main` workflow before it
+> inherits write permissions and secrets.
+
+> **2026-07-17 - OpenRouter Model Stats Canonicalization (Antigravity, branch `antigravity/openrouter-universal-routing`).** Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts` to strip provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs. This ensures that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`), preventing stats split and lookup mismatch in the Model Stats drawer. Verified via vitest and compiler checks. Rollout: `docs/rollouts/2026-07-17-openrouter-model-stats-canonicalization.md`.
+## 2026-07-16 — OpenRouter Catalog Integration & JSON Repair (ANTIGRAVITY)
+
+Added OpenRouter models to `app/ui/llm-model-catalog.ts` so they can be selected for Green and Red teams. Local response healing via `jsonrepair` integrated globally via `extractJsonPayload` without model-specific fallback calls. `better-sqlite3` native modules rebuilt for Node 24. Tests passed, ready for `main` deployment.
+
+> **2026-07-17 - SEC/RAG Backfill: Advanced RAG Backfill Improvements (Antigravity/AG, branch `agent/ag-rag-backfill-p3`).** Implemented Advanced RAG Backfill improvements (RAG-B08, RAG-B09, RAG-B10, RAG-B13, RAG-B14). Optimized the SEC filings discovery pipeline to check stashed SQLite filings first, dynamically skip online discovery if enough stashed filings satisfy the run's cap, and globally sort the queue breadth-first (newest 10-K, then newest 10-Q). Implemented dynamic raw-artifact local caching in the queue worker to bypass duplicate network fetches. Added a two-stage RAG query (scouting all candidates dynamically with `limit = 1` and deep-scanning finalists + holdings with `limit = 8`), grouping narrative chunks and structured facts/Form-4 transactions cards into prompt-injected symbol dossiers. Expanded the admin coverage dashboard at `/api/admin/rag-coverage` to query the entire database directly and report model, parser, and date ranges. Fully verified type safety, Next.js build, and 51/51 tests passing. Ready to push and merge.
+
+> **2026-07-16 - SEC/RAG Backfill: Phase 3 — HTML Parsing and Chunker (Antigravity/AG, branch `agent/ag-rag-backfill-p3`).** Implements cheerio-based HTML parser (`parseFilingHtml` in `src/lib/web-sources/sec-parser.ts`) to strip script/style/hidden tags, normalize Item/Part section headers, and reconstruct clean pipe-delimited Markdown tables (grouping/splitting large tables to fit token caps). Updated chunker in `src/lib/rag/chunk.ts` to be section-aware (resetting overlap across sections) and use token-aware estimation. Integrated this parser in `ingestFiling` inside `src/lib/web-sources/sec-filings.ts` to ingest bodies with parser revision `sec-edgar-filing-v2`. Verified via newly added unit test suite in `test/sec-parser.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Opening PR.
+
+> **2026-07-15 - SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG).** Implements Phase 2 (Discovery and Archive) of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Merged as PR #1665.
+> **2026-07-16 - Public-page renderer decision + legacy `app/ui` primitives slim-down (MONET,
+> branch `monet/vigilant-fermi-220244`).** Settles the "two renderers, one brand core" question
+> for every remaining legacy glass-token consumer (WS-E follow-up to the 2026-07-16 UI wave):
+> ALL public/marketing surfaces (welcome, how-it-works, framework, privacy-policy,
+> terms-and-conditions) plus the root error boundary and `app/ui/theme.tsx` deliberately KEEP
+> the distinct public renderer — no con-* migration (console.css is `.console-root`-scoped and
+> unlayered; the brand core is already shared via `--brand-accent` + the radius canon).
+> `app/ui/primitives.tsx` slims to its real consumers (Card, Button, buttonClass); the
+> design-sync-only exports, dead `ThemeToggle`, and 8 dead globals.css utilities are deleted.
+> Display-only; no scope/timeline impact on other lanes. Rollout:
+> `docs/rollouts/2026-07-16-public-renderer-decision-legacy-primitives-slim.md`.
+
+> **2026-07-15 - SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG, branch `agent/ag-rag-backfill-p2`).** Implemented Phase 2 (Discovery and Archive) of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. PR #1665 created and auto-merge armed.
+
+> **2026-07-15 - Durable state: persist in-memory rate-limiters/cooldowns across restarts (MONET,
+> branch `monet/durable-state-restart-survival`).** Owner directive after fleet-wide auto-deploy went
+> live: any in-memory guard against a real external cap or duplicate-action risk must survive a
+> mid-session container replacement. New shared `createDurableMap` primitive
+> (`src/lib/durable-state.ts`); persisted `RequestQuota`, the usage-budget alert cooldown, and the
+> congress-share send throttle after a 32-site discovery sweep. Two other candidates
+> (`order-replacement.ts`, `triggers.ts`) turned out to already be independently and more completely
+> solved by another agent while this branch was in flight — deferred to those, dropped the redundant
+> local wiring. Full gate green; landing via PR next. Rollout:
+> `docs/rollouts/2026-07-10-durable-state-restart-survival.md`.
+
+> **2026-07-15 - Primary-account Usage Monitor credential bridge writer
+> (CODEX).** Implement the default-off writer half of API Usage Monitor PR
+> #286: read only the fixed primary `local` user's Gemini and DeepSeek rows;
+> publish active values then a strict manifest-last monotonic complete set to
+> fixed ST `prod` `/usage-monitor/st-primary/v1`; retain delete-free revoked
+> tombstones; reconcile through the single-leader scheduler and immediate
+> tracked-key triggers; document least-privilege writer/read-only reader
+> identities. Focused/integration checks and the serialized full gate are green;
+> hostile writer findings are fixed. API Usage Monitor reader PR #293 is live
+> and healthy at `c6c4c8f` with the compatible bridge-only unexpanded-value
+> contract, so publish this default-off writer through a ready PR, hosted
+> checks, protected merge, and Coolify auto-deploy observation. Identity
+> creation, production configuration, secret mutation, and activation remain
+> out of scope.
+
+> **2026-07-15 - Open-PR cleanup and production verification (CODEX).** PR #1586 and PR #1612
+> are merged and production health reports exact `main@3c015a52`. Stale overlapping PRs #1610 and
+> #1611 are closed as superseded; the open PR list is empty. FMP transcripts remain default-off until
+> entitlement/rights and activation/backfill authority are confirmed.
+>
+> **2026-07-13 - FMP transcript producer (CODEX).** Add a production-inert, default-off,
+> rights-confirmed FMP earnings-call transcript source with tracked stable-endpoint requests,
+> independent cadence/lease/cursor/budgets, ticker-period identities, first-observed PIT timing,
+> retryable incomplete states, content-derived dedup plus occurrence identity, rights-aware
+> Strategy/Coach retrieval,
+> source status, and focused telemetry/safety tests. Do not enable production until the FMP plan
+> exposes both endpoints and the agreement permits persistence/embedding/display. Speaker/Q&A
+> segmentation and cited derived briefs require entitled representative fixtures before broad corpus
+> rollout. Starter is below its advertised rate/bandwidth limits but not entitled to transcripts;
+> surface that as a plan exclusion, never as quota exhaustion. See
+> `docs/rollouts/2026-07-13-fmp-transcripts-safe.md`.
+> Round-9 closes the subsequent nine-finding durability/rights review: atomic provider request/cost
+> reservations precede every FMP/Voyage/Pinecone boundary; dispatch outcomes survive lease loss and
+> crash-left calls reconcile to durable `unknown` outbox events; managed vectors remain pending until
+> exact provider plus relational receipts commit and retrieval validates every identity/version field.
+> Transcript revisions retain full SHA-256 content versions and first-content-seen PIT rows, ingestion
+> is operator-only, SEC uses the same lease guard, embedding revision stays at v1 pending a real corpus
+> migration, Strategy language is source-neutral, and rights tooling performs bounded dry-run inventory
+> plus provider-first verified purge. Account deletion covers the new user-scoped receipts/outbox rows.
+> Generic FMP and transcript calls share authority within Socratic.Trade; production remains blocked on
+> confirmed commercial rights and a genuinely shared cross-app transactional quota authority. Round-10
+> captures the complete implementation in local checkpoint `52cfcbec`, cleanly merges
+> `origin/main@4432c2bc` in `0713a254`, and uses an awaited Edge-safe Web Crypto SHA-256 credential
+> fingerprint after the first current-main production build exposed a transitive `node:crypto` import.
+> The final Node 24 gate is green: lint 0 errors / 458 inherited warnings; TypeScript clean; 369 files /
+> 4,145 tests; production build with the real TypeScript phase and 32 static pages; diff-check clean. Fresh
+> hostile review found no remaining P0/P1/P2 code issue. This lane is locally code-ready; no push or PR is
+> authorized yet, and activation/backfill remains blocked on an entitled plan, commercial rights, and the
+> shared authority. A future PR, merge/autodeploy, and live verification require explicit follow-through.
+> Round-11 landing review found and locally remediated one missed managed-commit cardinality defect:
+> nonzero ingest/write-budget prefixes can no longer commit full-document receipts or become retrievable.
+> The immutable original occurrence count now gates receipt persistence and provider promotion; partial
+> prefixes remain pending with zero receipts and a later SEC retry commits the exact full set. Node 24:
+> exact regression 6/6, related focused tests 106/106, lint 0 errors / 458 inherited warnings, TypeScript
+> clean, 369 files / 4,147 tests, production build with real TypeScript and 32 static pages, diff-check
+> clean. Hostile re-review found no remaining P0/P1/P2 in scope. Root review is pending; still no push/PR.
+> Round-12 then rejected publication on committed-replay demotion, same-commit writer races, an SEC 8-K
+> false-complete path, and zero/partial occurrence gaps. Round-13/14 now preserve committed generations,
+> serialize exact commit attempts, gate every filing caller on `documentComplete`, reject empty documents,
+> compensate Pinecone topK for locally proven stale managed generations, and make tenant scope authoritative.
+> Personal decision/experience memory is private even for the local operator; provider-first account deletion
+> inventories and fetch-verifies the subject's vectors before deleting local secrets/receipts, while preserving
+> shared public corpus and globally deduplicated chunk text still referenced by it. Current Node 24 focused
+> evidence is 20 files / 256 tests plus 2 privacy/deletion files / 22 tests, TypeScript clean, and diff-check
+> clean. Round-15 then makes nonlocal/shared scope impossible, holds a durable account-operation claim across
+> every private document provider/receipt write, requires current provider authority plus consecutive-clean
+> account erasure verification, tracks and purges transcript-derived artifacts/provider work, rejects legacy
+> Auth.js cookies after an account-generation tombstone, retries lock-contended trigger events, and centralizes
+> ownership/fencing for all user-scoped internal settings. Current targeted proof is 20 files / 302 tests plus
+> 4 derived-rights tests, TypeScript, and diff-check. Checkpoint this snapshot, merge `origin/main@2dabc7f8`,
+> renumber transcript/vector migrations behind main's versions 27-28, then run the ordered lint/TypeScript/test/
+> build gate and fresh hostile review. Draft PR #1586 stays HOLD until those gates pass; do not enable
+> transcripts or run a corpus backfill regardless of code-merge state.
+> Round-16 reconciles `origin/main@2dabc7f8`: main keeps migrations 27-28 and the transcript/vector
+> lane is renumbered 29-39; proposal plus Socratic-decision writes remain atomic while FMP-derived
+> decisions keep rights-generation/provider-work receipts. Hostile review found and the branch fixes
+> two additional P2s: Cloudflare Access assertion `iat` now participates in post-deletion identity
+> generation, and broker-minimum alert cooldowns are user-scoped for the shared settings fence/eraser.
+> Node 24 TypeScript and the merged targeted set (9 files / 99 tests) are green. Fresh hostile re-review
+> and the ordered full gate remain before #1586 can leave draft.
+> Rounds 17-20 supersede the Access-token freshness design with signed Auth.js `loginAt`, bind licensed
+> private derivative writes and purge receipts to immutable rights generation plus exact provider/ledger
+> authority, and require consecutive clean provider observations before deleting local evidence. Treat
+> an acknowledged zero-write as `no_provider_write`, but any provider error/timeout after dispatch as
+> `provider_write_unknown` and therefore an exact purge obligation. Filter tenant-, receipt-, and
+> transcript-rights-ineligible records inside each provider tier before the fair 1,000-document rerank
+> cap so stale generations cannot crowd out current evidence; carry tier identity through multi-query RRF
+> and apply one final fair cap before reranking. Chunk relational receipt lookups below SQLite's portable
+> host-parameter ceiling so the legal six-tier/60,000-candidate provider pool cannot fail closed by
+> accidentally discarding every managed match. Round 21 removes transitive `node:` imports exposed by
+> the production build: immutable derivative IDs use edge-safe Web Crypto SHA-256, the already-tested
+> abort-aware retry pause owns erasure backoff, and document construction requires the precomputed ID
+> to remain paired with its rights generation. Current-main reconciliation includes `origin/main@58de276e`
+> after PR #1607 merged. The doc-type coverage integration test now supplies deterministic encryption, the
+> vector authority mocks required by the licensed-memory path, the required proposal regime field, and
+> realistic timeout headroom; the Infisical signal-forwarding fixture supplies its own fake app identity/login.
+> Focused verification is green at 15/15 and 37/37, and `docs/BRANCH-INTEGRATION-LEDGER.md` records branch
+> dispositions for future agents. Round-23 fixes the final focused rights review: transcript retrieval requires
+> the durable active rights gate, derived Socratic-memory dedup hashes are included in rights purge, and unrelated
+> Pinecone upserts no longer block transcript erasure. Focused remediation verification is green at 31/31.
+> Round-24 closes the focused strategy/regime and suite-load compatibility fallout: Red Team prompt stubs now
+> distinguish review calls from Green/strategy calls, vector-authority mocks match the current licensed-memory
+> contract, heavy strategy cases have realistic timeout headroom, and the Infisical signal-forwarding regression
+> has enough full-suite load margin. Focused verification is green at 23/23 for regime/drawdown, 37/37 for
+> Infisical, 15/15 for RAG doc-type coverage, 31/31 for transcript rights/retrieval, and standalone TypeScript.
+> Local full/grouped gates are currently host-pressure limited rather than assertion-limited: grouped tests ended
+> with 143 and repeated production builds were OS-killed with 137 while other agent runners respawned. Push the
+> current branch and let hosted `verify` provide the authoritative full lint/test/build result, then mark ready, merge,
+> and verify the automatic production deployment without enabling transcript ingestion or backfill.
+> Round-25 removes a DB-barrel import cycle from the FMP transcript module; the RAG doc-type focused test now passes
+> without the prior `FMP_TRANSCRIPT_SOURCE` TDZ warning. The FMP rights-derived artifact hook has 120s setup headroom
+> and passes focused 10/10; standalone TypeScript is clean after the import split.
+> Hosted gitleaks then failed on the historical deterministic `ENCRYPTION_KEY` fixture commit even though the current
+> tree uses `"0".repeat(64)`; `.gitleaksignore` now includes the exact false-positive fingerprint for a normal recheck.
+> Round-27 fixes the hosted vector chunk-cap test fixture by adding the durable active transcript-rights gate row to
+> its DB mock; focused verification passes 14/14.
+> **2026-07-14 - Infisical JSON-export production compatibility (CODEX).** PR #1594 merged,
+> but its automatic Coolify deployment failed health checks and rolled back because pinned
+> Infisical CLI v0.43.98 emits `export --format json` as an array of secret records while the
+> merged runner expected a flat object. Parse only validated `{ key, value }` records, reject
+> malformed or duplicate keys without exposing output, repeat the full Node 24 landing gate,
+> and verify the exact corrective merge SHA in production before releasing dependent work.
+> **2026-07-15 - FMP coverage and market-data reliability (CODEX).** Make interactive Market Scan
+> return within an HTTP budget by keeping paced deep ingestion off the request path, reusing the
+> latest completed strategy scan's slow facts while refreshing prices, coalescing identical
+> refreshes, and bounding the Nasdaq fetch; preserve full enrichment in scheduled/strategy
+> work and bounded on-demand ticker detail. Replace Socratic.Trade's legacy FMP v4 calls with stable,
+> header-authenticated profile and insider-search routes; map the useful ratios/profile fields already
+> paid for; keep congressional truth in Congress.Trade; and document the plan/entitlement boundary for
+> scheduled statements, metrics, estimates, calendars, news, and transcripts. Transcripts stay disabled
+> while the current subscription returns HTTP 402. Complete focused/full gates, browser QA, ready PR,
+> hosted verification, protected merge, and exact auto-deploy verification. See
+> `docs/rollouts/2026-07-15-fmp-market-data-reliability.md` and `docs/fmp-capabilities.md`.
+> Local browser QA is green. The first landing gate passed 4,375 tests/build and opened ready PR #1618.
+> `main` advanced during that gate through PR #1616's broader FMP adapters; `d3efc9a6` is now reconciled,
+> the shared adapter path has header auth plus durable endpoint accounting, and scoped lint/TypeScript
+> plus 5 files / 163 overlap tests pass. The final land gate passed 381 files / 4,377 tests and build;
+> refreshed head `8949ebd8` is pushed to ready PR #1618. Require hosted checks, protected merge, then
+> verify the exact auto-deployed release.
+> Hosted review then found three P2s: unbounded BlackRock discovery, incomplete scan single-flight
+> identity, and immortal hung quote entries. Abort propagation plus a hard scan deadline, complete
+> scan keys, and a 30-second quote lease are implemented; scoped lint/TypeScript and 26 review tests
+> pass. Final exact-tree land passed 381 files / 4,381 tests and build; code head `3df82396` was pushed.
+> All review threads and hosted gates passed. PR #1618 squash-merged as `28eab7cb`; Coolify deployment
+> `a140o5e4sh3vh7ylqzzwu1qr` finished on that exact SHA, and production health verifies the release,
+> current scheduler lease, FMP/Congress dependencies, and Litestream replication. This lane is complete.
+
+> **2026-07-14 - Infisical JSON-export production compatibility (CODEX) — COMPLETE.** The
+> initial PR #1594 deployment failed closed and rolled back safely; corrective PR #1604 merged
+> as `f54e43aaba1589af2467b4ec2fc2be5eb461e1e8`, and Coolify deployment
+> `rkh3ifiyp2dbtvv7xz7rtnbn` finished on that exact SHA. Public production health is green for
+> the app/DB, current scheduler lease, Litestream replication with a valid sync timestamp, and
+> Congress/usage-monitor dependencies. The remaining cached-CLI version check is nonblocking P3.
+> See `docs/rollouts/2026-07-14-infisical-export-json-compat.md`.
+
+> **2026-07-14 - Local Infisical bootstrap wiring (CODEX).** Resolve the Socratic and shared
+> machine identities before the Infisical runner authenticates, with process env > `.env.local` >
+> secure global-file precedence; support both the owner-provided `INFIISICAL_ST_*` spelling and its
+> corrected alias plus `INFISICAL_CT_SHARED_*`; normalize only in process memory; default known
+> nonsecret project IDs without forcing a shared overlay; reject incomplete pairs; and prove no
+> unrelated global key or long-lived credential reaches the app child. Review found three P1s and
+> three P2s: same-source token-before-pair selection, Next reload reintroduction, runner-lifetime
+> credential retention, broad CLI inheritance, ambient path override, and overbroad global aliases.
+> All are remediated with pair-first resolution, immediate auth scrubbing, minimal CLI environments,
+> a fixed global path, a narrow ST/CT-shared allowlist, and an argv-safe post-injection wrapper whose
+> real `@next/env` regressions are green in normal and watch paths. Descriptor-level file hardening
+> and managed-only inert parsing also remain green. JSON export preserves exact values, CLI domain
+> routing remains explicit, preload hooks execute only after masking, and signal/argv/NUL/conflicting
+> alias/shell-block regressions are green. The branch is rebased on `origin/main@acd67a5c`; a force-quit-
+> contaminated npm Git-dependency cache initially installed declarations without runtime bundles, but
+> isolated installs proved the immutable shared-package release healthy and a disposable-cache reinstall
+> restored all CJS/ESM/type artifacts. The exact-tree Node 24 gate is green: lint 0 errors / 459 inherited
+> warnings, TypeScript, 369 files / 4,161 tests, and a production build with all 32 static pages. Publish
+> through `scripts/land.sh`, require hosted verification, then verify the automatic production rollout.
+> See `docs/rollouts/2026-07-14-infisical-bootstrap-wiring.md`.
+> **2026-07-14 - Final open-PR reconciliation (CODEX).** Reconcile PR #1589 with current
+> `origin/main`, correct stale merged/closed PR and effort-board state, resolve all review threads,
+> run the documentation branch through the canonical Node 24 gate, update the existing PR head
+> without rewriting history, and squash-merge after hosted checks. Then finish PR #1586 and verify
+> the exact auto-deployed production release. See
+> `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+> **2026-07-14 - Adopt immutable congress-trading-shared v1.7.1 (CODEX).** Replace the
+> exact `v1.6.0` commit pin with the immutable `v1.7.1` commit
+> `0bc26ab9311a396f3f6b5cba0fb54fa7558a42b4` across `package.json`, npm
+> `allowScripts`, and `package-lock.json`; regenerate through Node 24 with a fresh
+> disposable cache; prove non-empty JS/MJS/DTS/DMTS artifacts and both require/import
+> resolution; then run the serialized lint, standalone TypeScript, full test, and
+> production-build gate on current `origin/main`. Land through `scripts/land.sh`, require
+  > hosted verification and protected squash merge, then verify the exact automatic production
+  > rollout and dependency health. Ready PR #1607 merged as `58de276e`; production verification is included
+  > in the final all-PR release check after #1586 lands.
+> See `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
+
+> **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /
+> TypeScript 5 compiler-API arrangement with one supported TypeScript 6.0.3 graph; remove the
+> postinstall mutation, module-resolution hooks, Next override, and `ignoreBuildErrors` bypass;
+> enforce Node 24 across hosted/self CI, landing, and Node declarations; and prevent unsupported
+> automated compiler/runtime-type upgrades. Hostile-review remediation is complete: parsed lock/YAML
+> and active-source policy coverage is 5/5, clean-install/lock determinism, scoped lint, standalone
+> TypeScript, Bash 3/runtime guards, YAML parsing, and diff-check pass. The earlier repo-wide lint,
+> 4,041-test run, and two production builds prove the restored Next `Running TypeScript` phase. Fresh
+> review accepted the remediation and the final ordered full gate is green (lint, TypeScript,
+> 4,043 tests, and a production build with the real TypeScript phase). Reconcile current main, then
+> publish a ready PR and require hosted verification.
+> See `docs/rollouts/2026-07-13-typescript-toolchain-gate-repair.md`.
+> **2026-07-13 - Development background-worker safety gate (CODEX).** Preserve production's
+> default-on scheduler/usage-replay/stream boot while making every non-production runtime fail
+> closed unless `DEV_BACKGROUND_WORKERS=on` is explicit. Centralize the decision and startup receipt,
+> test both disabled and explicit opt-in paths without importing real workers, document the flag,
+> and require disposable local smoke plus the full ordered gate before a ready PR. Independent
+> review and the Node 24 local gate are green; publish through `scripts/land.sh`, require hosted
+> verify, then confirm the production boot receipt and scheduler health after auto-deploy. This prevents
+> UI-only localhost QA from launching broker/provider/RAG work against copied or credentialed data.
+> See `docs/rollouts/2026-07-13-development-background-workers.md`.
+
+> **2026-07-13 - Account-relative daily risk and decision clarity (CODEX).** Replace the fixed $500
+> daily-opening default with one canonical dollar-or-percent mode (20% NAV default), preserve
+> explicit legacy dollar choices, and route the resolved value through policy gates, approval-time
+> rechecks, prompts, capital posture, mobile data, and AI strategy review. Persist app-computed
+> notional/NAV arithmetic; clear impossible Alpaca whole-share bracket fields before fractional
+> submission; and render Green Team, sizing/risk, Red Team, and deterministic outcome as distinct
+> sections with explicit verdict wording. PR #1561 merged as `3e105e17`; required hosted checks passed
+> and that exact release is healthy in production. A review posted after auto-merge found three P2
+> gaps. The active follow-up persists Green/sizing receipts across refreshes, makes v26 cover every
+> legacy policy store without reinterpreting later intentional dollar choices, and separates a Red
+> override request from a final applied override. It also reruns Red exactly once after a
+> broker-minimum size mutation, preserves independent human-review reasons, atomically commits the
+> broker intent with its Socratic case, synchronizes lifecycle truth transactionally, serializes
+> same-decision vector updates, and keeps uncertain submissions in `placing`. The latest hostile
+> blockers are implemented: `filled` orders remain in caps and every success/count/UI/outcome
+> consumer; independent holds have structured owner-facing reasons; lifecycle sync preserves
+> learned fields; and an atomic approval claim requires a proposed Socratic case. The final two
+> race/recovery defects are closed: chat draft idempotency spans proposed through filled under an
+> immediate transaction, and stale broker-filled orders finalize an existing pending receipt with
+> proposal/case truth atomically. A final audit also handles terminal partial executions everywhere,
+> makes direct broker receipt + lifecycle commits atomic/recoverable, scopes replacement dedupe, and
+> binds legacy chat-case repair to the historical account. The final price/quantity review is also
+> closed: unpriced broker receipts store zero rather than estimates, cumulative execution is
+> monotonic, replacement partials remain refId-recoverable, and the active replacement index is
+> user-scoped. Current `main@07c2da3f` is integrated and independent re-review reports no P0-P2
+> findings on that snapshot. The later hosted review found one P1 ordering gap: sell-to-fund could
+> liquidate a holding before a broker-minimum-adjusted buy entered a final-size Red hold. The fix
+> now correlation-gates and caches tradability, broker minimum, exact-size Red, policy, and override
+> preflight before funding notional is calculated. Correlation-dropped, broker-unplaceable,
+> human-held, and non-funding policy-blocked openings fund `$0`; a valid cumulative buying-power
+> shortfall remains eligible. Regressions cover both no-sale-on-hold and exact cumulative funding,
+> and placement reuses the cached shape. Hosted autofix also synchronized account-switch cap-mode drafts and kept unpriced
+> fill growth pending. The prior ordered Node 24 gate is green: lint 0 errors / 458 inherited warnings,
+> standalone TypeScript clean, 368 files / 4,124 tests, and a production build with the real
+> TypeScript phase plus 32 static pages. `scripts/land.sh` repeated current-main TypeScript, all
+> 4,124 tests, and the build before opening ready PR #1587. The local ordering remediation passes
+> TypeScript and 3 focused files / 20 tests. The combined-tree ordered Node 24 gate is green:
+> lint exit 0, standalone TypeScript clean, 368 files / 4,128 tests, and a production build with
+> the real TypeScript phase plus 32 static pages. Push, resolve the review, merge after hosted
+> verification, and verify the exact production release.
+> The last hosted P2 is also closed: final-size owner consent carries the exact broker estimate it
+> covers. A fresh upward estimate above the greater of 1% or $0.01 is persisted and re-queued for
+> one new click; downward/immaterial drift remains within the approved envelope. Focused final-size
+> verification is green (3 files / 21 tests plus standalone TypeScript); the repeated full gate
+> passes lint, TypeScript, 368 files / 4,128 tests, and the production build.
+> See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
+> `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
+> Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
+
+> **2026-07-13 - Decision-evidence architecture program (CODEX, owner-directed).** Implement the
+> complete source-to-decision boundary before adding more feeds: wider bounded enrichment;
+> field-level provenance/freshness/failures and upstream-family arbitration; exact candidate
+> enforcement; immutable Green/Red evidence parity; point-in-time RAG, prompt-data containment and
+> global context budgets; account-scoped relational/vector learning with independently validated
+> paper-to-live transfer; source coverage, shadow ablation and outcome-linked value telemetry; and
+> the same evidence contract for strategy review, learning review, Framework, and Coach. Remove the
+> product Test Account and purge its simulated outcomes, while retaining real broker paper accounts
+> only behind exact-account learning and transfer gates. Add GPT-5.6 Luna/Terra/Sol plus role-specific
+> effort controls across every LLM surface; curate out full GPT-5.4/5.5 but keep Mini/Nano and legacy
+> custom IDs. Implementation, current-main reconciliation, and the full verification gate are
+> complete; PR #1544 merged as `60703dfe` and that exact release is healthy in production. See
+> `docs/reviews/2026-07-13-decision-evidence-architecture.md` and
+> `docs/rollouts/2026-07-13-evidence-architecture-gpt56.md`.
+## SEC/RAG 1,000-stock implementation train
+
+**Status: In progress; corpus writes gated**
+
+**2026-07-22 routing boundary:** strategy callers must declare information needs. Current
+prices, portfolio/positions, orders, SEC XBRL facts, and Form 4 transactions stay deterministic;
+only filing/transcript/lesson/research narrative is eligible for semantic retrieval. Unknown needs
+fail closed. Next integration is to make the same contract the shared entry point for chat and the
+evidence-consumption receipt, without changing the trading verdict path.
+
+- **[~] Wave A — prerequisite truth:** the versioned/checksummed universe acceptance contract and durable
+  job/task state with leases, strict transitions, retries, dead-letter/quarantine, verification receipts, and
+  replay invariants merged in PR #1543 after local/hosted gates. Corrected universe selection, census truth, and
+  adversarial integration remain in progress. Three post-merge P2 durability findings (failure reasons, checksum
+  immutability, lease config) are locally green on `codex/sec-rag-foundation-postmerge` in ready PR #1559.
+  Production is verified on foundation release `cbe3e532`; hosted follow-up acceptance and corpus gates remain.
+- **[~] Wave B — source correctness:** discover recent plus historical submission shards and filing exhibits;
+  archive immutable raw artifacts; enforce one aggregate SEC limiter; parse DOM/iXBRL sections, tables, units,
+  contexts, and footnotes; chunk against provider token budgets.
+- **[~] Wave C — structured and searchable evidence:** normalize XBRL, insider, ownership, offering, and event
+  facts; add a true corpus-wide lexical index; fuse dense/lexical recall, rerank wide, diversify, and return
+  typed evidence packets with strict point-in-time filtering. The read-only FTS5 source in
+  `src/lib/rag/corpus-wide-lexical.ts` is now wired default-off beside dense recall before one rerank,
+  with tenant, rights, committed-version, and stale-legacy guards.
+- **[ ] Wave D — evaluation and consumption:** build real-EDGAR parser/fact/retrieval/grounding fixtures and
+  metrics; replace the generic three-chunk strategy blob with issuer-scoped scout/deep dossiers and verified
+  evidence references.
+  - **[~] Production-path retrieval evaluator (2026-07-21):** `eval:rag-production` calls
+    `retrieveContextDetailedWithStatus` with immutable authoritative-as-of timestamps, real vector-id
+    diagnostics plus stable provenance relevance selectors, machine-readable relevance/PIT/coverage/latency/usage receipts, and explicit comparison labels.
+    Curate version-controlled JSON cases from frozen EDGAR evidence and run controlled shadow comparisons before changing defaults.
+  - **[~] Hosted-inference candidate (2026-07-21):** benchmark Pinecone `/embed` and `/rerank` directly
+    against frozen candidate pools before assuming self-hosted or routed BGE/Cohere is best. This is bounded
+    by absolute CLI caps, read-only, account-availability-gated, and it never touches the production index.
+- **[ ] Wave E — controlled operations:** only after gates, run shadow 10 -> 25 -> 100 -> 300 -> 1,000 breadth-
+  first waves with cost/rate/failure breakers, reconciliation, dual-read/write, rollback, and freshness SLOs.
+
+The highest-yield backfill order remains: freeze the exact 1,000-CIK universe plus a private priority overlay;
+archive immutable raw SEC artifacts broadly; embed 10-K/10-Q decision sections, material 8-K exhibits, and only
+entitled transcripts selectively; retain XBRL/fundamentals as structured facts; checkpoint by CIK/accession; and
+expand only after each 10 -> 25 -> 100 -> 300 -> 1,000 wave passes coverage, citation, PIT, cost, and failure gates.
+The production bulk worker must consume historical submissions shards rather than recent-only discovery. Crash
+repair must combine provider-page ghost cleanup with a local keyset whole-commit verifier; never page an exact-set
+commit reconciliation in a way that can split one commit across pages, and never rewrite PIT intervals/heads during
+repair. No 1,000-stock provider or corpus write is authorized yet.
+
+Node 24 remains the supported runtime. Node 26 is installed on the host but is not adopted while `.nvmrc`, CI,
+production, and the `better-sqlite3` native ABI are pinned to 24.
+
+## Codex Audit Wave 0: Base Guardrails
+**Status: In Progress**
+
+- **[x] PR 1: X0.1 & X0.2 Safety Maintenance & Draining Fence**
+  - X0.1 Safety Maintenance Coordinator: Run all side-effecting sweeps (fill reconciliation, stale intents, stale exits, synthetic stops) strictly before strategy admission, with strict network deadlines (15s). Ensures side effects execute exactly once per tick and never hang the singleflight guard.
+  - X0.2 Draining Fence: Hard pre-placement veto if the account's state is `draining` or `deleted`. Capture `accountNumber` and `policyRevision` onto the `strategy_runs` snapshot.
+  *(Completed 2026-07-12)*
+- **[x] PR 2: X0.3 Exit Replacement State Machine**
+  - Migrated limit order market-replacements to a robust, database-backed state machine.
+  - Added original order detail columns (symbol, side, type, quantity, filled quantity) to SQLite schema and reconstructed orders when missing from broker.
+  - Implemented auto-mode-off continuation and full reconciliation/recovery for in-flight `replacement_submitted` rows.
+  *(Completed 2026-07-13)*
+- **[ ] PR 3: X0.4 Strict P&L Fence**
+
 # Improvement Plan - Socratic Trade
 
 Eight-phase roadmap to make the dashboard genuinely autonomous, more accurate,
 measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
+
+> **2026-07-14 - Decision-detail dissent deduplication (CODEX).** No roadmap scope
+> change. `/console/decisions/[id]` now shows a structured Red Team verdict once,
+> filters only exact/generated copies of that explanation from the generic dissent
+> list, preserves distinct policy or override objections, and keeps approve-at-half
+> and rejection status explicit on the canonical card without repeating rationale. See
+> `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
+
+> **2026-07-12 - SEC/RAG 1,000-stock high-yield backfill architecture (CODEX).** The approved planning
+> direction is “archive broadly, embed selectively”: catalog all SEC filings; preserve selected immutable
+> originals; keep XBRL, insider, ownership, and financing facts structured; embed sectioned narrative, tables,
+> and material exhibits with occurrence-level provenance; and expose derived summaries only as cited children.
+> The current recent-10-K/10-Q scheduler is not the bulk runner. Round-8 FMP/RAG hardening now materializes
+> each new `storeDocument` occurrence as its own vector; before a 1,000-issuer write, reconcile any legacy
+> content-hash occurrence loss and finish artifact/job state, historical/exhibit discovery, DOM/iXBRL tables, PIT dates,
+> true lexical recall, real-corpus evaluation, coverage truth, and config drift. Then use a shadow corpus and
+> gated 10 -> 25 -> 100 -> 300 -> 1,000 breadth-first waves. See
+> `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` and
+> `docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`.
+> **2026-07-12 - Capability & Platform Expansion program, Phase 1 (CLAUDE, owner-directed,
+> team-of-agents).** New program alongside this roadmap, not a replacement for it: seven
+> workstreams (iOS honest-reset-then-build, web-app consistency, trading-framework
+> calibration, short-selling+leverage, options groundwork, Kalshi, eToro), all landing
+> dormant/default-off per-account double gates in the proven short-selling shape. Phase 1
+> (recon/design/feasibility/synthesis) is complete; full plan, package train, sequencing
+> waves, owner-decision list, and dissent are in
+> `docs/reviews/2026-07-12-capability-program-plan.md` — not duplicated here. Builds on the
+> existing Tradier broker capability work (`docs/broker-capability-plan.md`). See
+> `docs/rollouts/2026-07-12-capability-program-phase1.md`.
+
+> **2026-07-11 - Team names back to Green Team / Red Team (CLAUDE).** Copy-only rename: console
+> surfaces that had drifted to "Proposer"/"Reviewer" seat labels now lead with Green Team / Red
+> Team everywhere user-visible; internal identifiers and prompts untouched. Also fixed stale help
+> copy claiming a blank Red Team self-reviews (it fails closed to human approval). See
+> `docs/rollouts/2026-07-11-team-names-green-red.md`.
+
+> **2026-07-11 - Trading-framework doc + public /framework page + AI-scrape hardening (CLAUDE).**
+> No trading-behavior change; documentation + one new public marketing surface + edge/app
+> anti-extraction hardening. New `docs/trading-framework.md` (net-new, framework-level map of the
+> whole pipeline: 8-stage summary, per-layer detail, invariants, honest weaknesses; explicitly does
+> not supersede strategic-framework/phase-7/single-adversary docs). New human-eyes-only page at
+> `/framework` (how-it-works page pattern, three themed SVG diagrams) whose prose is served only via
+> a gated content API — never present in HTML or client chunks; UA gates in page+API, robots/noai/
+> TDMRep directives, no-store, sitemap-excluded, unlinked. Cloudflare zone: `ai_bots_protection=block`
+> + a `/framework*`+`/api/framework*` WAF UA-block rule (live already; Bot Fight Mode deliberately NOT
+> enabled — webhook/ops traffic risk). Middleware change is two PUBLIC_PREFIXES lines. 9 new focused
+> tests. See `docs/rollouts/2026-07-11-framework-page.md`.
+> **2026-07-11 - Whole-app audit and prioritized correctness fixes (CODEX, in progress).** No roadmap
+> phase change. The current-main audit added 34 reproducible findings to both effort boards (8 P0,
+> 18 P1, 8 P2). The first P0 account-scope slice is implemented: account switching passes through the
+> dirty guard, account editors remount, account-scoped policy/prompt writes carry an owned target,
+> prompt+policy persistence is atomic after validation, and same-tab card writes serialize. This
+> branch also implements synthetic-stop account targeting, mobile initial/command truth, and
+> Robinhood OAuth exact-state/origin integrity. The mobile refresh race has a bounded/coalesced core
+> fix; SSE-outage fallback polling remains. Remaining rows stay separately prioritized rather than
+> being folded into an unsafe monolithic change. See
+> `docs/rollouts/2026-07-11-app-wide-audit-account-scope.md`.
+
+> **2026-07-11 - Durable provider/dataset operation leases (CODEX).** No product-roadmap or
+> scheduler-loop change; reliability/cost correctness only. The manual admin guards and background
+> entrants now converge on four durable SQLite owner-token lease groups below the route layer:
+> RAG reindex/filing ingest, Congress daily share, Congress refresh, and SEC 8-K refresh. Claims are
+> acquired before admin rate debit, heartbeated for long operations, owner-checked on release, and
+> passed opaquely into core boundaries. Ownership loss aborts cooperatively, and non-force cadence is
+> rechecked after acquisition. Background contention is a typed benign skip with no cadence marker
+> advancement; admin contention remains a shared-contract HTTP 409. The intentionally detached 8-K
+> embedding tail remains a documented pending/retry-job follow-up. Final current-main Node 24 gate is
+> green (focused 130, lint 0 errors, typecheck, full 3,759 tests, build); ready-PR delivery remains. See
+> `docs/rollouts/2026-07-11-provider-operation-leases.md`.
+
+> **2026-07-11 - Truthful notification delivery status (CODEX).** No product-roadmap change;
+> delivery observability and preference correctness only. One gated orchestration path now owns
+> push/webhook/email/SMS delivery for ordinary, price-alert, and provider-health events; callers
+> supply only their richer body text. Status derives from every actual result, unexpected bridge
+> failures cannot masquerade as neutral skips, partial failures remain visible, and the legacy
+> policy-webhook lane emits normal channel telemetry. The operator fallback email remains an extra
+> gated lane. The branch is reconciled through strategy merge `main@0dda52db`; the final Node 24 gate
+> is green: focused 7 files / 96 tests, repository lint, TypeScript, full 342 files / 3,816 tests,
+> production build, and diff-check. Ready replacement PR, #1442 supersession, hosted checks, merge,
+> and production verification remain. See
+> `docs/rollouts/2026-07-11-notification-status-truth.md`.
+
+> **2026-07-11 - Runtime release and recovery-path observability (CODEX).** No roadmap scope
+> change; this is an operations-observability slice. `/api/health` gains a public-safe source
+> revision/process identity and hard-deadline, size-capped Litestream daemon status/last-sync
+> inspection over its local IPC socket. Production explicitly enables the v0.5.12 socket and skips
+> the non-verifying metadata-file fallback; staleness requires evidence of newer local DB/WAL activity.
+> See `docs/rollouts/2026-07-11-runtime-release-backup-health.md`.
+> **2026-07-11 - Strategy lease correctness + default-on scheduler (CODEX).** No roadmap scope
+> change; this closes a money-path concurrency hole in the existing Phase 1 lock design. Approval
+> and autonomous runs heartbeat unique account leases, snapshot one account for every later read/write,
+> and re-prove ownership after each long await before unrelated persistence. Durable non-placement and
+> broker outcomes remain in failed run receipts when ownership disappears; approval cannot report a
+> persisted block as `busy`. Scheduler signal shutdown retains the leader lease until TTL while detached
+> broker work may exist, and account-scoped auto-tuning runs only after completed strategy runs under its
+> own renewed account lease and LLM reservation. A final independent review additionally fixed the
+> account-bound strategy prompt, propagated account scope into walk-forward evidence, honored a lost
+> proposal-transition race, and computes tuning time only after the strategy run finishes. PR #1429
+> passed local and hosted gates with zero unresolved threads and merged as `0dda52db`; production now
+> reports that exact release with healthy scheduler/Litestream/dependency checks. The final Node 24 gate was green: focused
+> 11 files / 129 tests, repository lint, TypeScript, full 341 files / 3,801 tests, production build,
+> and diff-check. See
+> `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+> **2026-07-11 - Alpha Vantage admin health lane canonicalization (CODEX).** No roadmap scope
+> change; operator-observability correctness only. The connections-health expected-lane inventory now
+> uses the provider's canonical `alpha-vantage:env` identity, preventing a synthetic empty
+> `alphavantage:env` card beside the real lane. Authenticated route coverage locks the one-lane
+> invariant. No provider, secret, pacing, rotation, or quota semantics changed. See
+> `docs/rollouts/2026-07-11-alpha-vantage-health-lane-canonicalization.md`.
+> **2026-07-11 - Expensive admin-operation abuse/cost controls (CODEX).** No product-roadmap
+> scope change; operator/security hardening only. Paid reindexes, expensive analysis, forced
+> refresh/share, and broker probes now have named per-admin budgets and single-flight exclusion,
+> returning explicit 429/409 responses before duplicate work reaches providers or long DB scans.
+> Explicit validation/config rejection precedes quota admission; historical default-action body semantics
+> remain unchanged. Process-wide groups cover manual admin route calls, while
+> scheduler/background convergence at the underlying operation boundaries is explicitly planned rather
+> than claimed complete. These are anti-repeat budgets, not hard per-request spend ceilings. Node 24
+> PR #1409 is merged as `9552b648`; the later Tradier merge `e3d04221` restored all eight guarded
+> route wrappers that #1409's merge had dropped. The released, clean-install-verified shared package
+> `v1.5.0` is exact-pinned in follow-up PR #1426, whose app-local HTTP adapter delegates stable
+> rejection body/status construction to the shared builders while retaining HTTP headers and legacy
+> fields. It also keeps real Auth.js provenance coverage instead of a bypass mock. The current-main
+> Node 24 gate is green: focused 29/29, lint 0 errors, tsc, 3,740/3,740 tests, and build. Refreshed
+> hosted checks and the matched Congress.Trade peer pin remain pending. See
+> fields. It also keeps real Auth.js provenance coverage instead of a bypass mock. The final
+> `main@e395e65a` Node 24 gate is green: focused 29/29, lint 0 errors, tsc, 3,746/3,746 tests, and
+> build. Antigravity's ready Congress.Trade PR #296 carries the exact matched pin with 940 tests
+> green; its peer check becomes green after #1426 lands first. See
+> `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
+> **2026-07-11 - Usage telemetry delivery identity (CODEX).** No product-roadmap or trading-path
+> change. The API Usage Monitor integration now supplies fixed-length explicit IDs for local ledger
+> events, broker balance snapshots, and each aggregated provider-call window so same-flush credential
+> lanes cannot collide under the shared five-field fallback. Ledger timestamps are reused on replay,
+> and failed/ambiguous batches retain their exact events for bounded in-memory retry. See
+> `docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+> **2026-07-13 - Crash-durable usage telemetry replay (CODEX).** No product-roadmap or trading-path
+> change. Every new usage event now declares `project:"socratic-trade"` while retaining the raw
+> provider identity. A startup/one-minute worker reconstructs historical and new LLM/RAG events
+> from their durable ledgers using existing row IDs/timestamps, ordered monotonic settings
+> watermarks, acknowledged-only advancement, and idempotent one-row overlap. No schema or new env
+> configuration is required. The producer checkpoint is blocked from merge/deploy until the API
+> Usage Monitor receiver backfill is deployed. See
+> `docs/rollouts/2026-07-13-usage-monitor-durable-replay.md`.
+> **2026-07-11 - Admin authorization fail-closed hardening (CODEX).** No roadmap scope change;
+> security/correctness only. The shared admin gate now denies by default in every environment unless
+> the caller has a middleware-proven Cloudflare Access/Auth.js admin email or valid admin token. The
+> former broad `NODE_ENV !== "production"` bypass is removed without a hostname-based replacement;
+> the auth-unconfigured primary-email fallback never grants admin access. Current-main Node 24 gate
+> is green (lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build). See
+> `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
+
+> **2026-07-10 - Settings IA restructure: global-only Settings (CLAUDE).** No roadmap scope
+> change; console IA only. `/console/settings` now carries ONLY global (user/browser/operator/
+> reference/danger) settings; account-scoped config lives on Framework (`/console/strategy`):
+> the Settings Models card was DELETED (Framework's pickers with reasoning-effort controls are
+> the single source of truth — the "mandatory explicit Settings picks" in the 2026-07-07 note
+> below are now mandatory explicit *Framework* picks), Tax treatment moved to the bottom of
+> Framework (still account-scoped, THIS ACCOUNT chip), and `requireTypedConfirmation` was
+> promoted to a user-level policy field so Advanced action confirmation genuinely spans all
+> accounts. See `docs/rollouts/2026-07-10-settings-global-only.md`.
+> **2026-07-07 - Single-adversary consolidation IMPLEMENTED (MONET).** Roadmap-relevant change to
+> the Phase-7 strategy engine's adversarial review: the two adversarial LLM passes (in-flow Bear +
+> escalated `debateProposal`) are consolidated into ONE post-sizing Red Team review per risk-adding
+> opening, per `docs/single-adversary-consolidation.md` as amended by the owner's 2026-07-07
+> revision — three-way down-only verdict (approve / approve-at-half / reject), exits structurally
+> exempt, fail-closed + visible on every failure mode, and NO model defaults anywhere (both team
+> models are now mandatory explicit Settings picks; the `RED_TEAM_LLM_PROVIDER` env override and
+> every silent fallback are gone — supersedes older notes below that describe blank-reviewer
+> inheritance). Branch `monet/single-adversary-consolidation`, supersedes draft PR #1035. See
+> `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
+> **2026-07-09 - Red Team efficacy Results wiring (Codex).** No roadmap scope change. The
+> active-account dashboard snapshot now carries `redTeamEfficacy` plus the override split from
+> persisted audit history, and Results renders the scorecard with honest 20/50 sample gating for
+> reviewer rows plus explicit `unattributed` history when no reviewer model was persisted. This is
+> read-side only and deliberately stays out of `src/lib/red-team.ts` / `src/lib/strategy.ts`.
+> See `docs/rollouts/2026-07-09-red-team-efficacy-console.md`. Production close-out:
+> PR #1175 shipped with PR #1174 in Coolify deploy `krk1db6x` at `main@8bc0967f`.
+> **2026-07-09 - Home evidence symbol drawer parity (Codex).** No roadmap scope
+> change. The remaining console-side universal ticker drawer gap is closed by
+> rendering market-scan candidate evidence cards through the existing `SymbolButton`,
+> passing the current quote into the shared drawer. See
+> `docs/rollouts/2026-07-09-home-evidence-symbol-drawer.md`.
+> **2026-07-09 - Guardrails tooltip sweep (Codex).** No roadmap scope change.
+> Guardrails Universe and Autonomy controls now carry native titles for the
+> remaining bare checkbox/text/select/button controls. See
+> `docs/rollouts/2026-07-09-guardrails-tooltip-sweep.md`.
+> **2026-07-09 - Shared-dep proper-usage cleanup refresh (Codex).** No roadmap
+> scope change. Dirty Cursor PR #1105 was refreshed onto current `origin/main`
+> via `codex/refresh-shared-dep-usage` without editing Cursor's branch: event
+> checks use shared `CONGRESS_EVENT_TYPES`, outbound share payload typing derives
+> from shared `SharePayload`, and stale shared imports were removed. See
+> `docs/rollouts/2026-07-09-shared-dep-proper-usage.md`.
+> **2026-07-09 - Scoring-factor weight tooltips (MONET).** No roadmap scope
+> change, display-only. Each of the 8 "Scoring-factor weights" controls on the
+> Strategy console page now carries a hover tooltip explaining what the factor
+> measures and which direction more weight pushes candidate ranking, plus one
+> sentence clarifying the weights are relative. No scoring-math changes. See
+> `docs/rollouts/2026-07-09-scoring-factor-tooltips.md`.
+> **2026-07-09 - Model Stats drawer widened on desktop (MONET).** No roadmap
+> scope change, display-only. The shared `Sheet` component gained an opt-in
+> `wide` prop (920px desktop max-width vs. the 560px default; mobile bottom
+> sheet unaffected), used only by the Model Stats drawer's 4-column table.
+> No other `Sheet` call-site changed. See
+> `docs/rollouts/2026-07-09-model-stats-drawer-wide.md`.
 
 > **2026-07-06 - Learned-context copy fix + browse/delete archive (Claude).** No roadmap change.
 > Reworded the awkward/overclaiming empty-state copy on the Learned Context approval queue
@@ -13,6 +904,15 @@ filling the missing pieces.
 > `deleteLearnedContext` in `src/lib/db-learning.ts`, and a collapsed-by-default
 > `LearnedFactsArchive` component on the Approvals page. See
 > `docs/rollouts/2026-07-06-learned-context-archive.md`.
+
+> **2026-07-08 - Live bulk approval typed-confirm flow (Codex).** No roadmap change.
+> This closes the deliberately deferred #807 approval-triage gap: selected LIVE proposals can now
+> be approved in bulk, with one aggregate typed-confirm sheet only when
+> `policy.requireTypedConfirmation` is enabled. Bulk reject stays the existing inline one-click
+> confirm, and every approval still uses the existing per-item endpoint so partial blocked/failed
+> outcomes remain visible. See `docs/rollouts/2026-07-08-live-bulk-typed-confirm.md`.
+> Production close-out: PR #1174 shipped with PR #1175 in Coolify deploy `krk1db6x`
+> at `main@8bc0967f`.
 > **2026-07-06 - Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane
 > (Claude cloud).** No roadmap scope change; infrastructure/ops only. Self-hosted Coolify
 > stood up on Hetzner behind `jays.services` to offload local agent/dev-server resource
@@ -1096,8 +1996,9 @@ the Infisical runner (`npm run start:secrets`), which injects them at startup, a
 GCP runner was removed — Infisical is the single path.) The box authenticates with the machine
 identity's **Client ID + Client Secret** (universal auth, long-lived; the runner mints a short-lived
 token each launch — a raw `INFISICAL_TOKEN` is only a fallback and the Client Secret is NOT that
-token). Production cutover is scripted (`scripts/infisical-prod-cutover.sh`) and `deploy.yml`
-auto-picks-up the box bootstrap; shared App-A/B secrets are pulled via an app-wins overlay
+token). Current Coolify production injects that identity through `scripts/coolify-prod-start.sh`;
+the retired Mac rollback cutover remains scripted in `scripts/infisical-prod-cutover.sh`. Shared
+App-A/B secrets are pulled via an app-wins overlay
 (`INFISICAL_SHARED_PROJECT_ID` + its own Client ID/Secret). This documents existing behavior; no phase
 scope, timeline, or approach changed.
 
@@ -1181,7 +2082,40 @@ scope, timeline, or approach changed.
   ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap; congress-share bypass
   for adjusted-close when CONGRESS_TRADE_READS_ENABLED tier precedes Yahoo.
 
+## Fleet-infra tooling (host-side, no product-roadmap change)
+
+- **Retired deploy safety + CI Sentry coverage** (2026-07-11,
+  `.github/workflows/sentry-ci-report.yml`, `scripts/sentry-ci-report.py`,
+  `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`): removed the
+  obsolete Mac/PM2 GitHub Actions deploy workflow so Coolify remains the only
+  automatic production path, and synchronized Sentry failure/cron observation
+  with the active workflow fleet. This is CI/operations hardening only; it does
+  not change product scope, phase order, or acceptance criteria.
+
+- **Effort-log union-merge safety net** (2026-07-10,
+  `scripts/effort-log-union-merge.py`,
+  `docs/rollouts/2026-07-10-effort-log-union-merge-safety.md`): a stdlib-only,
+  row-level, invariant-checked reconciler that merges the machine-local live
+  effort board against the repo mirror (`docs/EFFORT-LOG.md`) **without ever
+  dropping a live-only row**. This is host-side coordination tooling only — it
+  changes no product code, ships no user-facing behavior, and does **not** alter
+  the phase roadmap or acceptance checks above. **Follow-up (out of this PR's
+  scope):** wire it into the always-on host-side `~/.claude-merge-shepherd/run.sh`
+  30-minute driver so live/mirror reconciliation runs automatically; that cron
+  lives outside this repo and touching it needs an owner-supervised session.
+
 ## Build Order
+
+### Current landing closure (2026-07-14)
+
+- Finish PR #1586 with immutable generation-bound transcript derivative IDs, exact provider/ledger
+  receipts, heartbeat-fenced writes, active-generation retrieval, provider-first consecutive-clean
+  erasure, account-deletion coverage, and independent private/shared rerank candidate pools.
+- Treat Cloudflare Access application-token timestamps as authorization-token freshness only; require
+  a matching signed Auth.js `loginAt` for post-deletion identity regeneration.
+- Complete the ordered Node 24 gate and hostile re-review, merge #1607 and #1586 through their PRs,
+  then verify zero open PRs plus the exact final production release. Transcript activation remains a
+  separate owner/config decision gated on endpoint entitlement and commercial storage/display rights.
 
 1. Phase 1 hardening: scheduler starts once, run lock works, market-hours state is visible.
 2. Phase 2 correctness: estimated notional is authoritative and sector attribution covers all scan rows.
@@ -1224,3 +2158,6 @@ scope, timeline, or approach changed.
 - Root-level manual probe artifacts such as screenshots, one-off UI scripts, and
   accidental shell-output files stay ignored so the integration worktree remains
   reserved for review and merges.
+
+## 2026-07-21 PR #1845
+LLM cooldown + draining purge safety — see rollout note.

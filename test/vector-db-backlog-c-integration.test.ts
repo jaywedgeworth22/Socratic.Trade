@@ -77,11 +77,17 @@ function resetEnv() {
   process.env.PINECONE_INDEX_READY_WAIT_MS = "0";
   process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
   delete process.env.RAG_QUERY_EMBED_CACHE;
-  delete process.env.RAG_RUN_BUDGET_ENABLED;
+  // Pin quality/telemetry flags OFF so each test opts in explicitly (production defaults are ON
+  // as of owner enablement 2026-07-24; tests must not depend on unset==off).
+  process.env.RAG_RUN_BUDGET_ENABLED = "off";
   delete process.env.RAG_RUN_BUDGET_CEILING;
   delete process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED;
   delete process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY;
-  delete process.env.RAG_APPLY_DEFAULT_FLOORS;
+  process.env.RAG_APPLY_DEFAULT_FLOORS = "off";
+  process.env.RAG_RETRIEVAL_TELEMETRY = "off";
+  process.env.RAG_CORPUS_WIDE_LEXICAL = "off";
+  process.env.RAG_PARENT_CONTEXT_EXPANSION = "off";
+  process.env.VECTOR_ASOF_SERVER_FILTER = "off";
   delete process.env.VECTOR_MIN_SCORE;
   delete process.env.VECTOR_ENABLE_RERANK;
   delete process.env.HYBRID_RETRIEVAL;
@@ -179,7 +185,7 @@ describe("R9: query-embedding LRU cache", () => {
     await retrieveContextDetailed("AAPL supply chain risk", "AAPL", 3, "local");
 
     expect(mocks.embed).toHaveBeenCalledTimes(1); // cached by default — second call is a hit
-    expect(mocks.query).toHaveBeenCalledTimes(2); // Pinecone query still runs fresh both times
+    expect(mocks.query).toHaveBeenCalledTimes(4); // private + shared pools still run fresh both times
   });
 
   it("opt-out (RAG_QUERY_EMBED_CACHE=off): embeds fresh on every call, even for the identical query", async () => {
@@ -204,7 +210,7 @@ describe("R9: query-embedding LRU cache", () => {
     await retrieveContextDetailed("AAPL supply chain risk", "AAPL", 3, "local");
 
     expect(mocks.embed).toHaveBeenCalledTimes(1); // second call is a cache hit
-    expect(mocks.query).toHaveBeenCalledTimes(2); // Pinecone query still runs fresh both times
+    expect(mocks.query).toHaveBeenCalledTimes(4); // private + shared pools still run fresh both times
   });
 
   it("when ON: per-user filters still apply after a cache hit (cache is vector-only, not results)", async () => {
@@ -386,12 +392,30 @@ describe("R16: per-run RAG budget ceiling with graceful degradation", () => {
     expect(second.length).toBeGreaterThan(0); // still returns core dense-cosine results
     expect(mocks.rerank).not.toHaveBeenCalled(); // degraded: rerank skipped
   });
+
+  it("keeps local corpus-wide lexical over-fetch enabled during budget degradation", async () => {
+    process.env.RAG_RUN_BUDGET_ENABLED = "on";
+    process.env.RAG_RUN_BUDGET_CEILING = "1";
+    process.env.RAG_CORPUS_WIDE_LEXICAL = "on";
+    process.env.VECTOR_ENABLE_RERANK = "on";
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+    mocks.query.mockResolvedValue({ matches: [{ id: "c0", score: 0.9, metadata: { text: "chunk", userId: "local", scope: "shared" } }] });
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+    const { resetRunBudget } = await import("../src/lib/rag/run-budget");
+    resetRunBudget();
+
+    await retrieveContextDetailed("q1", "AAPL", 2, "local");
+    mocks.query.mockClear();
+    await retrieveContextDetailed("q2", "AAPL", 2, "local");
+
+    expect(mocks.query.mock.calls.some(([request]) => request.topK === 10)).toBe(true);
+  });
 });
 
 // ── R5: consolidated per-retrieval telemetry ────────────────────────────────
 
 describe("R5: consolidated per-retrieval telemetry (recordRetrievalQuality)", () => {
-  it("default OFF: never calls audit with rag_retrieval_quality", async () => {
+  it("explicitly OFF: never calls audit with rag_retrieval_quality", async () => {
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
     mocks.query.mockResolvedValue({
       matches: [{ id: "a", score: 0.5, metadata: { text: "chunk", userId: "local", scope: "shared" } }]

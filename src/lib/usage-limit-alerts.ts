@@ -18,6 +18,21 @@ export interface UsageLimitAlertInput {
   payload?: Record<string, unknown>;
 }
 
+interface UsageLimitAlertOptions {
+  /** Cooperative ownership fence for callers whose work may be superseded while delivery awaits. */
+  assertActive?: () => void;
+  /** Cancels in-flight channel delivery and retry waits after ownership moves. */
+  signal?: AbortSignal;
+}
+
+function assertUsageAlertActive(options: UsageLimitAlertOptions): void {
+  options.assertActive?.();
+  if (!options.signal?.aborted) return;
+  throw options.signal.reason instanceof Error
+    ? options.signal.reason
+    : new Error("Usage-limit alert ownership was lost.");
+}
+
 const ALERT_KEY_PREFIX = "usageLimitAlert:lastSent";
 const DEFAULT_ALERT_COOLDOWN_MS = 6 * 60 * 60_000;
 
@@ -81,10 +96,18 @@ function bodyFor(input: UsageLimitAlertInput): string {
   return parts.join("\n");
 }
 
-async function notifyOperatorEmailFallback(userId: string, title: string, body: string, data: unknown): Promise<void> {
+async function notifyOperatorEmailFallback(
+  userId: string,
+  title: string,
+  body: string,
+  data: unknown,
+  options: UsageLimitAlertOptions
+): Promise<void> {
+  assertUsageAlertActive(options);
   const prefs = getNotifyPrefs(userId);
   if (prefs.channels.includes("email") && prefs.email.trim()) return;
 
+  assertUsageAlertActive(options);
   const fallbackEmail = operatorAlertEmail();
   if (!fallbackEmail) return;
   const config = loadNotifyConfig();
@@ -96,7 +119,14 @@ async function notifyOperatorEmailFallback(userId: string, title: string, body: 
     email: fallbackEmail,
     updatedAt: prefs.updatedAt
   };
-  await notify(userId, { title, body, kind: "budget_alert", data }, { config, prefs: forcedPrefs });
+  assertUsageAlertActive(options);
+  await notify(userId, { title, body, kind: "budget_alert", data }, {
+    config,
+    prefs: forcedPrefs,
+    assertActive: options.assertActive,
+    signal: options.signal
+  });
+  assertUsageAlertActive(options);
 }
 
 /**
@@ -104,17 +134,23 @@ async function notifyOperatorEmailFallback(userId: string, title: string, body: 
  * attempts the user's configured channels, and falls back to an operator email
  * target when email delivery is configured but the user has not opted into email.
  */
-export async function alertUsageLimitHit(input: UsageLimitAlertInput): Promise<void> {
+export async function alertUsageLimitHit(
+  input: UsageLimitAlertInput,
+  options: UsageLimitAlertOptions = {}
+): Promise<void> {
   const userId = input.userId ?? "local";
   try {
+    assertUsageAlertActive(options);
     const sendKey = {
       userId,
       provider: input.provider,
       operation: input.operation,
       limitName: input.limitName
     };
+    assertUsageAlertActive(options);
     if (!shouldSend(sendKey)) return;
 
+    assertUsageAlertActive(options);
     const status = input.status ?? "exceeded";
     const title =
       status === "warning"
@@ -134,13 +170,24 @@ export async function alertUsageLimitHit(input: UsageLimitAlertInput): Promise<v
       ...(input.payload ?? {})
     };
     const body = bodyFor(input);
+    assertUsageAlertActive(options);
     audit("usage_limit_alert", payload, userId);
+    assertUsageAlertActive(options);
     await sendNotification(
       { type: "budget_alert", title, payload },
-      { userId, policy: forcedBudgetAlertPolicy(getPolicy(userId)) }
+      {
+        userId,
+        policy: forcedBudgetAlertPolicy(getPolicy(userId)),
+        assertActive: options.assertActive,
+        signal: options.signal
+      }
     );
-    await notifyOperatorEmailFallback(userId, title, body, payload);
+    assertUsageAlertActive(options);
+    await notifyOperatorEmailFallback(userId, title, body, payload, options);
+    assertUsageAlertActive(options);
   } catch {
+    // A failed ownership fence is control flow, not a best-effort alert failure.
+    assertUsageAlertActive(options);
     // Usage alerts must never block trading, ingestion, or provider fallback.
   }
 }

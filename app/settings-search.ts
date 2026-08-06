@@ -128,6 +128,17 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     help: "If the account falls this far from its high point, it goes close-only."
   },
   {
+    id: "guardrails.accuracyBreaker",
+    label: "Consecutive-loss breaker",
+    synonyms: ["accuracy breaker", "losing streak", "consecutive losses", "hit rate", "wrong calls", "nofx"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "risk",
+    backingField: "riskRules.accuracyBreakerConsecutiveLosses",
+    disclosure: "advanced",
+    help: "Flags the account after this many matured losses in a row — advisory by default; the agent decides."
+  },
+  {
     id: "guardrails.perSymbolCap",
     label: "Per-symbol cap",
     synonyms: ["symbol exposure", "most in one symbol", "concentration", "position cap"],
@@ -147,6 +158,61 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "risk",
     backingField: "volPanicBrakeEnabled",
     disclosure: "advanced"
+  },
+  {
+    id: "guardrails.volTargeting",
+    label: "Volatility-target sizing",
+    synonyms: ["volatile", "wild names", "vol target", "size taper", "volatility taper", "position sizing volatility"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "tuning",
+    backingField: "tuning.volTargeting",
+    disclosure: "advanced",
+    help: "Tapers opening order size down when a name's realized volatility exceeds your target."
+  },
+  {
+    id: "guardrails.heatBudget",
+    label: "Portfolio heat budget",
+    synonyms: ["heat", "risk budget", "portfolio heat", "size taper", "distance to stop", "total risk"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "tuning",
+    backingField: "tuning.portfolioHeatBudgetPct",
+    disclosure: "advanced",
+    help: "Caps the book's total distance-to-stop dollar risk; openings taper to fit what's left."
+  },
+  {
+    id: "guardrails.riskReceipts",
+    label: "Risk receipts",
+    synonyms: ["risk receipt", "correlation receipt", "stress scenario", "pre-trade stress"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "tuning",
+    backingField: "tuning.riskReceipts",
+    disclosure: "advanced",
+    help: "Inform-only correlation + stress notes appended to every opening proposal."
+  },
+  {
+    id: "guardrails.eventTriggers",
+    label: "Event-triggered runs",
+    synonyms: ["event trigger", "signal", "regime flip run", "trigger engine", "event driven", "8-k trigger", "material event"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "operate",
+    backingField: "triggerSettings.enabled",
+    disclosure: "advanced",
+    help: "Let material events (filings, regime flips, signals) fire a run instead of waiting for the interval."
+  },
+  {
+    id: "guardrails.triggerFallbackInterval",
+    label: "Event-mode fallback interval",
+    synonyms: ["fallback interval", "event mode fallback", "cadence fallback", "safety floor", "trigger mode"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "operate",
+    backingField: "triggerSettings.fallbackIntervalMinutes",
+    disclosure: "advanced",
+    help: "Event-only mode: still run the fixed cadence at least this often so a quiet tape can't strand the account."
   },
   {
     id: "guardrails.washSaleGuard",
@@ -225,7 +291,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
   {
     id: "settings.brokerConnections",
     label: "Broker connections",
-    synonyms: ["connections", "broker", "alpaca", "robinhood", "test paper live"],
+    synonyms: ["connections", "broker", "alpaca", "robinhood", "tradier", "test paper live"],
     scope: "user",
     destination: "settings/connections",
     legacySection: "connections",

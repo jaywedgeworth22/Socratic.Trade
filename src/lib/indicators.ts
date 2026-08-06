@@ -24,6 +24,14 @@ export interface OHLCBar {
   volume?: number;
   /** Volume-weighted average price for the bar, when the source supplies it (e.g. Massive `vw`). */
   vwap?: number;
+  /**
+   * Provenance: which history tier produced this bar series (e.g. "massive", "yahoo-finance",
+   * "history-cache-eod"). Applied to every bar in a cascade result so chart/cache consumers can
+   * show source without a parallel series metadata object. See source-capability-matrix ohlcv_daily.
+   */
+  source?: string;
+  /** When we fetched/stored this bar (ISO). Distinct from bar `time` (session date). */
+  fetchedAt?: string;
 }
 
 export interface TechnicalRead {

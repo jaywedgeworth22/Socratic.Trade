@@ -12,12 +12,16 @@ import { deriveMetrics, type DerivedMetrics } from "@/lib/derived-metrics";
 import { friendlySource, receivedLabel } from "@/lib/dashboard-ui";
 import type {
   AnalystRatingDetail,
+  EnrichmentFieldObservations,
   EnrichmentSources,
   EquityPosition,
   MarketFactorBreakdown,
   MarketQuote,
   MarketQuoteSummary
 } from "@/lib/types";
+// Type-only: erased at build time, so importing the shape doesn't pull the (server-only)
+// provider implementations from data-providers.ts into the client bundle.
+import type { SymbolEnrichment } from "@/lib/data-providers";
 
 // ── Quote view (merged superset of MarketQuote / MarketQuoteSummary) ─────────
 
@@ -51,6 +55,7 @@ export interface QuoteView {
   dividendYield?: number;
   eps?: number;
   pbRatio?: number;
+  returnOnEquity?: number;
   shortPercentOfFloat?: number;
   beta?: number;
   fiftyTwoWeekHigh?: number;
@@ -71,6 +76,7 @@ export interface QuoteView {
   sectorRelStrength?: number;
   evidenceBulletins?: string[];
   sources?: EnrichmentSources;
+  fieldObservations?: EnrichmentFieldObservations;
 }
 
 const num = (v: unknown): number | undefined =>
@@ -126,6 +132,7 @@ export function toQuoteView(full: MarketQuote | undefined, summary: MarketQuoteS
     dividendYield: num(q.dividendYield),
     eps: num(q.eps),
     pbRatio: num(q.pbRatio),
+    returnOnEquity: num(q.returnOnEquity),
     shortPercentOfFloat: num(q.shortPercentOfFloat),
     beta: num(q.beta),
     fiftyTwoWeekHigh: posNum(q.fiftyTwoWeekHigh),
@@ -145,6 +152,7 @@ export function toQuoteView(full: MarketQuote | undefined, summary: MarketQuoteS
     targetMedian: posNum(q.targetMedian),
     evidenceBulletins: q.evidenceBulletins,
     sources: q.sources,
+    fieldObservations: q.fieldObservations,
     // Both tiers carry these now (summary quotes gained them in market.ts
     // quotesBySymbol); `q = full ?? summary` already prefers the full tier.
     volume: posNum(q.volume),
@@ -157,6 +165,72 @@ export function toQuoteView(full: MarketQuote | undefined, summary: MarketQuoteS
     view.marketCap = posNum(full.marketCap);
   }
   return view;
+}
+
+/** Build a QuoteView from an on-demand single-symbol enrichment fetch (`/api/quote`),
+ *  used when the last market scan didn't know the symbol at all. Deliberately omits
+ *  `score`, `factorBreakdown`, `marketCap`, and `sectorRelStrength` — those rank the
+ *  symbol against the scan's candidate universe and are never approximated here. */
+export function toQuoteViewFromEnrichment(symbol: string, enrichment: Partial<SymbolEnrichment>): QuoteView {
+  return {
+    symbol,
+    full: false,
+    companyName: enrichment.companyName,
+    price: posNum(enrichment.price),
+    vwap: posNum(enrichment.vwap),
+    bid: posNum(enrichment.bid),
+    ask: posNum(enrichment.ask),
+    sector: enrichment.sector,
+    industry: enrichment.industry,
+    asOf: enrichment.asOf,
+    sentiment: num(enrichment.sentiment),
+    peRatio: num(enrichment.peRatio),
+    analystRating: enrichment.analystRating,
+    analystScore: num(enrichment.analystScore),
+    analystBySource: enrichment.analystBySource,
+    dividendYield: num(enrichment.dividendYield),
+    eps: num(enrichment.eps),
+    pbRatio: num(enrichment.pbRatio),
+    returnOnEquity: num(enrichment.returnOnEquity),
+    shortPercentOfFloat: num(enrichment.shortPercentOfFloat),
+    beta: num(enrichment.beta),
+    fiftyTwoWeekHigh: posNum(enrichment.fiftyTwoWeekHigh),
+    fiftyTwoWeekLow: posNum(enrichment.fiftyTwoWeekLow),
+    insiderSentiment: num(enrichment.insiderSentiment),
+    fcfYield: num(enrichment.fcfYield),
+    debtToEquity: num(enrichment.debtToEquity),
+    epsGrowth: num(enrichment.epsGrowth),
+    senateTrades: num(enrichment.senateTrades),
+    daysToEarnings: num(enrichment.daysToEarnings),
+    institutionOwnershipPct: num(enrichment.institutionOwnershipPct),
+    nearTheMoneyIv: num(enrichment.nearTheMoneyIv),
+    putCallRatio: num(enrichment.putCallRatio),
+    targetMean: posNum(enrichment.targetMean),
+    targetHigh: posNum(enrichment.targetHigh),
+    targetLow: posNum(enrichment.targetLow),
+    targetMedian: posNum(enrichment.targetMedian),
+    volume: posNum(enrichment.volume),
+    intradayChangePct: num(enrichment.intradayChangePct),
+    headlines: enrichment.headlines,
+    sources: enrichment.sources
+  };
+}
+
+// Fields worth rendering the reduced on-demand fundamentals sections for. Deliberately
+// excludes `sources`/`asOf` (the cascade always sets `sources` to an object — possibly
+// empty — so its mere presence isn't a signal) and the scan-only fields above.
+const ENRICHED_SIGNAL_KEYS: (keyof QuoteView)[] = [
+  "price", "vwap", "bid", "ask", "volume", "intradayChangePct", "sector", "industry", "sentiment",
+  "peRatio", "analystRating", "analystScore", "dividendYield", "eps", "pbRatio", "shortPercentOfFloat",
+  "beta", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "insiderSentiment", "fcfYield", "debtToEquity",
+  "epsGrowth", "senateTrades", "daysToEarnings", "institutionOwnershipPct", "nearTheMoneyIv",
+  "putCallRatio", "targetMean", "targetHigh", "targetLow", "targetMedian", "companyName"
+];
+
+/** True when an on-demand enrichment view carries at least one real field worth
+ *  rendering — as opposed to every provider having come back empty for the symbol. */
+export function hasEnrichedData(view: QuoteView): boolean {
+  return ENRICHED_SIGNAL_KEYS.some((key) => view[key] !== undefined) || (view.headlines?.length ?? 0) > 0;
 }
 
 // ── P/E honesty (repo convention) ────────────────────────────────────────────
@@ -205,7 +279,8 @@ export function deriveForView(view: QuoteView, historyBarVolume?: number): Deriv
     volume: view.volume ?? (volumeFromHistory ? historyBarVolume : undefined),
     epsGrowth: view.epsGrowth,
     bid: view.bid,
-    ask: view.ask
+    ask: view.ask,
+    returnOnEquity: view.returnOnEquity
   });
   return { metrics, volumeFromHistory };
 }
@@ -268,7 +343,7 @@ export function buildDerivedTiles(view: QuoteView, derived: DerivedResult): Deri
     key: "roe",
     label: "ROE",
     value: typeof m.roe === "number" ? `${m.roe.toFixed(1)}%` : null,
-    title: `Return on equity = EPS ÷ book value per share. Higher = more efficient use of shareholder capital; 20%+ is excellent, negative means losses. ${COMPUTED}`,
+    title: `Return on equity — provider-reported (FMP ratios-ttm) when available, otherwise EPS ÷ book value per share. Higher = more efficient use of shareholder capital; 20%+ is excellent, negative means losses. ${COMPUTED}`,
     tone: typeof m.roe === "number" ? (m.roe >= 0 ? "pos" : "neg") : undefined
   });
 
@@ -568,13 +643,29 @@ export function targetUpsidePct(view: QuoteView): number | undefined {
 // ── Provenance tooltips ("via Yahoo Finance") ────────────────────────────────
 
 /** Append per-field provenance + freshness to a tooltip when the scan recorded
- *  which provider supplied the field. */
+ *  which provider supplied the field. When no provider supplied it, append
+ *  neither — stamping "Received <time>" on a field no provider returned claims
+ *  freshness for data we never got. */
+export function isStaleViewField(view: QuoteView, fieldKey?: keyof EnrichmentSources): boolean {
+  const specificTime = fieldKey && view.fieldObservations?.[fieldKey]?.fetchedAt;
+  const time = specificTime || view.asOf;
+  if (!time) return false;
+  return Date.now() - new Date(time).getTime() > 24 * 60 * 60 * 1000;
+}
+
 export function withProvenance(base: string, view: QuoteView, field: keyof EnrichmentSources): string {
   const parts = [base];
   const source = view.sources?.[field];
-  if (source) parts.push(`Source: ${friendlySource(source)}.`);
-  const received = receivedLabel(view.asOf);
-  if (received) parts.push(`${received}.`);
+  if (source) {
+    parts.push(`Source: ${friendlySource(source)}.`);
+    const specificTime = view.fieldObservations?.[field]?.fetchedAt;
+    const timeToUse = specificTime || view.asOf;
+    const received = receivedLabel(timeToUse);
+    const isStale = isStaleViewField(view, field);
+    if (received) {
+      parts.push(isStale ? `(Stale: ${received.replace('Received ', '')}).` : `${received}.`);
+    }
+  }
   return parts.join(" ");
 }
 

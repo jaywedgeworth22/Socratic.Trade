@@ -128,7 +128,7 @@ Expert review guidance for the candidate cap:
   ignored.
 
 **MCP/provider evaluation (2026-06-24):** `docs/data-provider-mcp-evaluation.md`
-compares FMP, Alpha Vantage, Twelve Data, Tiingo, Intrinio, EODHD,
+compares FMP, Alpha Vantage, Twelve Data, Tiingo, EODHD,
 FinancialData.net, Nasdaq Data Link, Tastytrade, Pyth, Databento, Unusual
 Whales, Trading Volatility, and a generic Yahoo-backed MCP server. The
 production guidance is to keep scheduled scans, scoring, history, cache writes,
@@ -136,8 +136,7 @@ and execution-adjacent data on direct REST/WebSocket adapters. MCP is useful for
 provider research, trial benchmarking, and interactive deep dives, but app-side
 MCP calls should be promoted only through a narrow server adapter that normalizes
 and caches source-attributed results. Near-term candidates are Tiingo as a
-low-cost direct adapter, an Intrinio trial benchmark before paying $150/month,
-and FinancialData.net/EODHD/Twelve Data as cheaper broad replacements if their
+low-cost direct adapter and FinancialData.net/EODHD/Twelve Data as broad replacements if their
 coverage and licensing fit.
 
 ## Acceptance
@@ -158,6 +157,27 @@ coverage and licensing fit.
 - Shared OHLC cache fills can satisfy pending public misses without pooling private user keys.
 - Source-provided VWAP is attributed when present and omitted when unavailable.
 - The strategy prompt asks for ask-relative limit prices only when ask data exists.
+
+## Interactive scan reliability and FMP routing (2026-07-15)
+
+The interactive `/api/scan` path no longer starts the full multi-provider fundamentals
+cascade. A default 30-candidate configuration widens to 150 preselection symbols; on a
+cold process, Finnhub alone can enqueue 750 calls at 50/min. The old 25-second
+`Promise.race` returned 500 without cancelling that work, and user retries multiplied
+the queue. Interactive scans now return the real Nasdaq/broker scan plus persisted web
+signals, reuse only slow facts from a completed strategy scan no more than 24 hours old,
+replace every price/event-sensitive field, coalesce identical refreshes, and bound Nasdaq
+at eight seconds. A Nasdaq outage shows the last strategy scan with explicit stale
+attribution instead of a blank table. Strategy/scheduler scans keep full enrichment, and
+ticker sheets fetch bounded, per-user/symbol-coalesced data for any valid symbol.
+
+FMP's live lane now uses stable `profile`, `ratios-ttm`, `grades-consensus`, and
+`insider-trading/search` endpoints (plus opt-in price targets), with header auth and
+per-field provenance. `ratios-ttm` maps valuation, leverage, returns, margin, and yield;
+`profile` maps issuer identity/classification, beta, dividend yield, and 52-week range.
+Congressional disclosures stay owned by Congress.Trade rather than duplicated per
+symbol. The cadence/entitlement expansion map is maintained in
+`docs/fmp-capabilities.md`.
 
 ## Data-source breadth (2026-07-01, branch `claude/trading-audit-d-e-dpw0h7`)
 
@@ -192,6 +212,23 @@ enrichment checklist (`SymbolEnrichment` → `EnrichmentSourcedField` → `takeS
 - **Finnhub REST-volume lever** — `FINNHUB_DROP_RECOMMENDATION` (default-off) drops the
   per-symbol `stock/recommendation` call (5→4); analyst ratings remain backstopped by the
   Yahoo/FMP/Alpha-Vantage tiers.
+- **Free-first field-demand planner (2026-07-26, default ON)** —
+  `ENRICHMENT_FREE_FIRST_ENABLED`. Wave A runs free/keyless providers (Yahoo, Alpaca
+  snapshot/news, SEC XBRL when enabled, FMP-RapidAPI, etc.) with one retry on throw; Wave B
+  runs paid non-scarce providers only for symbols still missing core gap fields; Wave C is
+  the existing scarce RapidAPI gate (`quotaScarce` + `suppliesFields`). Insiders/TwelveData
+  RapidAPI now declare `suppliesFields` so they participate in Wave C. Alpha Vantage RapidAPI
+  also supplies NEWS_SENTIMENT when sentiment/headlines remain gaps. Keyless `nasdaq-quote`
+  joins the free wave beside Yahoo. ROIC resolves from `ROIC_API_KEY` (profile-first).
+  FilingAPI.dev (`FILINGAPI`) supplies sector/industry/daysToEarnings/insiderSentiment in
+  wave C. SEC XBRL is default ON. Additional RapidAPI scarce lanes: yh-finance-apidojo,
+  real-time-finance-data, seeking-alpha-rapidapi.
+- **Enrichment coverage report** — after each cascade run, Admin → Enrichment Coverage
+  (`/admin/enrichment-coverage`), `/api/admin/enrichment-coverage`, and ops snapshot
+  `enrichmentCoverage` show per-field fill rate, winning/most-frequent source, missing
+  fields, and provider failures. `applyEnrichment` preserves `fieldObservations` /
+  `providerFailures` on `MarketQuote`.
 
-See `docs/rollouts/2026-07-01-data-sources-breadth.md` and
-`docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`.
+See `docs/rollouts/2026-07-01-data-sources-breadth.md`,
+`docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`, and
+`docs/rollouts/2026-07-26-free-cascade-coverage.md`.

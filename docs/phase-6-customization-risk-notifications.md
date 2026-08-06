@@ -23,6 +23,13 @@ in `src/lib/db.ts` (same pattern as other per-user tables).
 
 ## Risk Rules
 
+As of 2026-07-13, daily opening spend is an explicit either/or control:
+`maxDailyPctOfNav` (20% default) or `maxDailyNotional`. The selected mode is normalized on web,
+mobile, profile, and AI-review writes, then resolved once through `src/lib/policy-caps.ts` for
+strategy generation, deterministic review, broker-minimum bumps, approval-time rechecks, and UI
+utilization. Migration v26 changes only the exact former $500 product default to 20% NAV; other
+dollar values remain owner-selected dollar mode.
+
 Policy enforcement includes:
 
 - sector exposure caps for buys

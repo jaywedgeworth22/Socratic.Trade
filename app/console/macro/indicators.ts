@@ -47,14 +47,26 @@ export interface MacroSourcing {
   fred: boolean;
   /** The VIX value is a live reading (full FRED fetch OR the key-free Yahoo fallback). */
   vix: boolean;
+  /** The 3M/2Y/10Y Treasury yields (and the curves derived from them) are a live reading from the
+   *  key-free Treasury.gov fallback — set even without a FRED key, mirroring how `vix` works. */
+  treasury: boolean;
+  /** CPI/unemployment (and nonfarmPayrollsChangeK, which has no FRED equivalent at all) are a live
+   *  reading from the BLS fallback (keyless or lightly-keyed) — set even without a FRED key. */
+  bls: boolean;
 }
 
 export function macroSourcing(board: Board): MacroSourcing {
   const anyLive = board.macro.asOf !== "unavailable";
-  // `fredSourced` ships with the same build as this UI; tolerate its absence
-  // (older payload) by falling back to the legacy asOf heuristic instead of
-  // blanking data that may be real.
-  return { fred: board.macro.fredSourced ?? anyLive, vix: anyLive };
+  // `fredSourced`/`treasurySourced`/`blsSourced` ship with the same build as this UI; tolerate their
+  // absence (older payload) by falling back to the legacy asOf heuristic for `fred` only. `treasury`/
+  // `bls` default to false (not the asOf heuristic) since older payloads never set them — asOf being
+  // live doesn't imply either keyless fallback actually ran.
+  return {
+    fred: board.macro.fredSourced ?? anyLive,
+    vix: anyLive,
+    treasury: board.macro.treasurySourced ?? false,
+    bls: board.macro.blsSourced ?? false
+  };
 }
 
 // ── Parsing / formatting ─────────────────────────────────────────────────────
@@ -88,7 +100,28 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
   const mn = (s?: string): number | undefined => (sourcing.fred ? numFrom(s) : undefined);
   const dn = (v?: number): number | undefined => (sourcing.fred ? v : undefined);
 
-  const cpi = mn(macro.cpiInflation);
+  // The 3M/2Y/10Y Treasury yields (and the two curves computed purely from them) have a SECOND,
+  // key-free source (Treasury.gov) beside FRED — gate those specific tiles on either, so the
+  // keyless fallback actually lights them up instead of showing EM_DASH next to real data.
+  // `curvePolicy` (10Y − Fed funds) stays FRED-only below: Fed funds has no keyless source.
+  const fredOrTreasury = sourcing.fred || sourcing.treasury;
+  const mvRate = (s?: string): string => (fredOrTreasury && s && s.length > 0 ? s : EM_DASH);
+  const dnRate = (v?: number): number | undefined => (fredOrTreasury ? v : undefined);
+  const rateAsOf = fredOrTreasury ? macro.asOf : undefined;
+
+  // CPI and unemployment ALSO have a second, key-free-capable source (BLS) beside FRED — gate
+  // those two specific tiles (+ the misery index computed purely from them) on either, same
+  // reasoning as the Treasury rate tiles above. nonfarmPayrollsChangeK has no FRED equivalent at
+  // all (FRED's PAYEMS is a level, not this MoM delta), so it's BLS-only below, gated on `bls` alone.
+  const fredOrBls = sourcing.fred || sourcing.bls;
+  const mvLabor = (s?: string): string => (fredOrBls && s && s.length > 0 ? s : EM_DASH);
+  const mnLabor = (s?: string): number | undefined => (fredOrBls ? numFrom(s) : undefined);
+  const laborAsOf = fredOrBls ? macro.asOf : undefined;
+  const blsAsOf = sourcing.bls ? macro.asOf : undefined;
+  // nonfarmPayrollsChangeK has no FRED equivalent at all — gate it on `bls` alone, never `fred`.
+  const mvBls = (s?: string): string => (sourcing.bls && s && s.length > 0 ? s : EM_DASH);
+
+  const cpi = mnLabor(macro.cpiInflation);
   const corePce = mn(macro.corePCE);
   const breakeven = mn(macro.inflationExpectation10y);
   const gdp = mn(macro.realGDPGrowth);
@@ -97,16 +130,16 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
   const sent = mn(macro.consumerSentiment);
   const m2g = mn(macro.m2GrowthYoY);
   const oil = mn(macro.wtiOil);
-  const unemp = mn(macro.unemploymentRate);
+  const unemp = mnLabor(macro.unemploymentRate);
   const claims = mn(macro.initialClaims); // thousands
   const starts = mn(macro.housingStarts); // millions
 
-  const curve3m10y = dn(derived.curve3m10y);
-  const curve2s10s = dn(derived.curve2s10s);
+  const curve3m10y = dnRate(derived.curve3m10y);
+  const curve2s10s = dnRate(derived.curve2s10s);
   const curvePolicy = dn(derived.yieldCurveSpread);
   const real10Y = dn(derived.real10Y);
   const realFF = dn(derived.realFedFunds);
-  const misery = dn(derived.miseryIndex);
+  const misery = fredOrBls ? derived.miseryIndex : undefined;
   const vixTerm = dn(derived.vixTermStructure);
   const erp = dn(derived.equityRiskPremium);
 
@@ -138,23 +171,23 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
     {
       key: "dgs3mo",
       label: "3M T-bill",
-      value: mv(macro.dgs3moTreasury),
+      value: mvRate(macro.dgs3moTreasury),
       what: "Three-month Treasury yield — the near risk-free return on cash and the short leg of the Fed's preferred recession curve. Higher raises the bar every risky asset must clear.",
-      asOf: mAsOf
+      asOf: rateAsOf
     },
     {
       key: "dgs2",
       label: "2Y Treasury",
-      value: mv(macro.dgs2Treasury),
+      value: mvRate(macro.dgs2Treasury),
       what: "Two-year Treasury yield — the bond market's bet on where Fed policy goes over the next couple of years.",
-      asOf: mAsOf
+      asOf: rateAsOf
     },
     {
       key: "dgs10",
       label: "10Y Treasury",
-      value: mv(macro.dgs10Treasury),
+      value: mvRate(macro.dgs10Treasury),
       what: "Ten-year Treasury yield — the long-term discount rate on future profits. When it rises, expensive growth stocks feel it most.",
-      asOf: mAsOf
+      asOf: rateAsOf
     },
     {
       key: "curve3m10y",
@@ -163,7 +196,7 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
       tone: typeof curve3m10y === "number" ? (curve3m10y < 0 ? "neg" : "pos") : undefined,
       what: "10Y yield minus 3-month yield, in percentage points — the Fed's preferred recession curve. Below zero = inverted.",
       reading: curveReading(curve3m10y),
-      asOf: mAsOf
+      asOf: rateAsOf
     },
     {
       key: "curve2s10s",
@@ -172,7 +205,7 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
       tone: typeof curve2s10s === "number" ? (curve2s10s < 0 ? "neg" : "pos") : undefined,
       what: "10Y yield minus 2Y yield — the canonical “2s10s” curve traders quote. Below zero = inverted, a recession signal with a long lead.",
       reading: curveReading(curve2s10s),
-      asOf: mAsOf
+      asOf: rateAsOf
     },
     {
       key: "curvePolicy",
@@ -192,7 +225,7 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
     {
       key: "cpi",
       label: "CPI (YoY)",
-      value: mv(macro.cpiInflation),
+      value: mvLabor(macro.cpiInflation),
       what: "Consumer-price inflation over the last year. Hot inflation squeezes margins and valuation multiples.",
       reading:
         typeof cpi === "number"
@@ -202,7 +235,7 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
               ? "Above the Fed's 2% goal."
               : "Near (or below) the Fed's 2% goal."
           : undefined,
-      asOf: mAsOf
+      asOf: laborAsOf
     },
     {
       key: "corePce",
@@ -296,7 +329,7 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
               ? "Moderate."
               : "Low by historical standards."
           : undefined,
-      asOf: mAsOf
+      asOf: laborAsOf
     }
   ];
 
@@ -537,7 +570,7 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
     {
       key: "unemployment",
       label: "Unemployment",
-      value: mv(macro.unemploymentRate),
+      value: mvLabor(macro.unemploymentRate),
       what: "Share of the labor force out of work. A sustained rise is the classic recession confirmation.",
       reading:
         typeof unemp === "number"
@@ -547,7 +580,24 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
               ? "Near balance."
               : "Softening labor market."
           : undefined,
-      asOf: mAsOf
+      asOf: laborAsOf
+    },
+    {
+      key: "nonfarmPayrolls",
+      label: "Nonfarm payrolls",
+      value: mvBls(macro.nonfarmPayrollsChangeK),
+      // No FRED equivalent exists in this MoM-delta shape (FRED's PAYEMS is a level) — BLS-only,
+      // so this tile only ever lights up via the keyless/lightly-keyed BLS fallback, never FRED.
+      what: "Month-over-month change in total nonfarm payroll employment — the conventional \"jobs report\" headline.",
+      reading:
+        (() => {
+          const change = numFrom(macro.nonfarmPayrollsChangeK);
+          if (typeof change !== "number") return undefined;
+          if (change < 0) return "Contracting — a real labor-market warning sign.";
+          if (change < 100) return "Soft — below the pace needed to keep up with population growth.";
+          return "Healthy job growth.";
+        })(),
+      asOf: sourcing.bls ? blsAsOf : undefined
     },
     {
       key: "claims",
@@ -585,13 +635,13 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
     {
       id: "rates",
       title: "Rates & yield curve",
-      desc: "Treasury yields and curve spreads from FRED. An inverted curve (short rates above long rates) is the classic recession warning and feeds the regime label.",
+      desc: "Treasury yields and curve spreads from FRED (3M/2Y/10Y and their curves also have a key-free Treasury.gov fallback). An inverted curve (short rates above long rates) is the classic recession warning and feeds the regime label.",
       tiles: rates
     },
     {
       id: "inflation",
       title: "Inflation & growth",
-      desc: "Inflation gauges, real (inflation-adjusted) rates, and growth from FRED. Real rates set the valuation backdrop for stocks.",
+      desc: "Inflation gauges, real (inflation-adjusted) rates, and growth from FRED (CPI also has a key-free BLS fallback — see the misery index below and the labor tiles under Liquidity & economy). Real rates set the valuation backdrop for stocks.",
       tiles: inflationGrowth
     },
     {
@@ -609,7 +659,7 @@ export function buildSections(board: Board, sourcing: MacroSourcing): TileSectio
     {
       id: "liquidity",
       title: "Liquidity & economy",
-      desc: "Money supply, the dollar, oil, and the labor/housing pulse — the slower-moving backdrop behind everything above.",
+      desc: "Money supply, the dollar, oil, and the labor/housing pulse — the slower-moving backdrop behind everything above. Unemployment and nonfarm payrolls also have a key-free BLS fallback when no FRED key is configured.",
       tiles: liquidity
     }
   ];

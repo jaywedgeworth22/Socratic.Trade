@@ -6,8 +6,12 @@
  *  and an honest three-outcomes block. Brokerage approvals go through the
  *  server's typed-confirmation contract (LIVE_CONFIRMATION_REQUIRED). */
 
-import { useMemo, useState } from "react";
-import { Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
+import { memo, useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, CircleAlert, Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
+import { requestedExitQuantity } from "@/lib/broker-held-orders";
+import { isModelRotationSentinel } from "@/lib/llm-request";
+import { normalizeSymbol } from "@/lib/money";
+import { resolveDailyOpeningCap } from "@/lib/policy-caps";
 import type { PendingProposal, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
@@ -17,9 +21,11 @@ import {
   LiveConfirmationRequiredError,
   type ApproveResult
 } from "../lib/api";
-import { realityForMode } from "../lib/derive";
-import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
-import { DEFAULT_GREEN_MODEL_ID } from "../lib/models";
+import { estimatedClosingPnl, isClosingOrder, positionMarkPrice, realityForMode } from "../lib/derive";
+import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, fmtSignedMoney, timeUntil, EM_DASH } from "../lib/format";
+import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
+import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel } from "../lib/red-team";
+import { proposalGreenRationale, proposalHumanReviewReasons } from "../lib/thesis";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
@@ -28,6 +34,7 @@ import { Sheet } from "../ui/sheet";
 import { SymbolButton } from "../ui/symbol-drilldown";
 
 const SIDE_LABEL: Record<string, string> = { buy: "BUY", sell: "SELL", short: "SHORT", cover: "COVER" };
+const STOP_PLAN_DISPLAY: Record<string, string> = { fixed: "Fixed", atr: "ATR", trailing: "Trailing", none: "None" };
 
 function isExit(side: string): boolean {
   return side === "sell" || side === "cover";
@@ -46,8 +53,10 @@ type RedTeamTrigger = NonNullable<NonNullable<TradeProposal["redTeamVerdict"]>["
 
 function redTeamTriggerMeta(trigger?: RedTeamTrigger) {
   switch (trigger) {
+    case "all_openings":
+      return { label: "risk-adding opening", title: "Every risk-adding opening gets the single Red Team review at its finalized size — coverage is structural, not conviction-gated." };
     case "confidence":
-      return { label: "confidence", title: "The proposer confidence cleared the configured Red Team conviction threshold." };
+      return { label: "confidence", title: "The Green Team confidence cleared the configured Red Team conviction threshold." };
     case "notional":
       return { label: "large notional", title: "The order was large enough as a percentage of NAV to require adversarial review." };
     case "live_opening":
@@ -79,25 +88,51 @@ function matchedDecision(snapshot: DashboardSnapshot | null, pending: PendingPro
   return snapshot?.socratic?.decisions?.find((decision) => decision.proposalId === pending.id);
 }
 
+export function normalizeModelId(model: string | null | undefined): string {
+  if (!model) return "";
+  let cleaned = model.trim().toLowerCase().replace(/^openrouter\//i, "");
+  const slashIdx = cleaned.indexOf("/");
+  if (slashIdx !== -1) {
+    cleaned = cleaned.slice(slashIdx + 1);
+  }
+  return cleaned;
+}
+
 function modelProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {
   const configured = policy?.llmModel?.trim();
   const served = p.proposedByModel?.trim();
-  if (served && configured && served !== configured) return `served ${served}; configured primary was ${configured}`;
+  // A rotating policy EXPECTS a different served model each run — say so plainly instead of
+  // leaking the raw "__rotate__" sentinel and framing the rotation pick as an anomaly.
+  const rotating = isModelRotationSentinel(configured);
+  if (served && rotating) return `configured to rotate; served ${served} (this run's rotation pick)`;
+  const normConfigured = normalizeModelId(configured);
+  const normServed = normalizeModelId(served);
+  if (served && configured && normServed !== normConfigured) return `served ${served}; configured primary was ${configured}`;
   if (served) return `served ${served}`;
+  if (rotating) return "policy rotates models each run; the concrete pick was not persisted on this legacy proposal";
   if (configured) return `configured primary ${configured}; served model not persisted on this legacy proposal`;
   return "served model not exposed on this proposal";
 }
 
 function fallbackProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {
   const fallbackModels = policy?.llmFallbackModels?.filter(Boolean) ?? [];
-  if (p.proposedByModel && fallbackModels.includes(p.proposedByModel)) return `served by configured fallback ${p.proposedByModel}`;
-  if (p.proposedByModel && policy?.llmModel && p.proposedByModel !== policy.llmModel) return "served model differs from configured primary";
+  const normServed = normalizeModelId(p.proposedByModel);
+  const normFallbackModels = fallbackModels.map(normalizeModelId);
+  if (p.proposedByModel && normFallbackModels.includes(normServed)) return `served by configured fallback ${p.proposedByModel}`;
+  if (p.proposedByModel && isModelRotationSentinel(policy?.llmModel)) {
+    return "policy rotates models — the served model is this run's rotation pick, not a failover";
+  }
+  const normConfigured = normalizeModelId(policy?.llmModel);
+  if (p.proposedByModel && policy?.llmModel && normServed !== normConfigured) return "served model differs from configured primary";
   if (fallbackModels.length > 0) return `fallback chain configured (${fallbackModels.length}); no per-hop history on this card`;
   return "no fallback chain configured";
 }
 
 function evidenceLabel(item: SocraticRagAttribution): string {
-  return [item.docType, item.source, finite(item.score) ? `score ${item.score.toFixed(2)}` : undefined].filter(Boolean).join(" · ") || "retrieved evidence";
+  return (
+    [plainLabel(item.docType), item.source, finite(item.score) ? `score ${item.score.toFixed(2)}` : undefined].filter(Boolean).join(" · ") ||
+    "Retrieved evidence"
+  );
 }
 
 function expiryIso(p: PendingProposal, policy: TradingPolicy): string | null {
@@ -108,11 +143,79 @@ function expiryIso(p: PendingProposal, policy: TradingPolicy): string | null {
   return new Date(t + minutes * 60_000).toISOString();
 }
 
-export function ApprovalCard({ pending }: { pending: PendingProposal }) {
+/** Compact red-team chip for the default collapsed card (PR-A2). Full verdict text
+ *  stays in the expanded "Show full reasoning" body. Exported for unit tests. */
+export type RedTeamSummaryChip = {
+  tone: "pos" | "neg" | "warn" | "muted" | "accent";
+  label: string;
+  title: string;
+};
+
+export function redTeamCollapsedChip(
+  redCard: ReturnType<typeof redTeamCardState>,
+  verdict: TradeProposal["redTeamVerdict"] | undefined,
+  overrideApplied?: boolean
+): RedTeamSummaryChip {
+  // Alias used by tests / call sites that prefer the program name.
+  return redTeamSummaryChip(redCard, verdict, overrideApplied);
+}
+
+/** Program name for the collapsed-card AI-critic chip (PR-A2). */
+export function redTeamSummaryChip(
+  redCard: ReturnType<typeof redTeamCardState>,
+  verdict: TradeProposal["redTeamVerdict"] | undefined,
+  overrideApplied?: boolean
+): RedTeamSummaryChip {
+  if (redCard === "verdict-panel" && verdict) {
+    if (!verdict.available) {
+      return {
+        tone: "warn",
+        label: "AI critic: failed",
+        title: redTeamFailureMeta(verdict.failureKind).title
+      };
+    }
+    if (verdict.rejected || verdict.verdict === "reject") {
+      return {
+        tone: "neg",
+        label: "AI critic: reject",
+        title: redTeamVerdictLabel(verdict, overrideApplied)
+      };
+    }
+    if (verdict.verdict === "approve-at-half") {
+      return {
+        tone: "warn",
+        label: "AI critic: half size",
+        title: redTeamVerdictLabel(verdict, overrideApplied)
+      };
+    }
+    return {
+      tone: "pos",
+      label: "AI critic: approve",
+      title: redTeamVerdictLabel(verdict, overrideApplied)
+    };
+  }
+  if (redCard === "legacy-unavailable") {
+    return {
+      tone: "warn",
+      label: "AI critic: unavailable",
+      title: "The adversarial review was required but could not run — you are the sole reviewer."
+    };
+  }
+  return {
+    tone: "muted",
+    label: "No AI critic",
+    title: "No adversarial review ran for this proposal — below every dissent trigger."
+  };
+}
+
+/** Wave C: memo so parent dashboard re-renders do not rebuild every card. */
+export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const [liveOpen, setLiveOpen] = useState(false);
+  // PR-A2: default collapsed so Approve/Reject stay reachable; expand for the full receipt.
+  const [expanded, setExpanded] = useState(false);
 
   const p = pending.proposal;
   const reality = realityForMode(pending.executionMode);
@@ -123,22 +226,83 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const rewardRisk = rewardRiskFor(pending);
   const redTrigger = redTeamTriggerMeta(p.redTeamVerdict?.trigger);
   const policy = snapshot?.policy;
+  // Owner preference: when typed confirmation is off, approving a broker order is one-click like any
+  // other — no "APPROVE LIVE <SYMBOL>" phrase. The server honors the same flag (assertLiveApprovalConfirmation).
+  const willPromptTyped = live && policy?.requireTypedConfirmation !== false;
   const dailyUsed = finite(pending.decision.dailyNotionalUsed) ? pending.decision.dailyNotionalUsed : snapshot?.dailyStats.notional;
-  const dailyRemaining = finite(policy?.maxDailyNotional) && finite(dailyUsed) ? Math.max(0, policy.maxDailyNotional - dailyUsed) : undefined;
+  const dailyCap = policy ? resolveDailyOpeningCap(policy, snapshot?.portfolio?.totalMarketValue) : undefined;
+  const dailyRemaining = dailyCap && finite(dailyUsed) ? Math.max(0, dailyCap.notional - dailyUsed) : undefined;
   const referencePrice = p.referencePrice ?? pending.proposalReferencePrice;
   const currentDrift =
     finite(referencePrice) && finite(pending.proposalCurrentPrice) && referencePrice > 0
       ? ((pending.proposalCurrentPrice - referencePrice) / referencePrice) * 100
       : undefined;
 
+  // Estimated realized P/L for an exit (sell-of-long or cover-of-short): only meaningful when
+  // there's a matching held position to close against. Fresh price prefers the proposal's own
+  // drift price (pending.proposalCurrentPrice, already fetched for the "Since proposed" line
+  // above) and falls back to the position's own mark (marketValue/quantity, same snapshot).
+  // Missing position or price => estPnl stays null and the line is omitted — never fabricated.
+  // The position's SIGN must agree with the exit side (isClosingOrder): a card can sit for hours
+  // while the position underneath flips or closes — a sell card over a now-short position would
+  // otherwise show a long-exit "P/L" for an order that actually opens more short exposure.
+  const symbolPosition = isExit(p.side)
+    ? snapshot?.positions?.find((pos) => normalizeSymbol(pos.symbol) === normalizeSymbol(p.symbol))
+    : undefined;
+  const matchedPosition = symbolPosition && isClosingOrder({ symbol: p.symbol, side: p.side }, symbolPosition)
+    ? symbolPosition
+    : undefined;
+  // A price that exactly equals the position's average cost is almost certainly the broker
+  // adapter's no-quote fallback (Robinhood sets marketValue = quantity * averageCost when it
+  // cannot quote, and the server's currentPrices fall back to that mark) — showing it would
+  // render a fake $0.00 P/L. Treat it as unavailable; the line is omitted rather than misleading.
+  const costSuspicious = (price: number | undefined): boolean =>
+    price !== undefined &&
+    matchedPosition !== undefined &&
+    matchedPosition.averageCost > 0 &&
+    Math.abs(price - matchedPosition.averageCost) / matchedPosition.averageCost < 1e-9;
+  const exitPriceCandidate = finite(pending.proposalCurrentPrice)
+    ? pending.proposalCurrentPrice
+    : (positionMarkPrice(matchedPosition) ?? undefined);
+  const exitCurrentPrice = costSuspicious(exitPriceCandidate) ? undefined : exitPriceCandidate;
+  // Cap the exit quantity to the current position size so stale oversize exit proposals
+  // (e.g. the user manually reduced the position after the approval card was created)
+  // don't overstate the estimated closing P/L — same guard as closingOrderPnl in orders/lib.ts.
+  const exitQty = requestedExitQuantity(p);
+  const cappedExitQty = exitQty != null
+    ? Math.min(exitQty, Math.abs(matchedPosition?.quantity ?? 0))
+    : undefined;
+  const estPnl = matchedPosition && cappedExitQty != null
+    ? estimatedClosingPnl({ position: matchedPosition, shares: cappedExitQty, currentPrice: exitCurrentPrice })
+    : null;
+
   // Model attribution prefers the PERSISTED per-proposal values (p.proposedByModel /
   // p.redTeamVerdict.model — stamped failover-aware by src/lib/strategy.ts), falling back
   // to the snapshot policy's configured models only for legacy proposals that predate them
   // (the policy-derived value can be stale if the owner swapped models since proposing).
   const greenModelPersisted = p.proposedByModel?.trim() || null;
-  const greenModelConfigured = snapshot?.policy.llmModel?.trim() || null;
-  const greenModel = greenModelPersisted ?? greenModelConfigured ?? DEFAULT_GREEN_MODEL_ID;
-  const redModel = p.redTeamVerdict?.model?.trim() || snapshot?.policy.redTeamLlmModel?.trim() || greenModel;
+  // The "__rotate__" sentinel is a rotation marker, never a servable model — a ModelBadge for the
+  // literal sentinel would be a lie (and providerForModel would even give it an OpenAI logo).
+  const greenPolicyRotates = isModelRotationSentinel(snapshot?.policy.llmModel);
+  const greenModelConfigured = greenPolicyRotates ? null : (snapshot?.policy.llmModel?.trim() || null);
+  // No-defaults directive: never display a made-up default model as if it served this proposal.
+  const greenModel = greenModelPersisted ?? greenModelConfigured ?? "unknown";
+  // NO fallback to the green model here (no-defaults directive): Red never silently reuses Green,
+  // so displaying Green would misattribute the critique. "unknown" only for legacy verdicts that
+  // predate per-proposal model stamping on a policy whose Red model was since cleared (or rotates).
+  const redConfigured = isModelRotationSentinel(snapshot?.policy.redTeamLlmModel) ? null : (snapshot?.policy.redTeamLlmModel?.trim() || null);
+  const redModel = p.redTeamVerdict?.model?.trim() || redConfigured || "unknown";
+  // FAILED review: attribute honestly — never blame a fallback model that provably never ran.
+  const redFailure = redTeamFailureMeta(p.redTeamVerdict?.failureKind);
+  const redFailureModel =
+    p.redTeamVerdict && !p.redTeamVerdict.available ? redTeamFailureModel(p.redTeamVerdict, snapshot?.policy.redTeamLlmModel) : null;
+  // Exactly one Red Team section renders — the verdict panel (success OR failure), the legacy
+  // "unavailable" callout, or the "no review triggered" note. A total function keeps them mutually
+  // exclusive so a failed review can never render as both the panel and the callout (dedup).
+  const redCard = redTeamCardState(Boolean(p.redTeamVerdict), pending.decision.adversaryUnavailable === true);
+  const humanReviewReasons = proposalHumanReviewReasons(p);
+  const greenRationale = proposalGreenRationale(p);
+  const redCollapsed = redTeamCollapsedChip(redCard, p.redTeamVerdict, pending.decision.socraticOverride?.applied);
   const sizeText =
     typeof p.dollarAmount === "number"
       ? `~${fmtMoney(p.dollarAmount)}`
@@ -147,19 +311,28 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
         : EM_DASH;
 
   const finish = (result: ApproveResult) => {
-    if (result.status === "placed") {
+    if (result.status === "filled") {
+      toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} filled`, "The broker reports that the order completed.");
+    } else if (result.status === "placed") {
       toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} placed`, "The order went to the broker with a durable, idempotent intent record.");
     } else if (result.status === "paper") {
-      toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} filled (simulated)`, "Recorded as a practice-money fill.");
+      toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} filled (paper)`, "Recorded on the broker paper account.");
     } else if (result.status === "blocked") {
       toast.push("warn", "Blocked at approval time", (result.reasons ?? []).join(" ") || "The policy gate re-ran and refused it.");
+    } else if (result.status === "busy") {
+      toast.push(
+        "warn",
+        "Approval is still busy",
+        (result.reasons ?? []).join(" ") ||
+          "A strategy run is still in progress after waiting. Wait for the run to finish (or for its lock to expire, up to ~5 minutes), then Approve again."
+      );
     } else {
-      toast.push("info", `Result: ${result.status}`, (result.reasons ?? []).join(" ") || undefined);
+      toast.push("info", `Result: ${feedStatusLabel(result.status)}`, (result.reasons ?? []).join(" ") || undefined);
     }
   };
 
   const approve = async () => {
-    if (live) {
+    if (willPromptTyped) {
       setLiveOpen(true);
       return;
     }
@@ -189,8 +362,9 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   };
 
   return (
-    <article className={cx("con-card overflow-hidden", live && "border-[color:var(--con-live-border)]")}>
-      {/* Header: verb + company logo + symbol + reality word */}
+    // No overflow-hidden: it creates a containing block that breaks sticky CTAs (PR-A2).
+    <article className={cx("con-card", live && "border-[color:var(--con-live-border)]")}>
+      {/* Header: verb + company logo + symbol + size + reality word — always visible (PR-A2). */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[color:var(--con-line)] px-4 py-3">
         <span className={cx("inline-flex items-center gap-2 text-[length:var(--con-fs-md)] font-bold", isExit(p.side) ? "text-[color:var(--con-warn)]" : undefined)}>
           {SIDE_LABEL[p.side] ?? p.side.toUpperCase()}
@@ -211,6 +385,85 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       </header>
 
       <div className="flex flex-col gap-3 px-4 py-3 text-[length:var(--con-fs-sm)]">
+        {/* Collapsed summary (PR-A2): AI-critic chip + 2–3 line thesis. Full receipt below when expanded. */}
+        {!expanded && (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip tone={redCollapsed.tone} title={redCollapsed.title}>
+                <Swords size={11} /> {redCollapsed.label}
+              </Chip>
+              {typeof p.confidenceScore === "number" && (
+                <Chip
+                  tone="muted"
+                  title="The proposing model's stated conviction in this trade, on a 0–100 scale."
+                >
+                  conf {p.confidenceScore}/100
+                </Chip>
+              )}
+              <Chip tone="accent" title="The thesis tag this idea is filed under — its long-run hit rate is tracked on the Results screen.">
+                {thesisTagLabel(p.tradeThesisTag)}
+              </Chip>
+              <span className="text-[color:var(--con-faint)]">
+                Proposed <Ago iso={pending.createdAt} />
+              </span>
+            </div>
+            {greenRationale ? (
+              <p className="line-clamp-3 leading-relaxed text-[color:var(--con-muted)]">{greenRationale}</p>
+            ) : (
+              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">No thesis text on this proposal.</p>
+            )}
+            {estPnl && (
+              <p
+                className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"
+                title="Estimated at approval-card render time. The server re-prices at the moment you actually approve."
+              >
+                Est. P/L if filled:{" "}
+                <SignedText value={estPnl.pnl}>
+                  {fmtSignedMoney(estPnl.pnl)} ({fmtPct(estPnl.pnlPct, 1, true)})
+                </SignedText>
+              </p>
+            )}
+          </>
+        )}
+
+        <button
+          type="button"
+          className="ac-expand-toggle inline-flex items-center gap-1.5 self-start text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] hover:underline"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? (
+            <>
+              <ChevronUp size={14} aria-hidden /> Hide full reasoning
+            </>
+          ) : (
+            <>
+              <ChevronDown size={14} aria-hidden /> Show full reasoning
+            </>
+          )}
+        </button>
+
+        {expanded && (
+          <>
+        {/* Estimated closing P/L: only for exits with a matching held position and a fresh
+            price. Omitted entirely (no dashes-on-card noise) when either is missing. */}
+        {estPnl && (
+          <div
+            className="rounded-control border border-[color:var(--con-line)] p-3"
+            title="Estimated at approval-card render time: shares this order would close × (current price − average cost), sign-flipped for a short cover. The server re-prices at the moment you actually approve."
+          >
+            <div className="con-card-title mb-1 flex items-center gap-1.5">
+              <TrendingUp size={12} /> Est. P/L if filled
+            </div>
+            <p className="text-[color:var(--con-muted)]">
+              {fmtQty(estPnl.shares)} sh @ {fmtMoney(estPnl.currentPrice)} vs basis {fmtMoney(estPnl.basisPrice)} —{" "}
+              <SignedText value={estPnl.pnl}>
+                {fmtSignedMoney(estPnl.pnl)} ({fmtPct(estPnl.pnlPct, 1, true)})
+              </SignedText>
+            </p>
+          </div>
+        )}
+
         {/* Green team: the proposing (bull) model + its conviction, always shown. */}
         <div className="con-team con-team-green">
           <div className="flex items-start justify-between gap-3">
@@ -226,9 +479,13 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                 {!greenModelPersisted && !greenModelConfigured && (
                   <span
                     className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                    title="No model is set on the policy; the server uses its default (which an OPENAI_MODEL env override could change)."
+                    title={
+                      greenPolicyRotates
+                        ? "The policy rotates models each run; this legacy proposal predates per-proposal model stamping, so the concrete rotation pick was not recorded."
+                        : "This legacy proposal has no served-model stamp and no model is currently configured. The app has no hidden Green Team default."
+                    }
                   >
-                    (policy default)
+                    ({greenPolicyRotates ? "policy rotates models" : "model not recorded"})
                   </span>
                 )}
               </div>
@@ -246,7 +503,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Chip tone="accent" title="The thesis tag this idea is filed under — its long-run hit rate is tracked on the Results screen.">
-              {p.tradeThesisTag}
+              {thesisTagLabel(p.tradeThesisTag)}
             </Chip>
             <span className="cursor-default text-[color:var(--con-faint)]" title="The market regime the strategist saw when it proposed this trade.">
               Regime at proposal: {p.entryMarketRegime || EM_DASH}
@@ -257,63 +514,133 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             <Chip tone="muted" title={modelProvenance(p, policy)}>
               {p.proposedByModel ? "served model" : "model legacy"}
             </Chip>
-            <Chip tone="muted" title={fallbackProvenance(p, policy)}>
-              failover
-            </Chip>
+            {p.proposedByModel && policy?.llmModel && !isModelRotationSentinel(policy?.llmModel) && normalizeModelId(p.proposedByModel) !== normalizeModelId(policy?.llmModel) && (
+              <Chip tone="muted" title={fallbackProvenance(p, policy)}>
+                failover
+              </Chip>
+            )}
           </div>
-          <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{p.rationale}</p>
+          <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{proposalGreenRationale(p)}</p>
         </div>
 
-        {/* Red team: the adversarial (bear) model + its verdict, when the debate ran. */}
-        {p.redTeamVerdict?.available && (
+        {/* Red team: the single adversarial reviewer + its verdict — including the FAILURE state,
+            so a review that could not run is never visually identical to one that never triggered. */}
+        {redCard === "verdict-panel" && p.redTeamVerdict && (
           <div className="con-team con-team-red">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <div
                 className="con-card-title flex items-center gap-1.5"
-                title="Red team = the adversarial reviewer (bear): a model tasked with attacking the proposal before you see it."
+                title="Red team = the single adversarial reviewer: a model tasked with fact-checking and attacking the finalized trade before you see it."
               >
                 <Swords size={12} /> Devil&apos;s advocate (red team)
               </div>
-              <ModelBadge modelId={redModel} title="The adversarial reviewer model that critiqued this proposal" />
+              {p.redTeamVerdict.available ? (
+                <ModelBadge modelId={redModel} title="The adversarial reviewer model that critiqued this proposal" />
+              ) : redFailureModel ? (
+                <ModelBadge modelId={redFailureModel} title="The adversarial reviewer model that failed to produce a verdict" />
+              ) : (
+                <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title={redFailure.title}>
+                  no reviewer model configured
+                </span>
+              )}
             </div>
-            <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">{p.redTeamVerdict.reason}</p>
+            <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">
+              {p.redTeamVerdict.reason}
+              {!p.redTeamVerdict.available && " No model critiqued this trade — review it as the sole adversary."}
+            </p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
-              <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
-                {p.redTeamVerdict.rejected ? "Verdict: rejected" : "Verdict: survived review"}
-              </span>
-              <Chip tone="warn" title={redTrigger.title}>
-                trigger: {redTrigger.label}
-              </Chip>
+              {p.redTeamVerdict.available ? (
+                <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
+                  Verdict: {redTeamVerdictLabel(p.redTeamVerdict, pending.decision.socraticOverride?.applied)}
+                </span>
+              ) : (
+                <span className="font-semibold" style={{ color: "var(--con-warn)" }} title={redFailure.title}>
+                  No verdict: review failed ({redFailure.label})
+                </span>
+              )}
+              {(p.redTeamVerdict.available || p.redTeamVerdict.trigger) && (
+                <Chip tone="warn" title={redTrigger.title}>
+                  trigger: {redTrigger.label}
+                </Chip>
+              )}
+            </div>
+          </div>
+        )}
+        {redCard === "no-review" && (
+          <p
+            className="cursor-default text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+            title="None of the dissent triggers (confidence, notional, live opening, override request, risk regime) applied, so no adversarial reviewer was asked. The empty state is information, not an omission."
+          >
+            No adversarial review ran for this proposal — below every dissent trigger.
+          </p>
+        )}
+
+        {/* §5.1 / R19 — LEGACY fallback ONLY: a pending card with NO structured red-team verdict but the
+            stored `adversaryUnavailable` decision flag set (old proposals persisted before the
+            single-adversary consolidation). The structured-verdict failure state — including the
+            "sole adversary" framing — is owned by the Red Team panel above; gating this on the ABSENCE
+            of `redTeamVerdict` keeps the two mutually exclusive so an unavailable review never renders
+            twice (was: this block also fired on `!available`, duplicating the panel above). */}
+        {redCard === "legacy-unavailable" && (
+          <div
+            className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3"
+            title="The adversarial (red team) review was required but could not run, so this trade was routed to you unreviewed — you are the only reviewer it will get."
+          >
+            <div className="con-card-title flex items-center gap-1.5" style={{ color: "var(--con-warn)" }}>
+              <Swords size={12} /> Red Team review unavailable
+            </div>
+            <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">
+              {pending.decision.adversaryUnavailableReason ?? "The adversarial review could not run for this proposal."}
+              {" "}No model critiqued this trade — review it as the sole adversary.
+            </p>
+          </div>
+        )}
+
+        {humanReviewReasons.length > 0 && (
+          <div className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3">
+            <div className="con-card-title flex items-center gap-1.5" style={{ color: "var(--con-warn)" }}>
+              <CircleAlert size={12} /> Why your approval is required
+            </div>
+            <div className="mt-2 space-y-2">
+              {humanReviewReasons.map((reason) => (
+                <div key={reason.code}>
+                  <div className="font-semibold text-[color:var(--con-fg)]">{reason.title}</div>
+                  <p className="mt-0.5 leading-relaxed text-[color:var(--con-muted)]">{reason.summary}</p>
+                </div>
+              ))}
             </div>
           </div>
         )}
 
         {/* Provenance + sizing receipt */}
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(260px,0.95fr)]">
-          <div className="rounded-lg border border-[color:var(--con-line)] p-3">
+          <div className="rounded-control border border-[color:var(--con-line)] p-3">
             <div className="con-card-title mb-2 flex items-center gap-1.5" title="Sizing inputs already available on the approval snapshot; missing values stay blank instead of being inferred.">
               <Ruler size={12} /> Sizing provenance
             </div>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[length:var(--con-fs-xs)]">
-              <dt className="text-[color:var(--con-faint)]">Advised size</dt>
+              <dt className="text-[color:var(--con-faint)]">advised size</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{sizeText}</dd>
-              <dt className="text-[color:var(--con-faint)]">Broker review notional</dt>
+              <dt className="text-[color:var(--con-faint)]">broker review notional</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtMoney(pending.review?.estimatedNotional ?? notional)}</dd>
-              <dt className="text-[color:var(--con-faint)]">Per-order cap</dt>
+              <dt className="text-[color:var(--con-faint)]">per-order cap</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtMoney(policy?.maxOrderNotional)}</dd>
-              <dt className="text-[color:var(--con-faint)]">Daily cap remaining</dt>
-              <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtMoney(dailyRemaining)}</dd>
-              <dt className="text-[color:var(--con-faint)]">Projected symbol exposure</dt>
+              <dt className="text-[color:var(--con-faint)]">daily cap remaining</dt>
+              <dd className="con-num text-right text-[color:var(--con-fg)]">
+                {fmtMoney(dailyRemaining)}
+                {dailyCap?.mode === "pct_nav" ? ` (${fmtPct(dailyCap.configuredValue, 1)} NAV cap)` : ""}
+              </dd>
+              <dt className="text-[color:var(--con-faint)]">projected symbol exposure</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtPct(pending.decision.projectedSymbolExposurePct, 1)}</dd>
               <dt className="text-[color:var(--con-faint)]">ADV cap</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtPct(policy?.maxOrderPctOfAdv, 1)}</dd>
-              <dt className="text-[color:var(--con-faint)]">Sizer band</dt>
+              <dt className="text-[color:var(--con-faint)]">sizer band</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">
                 {finite(policy?.tuning?.sizingFloorPct) || finite(policy?.tuning?.sizingCeilingPct)
                   ? `${fmtPct(policy?.tuning?.sizingFloorPct, 0)}-${fmtPct(policy?.tuning?.sizingCeilingPct, 0)}`
                   : EM_DASH}
               </dd>
-              <dt className="text-[color:var(--con-faint)]">Entry drift</dt>
+              <dt className="text-[color:var(--con-faint)]">entry drift</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">
                 {finite(currentDrift) ? `${fmtPct(currentDrift, 2, true)} / max ${fmtPct(policy?.maxEntryDriftPct, 1)}` : EM_DASH}
               </dd>
@@ -327,7 +654,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             ) : null}
           </div>
 
-          <div className="rounded-lg border border-[color:var(--con-line)] p-3">
+          <div className="rounded-control border border-[color:var(--con-line)] p-3">
             <div className="con-card-title mb-2 flex items-center gap-1.5" title="Bracket reward:risk geometry from the persisted entry anchor, stop, and take-profit.">
               <TrendingUp size={12} /> Reward:risk geometry
             </div>
@@ -364,7 +691,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           </div>
         </div>
 
-        <div className="rounded-lg border border-[color:var(--con-line)] p-3">
+        <div className="rounded-control border border-[color:var(--con-line)] p-3">
           <div className="con-card-title mb-2 flex items-center gap-1.5" title="Decision-case evidence linked by proposal id.">
             <Database size={12} /> Evidence citations
           </div>
@@ -450,7 +777,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
         </div>
 
         {/* Three outcomes */}
-        <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed">
+        <div className="rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed">
           <p>
             <strong>If you approve:</strong> {SIDE_LABEL[p.side]?.toLowerCase() ?? p.side} {sizeText} at {p.type.replace("_", " ")}
             {typeof p.limitPrice === "number" ? ` (limit ${fmtMoney(p.limitPrice)})` : ""}.
@@ -462,7 +789,22 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                 {typeof p.bracketTakeProfit === "number" ? `take-profit ${fmtMoney(p.bracketTakeProfit)}` : ""}.
               </>
             ) : null}
-            {live ? " This uses the broker-account approval phrase before anything is placed." : ""}
+            {p.stopPlan && p.stopPlan.style === "default" ? (
+              <>
+                {" "}
+                <strong>Stop plan (reset to default):</strong> this scale-in clears any existing per-position override
+                (none/trailing/fixed/ATR) and returns the combined lot to the account's own stop precedence.
+              </>
+            ) : p.stopPlan && p.stopPlan.style !== "default" ? (
+              <>
+                {" "}
+                <strong>Stop plan ({STOP_PLAN_DISPLAY[p.stopPlan.style] ?? p.stopPlan.style}):</strong>{" "}
+                {p.stopPlan.style === "none"
+                  ? `the LLM chose to carry NO stop-loss on this position${p.stopPlan.rationale ? ` — "${p.stopPlan.rationale}"` : ""}.`
+                  : `this position's stop pins to the ${STOP_PLAN_DISPLAY[p.stopPlan.style] ?? p.stopPlan.style} distance, overriding the account's own default${p.stopPlan.rationale ? ` — "${p.stopPlan.rationale}"` : ""}.`}
+              </>
+            ) : null}
+            {willPromptTyped ? " This uses the broker-account approval phrase before anything is placed." : ""}
           </p>
           <p className="mt-1">
             <strong>If you reject:</strong> nothing is traded. The idea stays on the record and its counterfactual return
@@ -479,19 +821,38 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             )}
           </p>
         </div>
+          </>
+        )}
       </div>
 
-      {/* Actions */}
-      <footer className="flex items-center justify-end gap-2 border-t border-[color:var(--con-line)] px-4 py-3">
+      {/* Actions — sticky above mobile tab bar (PR-A2); static on desktop. API/confirm unchanged. */}
+      <footer className="ac-actions flex items-center justify-end gap-2 border-t border-[color:var(--con-line)] px-4 py-3">
         <Btn variant="ghost" disabled={busy !== null} onClick={() => void reject()}>
           {busy === "reject" ? "Rejecting…" : "Reject"}
         </Btn>
         {/* Approving a broker-connected order stays visually primary; the typed
             ritual in the sheet is the real friction. */}
-        <Btn variant={live ? "primary" : "pos"} disabled={busy !== null} onClick={() => void approve()}>
-          {busy === "approve" ? "Approving…" : live ? (
+        <Btn
+          variant={live ? "primary" : "pos"}
+          disabled={busy !== null}
+          onClick={() => void approve()}
+          aria-label={
+            live
+              ? willPromptTyped
+                ? `Approve live broker order for ${pending.proposal.side} ${pending.proposal.symbol}`
+                : `Approve live order for ${pending.proposal.side} ${pending.proposal.symbol}`
+              : `Approve paper order for ${pending.proposal.side} ${pending.proposal.symbol}`
+          }
+        >
+          {busy === "approve" ? (
+            "Approving…"
+          ) : willPromptTyped ? (
             <>
-              Approve broker order… <LiveTag />
+              Approve live… <LiveTag />
+            </>
+          ) : live ? (
+            <>
+              Approve live <LiveTag />
             </>
           ) : (
             "Approve"
@@ -510,7 +871,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       )}
     </article>
   );
-}
+});
 
 /** The typed real-money confirmation. The server contract
  *  (assertLiveApprovalConfirmation) verifies: proposal id, account number,
@@ -574,8 +935,8 @@ function LiveApproveSheet({
   };
 
   return (
-    <Sheet open={open} onClose={onClose} title="Broker order approval">
-      <div className="mb-3 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
+    <Sheet open={open} onClose={onClose} title="Broker order approval" tone="live">
+      <div className="mb-3 rounded-control border border-[color:var(--con-live-border)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
         <div className="font-bold">Brokerage account</div>
         <p className="con-num mt-1">
           {SIDE_LABEL[pending.proposal.side] ?? pending.proposal.side.toUpperCase()} {pending.proposal.symbol} — estimated{" "}
@@ -589,7 +950,7 @@ function LiveApproveSheet({
       </div>
 
       {serverReasons.length > 0 && (
-        <div className="mb-3 rounded-lg border border-[color:var(--con-warn-border)] p-3 text-[length:var(--con-fs-xs)]">
+        <div className="mb-3 rounded-control border border-[color:var(--con-warn-border)] p-3 text-[length:var(--con-fs-xs)]">
           <div className="font-semibold text-[color:var(--con-warn)]">The server refused the confirmation:</div>
           <ul className="mt-1 list-disc pl-4 text-[color:var(--con-muted)]">
             {serverReasons.map((r, i) => (

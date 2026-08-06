@@ -9,3 +9,40 @@
 63d5537df6fa29cb5faeced0c830ebe9cf0f4adc:test/congress-stream.test.ts:generic-api-key:80
 63d5537df6fa29cb5faeced0c830ebe9cf0f4adc:test/congress-stream.test.ts:generic-api-key:81
 63d5537df6fa29cb5faeced0c830ebe9cf0f4adc:test/congress-stream.test.ts:generic-api-key:98
+#
+# These are OBVIOUSLY-FAKE test fixtures (e.g. "integration-env-key-1", "fixture-secret-value-123")
+# tripping the generic-api-key rule's KEY="..." shape heuristic on their introducing commits
+# (PRs #1087 / #1167). Inline gitleaks:allow comments added in later commits cannot silence the
+# original commit's finding -- only these fingerprints can. Never add a fingerprint here without
+# confirming the flagged value is fake; real leaks get rotated, not ignored.
+edc62261e8cc085ab494c567462e6e97755db0d9:test/provider-rate-limit.test.ts:generic-api-key:374
+9f1ab3b0ec5d67fa62d213899bf8c883af8f5b81:test/alpha-vantage-key-pool.test.ts:generic-api-key:530
+9f1ab3b0ec5d67fa62d213899bf8c883af8f5b81:test/alpha-vantage-key-pool.test.ts:generic-api-key:531
+9f1ab3b0ec5d67fa62d213899bf8c883af8f5b81:test/alpha-vantage-key-pool.test.ts:generic-api-key:581
+9f1ab3b0ec5d67fa62d213899bf8c883af8f5b81:test/alpha-vantage-key-pool.test.ts:generic-api-key:582
+5d437b6133efb0a4f13cfc85a98299df5bdfa609:test/provider-rate-limit.test.ts:generic-api-key:374
+
+# Fake deterministic ENCRYPTION_KEY fixture in PR #1586. The current tree uses "0".repeat(64), but
+# hosted gitleaks scans the branch's first-parent history and still sees the original placeholder literal.
+dd63ba35cbd5023f3571992380454dad22225536:test/rag-doc-type-coverage.test.ts:generic-api-key:55
+#
+# FAKE API-key fixtures in test/api-key-preview.test.ts, flagged by generic-api-key on the
+# introducing commit's diff. Not real secrets -- they exist precisely so the test can assert that
+# GET /api/keys previews/masks a key correctly, so they are deliberately shaped like real keys:
+#   OPENROUTER_KEY / TENANT_KEY  "sk-or-v1-..."  41 chars  (a REAL OpenRouter key is 73:
+#                                                           "sk-or-v1-" + 64 hex -- these are far
+#                                                           too short to be genuine)
+#   TENANT_KEY / SHARED_KEY      bodies contain a SINGLE repeated character (e.g. "aaaa...") --
+#                                no real key looks like that
+#   SHARED_KEY                   "finnhub-" prefix, which is not a real Finnhub key format
+# Verified fixture-only before suppressing (length, prefix, and character-distinctness checks).
+1ea0caa9bbf2c72746b016214032da4d3f141ab8:test/api-key-preview.test.ts:generic-api-key:19
+f4e99900d93a8d341202a29bf6f5fa7feb5b6e81:test/api-key-preview.test.ts:generic-api-key:19
+
+# Follow-up commit on PR #1829 changed the fake OPENROUTER prefix (sk-or-v1- -> sk_or_v1_)
+# so gitleaks history scan still flags line 19 under a NEW commit fingerprint. Same fake fixture.
+f4e99900d93a8d341202a29bf6f5fa7feb5b6e81:test/api-key-preview.test.ts:generic-api-key:19
+
+# Fake test key fixture in test/wisesheets-provider.test.ts on PR #2365 introducing commit.
+# Fixed in later commit to test_wisesheets_key; fingerprint suppresses original commit scan finding.
+d79d3dfa3bd26ed2414373c2f7e3f492d5c99724:test/wisesheets-provider.test.ts:generic-api-key:44

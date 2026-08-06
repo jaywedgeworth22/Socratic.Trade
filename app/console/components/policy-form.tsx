@@ -7,7 +7,7 @@
  *  commit a change. The diff/classification logic lives in ../lib/policy-diff
  *  (pure, unit-tested); this file is the React skin over it. */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Lock, Unlock } from "lucide-react";
 import { DEFAULT_POLICY } from "@/lib/defaults";
 import type { TradingPolicy } from "@/lib/types";
@@ -28,7 +28,7 @@ import { fmtNum, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
-import { Btn, Chip, LiveTag, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
+import { Btn, Chip, LiveTag, NumInput, Segmented, Select, TextInput, Toggle } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 import { TypedConfirm } from "./chrome";
 
@@ -101,7 +101,12 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
 
   if (def.kind === "select") {
     const fallback = String(getAtPath(DEFAULT_POLICY, def.path) ?? "");
-    const selected = isBlank(value) ? fallback : String(value);
+    // Reverse-map a typed value (boolean/null) back to its string option key when optionValues is
+    // present; plain string-valued selects need no mapping.
+    const selectedKey = def.optionValues
+      ? (Object.keys(def.optionValues).find((key) => def.optionValues![key] === value) ?? "")
+      : String(value);
+    const selected = isBlank(value) ? fallback : selectedKey;
     return (
       <div className="py-2">
         <div className="flex items-end justify-between gap-4">
@@ -110,7 +115,19 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
             {touched && <span className="ml-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">edited</span>}
           </label>
           <div className="w-52">
-            <Select id={`pf-${def.path}`} value={selected} onChange={(e) => draft.set(def.path, e.target.value)}>
+            <Select
+              id={`pf-${def.path}`}
+              value={selected}
+              onChange={(e) => {
+                const raw = e.target.value;
+                // hasOwnProperty (not ??): an explicit null mapping ("" → clear-to-global) must
+                // survive, and ?? would fall through to the raw string for exactly that case.
+                const mapped = def.optionValues && Object.prototype.hasOwnProperty.call(def.optionValues, raw)
+                  ? def.optionValues[raw]
+                  : raw;
+                draft.set(def.path, mapped);
+              }}
+            >
               {(def.options ?? []).map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
@@ -183,8 +200,19 @@ export function PolicyDualModeRow({
   const pctTouched = pctDef.path in draft.values;
   const moneyValue = moneyTouched ? draft.values[moneyDef.path] : getAtPath(policy, moneyDef.path);
   const pctValue = pctTouched ? draft.values[pctDef.path] : getAtPath(policy, pctDef.path);
-  const [mode, setModeState] = useState<"money" | "pct">(() => (!isBlank(pctValue) ? "pct" : "money"));
+  // Percentage is the safe, account-relative default. Preserve an explicit
+  // dollar mode for legacy/custom policies, but never default a blank pair to
+  // an arbitrary dollar field.
+  const policyMode: "money" | "pct" = !isBlank(getAtPath(policy, pctDef.path)) || isBlank(getAtPath(policy, moneyDef.path)) ? "pct" : "money";
+  const [draftMode, setDraftMode] = useState<"money" | "pct">(policyMode);
   const [editText, setEditText] = useState<string | null>(null);
+  // Sync draft mode when the policy mode changes (e.g. account switch) so the first
+  // keystroke after the switch doesn't snap back to the stale previous account's mode.
+  useEffect(() => { setDraftMode(policyMode); }, [policyMode]);
+  // A mode choice is interaction state only while this field pair has an active draft. After
+  // discard/save or an account switch, derive from that account's persisted policy immediately;
+  // this avoids a stale selector without an effect-driven synchronization render.
+  const mode = moneyTouched || pctTouched ? draftMode : policyMode;
   const activeDef = mode === "money" ? moneyDef : pctDef;
   const activeValue = mode === "money" ? moneyValue : pctValue;
   const touched = moneyTouched || pctTouched;
@@ -192,7 +220,7 @@ export function PolicyDualModeRow({
   const unit = mode === "money" ? "$" : "%";
 
   const setMode = (next: "money" | "pct") => {
-    setModeState(next);
+    setDraftMode(next);
     setEditText(null);
     if (next === "money") {
       draft.set(pctDef.path, null);
@@ -214,24 +242,15 @@ export function PolicyDualModeRow({
           {hint && <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{hint}</p>}
         </div>
         <div className="flex min-w-[18rem] flex-wrap items-center justify-end gap-2">
-          <div className="inline-flex rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-0.5" role="group" aria-label={`${label} mode`}>
-            <button
-              type="button"
-              className={mode === "money" ? "rounded px-2 py-1 text-[length:var(--con-fs-xs)] font-bold text-[color:var(--con-fg)] bg-[color:var(--con-surface)]" : "rounded px-2 py-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"}
-              onClick={() => setMode("money")}
-              title={moneyDef.hint ?? `Use a dollar cap for ${label}.`}
-            >
-              Dollar
-            </button>
-            <button
-              type="button"
-              className={mode === "pct" ? "rounded px-2 py-1 text-[length:var(--con-fs-xs)] font-bold text-[color:var(--con-fg)] bg-[color:var(--con-surface)]" : "rounded px-2 py-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"}
-              onClick={() => setMode("pct")}
-              title={pctDef.hint ?? `Use a portfolio percentage cap for ${label}.`}
-            >
-              Percent
-            </button>
-          </div>
+          <Segmented
+            value={mode}
+            onChange={setMode}
+            ariaLabel={`${label} mode`}
+            options={[
+              { value: "money", label: "Dollar", title: moneyDef.hint ?? `Use a dollar cap for ${label}.` },
+              { value: "pct", label: "Percent", title: pctDef.hint ?? `Use a portfolio percentage cap for ${label}.` }
+            ]}
+          />
           <div className="flex w-36 items-center gap-1.5">
             {unit === "$" && <span className="text-[color:var(--con-faint)]">$</span>}
             <NumInput
@@ -302,20 +321,26 @@ export function PolicySaveBar({
   const diff = useMemo(() => computeDiff(policy, draft.values, defs), [policy, draft, defs]);
   const extraEntries: ExtraDiffEntry[] = useMemo(() => classifyExtraPatch(policy, extraPatch), [policy, extraPatch]);
   const changeCount = diff.length + extraEntries.length;
-  // Register the uncommitted draft with the shell's unsaved-changes guard
-  // (beforeunload + nav interception). Must run before the early return.
-  useUnsavedChanges(changeCount > 0);
+  // Register the uncommitted draft with the shell's unsaved-changes guard (beforeunload + nav
+  // interception). The onReview opener powers the nav prompt's "Review & save" option. Must run
+  // before the early return.
+  useUnsavedChanges(changeCount > 0, () => setReviewOpen(true));
   if (changeCount === 0) return null;
 
   // extraPatch changes (universe, blocklist, order types, sell-to-fund-buy) can
   // loosen the cage too — they must cost the typed word on brokerage accounts like any field.
   const hasLooser = diff.some((d) => d.direction === "looser") || extraEntries.some((e) => e.direction === "looser");
-  const needsTyped = reality.tone === "live" && hasLooser;
+  // Loosening a guardrail on a live account normally costs a typed word; the owner can turn that off
+  // in Settings → Advanced action confirmation (policy.requireTypedConfirmation).
+  const needsTyped = reality.tone === "live" && hasLooser && policy.requireTypedConfirmation !== false;
 
   const commit = async () => {
     setBusy(true);
     try {
-      await savePolicy({ ...buildPatch(diff, policy), ...(extraPatch ?? {}) });
+      await savePolicy(
+        { ...buildPatch(diff, policy), ...(extraPatch ?? {}) },
+        policy.connectedAccountId
+      );
       await refresh();
       draft.clear();
       setReviewOpen(false);

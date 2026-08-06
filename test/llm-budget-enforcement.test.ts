@@ -95,7 +95,7 @@ describe("LLM budget — durable spend-primitive enforcement", () => {
     const { withLlmGeneration } = await import("../src/lib/observability");
     let ran = false;
     await expect(
-      withLlmGeneration({ name: "test.generation", model: "gpt-4o", userId: "local" }, async () => {
+      withLlmGeneration({ name: "test.generation", model: "openai/gpt-4o", userId: "local" }, async () => {
         ran = true;
         return "should-not-run";
       })
@@ -107,7 +107,7 @@ describe("LLM budget — durable spend-primitive enforcement", () => {
     await setTokenBudget("local", 100000);
     await seedUsage("local", 10);
     const { withLlmGeneration } = await import("../src/lib/observability");
-    const out = await withLlmGeneration({ name: "test.generation", model: "gpt-4o", userId: "local" }, async () => "ok");
+    const out = await withLlmGeneration({ name: "test.generation", model: "openai/gpt-4o", userId: "local" }, async () => "ok");
     expect(out).toBe("ok");
   });
 

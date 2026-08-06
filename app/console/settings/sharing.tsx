@@ -60,7 +60,7 @@ function SharingRow({
 }) {
   return (
     <div
-      className="con-row flex items-center justify-between gap-4 rounded-md px-1.5 py-1.5"
+      className="con-row flex items-center justify-between gap-4 rounded-control px-1.5 py-1.5"
       title={rowTitle}
     >
       <div>

@@ -5,16 +5,21 @@
  *  events, grouped chronologically. Uses only what the snapshot actually
  *  provides — no invented data. */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { FillEvent, RecentProposal, StrategyRunRow } from "@/lib/types";
 import { OPS_AUDIT_KINDS, type UnifiedActivitySubEvent } from "@/lib/dashboard-feed";
 import type { UnifiedActivityGroup } from "../../dashboard-types";
 import { activeConnectedAccount, realityForMode } from "../lib/derive";
 import { cx, dayKey, fmtDay, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
+import { feedStatusLabel } from "../lib/labels";
+import { isStrategyRunSkipStatus, strategyRunStatusLabel } from "@/lib/strategy-run-status";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
+import { nextTabId } from "../lib/tabs";
 import { useConsoleData } from "../lib/useConsoleData";
 import { AlertCenter } from "../components/alert-center";
-import { Ago, Card, Chip, Empty, SignedText, type ChipTone } from "../ui/primitives";
+import { Ago, Card, Chip, Empty, SignedText, Tooltip, type ChipTone } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
+import { destinationLabel } from "../components/nav";
 
 type Tab = "all" | "runs" | "fills" | "alerts";
 
@@ -25,23 +30,55 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: "alerts", label: "Alert center" }
 ];
 
+const TAB_IDS = TABS.map((t) => t.id);
+
 export default function ActivityPage() {
   const { snapshot } = useConsoleData();
   const [tab, setTab] = useState<Tab>("all");
+  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
   if (!snapshot) return null;
 
+  const onTabsKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const next = nextTabId(TAB_IDS, tab, e.key);
+    if (!next) return;
+    e.preventDefault();
+    setTab(next);
+    tabRefs.current[next]?.focus();
+  };
+
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-[length:var(--con-fs-lg)] font-bold">Activity</h1>
-        <div className="flex gap-1 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1">
+        <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console/activity")}</h1>
+        <div
+          role="tablist"
+          aria-label="Activity views"
+          onKeyDown={onTabsKeyDown}
+          className="flex gap-1 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1"
+        >
           {TABS.map((t) => (
             <button
               key={t.id}
+              ref={(el) => {
+                tabRefs.current[t.id] = el;
+              }}
+              id={`activity-tab-${t.id}`}
+              role="tab"
+              aria-selected={tab === t.id}
+              // aria-controls on the SELECTED tab only. One panel is mounted at a
+              // time (each of the four feeds is expensive enough that mounting all
+              // of them just to satisfy the attribute would be a real regression),
+              // so pointing the inactive tabs at ids that are not in the document
+              // would only be a dangling IDREF — worse for AT than omitting it.
+              aria-controls={tab === t.id ? `activity-tabpanel-${t.id}` : undefined}
+              // Roving tabIndex: the switcher is one tab stop and arrows/Home/End
+              // move between views, so Tab no longer walks all four buttons before
+              // reaching the feed.
+              tabIndex={tab === t.id ? 0 : -1}
               type="button"
               onClick={() => setTab(t.id)}
               className={cx(
-                "rounded-md px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
+                "rounded-control px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
                 tab === t.id
                   ? "bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]"
                   : "text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)]"
@@ -53,18 +90,20 @@ export default function ActivityPage() {
         </div>
       </div>
 
-      {tab === "all" && <UnifiedFeed groups={snapshot.unifiedFeed ?? []} />}
-      {tab === "runs" && <RunsList runs={snapshot.strategyRuns ?? []} recentProposals={snapshot.recentProposals ?? []} />}
-      {tab === "fills" && <FillsList fills={snapshot.performance?.fills ?? []} />}
-      {tab === "alerts" && (
-        <AlertCenter
-          notifications={snapshot.notifications ?? []}
-          connectedAccounts={snapshot.connectedAccounts}
-          symbolMetaBySymbol={snapshot.symbolMetaBySymbol}
-          activeAccountId={activeConnectedAccount(snapshot)?.id}
-          maxItems={100}
-        />
-      )}
+      <div role="tabpanel" id={`activity-tabpanel-${tab}`} aria-labelledby={`activity-tab-${tab}`}>
+        {tab === "all" && <UnifiedFeed groups={snapshot.unifiedFeed ?? []} />}
+        {tab === "runs" && <RunsList runs={snapshot.strategyRuns ?? []} recentProposals={snapshot.recentProposals ?? []} />}
+        {tab === "fills" && <FillsList fills={snapshot.performance?.fills ?? []} />}
+        {tab === "alerts" && (
+          <AlertCenter
+            notifications={snapshot.notifications ?? []}
+            connectedAccounts={snapshot.connectedAccounts}
+            symbolMetaBySymbol={snapshot.symbolMetaBySymbol}
+            activeAccountId={activeConnectedAccount(snapshot)?.id}
+            maxItems={100}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -85,9 +124,14 @@ const STATUS_TONE: Record<string, ChipTone> = {
   rejected_by_broker: "neg",
   placing_failed: "neg",
   pending_reconciliation: "warn",
+  unreconcilable: "muted",
   failed: "neg",
   sent: "pos",
-  skipped: "muted"
+  // Strategy-run skips are non-success (warn), not muted success-adjacent (UX PR-A1).
+  skipped: "warn",
+  skipped_budget: "warn",
+  skipped_market_closed: "warn",
+  skipped_broker_unhealthy: "warn"
 };
 
 function statusTone(status: string | undefined): ChipTone {
@@ -149,7 +193,7 @@ function RawToggle({ text }: { text: string | undefined }) {
   return (
     <details className="mt-1">
       <summary className="cursor-pointer text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">raw data</summary>
-      <pre className="con-mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-[color:var(--con-surface-2)] p-2 text-[10px] leading-relaxed text-[color:var(--con-muted)]">
+      <pre className="con-mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-control bg-[color:var(--con-surface-2)] p-2 text-[length:var(--con-fs-2xs)] leading-relaxed text-[color:var(--con-muted)]">
         {text}
       </pre>
     </details>
@@ -208,7 +252,7 @@ function FeedGroupCard({ g, multiAccount }: { g: UnifiedActivityGroup; multiAcco
             {g.detail}
           </span>
         </span>
-        {g.status && <Chip tone={statusTone(g.status)}>{g.status}</Chip>}
+        {g.status && <Chip tone={statusTone(g.status)}>{feedStatusLabel(g.status)}</Chip>}
         <span className="text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
           <Ago iso={g.updatedAt} />
         </span>
@@ -319,16 +363,33 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                   Run · <Ago iso={run.startedAt} /> · {runDuration(run)}
                 </span>
                 <span className="con-num block text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
-                  {run.proposedCount} proposed · {run.placedCount} placed · {run.paperCount} simulated · {run.blockedCount} blocked
+                  {run.proposedCount} proposed · {run.placedCount} placed · {run.paperCount > 0 ? `${run.paperCount} paper · ` : ""}{run.blockedCount} blocked
                 </span>
               </span>
-              <Chip tone={run.status === "failed" ? "neg" : run.status === "running" ? "accent" : "pos"}>{run.status}</Chip>
+              <Chip
+                tone={
+                  run.status === "failed"
+                    ? "neg"
+                    : run.status === "running"
+                      ? "accent"
+                      : isStrategyRunSkipStatus(run.status)
+                        ? "warn"
+                        : "pos"
+                }
+              >
+                {strategyRunStatusLabel(run.status, run.summary)}
+              </Chip>
             </summary>
             <div className="border-t border-[color:var(--con-line)] py-2">
               {run.summary && <p className="mb-2 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">{run.summary}</p>}
               {run.status === "completed" && run.totalCount === 0 && (
                 <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                  Did nothing on purpose — no candidate cleared the bar this run.
+                  No candidate cleared the bar this run — deliberate hold after a full evaluation.
+                </p>
+              )}
+              {isStrategyRunSkipStatus(run.status) && (
+                <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+                  Pre-decision skip — not a successful evaluation. {strategyRunStatusLabel(run.status, run.summary)}.
                 </p>
               )}
               {proposals.length > 0 ? (
@@ -336,7 +397,7 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                   {proposals.map((p) => {
                     const r = realityForMode(p.executionMode);
                     return (
-                      <li key={p.id} className="rounded-lg border border-[color:var(--con-line)] p-2.5 text-[length:var(--con-fs-xs)]">
+                      <li key={p.id} className="rounded-control border border-[color:var(--con-line)] p-2.5 text-[length:var(--con-fs-xs)]">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-[length:var(--con-fs-sm)] font-bold">
                             {SIDE_LABEL[p.proposal.side] ?? p.proposal.side} <SymbolButton symbol={p.proposal.symbol} showLogo={false} />
@@ -350,14 +411,16 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                                   ? `${fmtQty(p.proposal.quantity)} sh`
                                   : EM_DASH}
                           </span>
-                          <Chip tone={statusTone(p.status)}>{p.status}</Chip>
+                          <Chip tone={statusTone(p.status)}>{feedStatusLabel(p.status)}</Chip>
                           <Chip tone={r.tone}>{r.word}</Chip>
                           {typeof p.performanceSinceProposalPct === "number" && (
-                            <span title="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
-                              <SignedText value={p.performanceSinceProposalPct}>
-                                since: {fmtPct(p.performanceSinceProposalPct, 2, true)}
-                              </SignedText>
-                            </span>
+                            <Tooltip content="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
+                              <span>
+                                <SignedText value={p.performanceSinceProposalPct}>
+                                  since: {fmtPct(p.performanceSinceProposalPct, 2, true)}
+                                </SignedText>
+                              </span>
+                            </Tooltip>
                           )}
                         </div>
                         <p className="mt-1 leading-relaxed text-[color:var(--con-muted)]">{p.proposal.rationale}</p>
@@ -413,7 +476,7 @@ function FillsList({ fills }: { fills: FillEvent[] }) {
             </Chip>
             {f.status !== "filled" && (
               <Chip tone={statusTone(f.status)} title="Recorded intent awaiting broker-truth reconciliation — it cannot double-place.">
-                {f.status}
+                {feedStatusLabel(f.status)}
               </Chip>
             )}
             <span className="ml-auto text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">

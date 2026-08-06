@@ -10,6 +10,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } 
 import type { TickerLogoDisplay } from "@/lib/ticker-logos";
 import { normalizeTickerLogoSymbol } from "@/lib/ticker-logos";
 import { cx } from "../lib/format";
+import { Tooltip } from "./primitives";
+import { useTickerLogoDisplay } from "../lib/useTickerLogoDisplay";
 
 export type { TickerLogoDisplay };
 
@@ -47,8 +49,8 @@ const SIZE_CLASS: Record<TickerLogoSize, string> = {
 };
 
 const MONOGRAM_FONT_CLASS: Record<TickerLogoSize, string> = {
-  sm: "text-[9px]",
-  md: "text-[11px]",
+  sm: "text-[length:var(--con-fs-2xs)]",
+  md: "text-[length:var(--con-fs-xs)]",
   lg: "text-base"
 };
 
@@ -61,7 +63,7 @@ function monogram(symbol: string): string {
 
 export function TickerLogo({
   symbol,
-  display = "tile",
+  display: explicitDisplay,
   size = "sm",
   className,
   title,
@@ -77,6 +79,8 @@ export function TickerLogo({
   title?: string;
   fallback?: ReactNode;
 }) {
+  const { tickerLogoDisplay: storedDisplay } = useTickerLogoDisplay();
+  const display = explicitDisplay ?? storedDisplay;
   const normalized = useMemo(() => normalizeTickerLogoSymbol(symbol), [symbol]);
   const [failed, setFailed] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
@@ -95,43 +99,45 @@ export function TickerLogo({
   if (failed) {
     if (fallback) return <>{fallback}</>;
     return (
-      <span
-        ref={ref}
-        className={cx(
-          "con-logo-tile inline-flex shrink-0 select-none items-center justify-center overflow-hidden font-semibold uppercase leading-none",
-          SIZE_CLASS[size],
-          MONOGRAM_FONT_CLASS[size],
-          className
-        )}
-        title={title}
-        aria-hidden="true"
-      >
-        {monogram(normalized)}
-      </span>
+      <Tooltip content={title}>
+        <span
+          ref={ref}
+          className={cx(
+            "con-logo-tile inline-flex shrink-0 select-none items-center justify-center overflow-hidden font-semibold uppercase leading-none",
+            SIZE_CLASS[size],
+            MONOGRAM_FONT_CLASS[size],
+            className
+          )}
+          aria-hidden="true"
+        >
+          {monogram(normalized)}
+        </span>
+      </Tooltip>
     );
   }
 
   return (
-    <span
-      ref={ref}
-      className={cx(
-        "inline-flex shrink-0 items-center justify-center overflow-hidden",
-        SIZE_CLASS[size],
-        display === "tile" ? "con-logo-tile p-0.5" : "rounded-sm",
-        className
-      )}
-      title={title}
-      aria-hidden="true"
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}`}
-        alt=""
-        className="h-full w-full object-contain"
-        loading="lazy"
-        decoding="async"
-        onError={() => setFailed(true)}
-      />
-    </span>
+    <Tooltip content={title}>
+      <span
+        ref={ref}
+        className={cx(
+          "inline-flex shrink-0 items-center justify-center overflow-hidden",
+          SIZE_CLASS[size],
+          display === "tile" ? "con-logo-tile p-0.5" : "rounded-sm",
+          className
+        )}
+        aria-hidden="true"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}`}
+          alt=""
+          className="h-full w-full object-contain"
+          loading="lazy"
+          decoding="async"
+          onError={() => setFailed(true)}
+        />
+      </span>
+    </Tooltip>
   );
 }

@@ -4,6 +4,8 @@
  *  every helper returns null/undefined when the snapshot can't answer. */
 
 import type { DashboardSnapshot } from "../../dashboard-types";
+import type { PositionStopPlan } from "@/lib/db";
+import { normalizeSymbol } from "@/lib/money";
 import type {
   ConnectedAccount,
   EquityCurvePoint,
@@ -12,8 +14,15 @@ import type {
   ExecutionMode,
   PerformanceSummary,
   SystemState,
-  TradingPolicy
+  TradingPolicy,
+  Portfolio
 } from "@/lib/types";
+import { resolveDailyOpeningCap, type DailyOpeningCapMode } from "@/lib/policy-caps";
+import { isRunAllowedNow, nextMarketOpenHint, previousTradingDayStart } from "@/lib/market-hours";
+// NOT from "@/lib/benchmark" — that file imports history.ts → the db barrel, and this module is
+// imported by every "use client" console component, so the whole server graph followed it into
+// the browser bundle. @/lib/cash-flows is the dependency-free extraction of the same function.
+import { inferExternalCashFlows } from "@/lib/cash-flows";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
 
@@ -23,9 +32,9 @@ export interface RealityInfo {
   mode?: ExecutionMode;
   tone: RealityTone;
   /** The load-bearing word. */
-  word: "NO ACCOUNT" | "TEST ACCOUNT" | "PAPER" | "BROKERAGE";
+  word: "NO ACCOUNT" | "PAPER" | "BROKERAGE";
   /** The load-bearing qualifier next to the word. */
-  phrase: "no account connected" | "Local Mock Paper Account" | "NOT real money" | "connected account";
+  phrase: "nothing connected yet" | "broker practice account" | "live orders";
   /** One-sentence honest clarification. */
   clarification: string;
   account?: ConnectedAccount;
@@ -42,24 +51,27 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
         mode,
         tone: "paper",
         word: "PAPER",
-        phrase: "NOT real money",
-        clarification: "Your broker's practice sandbox — real broker endpoints, zero real dollars."
+        phrase: "broker practice account",
+        clarification:
+          "Same broker-mediated trading path as live — practice dollars at the broker. Useful for reps and system training; live is the primary focus."
       };
     case "broker/live":
       return {
         mode,
         tone: "live",
         word: "BROKERAGE",
-        phrase: "connected account",
-        clarification: "Orders route through this connected broker account when approved or permitted by Autopilot."
+        phrase: "live orders",
+        clarification: "Orders route through this connected live broker account when approved or permitted by Autopilot."
       };
     default:
       return {
         mode: undefined,
         tone: "none",
         word: "NO ACCOUNT",
-        phrase: "no account connected",
-        clarification: "Connect a broker account (paper or live) before the app can place orders."
+        // Not "no account connected" — the banner renders "WORD · phrase", and
+        // repeating the word's meaning made it a tautology.
+        phrase: "nothing connected yet",
+        clarification: "Connect a broker account before the app can place orders. Prefer live when ready; paper is for training reps."
       };
   }
 }
@@ -73,18 +85,8 @@ export function deriveReality(snapshot: DashboardSnapshot): RealityInfo {
   return { ...realityForMode(mode), account };
 }
 
-/** Reality of a specific account ROW (switcher, connections list), derived from the
- *  account's own `environment` — an account is an account, whatever its broker. */
+/** Reality of a specific product account row, derived solely from its broker environment. */
 export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, "mode" | "tone" | "word" | "phrase" | "clarification"> {
-  if (account.broker === "test") {
-    return {
-      mode: "broker/paper",
-      tone: "paper",
-      word: "TEST ACCOUNT",
-      phrase: "Local Mock Paper Account",
-      clarification: "Local simulated fills for learning and testing. It is not a broker account and cannot reach real money."
-    };
-  }
   return realityForMode(account.environment === "paper" ? "broker/paper" : "broker/live");
 }
 
@@ -97,12 +99,45 @@ export interface StateInfo {
   /** One-line honest explanation. */
   detail: string;
   tone: "pos" | "warn" | "neg" | "muted";
+  /** Only meaningful when state === "active" — whether the market (per current session + the
+   *  account's extended-hours policy) is open right now. undefined for every other state (those
+   *  don't run on a market clock) AND for active policies whose `runDuringExtendedHours` wasn't
+   *  in the payload — without it the answer isn't knowable, so no paused/running split is made. A
+   *  configured-running account with the market closed is still `state: "active"` (nothing about
+   *  the underlying run-state changed) — only the label/detail/tone reflect the pause, so this is
+   *  purely a display fix, never a behavior change. */
+  marketOpen?: boolean;
 }
 
-export function deriveStateInfo(policy: TradingPolicy): StateInfo {
+/** `now` is injectable for tests; every real caller uses the default (current time). */
+export function deriveStateInfo(
+  policy: Pick<TradingPolicy, "systemState" | "strategyAuthority"> & { runDuringExtendedHours?: boolean },
+  now: Date = new Date()
+): StateInfo {
   const authority = policy.strategyAuthority === "decide" ? "Autopilot" : "Ask-first";
   switch (policy.systemState) {
-    case "active":
+    case "active": {
+      // undefined ≠ false: a payload that doesn't carry runDuringExtendedHours (older snapshot
+      // shapes, or a projection that forgot the field) cannot answer "is this account's market
+      // window open?" — an extended-hours account would be mislabeled "Paused · market closed"
+      // while genuinely running a pre/post session. In that case skip the split entirely and
+      // keep the plain "Running" claim. Only a real boolean opts into the market-aware display.
+      const marketOpen =
+        policy.runDuringExtendedHours === undefined ? undefined : isRunAllowedNow(policy.runDuringExtendedHours, now);
+      if (marketOpen === false) {
+        return {
+          state: "active",
+          label: "Paused · market closed",
+          detail:
+            `Scheduled runs pause while the market is closed and resume automatically once it reopens ` +
+            `(next open ${nextMarketOpenHint(now, policy.runDuringExtendedHours === true)}). ` +
+            (policy.strategyAuthority === "decide"
+              ? "Autonomous placement is paused too — nothing places itself outside market hours."
+              : "Every trade still waits for your approval once runs resume."),
+          tone: "muted",
+          marketOpen: false
+        };
+      }
       return {
         state: "active",
         label: `Running · ${authority}`,
@@ -110,8 +145,10 @@ export function deriveStateInfo(policy: TradingPolicy): StateInfo {
           policy.strategyAuthority === "decide"
             ? "The strategy runs on schedule and may place orders itself, inside your guardrails."
             : "The strategy runs on schedule. Every trade waits for your approval.",
-        tone: policy.strategyAuthority === "decide" ? "warn" : "pos"
+        tone: policy.strategyAuthority === "decide" ? "warn" : "pos",
+        ...(marketOpen === undefined ? {} : { marketOpen: true })
       };
+    }
     case "close_only":
       return {
         state: "close_only",
@@ -165,14 +202,80 @@ function hasWorkingClosingStop(orders: EquityOrder[], symbol: string, isShort: b
   });
 }
 
+const STOP_PLAN_LABEL: Record<string, string> = { fixed: "Fixed", atr: "ATR", trailing: "Trailing", none: "None" };
+
 /** Honest protection derivation from what the snapshot actually carries:
  *  a resting broker stop order that closes the position, else the app-managed
  *  stop rules (which pause while Stopped), else nothing. Shorts mirror the
  *  server's rules: the stop distance is riskRules.shortStopLossPct, falling
  *  back to stopLossPct (generateProactiveRiskProposals), and the app skips
  *  shorts entirely while shortSellingEnabled is off (synthetic-stops monitor
- *  and proactive exits both do). */
+ *  and proactive exits both do). An optional per-position stopPlan (the LLM's
+ *  own choice at buy time, from position_stop_plans) is layered on top —
+ *  NEVER a silent override: it always annotates the detail text, and a "none"
+ *  plan is called out prominently (never rendered as if nothing was ever
+ *  configured) rather than blending into the generic no-protection case. */
 export function deriveProtection(
+  position: EquityPosition,
+  orders: EquityOrder[],
+  policy: TradingPolicy,
+  stopPlan?: PositionStopPlan
+): ProtectionInfo {
+  const base = deriveBaseProtection(position, orders, policy);
+  if (!stopPlan || stopPlan.style === "default") return base;
+  const planLabel = STOP_PLAN_LABEL[stopPlan.style] ?? stopPlan.style;
+  if (stopPlan.style === "none") {
+    // Only a REAL, independently-verified resting broker stop order ("Broker stop") survives a
+    // "none" plan — every enforcement layer (synthetic monitor, broker-protective-stops.ts)
+    // deliberately suppresses ITS OWN stop for this symbol once "none" is set, so an "App stop..."
+    // label here would just be reflecting account-wide CONFIG that no longer actually applies to
+    // this position — showing it as protected would be misleading for a position the owner/LLM
+    // chose to run bare (Codex review, PR #1371).
+    const hasRealBrokerStop = base.label === "Broker stop";
+    return {
+      label: hasRealBrokerStop ? base.label : "No stop (LLM choice)",
+      detail:
+        `Per-position plan: NO stop-loss — a deliberate LLM/owner choice for this position` +
+        (stopPlan.rationale ? ` ("${stopPlan.rationale}")` : "") +
+        `. ${base.detail}`,
+      tone: hasRealBrokerStop ? base.tone : "warn"
+    };
+  }
+  // A REAL, independently-verified resting broker stop order protects regardless of what any plan
+  // says (accuracy over the plan's intent, same principle as the "none" branch above) — keep it
+  // exactly as `deriveBaseProtection` reported it.
+  if (base.label === "Broker stop") {
+    return { ...base, detail: `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice). ${base.detail}` };
+  }
+  // A short position with short selling turned off: every enforcement layer (synthetic monitor,
+  // proactive risk exits, broker-protective-stops) skips shorts entirely while shortSellingEnabled is
+  // off, regardless of any per-position plan — a "Fixed"/"ATR"/"Trailing plan" label here would show
+  // active protection for a short the app has deliberately stopped managing (Codex review, PR #1371).
+  // Preserve deriveBaseProtection's muted/unsafe state instead of building an active plan label.
+  if (position.quantity < 0 && !policy.shortSellingEnabled) {
+    return { ...base, detail: `Per-position plan: ${planLabel} (would pin this position's stop, but it never takes effect while short selling is off). ${base.detail}` };
+  }
+  // Otherwise, build the label/tone from the PLAN itself, never from the account-wide base label's
+  // CONTENT — that label describes whatever mechanism the ACCOUNT happens to have configured (e.g.
+  // "App stop −8%" for a flat stop), which may be an entirely different mechanism than what this
+  // plan actually pins (e.g. "trailing" on an account with only a flat stop configured, or "atr" on
+  // one with none at all) — reusing it would show a protection lane/price that isn't the one
+  // actually protecting this position. An explicit plan is real, active protection via
+  // STOP_PLAN_FALLBACK_STOP_PCT even on a bare account (universal availability) — but like every
+  // other app-managed enforcement layer, it pauses while the system is Stopped (Codex review, PR
+  // #1371).
+  const halted = policy.systemState === "halted";
+  return {
+    label: halted ? `${planLabel} plan · paused` : `${planLabel} plan`,
+    detail:
+      `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice)` +
+      (halted ? " — paused while the system is Stopped; resumes when you start or switch to Exit-only." : "") +
+      `. ${base.detail}`,
+    tone: halted ? "warn" : "pos"
+  };
+}
+
+function deriveBaseProtection(
   position: EquityPosition,
   orders: EquityOrder[],
   policy: TradingPolicy
@@ -198,10 +301,17 @@ export function deriveProtection(
       ? rules.shortStopLossPct
       : rules.stopLossPct
     : rules.stopLossPct;
-  const trailing = !!(rules.trailingStopPct && rules.trailingStopPct > 0);
-  const stopPct = trailing ? rules.trailingStopPct : baseStopPct;
-  if (typeof stopPct === "number" && stopPct > 0) {
-    const word = `App ${trailing ? "trailing " : ""}${isShort ? "short " : ""}stop −${stopPct}%`;
+  // A fixed stop and a trailing stop COEXIST — they are not alternatives. The fixed % drives the
+  // proactive risk-exit (and any broker bracket); the trailing % drives the synthetic scheduler-tick
+  // monitor, which runs on top. Naming ONLY the trailing one implied it replaced the fixed stop, so a
+  // held name with both configured looked protected by a single, wider trail. Show whichever apply.
+  const hasFixed = typeof baseStopPct === "number" && baseStopPct > 0;
+  const hasTrailing = !!(rules.trailingStopPct && rules.trailingStopPct > 0);
+  if (hasFixed || hasTrailing) {
+    const parts: string[] = [];
+    if (hasFixed) parts.push(`stop −${baseStopPct}%`);
+    if (hasTrailing) parts.push(`trailing −${rules.trailingStopPct}%`);
+    const word = `App ${isShort ? "short " : ""}${parts.join(" + ")}`;
     if (policy.systemState === "halted") {
       return {
         label: `${word} · paused`,
@@ -229,29 +339,65 @@ export interface DayPnl {
   pct: number;
   baselineAt: string;
   baselineEquity: number;
+  /** False when `baselineAt` is dated on (or after) the most recent prior trading session — the
+   *  normal case. True when the baseline predates that session, meaning one or more daily
+   *  snapshots are missing (the strategy didn't run/snapshot for a stretch) and this P&L is being
+   *  compared across a real gap (e.g. a July 7 baseline read on July 17), not just "yesterday". */
+  isStaleBaseline: boolean;
+  cashFlowAdjusted?: boolean;
 }
 
 /** Change in equity vs the last persisted snapshot before today (local time)
  *  in the current mode's bucket. Null when there is no prior-day snapshot or
- *  no current equity — render "—", never invent. */
+ *  no current equity — render "—", never invent. `now` is injectable for tests. */
 export function deriveDayPnl(
   performance: PerformanceSummary | undefined,
   mode: ExecutionMode | undefined,
-  currentEquity: number | undefined
+  portfolio: Pick<Portfolio, "totalMarketValue" | "cash"> | undefined,
+  now: Date = new Date()
 ): DayPnl | null {
+  const currentEquity = portfolio?.totalMarketValue;
   if (!performance || typeof currentEquity !== "number" || !Number.isFinite(currentEquity)) return null;
   const curve = mode === "broker/live" ? performance.liveEquityCurve : performance.paperEquityCurve;
   if (!curve || curve.length === 0) return null;
-  const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  let baseline: { timestamp: string; equity: number } | undefined;
+  let baseline: EquityCurvePoint | undefined;
   for (const point of curve) {
     const t = new Date(point.timestamp).getTime();
     if (Number.isFinite(t) && t < todayStart) baseline = point;
   }
   if (!baseline || !Number.isFinite(baseline.equity) || baseline.equity === 0) return null;
-  const pnl = currentEquity - baseline.equity;
-  return { pnl, pct: (pnl / baseline.equity) * 100, baselineAt: baseline.timestamp, baselineEquity: baseline.equity };
+
+  let flow = 0;
+  if (portfolio && typeof portfolio.cash === "number" && typeof baseline.cash === "number") {
+    const fakeCurrent: EquityCurvePoint = {
+      timestamp: now.toISOString(),
+      equity: currentEquity,
+      source: "live" as any,
+      cash: portfolio.cash,
+      positionsValue: currentEquity - portfolio.cash
+    };
+    const flowMap = inferExternalCashFlows([baseline, fakeCurrent], []);
+    // Sum any flows found in the map (there should only be at most 1, keyed by fakeCurrent date)
+    for (const v of flowMap.values()) flow += v;
+  }
+
+  const pnl = currentEquity - baseline.equity - flow;
+  const pctBase = baseline.equity + flow;
+  const pct = pctBase > 0 ? (pnl / pctBase) * 100 : 0;
+
+  const baselineDay = new Date(baseline.timestamp);
+  const baselineDayStart = new Date(baselineDay.getFullYear(), baselineDay.getMonth(), baselineDay.getDate()).getTime();
+  const priorSessionStart = previousTradingDayStart(now).getTime();
+  const isStaleBaseline = Number.isFinite(baselineDayStart) && baselineDayStart < priorSessionStart;
+  return {
+    pnl,
+    pct,
+    baselineAt: baseline.timestamp,
+    baselineEquity: baseline.equity,
+    isStaleBaseline,
+    ...(Math.abs(flow) > 0.01 ? { cashFlowAdjusted: true } : {})
+  };
 }
 
 // ── Needs-attention inbox ────────────────────────────────────────────────────
@@ -306,8 +452,31 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
     items.push({
       id: "llm",
       tone: "warn",
-      title: "No LLM key configured",
-      detail: "Runs that generate proposals need one. Market data, positions, and guardrails still work without it."
+      title: "Setup: add an LLM key",
+      detail:
+        "Strategy runs need OpenRouter (or another configured LLM key) so Green/Red teams can propose and debate. Market data, positions, and guardrails still work without it.",
+      href: "/console/connections#api-keys"
+    });
+  }
+  // First-run / setup checklist (robust for many users; still useful as sole-operator checklist).
+  if (!activeConnectedAccount(snapshot) && snapshot.connectedAccounts.length === 0) {
+    items.push({
+      id: "setup-broker",
+      tone: "accent",
+      title: "Setup: connect a broker account",
+      detail:
+        "Connect Alpaca or Robinhood (live preferred when ready; paper is fine for training reps). The app cannot place orders without a connected account.",
+      href: "/console/connections"
+    });
+  }
+  const greenModel = snapshot.policy.llmModel?.trim();
+  if (!greenModel && snapshot.llmConfigured !== false) {
+    items.push({
+      id: "setup-models",
+      tone: "warn",
+      title: "Setup: choose Green team model",
+      detail: "Strategy → Models — pick the model that writes trade ideas. Red team is optional; blank means you are the sole adversary.",
+      href: "/console/strategy"
     });
   }
   if (snapshot.accountReadiness && !snapshot.accountReadiness.ok) {
@@ -315,7 +484,8 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       id: "readiness",
       tone: "warn",
       title: "Account not ready to run",
-      detail: snapshot.accountReadiness.detail
+      detail: snapshot.accountReadiness.detail,
+      href: "/console/connections"
     });
   }
   const failed = (snapshot.recentProposals ?? []).filter((p) => p.status === "placing_failed");
@@ -360,19 +530,186 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
   return items;
 }
 
+// ── First-run / readiness checklist (Thesis hero) ────────────────────────────
+//
+// Canonical steps (docs/design/ux-improvement-program.md §PR-A3):
+//   1. Connect broker
+//   2. Active account selected
+//   3. Universe/index configured
+//   4. LLM key + Green team model
+//   5. Run once → open Proposals
+// Every field is a real snapshot value — never invent readiness.
+
+export type ReadinessStepId =
+  | "connect-broker"
+  | "active-account"
+  | "universe"
+  | "llm"
+  | "run-once";
+
+export interface ReadinessStep {
+  id: ReadinessStepId;
+  title: string;
+  detail: string;
+  complete: boolean;
+  /** Deep-link when incomplete (one CTA per step). */
+  href?: string;
+  ctaLabel?: string;
+}
+
+export interface ReadinessChecklist {
+  /** True only when every step is complete — no false ready when account/universe/LLM missing. */
+  ready: boolean;
+  steps: ReadinessStep[];
+  completedCount: number;
+  totalCount: number;
+  /** Flat flags for tests / iOS parity (PR-D2). */
+  flags: {
+    hasBroker: boolean;
+    hasActiveAccount: boolean;
+    hasUniverse: boolean;
+    hasLlmKey: boolean;
+    hasGreenModel: boolean;
+    hasRunOnce: boolean;
+  };
+}
+
+/** Structured first-run checklist from DashboardSnapshot. Pure — no side effects. */
+export function deriveReadinessChecklist(snapshot: DashboardSnapshot): ReadinessChecklist {
+  const hasBroker = (snapshot.connectedAccounts?.length ?? 0) > 0;
+  const active = activeConnectedAccount(snapshot);
+  // Active account: isActive row, or policy points at a known connected account / account number.
+  const hasActiveAccount = Boolean(
+    active ||
+      (snapshot.policy.connectedAccountId &&
+        snapshot.connectedAccounts?.some((a) => a.id === snapshot.policy.connectedAccountId)) ||
+      (snapshot.policy.accountNumber &&
+        snapshot.connectedAccounts?.some((a) => a.accountNumber === snapshot.policy.accountNumber))
+  );
+  const indices = snapshot.policy.includedIndices ?? [];
+  const extras = snapshot.policy.additionalSymbols ?? [];
+  const hasUniverse = indices.length > 0 || extras.length > 0;
+  // llmConfigured is optional on older payloads — undefined means "not reported, do not block".
+  // Explicit false is the only hard "no key" signal from the snapshot.
+  const hasLlmKey = snapshot.llmConfigured !== false;
+  const hasGreenModel = Boolean(snapshot.policy.llmModel?.trim());
+  const hasRunOnce = Boolean(
+    snapshot.latestStrategyRun ||
+      (snapshot.strategyRuns?.length ?? 0) > 0 ||
+      (snapshot.pendingProposals?.length ?? 0) > 0 ||
+      (snapshot.recentProposals?.length ?? 0) > 0
+  );
+
+  const steps: ReadinessStep[] = [
+    {
+      id: "connect-broker",
+      title: "Connect a broker",
+      detail: hasBroker
+        ? `${snapshot.connectedAccounts.length} account${snapshot.connectedAccounts.length === 1 ? "" : "s"} connected.`
+        : "Connect Alpaca or Robinhood (live when ready; paper is fine for training). The app cannot place orders without a connected account.",
+      complete: hasBroker,
+      href: hasBroker ? undefined : "/console/connections#brokers",
+      ctaLabel: hasBroker ? undefined : "Open Connections"
+    },
+    {
+      id: "active-account",
+      title: "Select an active account",
+      detail: hasActiveAccount
+        ? active
+          ? `Active: ${active.label || active.broker || active.accountNumber || "selected account"}.`
+          : "An account is selected in policy."
+        : hasBroker
+          ? "Pick which connected account this console should trade on."
+          : "Connect a broker first, then select which account is active.",
+      complete: hasActiveAccount,
+      href: hasActiveAccount ? undefined : "/console/connections#brokers",
+      ctaLabel: hasActiveAccount ? undefined : "Choose account"
+    },
+    {
+      id: "universe",
+      title: "Configure universe / index",
+      detail: hasUniverse
+        ? [
+            indices.length > 0 ? `${indices.length} index${indices.length === 1 ? "" : "es"}` : null,
+            extras.length > 0 ? `${extras.length} extra symbol${extras.length === 1 ? "" : "s"}` : null
+          ]
+            .filter(Boolean)
+            .join(" · ") + " in the scan universe."
+        : "Choose at least one base index (e.g. S&P 500) or add watchlist symbols so the strategy has names to scan.",
+      complete: hasUniverse,
+      href: hasUniverse ? undefined : "/console/guardrails",
+      ctaLabel: hasUniverse ? undefined : "Open Guardrails · Universe"
+    },
+    {
+      id: "llm",
+      title: "LLM key + Green team model",
+      detail:
+        hasLlmKey && hasGreenModel
+          ? `Key ready · Green model ${snapshot.policy.llmModel!.trim()}.`
+          : !hasLlmKey
+            ? "Add an OpenRouter (or other) LLM key so Green/Red teams can propose and debate."
+            : "Choose the Green team model that writes trade ideas (Strategy → Models).",
+      complete: hasLlmKey && hasGreenModel,
+      href:
+        hasLlmKey && hasGreenModel
+          ? undefined
+          : !hasLlmKey
+            ? "/console/connections#api-keys"
+            : "/console/strategy#models",
+      ctaLabel:
+        hasLlmKey && hasGreenModel ? undefined : !hasLlmKey ? "Add API key" : "Choose Green model"
+    },
+    {
+      id: "run-once",
+      title: "Run once → review Proposals",
+      detail: hasRunOnce
+        ? "At least one strategy run or proposal is on the record."
+        : "Use Run once in the top bar to generate the first decision trace, then open Proposals to approve or reject. (One control — not duplicated in this checklist.)",
+      complete: hasRunOnce,
+      // No deep-link to empty Proposals: the action is chrome Run once, not this row.
+      href: undefined,
+      ctaLabel: hasRunOnce ? undefined : "Top bar → Run once"
+    }
+  ];
+
+  const completedCount = steps.filter((s) => s.complete).length;
+  return {
+    ready: completedCount === steps.length,
+    steps,
+    completedCount,
+    totalCount: steps.length,
+    flags: {
+      hasBroker,
+      hasActiveAccount,
+      hasUniverse,
+      hasLlmKey,
+      hasGreenModel,
+      hasRunOnce
+    }
+  };
+}
+
 // ── Daily spend meter ────────────────────────────────────────────────────────
 
 export interface SpendInfo {
   usedNotional: number;
   capNotional?: number;
+  capMode?: DailyOpeningCapMode;
+  capConfiguredValue?: number;
+  capPctOfNav?: number;
   usedOrders: number;
   capOrders: number;
 }
 
 export function deriveSpend(snapshot: DashboardSnapshot): SpendInfo {
+  const availableSpend = snapshot.portfolio?.buyingPower ?? snapshot.portfolio?.totalMarketValue;
+  const cap = resolveDailyOpeningCap(snapshot.policy, snapshot.portfolio?.totalMarketValue, availableSpend);
   return {
     usedNotional: snapshot.dailyStats?.notional ?? 0,
-    capNotional: snapshot.policy.maxDailyNotional,
+    capNotional: cap?.notional,
+    capMode: cap?.mode,
+    capConfiguredValue: cap?.configuredValue,
+    capPctOfNav: cap?.pctOfNav,
     usedOrders: snapshot.dailyStats?.openingOrderCount ?? snapshot.dailyStats?.orderCount ?? 0,
     capOrders: snapshot.policy.maxDailyOrders
   };
@@ -403,6 +740,78 @@ export function deriveMarkToMarket(snapshot: DashboardSnapshot): MarkToMarketInf
     cash: snapshot.portfolio?.cash,
     buyingPower: snapshot.portfolio?.buyingPower
   };
+}
+
+// ── Estimated closing P/L (sell-of-long / cover-of-short) ───────────────────
+
+/** The position's current per-share price implied by its own marked-to-market value
+ *  (marketValue / quantity) — for a short both are negative, so the ratio is still a
+ *  positive price. This is the SAME snapshot the position itself came from, so it is
+ *  fresher than a market-scan cache that can be minutes old. Null when the position is
+ *  missing, flat (quantity 0), or the ratio isn't a finite positive number — never invent
+ *  a price for a closed/degenerate position. */
+export function positionMarkPrice(
+  position: Pick<EquityPosition, "quantity" | "marketValue"> | undefined | null
+): number | null {
+  if (!position || !Number.isFinite(position.quantity) || position.quantity === 0) return null;
+  if (!Number.isFinite(position.marketValue)) return null;
+  const price = position.marketValue / position.quantity;
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
+export interface EstimatedClosingPnl {
+  pnl: number;
+  pnlPct: number;
+  basisPrice: number;
+  currentPrice: number;
+  shares: number;
+}
+
+/** Estimated realized P/L from closing `shares` of an existing position at `currentPrice`
+ *  right now. `shares` is always the POSITIVE count of shares this order would close —
+ *  independent of, and possibly smaller than, the position's own signed quantity (a
+ *  partial exit). Sign-correct for BOTH directions: a long-sell profits when currentPrice
+ *  is above the average cost; a short-cover profits when it's below (mirrors
+ *  positionEconomics's short handling in ui/drilldown-data.ts, which gets the same sign
+ *  for free from `quantity * (currentPrice - averageCost)` since a short's quantity is
+ *  negative — here `shares` is unsigned, so the direction is read explicitly off
+ *  `position.quantity`'s sign instead). Returns null when any input is missing or
+ *  non-positive — never invent a number from a partial picture. */
+export function estimatedClosingPnl(input: {
+  position: Pick<EquityPosition, "quantity" | "averageCost">;
+  shares: number | null | undefined;
+  currentPrice: number | null | undefined;
+}): EstimatedClosingPnl | null {
+  const { position, shares, currentPrice } = input;
+  const basisPrice = position.averageCost;
+  if (!Number.isFinite(basisPrice) || basisPrice <= 0) return null;
+  if (typeof shares !== "number" || !Number.isFinite(shares) || shares <= 0) return null;
+  if (typeof currentPrice !== "number" || !Number.isFinite(currentPrice) || currentPrice <= 0) return null;
+  const isShort = position.quantity < 0;
+  const perShare = isShort ? basisPrice - currentPrice : currentPrice - basisPrice;
+  return {
+    pnl: perShare * shares,
+    pnlPct: (perShare / basisPrice) * 100,
+    basisPrice,
+    currentPrice,
+    shares
+  };
+}
+
+/** True when a resting order would REDUCE/CLOSE the matched position: a long (quantity >
+ *  0) closes with a sell; a short (quantity < 0) closes with a buy or cover (brokers that
+ *  infer open/close from the account's position, e.g. Alpaca, report a short's cover as a
+ *  raw "buy" — src/lib/broker-side.ts toBrokerSide). A flat position (quantity 0, or no
+ *  matching position at all) has nothing to close. Symbols are compared via the same
+ *  normalizeSymbol the drilldown join uses, so a bare/exchange-suffixed mismatch can't
+ *  silently fail the match. */
+export function isClosingOrder(
+  order: Pick<EquityOrder, "symbol" | "side">,
+  position: Pick<EquityPosition, "symbol" | "quantity"> | undefined | null
+): boolean {
+  if (!position || !Number.isFinite(position.quantity) || position.quantity === 0) return false;
+  if (normalizeSymbol(order.symbol) !== normalizeSymbol(position.symbol)) return false;
+  return position.quantity < 0 ? order.side === "buy" || order.side === "cover" : order.side === "sell";
 }
 
 export interface UtilizationMeter {

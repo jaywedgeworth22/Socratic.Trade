@@ -20,15 +20,11 @@
 
 import { applyCongressEvent, type CongressEvent } from "./congress-trade-events";
 import { logApiHealth } from "./db-health";
+import { CongressTradeClient, SseParser, type SseMessage, type Subscription } from "@jaywedgeworth22/congress-trading-shared";
 
 const DEFAULT_PATH = "/api/stream";
 const MAX_BACKOFF_MS = 60_000;
 const INITIAL_BACKOFF_MS = 1_000;
-
-interface Subscription {
-  id: string;
-  token: string;
-}
 
 interface StreamState {
   started: boolean;
@@ -57,10 +53,7 @@ function baseUrl(): string {
 
 /** Build App A's stream URL with the required `?subscription=<id>` query param. */
 function streamUrl(subscriptionId: string): string {
-  const path = (process.env.CONGRESS_STREAM_PATH ?? DEFAULT_PATH).trim();
-  const p = path.startsWith("/") ? path : `/${path}`;
-  const sep = p.includes("?") ? "&" : "?";
-  return `${baseUrl()}${p}${sep}subscription=${encodeURIComponent(subscriptionId)}`;
+  return new CongressTradeClient({ baseUrl: baseUrl() }).streamUrl(subscriptionId);
 }
 
 function envSubscriptionId(): string | undefined {
@@ -85,20 +78,8 @@ async function createSubscription(): Promise<Subscription | null> {
   const clientId = (process.env.CONGRESS_STREAM_CLIENT_ID ?? "app-b").trim() || "app-b";
   const desiredSecret = (process.env.CONGRESS_STREAM_SUBSCRIPTION_TOKEN ?? "").trim();
   try {
-    const res = await fetch(`${baseUrl()}/api/subscriptions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ delivery: "sse", clientId, ...(desiredSecret.length >= 16 ? { secret: desiredSecret } : {}) }),
-      cache: "no-store"
-    });
-    if (!res.ok) {
-      console.warn(`[congress-stream] subscription create failed: HTTP ${res.status}`);
-      return null;
-    }
-    const body = (await res.json().catch(() => null)) as { id?: string; secret?: string } | null;
-    if (body?.id && body?.secret) return { id: body.id, token: body.secret };
-    console.warn("[congress-stream] subscription create returned no id/secret");
-    return null;
+    const client = new CongressTradeClient({ baseUrl: baseUrl(), token: process.env.CONGRESS_TRADE_TOKEN || undefined });
+    return await client.createSubscription(clientId, desiredSecret);
   } catch (err) {
     console.warn("[congress-stream] subscription create error:", err instanceof Error ? err.message : err);
     return null;
@@ -113,7 +94,7 @@ async function createSubscription(): Promise<Subscription | null> {
 export async function resolveSubscription(): Promise<Subscription | null> {
   const id = envSubscriptionId();
   const token = envSubscriptionToken();
-  if (id && token) return { id, token };
+  if (id && token) return { id, secret: token };
   if (state.subscription) return state.subscription;
   if (!flagOn(process.env.CONGRESS_STREAM_AUTO_SUBSCRIBE)) return null;
   const created = await createSubscription();
@@ -122,46 +103,6 @@ export async function resolveSubscription(): Promise<Subscription | null> {
 }
 
 // ── Pure SSE frame parser (unit-tested; no network) ──────────────────────────
-export interface SseMessage {
-  event?: string;
-  id?: string;
-  data: string;
-}
-
-/** Incremental text/event-stream parser. Feed decoded chunks; get back complete events. */
-export class SseParser {
-  private buf = "";
-  private cur: { event?: string; id?: string; data: string[] } = { data: [] };
-
-  push(chunk: string): SseMessage[] {
-    this.buf += chunk;
-    const out: SseMessage[] = [];
-    let nl: number;
-    while ((nl = this.buf.indexOf("\n")) >= 0) {
-      let line = this.buf.slice(0, nl);
-      this.buf = this.buf.slice(nl + 1);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      if (line === "") {
-        if (this.cur.data.length > 0 || this.cur.event !== undefined || this.cur.id !== undefined) {
-          out.push({ event: this.cur.event, id: this.cur.id, data: this.cur.data.join("\n") });
-        }
-        this.cur = { data: [] };
-        continue;
-      }
-      if (line.startsWith(":")) continue; // comment / heartbeat
-      const colon = line.indexOf(":");
-      const field = colon === -1 ? line : line.slice(0, colon);
-      let value = colon === -1 ? "" : line.slice(colon + 1);
-      if (value.startsWith(" ")) value = value.slice(1);
-      if (field === "data") this.cur.data.push(value);
-      else if (field === "event") this.cur.event = value;
-      else if (field === "id") this.cur.id = value;
-      // "retry" and unknown fields ignored
-    }
-    return out;
-  }
-}
-
 /** App A's non-data control frames — recognized so they never log as "dropped unparseable". */
 const CONTROL_EVENTS = new Set(["cursor", "ping", "reconnect", "error"]);
 
@@ -227,7 +168,7 @@ export async function connectOnce(): Promise<void> {
   const res = await fetch(streamUrl(sub.id), {
     headers: {
       accept: "text/event-stream",
-      authorization: `Bearer ${sub.token}`, // App A reads the subscription secret from Bearer or ?token
+      authorization: `Bearer ${sub.secret}`, // App A reads the subscription secret from Bearer or ?token
       ...(state.lastEventId ? { "last-event-id": state.lastEventId } : {})
     },
     cache: "no-store",
@@ -239,7 +180,29 @@ export async function connectOnce(): Promise<void> {
     if (state.subscription) state.subscription = undefined;
     throw new Error(`SSE connect rejected: HTTP ${res.status} (subscription invalid?)`);
   }
-  if (!res.ok || !res.body) throw new Error(`SSE connect failed: HTTP ${res.status}`);
+  if (!res.ok || !res.body) {
+    let retryMsg = "";
+    if (res.status === 429) {
+      const retryAfter = res.headers.get("retry-after");
+      if (retryAfter) {
+        // RFC 7231 §7.1.3: Retry-After can be delta-seconds or HTTP-date
+        const parsed = parseInt(retryAfter, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          retryMsg = ` (Retry-After: ${parsed})`;
+        } else {
+          // Try HTTP-date format, e.g. "Wed, 21 Oct 2015 07:28:00 GMT"
+          const httpDate = Date.parse(retryAfter);
+          if (!isNaN(httpDate)) {
+            const seconds = Math.ceil((httpDate - Date.now()) / 1000);
+            if (seconds > 0) {
+              retryMsg = ` (Retry-After: ${seconds})`;
+            }
+          }
+        }
+      }
+    }
+    throw new Error(`SSE connect failed: HTTP ${res.status}${retryMsg}`);
+  }
   state.backoffMs = INITIAL_BACKOFF_MS; // healthy connection → reset backoff
   // Connection-health signal for the admin Connections page (App B's side of the App A → App B
   // real-time link). Re-fires on each (re)connect within App A's ~25min stream lifetime.
@@ -273,12 +236,35 @@ async function runLoop(): Promise<void> {
     try {
       await connectOnce();
     } catch (err) {
-      console.error("[congress-stream] connection error:", err instanceof Error ? err.message : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[congress-stream] connection error:", msg);
+      
+      // Do not pollute api_health_log or loop infinitely if we legitimately lack credentials
+      if (msg.includes("no subscription configured")) {
+        console.warn("[congress-stream] disabling stream until credentials are provided.");
+        state.closing = true;
+        break;
+      }
+
+      // Record ALL failures in api_health_log so the admin dashboard shows current state.
+      // logApiHealth already detects 429|rate limit in error text and suppresses Sentry
+      // alerts via skipSentry (see db-health.ts line 172-174), so rate-limit backpressure
+      // events are recorded without noise.
       logApiHealth({
         service: "congress.trade:sse",
         ok: false,
-        errorText: err instanceof Error ? err.message : String(err),
+        errorText: msg,
       });
+
+      // Back off on 429 explicitly, using the parsed Retry-After seconds if available
+      const retryMatch = msg.match(/HTTP 429 \(Retry-After: (\d+)\)/);
+      if (retryMatch) {
+        const sec = parseInt(retryMatch[1], 10);
+        state.backoffMs = Math.max(state.backoffMs, sec * 1000);
+      } else if (msg.includes("HTTP 429")) {
+        // Default to a 60s backoff if 429 but no Retry-After
+        state.backoffMs = Math.max(state.backoffMs, 60_000);
+      }
     }
     if (state.closing) break;
     await sleep(state.backoffMs);

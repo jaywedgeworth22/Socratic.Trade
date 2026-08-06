@@ -1,35 +1,142 @@
 "use client";
 
-/** Results — measurement, never fabrication. Practice-money and real-money
- *  buckets are reported separately and never share an axis. Uncomputable
- *  figures render as "—" with a reason, not an estimate. Tax figures are
- *  estimates only, clearly labeled. */
+/** Results — measurement, never fabrication. Paper-account and brokerage-account
+ *  buckets are reported separately and never share an axis — an account is an
+ *  account, distinguished only by its environment, never a "practice" tier.
+ *  Uncomputable figures render as "—" with a reason, not an estimate. Tax
+ *  figures are estimates only, clearly labeled. */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
+import type { ConnectedAccount, EquityCurvePoint, PerformanceSummary } from "@/lib/types";
+import type { DashboardSnapshot } from "../../dashboard-types";
+import { ConsoleApiError, fetchAccountPerformance } from "../lib/api";
+import {
+  buildRedTeamModelRows,
+  RED_TEAM_EFFICACY_MIN_RESOLVED,
+  redTeamAttributionLabel,
+  redTeamReturnTone,
+  redTeamSampleGate,
+  redTeamSampleTier
+} from "../lib/red-team-efficacy";
 import { EquityChart } from "../components/equity-chart";
 import { deriveReality } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
+import { thesisTagLabel } from "../lib/labels";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
-import { Btn, Card, Chip, Dash, Empty, SignedText, Stat } from "../ui/primitives";
+import { Card, Chip, Dash, Empty, Select, SignedText, Stat } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
+import { destinationLabel } from "../components/nav";
+
+type CompareAccountSummary = { id: string; label: string; environment: "paper" | "live" };
+type RedTeamEfficacySnapshot = NonNullable<DashboardSnapshot["redTeamEfficacy"]>;
+
+/** Bucket state for the comparison account picker on Results. Mirrors the
+ *  loading/empty/error/ready idiom used by the symbol drilldown's history fetch. */
+type CompareState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; account: CompareAccountSummary; performance: PerformanceSummary | null; pricesUnavailable: boolean };
+
+function useComparePerformance(accountId: string | null): CompareState {
+  const [state, setState] = useState<CompareState>({ status: "idle" });
+
+  useEffect(() => {
+    if (!accountId) {
+      setState({ status: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setState({ status: "loading" });
+    (async () => {
+      try {
+        const result = await fetchAccountPerformance(accountId);
+        if (cancelled) return;
+        setState({
+          status: "ready",
+          account: result.account,
+          performance: result.performance,
+          pricesUnavailable: result.pricesUnavailable
+        });
+      } catch (error) {
+        if (cancelled) return;
+        setState({
+          status: "error",
+          message: error instanceof ConsoleApiError ? error.message : "Could not load comparison performance."
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId]);
+
+  return state;
+}
+
+/** Pick the bucket (realized/unrealized/winRate/avgReturn/curve) matching an account's
+ *  OWN money-reality out of a full PerformanceSummary — same paper-vs-live split the
+ *  active account already uses above.
+ *
+ *  `pricesUnavailable` forces `unrealized` to `undefined` (rendered as "-" by BucketCard)
+ *  instead of the comparison endpoint's synthetic $0 — that endpoint never fetches live
+ *  quotes, so its unrealized figures aren't real data, just an artifact of an empty
+ *  currentPrices map (see app/api/connected-accounts/[id]/performance/route.ts). Realized
+ *  P&L, win rate, and avg return don't depend on currentPrices, so they stay untouched. */
+function bucketFor(
+  performance: PerformanceSummary | null,
+  environment: "paper" | "live",
+  pricesUnavailable = false
+): { realized?: number; unrealized?: number; winRate?: number; avgReturn?: number; curve: EquityCurvePoint[] } {
+  if (!performance) {
+    return { realized: undefined, unrealized: undefined, winRate: undefined, avgReturn: undefined, curve: [] };
+  }
+  const bucket =
+    environment === "paper"
+      ? {
+          realized: performance.paperRealizedPnl,
+          unrealized: performance.paperUnrealizedPnl,
+          winRate: performance.paperWinRate,
+          avgReturn: performance.paperAverageReturnPct,
+          curve: performance.paperEquityCurve
+        }
+      : {
+          realized: performance.liveRealizedPnl,
+          unrealized: performance.liveUnrealizedPnl,
+          winRate: performance.liveWinRate,
+          avgReturn: performance.liveAverageReturnPct,
+          curve: performance.liveEquityCurve
+        };
+  return pricesUnavailable ? { ...bucket, unrealized: undefined } : bucket;
+}
 
 export default function ResultsPage() {
   const { snapshot } = useConsoleData();
-  const [compare, setCompare] = useState(false);
+  const [compareAccountId, setCompareAccountId] = useState<string | null>(null);
   const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
+  const compareState = useComparePerformance(compareAccountId);
   if (!snapshot || !reality) return null;
 
   const perf = snapshot.performance;
   const tax = snapshot.tax;
+  // Real multi-account comparison: every OTHER connected account (any environment) the
+  // user could pick, never a hardcoded paper/live pairing of the same account's own data.
+  const otherAccounts: ConnectedAccount[] = snapshot.connectedAccounts.filter((a) => a.id !== reality.account?.id);
 
   // The selected account lives in exactly ONE money-reality, so only its bucket
-  // shows by default. The other bucket is one explicit toggle away — never
-  // silently mixed onto the page as if it belonged to this account.
+  // shows by default. A comparison account's bucket is one explicit picker
+  // selection away — never silently mixed onto the page as if it belonged to
+  // this account. With no connected account there is no bucket to show at all —
+  // neither "paper" nor "live" is true, so rendering one anyway (all zeros/dashes)
+  // would misrepresent an account that doesn't exist as if it were a real paper
+  // account with nothing in it.
+  const hasAccount = reality.tone !== "none";
   const liveSelected = reality.tone === "live";
-  const practiceBucket = (
+  const paperBucket = (
     <BucketCard
-      title="Practice money (Paper broker)"
+      title="Paper Account"
       tone="paper"
       realized={perf?.paperRealizedPnl}
       unrealized={perf?.paperUnrealizedPnl}
@@ -51,9 +158,9 @@ export default function ResultsPage() {
   );
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-[length:var(--con-fs-lg)] font-bold">Results</h1>
+        <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console/results")}</h1>
         <Chip tone={reality.tone}>
           {reality.word} · {reality.phrase}
         </Chip>
@@ -61,23 +168,59 @@ export default function ResultsPage() {
           for {reality.account?.label ?? "no connected account"}
         </span>
         <div className="flex-1" />
-        <Btn size="sm" variant="ghost" onClick={() => setCompare((v) => !v)}>
-          {compare
-            ? "Hide comparison"
-            : liveSelected
-              ? "Compare with paper account"
-              : "Compare with brokerage account"}
-        </Btn>
+        {otherAccounts.length > 0 && (
+          <div className="flex items-center gap-2">
+            <label htmlFor="compare-account" className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              Compare with
+            </label>
+            <Select
+              id="compare-account"
+              value={compareAccountId ?? ""}
+              onChange={(event) => setCompareAccountId(event.target.value || null)}
+            >
+              <option value="">None</option>
+              {otherAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.label} ({account.environment})
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
       </div>
 
-      {/* Buckets: selected reality first; the other only on explicit compare. */}
-      <div className={compare ? "grid gap-4 lg:grid-cols-2" : "grid gap-4"}>
-        {liveSelected ? liveBucket : practiceBucket}
-        {compare && (liveSelected ? practiceBucket : liveBucket)}
+      {/* Buckets: selected reality first; a comparison account's bucket only once picked.
+          With no connected account, there is no bucket of either reality to show — an
+          empty state, not a paper bucket full of zeros standing in for an account that
+          doesn't exist. */}
+      <div className={compareAccountId ? "grid gap-4 lg:grid-cols-2" : "grid gap-4"}>
+        {hasAccount ? (
+          liveSelected ? liveBucket : paperBucket
+        ) : (
+          <Card title="Account P&L">
+            <Empty>Connect a broker account to see its P&amp;L here.</Empty>
+          </Card>
+        )}
+        {compareAccountId &&
+          (compareState.status === "ready" ? (
+            <BucketCard
+              title={compareState.account.label}
+              tone={compareState.account.environment}
+              {...bucketFor(compareState.performance, compareState.account.environment, compareState.pricesUnavailable)}
+            />
+          ) : compareState.status === "error" ? (
+            <Card title="Comparison">
+              <Empty>{compareState.message}</Empty>
+            </Card>
+          ) : (
+            <Card title="Comparison">
+              <Empty>Loading comparison…</Empty>
+            </Card>
+          ))}
       </div>
-      {compare && (
+      {compareAccountId && (
         <p className="-mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Comparison only — broker-paper and brokerage-account results never share an axis or a total.
+          Comparison only — these two accounts&apos; results never share an axis or a total.
         </p>
       )}
 
@@ -90,30 +233,74 @@ export default function ResultsPage() {
                 label="Your account"
                 value={fmtPct(perf.benchmark.accountReturnPct, 2, true)}
                 sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`}
-                title="Time-weighted account return over this window when cash flows can be detected; otherwise raw account equity growth. This is the account return before subtracting SPY."
+                title="Time-weighted return: the window is split at every deposit/withdrawal into back-to-back capital regimes; each regime’s market return is chained (multiplied) with the others. Having $100 for 10 days then $10 for 100 days does not let the long small-balance stretch dominate like a simple start→end ratio would."
               />
-              <Stat label={perf.benchmark.benchmarkSymbol} value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)} sub="same window, buy and hold" title="Benchmark buy-and-hold return over the same window." />
+              <Stat
+                label={perf.benchmark.benchmarkSymbol}
+                value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)}
+                sub="same sub-periods, chained"
+                title="SPY return over each capital regime’s calendar dates, geometrically chained the same way as your account (equals full-window SPY when segments cover the whole timeline)."
+              />
               <div>
-                <div className="con-card-title">Excess return</div>
+                <div className="con-card-title">vs {perf.benchmark.benchmarkSymbol}</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold">
                   <SignedText value={perf.benchmark.excessReturnPct}>
-                    <span title="Benchmark-relative return: your account return minus SPY over the same window. This is the alpha-style comparison; other Results percentages are raw account/proposal outcomes unless they explicitly say benchmark or excess.">
+                    <span title="Your time-weighted account return minus the chained SPY return. Deposits and withdrawals define the sub-period cuts; they are not counted as performance.">
                       {fmtPct(perf.benchmark.excessReturnPct, 2, true)}
                     </span>
                   </SignedText>
                 </div>
                 <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                  positive = beating the market
+                  account − SPY (positive = beating the market)
                 </div>
               </div>
             </div>
             <p className="mt-3 border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
               {perf.benchmark.cashFlowAdjusted
-                ? `Time-weighted return — adjusted for ${fmtMoney(Math.abs(perf.benchmark.netExternalFlows ?? 0))} of detected ${
+                ? `Time-weighted across capital regimes — neutralized ${fmtMoney(Math.abs(perf.benchmark.netExternalFlows ?? 0))} net ${
                     (perf.benchmark.netExternalFlows ?? 0) < 0 ? "withdrawals" : "deposits"
-                  } so transfers don't read as gains or losses. Flows are inferred from account snapshots, not a broker transfer ledger.`
-                : "Raw equity growth over the window — no deposits or withdrawals were detected. If money moved in or out without being captured in snapshots, this includes those transfers and is not a pure return figure."}
+                  } (deposits +, withdrawals −). Each stretch between transfers is its own sub-period for you and for SPY; overall = product of (1 + r) − 1. Flows are inferred from snapshots and fills, not a broker transfer ledger.`
+                : "No material deposits or withdrawals detected — single continuous period (account equity growth vs SPY over the same dates)."}
             </p>
+            {perf.benchmark.subPeriods && perf.benchmark.subPeriods.length > 1 && (
+              <div className="mt-3 overflow-x-auto border-t border-[color:var(--con-line)] pt-2">
+                <div className="con-card-title mb-1.5">Capital regimes (between deposits / withdrawals)</div>
+                <table className="w-full min-w-[32rem] text-left text-[length:var(--con-fs-xs)]">
+                  <thead className="text-[color:var(--con-faint)]">
+                    <tr>
+                      <th className="py-1 pr-2 font-medium">Window</th>
+                      <th className="py-1 pr-2 font-medium">Start → end equity</th>
+                      <th className="py-1 pr-2 font-medium">Transfer</th>
+                      <th className="py-1 pr-2 font-medium">You</th>
+                      <th className="py-1 font-medium">{perf.benchmark.benchmarkSymbol}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perf.benchmark.subPeriods.map((seg) => (
+                      <tr key={`${seg.startDate}-${seg.endDate}-${seg.externalFlow}`} className="border-t border-[color:var(--con-line)]">
+                        <td className="py-1 pr-2 whitespace-nowrap">
+                          {seg.startDate} → {seg.endDate}
+                        </td>
+                        <td className="py-1 pr-2 whitespace-nowrap">
+                          {fmtMoney(seg.startEquity)} → {fmtMoney(seg.endEquity)}
+                        </td>
+                        <td className="py-1 pr-2 whitespace-nowrap">
+                          {Math.abs(seg.externalFlow) < 0.01
+                            ? "—"
+                            : `${seg.externalFlow > 0 ? "deposit" : "withdrawal"} ${fmtMoney(Math.abs(seg.externalFlow))}`}
+                        </td>
+                        <td className="py-1 pr-2">
+                          <SignedText value={seg.accountReturnPct}>{fmtPct(seg.accountReturnPct, 2, true)}</SignedText>
+                        </td>
+                        <td className="py-1">
+                          <SignedText value={seg.benchmarkReturnPct}>{fmtPct(seg.benchmarkReturnPct, 2, true)}</SignedText>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         ) : (
           <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">
@@ -124,11 +311,14 @@ export default function ResultsPage() {
       </Card>
 
       {/* Scorecards */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* id="thesis-regime" is the deep-link target for the home page's Framework-improvements
+          card when it's showing this same thesis/regime data as its fallback body; scroll-mt
+          clears the app shell's sticky reality/chrome header (see shell.tsx). */}
+      <div id="thesis-regime" className="grid scroll-mt-28 gap-4 lg:grid-cols-2">
         <ScorecardCard
           title="By thesis"
           rows={(snapshot.thesisScorecard ?? []).map((t: ThesisStat) => ({
-            name: t.thesisTag,
+            name: thesisTagLabel(t.thesisTag),
             trades: t.trades,
             winRate: t.winRate,
             avgReturnPct: t.avgReturnPct,
@@ -148,6 +338,7 @@ export default function ResultsPage() {
           nameLabel="Regime"
         />
       </div>
+      <RedTeamEfficacyCard efficacy={snapshot.redTeamEfficacy} />
 
       {/* Tax */}
       <Card
@@ -161,6 +352,198 @@ export default function ResultsPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot | undefined }) {
+  if (!efficacy) {
+    return (
+      <Card title="Red Team veto efficacy">
+        <Empty>Select an account to score Red Team history.</Empty>
+      </Card>
+    );
+  }
+
+  if (efficacy.vetoDecisions === 0) {
+    return (
+      <Card title="Red Team veto efficacy">
+        <Empty>No Red Team veto decisions recorded yet.</Empty>
+      </Card>
+    );
+  }
+
+  const modelRows = buildRedTeamModelRows(efficacy);
+  const sampleLabel = redTeamSampleGate(efficacy.maturedVetoes);
+  const sampleTier = redTeamSampleTier(efficacy.maturedVetoes);
+
+  return (
+    <Card
+      title="Red Team veto efficacy"
+      action={
+        <Chip
+          tone={sampleTier === "ready" ? "pos" : sampleTier === "caution" ? "warn" : "muted"}
+          title="Blocking vetoes are scored from matured counterfactuals; overridden vetoes are tracked separately and never mixed into the payoff metric."
+        >
+          {sampleLabel}
+        </Chip>
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <Stat
+          label="Veto decisions"
+          value={efficacy.vetoDecisions}
+          sub={`${efficacy.totalVetoes} blocking · ${efficacy.appliedOverrideVetoes}/${efficacy.overrideVetoes} overrides applied`}
+          title="Opening-side Red Team veto decisions only. Blocking vetoes keep the trade out; applied overrides proceed on a logged autonomy thesis and are not counted as missed opportunities. Survived Red Team reviews are not persisted in this metric."
+        />
+        <Stat
+          label="Resolved blocking vetoes"
+          value={efficacy.totalVetoes > 0 ? `${efficacy.maturedVetoes}/${efficacy.totalVetoes}` : <Dash />}
+          sub={efficacy.totalVetoes > 0 ? efficacy.coverage : "no blocking vetoes recorded"}
+          title="Blocking vetoes whose forward return actually resolved. Unresolvable names stay disclosed instead of disappearing from the denominator."
+        />
+        <Stat
+          label="Applied override share"
+          value={fmtPct(efficacy.overrideSharePct, 1)}
+          sub={efficacy.appliedOverrideVetoes > 0 ? `${efficacy.appliedOverrideVetoes} applied` : "none applied"}
+          title="Share of opening-side Red Team veto decisions where the Socratic override path actually applied. Refused overrides and later blocks are not counted as applied."
+        />
+        <Stat
+          label="Avoided losers"
+          value={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? fmtPct(efficacy.vetoValueAddRate, 1) : <Dash />}
+          sub={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? "resolved blocking vetoes" : `needs >=${RED_TEAM_EFFICACY_MIN_RESOLVED} resolved vetoes`}
+          tone={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? "pos" : "muted"}
+          title="Among resolved blocking vetoes, how often the vetoed trade would have lost money. Higher is better for the reviewer."
+        />
+        <Stat
+          label="Missed winners"
+          value={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? fmtPct(efficacy.survivorRiskHitRate, 1) : <Dash />}
+          sub={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? "resolved blocking vetoes" : `needs >=${RED_TEAM_EFFICACY_MIN_RESOLVED} resolved vetoes`}
+          tone={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? "neg" : "muted"}
+          title="Among resolved blocking vetoes, how often the veto killed a trade that would have made money."
+        />
+        <Stat
+          label="Avg vetoed trade return"
+          value={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? fmtPct(efficacy.avgReturnPct, 2, true) : <Dash />}
+          sub={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? "negative = good for the veto" : `needs >=${RED_TEAM_EFFICACY_MIN_RESOLVED} resolved vetoes`}
+          tone={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? (efficacy.avgReturnPct < 0 ? "pos" : efficacy.avgReturnPct > 0 ? "neg" : "muted") : "muted"}
+          title="Average side-adjusted forward return of the trades the blocking veto kept out. Negative means the veto avoided losses; positive means it missed winners."
+        />
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <div>
+          <div className="mb-1.5 flex items-center gap-2">
+            <div className="con-card-title">By reviewer attribution</div>
+            <Chip tone="muted" title="Rows without a persisted reviewer model are shown as unattributed, never backfilled from current settings.">
+              persisted only
+            </Chip>
+          </div>
+          {modelRows.length === 0 ? (
+            <Empty>No resolved blocking vetoes yet.</Empty>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="con-table">
+                <thead>
+                  <tr>
+                    <th>Red Team</th>
+                    <th className="num">n</th>
+                    <th className="num">Avoided</th>
+                    <th className="num">Missed</th>
+                    <th className="num" title="Average side-adjusted vetoed-trade return. Negative is good for the veto.">Avg</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {modelRows.map((row) => {
+                    const tier = redTeamSampleTier(row.maturedVetoes);
+                    const gateLabel =
+                      tier === "hidden"
+                        ? `needs >=20 vetoes (n=${row.maturedVetoes})`
+                        : tier === "caution"
+                          ? `small sample (n=${row.maturedVetoes})`
+                          : `n=${row.maturedVetoes}`;
+                    return (
+                      <tr key={row.model}>
+                        <td className="font-semibold">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span>{redTeamAttributionLabel(row.model)}</span>
+                            {tier !== "ready" ? <Chip tone={tier === "hidden" ? "muted" : "warn"}>{gateLabel}</Chip> : null}
+                          </div>
+                        </td>
+                        <td className="num con-num">{row.maturedVetoes}</td>
+                        <td className="num con-num" title={gateLabel}>
+                          {tier === "hidden" ? EM_DASH : fmtPct(row.vetoValueAddRate, 1)}
+                        </td>
+                        <td className="num con-num" title={gateLabel}>
+                          {tier === "hidden" ? EM_DASH : fmtPct(row.survivorRiskHitRate, 1)}
+                        </td>
+                        <td className="num" title={gateLabel}>
+                          {tier === "hidden" ? (
+                            EM_DASH
+                          ) : (
+                            <span style={{ color: row.avgReturnPct < 0 ? "var(--con-pos)" : row.avgReturnPct > 0 ? "var(--con-neg)" : undefined }}>
+                              {fmtPct(row.avgReturnPct, 2, true)}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-1.5 flex items-center gap-2">
+            <div className="con-card-title">Recent resolved vetoes</div>
+            <Chip tone="muted" title="Most recent resolved blocking vetoes first. Positive means the veto killed a would-have-worked trade; negative means it kept out a loser.">
+              blocking only
+            </Chip>
+          </div>
+          {efficacy.records.length === 0 ? (
+            <Empty>No resolved blocking vetoes yet.</Empty>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="con-table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Side</th>
+                    <th>Thesis</th>
+                    <th>Red Team</th>
+                    <th className="num" title="Side-adjusted forward return after the veto. Negative = the veto avoided a loser.">Return</th>
+                    <th>Readout</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {efficacy.records.map((record) => (
+                    <tr key={`${record.runId}:${record.symbol}`}>
+                      <td className="font-semibold">
+                        <SymbolButton symbol={record.symbol} showLogo={false} />
+                      </td>
+                      <td className="capitalize">{record.side ?? EM_DASH}</td>
+                      <td title={record.reason ?? undefined}>{record.thesisTag ? thesisTagLabel(record.thesisTag) : EM_DASH}</td>
+                      <td>{redTeamAttributionLabel(record.model)}</td>
+                      <td className="num">
+                        <span style={{ color: record.returnPct < 0 ? "var(--con-pos)" : record.returnPct > 0 ? "var(--con-neg)" : undefined }}>
+                          {fmtPct(record.returnPct, 2, true)}
+                        </span>
+                      </td>
+                      <td>
+                        <Chip tone={redTeamReturnTone(record.returnPct)}>
+                          {record.returnPct < 0 ? "avoided loser" : record.returnPct > 0 ? "missed winner" : "flat"}
+                        </Chip>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -202,14 +585,14 @@ function BucketCard({
           <div className="con-num mt-0.5">{hasAny && typeof winRate === "number" ? fmtPct(winRate, 0) : EM_DASH}</div>
         </div>
         <div>
-          <div className="con-card-title" title="Raw realized return per closed trade in this bucket, not benchmark-relative. The separate SPY panel below handles benchmark/excess return.">Avg return / closed trade</div>
+          <div className="con-card-title" title="Capital-weighted realized return across closed lots (sum of P&amp;L ÷ sum of entry notional). Not the same as account NAV change — open positions and cash are excluded. Unweighted trade averages were retired because small round-trips dominated. The SPY panel below is the account equity time-weighted return.">Avg return / closed capital</div>
           <div className="con-num mt-0.5" title="Raw realized return per closed trade, based on entry and exit prices. It is not adjusted for SPY or market beta.">
             {hasAny && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}
           </div>
         </div>
       </div>
       <div className="mt-3 border-t border-[color:var(--con-line)] pt-3">
-        <EquityChart points={curve} label={tone === "live" ? "real-money" : "practice-money"} />
+        <EquityChart points={curve} label={tone === "live" ? "real-money" : "paper-money"} />
         {curve.length >= 2 && (
           <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             Raw account equity — includes any deposits/withdrawals, so a transfer moves this line without being a

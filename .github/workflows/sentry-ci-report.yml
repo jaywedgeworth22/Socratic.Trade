@@ -18,28 +18,33 @@ name: Sentry CI Report
 #      STOPS firing (not "runs and fails" but "never runs again") raises a
 #      missed-check-in alert instead of going unnoticed.
 #
-# Raw Sentry envelope HTTP via curl + python3 (both preinstalled on
-# ubuntu-latest) — no action marketplace dependency, no new job permissions
+# Raw Sentry envelope HTTP via curl + python3 — no action marketplace dependency, no new job permissions
 # beyond what's needed to read the triggering run.
 #
-# workflows observed (from `ls .github/workflows/` at authoring time — see
-# the `name:` header of each file):
-#   CI, Codex Autofix, Deploy, Sync Preview Lanes, Shared package pin check,
-#   Playwright Smoke, Security
+# workflows observed (from `ls .github/workflows/`; see each file's `name:`):
+#   CI, Cleanup Actions Caches, Codex Autofix, Effort Issues Sync,
+#   merge-shepherd, Shared package pin check, Playwright Smoke, Security
+# Reusable-only `_merge-shepherd-impl` executes inside `merge-shepherd` and has no independent
+# workflow_run event; the caller's completion is the observable run.
 #
 # Cron schedules mirrored for the check-in step (must match the source
 # workflow's `schedule:` block; keep in sync if those change):
+#   CI                       -> "47 7 * * *"  (ci.yml nightly hosted canary)
+#   Cleanup Actions Caches   -> "5 3 * * *"   (cleanup-caches.yml)
+#   Effort Issues Sync       -> "12 6 * * *"  (effort-issues-sync.yml)
 #   Security                 -> "41 10 * * 1" (security.yml)
-#   Playwright Smoke         -> "17 9 * * 1"  (e2e.yml)
+#   Playwright Smoke         -> "17 9 * * *"  (e2e.yml nightly)
 #   Shared package pin check -> "0 13 * * 1"  (shared-package-pin-check.yml)
 
 on:
   workflow_run:
     workflows:
+      - Auto-merge congress-trading-shared PRs
       - CI
+      - Cleanup Actions Caches
       - Codex Autofix
-      - Deploy
-      - Sync Preview Lanes
+      - Effort Issues Sync
+      - merge-shepherd
       - Shared package pin check
       - Playwright Smoke
       - Security
@@ -61,6 +66,11 @@ jobs:
     # Gate the whole job so those no-op cases skip at ZERO runner minutes while the
     # two real signals (failure alerts, cron missed-check-in detection) are unchanged.
     if: ${{ github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.event == 'schedule' }}
+    # Prefer a separate observer lane when one exists. As of 2026-07-24 the
+    # ci-cpx32 box has systemd runners for socratic-ci / socratic-ci-2 only —
+    # there is no socratic-deploy unit under /opt/actions-runners, so jobs that
+    # target that label queue forever. Route the short failure/schedule-only
+    # reporter onto socratic-ci until a dedicated observer runner is restored.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)
@@ -86,5 +96,11 @@ jobs:
           WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch }}
           WORKFLOW_ACTOR: ${{ github.event.workflow_run.actor.login }}
           WORKFLOW_RUN_URL: ${{ github.event.workflow_run.html_url }}
-          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: python3 scripts/sentry-ci-report.py
+
+      - name: Disable sparse checkout (prevent poisoning self-hosted runner workspace)
+        if: always()
+        shell: bash
+        run: |
+          git sparse-checkout disable || true

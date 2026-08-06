@@ -10,9 +10,10 @@
  *  Scope honesty: only GENERAL market data is ever pooled — personal account
  *  data (positions, orders, balances, P&L, credentials) is never shared. */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Network } from "lucide-react";
 import { Btn } from "../ui/primitives";
+import { useFocusTrap } from "../ui/focus-trap";
 
 type GateState = "loading" | "needed" | "done";
 
@@ -20,6 +21,15 @@ export function ConsentGate() {
   const [state, setState] = useState<GateState>("loading");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // The backdrop only blocks the POINTER; keyboard focus walks straight past it into the
+  // console behind. The trap is what makes "blocks all interaction beneath" true, and
+  // `blocking` tells the rest of the console chrome (the command palette) not to open on
+  // top of an unanswered gate. Deliberately no `onEscape`: this gate has exactly two
+  // answers, and dismissing it is not one of them. Initial focus lands on Decline, the
+  // first focusable — the conservative default if someone hits Enter on reflex.
+  useFocusTrap(dialogRef, state === "needed", { blocking: true });
 
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +72,7 @@ export function ConsentGate() {
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="con-consent-title"
@@ -72,7 +83,7 @@ export function ConsentGate() {
       <div className="absolute inset-0" style={{ background: "var(--con-scrim)" }} aria-hidden />
       <div className="con-card relative z-10 flex w-full max-w-lg flex-col gap-4 p-6">
         <div className="flex items-start gap-3">
-          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]">
             <Network size={20} />
           </span>
           <div>

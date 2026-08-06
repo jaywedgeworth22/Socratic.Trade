@@ -29,7 +29,6 @@ import {
   IRA_WASH_SALE_DISREGARD_NOTE,
   WASH_SALE_AUTO_EDGE_MULTIPLE
 } from "../src/lib/policy";
-import { approvedEscalationsFromDecision, shouldEscalateDecision } from "../src/lib/strategy";
 import type { WashSaleLockMap } from "../src/lib/tax";
 import type {
   AccountCapabilities,
@@ -40,6 +39,7 @@ import type {
   TradeProposal,
   TradingPolicy
 } from "../src/lib/types";
+import { approvedEscalationsFromDecision, shouldEscalateDecision } from "../src/lib/strategy-risk";
 
 // Mock the tax module so the gate tests don't need a DB (the gate's fallback resolver is
 // exercised by policy.test.ts; here every test passes washSaleLocks/washSaleLockedSymbols).
@@ -82,7 +82,11 @@ function policyWith(overrides: Partial<TradingPolicy> = {}): TradingPolicy {
     maxOrderNotional: 50_000,
     maxOrderPctOfNav: undefined,
     maxDailyNotional: 50_000,
+    maxDailyPctOfNav: undefined,
     taxSettings: taxSettings(),
+    // Staleness gate pinned off (defaults to 120s since 2026-07-28): these wash-sale tests exercise
+    // the tax gates without fresh quote timestamps; tests about the gate itself override below.
+    maxQuoteAgeSec: 0,
     ...overrides
   };
 }
@@ -577,33 +581,41 @@ describe("time-context gate escalations (closed allowlist)", () => {
     expect(decision.escalations?.map((e) => e.kind)).toContain("daily_order_cap");
   });
 
-  it("quote staleness failure is escalatable", () => {
+  it("fundamentals/scan-age staleness is NOT escalatable (owner: never block on staleness)", () => {
     const decision = evaluateTradeProposal(
       buy,
-      ctx(policyWith({ maxQuoteAgeSec: 60 }), {
+      ctx(policyWith({ maxFundamentalsAgeSec: 60 }), {
         ...cleanLocks,
         now: new Date("2026-07-02T15:00:00.000Z"),
         marketScan: {
           source: "test",
-          generatedAt: "2026-07-02T15:00:00.000Z",
+          generatedAt: "2026-07-02T14:00:00.000Z",
           scannedSymbols: 1,
           returnedQuotes: 1,
           topCandidates: [],
           sectorBySymbol: {},
-          quotesBySymbol: { TSLA: { symbol: "TSLA", price: 100, volume: 1, intradayChangePct: 0, positionMarketValue: 0, score: 1, asOf: "2026-07-02T14:00:00.000Z" } },
+          quotesBySymbol: { TSLA: { symbol: "TSLA", price: 100, volume: 1, intradayChangePct: 0, positionMarketValue: 0, score: 1, asOf: "2026-07-02T15:00:00.000Z" } },
           warnings: []
         }
       })
     );
-    expect(decision.approved).toBe(false);
-    expect(decision.escalations?.map((e) => e.kind)).toContain("quote_staleness");
+    // Annotate only — no reasons, no escalations, still approved.
+    expect(decision.approved).toBe(true);
+    expect(decision.escalations?.map((e) => e.kind) ?? []).not.toContain("quote_staleness");
+    expect(decision.reasons.every((r) => !r.includes("staleness_gate"))).toBe(true);
   });
 
   it("PER-ORDER caps are never escalatable (hard class)", () => {
     // Daily budget has plenty of room — ONLY the per-order cap trips.
     const decision = evaluateTradeProposal(
       { ...buy, dollarAmount: 60_000 },
-      ctx(policyWith({ maxDailyNotional: 100_000 }), { ...cleanLocks, estimatedNotional: 60_000 })
+      ctx(policyWith({ maxDailyNotional: 100_000 }), {
+        ...cleanLocks,
+        estimatedNotional: 60_000,
+        // Keep the daily budget above the test order so this assertion remains
+        // about the hard per-order cap only.
+        portfolio: { ...portfolio, buyingPower: 100_000 }
+      })
     );
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("exceeds the maximum order limit");

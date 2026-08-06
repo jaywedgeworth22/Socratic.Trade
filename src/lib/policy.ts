@@ -20,6 +20,8 @@ import { getUserWashSaleLockProvenance, type WashSaleLockMap } from "./tax";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
 import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./market-regime";
+import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap } from "./policy-caps";
+import { quoteAgeSecForStalenessGate } from "./quotes-cascade";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -58,8 +60,8 @@ export interface PolicyContext {
    */
   approvedEscalations?: ApprovedEscalation[];
   /**
-   * The BUYING ConnectedAccount's taxationType (db row, as configured in Settings → Tax
-   * treatment). This is the SOURCE OF TRUTH for the account's tax regime — it wins over
+   * The BUYING ConnectedAccount's taxationType (db row, set on the account itself in Settings →
+   * Broker accounts). This is the SOURCE OF TRUTH for the account's tax regime — it wins over
    * policy.taxSettings.taxationType (see dashboard.ts's tax-summary overlay) and must be
    * threaded here because legacy/manually-configured IRA accounts may have capabilities absent
    * (or reporting "brokerage") AND a policy taxSettings without taxationType; without this the
@@ -331,14 +333,25 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     reasons.push(`${proposal.type} orders are not permitted.`);
   }
   // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
-  // configured (treating stop-loss rules as an implicit green-light for bracket risk management).
-  // Permissive default — brackets should be encouraged when stop rules are active.
+  // configured (treating stop-loss rules as an implicit green-light for bracket risk management) OR
+  // when this proposal carries an explicit per-position "fixed"/"atr" stop plan — that plan pins a
+  // bracket stop regardless of the account's own stopLossPct (STOP_PLAN_FALLBACK_STOP_PCT on a bare
+  // account, universal availability), so a bare account with no bracket permission and no base stop
+  // configured would otherwise reject the exact proposal the owner/LLM deliberately chose to protect
+  // (Codex review, PR #1371). Permissive default — brackets should be encouraged when stop rules (or
+  // an explicit per-position plan) are active.
   if (proposal.bracketTakeProfit != null || proposal.bracketStopLoss != null) {
+    const applicableStopLossPct =
+      proposal.side === "short" ? context.policy.riskRules?.shortStopLossPct : context.policy.riskRules?.stopLossPct;
     const bracketPermitted =
       context.policy.permittedOrderTypes.includes("bracket" as any) ||
-      (context.policy.riskRules?.stopLossPct != null && context.policy.riskRules.stopLossPct > 0);
+      (applicableStopLossPct != null && applicableStopLossPct > 0) ||
+      proposal.stopPlan?.style === "fixed" ||
+      proposal.stopPlan?.style === "atr";
     if (!bracketPermitted) {
-      reasons.push('Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct risk rule.');
+      reasons.push(
+        'Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct / shortStopLossPct risk rule.'
+      );
     }
   }
   if (proposal.side !== "sell" && proposal.side !== "cover" && !context.policy.permitExtendedHours && proposal.marketHours !== "regular_hours") {
@@ -374,47 +387,101 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       }
     }
   }
-  // STALENESS GATE: block an OPENING proposal built on stale market data (fail-safe, DEFAULT OFF).
-  // Enabled per-class only when the threshold is set (> 0). Fail-safe direction only: data older than
-  // the threshold → block; a MISSING timestamp is treated as stale (block) ONLY because the gate is on.
-  // Exits (sell/cover) are never gated. Timestamps are read from the run's MarketScan — never fabricated.
+  // STALENESS GATE (OPENINGS only) — NEVER blocks and NEVER escalates to a pending card.
+  // Primary path: the quote cascade must supply a trade-time within maxQuoteAgeSec (default 120s).
+  // Venue-authoritative delayed feeds (Tradier sandbox): age the FETCH snapshot (`fetchedAt`), not
+  // trade-time `asOf` — the ~15m delay is the venue's fill world, not a broken cascade.
+  // Backup if data is still old/missing (should be rare once cascade is healthy): convert the order
+  // to a LIMIT at the proposal's intended entry (referencePrice / existing limit), so the price the
+  // strategy identified as worth buying/shorting is honored instead of chasing a stale market print.
+  // Timestamps are read from the run's MarketScan — never fabricated. Exits (sell/cover) are ungated.
+  let quoteStaleMetadata: { ageSec?: number; originalType: any; originalLimitPrice?: number; referencePrice: number } | undefined = undefined;
+
   if (isOpening) {
     const now = (context.now ?? new Date()).getTime();
     const maxQuoteAgeSec = context.policy.maxQuoteAgeSec;
     if (maxQuoteAgeSec != null && maxQuoteAgeSec > 0) {
-      const quoteAsOf =
-        context.marketScan?.quotesBySymbol[symbol]?.asOf ??
-        context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.asOf;
-      const asOfMs = quoteAsOf ? new Date(quoteAsOf).getTime() : NaN;
-      // Staleness failures are TIME-CONTEXT gates: they are escalatable (Decide mode) because a
-      // later human approval re-runs this gate against a FRESH scan, so the condition self-heals.
-      if (!quoteAsOf || Number.isNaN(asOfMs)) {
-        pushEscalatable(
-          "quote_staleness",
-          `staleness_gate: ${symbol} quote timestamp is missing/unparseable; treating as stale ` +
-            `(maxQuoteAgeSec=${maxQuoteAgeSec}).`
-        );
-      } else {
-        const ageSec = Math.round((now - asOfMs) / 1000);
-        if (ageSec > maxQuoteAgeSec) {
-          pushEscalatable("quote_staleness", `staleness_gate: ${symbol} quote is ${ageSec}s old (max ${maxQuoteAgeSec}s).`);
+      const scanQuote =
+        context.marketScan?.quotesBySymbol[symbol] ??
+        context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+      const { ageSec, missing, venueDelayed } = quoteAgeSecForStalenessGate(scanQuote, now);
+      const isStale = missing || (ageSec !== undefined && ageSec > maxQuoteAgeSec);
+
+      if (isStale) {
+        const originalType = proposal.type;
+        const originalLimitPrice = proposal.limitPrice;
+
+        // Prefer the proposal's own entry anchor (what Green decided is worth paying/receiving),
+        // then any existing limit, then the scan last print — never invent a price from thin air.
+        const scanPrice = context.marketScan?.quotesBySymbol[symbol]?.price ??
+          context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.price;
+        const referencePrice =
+          (proposal.referencePrice != null && proposal.referencePrice > 0)
+            ? proposal.referencePrice
+            : (proposal.limitPrice != null && proposal.limitPrice > 0)
+              ? proposal.limitPrice
+              : (scanPrice != null && scanPrice > 0)
+                ? scanPrice
+                : (proposal.stopPrice != null && proposal.stopPrice > 0)
+                  ? proposal.stopPrice
+                  : 0;
+
+        // Always stamp quoteStale for audit/UI even when we cannot form a limit (no price
+        // available yet). Never block or escalate either way.
+        quoteStaleMetadata = {
+          ageSec,
+          originalType,
+          originalLimitPrice,
+          referencePrice
+        };
+
+        if (referencePrice > 0) {
+          proposal.type = "limit";
+          // Buy: never pay MORE than the decided entry. Short: never sell short BELOW the decided entry.
+          if (proposal.side === "buy") {
+            proposal.limitPrice =
+              proposal.limitPrice != null && proposal.limitPrice > 0
+                ? Math.min(proposal.limitPrice, referencePrice)
+                : referencePrice;
+          } else if (proposal.side === "short") {
+            proposal.limitPrice =
+              proposal.limitPrice != null && proposal.limitPrice > 0
+                ? Math.max(proposal.limitPrice, referencePrice)
+                : referencePrice;
+          }
+
+          const ageText = ageSec !== undefined ? `${ageSec}s old` : "missing/unparseable";
+          const venueNote = venueDelayed ? " venue-delayed snapshot" : "";
+          const warningNote =
+            ` [Stale quote backup: quote${venueNote} timestamp is ${ageText} (max ${maxQuoteAgeSec}s). ` +
+            `Converted to a limit at $${(proposal.limitPrice ?? 0).toFixed(2)} so the proposal's ` +
+            `intended entry $${referencePrice.toFixed(2)} is honored — not blocked.]`;
+          proposal.rationale = `${proposal.rationale}${warningNote}`;
+        } else {
+          const ageText = ageSec !== undefined ? `${ageSec}s old` : "missing/unparseable";
+          proposal.rationale =
+            `${proposal.rationale} [Stale quote backup: quote timestamp is ${ageText} ` +
+            `(max ${maxQuoteAgeSec}s); no usable entry price to pin a limit — not blocked.]`;
         }
       }
     }
+    // Stale market-scan fundamentals age used to pushEscalatable("quote_staleness") which soft-
+    // blocked Decide-mode proposals into pending cards. Owner (2026-08-04): never block/escalate
+    // on staleness — annotate only. Quote-level backup above already protects the entry price.
     const maxFundamentalsAgeSec = context.policy.maxFundamentalsAgeSec;
     if (maxFundamentalsAgeSec != null && maxFundamentalsAgeSec > 0) {
       const scanGeneratedAt = context.marketScan?.generatedAt;
       const genMs = scanGeneratedAt ? new Date(scanGeneratedAt).getTime() : NaN;
       if (!scanGeneratedAt || Number.isNaN(genMs)) {
-        pushEscalatable(
-          "quote_staleness",
-          `staleness_gate: market-scan timestamp is missing/unparseable; treating fundamentals as stale ` +
-            `(maxFundamentalsAgeSec=${maxFundamentalsAgeSec}).`
-        );
+        proposal.rationale =
+          `${proposal.rationale} [Scan-age note: market-scan timestamp missing/unparseable ` +
+          `(maxFundamentalsAgeSec=${maxFundamentalsAgeSec}); not blocking.]`;
       } else {
-        const ageSec = Math.round((now - genMs) / 1000);
-        if (ageSec > maxFundamentalsAgeSec) {
-          pushEscalatable("quote_staleness", `staleness_gate: market scan is ${ageSec}s old (max ${maxFundamentalsAgeSec}s).`);
+        const scanAgeSec = Math.round((now - genMs) / 1000);
+        if (scanAgeSec > maxFundamentalsAgeSec) {
+          proposal.rationale =
+            `${proposal.rationale} [Scan-age note: market scan is ${scanAgeSec}s old ` +
+            `(max ${maxFundamentalsAgeSec}s); not blocking — entry protected by quote-stale limit backup if needed.]`;
         }
       }
     }
@@ -430,8 +497,25 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
         : `the connected account does not support short selling`;
       reasons.push(`Order side "${proposal.side}" rejected: ${why}.`);
     } else {
-      if (!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) {
-        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct).`);
+      // An explicit per-position stopPlan satisfies the mandatory-stop requirement the same way it
+      // satisfies the bracket-permission gate above: "fixed"/"atr"/"trailing" guarantee this short a
+      // real stop (via STOP_PLAN_FALLBACK_STOP_PCT or the trailing lane) even on an account with no
+      // account-wide shortStopLossPct configured (Codex review, PR #1371). An explicit "none" ALSO
+      // satisfies this gate (owner decision, 2026-07-15 — "if the LLM decides it does not want a stop
+      // plan, that is okay"): the mandatory-stop-loss requirement exists to prevent an accidental,
+      // un-stopped short, not to override a deliberate, rationale-backed owner/LLM choice to carry
+      // one without a stop — same "real trading, owner's risk" precedent as `stopPlan: "none"` never
+      // being hard-blocked elsewhere in this file. An explicit "default" does NOT satisfy this gate —
+      // it defers to the account's own precedence, which in this branch has no shortStopLossPct
+      // configured, so it guarantees nothing; only fixed/atr/trailing/none are genuine, deliberate
+      // choices with a known outcome.
+      const hasExplicitStopPlan =
+        proposal.stopPlan?.style === "fixed" ||
+        proposal.stopPlan?.style === "atr" ||
+        proposal.stopPlan?.style === "trailing" ||
+        proposal.stopPlan?.style === "none";
+      if ((!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) && !hasExplicitStopPlan) {
+        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct, or an explicit stopPlan).`);
       }
       if (context.policy.maxShortOrderNotional && estimatedNotional > context.policy.maxShortOrderNotional) {
         reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the max short order limit of $${context.policy.maxShortOrderNotional}`);
@@ -445,24 +529,24 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   // MARGIN-ACCOUNT MINIMUM. FINRA Notice 26-10 replaces the old PDT count/$25k framework with
   // intraday margin standards effective 2026-06-04, with broker phase-in permitted through
   // 2027-10-20. We do not try to model broker-specific intraday margin; we enforce the static
-  // $2,000 margin minimum on a LIVE/real-capital MARGIN account and defer the rest to the broker.
-  // Scope: LIVE execution only (Test/local sim and broker-Paper are never gated); opening legs only;
-  // cash (non-margin) accounts are never gated here (they aren't subject to the margin minimum).
+  // $2,000 margin minimum on a margin account and defer the rest to the broker.
+  // Scope: opening legs only; cash (non-margin) accounts are never gated here.
   if (
     isOpening &&
-    context.isLiveExecution === true &&
     context.accountCapabilities?.marginEnabled === true &&
     context.portfolio.totalMarketValue < MARGIN_MINIMUM_EQUITY
   ) {
     reasons.push(
-      `margin_minimum: this LIVE margin account's equity $${context.portfolio.totalMarketValue.toFixed(2)} is below the ` +
+      `margin_minimum: this margin account's equity $${context.portfolio.totalMarketValue.toFixed(2)} is below the ` +
         `$${MARGIN_MINIMUM_EQUITY.toLocaleString("en-US")} margin minimum. FINRA Notice 26-10 replaces the old PDT count/$25k framework, but broker phase-in and broker-specific intraday margin restrictions can still apply.`
     );
   }
 
-  const effectiveMaxOrderNotional = Math.min(
-    context.policy.maxOrderNotional ?? Infinity,
-    context.policy.maxOrderPctOfNav ? (context.policy.maxOrderPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
+  const effectiveMaxOrderNotional = effectiveOpeningOrderNotionalCap(
+    context.policy,
+    context.portfolio.totalMarketValue,
+    context.portfolio.buyingPower,
+    proposal.side === "short" ? "short" : "buy"
   );
   if (isOpening && estimatedNotional > effectiveMaxOrderNotional) {
     reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${effectiveMaxOrderNotional.toFixed(2)}`);
@@ -503,9 +587,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       }
     }
   }
-  const effectiveMaxDailyNotional = Math.min(
-    context.policy.maxDailyNotional ?? Infinity,
-    context.policy.maxDailyPctOfNav ? (context.policy.maxDailyPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
+  const effectiveMaxDailyNotional = effectiveDailyOpeningNotionalCap(
+    context.policy,
+    context.portfolio.totalMarketValue
   );
   // Daily/hourly notional + daily order-count failures are TIME-CONTEXT gates: the budget they
   // guard replenishes on its own (midnight / rolling hour), so they are escalatable — a pending
@@ -841,6 +925,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     reasons,
     ...(reasons.length > 0 && escalations.length > 0 ? { escalations } : {}),
     ...(washSaleAudit ? { washSale: washSaleAudit } : {}),
+    ...(quoteStaleMetadata ? { quoteStale: quoteStaleMetadata } : {}),
     projectedSymbolExposurePct,
     // Opening sides accumulate daily notional; closing sides (sell/cover) do not (matches the
     // daily/hourly cap checks above, which are gated on isOpening). (T14)
@@ -962,10 +1047,28 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
   const beta = context.marketScan?.quotesBySymbol[normalizeSymbol(proposal.symbol)]?.beta;
   const betaStops = context.policy.betaScaledStops === true;
 
+  // Mark for add-to-loser: prefer live scan quote, then proposal limit/stop, then avgCost.
+  // Market/dollar openings often have no limit/stop — using only those made drawdown always 0
+  // so the rule never fired on the common path (expert review 2026-07-20).
+  const markForAddToLoser = (sym: string, proposal: TradeProposal, avgCost: number): number => {
+    const q = context.marketScan?.quotesBySymbol[normalizeSymbol(sym)];
+    const fromScan =
+      (typeof q?.price === "number" && q.price > 0 ? q.price : undefined) ??
+      (typeof q?.bid === "number" && typeof q?.ask === "number" && q.bid > 0 && q.ask > 0
+        ? (q.bid + q.ask) / 2
+        : undefined);
+    if (fromScan && fromScan > 0) return fromScan;
+    if (typeof position.marketValue === "number" && Math.abs(position.quantity) > 0) {
+      const fromMv = Math.abs(position.marketValue / position.quantity);
+      if (fromMv > 0) return fromMv;
+    }
+    return proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+  };
+
   if (proposal.side === "buy") {
     if (position.quantity > 0) {
       const avgCost = position.averageCost;
-      const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+      const currentPrice = markForAddToLoser(proposal.symbol, proposal, avgCost);
       const drawdownPct = ((avgCost - currentPrice) / avgCost) * 100;
       const returnPct = ((currentPrice - avgCost) / avgCost) * 100;
 
@@ -992,12 +1095,13 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
   } else if (proposal.side === "short") {
     if (position.quantity < 0) {
       const avgCost = position.averageCost;
-      const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+      const currentPrice = markForAddToLoser(proposal.symbol, proposal, avgCost);
       const drawdownPct = ((currentPrice - avgCost) / avgCost) * 100; // Inverse math for short: price up means loss
 
       const effShortStopPct = betaScaledStopPct(context.policy.riskRules?.shortStopLossPct ?? 0, beta, betaStops);
       if (effShortStopPct > 0 && drawdownPct > effShortStopPct) {
-        return `Cannot average up on short: Position is down ${drawdownPct.toFixed(2)}%, exceeding short stop-loss limit of ${context.policy.riskRules.shortStopLossPct}%.`;
+        const limitLabel = effShortStopPct;
+        return `Cannot average up on short: Position is down ${drawdownPct.toFixed(2)}%, exceeding short stop-loss limit of ${limitLabel}%.`;
       }
     }
   }
