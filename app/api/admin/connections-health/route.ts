@@ -8,12 +8,20 @@ import {
 import { requireAdmin } from "@/lib/auth/admin";
 import { listUserApiKeys, LOCAL_USER, credTierForService } from "@/lib/db-api-keys";
 import { activeEmbeddingProvider, activeRerankProvider } from "@/lib/vector-db";
+import {
+  intentionalOffHealthReason,
+  isIntentionalOffHealthService,
+} from "@/lib/retired-direct-vendors";
 
 export const dynamic = "force-dynamic";
 
 // "rag-embed"/"rag-rerank" (renamed 2026-07-19 from "voyage"/"voyage-rerank" — see withRagApiHealth
 // in vector-db.ts) are the provider-generic RAG health lanes: whichever embed/rerank provider is
 // actually active (Voyage, OpenRouter, SiliconFlow) logs under these names now.
+//
+// FMP is listed as an expected lane so it always appears as intentional OFF (retired product
+// use — not a missing/broken key). Quiver is not expected; if historical log rows exist they
+// are still annotated OFF via markIntentionalOffLanes.
 const EXPECTED_BACKEND_LANES: Array<{ service: string; keySource: string | null }> = [
   { service: "pinecone", keySource: "env" },
   { service: "rag-embed", keySource: "env" },
@@ -90,6 +98,7 @@ function withExpectedBackendLanes(services: ServiceHealthSummary[]): ServiceHeal
     const expectedKeySource = (lane.keySource === "env" && hasUserKey(lane.service)) ? "user" : lane.keySource;
     const key = `${lane.service}:${expectedKeySource ?? ""}`;
     if (byLane.has(key)) continue;
+    const intentionalOff = isIntentionalOffHealthService(lane.service);
     byLane.set(key, {
       service: lane.service,
       keySource: expectedKeySource,
@@ -99,11 +108,28 @@ function withExpectedBackendLanes(services: ServiceHealthSummary[]): ServiceHeal
       lastFailureError: null,
       callsLastHour: 0,
       callsLast24h: 0,
+      // Retired vendors never alarm as stopped — they are product-OFF by design.
       stoppedWorking: false,
-      stoppedReason: null
+      stoppedReason: intentionalOff ? intentionalOffHealthReason(lane.service) : null,
+      intentionalOff: intentionalOff || undefined
     });
   }
-  return Array.from(byLane.values());
+  return markIntentionalOffLanes(Array.from(byLane.values()));
+}
+
+/** Annotate FMP / Quiver / UW (and historical log variants) as intentional OFF so the
+ *  admin UI never paints them red STOPPED from leftover failure rows. */
+function markIntentionalOffLanes(services: ServiceHealthSummary[]): ServiceHealthSummary[] {
+  return services.map((s) => {
+    if (!isIntentionalOffHealthService(s.service)) return s;
+    return {
+      ...s,
+      intentionalOff: true,
+      stoppedWorking: false,
+      stoppedReason: intentionalOffHealthReason(s.service),
+      stoppedReasonKind: null
+    };
+  });
 }
 
 export async function GET(request: Request) {
