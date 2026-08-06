@@ -199,15 +199,22 @@ candle-canvas overlap at ~800px width; "Request access" mailto → form when GTM
 "acct test-loc" still in Usage filters; per-position "next run" visibility.
 
 ## E. iOS app + design system + a11y (workflow findings)
-See the appended workflow-verified findings below (§H) — filed as issues alongside the
-above.
+Filed as issues #2556–#2563; headlines in §H below.
 
-## F. Board + issues audit outcome
-See `docs/rollouts/2026-08-06-claude-full-product-review.md` §Corrections and the board
-files themselves; summary: zero open PRs but 15 `state:in-progress` mirror issues; the
-verified-stale ones were closed/relabeled with receipts, misfiled COMPLETED rows moved
-out of In Progress/Planned on both boards, and STATUS.md's stale blockers (FMP framing,
-"litestream replicating") corrected.
+## F. Board + issues audit outcome (verified with receipts)
+Zero open PRs existed while 15 mirror issues claimed `state:in-progress`. Audit of all 47
+open mirror issues: **24 corrected** (14 closed with merge receipts — #2539 #2537 #2535
+#2534 #2514 #2513 #2512 #2501 #2468 #2467 #2466 #2465 #2464 #2437 — and 10 relabeled to
+their true state), **23 verified accurate**. Board files: stale IN-PR/IN-PROGRESS claims
+for the merged `grok/data-sources-overhaul` cluster (#2531), P0-security (#2498),
+residual-issues batch (#2490), RAG multi-source (#2533) corrected in both the live board
+and the mirror; duplicate rows for merged PRs #2443/#2445/#2459 and the filing-skill
+dup removed from the mirror; the `- -` double-bullet union-merge scar fixed. Remaining
+known mirror hygiene (deliberately NOT bulk-deleted — other agents' rows): the mirror's
+Planned section still carries a block of COMPLETED-text activity-audit/P0/P1 rows
+(~mirror lines 205–266) that the live board already pruned; next board-hygiene pass can
+relocate them. STATUS.md stale blockers (FMP framing, "litestream replicating")
+corrected.
 
 ## G. What is genuinely good (don't churn it)
 Proposals triage + honest gated Red-Team efficacy stats (n≥20 discipline), the
@@ -215,6 +222,34 @@ Guardrails page (advisory framing + composed stop-lane diagram is the best page 
 product), tax lot awareness, per-model×context usage attribution, plan-tier key catalog,
 OFF-vs-STOPPED health semantics, decision case-file framing on the public pages.
 
-## H. Workflow-verified findings (appended)
-(Verified P0/P1 first; P2/P3 unverified pass-through listed after. Populated from the
-12-agent run — see rollout note for agent lanes and verification stats.)
+## H. Workflow findings (5-lane run; all file:line-grounded)
+The original 9-reviewer workflow was killed mid-flight by a session interrupt; a lean
+5-agent run (issues audit, board audit, iOS, design/a11y, web-code) completed in ~7 min.
+Highlights (full details in issues #2556–#2563):
+
+- **P1 web (verified live): Home "All Decisions" → 404** — `/console/decisions` has no
+  index page (`app/console/page.tsx:338`). #2556.
+- **P1 correctness: the inflated-return bug SURVIVES #2536** — live repro ran on a build
+  containing the fix; phantom $36.5k inferred withdrawal + SPY 0.00% everywhere. #2557.
+- **P1 expansion: settings-search catalog fully built, wired to nothing** —
+  `app/settings-search.ts` (fields, glossary, synonyms, relocations) has zero UI
+  consumers; wire into the command palette. Also indexes a phantom
+  `defaultLandingAccount` field. #2558.
+- **P1 iOS: Close-only / Wind-down absent on iOS** (PWA has them; MobileStore already
+  whitelists both) + zero APNs wiring while alert copy promises off-app watch +
+  TestFlight compliance gaps (no ITSAppUsesNonExemptEncryption, no privacy manifest).
+  #2560. iOS otherwise in strong parity shape.
+- **P2 mobile state bugs**: iOS SSE "connected" indicator stays false on a healthy idle
+  stream (heartbeat comments ignored); PWA `marketSession` type drift renders Market
+  always "Closed". #2559.
+- **P1/P2 a11y**: light-theme tonal chip text fails WCAG AA on soft fills; Sheet's
+  Escape handler ignores surface stacking (closes the sheet under a drawer); tooltip
+  content keyboard-unreachable/unannounced; scan Columns popover missing
+  aria-expanded/Escape/focus move. #2561. Token system otherwise excellent (4 files with
+  raw hex, all decorative; chips word-first; toggles/icon-buttons labeled).
+- **P2/P3 polish batch**: retired-FMP mentions in live tooltip/caption, "Paper mode"
+  vocabulary in preflight error, Coach/Assistant label drift, dead `market-data-filled`
+  event, intro-canvas light-palette candle colors in dark mode (+ canvas drawing through
+  checklist text at ~800px), iOS paper "?" icon / scheduler-state mislabel / URL
+  literals / Dynamic Type fixed widths. #2562. Curl-only capabilities (tuning-dry-run,
+  learning-ledger, backtest-ic, audit query) → #2563.
