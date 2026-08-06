@@ -1,9 +1,63 @@
+## Current (2026-08-06 MONET full-product review + deploy-freeze repair)
+
+**MONET (this seat; posts earlier today were tagged CLAUDE before the owner re-ruled the seat) ran the owner-requested full-product review** (live signed-in prod session +
+12-agent workflow): findings in `docs/reviews/2026-08-06-claude-full-product-review.md`,
+handoff in `docs/rollouts/2026-08-06-claude-full-product-review.md`, issues labeled
+`product-review-2026-08-06`. Highest-urgency discoveries:
+
+- **Deploy freeze (P0): all five 2026-08-06 deploys failed** — Coolify's SSH exec stream
+  dies mid-build (exit 255, "disconnected by user"), correlated with CT OCR load on the
+  shared box; prod sat on `6b47a886` while main advanced 4 merges. Zombie helper
+  `onlrw5mgf4s2pw9he4udt2kg` (13.5h) removed; webhook redelivered; retry on a quiet box
+  progressed past every earlier failure point (see rollout note for final status).
+- **Litestream→R2 replication is PAUSED (P0)** since Aug 4 (free-tier kill-switch): the
+  prod DB currently has no continuous backup and the R2 restore path is empty. The
+  health-table line below claiming "litestream replicating" is STALE. Owner decision:
+  resume via `POST /api/admin/r2-usage/resume` (pace 82%/month-end) or fund/point a new
+  backup target. Cross-app: Usage Monitor R2 storage 98.6% full; CT Class A pace 236%.
+- **Results page shows +56.47% vs SPY on a flat account (P1)** — phantom inferred
+  $36.5k withdrawal + SPY series silently 0.00% everywhere; and the tax open-lots ledger
+  contradicts live positions (T long 91 sh vs actual short −1.881). Overlaps GROK's
+  `grok/fix-account-return-pct`.
+- **Two unmanaged shorts (P1)**: PG/T shorts sit unprotected because every enforcement
+  layer skips shorts while `shortSellingEnabled` is off (`app/console/lib/derive.ts`).
+- **Shared-package drift (P1)**: manifest pins `congress-trading-shared#v2.5.1`, lockfile
+  ships 2.5.0 — the filingDate member-skill dependency is not actually deployed.
+
 ## Current (2026-08-06 GROK user source settings)
 
 **Per-user source knobs + FMP toggles restored; plan tiers for all market-data sources (branch `grok/plan-tiers-all-sources`).** Rollouts: `docs/rollouts/2026-08-06-user-source-settings-ui.md`, `docs/rollouts/2026-08-06-plan-tiers-all-data-sources.md`.
 
 ## 2026-08-05 GROK — multi-period TWR
 
+## 2026-07-06 — Learned-context copy fix + browse/delete archive (CLAUDE, `agent/claude`)
+Owner flagged awkward empty-state copy on the Learned Context approval queue and asked why the AI
+doesn't auto-learn and let the user review/delete afterward. Answer: it mostly already does — the
+`fact` tier is silent passthrough, never queued; only `risk`/`strategy-directive` (numeric limits,
+sizing, leverage, authority) confirms first, and that's deliberate (ingested-document/inference
+safety, not paternalism — see `docs/chat-multiuser-learning-design.md`). What was genuinely
+missing: the "browse + delete what was silently learned" surface the design doc promised but never
+built. Shipped both: reworded the empty-state copy; added `deleteLearnedContext` (ownership-scoped,
+also the shared-contribution erasure path) in `src/lib/db-learning.ts`, new `GET
+/api/learned-context` + `DELETE /api/learned-context/[id]` routes, client helpers, and a new
+collapsed-by-default `LearnedFactsArchive` browse/delete component in
+`app/console/approvals/learned-context.tsx` wired into the approvals page. New
+`test/learned-context-delete.test.ts` (7 tests: ownership isolation, foreign-user 404, shared-row
+erasure, audit trail, superseded-row exclusion). 8-angle adversarial review found no
+correctness/security bugs (two correctness-adjacent candidates investigated and refuted with
+concrete evidence — see rollout note). Branch had drifted far behind `origin/main`
+(Coolify/Hetzner migration, mobile fixes, RAG/sizing/prompt-safety work); merged by hand after
+reviewing every flagged overlap, re-verified full quartet on the merged tree: tsc clean, lint 0
+errors, 283 files / 2843 tests green, build clean. **Merged as PR #998** (`1c0c20d3`).
+**Deployed to production** 2026-07-06 21:30:29Z via `~/apps/trading-publish.sh` — verified
+`/api/health` 200, `pm2 trading` stable (0 unstable restarts post-deploy), and the new
+`/api/learned-context` route live (401 unauthenticated, not 404/500, confirming it shipped). See
+`docs/rollouts/2026-07-06-learned-context-archive.md`.
+
+erasure, audit trail, superseded-row exclusion). Full suite 258 files / 2518 tests green, tsc
+clean, lint 0 errors. Owner asked for production release this pass — see PR/deploy details below
+once landed. See `docs/rollouts/2026-07-06-learned-context-archive.md`.
+## 2026-07-06 — Mobile console width overflow fix (PR open)
 - **2026-08-05 — GROK — IN PROGRESS — Multi-period TWR: split at each deposit/withdrawal, chain account+SPY sub-period returns (branch `grok/twr-subperiod-spy-chain`).** Owner: $100 for 10d then $10 for 100d must be separate regimes geometrically linked.
 
 ## Active (GROK 2026-08-06)
@@ -286,8 +340,8 @@ tests, build clean. Rollout: `docs/rollouts/2026-08-02-data-provider-round2.md`.
 | In flight (MONET) | `monet/exit0-outage-audit` — exit-0 outage RCA + exit-code hardening (PR pending). `monet/broker-mutation-mutex-pr2` LANDED as #2361 (§7 slice 3 COMPLETE; corrected in place — was listed in flight); its deploy is also the freshness-lane re-enable live test. Landed today: #2350, #2352, #2354, #2360, #2361. Rollout: `docs/rollouts/2026-08-02-account-mutation-lease-pr2.md` |
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
-| Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
-| Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history (unchanged, owner decision pending) |
+| Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded. ~~litestream replicating~~ **CORRECTED 2026-08-06 (MONET): litestream→R2 is PAUSED (kill-switch since Aug 4) — no continuous DB backup; owner decision to resume** |
+| Data providers | `dataProvidersDegraded=true` — Massive capped to ~2y history (owner decision pending); filingapi STOPPED 6d. ~~FMP plan probe 403~~ (stale: FMP retired on ST 2026-08-04, health lanes show OFF by design) |
 
 ## Blockers
 
