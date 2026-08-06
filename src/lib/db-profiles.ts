@@ -273,6 +273,13 @@ export function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
   if (explicitDailyPct) delete merged.maxDailyNotional;
   else if (explicitDailyNotional) delete merged.maxDailyPctOfNav;
   if ((merged.maxOrderNotional ?? 0) > 100_000) merged.maxOrderNotional = 100_000;
+  // FMP product modules are retired on Socratic.Trade (owner 2026-08-04/05): always coerce
+  // OFF on read/write so stored policies that still have true cannot re-enable toggles or UI.
+  // Actual network calls are hard-blocked in fmp-common / retired-direct-vendors.
+  merged.fmpRealTimeDataEnabled = false;
+  merged.fmpMacroDataEnabled = false;
+  merged.fmpEventsDataEnabled = false;
+  merged.fmpFundamentalsDataEnabled = false;
   return merged;
 }
 

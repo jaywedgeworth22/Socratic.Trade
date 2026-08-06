@@ -624,6 +624,12 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
   const canonical = normalizeApiKeyService(service);
   const envVar = apiKeyEnvVarForService(canonical);
 
+  // FMP keys must never resolve in Socratic.Trade product code (owner: FMP is CT-only).
+  // Admin Connections may still show a retired catalog row; storage POST is rejected.
+  if (canonical === "fmp" || canonical.startsWith("fmp")) {
+    return { source: "none", envVar, service: canonical };
+  }
+
   // 1. A per-user stored key for a specific user ID always wins.
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
