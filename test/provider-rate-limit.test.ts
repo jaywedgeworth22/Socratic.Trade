@@ -141,8 +141,9 @@ describe("resolveProviderLimiterConfig", () => {
     expect(resolveProviderLimiterConfig("alpha-vantage")?.minIntervalMs).toBe(2500);
   });
 
-  it("uses roic's hard default of 400ms spacing and concurrency 1, matching filingapi", () => {
-    expect(resolveProviderLimiterConfig("roic")).toEqual({ minIntervalMs: 400, concurrency: 1 });
+  it("uses roic burst pacer (200ms, concurrency 1); free budget is RATE_QUOTAS 5/min", () => {
+    // Free 5/min is enforced by quota windows, not a 12s minInterval (that would throttle paid).
+    expect(resolveProviderLimiterConfig("roic")).toEqual({ minIntervalMs: 200, concurrency: 1 });
     expect(resolveProviderLimiterConfig("filingapi")).toEqual({ minIntervalMs: 400, concurrency: 1 });
   });
 });
@@ -525,23 +526,31 @@ describe("resolveProviderQuota", () => {
     expect(resolveProviderQuota("filingapi")).toEqual([{ maxRequests: 45, windowMs: 86_400_000 }]);
   });
 
-  it("returns the built-in roic free-safe window (300/day)", () => {
-    // Paid individual (10k/day) is selected via Connections plan tier, not the hard default.
-    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 300, windowMs: 86_400_000 }]);
-    expect(resolveProviderQuota("roic", "individual")).toEqual([{ maxRequests: 10_000, windowMs: 86_400_000 }]);
+  it("returns the built-in roic free-safe window (5/min from vendor pricing)", () => {
+    // Paid Individual = 300/min via Connections plan tier, not the hard default.
+    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 5, windowMs: 60_000 }]);
+    expect(resolveProviderQuota("roic", "individual")).toEqual([{ maxRequests: 300, windowMs: 60_000 }]);
+    expect(resolveProviderQuota("roic", "professional")).toBeUndefined(); // unlimited tier
   });
 
-  it("returns the built-in marketstack window (3/day, approximating its 100/month free tier)", () => {
-    expect(resolveProviderQuota("marketstack")).toEqual([{ maxRequests: 3, windowMs: 86_400_000 }]);
+  it("returns the built-in marketstack window (100/month free tier)", () => {
+    expect(resolveProviderQuota("marketstack")).toEqual([{ maxRequests: 100, windowMs: 30 * 86_400_000 }]);
   });
 
-  it("lets PROVIDER_QUOTA_<NAME>_PER_DAY override each of the three new defaults", () => {
+  it("lets PROVIDER_QUOTA_<NAME>_PER_DAY override or add day windows on the new defaults", () => {
     process.env.PROVIDER_QUOTA_FILINGAPI_PER_DAY = "10";
     expect(resolveProviderQuota("filingapi")).toEqual([{ maxRequests: 10, windowMs: 86_400_000 }]);
+    // ROIC free default is per-minute; PER_DAY adds a second window rather than inventing a day-only map.
     process.env.PROVIDER_QUOTA_ROIC_PER_DAY = "999";
-    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 999, windowMs: 86_400_000 }]);
+    expect(resolveProviderQuota("roic")).toEqual([
+      { maxRequests: 5, windowMs: 60_000 },
+      { maxRequests: 999, windowMs: 86_400_000 }
+    ]);
+    // Marketstack free default is monthly (30d); PER_DAY adds a day window alongside it.
     process.env.PROVIDER_QUOTA_MARKETSTACK_PER_DAY = "1";
-    expect(resolveProviderQuota("marketstack")).toEqual([{ maxRequests: 1, windowMs: 86_400_000 }]);
+    const ms = resolveProviderQuota("marketstack")!;
+    expect(ms.find((w) => w.windowMs === 86_400_000)?.maxRequests).toBe(1);
+    expect(ms.find((w) => w.windowMs === 30 * 86_400_000)?.maxRequests).toBe(100);
   });
 
   it("is undefined for an unconfigured provider (unlimited)", () => {
@@ -760,25 +769,27 @@ describe("RequestQuota (sliding-window, fake clock)", () => {
     expect(quota.admit("filingapi", "k", 100)).toBe(0); // day's budget already spent
   });
 
-  it("admits up to roic's free-safe 300/day default and denies once the day's budget is spent", () => {
+  it("admits up to roic's free-safe 5/min default and denies once the minute is spent", () => {
     const quota = new RequestQuota(new FakeClock());
-    expect(quota.admit("roic", "k", 15000)).toBe(300);
+    expect(quota.admit("roic", "k", 15000)).toBe(5);
     expect(quota.admit("roic", "k", 15000)).toBe(0);
   });
 
-  it("admits up to marketstack's 3/day default and denies once the day's budget is spent", () => {
+  it("admits up to marketstack's 100/month default and denies once the month window is spent", () => {
     const quota = new RequestQuota(new FakeClock());
-    expect(quota.admit("marketstack", "k", 10)).toBe(3);
-    expect(quota.admit("marketstack", "k", 10)).toBe(0);
+    expect(quota.admit("marketstack", "k", 200)).toBe(100);
+    expect(quota.admit("marketstack", "k", 200)).toBe(0);
   });
 
-  it("lets a PROVIDER_QUOTA_<NAME>_PER_DAY env override win over each new default", () => {
+  it("lets a PROVIDER_QUOTA_<NAME>_PER_DAY env override constrain alongside defaults", () => {
     process.env.PROVIDER_QUOTA_FILINGAPI_PER_DAY = "2";
     process.env.PROVIDER_QUOTA_ROIC_PER_DAY = "1";
     process.env.PROVIDER_QUOTA_MARKETSTACK_PER_DAY = "5";
     const quota = new RequestQuota(new FakeClock());
     expect(quota.admit("filingapi", "k", 100)).toBe(2); // overridden default (45) does not apply
+    // ROIC still has 5/min free default; day override of 1 is the tighter bound.
     expect(quota.admit("roic", "k", 100)).toBe(1);
+    // Marketstack still has 100/month; day override of 5 is tighter.
     expect(quota.admit("marketstack", "k", 100)).toBe(5);
   });
 

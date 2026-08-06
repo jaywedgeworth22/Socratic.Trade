@@ -71,11 +71,11 @@ const HARD_DEFAULTS: Record<string, { perMin?: number; minIntervalMs?: number; c
   "real-time-finance-data": { minIntervalMs: 500, concurrency: 1 },
   "seeking-alpha-rapidapi": { minIntervalMs: 1100, concurrency: 1 },
   filingapi: { minIntervalMs: 400, concurrency: 1 },
-  // No published rate limit, but it's the same shape of scarce paid-tier provider as filingapi
-  // above (small free daily budget, no burst tolerance documented) — pace it identically rather
-  // than leaving it fully unthrottled. The RATE_QUOTAS entry below is the real daily-budget cap;
-  // this is just burst safety.
-  roic: { minIntervalMs: 400, concurrency: 1 }
+  // ROIC free = 5 req/min, Individual = 300/min (https://www.roic.ai/pricing, 2026-08-06).
+  // Burst pacer only (concurrency 1, short spacing). The free-safe *budget* is RATE_QUOTAS /
+  // plan-tier windows (5/min default; 300/min when Connections plan = individual). Do not set
+  // minInterval to 12s here — that would throttle paid Individual even when the quota allows 300.
+  roic: { minIntervalMs: 200, concurrency: 1 }
 };
 
 function envKeyFor(provider: string): string {
@@ -266,6 +266,7 @@ export interface RateWindow {
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
+const MONTH = 30 * DAY;
 
 // The QUOTA is the right control ONLY for providers with a hard windowed cap that PACING can't solve:
 //  - twelvedata sends ONE batch /quote call costing 1 credit PER SYMBOL, so you can't space it under
@@ -293,19 +294,17 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
   // resolveProviderQuota("filingapi") returned undefined (unlimited), so that call site's "~50/day
   // free tier — admit at most one symbol-bundle per reservation unit" comment enforced nothing.
   filingapi: [{ maxRequests: 45, windowMs: DAY }],
-  // ROIC.ai free-safe default. Paid individual/professional raise this via Connections plan tier
-  // (provider-tier-plan.ts) or PROVIDER_QUOTA_ROIC_PER_DAY. Do NOT default to 10k — that burns
-  // free keys and misleads when plan tier is unset.
-  roic: [{ maxRequests: 300, windowMs: DAY }],
-  // Marketstack's free tier is 100 req/MONTH, not a daily cap — this module only models rolling
-  // minute/hour/day windows, so approximate the monthly budget as a conservative perDay window
-  // (100/30 ≈ 3) rather than adding a MONTH window shape used nowhere else. NOTE: unlike
-  // filingapi/roic above, history.ts's fetchMarketstack does not yet call admitProviderRequests
-  // (it goes through politeFetchJson, which knows nothing about this module) — this entry defines
-  // the budget so the window math and any future call site are correct on day one, but wiring the
-  // actual call site is separate work.
-  marketstack: [{ maxRequests: 3, windowMs: DAY }],
+  // ROIC.ai free tier = 5 req/min (https://www.roic.ai/pricing, verified 2026-08-06).
+  // Paid Individual (300/min) / Professional (unlimited) raise via Connections plan tier or
+  // PROVIDER_QUOTA_ROIC_PER_MIN. Never invent a daily cap — the vendor publishes per-minute.
+  roic: [{ maxRequests: 5, windowMs: MINUTE }],
+  // Marketstack free = 100 req/month (https://marketstack.com/pricing, 2026-08-06). 30d rolling
+  // window matches the published unit better than inventing ~3/day. NOTE: history.ts's
+  // fetchMarketstack does not yet call admitProviderRequests (politeFetchJson only) — this entry
+  // defines the budget shape for when that call site is wired.
+  marketstack: [{ maxRequests: 100, windowMs: MONTH }],
   // Free-safe defaults when plan tier is unset (Connections tier raises these via provider-tier-plan).
+  // Caps below are placeholders until re-verified on vendor sites — prefer plan tier / env.
   fintechstudios: [{ maxRequests: 50, windowMs: DAY }],
   marketaux: [{ maxRequests: 80, windowMs: DAY }],
   earningscalls: [{ maxRequests: 8, windowMs: DAY }],
@@ -316,6 +315,7 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
   fred: [{ maxRequests: 100, windowMs: MINUTE }],
   apify: [{ maxRequests: 50, windowMs: DAY }],
   logodev: [{ maxRequests: 5_000, windowMs: DAY }]
+
 };
 
 /** Env-overridable effective windows for a provider. `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`
