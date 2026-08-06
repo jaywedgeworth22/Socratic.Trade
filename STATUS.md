@@ -2,6 +2,11 @@
 
 - **2026-08-05 — GROK — IN PROGRESS — Fix inflated account % return (synthetic paper curve + live tip TWR; isAllCash cash-first; capital-weighted closed-lot return).** Branch `grok/fix-account-return-pct`. Owner: Sandbox/Alpaca Paper/etc showed ~+50% despite ~$100k start and slight drawdown.
 
+## Current (2026-08-06 GROK provider-neutral data sources + ROIC)
+
+**Settings Data sources card (no FMP-special toggles); ROIC key+tier+fixed transcript API (branch `grok/roic-provider-tiers`).**
+Connections: plan tiers for market data; ROIC free/starter/individual/professional quotas; env-key plan tier without re-paste; v3 earnings-calls fetch. Rollout: `docs/rollouts/2026-08-06-provider-neutral-data-sources-ui.md`.
+
 ## Current (2026-08-05 GROK multi-source RAG)
 
 **Earnings transcripts + SEC full bodies + trade highlights in RAG (branch `grok/rag-multi-source-ingest`).**

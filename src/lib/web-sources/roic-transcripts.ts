@@ -1,30 +1,39 @@
 // ROIC.ai earnings-call transcript ingestion -> shared RAG corpus.
 //
-// Ingests full earnings call transcripts from ROIC.ai (/v2/transcript/{symbol}/{year}/{quarter})
+// Full transcripts from ROIC.ai:
+//   v3: GET /v3.0.0/earnings-calls/{NASDAQ:SYM}?fiscal_year=&fiscal_quarter=
+//   v2 fallback: GET /v2/company/earnings-calls/latest/{SYM} (latest only)
 // into the shared RAG vector store (doc_type "earnings-transcript", source "roic-earnings-transcript").
-// Leverages the user's high-capacity ROIC.ai individual subscription to bypass free-tier rate limits.
+// Prefer ROIC over free EarningsCalls previews when the owner has a paid/entitled ROIC key.
 //
 // Scheduler: refreshRoicTranscriptsIfDue (wired from scheduler.ts). Opt-in = ROIC key present;
-// kill-switch ROIC_TRANSCRIPTS_DISABLED=1. Without the scheduler wire, helpers alone never
-// persisted transcripts (root cause of "no ROIC transcripts saved" as of 2026-08-05).
+// kill-switch ROIC_TRANSCRIPTS_DISABLED=1. Quarters-per-symbol follow Connections plan tier
+// (free=2, individual=6, …) unless ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL overrides.
 
 import { fetchWithRetry } from "../data-providers";
 import { audit } from "../db";
-import { listUsers, listWatchlistSymbols, resolveApiKeyWithSource } from "../db-api-keys";
+import {
+  getUserApiKey,
+  listUsers,
+  listWatchlistSymbols,
+  LOCAL_USER,
+  resolveApiKeyWithSource
+} from "../db-api-keys";
 import { listRecentlyHeldSymbolsAllUsers } from "../db-fills";
 import { logApiHealth } from "../db-health";
 import { getInternalSetting, setInternalSetting } from "../db-settings";
 import { normalizeSymbol } from "../money";
+import { lookupRegisteredPlanTier, roicTranscriptQuartersForPlan } from "../provider-tier-plan";
 import { storeDocument } from "../vector-db";
 
 export const ROIC_TRANSCRIPT_DOC_TYPE = "earnings-transcript";
 export const ROIC_TRANSCRIPT_SOURCE = "roic-earnings-transcript";
 
-const ROIC_BASE = "https://api.roic.ai/v2";
+const ROIC_V3_BASE = "https://api.roic.ai/v3.0.0";
+const ROIC_V2_BASE = "https://api.roic.ai/v2";
 const LAST_ATTEMPT_KEY = "webSource:roicTranscripts:lastAttemptAt";
 const DEFAULT_TTL_HOURS = 24;
 const DEFAULT_MAX_TRANSCRIPTS_PER_RUN = 12;
-const DEFAULT_QUARTERS_PER_SYMBOL = 2;
 
 function flagOn(value: string | undefined): boolean {
   return /^(1|true|on|yes)$/i.test((value ?? "").trim());
@@ -51,9 +60,23 @@ function maxTranscriptsPerRun(): number {
   return Math.max(1, Math.min(50, Number.isFinite(n) ? n : DEFAULT_MAX_TRANSCRIPTS_PER_RUN));
 }
 
-function quartersPerSymbol(): number {
-  const n = Number(process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL ?? DEFAULT_QUARTERS_PER_SYMBOL);
-  return Math.max(1, Math.min(8, Number.isFinite(n) ? n : DEFAULT_QUARTERS_PER_SYMBOL));
+/** Effective quarters: env override wins, else Connections plan tier, else free-safe 2. */
+export function quartersPerSymbol(userId?: string): number {
+  const envRaw = process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL;
+  if (envRaw !== undefined && envRaw.trim() !== "") {
+    const n = Number(envRaw);
+    if (Number.isFinite(n)) return Math.max(1, Math.min(8, Math.floor(n)));
+  }
+  let tier = lookupRegisteredPlanTier("roic");
+  if (tier === undefined || tier === null) {
+    try {
+      const row = getUserApiKey(userId ?? LOCAL_USER, "roic");
+      tier = row?.planTier ?? null;
+    } catch {
+      tier = null;
+    }
+  }
+  return roicTranscriptQuartersForPlan(tier);
 }
 
 /**
@@ -62,7 +85,10 @@ function quartersPerSymbol(): number {
  * backward from the previous calendar quarter so we rarely request the current
  * unfinished period.
  */
-export function recentFiscalPeriods(now: Date = new Date(), count: number = quartersPerSymbol()): Array<{ year: number; quarter: number }> {
+export function recentFiscalPeriods(
+  now: Date = new Date(),
+  count: number = quartersPerSymbol()
+): Array<{ year: number; quarter: number }> {
   let year = now.getUTCFullYear();
   let quarter = Math.floor(now.getUTCMonth() / 3); // 0..3 for current incomplete quarter index
   // Start at the previous completed quarter (if month is Jan-Mar, previous is Q4 prior year).
@@ -109,6 +135,26 @@ export interface RoicTranscriptItem {
   content: string;
 }
 
+/** Join speaker turns or take a plain string body; reject short / empty. */
+export function transcriptTextFromRoicPayload(raw: unknown): string | null {
+  if (typeof raw === "string") {
+    const t = raw.trim();
+    return t.length >= 200 ? t : null;
+  }
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const parts: string[] = [];
+  for (const turn of raw) {
+    if (!turn || typeof turn !== "object") continue;
+    const row = turn as Record<string, unknown>;
+    const speaker = typeof row.speaker === "string" ? row.speaker.trim() : "";
+    const text = typeof row.text === "string" ? row.text.trim() : typeof row.content === "string" ? row.content.trim() : "";
+    if (!text) continue;
+    parts.push(speaker ? `${speaker}: ${text}` : text);
+  }
+  const joined = parts.join("\n\n").trim();
+  return joined.length >= 200 ? joined : null;
+}
+
 export function parseRoicTranscriptResponse(
   json: unknown,
   symbol: string,
@@ -117,18 +163,39 @@ export function parseRoicTranscriptResponse(
 ): RoicTranscriptItem | null {
   if (!json || typeof json !== "object") return null;
   const obj = json as Record<string, unknown>;
-  const rawContent = obj.transcript ?? obj.content ?? obj.text ?? obj.body;
-  if (typeof rawContent !== "string" || rawContent.trim().length < 200) {
-    return null;
-  }
+  const content = transcriptTextFromRoicPayload(obj.transcript ?? obj.content ?? obj.text ?? obj.body);
+  if (!content) return null;
   const date = typeof obj.date === "string" ? obj.date : undefined;
+  const fy =
+    typeof obj.fiscal_year === "number"
+      ? obj.fiscal_year
+      : typeof obj.year === "number"
+        ? obj.year
+        : year;
+  const fq =
+    typeof obj.fiscal_quarter === "number"
+      ? obj.fiscal_quarter
+      : typeof obj.quarter === "number"
+        ? obj.quarter
+        : quarter;
   return {
     symbol: normalizeSymbol(symbol),
-    year,
-    quarter,
+    year: fy,
+    quarter: fq,
     date,
-    content: rawContent.trim()
+    content
   };
+}
+
+/**
+ * Prefer exchange:ticker for v3 when we only have a bare symbol. US large-caps
+ * commonly resolve as NASDAQ: or NYSE: — try NASDAQ first then bare path fails with 400.
+ */
+export function roicV3Identifiers(symbol: string): string[] {
+  const s = normalizeSymbol(symbol);
+  if (!s) return [];
+  if (s.includes(":")) return [s];
+  return [`NASDAQ:${s}`, `NYSE:${s}`, s];
 }
 
 export async function fetchRoicTranscript(
@@ -143,25 +210,59 @@ export async function fetchRoicTranscript(
   const keyInfo = resolveApiKeyWithSource("roic", userId);
   if (!keyInfo.key) return null;
 
-  const url = `${ROIC_BASE}/transcript/${encodeURIComponent(normalized)}/${year}/${quarter}?apikey=${encodeURIComponent(keyInfo.key)}`;
-  try {
-    const res = await fetchWithRetry(
-      url,
-      {},
-      {
-        service: "roic",
-        keySource: keyInfo.source,
-        userId,
-        suppressHealthStatuses: [404, 429]
-      }
-    );
-    if (!res || !res.ok) return null;
-    const json = await res.json();
-    return parseRoicTranscriptResponse(json, normalized, year, quarter);
-  } catch (err) {
-    console.warn(`[roic-transcripts] failed to fetch transcript for ${normalized} Q${quarter} ${year}:`, err);
-    return null;
+  const fetchOpts = {
+    service: "roic" as const,
+    keySource: keyInfo.source,
+    userId,
+    suppressHealthStatuses: [400, 404, 429] as number[]
+  };
+
+  // v3 period-specific retrieve (canonical).
+  for (const identifier of roicV3Identifiers(normalized)) {
+    const url =
+      `${ROIC_V3_BASE}/earnings-calls/${encodeURIComponent(identifier)}` +
+      `?fiscal_year=${year}&fiscal_quarter=${quarter}&format=json&apikey=${encodeURIComponent(keyInfo.key)}`;
+    try {
+      const res = await fetchWithRetry(url, {}, fetchOpts);
+      if (!res || !res.ok) continue;
+      const json = await res.json();
+      const parsed = parseRoicTranscriptResponse(json, normalized, year, quarter);
+      if (parsed) return parsed;
+    } catch (err) {
+      console.warn(
+        `[roic-transcripts] v3 fetch failed for ${identifier} Q${quarter} ${year}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
   }
+
+  // v2 latest only — only use when the requested period is the most recent completed
+  // (or when we just want any full text). Always try once as last resort for the first period.
+  try {
+    const latestUrl =
+      `${ROIC_V2_BASE}/company/earnings-calls/latest/${encodeURIComponent(normalized)}` +
+      `?apikey=${encodeURIComponent(keyInfo.key)}`;
+    const res = await fetchWithRetry(latestUrl, {}, fetchOpts);
+    if (res?.ok) {
+      const json = await res.json();
+      const parsed = parseRoicTranscriptResponse(json, normalized, year, quarter);
+      // Accept latest only when it matches the requested period (or period fields missing).
+      if (parsed) {
+        const matchesPeriod =
+          (parsed.year === year && parsed.quarter === quarter) ||
+          (typeof (json as { year?: unknown }).year !== "number" &&
+            typeof (json as { quarter?: unknown }).quarter !== "number");
+        if (matchesPeriod) return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `[roic-transcripts] v2 latest failed for ${normalized}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  return null;
 }
 
 export async function ingestRoicTranscriptToRag(
@@ -256,7 +357,7 @@ export async function refreshRoicTranscriptsIfDue(options?: {
   }
 
   base.symbolsConsidered = ordered.length;
-  const periods = recentFiscalPeriods(new Date(now), quartersPerSymbol());
+  const periods = recentFiscalPeriods(new Date(now), quartersPerSymbol(options?.userId));
   const budget = maxTranscriptsPerRun();
   let remaining = budget;
 

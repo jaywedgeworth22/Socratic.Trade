@@ -58,6 +58,14 @@ describe("provider-tier-plan mapping", () => {
     expect(isRetiredMarketDataService("tiingo")).toBe(false);
   });
 
+  it("maps ROIC free vs individual quotas and plan options", () => {
+    expect(planTierOptionsForService("roic")?.map((o) => o.id)).toEqual(
+      expect.arrayContaining(["free", "starter", "individual", "professional", "unknown"])
+    );
+    expect(quotaWindowsForPlan("roic", "free")).toEqual([{ maxRequests: 300, windowMs: DAY }]);
+    expect(quotaWindowsForPlan("roic", "individual")).toEqual([{ maxRequests: 10_000, windowMs: DAY }]);
+  });
+
   it("normalizes alpha-vantage provider name to alphavantage service", () => {
     expect(rateLimitProviderName("alphavantage")).toBe("alpha-vantage");
     expect(quotaWindowsForPlan("alpha-vantage", "free")).toEqual([{ maxRequests: 25, windowMs: DAY }]);

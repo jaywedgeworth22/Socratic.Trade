@@ -125,6 +125,7 @@ import {
   type FmpTranscriptRightsGenerationClaim
 } from "./web-sources/fmp-transcripts";
 import { earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
+import { roicTranscriptsEnabled } from "./web-sources/roic-transcripts";
 import { strategyInformationRouting } from "./rag/information-routing";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
@@ -232,7 +233,10 @@ export function coverageCheckedFilingsDocTypes(): string[] {
   // EarningsCalls.dev (key = opt-in) and FMP (dual-gated) both write doc_type earnings-transcript.
   // Include the type in empty-corpus receipts whenever ANY producer is active so strategy
   // coverage canaries see transcript gaps (owner 2026-08-05 multi-source RAG).
-  const transcriptsOn = fmpTranscriptsEnabled() || earningsCallsTranscriptsEnabled();
+  // Any active transcript producer (ROIC paid, EarningsCalls, or dual-gated FMP) is enough
+  // for coverage canaries to watch the earnings-transcript lane.
+  const transcriptsOn =
+    fmpTranscriptsEnabled() || earningsCallsTranscriptsEnabled() || roicTranscriptsEnabled();
   return transcriptsOn
     ? [...BASE_COVERAGE_CHECKED_DOC_TYPES, "earnings-transcript"]
     : [...BASE_COVERAGE_CHECKED_DOC_TYPES];
@@ -1288,7 +1292,9 @@ export async function runStrategyOnce(
     // declared semantic sources alongside retrieval results. 10-k/10-q always participate;
     // transcript narrative joins only while its producer/rights gate is active. 8-K remains
     // retrieval-only because its ledger is incomplete.
-    const informationRouting = strategyInformationRouting(Boolean(fmpRightsClaim || earningsCallsTranscriptsEnabled()));
+    const informationRouting = strategyInformationRouting(
+      Boolean(fmpRightsClaim || earningsCallsTranscriptsEnabled() || roicTranscriptsEnabled())
+    );
     const requestedFilingsDocTypes = informationRouting.semantic.documentTypes;
     const coverageCheckedDocTypes = coverageCheckedFilingsDocTypes();
     const retrievedFilingsDocTypes = new Set<string>();

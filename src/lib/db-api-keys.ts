@@ -498,18 +498,62 @@ export function setUserApiKeyPlanTier(
 ): UserApiKey | undefined {
   const canonical = normalizeApiKeyService(service);
   const existing = getUserApiKey(userId, canonical);
-  if (!existing || existing.apiKey === DELETED_KEY_TOMBSTONE) return undefined;
   const now = new Date().toISOString();
   const nextTier = planTier === null || planTier === "" ? null : planTier;
+
+  // Existing real key (or env-plan marker): just update plan_tier.
+  if (existing && existing.apiKey !== DELETED_KEY_TOMBSTONE) {
+    getDb()
+      .prepare(
+        `UPDATE user_api_keys SET plan_tier = ?, updated_at = ? WHERE user_id = ? AND service = ?`
+      )
+      .run(nextTier, now, userId, canonical);
+    return { ...existing, planTier: nextTier ?? undefined, updatedAt: now };
+  }
+
+  // No user key yet: allow a tier-only row when an env credential exists for this service
+  // (shared-operator-infra market data). Marker is never returned as a secret.
+  const envVar = apiKeyEnvVarForService(canonical);
+  const envKey = envVar ? (process.env[envVar] ?? "").trim() : "";
+  if (!envKey) return undefined;
+
+  const id = `${userId}_${canonical}`;
+  const encryptedMarker = encryptValue(ENV_PLAN_TIER_MARKER);
   getDb()
     .prepare(
-      `UPDATE user_api_keys SET plan_tier = ?, updated_at = ? WHERE user_id = ? AND service = ?`
+      `INSERT INTO user_api_keys (id, user_id, service, api_key, label, plan_tier, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, service) DO UPDATE SET
+         api_key = excluded.api_key,
+         label = excluded.label,
+         plan_tier = excluded.plan_tier,
+         updated_at = excluded.updated_at`
     )
-    .run(nextTier, now, userId, canonical);
-  return { ...existing, planTier: nextTier ?? undefined, updatedAt: now };
+    .run(id, userId, canonical, encryptedMarker, "plan tier for server key", nextTier, now, now);
+  return {
+    id,
+    userId,
+    service: canonical,
+    apiKey: ENV_PLAN_TIER_MARKER,
+    label: "plan tier for server key",
+    planTier: nextTier ?? undefined,
+    createdAt: now,
+    updatedAt: now
+  };
 }
 
 export const DELETED_KEY_TOMBSTONE = "__DISABLED__";
+
+/**
+ * Marker stored in user_api_keys.api_key when the operator only declares a plan tier for an
+ * env-backed service (no secret paste). resolveApiKeyWithSource treats this like "no user key"
+ * and falls through to ROIC_API_KEY / TIINGO_API_KEY / etc.
+ */
+export const ENV_PLAN_TIER_MARKER = "__ENV_PLAN_TIER__";
+
+function isNonSecretKeyMarker(value: string | undefined | null): boolean {
+  return value === DELETED_KEY_TOMBSTONE || value === ENV_PLAN_TIER_MARKER;
+}
 
 export function deleteUserApiKey(userId: string, service: string): void {
   const canonical = normalizeApiKeyService(service);
@@ -582,6 +626,7 @@ registerPlanTierLookup((service) => {
   try {
     const row = getUserApiKey(LOCAL_USER, service);
     if (!row || row.apiKey === DELETED_KEY_TOMBSTONE) return null;
+    // ENV_PLAN_TIER_MARKER rows are valid plan declarations for env-backed keys.
     return row.planTier ?? null;
   } catch {
     return null;
@@ -630,11 +675,13 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
     return { source: "none", envVar, service: canonical };
   }
 
-  // 1. A per-user stored key for a specific user ID always wins.
+  // 1. A per-user stored key for a specific user ID always wins (not markers / tombstones).
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
     if (userKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none", envVar, service: canonical };
-    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", envVar, service: canonical };
+    if (userKey?.apiKey && !isNonSecretKeyMarker(userKey.apiKey)) {
+      return { key: userKey.apiKey, source: "user", envVar, service: canonical };
+    }
   }
 
   const envKey = envVar ? process.env[envVar] : undefined;
@@ -648,7 +695,9 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
     // jobs and global operations run off these keys.
     if (userId !== "local") {
       const localKey = getUserApiKey("local", canonical);
-      if (localKey?.apiKey && localKey.apiKey !== DELETED_KEY_TOMBSTONE) return { key: localKey.apiKey, source: "env", envVar, service: canonical };
+      if (localKey?.apiKey && !isNonSecretKeyMarker(localKey.apiKey)) {
+        return { key: localKey.apiKey, source: "env", envVar, service: canonical };
+      }
     }
 
     return { source: "none", envVar, service: canonical };
@@ -659,7 +708,9 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
   if (!userId || userId === LOCAL_USER) {
     const localKey = getUserApiKey(LOCAL_USER, canonical);
     if (localKey?.apiKey === DELETED_KEY_TOMBSTONE) return { source: "none", envVar, service: canonical };
-    if (localKey?.apiKey) return { key: localKey.apiKey, source: "user", envVar, service: canonical };
+    if (localKey?.apiKey && !isNonSecretKeyMarker(localKey.apiKey)) {
+      return { key: localKey.apiKey, source: "user", envVar, service: canonical };
+    }
   }
 
   return { source: "none", envVar, service: canonical };

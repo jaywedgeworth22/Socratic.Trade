@@ -70,10 +70,14 @@ const TIER_OPTIONS: Record<string, PlanTierOption[]> = {
     { id: "business", label: "Business", hint: "Statements + long history" },
     { id: "unknown", label: "Unknown" }
   ],
+  // Align with https://www.roic.ai/pricing — free is low request + short transcript history;
+  // paid individual/professional unlock deep fundamentals + full transcript archive.
   roic: [
-    { id: "free", label: "Free", hint: "Conservative 200/day placeholder" },
-    { id: "individual", label: "Individual", hint: "Paid individual ~10k/day" },
-    { id: "unknown", label: "Unknown" }
+    { id: "free", label: "Free", hint: "~300 req/day · ~2 quarters transcripts" },
+    { id: "starter", label: "Starter / Plus", hint: "Higher daily quota · longer transcript history" },
+    { id: "individual", label: "Individual", hint: "Paid individual ~10k/day · full-text transcripts" },
+    { id: "professional", label: "Professional", hint: "Highest request budget · all transcript history" },
+    { id: "unknown", label: "Unknown", hint: "Use free-safe caps until you confirm" }
   ],
   filingapi: [
     { id: "free", label: "Free", hint: "~50 req/day (app uses 45)" },
@@ -149,9 +153,11 @@ const TIER_QUOTA_WINDOWS: Record<string, Record<string, RateWindowHint[]>> = {
     unknown: [{ maxRequests: 3, windowMs: DAY }]
   },
   roic: {
-    free: [{ maxRequests: 200, windowMs: DAY }],
+    free: [{ maxRequests: 300, windowMs: DAY }],
+    starter: [{ maxRequests: 2_000, windowMs: DAY }],
     individual: [{ maxRequests: 10_000, windowMs: DAY }],
-    unknown: [{ maxRequests: 200, windowMs: DAY }]
+    professional: [{ maxRequests: 50_000, windowMs: DAY }],
+    unknown: [{ maxRequests: 300, windowMs: DAY }]
   },
   filingapi: {
     free: [{ maxRequests: 45, windowMs: DAY }],
@@ -251,6 +257,26 @@ export function rateLimitProviderName(service: string): string {
 export function apiKeyServiceForRateLimitProvider(provider: string): string {
   if (provider === "alpha-vantage") return "alphavantage";
   return provider;
+}
+
+/**
+ * How many completed fiscal quarters of earnings transcripts a declared ROIC plan should
+ * attempt per symbol (scheduler + refresh). Free is intentionally shallow; paid goes deep.
+ */
+export function roicTranscriptQuartersForPlan(tier: string | null | undefined): number {
+  switch ((tier ?? "unknown").toLowerCase()) {
+    case "professional":
+      return 8;
+    case "individual":
+      return 6;
+    case "starter":
+    case "plus":
+      return 4;
+    case "free":
+    case "unknown":
+    default:
+      return 2;
+  }
 }
 
 /** True when ST product must not use this service (key row may still be visible). */
