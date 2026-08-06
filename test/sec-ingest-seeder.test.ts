@@ -41,7 +41,8 @@ vi.mock("../src/lib/web-sources/http", () => ({
   politeFetch: vi.fn(),
   secUserAgent: vi.fn(() => "test-agent"),
   runRateLimited: vi.fn(),
-  sleep: vi.fn()
+  sleep: vi.fn(),
+  BROWSER_UA: "Mozilla/5.0 test"
 }));
 
 function issuer(rank: number, cik: string, ticker: string): SecUniverseIssuer {

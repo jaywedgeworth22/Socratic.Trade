@@ -1500,11 +1500,19 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         value: SymbolEnrichment[K] | undefined
       ) => {
         const supplied = currentRecord?.fieldObservations?.[field] as FieldObservation<SymbolEnrichment[K]> | undefined;
-        if (value !== undefined || supplied) {
+        // Empty arrays/strings are not real fills — e.g. headlines: [] must not first-win and
+        // block a scarce failover that has real headlines (see enrichment-scarce-tier-gate test).
+        // Align with enrichment-coverage.isFilledEnrichmentValue.
+        const usableValue =
+          value !== undefined &&
+          value !== null &&
+          !(Array.isArray(value) && value.length === 0) &&
+          !(typeof value === "string" && value.trim().length === 0);
+        if (usableValue || supplied) {
           // Always stamp source + asOf + fetchedAt (never leave asOf blank when we have a value).
           // Provider fieldDates / fieldObservations win when present; else cascade clock.
           // Capability / preference notes: source-capability-matrix.ts
-          const resolvedValue = value ?? supplied?.value;
+          const resolvedValue = usableValue ? value : supplied?.value;
           const asOf =
             supplied?.asOf ??
             currentRecord?.fieldDates?.[field] ??
@@ -1530,7 +1538,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
           });
           scalarCandidates[field] = candidates;
         }
-        if (base[field] === undefined && value !== undefined) {
+        if (base[field] === undefined && usableValue) {
           base[field] = value;
           sources[field] = sourceName;
         }
