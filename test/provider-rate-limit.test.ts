@@ -525,8 +525,10 @@ describe("resolveProviderQuota", () => {
     expect(resolveProviderQuota("filingapi")).toEqual([{ maxRequests: 45, windowMs: 86_400_000 }]);
   });
 
-  it("returns the built-in roic window (10000/day)", () => {
-    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 10000, windowMs: 86_400_000 }]);
+  it("returns the built-in roic free-safe window (300/day)", () => {
+    // Paid individual (10k/day) is selected via Connections plan tier, not the hard default.
+    expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 300, windowMs: 86_400_000 }]);
+    expect(resolveProviderQuota("roic", "individual")).toEqual([{ maxRequests: 10_000, windowMs: 86_400_000 }]);
   });
 
   it("returns the built-in marketstack window (3/day, approximating its 100/month free tier)", () => {
