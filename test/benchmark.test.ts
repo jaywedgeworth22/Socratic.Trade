@@ -172,14 +172,64 @@ describe("normalizeAgainstBenchmark", () => {
       { date: "2026-06-01", close: 500 },
       { date: "2026-06-02", close: 500 }
     ];
-    // $10k of the equity rise is a market gain on positions... this fixture holds everything
-    // in cash terms: cash went 100k → 200k with no trades = +100k external flow.
+    // $10k of the equity rise is a market gain; cash went 100k → 200k with no trades = +100k flow.
     const flows = inferExternalCashFlows(equity, []);
     expect(flows.get("2026-06-02")).toBeCloseTo(100_000, 2);
     const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
     expect(r.cashFlowAdjusted).toBe(true);
-    // TWR: 210k / (100k + 100k) − 1 = +5%
-    expect(r.accountReturnPct).toBeCloseTo(5, 2);
+    // Capital-adjusted: (210k − 100k − 100k deposit) / 100k = +10% market P&L on starting capital.
+    expect(r.accountReturnPct).toBeCloseTo(10, 2);
+    expect(r.netExternalFlows).toBeCloseTo(100_000, 2);
+  });
+
+  it("neutralizes a withdrawal while positions stay open", () => {
+    // Started $100k (50k cash + 50k stock). Withdraw $20k cash. Stock flat. Equity 100k → 80k.
+    // Must read ~0% account return, not −20%.
+    const equity = [
+      { timestamp: "2026-05-01T16:00:00Z", equity: 100_000, cash: 50_000, positionsValue: 50_000, source: "paper" as const },
+      { timestamp: "2026-05-02T16:00:00Z", equity: 80_000, cash: 30_000, positionsValue: 50_000, source: "paper" as const }
+    ];
+    const spy = [
+      { date: "2026-05-01", close: 500 },
+      { date: "2026-05-02", close: 500 }
+    ];
+    const flows = inferExternalCashFlows(equity, []);
+    expect(flows.get("2026-05-02")).toBeCloseTo(-20_000, 2);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.cashFlowAdjusted).toBe(true);
+    expect(r.netExternalFlows).toBeCloseTo(-20_000, 2);
+    // (80k − 100k − (−20k)) / 100k = 0%
+    expect(r.accountReturnPct).toBeCloseTo(0, 2);
+    const raw = normalizeAgainstBenchmark(equity, spy)!;
+    expect(raw.accountReturnPct).toBeCloseTo(-20, 2);
+  });
+
+  it("nets deposit then withdrawal to the true market P&L", () => {
+    // 100k all cash → +50k deposit → 150k → −30k withdrawal → 120k → positions mark +5k → 125k.
+    const equity = [
+      { timestamp: "2026-01-02T16:00:00Z", equity: 100_000, cash: 100_000, positionsValue: 0, source: "paper" as const },
+      { timestamp: "2026-02-02T16:00:00Z", equity: 150_000, cash: 150_000, positionsValue: 0, source: "paper" as const },
+      { timestamp: "2026-03-02T16:00:00Z", equity: 120_000, cash: 120_000, positionsValue: 0, source: "paper" as const },
+      // Deploy cash into stock (fill), then mark up:
+      { timestamp: "2026-03-03T16:00:00Z", equity: 120_000, cash: 20_000, positionsValue: 100_000, source: "paper" as const },
+      { timestamp: "2026-04-02T16:00:00Z", equity: 125_000, cash: 20_000, positionsValue: 105_000, source: "paper" as const }
+    ];
+    const spy = [
+      { date: "2026-01-02", close: 500 },
+      { date: "2026-02-02", close: 500 },
+      { date: "2026-03-02", close: 500 },
+      { date: "2026-03-03", close: 500 },
+      { date: "2026-04-02", close: 500 }
+    ];
+    const flows = inferExternalCashFlows(equity, [
+      fill({ filledAt: "2026-03-03T15:00:00Z", side: "buy", notional: 100_000 })
+    ]);
+    expect(flows.get("2026-02-02")).toBeCloseTo(50_000, 2);
+    expect(flows.get("2026-03-02")).toBeCloseTo(-30_000, 2);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.netExternalFlows).toBeCloseTo(20_000, 2); // +50 − 30
+    // (125 − 100 − 20) / 100 = +5%
+    expect(r.accountReturnPct).toBeCloseTo(5, 1);
   });
 
   it("ignores sub-threshold cash drift (dividends/fees are not transfers)", () => {

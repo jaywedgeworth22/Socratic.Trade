@@ -2511,7 +2511,8 @@ export interface BenchmarkSeriesPoint {
 export interface BenchmarkComparison {
   equityIndex: BenchmarkSeriesPoint[];
   benchmarkIndex: BenchmarkSeriesPoint[];
-  /** Account total return over the window (%, base→last). Time-weighted when cash flows detected. */
+  /** Account total return over the window (%, base→last). Capital-adjusted simple return:
+   *  (V_end − V_start − netExternalFlows) / V_start — deposits (+) and withdrawals (−) stripped. */
   accountReturnPct: number;
   /** Benchmark (SPY) total return over the same window (%). */
   benchmarkReturnPct: number;
@@ -2522,13 +2523,12 @@ export interface BenchmarkComparison {
   endDate: string;
   points: number;
   benchmarkSymbol: string;
-  /** True when the account line is a time-weighted return chained over inferred external
-   *  deposits/withdrawals (at least one material flow was detected and neutralized).
-   *  False/absent = plain equity growth, which counts any transfers as if they were returns. */
+  /** True when at least one material external deposit/withdrawal was inferred and stripped
+   *  from accountReturnPct. False/absent = no material flows detected (raw equity growth). */
   cashFlowAdjusted?: boolean;
   /** Net inferred external flow over the window in dollars (deposits positive, withdrawals
-   *  negative). Present only when cashFlowAdjusted is true. Inferred from snapshot cash deltas
-   *  minus recorded trade cash — an estimate, not a broker transfer ledger. */
+   *  negative). Present when cashFlowAdjusted is true. Inferred from snapshot cash/equity
+   *  deltas minus recorded trade cash — an estimate, not a broker transfer ledger. */
   netExternalFlows?: number;
 }
 

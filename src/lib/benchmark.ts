@@ -7,21 +7,23 @@
 // there isn't enough history or SPY can't be fetched, returns null and the UI degrades to "—".
 //
 // Reading the scoreboard: excessReturnPct = accountReturnPct − benchmarkReturnPct. So if vs SPY
-// is +5% and SPY rose +8% over the window, the account's time-weighted return was +13%.
+// is +5% and SPY rose +8% over the window, the account returned +13% after external capital.
 //
 // Deposits/withdrawals: no broker transfer ledger exists in this app, so external cash flows are
-// INFERRED per snapshot gap. All-cash gaps treat equity deltas as transfers (paper resets /
-// deposits must not read as alpha). When cash + fills are available, flow = cash delta − trade
-// cash, with guards so a cash→positions conversion without a recorded fill is not mistaken for a
-// withdrawal. The account line is a chained time-weighted return (TWR) that neutralizes those
-// flows — equivalent to asking "what if the same dollars had tracked SPY as they were added or
-// removed." Flagged `cashFlowAdjusted` so the UI can say so honestly.
+// INFERRED per snapshot gap (deposits +, withdrawals −, paper resets, ACH). All-cash gaps treat
+// equity deltas as transfers. When cash + fills are available, flow = Δcash − trade cash, with
+// guards so a cash→positions conversion without a recorded fill is not mistaken for a withdrawal.
+//
+// Headline accountReturnPct is capital-adjusted simple return:
+//   (V_end − V_start − netExternalFlows) / V_start
+// so every external dollar is stripped. The equity-index series still chains a TWR for the chart
+// (same-dollars path). Flagged `cashFlowAdjusted` when any material flow was neutralized.
 
 import { fetchDailyOHLC } from "./history";
 // The external-cash-flow math lives in its own dependency-free module: the console's client
 // components need it, and reaching it through this file dragged history.ts + the db barrel into
 // the browser bundle. See the header of ./cash-flows for the full rationale.
-import { inferExternalCashFlows, isoDate, round2 } from "./cash-flows";
+import { capitalAdjustedReturnPct, inferExternalCashFlows, isoDate, round2 } from "./cash-flows";
 import type { BenchmarkComparison, BenchmarkSeriesPoint, EquityCurvePoint, FillEvent } from "./types";
 
 /**
@@ -124,8 +126,39 @@ export function normalizeAgainstBenchmark(
   }
   if (equityIndex.length < 2) return null;
 
-  const accountReturnPct = equityIndex[equityIndex.length - 1].index - 100;
+  // Headline return: prefer multi-period TWR (equity index last − 100) so mid-window
+  // deposits/withdrawals are period-weighted correctly. When a single wipe-level withdrawal
+  // makes TWR rebase (flow ≤ −start equity), capital-adjusted simple return is used as a
+  // sanity cross-check only for the netExternalFlows annotation.
+  //
+  // Capital-adjusted simple: (V_end − V_start − netFlows) / V_start — intuitive for
+  // "started $100k, withdrew $X, now $Y" and matches SPY buy-hold when flows are sparse.
+  const startEq = equityByDate.get(baseDate);
+  const endDate = equityIndex[equityIndex.length - 1].date;
+  const endEq = equityByDate.get(endDate);
+  let netFlowsInWindow = 0;
+  if (flowsByDate) {
+    for (const d of equityDates) {
+      if (d <= baseDate || d > endDate) continue;
+      netFlowsInWindow += flowsByDate.get(d) ?? 0;
+    }
+  }
+  const twrReturnPct = equityIndex[equityIndex.length - 1].index - 100;
+  const capitalAdj =
+    startEq != null && endEq != null
+      ? capitalAdjustedReturnPct(startEq, endEq, netFlowsInWindow)
+      : null;
+  // Use capital-adjusted when we detected flows (strips every external dollar from the headline).
+  // Exception: near-total withdrawal (flow wipes ≥95% of start equity) — TWR rebase treats leftover
+  // crumbs as new principal (0% period), while capital-adj with an overstated −start flow can show
+  // a phantom small gain. Prefer TWR there.
+  let accountReturnPct = round2(twrReturnPct);
+  if (flowsApplied > 0 && capitalAdj != null && startEq != null) {
+    const wipeLevel = netFlowsInWindow < 0 && -netFlowsInWindow >= startEq * 0.95;
+    accountReturnPct = wipeLevel ? round2(twrReturnPct) : capitalAdj;
+  }
   const benchmarkReturnPct = benchmarkIndex[benchmarkIndex.length - 1].index - 100;
+  const flowsDetected = flowsApplied > 0 || Math.abs(netFlowsInWindow) >= 0.01;
   return {
     equityIndex,
     benchmarkIndex,
@@ -133,10 +166,12 @@ export function normalizeAgainstBenchmark(
     benchmarkReturnPct: round2(benchmarkReturnPct),
     excessReturnPct: round2(accountReturnPct - benchmarkReturnPct),
     startDate: baseDate,
-    endDate: equityIndex[equityIndex.length - 1].date,
+    endDate,
     points: equityIndex.length,
     benchmarkSymbol,
-    ...(flowsApplied > 0 ? { cashFlowAdjusted: true, netExternalFlows: round2(netExternalFlows) } : { cashFlowAdjusted: false })
+    ...(flowsDetected
+      ? { cashFlowAdjusted: true, netExternalFlows: round2(netFlowsInWindow) }
+      : { cashFlowAdjusted: false })
   };
 }
 

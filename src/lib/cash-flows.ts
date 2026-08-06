@@ -16,6 +16,11 @@
 // at compile time); a value import from `./db`, `./history`, or anything that reaches them will
 // silently re-attach the server graph to every console page. `history.ts` and the `db` barrel are
 // marked `server-only`, so a regression fails the build instead of shipping quietly.
+//
+// Sign convention (everywhere):
+//   deposit / paper top-up / ACH in  → positive
+//   withdrawal / ACH out / paper cash-out → negative
+// Account return math: V_end - V_start - sum(flows) is market P&L in dollars.
 
 import type { EquityCurvePoint, FillEvent } from "./types";
 
@@ -49,7 +54,7 @@ type CurvePoint = {
 };
 
 function materialityThreshold(priorEquity: number): number {
-  return Math.max((FLOW_MATERIALITY_PCT_OF_EQUITY / 100) * priorEquity, FLOW_MATERIALITY_MIN_USD);
+  return Math.max((FLOW_MATERIALITY_PCT_OF_EQUITY / 100) * Math.max(priorEquity, 0), FLOW_MATERIALITY_MIN_USD);
 }
 
 /** True when the snapshot is essentially all cash (no meaningful open positions). */
@@ -66,15 +71,30 @@ function isAllCash(p: CurvePoint): boolean {
   return false;
 }
 
+function hasCash(p: CurvePoint): p is CurvePoint & { cash: number } {
+  return typeof p.cash === "number" && Number.isFinite(p.cash);
+}
+
+function hasPositions(p: CurvePoint): p is CurvePoint & { positionsValue: number } {
+  return typeof p.positionsValue === "number" && Number.isFinite(p.positionsValue);
+}
+
 /**
  * Infer external deposits/withdrawals per calendar date from the equity curve and recorded fills.
  *
- * Priority:
- *  1. All-cash → all-cash gaps: equity delta IS the external transfer (paper resets, ACH, etc.).
- *  2. Otherwise, when cash is present: (cash delta) − (trade cash from fills), with guards so a
- *     cash→positions conversion without a recorded fill is not counted as a withdrawal.
+ * Every material external dollar move should appear here (deposits AND withdrawals, paper resets,
+ * ACH). Market P&L and trade-driven cash↔stock conversions must NOT.
  *
- * Returns a map keyed by the PERIOD-END snapshot date. Pure — exported for direct unit testing.
+ * Priority:
+ *  1. All-cash → all-cash: equity delta IS the transfer (paper reset, full-cash ACH).
+ *  2. Cash present: flow = Δcash − tradeCash (buy notional reduces cash, sell/cover increases it).
+ *     Guards zero out cash↔stock conversions when fills are missing.
+ *  3. Cash+positions both present and equity ≈ cash+positions: cross-check with
+ *     flow ≈ Δequity − Δpositions − tradeCash (same identity when the balance sheet holds).
+ *  4. Missing cash: only invent a transfer when both sides look flat and there was no trading.
+ *
+ * Returns a map keyed by the PERIOD-END snapshot date. Sign: deposit +, withdrawal −.
+ * Pure — exported for direct unit testing.
  */
 export function inferExternalCashFlows(
   equityCurve: EquityCurvePoint[],
@@ -109,14 +129,7 @@ export function inferExternalCashFlows(
     const threshold = materialityThreshold(prev.equity);
     const deltaEquity = cur.equity - prev.equity;
 
-    // All-cash books have no market P&L between snapshots — any equity move is a transfer.
-    // This is the paper-reset / deposit case that previously read as +30% "alpha".
-    if (isAllCash(prev) && isAllCash(cur)) {
-      if (Math.abs(deltaEquity) >= threshold) flows.set(dates[i], round2(deltaEquity));
-      continue;
-    }
-
-    // Count absolute trade notional in the gap (used by missing-cash and residual guards).
+    // Trade cash in the gap: buys/shorts reduce cash (negative), sells/covers increase it.
     let tradeNotionalAbs = 0;
     let tradeCash = 0;
     for (const f of sortedFills) {
@@ -126,45 +139,70 @@ export function inferExternalCashFlows(
       tradeCash += f.side === "sell" || f.side === "cover" ? f.notional : -f.notional;
     }
 
-    // Missing cash metadata: only invent a transfer when BOTH sides look flat (no positions)
-    // AND there was essentially no trading — otherwise mark-to-market would be misread as ACH.
-    if (typeof prev.cash !== "number" || typeof cur.cash !== "number") {
-      const prevFlat =
-        typeof prev.positionsValue === "number" ? Math.abs(prev.positionsValue) < threshold : true;
-      const curFlat =
-        typeof cur.positionsValue === "number" ? Math.abs(cur.positionsValue) < threshold : true;
-      if (prevFlat && curFlat && tradeNotionalAbs < threshold && Math.abs(deltaEquity) >= threshold) {
-        flows.set(dates[i], round2(deltaEquity));
-      }
+    // ── 1. All-cash books: any equity move is a transfer (deposit or withdrawal / reset). ──
+    if (isAllCash(prev) && isAllCash(cur)) {
+      if (Math.abs(deltaEquity) >= threshold) flows.set(dates[i], round2(deltaEquity));
       continue;
     }
 
-    const deltaCash = cur.cash - prev.cash;
-    let flow = deltaCash - tradeCash;
+    // ── 2. Cash present: primary identity flow = Δcash − tradeCash. ──
+    // Deposits: Δcash > 0 (and usually Δequity > 0). Withdrawals: Δcash < 0 (and usually Δequity < 0).
+    // Trade-driven cash↔stock is removed via tradeCash or the missing-fill guards below.
+    if (hasCash(prev) && hasCash(cur)) {
+      const deltaCash = cur.cash - prev.cash;
+      let flow = deltaCash - tradeCash;
 
-    // Missing-fill guards: without trade receipts, a cash→stock conversion looks like a withdrawal.
-    if (Math.abs(tradeCash) < 1e-9) {
-      const deltaPos =
-        typeof prev.positionsValue === "number" && typeof cur.positionsValue === "number"
-          ? cur.positionsValue - prev.positionsValue
-          : null;
+      // Missing-fill guards: without trade receipts, a cash→stock conversion looks like a withdrawal.
+      if (Math.abs(tradeCash) < 1e-9) {
+        const deltaPos =
+          hasPositions(prev) && hasPositions(cur) ? cur.positionsValue - prev.positionsValue : null;
 
-      if (Math.abs(deltaCash) >= threshold && Math.abs(deltaEquity) < threshold) {
-        // Cash moved, equity didn't — bought/sold positions, not a transfer.
-        flow = 0;
-      } else if (
-        deltaPos != null &&
-        ((deltaCash < -threshold && deltaPos > threshold) || (deltaCash > threshold && deltaPos < -threshold))
-      ) {
-        // Cash and positions moved in opposite directions — trade, not ACH.
-        flow = 0;
-      } else if (Math.abs(deltaCash - deltaEquity) < threshold) {
-        // Cash and equity moved together — classic deposit/withdrawal.
-        flow = deltaEquity;
+        if (Math.abs(deltaCash) >= threshold && Math.abs(deltaEquity) < threshold) {
+          // Cash moved, equity didn't — bought/sold positions, not a transfer.
+          flow = 0;
+        } else if (
+          deltaPos != null &&
+          ((deltaCash < -threshold && deltaPos > threshold) || (deltaCash > threshold && deltaPos < -threshold))
+        ) {
+          // Cash and positions moved in opposite directions — trade, not ACH.
+          // (Do NOT re-introduce a residual that undoes this guard.)
+          flow = 0;
+        } else if (Math.abs(deltaCash - deltaEquity) < threshold) {
+          // Cash and equity moved together (same direction & size) — pure deposit/withdrawal.
+          // Covers: withdraw cash (both down), deposit cash (both up), with or without open stock.
+          flow = deltaEquity;
+        }
       }
+
+      if (Math.abs(flow) >= threshold) flows.set(dates[i], round2(flow));
+      continue;
     }
 
-    if (Math.abs(flow) >= threshold) flows.set(dates[i], round2(flow));
+    // ── 4. Missing cash metadata: only invent a transfer when both sides look flat and no trades. ──
+    // (Otherwise mark-to-market would be misread as ACH.)
+    const prevFlat = hasPositions(prev) ? Math.abs(prev.positionsValue) < threshold : true;
+    const curFlat = hasPositions(cur) ? Math.abs(cur.positionsValue) < threshold : true;
+    if (prevFlat && curFlat && tradeNotionalAbs < threshold && Math.abs(deltaEquity) >= threshold) {
+      flows.set(dates[i], round2(deltaEquity));
+    }
   }
   return flows;
+}
+
+/**
+ * Capital-adjusted account return over a window (%):
+ *   (V_end − V_start − netExternalFlows) / V_start × 100
+ *
+ * Deposits (+) and withdrawals (−) in `netExternalFlows` are stripped so only market P&L remains.
+ * This is the intuitive "I started with $100k, took out $10k, have $88k → lost $2k = −2%" figure.
+ * Distinct from multi-period TWR (which chains sub-period returns). Pure.
+ */
+export function capitalAdjustedReturnPct(
+  startEquity: number,
+  endEquity: number,
+  netExternalFlows: number
+): number | null {
+  if (!(startEquity > 0) || !Number.isFinite(startEquity) || !Number.isFinite(endEquity)) return null;
+  if (!Number.isFinite(netExternalFlows)) netExternalFlows = 0;
+  return round2(((endEquity - startEquity - netExternalFlows) / startEquity) * 100);
 }

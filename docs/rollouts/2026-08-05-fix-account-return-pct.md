@@ -32,3 +32,15 @@ npx vitest run test/benchmark.test.ts  # 19 pass
 - `src/lib/benchmark.ts`, `src/lib/cash-flows.ts`, `src/lib/performance.ts`
 - `app/console/results/page.tsx`
 - `test/benchmark.test.ts`
+
+## Follow-up: withdrawals + every external dollar
+
+Owner: also need withdrawals and every dollar change accounted for.
+
+- Strengthened `inferExternalCashFlows`: cash-first deposits **and** withdrawals
+  (`flow = Δcash − tradeCash`; pure transfer when cash+equity move together).
+- Headline `accountReturnPct` is **capital-adjusted simple return**
+  `(V_end − V_start − netExternalFlows) / V_start` so net deposits (+) and
+  withdrawals (−) are stripped; wipe-level withdrawals still use TWR rebase.
+- UI copy on Results spells out deposit/withdrawal stripping.
+- Tests: withdrawal with open positions; multi deposit+withdrawal netting to market P&L.
