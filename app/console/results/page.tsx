@@ -233,19 +233,19 @@ export default function ResultsPage() {
                 label="Your account"
                 value={fmtPct(perf.benchmark.accountReturnPct, 2, true)}
                 sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`}
-                title="Capital-adjusted return: (ending equity − starting equity − net deposits/withdrawals) ÷ starting equity. Deposits and withdrawals are stripped so only market P&L remains. Not the same as unweighted trade averages."
+                title="Time-weighted return: the window is split at every deposit/withdrawal into back-to-back capital regimes; each regime’s market return is chained (multiplied) with the others. Having $100 for 10 days then $10 for 100 days does not let the long small-balance stretch dominate like a simple start→end ratio would."
               />
               <Stat
                 label={perf.benchmark.benchmarkSymbol}
                 value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)}
-                sub="same window, buy and hold"
-                title="What buy-and-hold SPY did over the same calendar window. Excess = your account return minus this."
+                sub="same sub-periods, chained"
+                title="SPY return over each capital regime’s calendar dates, geometrically chained the same way as your account (equals full-window SPY when segments cover the whole timeline)."
               />
               <div>
                 <div className="con-card-title">vs {perf.benchmark.benchmarkSymbol}</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold">
                   <SignedText value={perf.benchmark.excessReturnPct}>
-                    <span title="Your capital-adjusted account return minus SPY over the same window. Deposits and withdrawals are neutralized so transfers are not counted as performance.">
+                    <span title="Your time-weighted account return minus the chained SPY return. Deposits and withdrawals define the sub-period cuts; they are not counted as performance.">
                       {fmtPct(perf.benchmark.excessReturnPct, 2, true)}
                     </span>
                   </SignedText>
@@ -257,11 +257,50 @@ export default function ResultsPage() {
             </div>
             <p className="mt-3 border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
               {perf.benchmark.cashFlowAdjusted
-                ? `Capital-adjusted — stripped ${fmtMoney(Math.abs(perf.benchmark.netExternalFlows ?? 0))} net ${
+                ? `Time-weighted across capital regimes — neutralized ${fmtMoney(Math.abs(perf.benchmark.netExternalFlows ?? 0))} net ${
                     (perf.benchmark.netExternalFlows ?? 0) < 0 ? "withdrawals" : "deposits"
-                  } (deposits +, withdrawals −) so only market P&L counts. Flows are inferred from account snapshots and fills, not a broker transfer ledger.`
-                : "No material deposits or withdrawals detected in snapshots. If money moved in or out without being captured, this figure still includes those transfers."}
+                  } (deposits +, withdrawals −). Each stretch between transfers is its own sub-period for you and for SPY; overall = product of (1 + r) − 1. Flows are inferred from snapshots and fills, not a broker transfer ledger.`
+                : "No material deposits or withdrawals detected — single continuous period (account equity growth vs SPY over the same dates)."}
             </p>
+            {perf.benchmark.subPeriods && perf.benchmark.subPeriods.length > 1 && (
+              <div className="mt-3 overflow-x-auto border-t border-[color:var(--con-line)] pt-2">
+                <div className="con-card-title mb-1.5">Capital regimes (between deposits / withdrawals)</div>
+                <table className="w-full min-w-[32rem] text-left text-[length:var(--con-fs-xs)]">
+                  <thead className="text-[color:var(--con-faint)]">
+                    <tr>
+                      <th className="py-1 pr-2 font-medium">Window</th>
+                      <th className="py-1 pr-2 font-medium">Start → end equity</th>
+                      <th className="py-1 pr-2 font-medium">Transfer</th>
+                      <th className="py-1 pr-2 font-medium">You</th>
+                      <th className="py-1 font-medium">{perf.benchmark.benchmarkSymbol}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perf.benchmark.subPeriods.map((seg) => (
+                      <tr key={`${seg.startDate}-${seg.endDate}-${seg.externalFlow}`} className="border-t border-[color:var(--con-line)]">
+                        <td className="py-1 pr-2 whitespace-nowrap">
+                          {seg.startDate} → {seg.endDate}
+                        </td>
+                        <td className="py-1 pr-2 whitespace-nowrap">
+                          {fmtMoney(seg.startEquity)} → {fmtMoney(seg.endEquity)}
+                        </td>
+                        <td className="py-1 pr-2 whitespace-nowrap">
+                          {Math.abs(seg.externalFlow) < 0.01
+                            ? "—"
+                            : `${seg.externalFlow > 0 ? "deposit" : "withdrawal"} ${fmtMoney(Math.abs(seg.externalFlow))}`}
+                        </td>
+                        <td className="py-1 pr-2">
+                          <SignedText value={seg.accountReturnPct}>{fmtPct(seg.accountReturnPct, 2, true)}</SignedText>
+                        </td>
+                        <td className="py-1">
+                          <SignedText value={seg.benchmarkReturnPct}>{fmtPct(seg.benchmarkReturnPct, 2, true)}</SignedText>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         ) : (
           <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">

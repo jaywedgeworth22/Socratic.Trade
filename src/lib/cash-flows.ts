@@ -164,9 +164,19 @@ export function inferExternalCashFlows(
           deltaPos != null &&
           ((deltaCash < -threshold && deltaPos > threshold) || (deltaCash > threshold && deltaPos < -threshold))
         ) {
-          // Cash and positions moved in opposite directions — trade, not ACH.
-          // (Do NOT re-introduce a residual that undoes this guard.)
-          flow = 0;
+          // Cash and positions moved in opposite directions — usually a trade.
+          // Exception: large cash+equity drop while positions only absorb a fraction of the cash
+          // (withdraw most, leave/invest a remainder) — still an external withdrawal of ≈ Δequity.
+          if (
+            deltaCash < -threshold &&
+            deltaEquity < -threshold &&
+            deltaPos >= -threshold &&
+            Math.abs(deltaCash) > Math.abs(deltaPos) * 2
+          ) {
+            flow = deltaEquity;
+          } else {
+            flow = 0;
+          }
         } else if (Math.abs(deltaCash - deltaEquity) < threshold) {
           // Cash and equity moved together (same direction & size) — pure deposit/withdrawal.
           // Covers: withdraw cash (both down), deposit cash (both up), with or without open stock.

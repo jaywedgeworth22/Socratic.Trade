@@ -177,8 +177,8 @@ describe("normalizeAgainstBenchmark", () => {
     expect(flows.get("2026-06-02")).toBeCloseTo(100_000, 2);
     const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
     expect(r.cashFlowAdjusted).toBe(true);
-    // Capital-adjusted: (210k − 100k − 100k deposit) / 100k = +10% market P&L on starting capital.
-    expect(r.accountReturnPct).toBeCloseTo(10, 2);
+    // TWR sub-period: 210 / (100 + 100 deposit) − 1 = +5% (deposit not counted as gain).
+    expect(r.accountReturnPct).toBeCloseTo(5, 2);
     expect(r.netExternalFlows).toBeCloseTo(100_000, 2);
   });
 
@@ -228,8 +228,37 @@ describe("normalizeAgainstBenchmark", () => {
     expect(flows.get("2026-03-02")).toBeCloseTo(-30_000, 2);
     const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
     expect(r.netExternalFlows).toBeCloseTo(20_000, 2); // +50 − 30
-    // (125 − 100 − 20) / 100 = +5%
-    expect(r.accountReturnPct).toBeCloseTo(5, 1);
+    // TWR chains sub-periods at each transfer; final mark 120→125 is ~+4.17%.
+    expect(r.accountReturnPct).toBeCloseTo(4.17, 1);
+    // Sub-periods split at each deposit/withdrawal (coalesced between flows).
+    expect(r.subPeriods && r.subPeriods.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("chains unequal capital regimes: $100 then $10 (owner multi-period TWR request)", () => {
+    // 10 days with ~$100 cash (flat), withdraw to $10 invested, then that $10 gains 50%.
+    // TWR chains both regimes so the long small-capital stretch still contributes its +50%.
+    const equity = [
+      { timestamp: "2026-01-01T16:00:00Z", equity: 100, cash: 100, positionsValue: 0, source: "paper" as const },
+      { timestamp: "2026-01-11T16:00:00Z", equity: 100, cash: 100, positionsValue: 0, source: "paper" as const },
+      // Withdraw $90 and stay fully invested at $10
+      { timestamp: "2026-01-12T16:00:00Z", equity: 10, cash: 0, positionsValue: 10, source: "paper" as const },
+      { timestamp: "2026-04-22T16:00:00Z", equity: 15, cash: 0, positionsValue: 15, source: "paper" as const }
+    ];
+    const spy = [
+      { date: "2026-01-01", close: 100 },
+      { date: "2026-01-11", close: 100 }, // flat while large capital
+      { date: "2026-01-12", close: 100 },
+      { date: "2026-04-22", close: 130 } // +30% SPY while small capital
+    ];
+    const flows = inferExternalCashFlows(equity, []);
+    expect(flows.get("2026-01-12")).toBeCloseTo(-90, 2);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    // Account: 100→100 (0%), then after withdrawal 15/10 = +50%. Chain: 1.0 * 1.5 − 1 = +50%.
+    expect(r.accountReturnPct).toBeCloseTo(50, 1);
+    // SPY chained over same knots: 100→100 (0%), 100→130 (+30%) → +30%.
+    expect(r.benchmarkReturnPct).toBeCloseTo(30, 1);
+    expect(r.excessReturnPct).toBeCloseTo(20, 1);
+    expect(r.subPeriods?.some((s) => Math.abs(s.externalFlow + 90) < 1)).toBe(true);
   });
 
   it("ignores sub-threshold cash drift (dividends/fees are not transfers)", () => {

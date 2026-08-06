@@ -1,46 +1,51 @@
 // SPY-benchmark equity-curve scoreboard.
 //
-// Compares the account's equity curve (from portfolio_snapshots) to a SPY buy-and-hold over the
-// same window — the honest "are we beating the market net of cost" readout. Both series are
-// normalized to 100 at the first common date so they overlay on one axis. SPY daily closes come
-// from the same key-free history cascade every chart uses (fetchDailyOHLC). Never fabricates: if
-// there isn't enough history or SPY can't be fetched, returns null and the UI degrades to "—".
-//
-// Reading the scoreboard: excessReturnPct = accountReturnPct − benchmarkReturnPct. So if vs SPY
-// is +5% and SPY rose +8% over the window, the account returned +13% after external capital.
+// Compares the account's equity curve (from portfolio_snapshots) to SPY over the same window —
+// the honest "are we beating the market net of cost" readout. Both series are normalized to 100
+// at the first common date so they overlay on one axis. SPY daily closes come from the same
+// key-free history cascade every chart uses (fetchDailyOHLC). Never fabricates: if there isn't
+// enough history or SPY can't be fetched, returns null and the UI degrades to "—".
 //
 // Deposits/withdrawals: no broker transfer ledger exists in this app, so external cash flows are
-// INFERRED per snapshot gap (deposits +, withdrawals −, paper resets, ACH). All-cash gaps treat
-// equity deltas as transfers. When cash + fills are available, flow = Δcash − trade cash, with
-// guards so a cash→positions conversion without a recorded fill is not mistaken for a withdrawal.
+// INFERRED per snapshot gap (deposits +, withdrawals −, paper resets, ACH). See cash-flows.ts.
 //
-// Headline accountReturnPct is capital-adjusted simple return:
-//   (V_end − V_start − netExternalFlows) / V_start
-// so every external dollar is stripped. The equity-index series still chains a TWR for the chart
-// (same-dollars path). Flagged `cashFlowAdjusted` when any material flow was neutralized.
+// Multi-period time-weighted return (TWR) — the GIPS-style method the owner described:
+//   Split the overall window into back-to-back sub-periods at each deposit/withdrawal.
+//   Sub-period account growth = V_end / (V_start + flow_at_end)  (flow is the external cash
+//   that lands on the end snapshot; 0 when no transfer that day).
+//   Sub-period SPY growth = SPY_end / SPY_start over the same calendar dates.
+//   Chain: overall = ∏(1 + r_i) − 1 for account and for SPY independently.
+// So "$100 for 10 days then $10 for 100 days" weights each regime's market performance by
+// geometric linking, not by simple (end−start−flows)/start which overweights the big balance.
+//
+// excessReturnPct = accountTWR − spyTWR (percentage points).
 
 import { fetchDailyOHLC } from "./history";
 // The external-cash-flow math lives in its own dependency-free module: the console's client
 // components need it, and reaching it through this file dragged history.ts + the db barrel into
 // the browser bundle. See the header of ./cash-flows for the full rationale.
-import { capitalAdjustedReturnPct, inferExternalCashFlows, isoDate, round2 } from "./cash-flows";
-import type { BenchmarkComparison, BenchmarkSeriesPoint, EquityCurvePoint, FillEvent } from "./types";
+import { inferExternalCashFlows, isoDate, round2 } from "./cash-flows";
+import type {
+  BenchmarkComparison,
+  BenchmarkSeriesPoint,
+  BenchmarkSubPeriod,
+  EquityCurvePoint,
+  FillEvent
+} from "./types";
 
 /**
- * Pure normalization: align an equity curve with a date→close benchmark series, base both to 100
- * at the first equity date that has a benchmark close on/before it. Benchmark closes are looked up
- * carry-forward (last close on/before the date) so non-trading-day snapshots still align. Returns
- * null when either series has < 2 usable points. Exported for direct unit testing (no network).
+ * Pure multi-period TWR normalization.
  *
- * When `flowsByDate` (external deposits/withdrawals keyed by period-end date, from
- * inferExternalCashFlows) contains a flow inside the window, the account index becomes a chained
- * time-weighted return: each period's growth is equity_i / (equity_{i−1} + flow_i), so a
- * withdrawal no longer reads as a loss and a deposit no longer reads as a gain. Without flows the
- * math is byte-identical to plain equity growth.
+ * Aligns equity with a date→close benchmark series, then walks every consecutive snapshot pair
+ * (after the first date that has a SPY close). Each pair is one sub-period:
+ *   - Account factor = equity_i / (equity_{i−1} + externalFlow_i)   [flow-neutral TWR]
+ *   - SPY factor     = spy_i / spy_{i−1}                           [same calendar window]
+ * Both indexes start at 100 and multiply by the factors (geometric chain).
  *
- * excessReturnPct = accountReturnPct − benchmarkReturnPct (percentage points of out/under-performance
- * vs buying and holding SPY over the same calendar window with the same external capital timing
- * neutralized on the account side).
+ * When `flowsByDate` is empty/undefined, account factor collapses to equity_i/equity_{i−1}
+ * (plain equity growth) and SPY chain equals buy-and-hold over the full window.
+ *
+ * Returns null when either series has < 2 usable points. Exported for direct unit testing.
  */
 export function normalizeAgainstBenchmark(
   equityCurve: EquityCurvePoint[],
@@ -81,98 +86,165 @@ export function normalizeAgainstBenchmark(
     return ans;
   };
 
-  let baseDate: string | null = null;
+  // Build aligned (date, equity, spy) series starting at first date with a SPY close.
+  const aligned: Array<{ date: string; equity: number; spy: number }> = [];
   for (const d of equityDates) {
-    if (closeOnOrBefore(d) != null) {
-      baseDate = d;
-      break;
-    }
+    const eq = equityByDate.get(d)!;
+    const spy = closeOnOrBefore(d);
+    if (spy == null) continue;
+    aligned.push({ date: d, equity: eq, spy });
   }
-  if (!baseDate) return null;
-  const baseBench = closeOnOrBefore(baseDate)!;
+  if (aligned.length < 2) return null;
 
   const equityIndex: BenchmarkSeriesPoint[] = [];
   const benchmarkIndex: BenchmarkSeriesPoint[] = [];
-  // TWR chaining state: index_i = index_{i−1} × equity_i / (equity_{i−1} + flow_i).
-  let chainedIndex = 100;
-  let prevEquity: number | null = null;
+  const subPeriods: BenchmarkSubPeriod[] = [];
+
+  // Both series start at 100 on the first aligned date.
+  let accountIndex = 100;
+  let spyIndex = 100;
+  equityIndex.push({ date: aligned[0].date, index: 100 });
+  benchmarkIndex.push({ date: aligned[0].date, index: 100 });
+
   let flowsApplied = 0;
   let netExternalFlows = 0;
-  for (const d of equityDates) {
-    if (d < baseDate) continue;
-    const eq = equityByDate.get(d)!;
-    const bc = closeOnOrBefore(d);
-    if (bc == null) continue;
-    if (prevEquity != null) {
-      const flow = flowsByDate?.get(d) ?? 0;
-      const denominator = prevEquity + flow;
-      if (flow !== 0 && denominator > 0) {
-        chainedIndex *= eq / denominator;
-        flowsApplied += 1;
-        netExternalFlows += flow;
-      } else if (flow !== 0 && denominator <= 0) {
-        // Flow wiped (or more than wiped) prior equity — rebase with 0% for this period rather
-        // than dividing by a non-positive base (which previously fell through to raw equity ratio
-        // and re-introduced the withdrawal-as-loss distortion).
+
+  for (let i = 1; i < aligned.length; i++) {
+    const prev = aligned[i - 1]!;
+    const cur = aligned[i]!;
+    const flow = flowsByDate?.get(cur.date) ?? 0;
+
+    // ── Account sub-period (flow-neutral TWR) ──────────────────────────────
+    // V_end / (V_start + external_flow_at_end). Deposit (+): larger denominator so the
+    // injected cash is not counted as a gain. Withdrawal (−): smaller denominator so the
+    // cash leaving is not counted as a loss.
+    let accountFactor = 1;
+    if (flow !== 0) {
+      const denominator = prev.equity + flow;
+      if (denominator > 0) {
+        accountFactor = cur.equity / denominator;
         flowsApplied += 1;
         netExternalFlows += flow;
       } else {
-        chainedIndex *= eq / prevEquity;
+        // Flow wiped (or more than wiped) prior equity — rebase at 0% for this sub-period
+        // rather than dividing by a non-positive base.
+        accountFactor = 1;
+        flowsApplied += 1;
+        netExternalFlows += flow;
       }
+    } else if (prev.equity > 0) {
+      accountFactor = cur.equity / prev.equity;
     }
-    prevEquity = eq;
-    equityIndex.push({ date: d, index: round2(chainedIndex) });
-    benchmarkIndex.push({ date: d, index: round2((bc / baseBench) * 100) });
+
+    // ── SPY sub-period over the same calendar dates ────────────────────────
+    // Geometric product of these factors = SPY_end/SPY_start over the full window, but we
+    // still step them alongside account segments so each deposit/withdrawal boundary is an
+    // explicit back-to-back sub-period (and the chart indexes share the same knots).
+    const spyFactor = prev.spy > 0 ? cur.spy / prev.spy : 1;
+
+    accountIndex *= accountFactor;
+    spyIndex *= spyFactor;
+
+    equityIndex.push({ date: cur.date, index: round2(accountIndex) });
+    benchmarkIndex.push({ date: cur.date, index: round2(spyIndex) });
+
+    // Record every sub-period that either has a flow or is a material market move — and always
+    // when a flow lands, so the UI can show "between transfers" segments. Snap quiet flat days
+    // into coarser segments? Keep every step for honesty; callers may aggregate.
+    subPeriods.push({
+      startDate: prev.date,
+      endDate: cur.date,
+      startEquity: round2(prev.equity),
+      endEquity: round2(cur.equity),
+      externalFlow: round2(flow),
+      accountReturnPct: round2((accountFactor - 1) * 100),
+      benchmarkReturnPct: round2((spyFactor - 1) * 100)
+    });
   }
+
   if (equityIndex.length < 2) return null;
 
-  // Headline return: prefer multi-period TWR (equity index last − 100) so mid-window
-  // deposits/withdrawals are period-weighted correctly. When a single wipe-level withdrawal
-  // makes TWR rebase (flow ≤ −start equity), capital-adjusted simple return is used as a
-  // sanity cross-check only for the netExternalFlows annotation.
-  //
-  // Capital-adjusted simple: (V_end − V_start − netFlows) / V_start — intuitive for
-  // "started $100k, withdrew $X, now $Y" and matches SPY buy-hold when flows are sparse.
-  const startEq = equityByDate.get(baseDate);
-  const endDate = equityIndex[equityIndex.length - 1].date;
-  const endEq = equityByDate.get(endDate);
-  let netFlowsInWindow = 0;
-  if (flowsByDate) {
-    for (const d of equityDates) {
-      if (d <= baseDate || d > endDate) continue;
-      netFlowsInWindow += flowsByDate.get(d) ?? 0;
-    }
-  }
-  const twrReturnPct = equityIndex[equityIndex.length - 1].index - 100;
-  const capitalAdj =
-    startEq != null && endEq != null
-      ? capitalAdjustedReturnPct(startEq, endEq, netFlowsInWindow)
-      : null;
-  // Use capital-adjusted when we detected flows (strips every external dollar from the headline).
-  // Exception: near-total withdrawal (flow wipes ≥95% of start equity) — TWR rebase treats leftover
-  // crumbs as new principal (0% period), while capital-adj with an overstated −start flow can show
-  // a phantom small gain. Prefer TWR there.
-  let accountReturnPct = round2(twrReturnPct);
-  if (flowsApplied > 0 && capitalAdj != null && startEq != null) {
-    const wipeLevel = netFlowsInWindow < 0 && -netFlowsInWindow >= startEq * 0.95;
-    accountReturnPct = wipeLevel ? round2(twrReturnPct) : capitalAdj;
-  }
-  const benchmarkReturnPct = benchmarkIndex[benchmarkIndex.length - 1].index - 100;
-  const flowsDetected = flowsApplied > 0 || Math.abs(netFlowsInWindow) >= 0.01;
+  const accountReturnPct = round2(accountIndex - 100);
+  const benchmarkReturnPct = round2(spyIndex - 100);
+  const flowsDetected = flowsApplied > 0 || Math.abs(netExternalFlows) >= 0.01;
+
+  // Coalesce consecutive zero-flow flat sub-periods for a readable segment list: merge runs of
+  // steps that have no external flow into one segment from first to last date (sum isn't needed —
+  // recompute factors from endpoints). Keep every flow boundary as a hard cut.
+  const coalesced = coalesceSubPeriods(subPeriods);
+
   return {
     equityIndex,
     benchmarkIndex,
-    accountReturnPct: round2(accountReturnPct),
-    benchmarkReturnPct: round2(benchmarkReturnPct),
+    accountReturnPct,
+    benchmarkReturnPct,
     excessReturnPct: round2(accountReturnPct - benchmarkReturnPct),
-    startDate: baseDate,
-    endDate,
+    startDate: aligned[0].date,
+    endDate: equityIndex[equityIndex.length - 1].date,
     points: equityIndex.length,
     benchmarkSymbol,
+    subPeriods: coalesced,
     ...(flowsDetected
-      ? { cashFlowAdjusted: true, netExternalFlows: round2(netFlowsInWindow) }
+      ? { cashFlowAdjusted: true, netExternalFlows: round2(netExternalFlows) }
       : { cashFlowAdjusted: false })
   };
+}
+
+/**
+ * Merge consecutive sub-periods that have no external flow into single segments so the
+ * UI shows one row per capital regime (between deposits/withdrawals), not one row per snapshot.
+ * Periods with a non-zero externalFlow always start a new segment (the flow sits on endDate).
+ */
+export function coalesceSubPeriods(periods: BenchmarkSubPeriod[]): BenchmarkSubPeriod[] {
+  if (periods.length === 0) return [];
+  const out: BenchmarkSubPeriod[] = [];
+  let acc: BenchmarkSubPeriod | null = null;
+  let accAccountFactor = 1;
+  let accSpyFactor = 1;
+
+  const flush = () => {
+    if (!acc) return;
+    out.push({
+      ...acc,
+      accountReturnPct: round2((accAccountFactor - 1) * 100),
+      benchmarkReturnPct: round2((accSpyFactor - 1) * 100)
+    });
+    acc = null;
+    accAccountFactor = 1;
+    accSpyFactor = 1;
+  };
+
+  for (const p of periods) {
+    const aFactor = 1 + p.accountReturnPct / 100;
+    const sFactor = 1 + p.benchmarkReturnPct / 100;
+    const hasFlow = Math.abs(p.externalFlow) >= 0.01;
+
+    if (!acc) {
+      acc = { ...p };
+      accAccountFactor = aFactor;
+      accSpyFactor = sFactor;
+      if (hasFlow) flush();
+      continue;
+    }
+
+    // Extend the open no-flow run.
+    if (!hasFlow && Math.abs(acc.externalFlow) < 0.01) {
+      acc.endDate = p.endDate;
+      acc.endEquity = p.endEquity;
+      accAccountFactor *= aFactor;
+      accSpyFactor *= sFactor;
+      continue;
+    }
+
+    // Flow boundary (on this period or we already had a flow pending): close prior, start new.
+    flush();
+    acc = { ...p };
+    accAccountFactor = aFactor;
+    accSpyFactor = sFactor;
+    if (hasFlow) flush();
+  }
+  flush();
+  return out;
 }
 
 /**
