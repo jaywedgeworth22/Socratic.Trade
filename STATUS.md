@@ -438,3 +438,7 @@ Fixed `gpt-5.4-mini` regex inclusion in reasoning model capabilities which was c
 
 **2026-08-04 — Revert accidental marketScan in from-draft preview (Antigravity).**
 Fixed `test/chat-draft-policy.test.ts` test regression. A previous commit accidentally added a `fetchFreshQuotesCascade` call to the preview evaluation in `app/api/proposals/from-draft/route.ts`. Since the mock test broker returns real time quotes, this caused the "scan-less" preview to actually fetch a fresh quote and skip the expected `staleness_gate` block in tests. Reverted the addition so the preview returns to its scan-less state. All 10/10 tests pass, `land.sh` executed.
+## Current (2026-08-07 GROK)
+
+- **Fix paper vs-SPY +50%**: deposit+invest sparse snapshots without fills no longer count as alpha (`grok/fix-paper-spy-return-again`).
+
