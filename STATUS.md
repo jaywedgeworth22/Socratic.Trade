@@ -1,4 +1,8 @@
-## Current (2026-08-06 MONET full-product review + deploy-freeze repair)
+## Current (2026-08-07 GROK — iOS login brand parity)
+
+**iOS login restyled to match website** (`app/login/page.tsx`): candlestick "SOCRATIC TRADE" wordmark (`CandleWordmarkView`, port of `candle-ticker.ts`), accent-dot value bullets, plain `--bg` surface, Google/GitHub/Apple button order and styles. Branch `grok/ios-login-brand`. `xcodebuild` BUILD SUCCEEDED. Rollout: `docs/rollouts/2026-08-07-ios-login-brand.md`.
+
+## Prior (2026-08-06 MONET full-product review + deploy-freeze repair)
 
 
 ## Production host (2026-08-07)
