@@ -13,7 +13,6 @@ import {
 } from "../api-clients/congress";
 import type {
   ConvictionTicker,
-  MemberDualPerformance,
   MemberLeader,
   MemberPerformance
 } from "@jaywedgeworth22/congress-trading-shared";
@@ -28,6 +27,21 @@ const CLUSTER_LIMIT = 200;
 const MEMBER_LIMIT = 500;
 const CONFLICT_LIMIT = 1000; // fetch all conflicts in window (App A default=100; raise to catch all)
 const MAX_SKILL_LOOKUPS = 200; // cap per-member performance calls per refresh
+
+/**
+ * App A dual performance payload (filingDate vs tradeDate legs). Not yet exported from
+ * congress-trading-shared@v2.5.1 — local shape so skill ranking typechecks until the shared
+ * package publishes MemberDualPerformance.
+ */
+type MemberPerformanceLeg = MemberPerformance & {
+  avgAnnualizedExcess?: number | null;
+};
+
+type MemberDualPerformance = {
+  filingDate?: MemberPerformanceLeg | null;
+  tradeDate?: MemberPerformanceLeg | null;
+  performance?: MemberPerformanceLeg | null;
+};
 
 export { congressAnalyticsEnabled };
 
@@ -125,7 +139,7 @@ function finiteNum(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
-function legAlpha(leg: MemberPerformance | null | undefined): number | undefined {
+function legAlpha(leg: MemberPerformanceLeg | null | undefined): number | undefined {
   if (!leg) return undefined;
   if (typeof leg.scoredCount !== "number" || leg.scoredCount <= 0) return undefined;
   // Prefer avgExcess (vs S&P); annualized is secondary ranking signal for filing leg only.
@@ -139,9 +153,9 @@ function legAlpha(leg: MemberPerformance | null | undefined): number | undefined
  * fall back to tradeDate (politician timing) when filing is unscored.
  */
 export function preferMemberSkillLeg(dual: MemberDualPerformance | null | undefined): {
-  leg: MemberPerformance;
+  leg: MemberPerformanceLeg;
   anchor: MemberSkillAnchor;
-  other?: MemberPerformance;
+  other?: MemberPerformanceLeg;
   otherAnchor?: MemberSkillAnchor;
 } | null {
   if (!dual) return null;
@@ -170,17 +184,29 @@ export async function buildMemberSkillDetails(filerIds: string[]): Promise<Map<s
   if (distinct.length === 0) return map;
 
   const client = getCongressTradeClient();
-  const perf = await Promise.all(distinct.map((id) => client.getMemberPerformance(id).catch(() => null)));
+  const perf = await Promise.all(
+    distinct.map((id) =>
+      client.getMemberPerformance(id).catch(() => null) as Promise<MemberDualPerformance | MemberPerformanceLeg | null>
+    )
+  );
   const scored: Array<{
     id: string;
     alpha: number;
     anchor: MemberSkillAnchor;
-    leg: MemberPerformance;
-    other?: MemberPerformance;
+    leg: MemberPerformanceLeg;
+    other?: MemberPerformanceLeg;
     otherAnchor?: MemberSkillAnchor;
   }> = [];
   distinct.forEach((id, i) => {
-    const picked = preferMemberSkillLeg(perf[i]);
+    const raw = perf[i];
+    // Client may return dual {filingDate,tradeDate} or a single leg — normalize.
+    const dual: MemberDualPerformance | null =
+      raw && typeof raw === "object" && ("filingDate" in raw || "tradeDate" in raw || "performance" in raw)
+        ? (raw as MemberDualPerformance)
+        : raw
+          ? { performance: raw as MemberPerformanceLeg }
+          : null;
+    const picked = preferMemberSkillLeg(dual);
     if (!picked) return;
     const alpha = legAlpha(picked.leg);
     if (alpha === undefined) return;
