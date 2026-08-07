@@ -1,8 +1,11 @@
 # Litestream config for the PRODUCTION app running on the Coolify box
-# (socratictrade.com). Mirrors the Mac's ~/apps/trading-live/litestream.yml but
-# with the container DB path. Same replica bucket/path as the Mac ran, so the
-# restore at cutover reads the replica the Mac wrote, and post-cutover
-# replication continues into the same history.
+# (socratictrade.com). Continuous SQLite backup to Backblaze B2 (S3-compatible).
+#
+# Destination (2026-08-07, owner): Backblaze B2 EU Central
+#   bucket jays-socratic-trade-eu, endpoint s3.eu-central-003.backblazeb2.com
+# Cloudflare R2 (`socratic-trade-bucket` etc.) is left as a historic object set —
+# do not delete R2 until B2 restore is proven. Active replication no longer
+# writes to R2.
 #
 # All ${VARS} are injected at runtime by scripts/infisical-run.mjs (Infisical
 # `prod` env) — no secrets live in this file. Used only by
@@ -11,7 +14,7 @@ socket:
   enabled: true
   # Writable by the container `node` user. /var/run/litestream.sock fails with
   # "bind: permission denied" under Coolify (node is non-root), which left IPC
-  # dead and /api/health stuck on storageDegraded=unavailable even while R2
+  # dead and /api/health stuck on storageDegraded=unavailable even while
   # replication was healthy. Keep next to the DB volume.
   path: /app/data/litestream.sock
   permissions: 0600
@@ -19,27 +22,25 @@ socket:
 dbs:
   - path: /app/data/app.db
     # PITR snapshot policy (Litestream 0.5.x): snapshot interval + retention are
-    # DB-level `snapshot:` settings (see the note in the Mac's litestream.yml).
+    # DB-level `snapshot:` settings.
     snapshot:
       interval: 24h
-      retention: 24h  # free-tier opt 2026-08-04 GROK (was 48h; storage ~3GB/day LTX)
+      # B2 is paid capacity (not CF free-tier) — keep 7d of LTX for restore headroom.
+      retention: 168h
     replicas:
       - type: s3
-        # Throttles the R2 request rate. Litestream 0.5.x opens a NEW connection per
-        # request to R2 and abandons the response without draining or closing it, so
-        # every sync tick permanently pins a socket (measured: 100% ESTABLISHED,
-        # keepalive-timer, frozen non-empty Recv-Q, ~34KB each). At the 1s default that
-        # leaked ~15k sockets/hr, blew past net.ipv4.tcp_mem, and wedged every deploy at
-        # git-clone via receive-window clamping. 10s cuts the leak rate 10x.
-        # TRADEOFF: replica RPO 1s -> 10s. NOT a fix for the leak itself — see
-        # docs/rollouts/2026-07-19-deploy-wedge-diagnosis.md.
-        sync-interval: 15m  # free-tier Class A survival 2026-08-05 GROK (was 60s; List+Put still burn free tier under write storms)
+        # Litestream 0.5.x can leak sockets at very short sync intervals against some
+        # S3-compatible endpoints (historical R2 outage). 60s RPO is plenty for ST
+        # and keeps Class A volume reasonable on B2.
+        sync-interval: 60s
         bucket: ${AWS_S3_BUCKET_NAME}
         path: trading-live/app.db
-        # Literal, not ${AWS_REGION:-auto}: litestream does its own ${VAR}
-        # substitution and does NOT support bash `:-` defaults, so that form resolved to
-        # an EMPTY region (confirmed in the startup banner: `region=""`). R2 wants "auto".
-        region: auto
+        # Literal region required: litestream substitutes ${VAR} but does NOT support
+        # bash `:-` defaults (empty region broke R2). B2 wants the cluster id, e.g.
+        # eu-central-003 (set AWS_REGION accordingly in Infisical).
+        region: ${AWS_REGION}
         endpoint: ${AWS_S3_ENDPOINT}
+        # Required for Backblaze B2 S3 API (virtual-hosted style is unreliable).
+        force-path-style: true
         access-key-id: ${AWS_ACCESS_KEY_ID}
         secret-access-key: ${AWS_SECRET_ACCESS_KEY}

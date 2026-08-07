@@ -16,6 +16,7 @@ import {
   isR2AccountDueThisRun,
   isR2AutoDisableArmed,
   isR2ReplicationDisabled,
+  isLitestreamReplicaCloudflareR2,
   isR2UsageCheckDue,
   loadR2UsageAccounts,
   loadR2UsageMonitorConfig,
@@ -298,10 +299,18 @@ describe("runR2UsageCheck", () => {
     expect(isR2UsageCheckDue(MID_JULY + 1000)).toBe(true);
   });
 
+  it("isLitestreamReplicaCloudflareR2 detects R2 endpoints only", () => {
+    expect(isLitestreamReplicaCloudflareR2("https://abc.r2.cloudflarestorage.com")).toBe(true);
+    expect(isLitestreamReplicaCloudflareR2("https://s3.eu-central-003.backblazeb2.com")).toBe(false);
+    expect(isLitestreamReplicaCloudflareR2("")).toBe(false);
+  });
+
   it("auto-disable (armed, live boot) writes the kill-switch marker, notifies, and exits — once", async () => {
     process.env.CLOUDFLARE_ST_API_TOKEN = "t";
     process.env.CLOUDFLARE_ST_ACCOUNT_ID = "acct";
     process.env.DB_BOOTSTRAP = "live";
+    // Kill-switch only arms while litestream still targets Cloudflare R2.
+    process.env.AWS_S3_ENDPOINT = "https://deadbeef.r2.cloudflarestorage.com";
     const marker = join(tmpdir(), `r2-disable-${randomUUID()}`);
     process.env.R2_USAGE_DISABLE_MARKER = marker;
     const notifyCalls: Array<{ title: string; body: string }> = [];
@@ -344,10 +353,32 @@ describe("runR2UsageCheck", () => {
     expect(resumeExits).toEqual([42]);
   });
 
+  it("auto-disable does NOT fire when active litestream replica is Backblaze B2", async () => {
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "acct";
+    process.env.DB_BOOTSTRAP = "live";
+    process.env.AWS_S3_ENDPOINT = "https://s3.eu-central-003.backblazeb2.com";
+    process.env.AWS_S3_BUCKET_NAME = "jays-socratic-trade-eu";
+    const marker = join(tmpdir(), `r2-disable-b2-${randomUUID()}`);
+    process.env.R2_USAGE_DISABLE_MARKER = marker;
+    const exitCodes: number[] = [];
+    await runR2UsageCheck(MID_JULY, {
+      fetchImpl: graphqlStorageAndOps(8 * 1024 ** 3, 100, 100),
+      notifyImpl: (async () => []) as never,
+      exitImpl: (code: number) => {
+        exitCodes.push(code);
+      },
+    });
+    expect(exitCodes).toEqual([]);
+    expect(existsSync(marker)).toBe(false);
+    expect(isLitestreamReplicaCloudflareR2()).toBe(false);
+  });
+
   it("auto-disable does NOT arm outside the live prod boot (no marker, no exit)", async () => {
     process.env.CLOUDFLARE_ST_API_TOKEN = "t";
     process.env.CLOUDFLARE_ST_ACCOUNT_ID = "acct";
     // DB_BOOTSTRAP unset (dev/test) — exceeded metrics must only alert, never kill.
+    process.env.AWS_S3_ENDPOINT = "https://deadbeef.r2.cloudflarestorage.com";
     const marker = join(tmpdir(), `r2-disable-${randomUUID()}`);
     process.env.R2_USAGE_DISABLE_MARKER = marker;
     const exitCodes: number[] = [];

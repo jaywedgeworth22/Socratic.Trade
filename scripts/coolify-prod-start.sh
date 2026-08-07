@@ -179,14 +179,23 @@ log "DB_BOOTSTRAP=live - starting under litestream replicate"
 
 # R2 free-tier kill-switch (owner directive 2026-08-01): when the app's R2 usage
 # monitor projects >70% of the free tier it writes this marker and restarts the
-# container; while the marker exists we boot WITHOUT litestream replication so R2
-# usage stops growing. Resume: delete the marker (POST /api/admin/r2-usage/resume
-# does this + restarts) and the next boot re-enables replication.
+# container. ONLY applies when the active litestream replica is still Cloudflare
+# R2 — once AWS_S3_ENDPOINT is Backblaze B2 (or any non-R2 S3), ignore the marker
+# so historic R2 free-tier pressure cannot pause the real backup target.
+# Resume (R2-era only): POST /api/admin/r2-usage/resume or delete the marker.
 R2_DISABLE_MARKER="${R2_USAGE_DISABLE_MARKER:-$DATA_DIR/.litestream-r2-disabled}"
 if [ -f "$R2_DISABLE_MARKER" ]; then
-  log "R2 kill-switch marker present ($R2_DISABLE_MARKER) - starting WITHOUT litestream replication"
-  log "marker contents: $(cat "$R2_DISABLE_MARKER" 2>/dev/null | head -c 500)"
-  run_app node_modules/.bin/next start
+  case "${AWS_S3_ENDPOINT:-}" in
+    *r2.cloudflarestorage.com*|*cloudflarestorage.com*)
+      log "R2 kill-switch marker present ($R2_DISABLE_MARKER) and replica is Cloudflare R2 - starting WITHOUT litestream replication"
+      log "marker contents: $(cat "$R2_DISABLE_MARKER" 2>/dev/null | head -c 500)"
+      run_app node_modules/.bin/next start
+      ;;
+    *)
+      log "R2 kill-switch marker present but replica endpoint is not Cloudflare R2 (endpoint host set; len=${#AWS_S3_ENDPOINT}) - ignoring marker so B2/other backup continues"
+      log "marker contents: $(cat "$R2_DISABLE_MARKER" 2>/dev/null | head -c 500)"
+      ;;
+  esac
 fi
 
 run_app litestream replicate -config "$CONFIG" -exec "node_modules/.bin/next start"

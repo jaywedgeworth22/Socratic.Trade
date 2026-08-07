@@ -552,6 +552,20 @@ export function isR2AutoDisableArmed(cfg: R2UsageMonitorConfig): boolean {
   return cfg.autoDisable && process.env.DB_BOOTSTRAP === "live";
 }
 
+/**
+ * True when litestream's AWS_S3_ENDPOINT still points at Cloudflare R2.
+ * The free-tier kill-switch only makes sense while replication *writes* to R2.
+ * After the active replica moves to Backblaze B2 (or another S3), R2 metrics may
+ * still exceed free-tier pace from historic data — they must not pause backups.
+ */
+export function isLitestreamReplicaCloudflareR2(
+  endpoint: string = process.env.AWS_S3_ENDPOINT ?? "",
+): boolean {
+  const e = endpoint.trim().toLowerCase();
+  if (!e) return false;
+  return e.includes("r2.cloudflarestorage.com") || e.includes("cloudflarestorage.com");
+}
+
 /** True while litestream replication is disabled by the kill-switch marker. */
 export function isR2ReplicationDisabled(cfg: R2UsageMonitorConfig = loadR2UsageMonitorConfig()): boolean {
   try {
@@ -734,15 +748,22 @@ export async function runR2UsageCheck(
   const errors = results.filter((r) => r.status === "error").length;
 
   // Hard kill-switch (owner directive 2026-08-01), scoped to the "st" account ONLY — that is
-  // the Cloudflare account THIS app's litestream writes to; ct/um usage must never stop our
-  // replication. When armed (live prod boot) and any st metric is over its alert basis, write
-  // the persistent disable marker (coolify-prod-start.sh boots without `litestream replicate`
-  // while it exists) and restart the container so replication actually halts. Stays off until
+  // the Cloudflare account THIS app's litestream *used to* write to. ct/um usage must never
+  // stop our replication. Only fires when the active replica is still Cloudflare R2
+  // (isLitestreamReplicaCloudflareR2); once AWS_* points at B2, R2 free-tier pressure is
+  // historic and must not write the marker / exit 41. When armed and any st metric is over
+  // its alert basis, write the disable marker (coolify-prod-start.sh boots without
+  // `litestream replicate` while it exists AND endpoint is R2) and restart. Stays off until
   // the owner resumes via POST /api/admin/r2-usage/resume (or deletes the marker + restarts).
   // State writes above already landed, so the post-restart check can't double-fire.
   const stResult = results.find((r) => r.snapshot && accounts.find((a) => a.accountId === r.accountId)?.id === "st");
   const exceededMetrics = (stResult?.snapshot?.metrics ?? []).filter((m) => m.exceeded);
-  if (exceededMetrics.length > 0 && isR2AutoDisableArmed(cfg) && !isR2ReplicationDisabled(cfg)) {
+  if (
+    exceededMetrics.length > 0 &&
+    isR2AutoDisableArmed(cfg) &&
+    !isR2ReplicationDisabled(cfg) &&
+    isLitestreamReplicaCloudflareR2()
+  ) {
     const markerPayload = {
       disabledAt: new Date(now).toISOString(),
       reason: `Socratic Trade R2 account over ${cfg.thresholdPct}% free-tier threshold`,
