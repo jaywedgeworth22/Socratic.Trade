@@ -164,15 +164,30 @@ export function inferExternalCashFlows(
           deltaPos != null &&
           ((deltaCash < -threshold && deltaPos > threshold) || (deltaCash > threshold && deltaPos < -threshold))
         ) {
-          // Cash and positions moved in opposite directions — usually a trade.
-          // Exception: large cash+equity drop while positions only absorb a fraction of the cash
-          // (withdraw most, leave/invest a remainder) — still an external withdrawal of ≈ Δequity.
+          // Cash and positions moved in opposite directions — usually a trade (cash↔stock).
+          // Without fills we cannot see the trade notional, so a pure conversion would look
+          // like a withdrawal (cash down) or deposit (cash up). Default: flow = 0.
+          //
+          // Exceptions — concurrent EXTERNAL capital with trading in the same sparse gap
+          // (common on paper accounts: deposit then invest between rare snapshots):
+          //   1. Large cash+equity drop while positions only absorb a fraction of the cash
+          //      (withdraw most, leave/invest a remainder) → flow ≈ Δequity (withdrawal).
+          //   2. Material residual equity change vs the cash↔stock swap size → transfer
+          //      dominates (deposit then buy, or sell then withdraw). Pure trade + modest
+          //      mark-to-market keeps |Δequity| small vs the swap, so flow stays 0.
+          const swapped = Math.min(Math.abs(deltaCash), Math.abs(deltaPos));
+          const residualIsTransfer =
+            Math.abs(deltaEquity) >= Math.max(threshold, 0.25 * swapped);
           if (
             deltaCash < -threshold &&
             deltaEquity < -threshold &&
             deltaPos >= -threshold &&
             Math.abs(deltaCash) > Math.abs(deltaPos) * 2
           ) {
+            flow = deltaEquity;
+          } else if (residualIsTransfer) {
+            // Deposit+invest (Δequity ≈ deposit) or sell+withdraw: neutralize the external $
+            // so TWR does not report e.g. 66k→99k as +50% alpha vs SPY.
             flow = deltaEquity;
           } else {
             flow = 0;
