@@ -184,7 +184,8 @@ private struct ProposalCard: View {
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .center, spacing: 10) {
+                    TickerLogo(symbol: proposal.proposal.symbol, size: 32)
                     Text(proposal.proposal.symbol.uppercased())
                         .font(.title2.weight(.bold))
                     StatusPill(proposal.proposal.side.uppercased(), color: sideColor)

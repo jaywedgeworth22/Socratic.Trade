@@ -221,7 +221,7 @@ function LearnedItemCard({
           <Tooltip content="The ticker this item is about.">
             <span
               className="con-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-              <SymbolButton symbol={item.symbol} showLogo={false} />
+              <SymbolButton symbol={item.symbol} />
             </span>
           </Tooltip>
         )}
@@ -450,7 +450,7 @@ export function LearnedContextInbox() {
                 {confirming.symbol ? (
                   <Tooltip content="The ticker this item is about.">
                     <span className="con-mono text-[color:var(--con-muted)]">
-                      {" "}· <SymbolButton symbol={confirming.symbol} showLogo={false} />
+                      {" "}· <SymbolButton symbol={confirming.symbol} />
                     </span>
                   </Tooltip>
                 ) : null}
@@ -532,7 +532,7 @@ function LearnedFactCard({
           <Tooltip content="The ticker this row is about.">
             <span
               className="con-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-              <SymbolButton symbol={item.symbol} showLogo={false} />
+              <SymbolButton symbol={item.symbol} />
             </span>
           </Tooltip>
         )}
@@ -730,7 +730,7 @@ export function LearnedFactsArchive() {
                   {confirmingDelete.symbol ? (
                     <span className="con-mono text-[color:var(--con-muted)]">
                       {" "}
-                      · <SymbolButton symbol={confirmingDelete.symbol} showLogo={false} />
+                      · <SymbolButton symbol={confirmingDelete.symbol} />
                     </span>
                   ) : null}
                 </p>

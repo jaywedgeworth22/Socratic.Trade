@@ -70,6 +70,7 @@ private struct PositionRow: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
+                        TickerLogo(symbol: position.symbol, size: 26)
                         Text(position.symbol)
                             .font(.headline)
                         if position.quantity < 0 {
@@ -134,6 +135,7 @@ private struct OrderRow: View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
+                    TickerLogo(symbol: order.symbol, size: 24)
                     Text(order.symbol)
                         .font(.headline)
                     StatusPill(order.side.uppercased(), color: sideColor)
@@ -244,6 +246,7 @@ private struct FlowSymbols: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
+                        TickerLogo(symbol: item.symbol, size: 18)
                         Text(item.symbol)
                             .font(.subheadline.weight(.semibold))
                         if store.isBusy(operationID) {
@@ -300,11 +303,18 @@ private struct AlertRow: View {
     var body: some View {
         AppCard {
             HStack(spacing: 12) {
-                Image(systemName: alert.status == "armed" ? "bell.fill" : "bell.badge.fill")
-                    .foregroundStyle(alert.status == "armed" ? AppPalette.accent : AppPalette.positive)
+                TickerLogo(symbol: alert.symbol, size: 26)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("\(alert.symbol) \(alert.op) \(AppFormat.money(alert.price))")
-                        .font(.headline)
+                    HStack(spacing: 6) {
+                        Text(alert.symbol)
+                            .font(.headline)
+                        Image(systemName: alert.status == "armed" ? "bell.fill" : "bell.badge.fill")
+                            .font(.caption)
+                            .foregroundStyle(alert.status == "armed" ? AppPalette.accent : AppPalette.positive)
+                    }
+                    Text("\(alert.op) \(AppFormat.money(alert.price))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     Text(alert.note?.isEmpty == false ? alert.note! : alert.status.capitalized)
                         .font(.caption)
                         .foregroundStyle(.secondary)

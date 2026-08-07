@@ -1065,7 +1065,7 @@ function EvidenceCard({ title, meta, metaTitle, body, symbol, quote, tone = "acc
     <article className={`con-evidence-card con-evidence-${tone}`}>
       <div className="flex items-start justify-between gap-3">
         {symbol ? (
-          <SymbolButton symbol={symbol} quote={quote} showLogo={false}>
+          <SymbolButton symbol={symbol} quote={quote}>
             {title}
           </SymbolButton>
         ) : (

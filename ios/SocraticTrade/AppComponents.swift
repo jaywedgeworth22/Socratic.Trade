@@ -32,6 +32,8 @@ enum AppFormat {
         "alert.delete": "Delete Alert"
     ]
 
+    /// Full money by default (`$99,812.34`). Compact uses lowercase suffixes (`$99.8k`, `$1.2m`)
+    /// to match web compact style when used.
     static func money(_ value: Double?, compact: Bool = false) -> String {
         guard let value else { return "—" }
         if compact, abs(value) >= 1_000 {
@@ -39,13 +41,13 @@ enum AppFormat {
             let suffix: String
             if abs(value) >= 1_000_000_000 {
                 magnitude = 1_000_000_000
-                suffix = "B"
+                suffix = "b"
             } else if abs(value) >= 1_000_000 {
                 magnitude = 1_000_000
-                suffix = "M"
+                suffix = "m"
             } else {
                 magnitude = 1_000
-                suffix = "K"
+                suffix = "k"
             }
             let sign = value < 0 ? "−" : ""
             let scaled = abs(value) / magnitude
@@ -290,6 +292,69 @@ struct MetricTile: View {
         .padding(12)
         .background(tint.opacity(0.09), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Company logo for a ticker (same open ticker-icons source as the web console).
+/// Falls back to a 1–2 letter monogram when the image is missing or fails to load.
+struct TickerLogo: View {
+    let symbol: String
+    var size: CGFloat = 22
+
+    @State private var failed = false
+
+    private var normalized: String {
+        symbol.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "$", with: "")
+            .uppercased()
+    }
+
+    private var monogram: String {
+        let base = normalized.split { $0 == "." || $0 == "-" || $0 == "_" }.first.map(String.init) ?? normalized
+        return String(base.prefix(2))
+    }
+
+    private var logoURL: URL? {
+        guard !normalized.isEmpty else { return nil }
+        // Parity with src/lib/ticker-logos.ts TICKER_LOGO_BASE_URL
+        return URL(string: "https://raw.githubusercontent.com/davidepalazzo/ticker-logos/main/ticker_icons/\(normalized).png")
+    }
+
+    var body: some View {
+        Group {
+            if failed || logoURL == nil {
+                monogramView
+            } else if let logoURL {
+                AsyncImage(url: logoURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .padding(2)
+                    case .failure:
+                        monogramView
+                            .onAppear { failed = true }
+                    case .empty:
+                        ProgressView()
+                            .controlSize(.mini)
+                    @unknown default:
+                        monogramView
+                    }
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        .accessibilityHidden(true)
+        .onChange(of: normalized) { _, _ in failed = false }
+    }
+
+    private var monogramView: some View {
+        Text(monogram)
+            .font(.system(size: max(9, size * 0.38), weight: .semibold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

@@ -183,9 +183,11 @@ private struct ReadyHomeHero: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
-                        Text(AppFormat.money(snapshot.portfolio?.totalMarketValue, compact: true))
+                        Text(AppFormat.money(snapshot.portfolio?.totalMarketValue))
                             .font(.largeTitle.weight(.bold))
                             .foregroundStyle(AppPalette.accent)
+                            .minimumScaleFactor(0.7)
+                            .lineLimit(1)
                         Text("Equity")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -431,9 +433,9 @@ private struct PortfolioOverviewCard: View {
             SectionHeading("Portfolio")
             if let portfolio = snapshot.portfolio {
                 LazyVGrid(columns: columns, spacing: 10) {
-                    MetricTile(title: "Equity", value: AppFormat.money(portfolio.totalMarketValue, compact: true))
-                    MetricTile(title: "Buying Power", value: AppFormat.money(portfolio.buyingPower, compact: true))
-                    MetricTile(title: "Cash", value: AppFormat.money(portfolio.cash, compact: true))
+                    MetricTile(title: "Equity", value: AppFormat.money(portfolio.totalMarketValue))
+                    MetricTile(title: "Buying Power", value: AppFormat.money(portfolio.buyingPower))
+                    MetricTile(title: "Cash", value: AppFormat.money(portfolio.cash))
                     MetricTile(
                         title: "Positions",
                         value: "\(snapshot.positions.count)",

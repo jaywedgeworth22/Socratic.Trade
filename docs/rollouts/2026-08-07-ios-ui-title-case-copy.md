@@ -21,3 +21,10 @@
 - Order types: `stop_market` → **Stop Market**.
 - Price Alerts / Orders title-case; empty alert message no trailing period.
 - Insights: Portfolio Brief; Backend Remains Authoritative; vs SPY; Daily Opening Notional: N% used; N pending proposals.
+
+## Money + logos (2026-08-07)
+
+- Compact money suffixes lowercase: `$99.8k`, `$1.2m`, `$3.4b`.
+- iOS Home equity + Portfolio tiles use **full** currency (not compact).
+- iOS `TickerLogo` (ticker-icons + monogram fallback) on Assets positions/orders/watchlist/alerts, Activity fills, Proposals.
+- Web: re-enabled logos on all `SymbolButton` call sites that had `showLogo={false}` (watchlist, alerts, activity, results, lessons, etc.).

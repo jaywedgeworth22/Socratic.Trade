@@ -100,11 +100,7 @@ private struct FillActivityRow: View {
     var body: some View {
         AppCard {
             HStack(spacing: 12) {
-                Image(systemName: fill.side == "buy" || fill.side == "cover" ? "arrow.down.left" : "arrow.up.right")
-                    .font(.headline)
-                    .foregroundStyle(sideColor)
-                    .frame(width: 34, height: 34)
-                    .background(sideColor.opacity(0.1), in: Circle())
+                TickerLogo(symbol: fill.symbol, size: 34)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 7) {
                         Text(fill.symbol)

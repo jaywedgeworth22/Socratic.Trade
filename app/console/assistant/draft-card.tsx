@@ -201,7 +201,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
     <div className="mt-2 rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Tooltip className="con-mono text-[length:var(--con-fs-sm)] font-semibold" content="The order the assistant drafted. It is only a draft until you stage and then approve it.">
-          {sideUp} {draft.qty} <SymbolButton symbol={draft.symbol} showLogo={false} className="font-mono text-inherit" /> · {draft.order_type}
+          {sideUp} {draft.qty} <SymbolButton symbol={draft.symbol} className="font-mono text-inherit" /> · {draft.order_type}
           {limitText}
         </Tooltip>
         <Chip
