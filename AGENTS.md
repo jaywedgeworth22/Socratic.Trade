@@ -636,3 +636,7 @@ Fleet driver + all three apps (Socratic / Congress / Usage Monitor):
 `/Users/jay/apps/ios-fleet/README.md`. Bundle ID `trade.socratic.app`, team
 `CC8UTF7ATG`. Upload needs App Store Connect app record + either Xcode session
 or `~/.secrets/appstore-connect.env` (never print secrets).
+
+## Fleet UI copy
+
+Owner copy rules (Title Case headings/buttons; sentence-case values; lowercase compact money; always-inline iOS nav titles; ticker logos): `docs/FLEET-UI-COPY.md` (canonical live board: `/Users/jay/apps/FLEET-UI-COPY.md`).
