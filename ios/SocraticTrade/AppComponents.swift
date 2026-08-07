@@ -18,18 +18,18 @@ enum AppPalette {
 enum AppFormat {
     /// Humanized mobile command types — mirrors PWA `commandLabel`. API ids stay dotted.
     private static let commandLabels: [String: String] = [
-        "strategy.run_once": "Run once",
-        "strategy.start": "Start agent",
-        "strategy.stop": "Stop agent",
-        "strategy.close_only": "Close only",
-        "strategy.liquidating": "Wind down",
-        "proposal.approve": "Approve proposal",
-        "proposal.reject": "Reject proposal",
-        "account.activate": "Switch account",
-        "watchlist.add": "Add to watchlist",
-        "watchlist.remove": "Remove from watchlist",
-        "alert.create": "Create alert",
-        "alert.delete": "Delete alert"
+        "strategy.run_once": "Run Once",
+        "strategy.start": "Start Agent",
+        "strategy.stop": "Stop Agent",
+        "strategy.close_only": "Close Only",
+        "strategy.liquidating": "Wind Down",
+        "proposal.approve": "Approve Proposal",
+        "proposal.reject": "Reject Proposal",
+        "account.activate": "Switch Account",
+        "watchlist.add": "Add to Watchlist",
+        "watchlist.remove": "Remove from Watchlist",
+        "alert.create": "Create Alert",
+        "alert.delete": "Delete Alert"
     ]
 
     static func money(_ value: Double?, compact: Bool = false) -> String {
@@ -74,23 +74,58 @@ enum AppFormat {
     }
 
     static func relative(_ value: String?) -> String {
-        guard let date = date(value) else { return "Not scheduled" }
+        // Value/answer copy — sentence case, not a heading.
+        guard let date = date(value) else { return "not scheduled" }
         return date.formatted(.relative(presentation: .named))
     }
 
     static func relative(_ date: Date?) -> String {
-        guard let date else { return "Never" }
+        guard let date else { return "never" }
         return date.formatted(.relative(presentation: .named))
     }
 
-    /// Authority glossary: never show raw propose/decide — Ask-first / Autopilot (console parity).
+    /// Authority glossary: never show raw propose/decide — Ask-First / Autopilot (console parity).
+    /// Title-ish for chips/status next to headings; settings *values* use `strategyAuthorityValue`.
     static func strategyAuthorityLabel(_ value: String?) -> String {
         switch value?.lowercased() {
-        case "propose": return "Ask-first"
+        case "propose": return "Ask-First"
         case "decide": return "Autopilot"
         case .none, .some(""): return "—"
         case .some(let raw): return raw.replacingOccurrences(of: "_", with: " ").capitalized
         }
+    }
+
+    /// Settings / LabeledContent *value* — not a heading (owner: "ask-first", "intraday").
+    static func strategyAuthorityValue(_ value: String?) -> String {
+        switch value?.lowercased() {
+        case "propose": return "ask-first"
+        case "decide": return "autopilot"
+        case .none, .some(""): return "—"
+        case .some(let raw): return raw.replacingOccurrences(of: "_", with: " ").lowercased()
+        }
+    }
+
+    /// Policy horizon value for settings (e.g. "intraday"), not title case.
+    static func policyHorizonValue(_ value: String?) -> String {
+        guard let value, !value.isEmpty else { return "—" }
+        return value.replacingOccurrences(of: "_", with: " ").lowercased()
+    }
+
+    /// Cadence value, e.g. "every 60 min" (not "Every 60 min").
+    static func cadenceMinutesValue(_ minutes: Int?) -> String {
+        guard let minutes else { return "manual" }
+        return "every \(minutes) min"
+    }
+
+    /// Account environment annotation: live is unmarked (all money is real to the owner);
+    /// paper is "Broker (paper)" with lowercase p.
+    static func accountBrokerEnvironmentLine(broker: String, environment: String) -> String {
+        let name = broker.trimmingCharacters(in: .whitespacesAndNewlines)
+        let display = name.isEmpty ? "Broker" : name.prefix(1).uppercased() + name.dropFirst().lowercased()
+        if environment.lowercased() == "paper" {
+            return "\(display) (paper)"
+        }
+        return String(display)
     }
 
     /// Humanized command type for Activity / busy strips.
@@ -166,16 +201,32 @@ struct SectionHeading: View {
     }
 }
 
+/// Where the optional metric detail sits relative to the large value.
+enum MetricTileDetailPlacement: Sendable {
+    /// Under the value (default).
+    case below
+    /// Same row, smaller type to the right of the value (e.g. Positions: "14" + "open holdings").
+    case trailing
+}
+
 struct MetricTile: View {
     let title: String
     let value: String
     let detail: String?
+    let detailPlacement: MetricTileDetailPlacement
     let tint: Color
 
-    init(title: String, value: String, detail: String? = nil, tint: Color = AppPalette.accent) {
+    init(
+        title: String,
+        value: String,
+        detail: String? = nil,
+        detailPlacement: MetricTileDetailPlacement = .below,
+        tint: Color = AppPalette.accent
+    ) {
         self.title = title
         self.value = value
         self.detail = detail
+        self.detailPlacement = detailPlacement
         self.tint = tint
     }
 
@@ -184,15 +235,29 @@ struct MetricTile: View {
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(value)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(tint)
-                .fixedSize(horizontal: false, vertical: true)
-            if let detail {
-                Text(detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+            if let detail, detailPlacement == .trailing {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(value)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(tint)
+                        .fixedSize(horizontal: true, vertical: true)
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+            } else {
+                Text(value)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

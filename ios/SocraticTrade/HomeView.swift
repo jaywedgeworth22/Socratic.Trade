@@ -70,7 +70,7 @@ private struct ReadinessChecklistHero: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Finish setup to trade")
                             .font(.title3.weight(.bold))
-                        Text("Phone is a control remote — connect an account and symbol universe, then Run once.")
+                        Text("Phone is a control remote — connect an account and symbol universe, then Run Once.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -169,12 +169,12 @@ private struct ReadyHomeHero: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            // Word-first money reality (matches web; Live must not be color-only red).
-                            if let env = snapshot.readiness.activeConnectedAccount?.environment {
+                            // Paper-only badge — owner does not want "Live" called out (paper is still real capital).
+                            if snapshot.readiness.activeConnectedAccount?.environment.lowercased() == "paper" {
                                 StatusPill(
-                                    env == "live" ? "LIVE" : "PAPER",
-                                    color: env == "live" ? AppPalette.accent : AppPalette.accent.opacity(0.85),
-                                    systemImage: env == "live" ? "bolt.horizontal.fill" : "doc.text"
+                                    "PAPER",
+                                    color: AppPalette.accent.opacity(0.85),
+                                    systemImage: "doc.text"
                                 )
                             }
                             Text(snapshot.readiness.activeConnectedAccount?.label ?? "Ready")
@@ -206,13 +206,12 @@ private struct ReadyHomeHero: View {
                     MetricTile(
                         title: "Open P&L",
                         value: AppFormat.money(openPnl),
-                        detail: usesLiveMetrics ? "Live account" : "Paper account",
                         tint: pnlColor(openPnl)
                     )
                     MetricTile(
                         title: "Proposals",
                         value: "\(pendingCount)",
-                        detail: pendingCount == 0 ? "None waiting" : "Awaiting review",
+                        detail: pendingCount == 0 ? "none waiting" : "Awaiting Review",
                         tint: pendingCount > 0 ? AppPalette.warning : AppPalette.accent
                     )
                 }
@@ -227,7 +226,7 @@ private struct ReadyHomeHero: View {
         if pendingCount > 0 {
             Button(action: onReviewProposals) {
                 Label(
-                    pendingCount == 1 ? "Review 1 proposal" : "Review \(pendingCount) proposals",
+                    pendingCount == 1 ? "Review 1 Proposal" : "Review \(pendingCount) Proposals",
                     systemImage: "checklist"
                 )
                 .font(.body.weight(.semibold))
@@ -239,7 +238,7 @@ private struct ReadyHomeHero: View {
             .accessibilityHint("Opens the Proposals tab to approve or reject")
         } else {
             CommandButton(
-                "Run once",
+                "Run Once",
                 systemImage: "sparkles",
                 isBusy: store.isBusy("strategy.run_once"),
                 isDisabled: !store.canSubmit("strategy.run_once"),
@@ -350,9 +349,9 @@ private struct StrategyControlsCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeading(
-                    "Agent controls",
+                    "Agent Controls",
                     subtitle: heroOwnsRunOnce
-                        ? "Start scheduled autonomy or stop broker submissions. Run once is the primary button above."
+                        ? "Start scheduled autonomy or stop broker submissions. Run Once is the primary button above."
                         : "Every action is validated and executed by the backend."
                 )
 
@@ -372,7 +371,7 @@ private struct StrategyControlsCard: View {
                 }
 
                 CommandButton(
-                    "Stop agent",
+                    "Stop Agent",
                     systemImage: "stop.fill",
                     isBusy: store.isBusy("strategy.stop"),
                     role: .destructive
@@ -401,7 +400,7 @@ private struct StrategyControlsCard: View {
 
     private var runOnceButton: some View {
         CommandButton(
-            "Run once",
+            "Run Once",
             systemImage: "sparkles",
             isBusy: store.isBusy("strategy.run_once"),
             isDisabled: !store.canSubmit("strategy.run_once"),
@@ -413,7 +412,7 @@ private struct StrategyControlsCard: View {
 
     private var startButton: some View {
         CommandButton(
-            "Start agent",
+            "Start Agent",
             systemImage: "play.fill",
             isBusy: store.isBusy("strategy.start"),
             isDisabled: !store.canSubmit("strategy.start")
@@ -432,9 +431,14 @@ private struct PortfolioOverviewCard: View {
             if let portfolio = snapshot.portfolio {
                 LazyVGrid(columns: columns, spacing: 10) {
                     MetricTile(title: "Equity", value: AppFormat.money(portfolio.totalMarketValue, compact: true))
-                    MetricTile(title: "Buying power", value: AppFormat.money(portfolio.buyingPower, compact: true))
+                    MetricTile(title: "Buying Power", value: AppFormat.money(portfolio.buyingPower, compact: true))
                     MetricTile(title: "Cash", value: AppFormat.money(portfolio.cash, compact: true))
-                    MetricTile(title: "Positions", value: "\(snapshot.positions.count)", detail: "Open holdings")
+                    MetricTile(
+                        title: "Positions",
+                        value: "\(snapshot.positions.count)",
+                        detail: "open holdings",
+                        detailPlacement: .trailing
+                    )
                 }
             } else {
                 EmptyStateCard(
@@ -458,11 +462,15 @@ private struct PerformanceOverviewCard: View {
         snapshot.readiness.activeConnectedAccount?.environment == "live"
     }
 
-    private var accountSubtitle: String {
-        guard let environment = snapshot.readiness.activeConnectedAccount?.environment else {
-            return "No active account"
+    private var accountSubtitle: String? {
+        guard let account = snapshot.readiness.activeConnectedAccount else {
+            return "no active account"
         }
-        return environment == "live" ? "Active live account" : "Active paper account"
+        // Paper only — never "live account" (owner: all accounts are real; paper is the exception).
+        if account.environment.lowercased() == "paper" {
+            return AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment)
+        }
+        return nil
     }
 
     var body: some View {
@@ -481,11 +489,11 @@ private struct PerformanceOverviewCard: View {
                         tint: pnlColor(usesLiveMetrics ? performance.liveUnrealizedPnl : performance.paperUnrealizedPnl)
                     )
                     MetricTile(
-                        title: "Win rate",
+                        title: "Win Rate",
                         value: AppFormat.percent(usesLiveMetrics ? performance.liveWinRate : performance.paperWinRate)
                     )
                     MetricTile(
-                        title: "Avg. return",
+                        title: "Avg. Return",
                         value: AppFormat.percent(
                             usesLiveMetrics ? performance.liveAverageReturnPct : performance.paperAverageReturnPct,
                             signed: true
@@ -498,7 +506,7 @@ private struct PerformanceOverviewCard: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("vs. \(benchmark.benchmarkSymbol)")
+                                    Text("vs \(benchmark.benchmarkSymbol)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                     Text(AppFormat.percent(benchmark.excessReturnPct, signed: true))
@@ -515,7 +523,7 @@ private struct PerformanceOverviewCard: View {
                             )
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            Text("Account return minus \(benchmark.benchmarkSymbol) over the same window (cash flows neutralized).")
+                            Text("account return minus \(benchmark.benchmarkSymbol) over the same window (cash flows neutralized).")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -548,11 +556,11 @@ private struct ScheduleOverviewCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 12) {
                 SectionHeading("Schedule")
-                LabeledContent("Last run", value: AppFormat.relative(snapshot.scheduler.lastRunAt))
-                LabeledContent("Next run", value: AppFormat.relative(snapshot.scheduler.nextRunAt))
+                LabeledContent("Last Run", value: AppFormat.relative(snapshot.scheduler.lastRunAt))
+                LabeledContent("Next Run", value: AppFormat.relative(snapshot.scheduler.nextRunAt))
                 LabeledContent(
                     "Cadence",
-                    value: snapshot.policy.runCadenceMinutes.map { "Every \($0) min" } ?? "Manual"
+                    value: AppFormat.cadenceMinutesValue(snapshot.policy.runCadenceMinutes)
                 )
             }
         }
@@ -574,24 +582,24 @@ private struct HomeAttentionCard: View {
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 4) {
-                SectionHeading("Needs attention")
+                SectionHeading("Needs Attention")
                     .padding(.bottom, 8)
                 AttentionRow(
-                    title: "Pending proposals",
+                    title: "Pending Proposals",
                     value: "\(snapshot.pendingProposals.count)",
                     emphasize: snapshot.pendingProposals.count > 0
                 ) {
                     selectedTab = .proposals
                 }
                 AttentionRow(
-                    title: "Armed price alerts",
+                    title: "Armed Price Alerts",
                     value: "\(armedAlerts)",
                     emphasize: armedAlerts > 0
                 ) {
                     selectedTab = .markets
                 }
                 AttentionRow(
-                    title: "Open orders",
+                    title: "Open Orders",
                     value: "\(snapshot.orders.count)",
                     emphasize: snapshot.orders.count > 0
                 ) {
@@ -665,16 +673,19 @@ private struct AccountSettingsView: View {
 
     @ViewBuilder
     private var identitySection: some View {
-        Section("Signed in") {
+        Section("User Info") {
             LabeledContent("Name", value: store.snapshot?.currentUser?.name ?? "—")
             LabeledContent("Email", value: store.snapshot?.currentUser?.email ?? "—")
-            LabeledContent("Provider", value: store.snapshot?.currentUser?.loginProvider?.capitalized ?? "Not reported")
+            LabeledContent(
+                "Provider",
+                value: store.snapshot?.currentUser?.loginProvider.map { $0.lowercased() } ?? "not reported"
+            )
         }
     }
 
     @ViewBuilder
     private var accountsSection: some View {
-        Section("Connected accounts") {
+        Section("Connected Accounts") {
             if let accounts = store.snapshot?.connectedAccounts, !accounts.isEmpty {
                 ForEach(accounts) { account in
                     ConnectedAccountSettingsRow(account: account)
@@ -688,12 +699,12 @@ private struct AccountSettingsView: View {
 
     @ViewBuilder
     private var policySection: some View {
-        Section("Current policy") {
-            LabeledContent("Authority", value: AppFormat.strategyAuthorityLabel(store.snapshot?.policy.strategyAuthority))
-            LabeledContent("Horizon", value: store.snapshot?.policy.holdingHorizon?.capitalized ?? "—")
-            LabeledContent("Max order", value: AppFormat.money(store.snapshot?.policy.maxOrderNotional))
-            LabeledContent("Daily cap", value: AppFormat.money(store.snapshot?.policy.maxDailyNotional))
-            LabeledContent("Daily orders", value: store.snapshot?.policy.maxDailyOrders.map(String.init) ?? "—")
+        Section("Current Policy") {
+            LabeledContent("Authority", value: AppFormat.strategyAuthorityValue(store.snapshot?.policy.strategyAuthority))
+            LabeledContent("Horizon", value: AppFormat.policyHorizonValue(store.snapshot?.policy.holdingHorizon))
+            LabeledContent("Max Order", value: AppFormat.money(store.snapshot?.policy.maxOrderNotional))
+            LabeledContent("Daily Cap", value: AppFormat.money(store.snapshot?.policy.maxDailyNotional))
+            LabeledContent("Daily Orders", value: store.snapshot?.policy.maxDailyOrders.map(String.init) ?? "—")
         }
     }
 
@@ -741,7 +752,7 @@ private struct AccountSettingsView: View {
                 .disabled(store.isDeletingAccount)
             }
         } header: {
-            Text("Delete account")
+            Text("Delete Account")
         } footer: {
             Text("Reviewing is read-only and does not pause the agent. Final confirmation prepares and deletes this app account, its server-stored secrets, proposals, fills, watchlists, alerts, and learned context. Provider-side OAuth grants must be revoked separately.")
         }
@@ -781,7 +792,7 @@ private struct ConnectedAccountSettingsRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(account.label)
                     .font(.body.weight(.medium))
-                Text("\(account.broker.capitalized) · \(account.environment.capitalized)")
+                Text(AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -793,7 +804,8 @@ private struct ConnectedAccountSettingsRow: View {
                     .accessibilityLabel("Switching to \(account.label)")
             } else {
                 Button("Use") {
-                    if account.environment.lowercased() == "live" {
+                    // Still confirm before switching to a non-paper brokerage account; wording avoids "Live".
+                    if account.environment.lowercased() != "paper" {
                         confirmingLiveActivation = true
                     } else {
                         activate()
@@ -808,11 +820,11 @@ private struct ConnectedAccountSettingsRow: View {
                     : "Unavailable until the app loads account data")
             }
         }
-        .alert("Use Live Brokerage Account?", isPresented: $confirmingLiveActivation) {
-            Button("Use Live Account", role: .destructive, action: activate)
+        .alert("Use Brokerage Account?", isPresented: $confirmingLiveActivation) {
+            Button("Use Account", role: .destructive, action: activate)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Switch execution context to \(account.label) (\(account.broker.capitalized), live). Future approved actions will target this account after backend validation.")
+            Text("Switch execution context to \(account.label) (\(AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment))). Future approved actions will target this account after backend validation.")
         }
     }
 

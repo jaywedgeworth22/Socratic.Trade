@@ -186,13 +186,13 @@ private struct InsightsActionCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeading(
-                    "Want a fresh cycle?",
-                    subtitle: "Run once lives on Home so there is a single primary control — not a second copy here."
+                    "Want a Fresh Cycle?",
+                    subtitle: "Run Once lives on Home so there is a single primary control — not a second copy here."
                 )
                 Text(
                     snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse
-                        ? "Open the Home tab and tap Run once (or Review proposals when the queue is waiting)."
-                        : "Finish account + universe setup on Home first; then use Run once there."
+                        ? "Open the Home tab and tap Run Once (or Review Proposals when the queue is waiting)."
+                        : "Finish account + universe setup on Home first; then use Run Once there."
                 )
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
