@@ -12,12 +12,23 @@
 // disable the check silently and every failure is caught/logged, never thrown
 // into the trading tick.
 //
+// Alert identity (owner 2026-08-06): each free-tier SUBJECT uses that product's
+// Pushover app token so the phone logo matches the service the message is
+// about (ST/CT/UM). The body always ends with `(sent from Socratic Trade)` so
+// the runner is still visible. Peer free-tier checks run on a UTC-hour phase
+// offset from home so fleet GraphQL + pushes are staggered (denser coverage,
+// no simultaneous pile-up). Own backup regimen is summarized against a 24h
+// Hetzner volume PITR floor (shallow R2 is intentional; do not require multi-day LTX).
+//
 // Env:
 //   CLOUDFLARE_ST_API_TOKEN    (required — Cloudflare API token w/ account analytics read)
 //   CLOUDFLARE_ST_ACCOUNT_ID   (required — account tag, e.g. 94ec35cf…)
 //   R2_USAGE_MONITOR_INTERVAL_HOURS  (default 6)
 //   R2_USAGE_ALERT_THRESHOLD_PCT     (default 70)
 //   R2_USAGE_BUCKET_FILTER           (optional — only count this bucket; default: whole account)
+//   PUSHOVER_ST_API_TOKEN / PUSHOVER_CT_API_TOKEN / PUSHOVER_USAGE_API_TOKEN
+//     (subject app tokens; fall back to PUSHOVER_APP_TOKEN for home only)
+//   R2_USAGE_CHECK_ALL_ACCOUNTS=1    (tests/admin: skip peer UTC-hour stagger)
 
 // Use bare "fs" (not the "node:" scheme) so Next.js webpack can externalize it for server
 // bundles — the "node:" URI scheme fails client/edge compilation when this module is pulled
@@ -25,7 +36,7 @@
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import { getInternalSetting, setInternalSetting } from "./db-settings";
 import { audit } from "./db";
-import { notify } from "./notify";
+import { loadUserNotifyConfig, notify, type NotifyConfig } from "./notify";
 
 // ── Free tier + pure helpers (exported for tests) ────────────────────────────
 
@@ -351,15 +362,35 @@ function numericEnv(name: string, fallback: number, min: number): number {
  * Each slot is configured by an env pair; every configured slot is monitored.
  * Unset slots are skipped, so a subset works fine.
  */
+export type R2FleetAccountId = "st" | "ct" | "um";
+
+/** This process's product identity (Pushover "sent from" footer + home free tier). */
+export const R2_SENDER_APP_LABEL = "Socratic Trade";
+export const R2_HOME_ACCOUNT_ID: R2FleetAccountId = "st";
+
+/**
+ * UTC-hour peer phase so ST/CT/UM peer GraphQL don't stampede together.
+ * Home is always eligible; peers only when `utcHour % 6 === phase[sender]`.
+ * ST=2 → peers at 02,08,14,20Z; CT=4; UM=0.
+ */
+export const R2_PEER_CHECK_PHASE: Record<R2FleetAccountId, number> = {
+  st: 2,
+  ct: 4,
+  um: 0,
+};
+
+/** Hetzner volume snapshots are the ~24h worst-case floor; R2 is shallow/continuous. */
+export const R2_BACKUP_HETZNER_FLOOR_MS = 24 * 3600_000;
+
 export interface R2UsageAccountConfig {
-  id: "st" | "ct" | "um";
+  id: R2FleetAccountId;
   label: string;
   accountId: string;
   token: string;
 }
 
 export function loadR2UsageAccounts(): R2UsageAccountConfig[] {
-  const slots: Array<{ id: "st" | "ct" | "um"; label: string; tokenEnv: string; accountEnv: string }> = [
+  const slots: Array<{ id: R2FleetAccountId; label: string; tokenEnv: string; accountEnv: string }> = [
     { id: "st", label: "Socratic Trade", tokenEnv: "CLOUDFLARE_ST_API_TOKEN", accountEnv: "CLOUDFLARE_ST_ACCOUNT_ID" },
     { id: "ct", label: "Congress.Trade", tokenEnv: "CLOUDFLARE_CT_API_TOKEN", accountEnv: "CLOUDFLARE_CT_ACCOUNT_ID" },
     { id: "um", label: "Usage Monitor", tokenEnv: "CLOUDFLARE_JAY_API_TOKEN", accountEnv: "CLOUDFLARE_JAY_ACCOUNT_ID" },
@@ -371,6 +402,114 @@ export function loadR2UsageAccounts(): R2UsageAccountConfig[] {
     if (token && accountId) out.push({ id: s.id, label: s.label, accountId, token });
   }
   return out;
+}
+
+/**
+ * Pushover **application** token for the SUBJECT free-tier account so the phone
+ * shows that product's logo. Never prefer a peer's token for the home product.
+ */
+export function resolveSubjectPushoverAppToken(accountId: R2FleetAccountId): string {
+  const primary: Record<R2FleetAccountId, string[]> = {
+    st: ["PUSHOVER_ST_API_TOKEN", "PUSHOVER_APP_TOKEN"],
+    ct: ["PUSHOVER_CT_API_TOKEN"],
+    um: ["PUSHOVER_USAGE_API_TOKEN", "PUSHOVER_UM_API_TOKEN"],
+  };
+  for (const key of primary[accountId]) {
+    const v = process.env[key]?.trim();
+    if (v) return v;
+  }
+  // Last resort: this host's default app token (may wrong-logo; better than silence).
+  return (
+    process.env.PUSHOVER_APP_TOKEN?.trim() ||
+    process.env.PUSHOVER_ST_API_TOKEN?.trim() ||
+    ""
+  );
+}
+
+/** Append `(sent from APP)` once so the runner is visible next to the subject logo. */
+export function appendSentFromFooter(body: string, senderLabel: string = R2_SENDER_APP_LABEL): string {
+  const footer = `(sent from ${senderLabel})`;
+  const trimmed = body.replace(/\s+$/u, "");
+  if (trimmed.endsWith(footer)) return trimmed;
+  return `${trimmed}\n${footer}`;
+}
+
+/**
+ * Whether this run should GraphQL-check `accountId`. Home always; peers only on
+ * this sender's UTC phase (or when R2_USAGE_CHECK_ALL_ACCOUNTS=1).
+ */
+export function isR2AccountDueThisRun(
+  accountId: R2FleetAccountId,
+  now: number = Date.now(),
+  senderId: R2FleetAccountId = R2_HOME_ACCOUNT_ID,
+): boolean {
+  if (process.env.R2_USAGE_CHECK_ALL_ACCOUNTS === "1") return true;
+  if (accountId === senderId) return true;
+  const hour = new Date(now).getUTCHours();
+  return hour % 6 === R2_PEER_CHECK_PHASE[senderId];
+}
+
+export function selectR2AccountsForRun(
+  accounts: R2UsageAccountConfig[],
+  now: number = Date.now(),
+  senderId: R2FleetAccountId = R2_HOME_ACCOUNT_ID,
+): R2UsageAccountConfig[] {
+  return accounts.filter((a) => isR2AccountDueThisRun(a.id, now, senderId));
+}
+
+/**
+ * Own backup line for digests: R2 litestream is shallow/continuous; Hetzner is the 24h floor.
+ * Pure — callers supply litestream probe results (or omit for a generic reminder).
+ */
+export function formatOwnBackupRegimenLine(input: {
+  killEngaged: boolean;
+  litestreamState?: "active" | "idle" | "unknown" | "error" | "paused";
+  lastReplicaAgeMs?: number | null;
+  maxAcceptableAgeMs?: number;
+}): string {
+  const maxAge = input.maxAcceptableAgeMs ?? R2_BACKUP_HETZNER_FLOOR_MS;
+  if (input.killEngaged) {
+    return "Backup: R2 litestream paused (free-tier kill). Hetzner volume snapshots remain the ~24h PITR floor.";
+  }
+  const age = input.lastReplicaAgeMs;
+  if (typeof age === "number" && Number.isFinite(age) && age > maxAge) {
+    const hours = (age / 3600_000).toFixed(1);
+    return `Backup: ⚠️ replica lag ~${hours}h exceeds the 24h Hetzner floor — investigate litestream/R2.`;
+  }
+  const state = input.litestreamState ?? "unknown";
+  if (state === "active" || state === "idle") {
+    return `Backup: litestream ${state} (shallow R2 + Hetzner ~24h floor).`;
+  }
+  if (state === "paused") {
+    return "Backup: litestream paused. Hetzner ~24h floor still applies.";
+  }
+  return `Backup: litestream ${state} — treat Hetzner ~24h snapshots as worst-case floor.`;
+}
+
+/** Build notify config that forces the SUBJECT product's Pushover app token. */
+export function buildR2NotifyConfigForSubject(accountId: R2FleetAccountId): NotifyConfig {
+  const base = loadUserNotifyConfig("local");
+  const subjectToken = resolveSubjectPushoverAppToken(accountId);
+  if (!subjectToken) return base;
+  return {
+    ...base,
+    pushover: { ...base.pushover, pushoverToken: subjectToken },
+  };
+}
+
+async function deliverR2Alert(
+  account: R2UsageAccountConfig,
+  msg: { title: string; body: string; kind: string },
+  notifyImpl: typeof notify,
+): Promise<void> {
+  const body = appendSentFromFooter(msg.body, R2_SENDER_APP_LABEL);
+  let config: NotifyConfig | undefined;
+  try {
+    config = buildR2NotifyConfigForSubject(account.id);
+  } catch {
+    config = undefined;
+  }
+  await notifyImpl("local", { ...msg, body }, config ? { config } : undefined);
 }
 
 export interface R2UsageMonitorConfig {
@@ -498,7 +637,8 @@ async function checkOneAccount(
         ? `Review litestream/upload activity on this Cloudflare account before paid usage kicks in.`
         : `Usage is back inside the free-tier threshold.`);
     try {
-      await notifyImpl("local", { title, body, kind: "r2-usage" });
+      // Subject account → that product's Pushover app token (logo) + sent-from footer.
+      await deliverR2Alert(account, { title, body, kind: "r2-usage" }, notifyImpl);
       alertsSent += 1;
     } catch (err) {
       console.error("[r2-usage] notify error:", err);
@@ -547,8 +687,10 @@ export async function runR2UsageCheck(
   const prev = getInternalSetting<R2AlertState>(ALERT_STATE_KEY) ?? {};
   const next: R2AlertState = { ...prev };
   const results: R2AccountCheckResult[] = [];
+  // Stagger peer free-tier GraphQL/alerts vs home (and vs CT/UM peer phases).
+  const dueAccounts = selectR2AccountsForRun(accounts, now, R2_HOME_ACCOUNT_ID);
 
-  for (const account of accounts) {
+  for (const account of dueAccounts) {
     try {
       results.push(await checkOneAccount(account, window, cfg, now, prev, next, notifyImpl, deps));
     } catch (err) {
@@ -557,6 +699,21 @@ export async function runR2UsageCheck(
       audit("r2_usage.check_error", { account: account.id, error: msg });
       results.push({ accountId: account.accountId, accountLabel: account.label, status: "error", error: msg, alertsSent: 0 });
     }
+  }
+
+  // Keep prior peer snapshots in the dashboard when this run skipped them (phase offset).
+  const priorSnaps = getInternalSetting<R2UsageSnapshot[]>(SNAPSHOTS_KEY) ?? [];
+  const checkedIds = new Set(results.map((r) => r.accountId));
+  for (const prior of priorSnaps) {
+    if (checkedIds.has(prior.accountId)) continue;
+    // Re-attach as synthetic ok so admin card still shows last known peer state.
+    results.push({
+      accountId: prior.accountId,
+      accountLabel: prior.accountLabel,
+      status: "ok",
+      alertsSent: 0,
+      snapshot: prior,
+    });
   }
 
   setInternalSetting(ALERT_STATE_KEY, next);
@@ -592,18 +749,30 @@ export async function runR2UsageCheck(
       writeFileSync(cfg.disableMarkerPath, JSON.stringify(markerPayload, null, 2));
       audit("r2_usage.auto_disabled", markerPayload);
       try {
-        await notifyImpl("local", {
-          title: `🛑 R2 free-tier kill-switch: litestream replication auto-disabled`,
-          body:
-            `The Socratic Trade Cloudflare account crossed the ${cfg.thresholdPct}% free-tier threshold:\n` +
-            exceededMetrics
-              .map((m) => `${m.label}: ${m.alertBasis === "pace" ? `projected ${formatR2Projected(m)} (${m.projectedPct.toFixed(1)}%)` : `${formatR2MetricValue(m)} (${m.pctUsed.toFixed(1)}%)`}`)
-              .join("\n") +
-            `\n\nReplication is OFF (container restarting without litestream) and stays off until you resume it: ` +
-            `POST /api/admin/r2-usage/resume or delete ${cfg.disableMarkerPath} and restart. ` +
-            `Note: PITR backups to R2 are paused while disabled.`,
-          kind: "r2-usage",
-        });
+        const stAccount =
+          accounts.find((a) => a.id === "st") ??
+          ({
+            id: "st" as const,
+            label: "Socratic Trade",
+            accountId: stResult?.accountId ?? "st",
+            token: "",
+          } satisfies R2UsageAccountConfig);
+        await deliverR2Alert(
+          stAccount,
+          {
+            title: `🛑 R2 free-tier kill-switch: litestream replication auto-disabled`,
+            body:
+              `The Socratic Trade Cloudflare account crossed the ${cfg.thresholdPct}% free-tier threshold:\n` +
+              exceededMetrics
+                .map((m) => `${m.label}: ${m.alertBasis === "pace" ? `projected ${formatR2Projected(m)} (${m.projectedPct.toFixed(1)}%)` : `${formatR2MetricValue(m)} (${m.pctUsed.toFixed(1)}%)`}`)
+                .join("\n") +
+              `\n\nReplication is OFF (container restarting without litestream) and stays off until you resume it: ` +
+              `POST /api/admin/r2-usage/resume or delete ${cfg.disableMarkerPath} and restart. ` +
+              `Note: R2 PITR is paused while disabled; Hetzner volume snapshots remain the ~24h floor.`,
+            kind: "r2-usage",
+          },
+          notifyImpl,
+        );
       } catch (err) {
         console.error("[r2-usage] auto-disable notify error:", err);
       }
@@ -676,17 +845,63 @@ export function r2UsageDigestEnabled(): boolean {
   return !(raw === "off" || raw === "false" || raw === "0" || raw === "no");
 }
 
+/** Preferred UTC hour for digests; -1 disables hour gate (tests). Default ST=14. */
+function r2DigestPreferUtcHour(): number {
+  const raw = process.env.R2_USAGE_DIGEST_UTC_HOUR;
+  if (raw === undefined || raw === "") return 14;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 14;
+}
+
 export function isR2UsageDigestDue(now: number = Date.now()): boolean {
   if (loadR2UsageAccounts().length === 0 || !r2UsageDigestEnabled()) return false;
   const intervalMs = numericEnv("R2_USAGE_DIGEST_INTERVAL_HOURS", 24, 1) * 3600_000;
   const last = getInternalSetting<string>(LAST_DIGEST_KEY);
-  if (!last) return true;
+  const preferHour = r2DigestPreferUtcHour();
+  const hourOk = preferHour < 0 || preferHour > 23 || new Date(now).getUTCHours() === preferHour;
+  if (!last) {
+    // First digest: prefer a fleet-staggered UTC hour (ST=14) so CT/UM digests don't pile up.
+    return hourOk;
+  }
   const lastMs = Date.parse(last);
-  if (!Number.isFinite(lastMs)) return true;
-  return now - lastMs >= intervalMs;
+  if (!Number.isFinite(lastMs)) return hourOk;
+  if (now - lastMs < intervalMs) return false;
+  // After interval, wait until the preferred UTC hour so fleet digests stay staggered.
+  return hourOk;
 }
 
-/** Compose the digest message from the per-account snapshots. Exported for tests. */
+/** One-account digest body (preferred for Pushover — one logo per subject). */
+export function buildR2UsageDigestMessageForAccount(
+  s: R2UsageSnapshot,
+  opts?: { backupLine?: string },
+): { title: string; body: string } {
+  const day = (s.checkedAt ?? new Date().toISOString()).slice(0, 10);
+  const anyExceeded = s.metrics.some((m) => m.exceeded);
+  const title = anyExceeded
+    ? `📊 R2 free-tier daily — ${day} — ⚠️ over threshold`
+    : `📊 R2 free-tier daily — ${day}`;
+  const lines = s.metrics.map((m) => {
+    const flag = m.exceeded ? " ⚠️" : " ✓";
+    const pace = m.alertBasis === "pace" ? ` → pace ${m.projectedPct.toFixed(0)}%` : "";
+    return `  ${m.label}: ${formatR2MetricValue(m)} MTD (${m.pctUsed.toFixed(1)}%)${pace}${flag}`;
+  });
+  const backup =
+    opts?.backupLine ??
+    (/* home account only gets a live backup line from the runner */ "");
+  const body =
+    `${s.accountLabel}\n${lines.join("\n")}` +
+    `\n\nFree tier: 10 GiB storage / 1M Class A / 10M Class B ops per month.` +
+    ` Alert threshold: ${s.thresholdPct}%.` +
+    `\nChecked: ${s.checkedAt ?? "never"}` +
+    (backup ? `\n${backup}` : "");
+  return { title, body };
+}
+
+/**
+ * Multi-account compose (admin/tests). Production digest sends one Pushover
+ * per account via {@link buildR2UsageDigestMessageForAccount} so each uses
+ * the correct subject app token.
+ */
 export function buildR2UsageDigestMessage(
   snapshots: R2UsageSnapshot[],
 ): { title: string; body: string } {
@@ -717,8 +932,9 @@ export interface R2UsageDigestResult {
   reason?: string;
 }
 
-/** Runs a FRESH usage check (so the digest is never stale), then notifies the
- *  summary. Self-guarded; watermark-first. */
+/** Runs a FRESH usage check (so the digest is never stale), then notifies
+ *  **one Pushover per subject account** (correct logo each) with sent-from footer.
+ *  Self-guarded; watermark-first. */
 export async function runR2UsageDailyDigestIfDue(
   now: number = Date.now(),
   deps: GraphqlDeps & { notifyImpl?: typeof notify } = {},
@@ -726,18 +942,46 @@ export async function runR2UsageDailyDigestIfDue(
   try {
     if (!isR2UsageDigestDue(now)) return { status: "skipped", reason: "not_due" };
     setInternalSetting(LAST_DIGEST_KEY, new Date(now).toISOString());
-    const check = await runR2UsageCheck(now, deps);
+    // Digest wants every configured account (not just this hour's peer phase).
+    const prevForce = process.env.R2_USAGE_CHECK_ALL_ACCOUNTS;
+    process.env.R2_USAGE_CHECK_ALL_ACCOUNTS = "1";
+    let check: R2UsageCheckResult;
+    try {
+      check = await runR2UsageCheck(now, deps);
+    } finally {
+      if (prevForce === undefined) delete process.env.R2_USAGE_CHECK_ALL_ACCOUNTS;
+      else process.env.R2_USAGE_CHECK_ALL_ACCOUNTS = prevForce;
+    }
     if (check.snapshots.length === 0) {
       return { status: "skipped", reason: check.reason ?? "check_failed" };
     }
-    const { title, body } = buildR2UsageDigestMessage(check.snapshots);
     const notifyImpl = deps.notifyImpl ?? notify;
-    await notifyImpl("local", { title, body, kind: "r2-usage-digest" });
+    const accounts = loadR2UsageAccounts();
+    const homeBackupLine = formatOwnBackupRegimenLine({
+      killEngaged: isR2ReplicationDisabled(),
+      litestreamState: isR2ReplicationDisabled() ? "paused" : "unknown",
+    });
+    let sent = 0;
+    for (const snap of check.snapshots) {
+      const account =
+        accounts.find((a) => a.accountId === snap.accountId) ??
+        accounts.find((a) => a.label === snap.accountLabel);
+      if (!account) continue;
+      const backupLine = account.id === R2_HOME_ACCOUNT_ID ? homeBackupLine : undefined;
+      const { title, body } = buildR2UsageDigestMessageForAccount(snap, { backupLine });
+      try {
+        await deliverR2Alert(account, { title, body, kind: "r2-usage-digest" }, notifyImpl);
+        sent += 1;
+      } catch (err) {
+        console.error(`[r2-usage] digest notify error for ${account.id}:`, err);
+      }
+    }
     audit("r2_usage.digest", {
       accounts: check.snapshots.map((s) => s.accountId),
+      messagesSent: sent,
       exceeded: check.snapshots.flatMap((s) => s.metrics.filter((m) => m.exceeded).map((m) => `${s.accountLabel}:${m.id}`)),
     });
-    return { status: "sent" };
+    return sent > 0 ? { status: "sent" } : { status: "skipped", reason: "no_messages" };
   } catch (err) {
     console.error("[r2-usage] daily digest error:", err);
     try {
