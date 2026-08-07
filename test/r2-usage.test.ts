@@ -4,22 +4,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  appendSentFromFooter,
   assessR2Usage,
   buildR2UsageDigestMessage,
+  buildR2UsageDigestMessageForAccount,
   classifyR2Action,
   fetchR2RawUsage,
+  formatOwnBackupRegimenLine,
   formatR2MetricValue,
   getR2UsageSnapshots,
+  isR2AccountDueThisRun,
   isR2AutoDisableArmed,
   isR2ReplicationDisabled,
   isR2UsageCheckDue,
   loadR2UsageAccounts,
   loadR2UsageMonitorConfig,
   r2AlertTransitions,
+  resolveSubjectPushoverAppToken,
   r2MonthWindow,
   resumeR2Replication,
   runR2UsageCheck,
   R2_FREE_TIER,
+  R2_PEER_CHECK_PHASE,
 } from "../src/lib/r2-usage";
 import { deleteInternalSetting } from "../src/lib/db-settings";
 
@@ -43,6 +49,11 @@ beforeEach(() => {
   delete process.env.R2_USAGE_DISABLE_MARKER;
   delete process.env.R2_USAGE_AUTO_DISABLE;
   delete process.env.DB_BOOTSTRAP;
+  delete process.env.R2_USAGE_CHECK_ALL_ACCOUNTS;
+  delete process.env.PUSHOVER_ST_API_TOKEN;
+  delete process.env.PUSHOVER_CT_API_TOKEN;
+  delete process.env.PUSHOVER_USAGE_API_TOKEN;
+  delete process.env.PUSHOVER_APP_TOKEN;
   // Existing alert tests assert exact notification counts; daily-report tests opt in explicitly.
 });
 
@@ -241,6 +252,8 @@ describe("runR2UsageCheck", () => {
     expect(notifyCalls).toHaveLength(1);
     expect(notifyCalls[0].title).toContain("Storage");
     expect(notifyCalls[0].title).toContain("⚠️");
+    // Home free tier under ST logo — no sent-from footer.
+    expect(notifyCalls[0].body).not.toContain("(sent from Socratic Trade)");
 
     const snap = getR2UsageSnapshots()[0]!;
     expect(snap.accountId).toBe("acct");
@@ -401,6 +414,8 @@ describe("daily digest", () => {
     deleteInternalSetting("r2usage:lastDigestAt");
     delete process.env.R2_USAGE_DAILY_DIGEST;
     delete process.env.R2_USAGE_DIGEST_INTERVAL_HOURS;
+    // Tests use MID_JULY 00:00Z; disable fleet UTC-hour gate (-1 = any hour).
+    process.env.R2_USAGE_DIGEST_UTC_HOUR = "-1";
   });
 
   it("buildR2UsageDigestMessage renders per-account sections with flags", async () => {
@@ -492,6 +507,7 @@ describe("multi-account", () => {
   });
 
   it("checks every configured account; one failing account doesn't block the others", async () => {
+    process.env.R2_USAGE_CHECK_ALL_ACCOUNTS = "1";
     process.env.CLOUDFLARE_ST_API_TOKEN = "t1";
     process.env.CLOUDFLARE_ST_ACCOUNT_ID = "a1";
     process.env.CLOUDFLARE_CT_API_TOKEN = "t2";
@@ -513,12 +529,13 @@ describe("multi-account", () => {
   });
 
   it("alert state tracks accounts independently", async () => {
+    process.env.R2_USAGE_CHECK_ALL_ACCOUNTS = "1";
     process.env.CLOUDFLARE_ST_API_TOKEN = "t1";
     process.env.CLOUDFLARE_ST_ACCOUNT_ID = "a1";
     process.env.CLOUDFLARE_CT_API_TOKEN = "t2";
     process.env.CLOUDFLARE_CT_ACCOUNT_ID = "a2";
-    const notifyCalls: Array<{ title: string }> = [];
-    const notifyImpl = (async (_u: string, msg: { title: string }) => { notifyCalls.push(msg); return []; }) as never;
+    const notifyCalls: Array<{ title: string; body: string }> = [];
+    const notifyImpl = (async (_u: string, msg: { title: string; body: string }) => { notifyCalls.push(msg); return []; }) as never;
     const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
       const body = String(init?.body ?? "");
       // ST hot (8 GiB), CT quiet (1 GiB) — only ST should alert.
@@ -528,5 +545,88 @@ describe("multi-account", () => {
     await runR2UsageCheck(MID_JULY, { fetchImpl, notifyImpl });
     expect(notifyCalls).toHaveLength(1);
     expect(notifyCalls[0].title).toContain("Socratic Trade");
+    // ST subject + ST runner → no footer.
+    expect(notifyCalls[0].body).not.toContain("(sent from");
+  });
+
+  it("peer-subject alerts append sent-from footer; home does not", async () => {
+    process.env.R2_USAGE_CHECK_ALL_ACCOUNTS = "1";
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t1";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "a1";
+    process.env.CLOUDFLARE_CT_API_TOKEN = "t2";
+    process.env.CLOUDFLARE_CT_ACCOUNT_ID = "a2";
+    const notifyCalls: Array<{ title: string; body: string }> = [];
+    const notifyImpl = (async (_u: string, msg: { title: string; body: string }) => {
+      notifyCalls.push(msg);
+      return [];
+    }) as never;
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const body = String(init?.body ?? "");
+      // CT hot, ST quiet — peer subject under CT logo needs sent-from.
+      const hot = body.includes("a2");
+      return graphqlStorageAndOps(hot ? 8 * 1024 ** 3 : 1 * 1024 ** 3, 100, 100)(url, init);
+    }) as unknown as typeof fetch;
+    await runR2UsageCheck(MID_JULY, { fetchImpl, notifyImpl });
+    expect(notifyCalls).toHaveLength(1);
+    expect(notifyCalls[0].title).toContain("Congress.Trade");
+    expect(notifyCalls[0].body).toContain("(sent from Socratic Trade)");
+  });
+
+  it("staggers peer checks by UTC hour phase (home always due)", () => {
+    // MID_JULY is 00:00Z → hour 0; ST peer phase is 2.
+    expect(isR2AccountDueThisRun("st", MID_JULY)).toBe(true);
+    expect(isR2AccountDueThisRun("ct", MID_JULY)).toBe(false);
+    expect(isR2AccountDueThisRun("um", MID_JULY)).toBe(false);
+    const peerHour = Date.UTC(2026, 6, 16, R2_PEER_CHECK_PHASE.st);
+    expect(isR2AccountDueThisRun("ct", peerHour)).toBe(true);
+    expect(isR2AccountDueThisRun("um", peerHour)).toBe(true);
+    process.env.R2_USAGE_CHECK_ALL_ACCOUNTS = "1";
+    expect(isR2AccountDueThisRun("ct", MID_JULY)).toBe(true);
+  });
+
+  it("resolveSubjectPushoverAppToken maps account → product token", () => {
+    process.env.PUSHOVER_ST_API_TOKEN = "st-tok";
+    process.env.PUSHOVER_CT_API_TOKEN = "ct-tok";
+    process.env.PUSHOVER_USAGE_API_TOKEN = "um-tok";
+    expect(resolveSubjectPushoverAppToken("st")).toBe("st-tok");
+    expect(resolveSubjectPushoverAppToken("ct")).toBe("ct-tok");
+    expect(resolveSubjectPushoverAppToken("um")).toBe("um-tok");
+  });
+
+  it("appendSentFromFooter only when subject ≠ sender", () => {
+    expect(appendSentFromFooter("hi", "st")).toBe("hi");
+    expect(appendSentFromFooter("hi", "ct")).toBe("hi\n(sent from Socratic Trade)");
+    expect(appendSentFromFooter("hi\n(sent from Socratic Trade)", "um")).toBe(
+      "hi\n(sent from Socratic Trade)",
+    );
+  });
+
+  it("formatOwnBackupRegimenLine references Hetzner 24h floor", () => {
+    expect(formatOwnBackupRegimenLine({ killEngaged: true })).toContain("Hetzner");
+    expect(formatOwnBackupRegimenLine({ killEngaged: false, litestreamState: "active" })).toContain("litestream active");
+    expect(formatOwnBackupRegimenLine({ killEngaged: false, lastReplicaAgeMs: 30 * 3600_000 })).toContain("⚠️");
+  });
+
+  it("buildR2UsageDigestMessageForAccount is single-subject", () => {
+    const snapshot = {
+      accountId: "acct-ct",
+      accountLabel: "Congress.Trade",
+      checkedAt: "2026-07-16T12:00:00.000Z",
+      month: { startISO: "2026-07-01T00:00:00.000Z", endISO: "2026-08-01T00:00:00.000Z", elapsedFraction: 0.5 },
+      thresholdPct: 70,
+      bucketFilter: null,
+      metrics: assessR2Usage({
+        storageBytes: 1 * 1024 ** 3,
+        classAOps: 5_000,
+        classBOps: 2_000,
+        thresholdPct: 70,
+        now: MID_JULY,
+      }),
+      buckets: [],
+    };
+    const { title, body } = buildR2UsageDigestMessageForAccount(snapshot);
+    expect(title).toContain("2026-07-16");
+    expect(body).toContain("Congress.Trade");
+    expect(body).not.toContain("Socratic Trade\n");
   });
 });

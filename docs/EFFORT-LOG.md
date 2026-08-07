@@ -306,6 +306,8 @@ As of 2026-07-08 (assignment-rule update).
 - **[Socratic.Trade][CODEX sublane] RAG structured-vs-narrative routing boundary (branch `codex/rag-data-routing-20260722`, worktree `/Users/jay/.codex/worktrees/rag-data-routing-20260722`, claimed 2026-07-22) — LOCALLY READY.** Typed, fail-closed information-needs contract now keeps current prices, positions, orders, and financial facts deterministic while filings/transcripts/lessons/narrative research alone enter RAG. Focused routing tests 4/4, scoped lint, TypeScript, and diff check green; slow strategy integration verification deferred under host saturation. No provider, corpus, broker, or production writes.
 
 ## In Progress
+- **[2026-08-06][GROK] R2 subject Pushover identity + sent-from + fleet stagger + own backup line — IN PROGRESS / landing.** Subject free-tier → that app's PUSHOVER_* token; footer `(sent from APP)`; peer checks UTC phase; digests UM≥08/ST=14/CT≥20; Hetzner 24h floor. Branch `grok/r2-pushover-subject-identity`.
+
 
 - **2026-08-05 — GROK — COMPLETED (merged #2538 `2e55e075` + DEPLOYED 2026-08-06 21:39Z after the freeze repair; was IN PROGRESS — MONET board sweep 2026-08-06) — Multi-period TWR: split at each deposit/withdrawal, chain account+SPY sub-period returns (branch `grok/twr-subperiod-spy-chain`).** Owner: $100 for 10d then $10 for 100d must be separate regimes geometrically linked. NOTE (MONET live review 2026-08-06): Results still shows +56.47% via phantom $36.5k inferred withdrawal AND SPY prints 0.00% every sub-period — remaining bugs tracked on the row below + issues #2537/#2548.
 
