@@ -1,5 +1,10 @@
 ## Current (2026-08-06 MONET full-product review + deploy-freeze repair)
 
+
+## Production host (2026-08-07)
+
+**Hetzner** `167.233.254.55` (Coolify + all apps). ST live with L9 repaired DB. CT/UM live on fresh schema. See `docs/rollouts/2026-08-07-hetzner-fleet-cutover.md`.
+
 **MONET (this seat; posts earlier today were tagged CLAUDE before the owner re-ruled the seat) ran the owner-requested full-product review** (live signed-in prod session +
 12-agent workflow): findings in `docs/reviews/2026-08-06-claude-full-product-review.md`,
 handoff in `docs/rollouts/2026-08-06-claude-full-product-review.md`, issues labeled
