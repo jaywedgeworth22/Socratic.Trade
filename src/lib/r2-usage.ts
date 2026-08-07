@@ -14,11 +14,12 @@
 //
 // Alert identity (owner 2026-08-06): each free-tier SUBJECT uses that product's
 // Pushover app token so the phone logo matches the service the message is
-// about (ST/CT/UM). The body always ends with `(sent from Socratic Trade)` so
-// the runner is still visible. Peer free-tier checks run on a UTC-hour phase
-// offset from home so fleet GraphQL + pushes are staggered (denser coverage,
-// no simultaneous pile-up). Own backup regimen is summarized against a 24h
-// Hetzner volume PITR floor (shallow R2 is intentional; do not require multi-day LTX).
+// about (ST/CT/UM). When THIS app sends under another product's token/logo,
+// the body ends with `(sent from Socratic Trade)` so the runner is still
+// visible; same-product messages (home free tier under ST token) omit the
+// footer. Peer free-tier checks run on a UTC-hour phase offset from home so
+// fleet GraphQL + pushes are staggered. Own backup regimen is summarized
+// against a 24h Hetzner volume PITR floor (shallow R2 is intentional).
 //
 // Env:
 //   CLOUDFLARE_ST_API_TOKEN    (required — Cloudflare API token w/ account analytics read)
@@ -426,10 +427,19 @@ export function resolveSubjectPushoverAppToken(accountId: R2FleetAccountId): str
   );
 }
 
-/** Append `(sent from APP)` once so the runner is visible next to the subject logo. */
-export function appendSentFromFooter(body: string, senderLabel: string = R2_SENDER_APP_LABEL): string {
-  const footer = `(sent from ${senderLabel})`;
+/**
+ * Append `(sent from APP)` only when the runner is **not** the same product as
+ * the subject logo (owner: footer is noise when ST messages under ST token).
+ */
+export function appendSentFromFooter(
+  body: string,
+  subjectId: R2FleetAccountId,
+  senderId: R2FleetAccountId = R2_HOME_ACCOUNT_ID,
+  senderLabel: string = R2_SENDER_APP_LABEL,
+): string {
   const trimmed = body.replace(/\s+$/u, "");
+  if (subjectId === senderId) return trimmed;
+  const footer = `(sent from ${senderLabel})`;
   if (trimmed.endsWith(footer)) return trimmed;
   return `${trimmed}\n${footer}`;
 }
@@ -502,7 +512,8 @@ async function deliverR2Alert(
   msg: { title: string; body: string; kind: string },
   notifyImpl: typeof notify,
 ): Promise<void> {
-  const body = appendSentFromFooter(msg.body, R2_SENDER_APP_LABEL);
+  // Footer only when we speak under another product's Pushover logo.
+  const body = appendSentFromFooter(msg.body, account.id, R2_HOME_ACCOUNT_ID, R2_SENDER_APP_LABEL);
   let config: NotifyConfig | undefined;
   try {
     config = buildR2NotifyConfigForSubject(account.id);

@@ -12,7 +12,9 @@ accounts into one ST-logo message. Peer checks could fire near home-app digests.
    - ST → `PUSHOVER_ST_API_TOKEN` (or `PUSHOVER_APP_TOKEN` on ST host)
    - CT → `PUSHOVER_CT_API_TOKEN` (or `PUSHOVER_APP_TOKEN` on CT host)
    - UM → `PUSHOVER_USAGE_API_TOKEN`
-2. **Runner footer:** every R2 ops message ends with `(sent from <App Name>)`.
+2. **Runner footer:** `(sent from <App Name>)` only when the runner is **not**
+   the same product as the subject logo (e.g. ST messaging under CT/UM token).
+   Same-product messages omit the footer.
 3. **Peer GraphQL stagger (ST multi-account):** home free tier always; peers only
    when `utcHour % 6 === phase` — ST=2, CT=4, UM=0. Force all:
    `R2_USAGE_CHECK_ALL_ACCOUNTS=1`.

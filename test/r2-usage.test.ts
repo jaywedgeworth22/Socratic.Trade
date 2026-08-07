@@ -252,7 +252,8 @@ describe("runR2UsageCheck", () => {
     expect(notifyCalls).toHaveLength(1);
     expect(notifyCalls[0].title).toContain("Storage");
     expect(notifyCalls[0].title).toContain("⚠️");
-    expect(notifyCalls[0].body).toContain("(sent from Socratic Trade)");
+    // Home free tier under ST logo — no sent-from footer.
+    expect(notifyCalls[0].body).not.toContain("(sent from Socratic Trade)");
 
     const snap = getR2UsageSnapshots()[0]!;
     expect(snap.accountId).toBe("acct");
@@ -544,6 +545,30 @@ describe("multi-account", () => {
     await runR2UsageCheck(MID_JULY, { fetchImpl, notifyImpl });
     expect(notifyCalls).toHaveLength(1);
     expect(notifyCalls[0].title).toContain("Socratic Trade");
+    // ST subject + ST runner → no footer.
+    expect(notifyCalls[0].body).not.toContain("(sent from");
+  });
+
+  it("peer-subject alerts append sent-from footer; home does not", async () => {
+    process.env.R2_USAGE_CHECK_ALL_ACCOUNTS = "1";
+    process.env.CLOUDFLARE_ST_API_TOKEN = "t1";
+    process.env.CLOUDFLARE_ST_ACCOUNT_ID = "a1";
+    process.env.CLOUDFLARE_CT_API_TOKEN = "t2";
+    process.env.CLOUDFLARE_CT_ACCOUNT_ID = "a2";
+    const notifyCalls: Array<{ title: string; body: string }> = [];
+    const notifyImpl = (async (_u: string, msg: { title: string; body: string }) => {
+      notifyCalls.push(msg);
+      return [];
+    }) as never;
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const body = String(init?.body ?? "");
+      // CT hot, ST quiet — peer subject under CT logo needs sent-from.
+      const hot = body.includes("a2");
+      return graphqlStorageAndOps(hot ? 8 * 1024 ** 3 : 1 * 1024 ** 3, 100, 100)(url, init);
+    }) as unknown as typeof fetch;
+    await runR2UsageCheck(MID_JULY, { fetchImpl, notifyImpl });
+    expect(notifyCalls).toHaveLength(1);
+    expect(notifyCalls[0].title).toContain("Congress.Trade");
     expect(notifyCalls[0].body).toContain("(sent from Socratic Trade)");
   });
 
@@ -568,9 +593,12 @@ describe("multi-account", () => {
     expect(resolveSubjectPushoverAppToken("um")).toBe("um-tok");
   });
 
-  it("appendSentFromFooter is idempotent", () => {
-    expect(appendSentFromFooter("hi")).toBe("hi\n(sent from Socratic Trade)");
-    expect(appendSentFromFooter("hi\n(sent from Socratic Trade)")).toBe("hi\n(sent from Socratic Trade)");
+  it("appendSentFromFooter only when subject ≠ sender", () => {
+    expect(appendSentFromFooter("hi", "st")).toBe("hi");
+    expect(appendSentFromFooter("hi", "ct")).toBe("hi\n(sent from Socratic Trade)");
+    expect(appendSentFromFooter("hi\n(sent from Socratic Trade)", "um")).toBe(
+      "hi\n(sent from Socratic Trade)",
+    );
   });
 
   it("formatOwnBackupRegimenLine references Hetzner 24h floor", () => {
