@@ -1,10 +1,16 @@
 # Litestream WAL Replication
 
 Continuous SQLite backup via [Litestream](https://litestream.io) **0.5.x**. Streams the
-WAL from `~/apps/trading-live/data/app.db` to a Cloudflare R2 bucket as LTX files.
+WAL as LTX files to an S3-compatible object store.
 
-The app runs locally on macOS under PM2; Litestream runs as a sidecar PM2 process
-(`litestream`) launched by `scripts/run-litestream.sh`.
+**Production (Coolify, 2026-08-07+):** active replica is **Backblaze B2** EU Central
+(`jays-socratic-trade-eu`, endpoint `s3.eu-central-003.backblazeb2.com`) via
+`litestream.coolify.yml` + Infisical `AWS_*`. Cloudflare R2 holds a **historic** freeze
+until B2 restore is proven — do not delete R2 objects yet. Details:
+`docs/rollouts/2026-08-07-litestream-b2-backup.md`.
+
+Local Mac notes below (`litestream.yml` + `scripts/run-litestream.sh`) are optional
+dev/sidecar history; production does **not** use Mac PM2 litestream.
 
 > **0.5.x note:** Litestream 0.5 only supports a **single replica per database**
 > (the old multi-replica config errors with "multiple replicas on a single database

@@ -1,3 +1,12 @@
+## Current (2026-08-07 GROK — Litestream → Backblaze B2)
+
+**Active SQLite backup target is Backblaze B2** (`jays-socratic-trade-eu`, eu-central-003).
+Infisical ST prod `AWS_*` repointed to scoped key `fleet-socratic-backup`; prior R2
+credentials preserved as `AWS_R2_HISTORIC_*` (R2 objects left in place — historic).
+Code: `litestream.coolify.yml` (force-path-style, 7d retention, 60s sync); R2 free-tier
+kill-switch no longer pauses litestream when endpoint is B2. Host spare forensic
+`app.db.*` copies pruned after integrity_check=ok. Branch `grok/litestream-b2-backup`.
+Rollout: `docs/rollouts/2026-08-07-litestream-b2-backup.md`.
 # Status
 
 ## Current (2026-08-07) — docs / GitHub surface refresh
@@ -41,11 +50,9 @@ handoff in `docs/rollouts/2026-08-06-claude-full-product-review.md`, issues labe
   shared box; prod sat on `6b47a886` while main advanced 4 merges. Zombie helper
   `onlrw5mgf4s2pw9he4udt2kg` (13.5h) removed; webhook redelivered; retry on a quiet box
   progressed past every earlier failure point (see rollout note for final status).
-- **Litestream→R2 replication is PAUSED (P0)** since Aug 4 (free-tier kill-switch): the
-  prod DB currently has no continuous backup and the R2 restore path is empty. The
-  health-table line below claiming "litestream replicating" is STALE. Owner decision:
-  resume via `POST /api/admin/r2-usage/resume` (pace 82%/month-end) or fund/point a new
-  backup target. Cross-app: Usage Monitor R2 storage 98.6% full; CT Class A pace 236%.
+- **Litestream→R2 was PAUSED (P0)** since Aug 4 (free-tier kill-switch). **Superseded
+  2026-08-07 GROK:** active replica → **Backblaze B2** (see Current header); R2 left
+  historic. Cross-app R2 free-tier noise may still alert but must not stop B2 backups.
 - **Results page shows +56.47% vs SPY on a flat account (P1)** — phantom inferred
   $36.5k withdrawal + SPY series silently 0.00% everywhere; and the tax open-lots ledger
   contradicts live positions (T long 91 sh vs actual short −1.881). Overlaps GROK's
