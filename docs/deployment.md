@@ -1,62 +1,54 @@
 # Production Deployment
 
-Production is `socratictrade.com` on the Coolify app `socratic-trade-prod`
-(`m1os7ijf31bg3fanil152e4b`) on the Hetzner host. Coolify's GitHub App watches
-`main` and auto-deploys every push. A merged PR therefore enters the production
-deployment queue without an additional GitHub Actions or operator deploy step.
+Production is **[socratictrade.com](https://socratictrade.com)** on Coolify app
+**uuid `socratic-app`** (name "Socratic.Trade", branch `main`, dockerfile build pack).
 
-Canonical implementation and rollback evidence:
+**Host (current):** Coolify on Hetzner (`167.233.254.55`; dashboard/API
+`https://host.jays.services`). Oracle Cloud (`141.148.182.224`) was the prior
+prod host until the 2026-08 fleet cutover — treat Oracle IPs and old app uuids
+in historical rollouts as archival, not live targets.
+
+**Auto-deploy:** every push to `main` triggers Coolify via the repo webhook to
+Coolify's **manual** GitHub webhook endpoint
+(`https://host.jays.services/webhooks/source/github/events/manual`), not the
+GitHub-App integration alone. HMAC must match the app's
+`manual_webhook_secret_github`. Merge == live; do **not** post deploy claims or
+manually trigger deploys (ANNOUNCE-THEN-DEPLOY is retired).
+
+Canonical detail:
 
 - `docs/rollouts/2026-07-10-auto-deploy-on.md`
-- `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`
-- `docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`
-- `AGENTS.md` -> **PRODUCTION IS ON COOLIFY**
+- `docs/rollouts/2026-08-07-hetzner-fleet-cutover.md` (and ops follow-up notes)
+- `docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md` (webhook signature drift)
+- `AGENTS.md` → production / Coolify stanzas
 
 ## Deployment flow
 
-1. A pull request passes the required `verify` check and merges to `main`.
-2. GitHub sends the push webhook to Coolify. The Cloudflare zone allows GitHub's
-   documented webhook source ranges.
-3. Coolify serializes the build (`concurrent_builds=1`), builds with Nixpacks,
-   and starts `scripts/coolify-prod-start.sh` with `DB_BOOTSTRAP=live`.
-4. The boot script injects Infisical secrets, restores the persistent SQLite DB
-   only when the marker-guarded bootstrap requires it, and runs Litestream
-   replication around the Next.js process.
+1. A pull request passes the required `verify` check and merges to `main`
+   (prefer `gh pr merge <n> --squash --auto`).
+2. GitHub delivers the push to Coolify's manual webhook (HMAC-validated).
+3. Coolify serializes builds (`concurrent_builds` pinned to **1**), builds with
+   the app's **Dockerfile** pack, and starts `scripts/coolify-prod-start.sh`
+   with `DB_BOOTSTRAP=live`.
+4. Boot injects Infisical secrets, restores SQLite when the marker-guarded
+   bootstrap requires it, and runs Litestream (when R2 is enabled) around Next.js.
 
-The retired `.github/workflows/deploy.yml` Mac/PM2 workflow was deleted on
-2026-07-11. Do not recreate or manually dispatch it: the old `trading-live`
-worktree and PM2 `trading` process are rollback infrastructure, and starting
-that scheduler while Coolify is live can place duplicate trades.
+The retired Mac/PM2 publish path and Coolify PR previews are gone. Do not start
+Mac `pm2` `trading` while Coolify runs `DB_BOOTSTRAP=live` (dual schedulers).
 
 ## Secrets and persistence
 
-- Infisical is authoritative. `REQUIRE_SECRETS_MANAGER=1` makes production fail
-  closed unless startup runs through the Infisical injection path.
+- Infisical is authoritative for production secrets.
 - SQLite lives on the Coolify persistent volume at `/app/data`.
-- Litestream replicates from the production container to the R2 replica. The
-  version is pinned in `scripts/coolify-prod-start.sh`.
-- `ENCRYPTION_KEY` must remain stable or stored user/broker credentials become
-  undecryptable.
+- Litestream → R2 when enabled; free-tier kill-switch and B2 offsite are covered
+  in fleet ops rollouts. `ENCRYPTION_KEY` must remain stable or stored credentials
+  become undecryptable.
 
-See `docs/secrets.md` and `docs/litestream.md` for their focused runbooks.
+## Verify after merge
 
-## Verification
+```bash
+bash scripts/verify-deploy-sha.sh   # live sha contains your commit
+curl -sS https://socratictrade.com/api/health
+```
 
-- Confirm the latest Coolify deployment is `finished` and its recorded commit
-  matches the intended `main` commit.
-- `curl -fsS https://socratictrade.com/api/health` must return `ok: true`, DB
-  `ok`, and a fresh scheduler tick.
-- Verify the running container is healthy and Litestream replication remains
-  continuous. A healthy edge response alone does not prove the intended commit
-  is serving.
-
-## Rollback boundary
-
-The Mac/PM2 lane is rollback-only. Before starting it, an operator must first
-disable Coolify auto-deploy and stop the Coolify application/scheduler, then
-restore the saved rollback DNS target. Never run the Coolify and Mac schedulers
-at the same time. The exact saved DNS target and recovery boundary are recorded
-in `AGENTS.md` and the migration rollout notes above.
-
-Preview servers and preview hostnames are retired. Review branch work locally
-with `npm run dev` and use the required PR verification gate.
+CI: GitHub-hosted `ubuntu-latest` only (no self-hosted Mac/Oracle runner labels).

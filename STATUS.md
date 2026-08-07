@@ -7,6 +7,16 @@ Code: `litestream.coolify.yml` (force-path-style, 7d retention, 60s sync); R2 fr
 kill-switch no longer pauses litestream when endpoint is B2. Host spare forensic
 `app.db.*` copies pruned after integrity_check=ok. Branch `grok/litestream-b2-backup`.
 Rollout: `docs/rollouts/2026-08-07-litestream-b2-backup.md`.
+# Status
+
+## Current (2026-08-07) — docs / GitHub surface refresh
+
+**README + `docs/deployment.md` + strategic-framework + GitHub About** brought in line with
+supported brokers (**Alpaca**, **Tradier**, **Robinhood**), Hetzner Coolify host, app uuid
+`socratic-app`, dockerfile + auto-deploy on main, no Test-mode/local sim, fleet UI copy pointer.
+Branch `grok/docs-github-refresh`.
+
+---
 
 ## Current (2026-08-06 MONET representation-weighted model rotation)
 
