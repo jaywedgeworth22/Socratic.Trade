@@ -1,5 +1,6 @@
 // model-rotation.ts — the "__rotate__" comparative-measurement option: rotate the Proposer (green) and/or
-// Reviewer (red) model through every eligible curated model, a different one each strategy run.
+// Reviewer (red) model through the eligible curated models, one per strategy run, weighted toward
+// models underrepresented in this account's own recent rotation history.
 //
 // PURPOSE (owner request 2026-07-08): accrue attributed comparative history across models on the
 // selected broker account. Proposals already persist `proposedByModel` (the CONCRETE serving model),
@@ -19,22 +20,27 @@
 // `resolveOpenAiModel` (llm-request.ts) covers consumers that read the persisted policy outside a
 // run (chat, lesson pass, tuning): they fail closed, never serving the literal sentinel.
 //
-// POINTER STATE: independent per-seat round-robin counters persisted via internal settings, keyed
-// `model_rotation:<userId>:<accountId>:<seat>`. To vary green/red COMBINATIONS rather than locking
-// phase (both counters advancing by 1 per run = a fixed pairing), the red counter advances one
-// EXTRA step whenever the green counter wraps a full cycle. Additionally, when BOTH seats rotate,
-// a run never serves the SAME model to both: if red's slot would equal green's pick, red skips one
-// slot forward (pool >= 2 only — a 1-model pool degenerates to same-model by necessity). Without
-// the skip, both counters start at 0, so proposer and reviewer served identical models for the
-// entire first cycle (pairings only de-phased after the first green wrap). The pointer advance +
-// pick audit are
+// REPRESENTATION-WEIGHTED PICK (owner request 2026-08-06 — replaces the per-seat round-robin
+// counters): each rotating seat SAMPLES its model from the eligible pool, weighted by how
+// underrepresented each candidate is in this (user, account, seat)'s own recent rotation history —
+// the committed `model_rotation_pick` audits over the trailing 30 days. Candidates whose
+// representation count is BELOW the median of the candidate set carry weight 2 (zero-usage models
+// always do — they are maximally underrepresented); at-or-above-median candidates carry weight 1.
+// An underrepresented model is therefore twice as likely to be picked as an overrepresented one,
+// which can still be picked. When BOTH seats rotate, a run never serves the SAME model to both:
+// red samples from the pool minus green's pick (pool >= 2 only — a 1-model pool degenerates to
+// same-model by necessity). The RNG is injectable (`random` on the input) so tests stay
+// deterministic. The pick audit is
 // COMMITTED LATE: `resolveModelRotationForRun` computes the picks early (so the budget preview can
 // price the concrete models) but returns a `commit()` the caller only invokes once the run is
 // actually committed to serving the LLM — after account validation and the usage-budget skip gate.
-// A run that aborts earlier holds the pointer, so a rotation slot is never burned on a run that
-// generated no proposal (no `proposedByModel` to match). Per-account run locks serialize same-account
-// runs, so the read-early / commit-late window has no TOCTOU.
-import { audit, getInternalSetting, resolveLlmCredential, setInternalSetting } from "./db";
+// The committed audit IS the representation ledger, so a run that aborts earlier writes nothing
+// and never skews the weights with a pick that generated no proposal (no `proposedByModel` to
+// match). Per-account run locks serialize same-account runs, so the read-early / commit-late
+// window has no TOCTOU. Legacy `model_rotation:<userId>:<accountId>:<seat>` internal-settings
+// pointer rows are no longer read or written (account-deletion cleanup still recognizes the
+// prefix for old rows).
+import { audit, getDb, resolveLlmCredential } from "./db";
 import { modelCredentialService } from "./llm-provider";
 import { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL } from "./llm-request";
 import { recommendedReasoningEffortForModel } from "./model-reasoning-recommendations";
@@ -83,71 +89,75 @@ export const MODEL_ROTATION_POOL: readonly string[] = [
   "deepseek-reasoner"
 ];
 
-/** One seat's pick: the model served this run plus the pointer bookkeeping that produced it. */
-export interface RotationSeatPick {
-  model: string;
-  /** Counter value CONSUMED by this pick (pool index = pointer % pool length). */
-  pointer: number;
-  /** Counter value to persist for the next run. */
-  nextPointer: number;
-  /** True when this pick consumed the last slot of a full cycle through the pool. */
-  wrapped: boolean;
+/** Owner request (2026-08-06, verbatim intent): a model UNDERREPRESENTED in the rotation's own
+ *  statistics is twice as likely to be picked as an overrepresented one — which can still be
+ *  picked (weight 1, never 0). */
+export const ROTATION_UNDERREPRESENTED_WEIGHT = 2;
+export const ROTATION_REPRESENTED_WEIGHT = 1;
+/** Trailing window for representation counts — safely inside the 90-day audit_events retention
+ *  (`model_rotation_pick` is not an observability-pruned kind; src/lib/audit-prune.ts). */
+export const ROTATION_REPRESENTATION_WINDOW_DAYS = 30;
+
+/**
+ * Pure weighting rule (unit-testable without a DB): weight 2 for candidates whose representation
+ * count is BELOW the median of the candidate set, weight 1 at-or-above. Zero-usage models are
+ * maximally underrepresented and ALWAYS get weight 2 — even when at/above a zero median (e.g.
+ * counts [0, 0, 5]: median 0, but the two unserved models must still be favored). Empty stats
+ * (all zero) degrade to uniform weight 2 across the board — i.e. uniform sampling.
+ */
+export function rotationRepresentationWeights(
+  pool: readonly string[],
+  counts: ReadonlyMap<string, number>
+): number[] {
+  const observed = pool.map((model) => {
+    const count = counts.get(model);
+    return typeof count === "number" && Number.isFinite(count) && count > 0 ? Math.trunc(count) : 0;
+  });
+  if (observed.length === 0) return [];
+  const sorted = [...observed].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+  return observed.map((count) =>
+    count === 0 || count < median ? ROTATION_UNDERREPRESENTED_WEIGHT : ROTATION_REPRESENTED_WEIGHT
+  );
 }
 
-export interface RotationAdvance {
-  green?: RotationSeatPick;
-  red?: RotationSeatPick;
+/** One seat's weighted pick: the model served this run plus the weighting receipts for the audit. */
+export interface WeightedRotationPick {
+  model: string;
+  /** Weight the sampled model carried (2 = underrepresented, 1 = at/above the median). */
+  weight: number;
+  /** The model's representation count in the window (committed picks for this user/account/seat). */
+  representation: number;
 }
 
 /**
- * Pure round-robin pointer logic (unit-testable without a DB). Each rotating seat consumes
- * `pool[counter % pool.length]` and advances its counter by 1; when the GREEN counter wraps
- * (finishes a full cycle), the RED counter advances one extra step so the green/red pairing
- * shifts phase instead of repeating the same combinations forever.
- *
- * SAME-MODEL SKIP: when BOTH seats rotate and the pool has >= 2 models, red never serves the
- * model green picked this run — if red's slot lands on it, red consumes the NEXT slot instead
- * (and its counter continues from there). Both counters start at 0, so without this skip the
- * two seats served the SAME model every run for the whole first cycle. The green-wrap extra
- * advance stacks on top unchanged.
+ * Proportional (weighted) sampling over the pool. `random()` must return a value in [0, 1) —
+ * injectable so tests are deterministic; callers default it to Math.random. Out-of-range or
+ * non-finite RNG output is clamped defensively rather than thrown.
  */
-export function advanceRotationPointers(input: {
+export function weightedRotationPick(input: {
   pool: readonly string[];
-  rotateGreen: boolean;
-  rotateRed: boolean;
-  greenCounter: number;
-  redCounter: number;
-}): RotationAdvance {
-  const n = input.pool.length;
-  if (n === 0) return {};
-  const normalize = (counter: number): number => {
-    const safe = Number.isFinite(counter) ? Math.trunc(counter) : 0;
-    return ((safe % n) + n) % n;
-  };
-  const out: RotationAdvance = {};
-  let greenWrapped = false;
-  if (input.rotateGreen) {
-    const pointer = normalize(input.greenCounter);
-    greenWrapped = pointer === n - 1;
-    out.green = { model: input.pool[pointer]!, pointer, nextPointer: pointer + 1, wrapped: greenWrapped };
-  }
-  if (input.rotateRed) {
-    let pointer = normalize(input.redCounter);
-    // Same-model skip: when both seats rotate, never serve green's pick to red too — skip to the
-    // next slot (possible only with >= 2 models). `pointer` stays the slot actually CONSUMED, so
-    // the `model === pool[pointer % n]` audit invariant holds and the counter continues past it.
-    if (out.green && n >= 2 && input.pool[pointer] === out.green.model) {
-      pointer = (pointer + 1) % n;
+  counts: ReadonlyMap<string, number>;
+  random: () => number;
+}): WeightedRotationPick | undefined {
+  const { pool, counts } = input;
+  if (pool.length === 0) return undefined;
+  const weights = rotationRepresentationWeights(pool, counts);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  const raw = input.random();
+  const r = Number.isFinite(raw) ? Math.min(Math.max(raw, 0), 1 - Number.EPSILON) : 0;
+  let cumulative = 0;
+  for (let i = 0; i < pool.length; i++) {
+    cumulative += weights[i]!;
+    if (r * total < cumulative) {
+      return { model: pool[i]!, weight: weights[i]!, representation: counts.get(pool[i]!) ?? 0 };
     }
-    out.red = {
-      model: input.pool[pointer]!,
-      pointer,
-      // The extra +1 on green wrap is what varies the green/red COMBINATION over cycles.
-      nextPointer: pointer + 1 + (greenWrapped ? 1 : 0),
-      wrapped: pointer === n - 1
-    };
   }
-  return out;
+  // Unreachable with a clamped r (< 1 guarantees r * total < total = final cumulative), kept as a
+  // belt-and-braces floor so a floating-point edge can never yield "no pick" on a non-empty pool.
+  const last = pool.length - 1;
+  return { model: pool[last]!, weight: weights[last]!, representation: counts.get(pool[last]!) ?? 0 };
 }
 
 /**
@@ -197,28 +207,69 @@ export async function eligibleRotationPool(userId: string): Promise<EligibleRota
   return { pool: credentialPool, skipped, availability: "not_checked" };
 }
 
-function rotationPointerKey(userId: string, accountId: string | undefined, seat: "green" | "red"): string {
-  return `model_rotation:${userId}:${accountId ?? "none"}:${seat}`;
+/**
+ * Representation counts for one rotating seat: committed `model_rotation_pick` audits for the same
+ * (user, account, seat) over the trailing window, keyed by model and seeded with 0 for every pool
+ * candidate. Picks of models outside the current candidate pool are ignored — a model that left
+ * the pool must not shift the median for the models still in it. Stats are ADVISORY: on any read
+ * error the seat degrades to uniform sampling (all-zero counts) rather than failing the rotation —
+ * a pick must not die because its history could not be read.
+ */
+function rotationSeatRepresentation(
+  userId: string,
+  accountId: string | undefined,
+  seat: "green" | "red",
+  pool: readonly string[]
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const model of pool) counts.set(model, 0);
+  try {
+    const since = new Date(Date.now() - ROTATION_REPRESENTATION_WINDOW_DAYS * 24 * 3600_000).toISOString();
+    const rows = getDb()
+      .prepare(
+        `SELECT payload FROM audit_events
+         WHERE kind = 'model_rotation_pick' AND user_id = ? AND connected_account_id IS ? AND created_at >= ?`
+      )
+      .all(userId, accountId ?? null, since) as Array<{ payload: string }>;
+    for (const row of rows) {
+      try {
+        const pick = JSON.parse(row.payload) as { seat?: unknown; model?: unknown };
+        if (pick.seat !== seat || typeof pick.model !== "string" || !counts.has(pick.model)) continue;
+        counts.set(pick.model, (counts.get(pick.model) ?? 0) + 1);
+      } catch {
+        // An unparseable audit payload never breaks a pick.
+      }
+    }
+  } catch (error) {
+    console.warn(`[model-rotation] representation read failed for seat ${seat}; sampling uniformly:`, error);
+  }
+  return counts;
 }
 
 /**
  * Resolve the rotation sentinel(s) on a policy into CONCRETE models for one strategy run, and return
- * a `commit()` that PERSISTS the side effects (per-seat pointer advance + `model_rotation_pick`
- * audit). The picks are computed EARLY so the caller's budget preview can reason about the concrete
- * models this run would serve, but the pointer only advances when `commit()` is called — the caller
- * invokes it once the run is actually committed to serving the LLM (AFTER account validation + the
- * usage-budget skip gate, immediately before the Green proposeTrades call). A run that aborts before
- * that leaves the pointer untouched, so an aborted run never burns a rotation slot nor logs a phantom
- * pick with no `proposedByModel` to match (Finding 3). `commit` is ALWAYS present (a no-op when
- * neither seat rotates, on an empty eligible pool, or on any storage error). Never throws: an empty
- * pool or storage error resolves the rotating seats to "" (the normal unconfigured/fail-closed state
- * under no-defaults) rather than letting the raw sentinel reach a provider.
+ * a `commit()` that PERSISTS the side effect (the `model_rotation_pick` audit — which doubles as the
+ * representation ledger the NEXT run's weights are computed from). Each rotating seat samples its
+ * model representation-weighted (see `rotationRepresentationWeights`): models underrepresented in
+ * this (user, account, seat)'s committed rotation history over the trailing window are twice as
+ * likely to be picked as at/above-median ones, which can still be picked. The picks are computed
+ * EARLY so the caller's budget preview can reason about the concrete models this run would serve,
+ * but the audit is only written when `commit()` is called — the caller invokes it once the run is
+ * actually committed to serving the LLM (AFTER account validation + the usage-budget skip gate,
+ * immediately before the Green proposeTrades call). A run that aborts before that writes nothing, so
+ * an aborted run never skews the representation weights nor logs a phantom pick with no
+ * `proposedByModel` to match (Finding 3). `commit` is ALWAYS present (a no-op when neither seat
+ * rotates, on an empty eligible pool, or on any storage error). Never throws: an empty pool or
+ * storage error resolves the rotating seats to "" (the normal unconfigured/fail-closed state under
+ * no-defaults) rather than letting the raw sentinel reach a provider. `random` is injectable for
+ * deterministic tests and defaults to Math.random.
  */
 export async function resolveModelRotationForRun(input: {
   userId: string;
   accountId?: string;
   runId: string;
   policy: { llmModel?: string | null; redTeamLlmModel?: string | null };
+  random?: () => number;
 }): Promise<{
   llmModel?: string;
   redTeamLlmModel?: string;
@@ -260,29 +311,40 @@ export async function resolveModelRotationForRun(input: {
         commit: () => {}
       };
     }
-    const greenKey = rotationPointerKey(input.userId, input.accountId, "green");
-    const redKey = rotationPointerKey(input.userId, input.accountId, "red");
-    const advance = advanceRotationPointers({
-      pool,
-      rotateGreen,
-      rotateRed,
-      greenCounter: getInternalSetting<number>(greenKey) ?? 0,
-      redCounter: getInternalSetting<number>(redKey) ?? 0
-    });
+    const random = input.random ?? Math.random;
+    const greenPick = rotateGreen
+      ? weightedRotationPick({
+          pool,
+          counts: rotationSeatRepresentation(input.userId, input.accountId, "green", pool),
+          random
+        })
+      : undefined;
+    // Same-model guarantee: when BOTH seats rotate, a run never serves green's pick to red too —
+    // red samples from the pool MINUS green's model (possible only with >= 2 models; a 1-model
+    // pool degenerates to same-model by necessity). Red's weights are computed over ITS candidate
+    // set (the reduced pool) from RED-seat history only.
+    const redPool = greenPick && pool.length >= 2 ? pool.filter((model) => model !== greenPick.model) : pool;
+    const redPick = rotateRed
+      ? weightedRotationPick({
+          pool: redPool,
+          counts: rotationSeatRepresentation(input.userId, input.accountId, "red", redPool),
+          random
+        })
+      : undefined;
     const out: {
       llmModel?: string;
       redTeamLlmModel?: string;
       llmReasoningEffort?: LlmReasoningEffort;
       redTeamReasoningEffort?: LlmReasoningEffort;
     } = {};
-    // Per-seat side effects (pointer advance + pick audit) are DEFERRED into `commit`: the models are
-    // known now (so the budget preview can price them) but the pointer must only advance once the run
-    // is committed to serving the LLM. If the caller returns/throws/skips before calling commit(), the
-    // pointer holds and nothing is audited — no rotation slot burned on an aborted run (Finding 3).
+    // Per-seat side effects (the pick audit = the representation ledger) are DEFERRED into `commit`:
+    // the models are known now (so the budget preview can price them) but the ledger must only grow
+    // once the run is committed to serving the LLM. If the caller returns/throws/skips before calling
+    // commit(), nothing is audited — an aborted run never skews the weights (Finding 3).
     const commits: Array<() => void> = [];
-    for (const [seat, pick, key] of [
-      ["green", advance.green, greenKey],
-      ["red", advance.red, redKey]
+    for (const [seat, pick] of [
+      ["green", greenPick],
+      ["red", redPick]
     ] as const) {
       if (!pick) continue;
       // Rotation owns the rotated seat's reasoning effort too: each served model runs at its
@@ -291,7 +353,6 @@ export async function resolveModelRotationForRun(input: {
       // whenever rotation is switched off; call time still re-clamps per model.
       const reasoningEffort = recommendedReasoningEffortForModel(pick.model, seat);
       commits.push(() => {
-        setInternalSetting(key, pick.nextPointer);
         audit(
           "model_rotation_pick",
           {
@@ -299,9 +360,8 @@ export async function resolveModelRotationForRun(input: {
             seat,
             model: pick.model,
             reasoningEffort,
-            pointer: pick.pointer,
-            nextPointer: pick.nextPointer,
-            wrapped: pick.wrapped,
+            weight: pick.weight,
+            representation: pick.representation,
             poolSize: pool.length,
             skippedNoCredential: skipped
           },
