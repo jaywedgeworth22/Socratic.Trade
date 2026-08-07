@@ -11,3 +11,13 @@
 - `ios/SocraticTrade/AppComponents.swift` — format helpers + MetricTile trailing detail
 - `ios/SocraticTrade/HomeView.swift` — Home / settings copy
 - `ios/SocraticTrade/InsightsView.swift`, `ActivityView.swift` — Run Once / Last Run
+
+## Follow-up (same PR / branch)
+
+- Always `.inline` nav titles (small centered) on Home, Proposals, Assets, Activity, Insights.
+- Tab **Markets → Assets** (same chart icon); remove U.S. Equities session card.
+- Status banner: `arrow.triangle.2.circlepath` + **Market Closed** / **Market Open** (all tabs via SnapshotScaffold).
+- Bell alert button always opens composer (was disabled when snapshot stale → looked dead).
+- Order types: `stop_market` → **Stop Market**.
+- Price Alerts / Orders title-case; empty alert message no trailing period.
+- Insights: Portfolio Brief; Backend Remains Authoritative; vs SPY; Daily Opening Notional: N% used; N pending proposals.

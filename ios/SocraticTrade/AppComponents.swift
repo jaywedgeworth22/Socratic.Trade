@@ -117,6 +117,32 @@ enum AppFormat {
         return "every \(minutes) min"
     }
 
+    /// Order / stop type slug → readable words (`stop_market` → `Stop Market`).
+    static func orderTypeLabel(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "—" }
+        return raw
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst().lowercased() }
+            .joined(separator: " ")
+    }
+
+    /// Market session for status banner: "Market Closed", "Market Open", etc.
+    static func marketSessionBannerLabel(_ session: String?) -> String {
+        switch (session ?? "").lowercased() {
+        case "regular", "open": return "Market Open"
+        case "pre": return "Pre-Market"
+        case "post": return "After Hours"
+        case "closed": return "Market Closed"
+        case "": return "Market Session"
+        default:
+            return (session ?? "")
+                .replacingOccurrences(of: "_", with: " ")
+                .capitalized
+        }
+    }
+
     /// Account environment annotation: live is unmarked (all money is real to the owner);
     /// paper is "Broker (paper)" with lowercase p.
     static func accountBrokerEnvironmentLine(broker: String, environment: String) -> String {
@@ -448,9 +474,10 @@ private struct SnapshotStatusBanner: View {
             } else {
                 Image(systemName: store.isStreamConnected ? "dot.radiowaves.left.and.right" : "arrow.triangle.2.circlepath")
                     .foregroundStyle(store.isStreamConnected ? AppPalette.positive : .secondary)
-                    .accessibilityLabel(store.isStreamConnected ? "Live updates connected" : "Live updates reconnecting")
+                    .accessibilityLabel(store.isStreamConnected ? "Stream connected" : "Reconnecting")
             }
-            Text(snapshot.marketSession.capitalized)
+            // Keep the circlepath / radio glyph; label is "Market Closed" etc. on every tab.
+            Text(AppFormat.marketSessionBannerLabel(snapshot.marketSession))
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
         }

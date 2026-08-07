@@ -27,6 +27,7 @@ struct HomeView: View {
             HomeAttentionCard(snapshot: snapshot, selectedTab: $selectedTab)
         }
         .navigationTitle("Home")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
@@ -380,7 +381,7 @@ private struct StrategyControlsCard: View {
                 }
                 .tint(AppPalette.negative)
 
-                Text("Stop immediately halts future broker submissions. A broker request already submitted before the halt may still complete; review existing orders in Markets.")
+                Text("Stop immediately halts future broker submissions. A broker request already submitted before the halt may still complete; review existing orders under Assets.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

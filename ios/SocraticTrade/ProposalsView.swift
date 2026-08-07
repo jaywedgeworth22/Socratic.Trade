@@ -32,6 +32,7 @@ struct ProposalsView: View {
             }
         }
         .navigationTitle("Proposals")
+        .navigationBarTitleDisplayMode(.inline)
         .alert(
             "Confirm Live Order",
             isPresented: Binding(

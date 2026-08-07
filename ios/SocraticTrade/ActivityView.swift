@@ -9,6 +9,7 @@ struct ActivityView: View {
             CommandActivitySection(commands: snapshot.recentCommands)
         }
         .navigationTitle("Activity")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
