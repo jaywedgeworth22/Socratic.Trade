@@ -1,13 +1,16 @@
 /**
- * Model rotation ("__rotate__" testing option) — the sentinel that round-robins the Proposer
- * (green) and/or Reviewer (red) model through every eligible curated model, one per strategy run,
- * so comparative live history accrues across models (proposals stamp `proposedByModel`).
+ * Model rotation ("__rotate__" testing option) — the sentinel that rotates the Proposer (green)
+ * and/or Reviewer (red) model through the eligible curated models, one per strategy run, so
+ * comparative live history accrues across models (proposals stamp `proposedByModel`).
  *
- * Covers: pure round-robin pointer logic (wrap advances the red pointer one extra step so
- * green/red combinations vary; the same-model skip keeps the two seats on DIFFERENT models within
- * a run), the curated-pool exclusions, the credential-missing skip (rotation never picks a model
- * whose provider key doesn't resolve), pointer persistence via internal settings + pick auditing,
- * the resolveOpenAiModel safety net, and that the sentinel passes /api/policy validation.
+ * Covers: the pure representation-weighting rule (below-median and zero-usage models carry weight
+ * 2, at/above-median weight 1 — an underrepresented model is twice as likely to be picked, an
+ * overrepresented one still can be), proportional sampling with an injectable RNG (deterministic
+ * picks + ~2:1 distribution sanity), the curated-pool exclusions, the credential-missing skip
+ * (rotation never picks a model whose provider key doesn't resolve), commit-late pick auditing
+ * (the audit IS the representation ledger — aborted runs never skew the weights), the same-model
+ * guarantee across seats, per-account/per-seat representation scoping, the resolveOpenAiModel
+ * safety net, and that the sentinel passes /api/policy validation.
  */
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -33,89 +36,113 @@ function noEnvKeys() {
   for (const k of LLM_ENV) vi.stubEnv(k, "");
 }
 
-describe("advanceRotationPointers (pure round-robin)", () => {
+/** Small deterministic PRNG (mulberry32) so sampling tests are reproducible. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+describe("rotationRepresentationWeights (2x underrepresented rule)", () => {
   const pool = ["m0", "m1", "m2"];
 
-  it("cycles the green seat through the pool in order and wraps", async () => {
-    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
-    const picks: string[] = [];
-    let counter = 0;
-    for (let i = 0; i < 7; i++) {
-      const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: false, greenCounter: counter, redCounter: 0 });
-      picks.push(out.green!.model);
-      counter = out.green!.nextPointer;
+  it("assigns weight 2 below the median and weight 1 at or above it", async () => {
+    const { rotationRepresentationWeights } = await import("../src/lib/model-rotation");
+    const counts = new Map([
+      ["m0", 1],
+      ["m1", 2],
+      ["m2", 3]
+    ]);
+    expect(rotationRepresentationWeights(pool, counts)).toEqual([2, 1, 1]);
+  });
+
+  it("treats zero-usage models as maximally underrepresented (weight 2) even when the median is 0", async () => {
+    const { rotationRepresentationWeights } = await import("../src/lib/model-rotation");
+    // Median of [0, 0, 5] is 0 — the two unserved models are NOT below it, yet they must still be
+    // favored. A model absent from the counts map is zero-usage too.
+    const counts = new Map([
+      ["m0", 0],
+      ["m2", 5]
+    ]);
+    expect(rotationRepresentationWeights(pool, counts)).toEqual([2, 2, 1]);
+  });
+
+  it("degrades to uniform on empty stats (all weight 2) and on equal representation (all weight 1)", async () => {
+    const { rotationRepresentationWeights } = await import("../src/lib/model-rotation");
+    expect(rotationRepresentationWeights(pool, new Map())).toEqual([2, 2, 2]);
+    const equal = new Map([
+      ["m0", 4],
+      ["m1", 4],
+      ["m2", 4]
+    ]);
+    expect(rotationRepresentationWeights(pool, equal)).toEqual([1, 1, 1]);
+  });
+
+  it("normalizes garbage counts (negative / non-finite -> zero) and returns [] for an empty pool", async () => {
+    const { rotationRepresentationWeights } = await import("../src/lib/model-rotation");
+    expect(rotationRepresentationWeights([], new Map())).toEqual([]);
+    const counts = new Map([
+      ["m0", -3],
+      ["m1", Number.NaN],
+      ["m2", 2]
+    ]);
+    expect(rotationRepresentationWeights(pool, counts)).toEqual([2, 2, 1]);
+  });
+});
+
+describe("weightedRotationPick (proportional sampling)", () => {
+  const pool = ["m0", "m1", "m2", "m3"];
+
+  it("returns undefined on an empty pool and is deterministic for a fixed rng", async () => {
+    const { weightedRotationPick } = await import("../src/lib/model-rotation");
+    expect(weightedRotationPick({ pool: [], counts: new Map(), random: () => 0 })).toBeUndefined();
+    // All-zero counts -> uniform weight 2 each; r = 0 lands in the first slice, r near 1 in the last.
+    const first = weightedRotationPick({ pool, counts: new Map(), random: () => 0 });
+    expect(first).toMatchObject({ model: "m0", weight: 2, representation: 0 });
+    const last = weightedRotationPick({ pool, counts: new Map(), random: () => 0.999999 });
+    expect(last!.model).toBe("m3");
+  });
+
+  it("clamps a misbehaving rng instead of failing the pick", async () => {
+    const { weightedRotationPick } = await import("../src/lib/model-rotation");
+    expect(weightedRotationPick({ pool, counts: new Map(), random: () => Number.NaN })!.model).toBe("m0");
+    expect(weightedRotationPick({ pool, counts: new Map(), random: () => 7 })!.model).toBe("m3");
+    expect(weightedRotationPick({ pool, counts: new Map(), random: () => -1 })!.model).toBe("m0");
+  });
+
+  it("samples underrepresented models ~twice as often as overrepresented ones (seeded rng)", async () => {
+    const { weightedRotationPick } = await import("../src/lib/model-rotation");
+    // m0/m1 unserved (weight 2), m2/m3 well-represented (weight 1) -> expected pick shares
+    // 1/3, 1/3, 1/6, 1/6.
+    const counts = new Map([
+      ["m2", 9],
+      ["m3", 9]
+    ]);
+    const random = mulberry32(0xc0ffee);
+    const tally = new Map<string, number>();
+    const draws = 6000;
+    for (let i = 0; i < draws; i++) {
+      const pick = weightedRotationPick({ pool, counts, random })!;
+      tally.set(pick.model, (tally.get(pick.model) ?? 0) + 1);
     }
-    expect(picks).toEqual(["m0", "m1", "m2", "m0", "m1", "m2", "m0"]);
-  });
-
-  it("advances the red pointer ONE EXTRA step when the green pointer wraps (combinations shift phase)", async () => {
-    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
-    // Green consuming the LAST slot of the cycle = wrap. Red on a DIFFERENT slot (no same-model
-    // skip in play) isolates the wrap-extra behavior.
-    const wrapped = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 2, redCounter: 0 });
-    expect(wrapped.green).toMatchObject({ model: "m2", wrapped: true, nextPointer: 3 });
-    expect(wrapped.red).toMatchObject({ model: "m0", pointer: 0, nextPointer: 2 }); // extra step
-    // Mid-cycle: no extra step.
-    const mid = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 1 });
-    expect(mid.green!.wrapped).toBe(false);
-    expect(mid.red).toMatchObject({ model: "m1", pointer: 1, nextPointer: 2 });
-  });
-
-  it("skips red one slot when both seats rotate onto the SAME model (both counters at 0 → adjacent picks)", async () => {
-    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
-    // Both counters start at 0 on a fresh account: without the skip, green AND red served m0 —
-    // the same model debating itself — every run of the entire first cycle.
-    const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 0 });
-    expect(out.green).toMatchObject({ model: "m0", pointer: 0, nextPointer: 1 });
-    // Red consumed the NEXT slot; its counter continues past the consumed slot.
-    expect(out.red).toMatchObject({ model: "m1", pointer: 1, nextPointer: 2 });
-  });
-
-  it("stacks the same-model skip with the green-wrap extra advance (skip wraps to slot 0, wrap adds +1)", async () => {
-    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
-    // Green consumes the last slot (m2, wraps); red's slot 2 would ALSO be m2 → skip wraps red to
-    // slot 0 (m0), and the green-wrap extra advance still applies on top: nextPointer = 0 + 1 + 1.
-    const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 2, redCounter: 2 });
-    expect(out.green).toMatchObject({ model: "m2", wrapped: true, nextPointer: 3 });
-    expect(out.red).toMatchObject({ model: "m0", pointer: 0, nextPointer: 2, wrapped: false });
-  });
-
-  it("cannot skip on a single-model pool (degenerate case: both seats serve the only model)", async () => {
-    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
-    const out = advanceRotationPointers({ pool: ["only"], rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 0 });
-    expect(out.green!.model).toBe("only");
-    expect(out.red!.model).toBe("only");
-  });
-
-  it("phase-shifts the green/red pairing across full cycles and NEVER pairs a model with itself", async () => {
-    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
-    const pairs = new Set<string>();
-    let green = 0;
-    let red = 0;
-    for (let i = 0; i < pool.length * pool.length; i++) {
-      const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: green, redCounter: red });
-      expect(out.red!.model).not.toBe(out.green!.model); // same-model skip: never the same model in one run
-      pairs.add(`${out.green!.model}+${out.red!.model}`);
-      green = out.green!.nextPointer;
-      red = out.red!.nextPointer;
-    }
-    // Fixed phase would yield exactly |pool| distinct pairs; the wrap-advance must reach every
-    // DISTINCT-model ordered pair — |pool| * (|pool| - 1), since same-model pairs are skipped.
-    expect(pairs.size).toBe(pool.length * (pool.length - 1));
-  });
-
-  it("red-only rotation advances by exactly one per run (no green wrap possible)", async () => {
-    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
-    const out = advanceRotationPointers({ pool, rotateGreen: false, rotateRed: true, greenCounter: 2, redCounter: 2 });
-    expect(out.green).toBeUndefined();
-    expect(out.red!.nextPointer).toBe(out.red!.pointer + 1);
-  });
-
-  it("normalizes garbage counters and returns {} on an empty pool", async () => {
-    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
-    expect(advanceRotationPointers({ pool: [], rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 0 })).toEqual({});
-    const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: false, greenCounter: Number.NaN, redCounter: -7 });
-    expect(out.green!.model).toBe("m0");
+    const under = (tally.get("m0") ?? 0) + (tally.get("m1") ?? 0);
+    const over = (tally.get("m2") ?? 0) + (tally.get("m3") ?? 0);
+    expect(under + over).toBe(draws);
+    // Underrepresented share ~2/3 (deterministic for the seed; loose bounds for clarity).
+    expect(under / draws).toBeGreaterThan(0.62);
+    expect(under / draws).toBeLessThan(0.71);
+    // Per-model ratio between one underrepresented and one overrepresented model ~2:1.
+    const ratio = (tally.get("m0") ?? 0) / (tally.get("m2") ?? 1);
+    expect(ratio).toBeGreaterThan(1.7);
+    expect(ratio).toBeLessThan(2.3);
+    // Overrepresented never means excluded — weight 1, not 0.
+    expect(tally.get("m2")!).toBeGreaterThan(0);
+    expect(tally.get("m3")!).toBeGreaterThan(0);
   });
 });
 
@@ -175,7 +202,7 @@ describe("resolveModelRotationForRun", () => {
     expect(() => commit()).not.toThrow(); // no-op — nothing to persist
   });
 
-  it("rotates the green seat per run with a persisted pointer, never returning the sentinel", async () => {
+  it("rotates the green seat per run with representation-weighted sampling, never returning the sentinel", async () => {
     noEnvKeys();
     const userId = `rot-green-${randomUUID()}`;
     const accountId = "acct-green";
@@ -184,75 +211,134 @@ describe("resolveModelRotationForRun", () => {
     upsertUserApiKey(userId, "openai", "sk-test", "test");
     upsertUserApiKey(userId, "anthropic", "sk-test", "test");
     const { pool } = await eligibleRotationPool(userId);
-    const served: string[] = [];
-    for (let i = 0; i < pool.length; i++) {
+    const random = mulberry32(42);
+    for (let i = 0; i < 12; i++) {
       const out = await resolveModelRotationForRun({
         userId,
         accountId,
         runId: randomUUID(),
-        policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }
+        policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL },
+        random
       });
       expect(out.llmModel).toBeTruthy();
       expect(out.llmModel).not.toBe(LLM_MODEL_ROTATION_SENTINEL);
+      expect(pool).toContain(out.llmModel!); // always a concrete eligible model
       expect(out.redTeamLlmModel).toBeUndefined(); // red seat not rotating
       expect(out.redTeamReasoningEffort).toBeUndefined(); // ...so its effort is untouched too
       // Per-team reasoning (2026-07-10): a rotating seat auto-sets the served model's curated
       // recommended effort on the run-scoped override.
       expect(out.llmReasoningEffort).toBeTruthy();
-      served.push(out.llmModel!);
-      out.commit(); // commit-late: the pointer only advances once the run serves the LLM
+      out.commit(); // commit-late: the representation ledger only grows once the run serves the LLM
     }
-    // One full cycle of COMMITTED runs serves every eligible model exactly once, in pool order.
-    expect(served).toEqual(pool);
   });
 
-  it("rotates both seats independently, audits every pick, and scopes pointers per account", async () => {
+  it("weights the pick by committed history: an overrepresented model becomes half as likely, but can still be picked", async () => {
+    noEnvKeys();
+    const userId = `rot-weight-${randomUUID()}`;
+    const accountId = "acct-weight";
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    const { resolveModelRotationForRun, eligibleRotationPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
+    upsertUserApiKey(userId, "openai", "sk-test", "test");
+    const { pool } = await eligibleRotationPool(userId);
+    const n = pool.length;
+    expect(n).toBeGreaterThanOrEqual(3);
+    // An r on the uniform/weighted boundary: with all-zero stats (uniform weight 2, total 2n) it
+    // lands in pool[0]'s slice (r * 2n < 2 for n >= 3); once pool[0] carries the only committed
+    // pick (weight 1, total 2n - 1) the same r clears pool[0]'s halved slice (r * (2n-1) = 1.5 >= 1)
+    // and lands in pool[1]'s.
+    const r = 1.5 / (2 * n - 1);
+    const baseline = await resolveModelRotationForRun({
+      userId,
+      accountId,
+      runId: randomUUID(),
+      policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL },
+      random: () => r
+    });
+    expect(baseline.llmModel).toBe(pool[0]);
+    baseline.commit(); // pool[0] is now the only represented model -> weight 1, everything else 2
+    const shifted = await resolveModelRotationForRun({
+      userId,
+      accountId,
+      runId: randomUUID(),
+      policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL },
+      random: () => r
+    });
+    expect(shifted.llmModel).toBe(pool[1]);
+    // Overrepresented is NOT excluded: r = 0 still lands in pool[0]'s (weight-1) slice.
+    const still = await resolveModelRotationForRun({
+      userId,
+      accountId,
+      runId: randomUUID(),
+      policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL },
+      random: () => 0
+    });
+    expect(still.llmModel).toBe(pool[0]);
+  });
+
+  it("rotates both seats independently, audits every pick with its weighting receipts, and scopes representation per account", async () => {
     noEnvKeys();
     const userId = `rot-both-${randomUUID()}`;
     const { upsertUserApiKey, getDb } = await import("../src/lib/db");
-    const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
+    const { resolveModelRotationForRun, eligibleRotationPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test", "test");
+    const { pool } = await eligibleRotationPool(userId);
     const runId = randomUUID();
     const out = await resolveModelRotationForRun({
       userId,
       accountId: "acct-A",
       runId,
-      policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL, redTeamLlmModel: LLM_MODEL_ROTATION_SENTINEL }
+      policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL, redTeamLlmModel: LLM_MODEL_ROTATION_SENTINEL },
+      random: () => 0
     });
     expect(out.llmModel).toMatch(/^gpt-/);
     expect(out.redTeamLlmModel).toMatch(/^gpt-/);
-    // Same-model skip end-to-end: both pointers start at 0, but the run never serves the same
-    // model to both seats (red consumes the adjacent slot).
+    // Same-model guarantee end-to-end: red samples from the pool MINUS green's pick, so one run
+    // never serves the same model to both seats.
     expect(out.redTeamLlmModel).not.toBe(out.llmModel);
     // Per-team reasoning (2026-07-10): each rotated seat carries ITS served model's curated
     // recommended effort (unknown -> medium) on the run-scoped override.
     const { recommendedReasoningEffortForModel } = await import("../src/lib/model-reasoning-recommendations");
     expect(out.llmReasoningEffort).toBe(recommendedReasoningEffortForModel(out.llmModel));
     expect(out.redTeamReasoningEffort).toBe(recommendedReasoningEffortForModel(out.redTeamLlmModel, "red"));
-    out.commit(); // pick audits + pointer advance are only written on commit (Finding 3: commit-late)
+    out.commit(); // pick audits are only written on commit (Finding 3: commit-late)
     const audits = getDb()
       .prepare("SELECT payload FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
       .all(userId) as Array<{ payload: string }>;
     const parsed = audits.map(
-      (row) => JSON.parse(row.payload) as { runId: string; seat: string; model: string; pointer: number; reasoningEffort?: string }
+      (row) =>
+        JSON.parse(row.payload) as {
+          runId: string;
+          seat: string;
+          model: string;
+          weight: number;
+          representation: number;
+          reasoningEffort?: string;
+        }
     );
     expect(parsed.filter((p) => p.runId === runId).map((p) => p.seat).sort()).toEqual(["green", "red"]);
     for (const pick of parsed) {
-      expect(typeof pick.pointer).toBe("number");
+      // The weighting receipts are part of the pick's audit trail.
+      expect([1, 2]).toContain(pick.weight);
+      expect(pick.representation).toBe(0); // first-ever picks: no prior representation
       expect(pick.model).not.toBe(LLM_MODEL_ROTATION_SENTINEL);
       // The served effort is part of the pick's audit trail.
       expect(pick.reasoningEffort).toBe(
         recommendedReasoningEffortForModel(pick.model, pick.seat === "red" ? "red" : "green")
       );
     }
-    // A different account starts at its own pointer (slot 0), independent of acct-A's advance.
+    // A different account starts from its OWN (empty) representation, independent of acct-A's
+    // committed picks: on the uniform/weighted boundary r (see the weighting test above), acct-B
+    // still resolves pool[0] — leaked acct-A history (or leaked red-seat history) would shift it.
+    const r = 1.5 / (2 * pool.length - 1);
     const other = await resolveModelRotationForRun({
       userId,
       accountId: "acct-B",
       runId: randomUUID(),
-      policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }
+      policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL },
+      random: () => r
     });
-    expect(other.llmModel).toBe(out.llmModel); // acct-A consumed slot 0; acct-B starts fresh at slot 0
+    expect(other.llmModel).toBe(pool[0]);
+    expect(other.llmModel).toBe(out.llmModel); // acct-A's first pick was pool[0] too (r = 0)
   });
 
   it("fails the rotating seats closed (empty override models, not the sentinel) when no credential resolves at all", async () => {
@@ -271,14 +357,13 @@ describe("resolveModelRotationForRun", () => {
     expect(() => commit()).not.toThrow(); // no-op — no pointer to advance on an empty pool
   });
 
-  it("defers the pointer advance and pick audit until commit() is called (commit-late)", async () => {
+  it("defers the pick audit — the representation ledger — until commit() is called (commit-late)", async () => {
     noEnvKeys();
     const userId = `rot-commit-${randomUUID()}`;
     const accountId = "acct-commit";
-    const { upsertUserApiKey, getDb, getInternalSetting } = await import("../src/lib/db");
+    const { upsertUserApiKey, getDb } = await import("../src/lib/db");
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test", "test");
-    const pointerKey = `model_rotation:${userId}:${accountId}:green`;
     const auditCount = () =>
       (getDb()
         .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
@@ -290,32 +375,42 @@ describe("resolveModelRotationForRun", () => {
       policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }
     });
     expect(out.llmModel).toBeTruthy();
-    // Resolve alone must NOT persist the pointer or write the pick audit.
-    expect(getInternalSetting<number>(pointerKey)).toBeUndefined();
+    // Resolve alone must NOT write the pick audit (nothing may skew the next run's weights yet).
     expect(auditCount()).toBe(0);
-    // commit() (the run reached the LLM) persists both.
+    // commit() (the run reached the LLM) writes it.
     out.commit();
-    expect(getInternalSetting<number>(pointerKey)).toBe(1);
     expect(auditCount()).toBe(1);
   });
 
-  it("holds the pointer when a run aborts before commit — no rotation slot burned (Finding 3)", async () => {
+  it("holds representation when a run aborts before commit — an aborted run never skews the weights (Finding 3)", async () => {
     noEnvKeys();
     const userId = `rot-abort-${randomUUID()}`;
     const accountId = "acct-abort";
-    const { upsertUserApiKey, getInternalSetting } = await import("../src/lib/db");
-    const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
+    const { upsertUserApiKey, getDb } = await import("../src/lib/db");
+    const { resolveModelRotationForRun, eligibleRotationPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test", "test");
-    const pointerKey = `model_rotation:${userId}:${accountId}:green`;
-    // Run 1 resolves a pick but ABORTS before commit (e.g. account unavailable / over budget) — never commits.
-    const first = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
-    // Run 2 resolves next: because run 1 never committed, the pointer is still at slot 0, so it serves the SAME model.
-    const second = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    const { pool } = await eligibleRotationPool(userId);
+    expect(pool.length).toBeGreaterThanOrEqual(3);
+    // Uniform/weighted boundary r (see the weighting test): uniform stats -> pool[0]; after ONE
+    // committed pool[0] pick -> pool[1].
+    const r = 1.5 / (2 * pool.length - 1);
+    const random = () => r;
+    // Run 1 resolves a pick but ABORTS before commit (e.g. account unavailable / over budget).
+    const first = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }, random });
+    // Run 2: the aborted run recorded nothing, so the same rng resolves the SAME model.
+    const second = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }, random });
+    expect(first.llmModel).toBe(pool[0]);
     expect(second.llmModel).toBe(first.llmModel);
-    expect(getInternalSetting<number>(pointerKey)).toBeUndefined(); // no slot consumed by the aborted runs
-    // Run 2 now actually serves the LLM and commits → the pointer finally advances, so run 3 gets a different model.
+    const auditCount = () =>
+      (getDb()
+        .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
+        .get(userId) as { n: number }).n;
+    expect(auditCount()).toBe(0); // no representation recorded by the aborted runs
+    // Run 2 now actually serves the LLM and commits -> pool[0] is represented (weight halved), so
+    // the same rng shifts run 3 to the next underrepresented model.
     second.commit();
-    const third = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    const third = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }, random });
+    expect(third.llmModel).toBe(pool[1]);
     expect(third.llmModel).not.toBe(first.llmModel);
   });
 });

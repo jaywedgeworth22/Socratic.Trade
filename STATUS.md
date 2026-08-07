@@ -1,3 +1,14 @@
+## Current (2026-08-06 MONET representation-weighted model rotation)
+
+**"__rotate__" now samples representation-weighted instead of round-robin** (owner request:
+underrepresented models 2x as likely as overrepresented, which can still be picked). Weights come
+from the rotation's own committed `model_rotation_pick` audits (30d window, per user/account/seat;
+below-median or zero-usage = weight 2, else 1); commit-late + same-model guarantee + fail-closed
+behavior unchanged; injectable RNG for deterministic tests. Branch `monet/rotation-weighted`
+(committed, NOT yet pushed — landing operator runs the full gate + `land.sh`). Rollout:
+`docs/rollouts/2026-08-06-rotation-representation-weighted.md`.
+
+## Current (2026-08-06 MONET full-product review + deploy-freeze repair)
 ## Current (2026-08-07 GROK — iOS login brand parity)
 
 **iOS login restyled to match website** (`app/login/page.tsx`): candlestick "SOCRATIC TRADE" wordmark (`CandleWordmarkView`, port of `candle-ticker.ts`), accent-dot value bullets, plain `--bg` surface, Google/GitHub/Apple button order and styles. PR [#2574](https://github.com/jaywedgeworth22/Socratic.Trade/pull/2574) (branch `grok/ios-login-brand`, auto-merge armed). `xcodebuild` BUILD SUCCEEDED. Rollout: `docs/rollouts/2026-08-07-ios-login-brand.md`.

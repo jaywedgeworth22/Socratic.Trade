@@ -501,9 +501,11 @@ export async function runStrategyOnce(
     }
 
     // ── Model rotation (comparative-measurement option) ───────────────────
-    // "__rotate__" as llmModel / redTeamLlmModel round-robins each run through every curated
-    // model whose provider credential resolves, so comparative live history accrues across
-    // models (`proposedByModel` already stamps the CONCRETE serving model on each proposal).
+    // "__rotate__" as llmModel / redTeamLlmModel samples each run's model from the curated pool
+    // (credential-resolving models only), weighted toward models UNDERREPRESENTED in this
+    // account's recent rotation history (2x pick weight vs 1x at/above the median), so
+    // comparative live history accrues evenly across models (`proposedByModel` already stamps
+    // the CONCRETE serving model on each proposal).
     // Resolved HERE — after the market-closed early-return (a skipped run must not consume a
     // rotation slot) and BEFORE any budget preview or LLM endpoint resolution — onto a
     // RUN-SCOPED override, the same pattern as the usage-budget downgrade below: the persisted
@@ -511,11 +513,12 @@ export async function runStrategyOnce(
     // calls above/below (which persist `policy`) can never overwrite it with a concrete model.
     // Every pick is audited (`model_rotation_pick`). See src/lib/model-rotation.ts.
     // Resolve the picks NOW (so the budget preview/enforcement below can price the concrete models this
-    // run would serve), but DEFER the pointer advance + pick audit to `commitRotation()`: it is called
-    // late, immediately before the Green proposeTrades call, once the run is actually committed to
-    // serving the LLM (after account validation + the usage-budget skip gate). A run that aborts before
-    // that point (account unavailable, over budget, no candidate cleared the threshold) leaves the
-    // pointer untouched, so it never burns a rotation slot on a run that generated no proposal.
+    // run would serve), but DEFER the pick audit — the rotation's representation ledger — to
+    // `commitRotation()`: it is called late, immediately before the Green proposeTrades call, once the
+    // run is actually committed to serving the LLM (after account validation + the usage-budget skip
+    // gate). A run that aborts before that point (account unavailable, over budget, no candidate
+    // cleared the threshold) writes nothing, so it never skews the rotation weights with a run that
+    // generated no proposal.
     const { commit: commitRotation, ...rotationOverride } = await resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
 
     // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for

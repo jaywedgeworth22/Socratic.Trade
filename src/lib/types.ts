@@ -925,7 +925,8 @@ export interface TradingPolicy {
    * defaults, ever; the former OPENAI_MODEL/DEFAULT_OPENAI_MODEL fallbacks are gone). Unset
    * resolves to "" and the strategy run fails closed with an actionable Settings message.
    * May also hold the "__rotate__" rotation sentinel (LLM_MODEL_ROTATION_SENTINEL) — resolved to a
-   * concrete round-robin pick at run start (src/lib/model-rotation.ts), never served literally.
+   * concrete representation-weighted pick at run start (src/lib/model-rotation.ts), never served
+   * literally.
    */
   llmModel?: string;
   /**

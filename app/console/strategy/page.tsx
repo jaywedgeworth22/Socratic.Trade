@@ -180,7 +180,7 @@ function ModelSelect({
         )}
         <option
           value={ROTATE_ALL_MODELS_ID}
-          title="Round-robins every curated model with a resolvable key so attributed comparative history accrues. Use only where model-to-model variation is acceptable."
+          title="Rotates through every curated model with a resolvable key, favoring models with less accrued history (2x pick weight), so attributed comparative history accrues evenly. Use only where model-to-model variation is acceptable."
         >
           {ROTATE_ALL_MODELS_LABEL}
         </option>
@@ -828,8 +828,9 @@ function AccountScopedStrategyPage() {
           {reasoningSummary(reasoningControl)}
           {rotationSelected && (
             <span className="block mt-2 pt-2 border-t border-[color:var(--con-line)]">
-              Rotation: each run picks the next curated model whose provider key resolves (round-robin per account,
-              audited). Every proposal records the concrete model that wrote it, so per-model history accrues
+              Rotation: each run picks a curated model whose provider key resolves, weighted toward models
+              underrepresented in this account&apos;s recent rotation history (2x pick weight vs 1x, audited).
+              Every proposal records the concrete model that wrote it, so per-model history accrues
               automatically. Use only where model-to-model variation is acceptable for that account.
             </span>
           )}
