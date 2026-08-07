@@ -63,7 +63,7 @@ scheduler, or manually — flows through eight stages:
    else is an owner preference the agent may argue past with a logged,
    structured override thesis.
 7. **Execute (broker).** Approved orders route through one guarded choke point
-   into a broker-agnostic gateway (Alpaca, Tradier, Robinhood adapters).
+   into a broker-agnostic gateway (Alpaca, Tradier, and Robinhood adapters).
    Placement is crash-safe and idempotent: the intent is persisted before the
    broker call, uncertain outcomes are reconciled against broker truth by
    client-order-id, and protective stops rest at the broker so they survive

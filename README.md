@@ -1,7 +1,22 @@
-# Socratic Trade Dashboard
+# Socratic.Trade
 
-Local-only Next.js dashboard for managing supported agentic trading accounts,
-including Robinhood through MCP and Alpaca through API keys.
+Next.js agentic trading console for real broker accounts — **production at
+[socratictrade.com](https://socratictrade.com)** (Coolify). Local `npm run dev` is
+for development only; previews are retired.
+
+## Supported brokers
+
+| Broker | Connection | Environments |
+|--------|------------|--------------|
+| **Alpaca** | API key + secret (REST) | Paper (`PA…` / `PK…`) and live brokerage |
+| **Tradier** | Access token | Sandbox (paper) and production (live) |
+| **Robinhood** | Official Trading MCP (OAuth) | Live brokerage |
+
+An account is an account: paper vs live is only the broker account's
+`environment`. There is **no** local simulator, **no** "Test mode", and **no**
+fake fills. With no connected account, the app cannot place orders.
+
+Native iOS companion (TestFlight): control remote for the same production backend.
 
 ## For AI Tools And Contributors
 
@@ -12,8 +27,9 @@ Read these before changing code:
 2. `STATUS.md` for the current handoff snapshot.
 3. `PLAN.md` for the roadmap and acceptance checks.
 4. `docs/rollouts/` for chronological handoff notes so Codex, Claude Code,
-   Antigravity/Gemini, Cursor, or a human can resume cleanly.
+   Antigravity/Gemini, Cursor, Monet, or a human can resume cleanly.
 5. The relevant `docs/phase-*.md` and latest matching `docs/rollouts/*.md`.
+6. UI copy conventions (Title Case headings/buttons; sentence-case values): `docs/FLEET-UI-COPY.md`.
 
 Non-trivial changes must update `STATUS.md`, `PLAN.md`, the relevant phase doc,
 and a dated rollout note before commit/push. Do not recreate a single
@@ -21,18 +37,16 @@ and a dated rollout note before commit/push. Do not recreate a single
 
 ## What It Does
 
-- Shows accounts, portfolio, positions, orders, and an audit feed.
-- Runs an equity strategy loop in either proposal-only or decision mode.
-- Scans the allowed equity universe with delayed quote data, fundamentals,
-  technicals, macro/market signals, and cached public web-source evidence before
-  asking the LLM for proposals.
-- Lets an LLM propose trades, then enforces deterministic policy gates before live order placement.
-- Reviews broker-routed orders through the active provider before placement when
-  the provider supports a review step.
-- Uses idempotency keys for live order placement.
-- Trades through a connected broker account (paper or live) from Accounts. An
-  account's `environment` decides paper vs. live; there is no local-simulation
-  fallback, so the app can't place orders until an account is connected.
+- Multi-account cockpit: balances, positions, orders, proposals, activity, Results
+  (vs SPY), Markets/Assets, Insights, Settings / Connections.
+- Equity strategy loop in **ask-first** (proposals wait for approval) or
+  **autopilot** (decides within guardrails) authority.
+- Scans the allowed equity universe with quote data, fundamentals, technicals,
+  macro/market signals, and public web-source evidence before LLM proposals.
+- Deterministic policy gates before order placement; idempotency keys on broker
+  submits.
+- Optional Red Team review, protective stops, learning / framework proposals,
+  and Usage Monitor spend telemetry.
 
 ## Safety Defaults
 
@@ -56,10 +70,13 @@ The S&P 500 universe is stored locally in `src/lib/sp500.ts`; the app does not f
 
 ## Strategy Authority
 
-Use **Strategy Authority** in the dashboard controls:
+Use **Strategy Authority** (Ask-first / Autopilot) in Guardrails / Agent Controls:
 
-- `LLM proposes` records reviewed recommendations but does not submit orders, even when live mode is on.
-- `LLM decides` uses the existing autonomous path: policy gate, broker review when available, then Test, Paper, or Brokerage handling depending on the active account mode.
+- **Ask-first** (`propose`): records reviewed recommendations; orders wait for human
+  approval. Manual **Run Once** always stays ask-first.
+- **Autopilot** (`decide`): autonomous path within policy — gate, optional review,
+  then place on the **active connected account** (paper or live by that account's
+  environment).
 
 ## Setup
 
@@ -71,11 +88,14 @@ npm run dev
 
 For one-off local development, open `http://127.0.0.1:3000`.
 
-Previews are **retired** (owner decision, 2026-07-08): there are no per-agent PM2 `next dev`
-lanes and no `*.jays.services` preview hostnames. Production is the only hosted environment
-(`https://socratictrade.com`, Coolify app `socratic-trade-prod` — see `docs/deployment.md`).
-To see in-progress edits, run `npm run dev` in your own worktree and open
-`http://localhost:3000`; the `verify` CI gate covers integrated behavior.
+Previews are **retired** (owner decision, 2026-07-08): no per-agent PM2 preview lanes and no
+`*.jays.services` preview hostnames. Production is the only hosted environment
+(`https://socratictrade.com`, Coolify app **uuid `socratic-app`**, name "Socratic.Trade" —
+see `docs/deployment.md`). Fleet host: Coolify on Hetzner (post–2026-08 Oracle cutover;
+dashboard/API `https://host.jays.services`). Auto-deploy: every merge to `main` via the
+GitHub → Coolify **manual** webhook (not announce-then-deploy). To see in-progress edits,
+run `npm run dev` in your agent worktree and open `http://localhost:3000`; CI `verify`
+covers integrated behavior.
 
 If the UI appears as plain, unstyled HTML, the dev server is likely serving stale
 `.next` assets after a build. Stop the old listener only on the port your agent
@@ -150,9 +170,9 @@ VECTOR_EMBED_BATCH_DELAY_MS=21000  # unpaid Voyage accounts are limited to 3 RPM
 ALPACA_PAPER_API_KEY=...
 ALPACA_PAPER_SECRET_KEY=...
 
-# Optional/future provider keys routed through the per-user key system as it lands.
-# Tradier price history is sourced from your connected Tradier BROKER account (Settings ->
-# Accounts) instead of a separate key here — connect a Tradier account to enable it.
+# Optional market-data keys (per-user Connections store preferred over bare env).
+# Tradier: connect Sandbox or Production in Connections (access token) — no separate
+# TRADIER_* market-data key; the broker connection supplies quotes/history for that venue.
 MARKETSTACK_API_KEY=...
 MASSIVE_API_KEY=...
 MASSIVE_REST_MAX_CALLS_PER_MINUTE=5 # Massive Basic quota guard; excess calls fall back/skip
@@ -170,19 +190,17 @@ WEBHOOK_URL=...
 
 ## Paper And Brokerage Accounts
 
-- An account is an account: execution mode is decided purely by the connected
-  account's `environment` — there is no local simulator and no "Test mode"
-  fallback. With no connected account, the app cannot place orders.
-- **Paper** is broker-hosted. Users enter Paper mode by connecting a supported
-  provider's paper/sandbox account, such as Alpaca Paper. The app does not
-  invent balances or fills for these accounts.
-- **Brokerage** (live) is a production broker account, such as Robinhood MCP or
-  Alpaca Brokerage. Broker-routed orders can affect real capital when policy,
-  approval, and risk gates allow them.
-- Both modes use the same market-data and policy paths; the account connection
-  only changes where balances, positions, fills, and orders come from. (A
-  `broker: "test"` gateway exists purely as test infrastructure for the unit
-  suite — it is not a user-facing mode.)
+- An account is an account: execution is decided purely by the connected
+  account's `environment` — no local simulator, no "Test mode", no fake fills.
+  With no connected account, the app cannot place orders.
+- **Paper / sandbox** is still a real broker account, just not production money.
+  Connect e.g. **Alpaca Paper** or **Tradier Sandbox** from Connections. The app
+  does not invent balances or fills.
+- **Live / production** brokerage (e.g. Robinhood MCP, Alpaca live, Tradier
+  production) can affect real capital when policy, approval, and risk gates allow.
+- Same market-data and policy paths for paper and live; only balances, positions,
+  fills, and order routing differ by account. (`broker: "test"` is unit-test
+  infrastructure only — never product-facing.)
 
 To use a real MCP transport, set:
 

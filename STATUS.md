@@ -1,3 +1,14 @@
+# Status
+
+## Current (2026-08-07) — docs / GitHub surface refresh
+
+**README + `docs/deployment.md` + strategic-framework + GitHub About** brought in line with
+supported brokers (**Alpaca**, **Tradier**, **Robinhood**), Hetzner Coolify host, app uuid
+`socratic-app`, dockerfile + auto-deploy on main, no Test-mode/local sim, fleet UI copy pointer.
+Branch `grok/docs-github-refresh`.
+
+---
+
 ## Current (2026-08-06 MONET representation-weighted model rotation)
 
 **"__rotate__" now samples representation-weighted instead of round-robin** (owner request:
