@@ -520,7 +520,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
                   {efficacy.records.map((record) => (
                     <tr key={`${record.runId}:${record.symbol}`}>
                       <td className="font-semibold">
-                        <SymbolButton symbol={record.symbol} showLogo={false} />
+                        <SymbolButton symbol={record.symbol} />
                       </td>
                       <td className="capitalize">{record.side ?? EM_DASH}</td>
                       <td title={record.reason ?? undefined}>{record.thesisTag ? thesisTagLabel(record.thesisTag) : EM_DASH}</td>
@@ -683,7 +683,7 @@ function TaxBlock() {
           <div className="flex flex-wrap gap-1.5">
             {tax.lockedSymbols.map((s) => (
               <Chip key={s} tone="warn" title="Rebuying within 30 days of the loss would forfeit the loss deduction. The buy gate enforces this automatically.">
-                <SymbolButton symbol={s} showLogo={false} className="text-inherit" /> locked
+                <SymbolButton symbol={s} className="text-inherit" /> locked
               </Chip>
             ))}
           </div>
@@ -712,7 +712,7 @@ function TaxBlock() {
                   .map((lot, i) => (
                     <tr key={`${lot.symbol}-${i}`}>
                       <td className="font-semibold">
-                        <SymbolButton symbol={lot.symbol} showLogo={false} />
+                        <SymbolButton symbol={lot.symbol} />
                       </td>
                       <td className="num con-num">{fmtQty(lot.quantity)}</td>
                       <td className="num con-num">{lot.daysHeld}</td>
@@ -741,7 +741,7 @@ function TaxBlock() {
           <div className="flex flex-wrap gap-1.5">
             {tax.harvestCandidates.slice(0, 8).map((h) => (
               <Chip key={h.symbol} tone="muted">
-                <SymbolButton symbol={h.symbol} showLogo={false} className="text-inherit" /> {fmtSignedMoney(h.unrealizedLoss)}
+                <SymbolButton symbol={h.symbol} className="text-inherit" /> {fmtSignedMoney(h.unrealizedLoss)}
               </Chip>
             ))}
           </div>

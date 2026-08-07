@@ -15,6 +15,7 @@ struct InsightsView: View {
             InsightsAuthorityCard()
         }
         .navigationTitle("Insights")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func insights(for snapshot: MobileSnapshot) -> [StatusInsight] {
@@ -23,7 +24,7 @@ struct InsightsView: View {
         if !snapshot.readiness.hasAccount {
             insights.append(.init(
                 id: "account",
-                title: "Choose an execution account",
+                title: "Choose an Execution Account",
                 detail: "Open Account & Settings from Home to connect or select the account the agent should use.",
                 systemImage: "person.crop.circle.badge.exclamationmark",
                 tone: .warning
@@ -31,7 +32,7 @@ struct InsightsView: View {
         } else if !snapshot.readiness.hasUniverse {
             insights.append(.init(
                 id: "universe",
-                title: "Your trading universe is empty",
+                title: "Your Trading Universe Is Empty",
                 detail: "Add an included index or symbol before asking the strategy to find opportunities.",
                 systemImage: "scope",
                 tone: .warning
@@ -39,10 +40,11 @@ struct InsightsView: View {
         }
 
         if !snapshot.pendingProposals.isEmpty {
+            let n = snapshot.pendingProposals.count
             insights.append(.init(
                 id: "proposals",
-                title: "\(snapshot.pendingProposals.count) proposal\(snapshot.pendingProposals.count == 1 ? "" : "s") need a decision",
-                detail: "Review rationale, size, execution environment, and any live confirmation in Proposals.",
+                title: "\(n) pending proposal\(n == 1 ? "" : "s")",
+                detail: "Review rationale, size, execution environment, and any confirmation in Proposals.",
                 systemImage: "checklist",
                 tone: .attention
             ))
@@ -52,7 +54,7 @@ struct InsightsView: View {
             let utilization = min(max(snapshot.dailyStats.notional / cap, 0), 1)
             insights.append(.init(
                 id: "daily-notional",
-                title: "Daily opening notional is \(Int((utilization * 100).rounded()))% used",
+                title: "Daily Opening Notional: \(Int((utilization * 100).rounded()))% used",
                 detail: "\(AppFormat.money(snapshot.dailyStats.notional)) of the owner-set \(AppFormat.money(cap)) daily cap.",
                 systemImage: "gauge.with.dots.needle.50percent",
                 tone: utilization >= 0.8 ? .warning : .neutral
@@ -63,8 +65,8 @@ struct InsightsView: View {
             let ahead = benchmark.excessReturnPct >= 0
             insights.append(.init(
                 id: "benchmark",
-                title: ahead ? "Ahead of \(benchmark.benchmarkSymbol)" : "Behind \(benchmark.benchmarkSymbol)",
-                detail: "You \(AppFormat.percent(benchmark.accountReturnPct, signed: true)) vs \(benchmark.benchmarkSymbol) \(AppFormat.percent(benchmark.benchmarkReturnPct, signed: true)) → excess \(AppFormat.percent(benchmark.excessReturnPct, signed: true)) across \(benchmark.points) observations.",
+                title: "vs SPY",
+                detail: "You \(AppFormat.percent(benchmark.accountReturnPct, signed: true)) · SPY \(AppFormat.percent(benchmark.benchmarkReturnPct, signed: true)) → excess \(AppFormat.percent(benchmark.excessReturnPct, signed: true)) across \(benchmark.points) observations.",
                 systemImage: ahead ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis",
                 tone: ahead ? .positive : .attention
             ))
@@ -75,7 +77,7 @@ struct InsightsView: View {
             insights.append(.init(
                 id: "triggered-alerts",
                 title: "\(triggeredAlerts.count) price alert\(triggeredAlerts.count == 1 ? " has" : "s have") triggered",
-                detail: "Review current prices and remove alerts you no longer need from Markets.",
+                detail: "Review current prices and remove alerts you no longer need under Assets.",
                 systemImage: "bell.badge.fill",
                 tone: .attention
             ))
@@ -84,7 +86,7 @@ struct InsightsView: View {
         if insights.isEmpty {
             insights.append(.init(
                 id: "clear",
-                title: "No immediate action needed",
+                title: "No Immediate Action Needed",
                 detail: "The selected account is ready, the proposal queue is clear, and no tracked threshold needs attention.",
                 systemImage: "checkmark.seal.fill",
                 tone: .positive
@@ -106,7 +108,7 @@ private struct InsightsBriefCard: View {
                         .font(.title2)
                         .foregroundStyle(AppPalette.accent)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Portfolio brief")
+                        Text("Portfolio Brief")
                             .font(.title3.weight(.semibold))
                         Text("A concise read from the latest backend snapshot")
                             .font(.caption)
@@ -125,7 +127,9 @@ private struct InsightsBriefCard: View {
         let account = snapshot.readiness.activeConnectedAccount?.label ?? "No account"
         let state = snapshot.readiness.systemState.replacingOccurrences(of: "_", with: " ")
         let equity = AppFormat.money(snapshot.portfolio?.totalMarketValue)
-        return "\(account) is \(state) with \(equity) in equity, \(snapshot.positions.count) open position\(snapshot.positions.count == 1 ? "" : "s"), and \(snapshot.pendingProposals.count) pending proposal\(snapshot.pendingProposals.count == 1 ? "" : "s"). The market session is \(snapshot.marketSession)."
+        let n = snapshot.pendingProposals.count
+        let pending = "\(n) pending proposal\(n == 1 ? "" : "s")"
+        return "\(account) is \(state) with \(equity) in equity, \(snapshot.positions.count) open position\(snapshot.positions.count == 1 ? "" : "s"), and \(pending). Session: \(AppFormat.marketSessionBannerLabel(snapshot.marketSession))."
     }
 }
 
@@ -186,13 +190,13 @@ private struct InsightsActionCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeading(
-                    "Want a fresh cycle?",
-                    subtitle: "Run once lives on Home so there is a single primary control — not a second copy here."
+                    "Want a Fresh Cycle?",
+                    subtitle: "Run Once lives on Home so there is a single primary control — not a second copy here."
                 )
                 Text(
                     snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse
-                        ? "Open the Home tab and tap Run once (or Review proposals when the queue is waiting)."
-                        : "Finish account + universe setup on Home first; then use Run once there."
+                        ? "Open the Home tab and tap Run Once (or Review Proposals when the queue is waiting)."
+                        : "Finish account + universe setup on Home first; then use Run Once there."
                 )
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -206,7 +210,7 @@ private struct InsightsAuthorityCard: View {
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 8) {
-                Label("The backend remains authoritative", systemImage: "lock.shield.fill")
+                Label("Backend Remains Authoritative", systemImage: "lock.shield.fill")
                     .font(.headline)
                     .foregroundStyle(AppPalette.accent)
                 Text("This tab summarizes server-returned facts. Broker credentials, provider keys, policy checks, proposal validation, and order placement never move onto the phone.")

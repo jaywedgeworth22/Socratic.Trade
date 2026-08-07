@@ -3,6 +3,7 @@ import SwiftUI
 enum AppTab: String, CaseIterable, Identifiable {
     case home
     case proposals
+    /// Holdings, orders, watchlist, alerts (tab label "Assets"; same chart symbol).
     case markets
     case activity
     /// Snapshot brief + rule-based attention items — not the web console Coach chat.
@@ -18,7 +19,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .proposals:
             Label("Proposals", systemImage: "checklist")
         case .markets:
-            Label("Markets", systemImage: "chart.line.uptrend.xyaxis")
+            Label("Assets", systemImage: "chart.line.uptrend.xyaxis")
         case .activity:
             Label("Activity", systemImage: "clock.arrow.circlepath")
         case .insights:

@@ -458,7 +458,7 @@ function NewsCard({ news }: { news?: MarketNewsItem[] }) {
                   className="con-chip"
                   title={`This story mentions ${t}.`}
                 >
-                  <SymbolButton symbol={t} showLogo={false} className="text-inherit" />
+                  <SymbolButton symbol={t} className="text-inherit" />
                 </span>
               ))}
             </div>

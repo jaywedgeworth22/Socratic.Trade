@@ -191,7 +191,7 @@ export default function DecisionTracePage() {
             {decision.symbol && (
               <Chip tone="accent">
                 {decision.side ? `${SIDE_LABEL[decision.side] ?? decision.side.toUpperCase()} ` : ""}
-                <SymbolButton symbol={decision.symbol} showLogo={false} className="text-inherit" />
+                <SymbolButton symbol={decision.symbol} className="text-inherit" />
               </Chip>
             )}
             {decision.thesisTag && <Chip tone="muted">{thesisTagLabel(decision.thesisTag)}</Chip>}
