@@ -25,6 +25,11 @@ handoff in `docs/rollouts/2026-08-06-claude-full-product-review.md`, issues labe
   ships 2.5.0 — the filingDate member-skill dependency is not actually deployed.
 
 ## Current (2026-08-06 GROK user source settings)
+## Current (2026-08-06 GROK — iOS login 522 / Oracle host down)
+
+**iOS Sign-In failures (Apple 522 banner; Google/GitHub CF interstitial) are a production origin outage, not OAuth wiring.** UptimeRobot + curl confirm Cloudflare **522** on socratictrade.com / congress.trade / usage.jays.services / host.jays.services; Tailscale `usage-monitor-oracle` offline; public IP no ping; OCI API keys 401 so agents cannot SOFTRESET. **Owner action: OCI Console reboot in us-phoenix-1.** Branch `grok/ios-login-522-and-anchor`: iOS 26 `ASPresentationAnchor` deprecation fix + clearer 521–523 error copy. Rollout: `docs/rollouts/2026-08-06-ios-login-522-oracle-down.md`.
+
+## Prior (2026-08-06 GROK user source settings)
 
 **Per-user source knobs + FMP toggles restored; plan tiers for all market-data sources (branch `grok/plan-tiers-all-sources`).** Rollouts: `docs/rollouts/2026-08-06-user-source-settings-ui.md`, `docs/rollouts/2026-08-06-plan-tiers-all-data-sources.md`.
 
