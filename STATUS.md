@@ -9,6 +9,21 @@ kill-switch no longer pauses litestream when endpoint is B2. Host spare forensic
 Rollout: `docs/rollouts/2026-08-07-litestream-b2-backup.md`.
 # Status
 
+## Current (2026-08-08 MONET — review-fix wave E: owner mobile punch list)
+
+**Branch `monet/review-fixes-e` (isolated worktree, commit-only — landing operator lands):**
+owner iPhone-Safari punch list. New owner-wide `SENTENCE_GAP` (NBSP+space) sentence separator
+applied to this wave's copy; Proposals empty state merged to one paragraph naming the ⚡
+lightning Run-once button; Orders header de-chipped (env + account chips duplicated the top
+banner) with Refresh on the h1 row and a merged intro; mobile tab bar restored to
+`bottom:0` + env(safe-area-inset-bottom) only (the 2026-08-05 chrome-gap shift itself hid the
+labels under Safari's URL chrome and its ≥48px underlay was the grey buffer — reverted);
+Positions weight is now the UNSIGNED share of gross exposure (kills "-0.0%" short artifacts;
+fmtPct never renders negative zero); Orders LAST PRICE gains a durable `symbol_field_latest`
+final fallback (`orderPriceFallbacks` on the snapshot, age-tagged "· 23h old") and the mobile
+card label is one-line "Last". Gates: tsc clean; 12 test files / 161 tests green; lint 0
+errors. Rollout: `docs/rollouts/2026-08-08-review-fixes-e-mobile-punchlist.md`.
+
 ## Current (2026-08-08 MONET — review-fixes wave D: mobile #2559 #2551)
 
 **PWA Market metric now renders the real session** (type drift `{label,isOpen}` → raw

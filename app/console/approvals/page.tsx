@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ListFilter, ShieldAlert } from "lucide-react";
+import { ListFilter, ShieldAlert, Zap } from "lucide-react";
 import type { PendingProposal } from "@/lib/types";
 import { deriveStateInfo, activeConnectedAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { bulkApproveProposals, LiveConfirmationRequiredError, rejectProposal, type ApproveResult } from "../lib/api";
-import { fmtMoney } from "../lib/format";
+import { fmtMoney, SENTENCE_GAP } from "../lib/format";
 import { fetchPendingLearnedContext } from "../lib/learned-context";
 import { isSuccessfulApprovalResult } from "../lib/thesis";
 import { ApprovalCard } from "../components/approval-card";
@@ -401,16 +401,18 @@ export default function ApprovalsPage() {
               {pending.length === 0 ? (
                 <>
                   <p className="font-semibold">Nothing waiting for your judgment.</p>
+                  {/* One paragraph, sentence-gap separated (owner copy rule 2026-08-08). "Run once"
+                      is icon-only in the phone chrome (see RunOnceButton in chrome.tsx), so the copy
+                      names the lightning glyph it renders as. */}
                   <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                    When a run stages a trade that needs your approval, it shows up here.
-                  </p>
-                  <p className="mt-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                    When a run stages a trade that needs your approval, it shows up here.{SENTENCE_GAP}
                     Need a cycle now? Use <strong className="font-semibold text-[color:var(--con-fg)]">Run once</strong>{" "}
-                    in the top bar
+                    — the <Zap size={12} className="inline-block align-[-1px]" aria-hidden /> lightning button in the
+                    top bar
                     {stopped ? (
                       <>
                         {" "}
-                        (works while stopped). To approve later, start the agent from the same bar first.
+                        (works while stopped).{SENTENCE_GAP}To approve later, start the agent from the same bar first.
                       </>
                     ) : (
                       <> — then return here to decide.</>

@@ -90,6 +90,12 @@ export interface DashboardSnapshot {
   paperPositions?: EquityPosition[];
   paperOptions?: OptionPosition[];
   orders: EquityOrder[];
+  /** Durable last-known price per order symbol (from the shared symbol_field_latest
+   *  store, PR #2503) — the Orders screen's FINAL "Last price" fallback when a symbol
+   *  is neither held nor covered by the latest scan. Keyed by normalized symbol; each
+   *  entry carries its own as_of so the UI always age-tags it. Optional: older payloads
+   *  and empty stores simply omit it ("—" remains the last resort). */
+  orderPriceFallbacks?: Record<string, { price: number; asOf: string; source?: string }>;
   audit: AuditEvent[];
   auditFeed: DashboardAuditFeedItem[];
   unifiedFeed: UnifiedActivityGroup[];

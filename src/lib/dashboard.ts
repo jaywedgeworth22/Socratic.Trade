@@ -27,6 +27,7 @@ import {
   listSocraticFrameworkProposals,
   getRedTeamCriticFailureStats
 } from "./db";
+import { getSymbolLatestPrices } from "./db-fundamentals";
 import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
@@ -882,6 +883,22 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     pendingProposals,
     latestStrategyRun
   });
+  // Durable last-known price per order symbol (symbol_field_latest, PR #2503) — the Orders
+  // screen's FINAL "Last price" fallback when a symbol is neither held nor in the latest scan
+  // (owner mobile punch list 2026-08-08: a bare "—" is useless for the Replace-at-market call).
+  // Loaded for every order symbol; the client keeps its own preference order (held mark → scan
+  // → this store → "—") and always age-tags the store's as_of. Best-effort: a read failure just
+  // omits the map.
+  const orderPriceFallbacks = (() => {
+    try {
+      const symbols = [...new Set(orders.map((order) => order.symbol))];
+      if (symbols.length === 0) return undefined;
+      const prices = getSymbolLatestPrices(symbols);
+      return Object.keys(prices).length > 0 ? prices : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
   // Per-position stop PLANS (LLM-chosen stop TYPE, persisted at fill time) — surfaced in the
   // Positions table and the stop-flow diagram so a plan is never a hidden override. Best-effort:
   // a lookup failure just means the UI falls back to the account's own precedence for every symbol.
@@ -1009,6 +1026,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     symbolMetaBySymbol,
     stopPlanBySymbol,
     orders,
+    orderPriceFallbacks,
     audit: clientAudit,
     auditFeed,
     unifiedFeed,

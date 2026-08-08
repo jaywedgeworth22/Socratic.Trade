@@ -3,6 +3,12 @@
 
 export const EM_DASH = "—";
 
+/** Owner-wide copy rule (2026-08-08 mobile punch list): sentences inside one
+ *  paragraph are separated by TWO spaces. HTML collapses consecutive plain
+ *  spaces to one, so the gap is rendered as NBSP + space — interpose
+ *  {SENTENCE_GAP} between sentences in JSX copy instead of a literal "  ". */
+export const SENTENCE_GAP = "\u00A0 ";
+
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }
@@ -30,8 +36,12 @@ export function fmtSignedMoney(v: number | null | undefined): string {
 
 export function fmtPct(v: number | null | undefined, digits = 2, signed = false): string {
   if (!isNum(v)) return EM_DASH;
+  let text = v.toFixed(digits);
+  // Never render negative zero (owner rule, 2026-08-08): -0 and tiny negatives
+  // that round to "-0.0" display as plain zero.
+  if (/^-0(\.0+)?$/.test(text)) text = text.slice(1);
   const sign = signed && v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(digits)}%`;
+  return `${sign}${text}%`;
 }
 
 export function fmtNum(v: number | null | undefined): string {

@@ -8,7 +8,7 @@ import { memo } from "react";
 import Link from "next/link";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import type { OptionPosition } from "@/lib/types";
-import { deriveProtection, deriveUnmanagedShortCount, unmanagedShortNotice } from "../lib/derive";
+import { deriveProtection, deriveUnmanagedShortCount, grossExposure, grossExposureWeightPct, unmanagedShortNotice } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { Card, Dash, Empty, SignedText } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
@@ -43,6 +43,10 @@ export const PositionsCard = memo(function PositionsCard({ snapshot }: { snapsho
 
   // Computed once per position and shared by both the ≥lg table and the
   // <lg card list below, so the two layouts can never drift out of sync.
+  // Weight is the UNSIGNED share of gross exposure (owner decision 2026-08-08):
+  // a signed weight rendered "-0.0%"/"-1.8%" artifacts for shorts, whose
+  // direction the SHORT tag already carries.
+  const grossTotal = grossExposure(positions);
   const rows = positions.map((p) => {
     const short = p.quantity < 0;
     const costBasis = p.averageCost * p.quantity;
@@ -50,10 +54,15 @@ export const PositionsCard = memo(function PositionsCard({ snapshot }: { snapsho
       Number.isFinite(p.marketValue) && Number.isFinite(costBasis) ? p.marketValue - costBasis : undefined;
     const unrealizedPct =
       unrealized !== undefined && costBasis !== 0 ? (unrealized / Math.abs(costBasis)) * 100 : undefined;
-    const weightPct = equity && equity !== 0 ? (p.marketValue / equity) * 100 : undefined;
+    const weightPct = grossExposureWeightPct(p.marketValue, grossTotal);
+    // The over-cap cue keeps the policy cap's own basis — |value| as a share of ACCOUNT
+    // value (maxSymbolExposurePct is defined against account value, not gross exposure);
+    // its tooltip spells out that percentage.
+    const equitySharePct =
+      equity && equity !== 0 && Number.isFinite(p.marketValue) ? (Math.abs(p.marketValue) / Math.abs(equity)) * 100 : undefined;
     const protection = deriveProtection(p, snapshot.orders ?? [], snapshot.policy, snapshot.stopPlanBySymbol?.[p.symbol]);
     const meta = snapshot.symbolMetaBySymbol?.[p.symbol];
-    const exposure = exposureCue(weightPct, exposureCap);
+    const exposure = exposureCue(equitySharePct, exposureCap);
     return { p, short, unrealized, unrealizedPct, weightPct, protection, meta, exposure };
   });
 
@@ -80,7 +89,7 @@ export const PositionsCard = memo(function PositionsCard({ snapshot }: { snapsho
                   <th className="num" title="Shares held; negative means a short position.">Qty</th>
                   <th className="num" title="Average price paid per share.">Avg cost</th>
                   <th className="num" title="Current market value of the position.">Value</th>
-                  <th className="num" title="Share of the account's total market value currently tied to this position.">Weight</th>
+                  <th className="num" title="Share of gross exposure (absolute): this position's |market value| as a percent of the sum of |market value| across all open positions. Direction is carried by the SHORT tag, so shorts never show a negative weight.">Weight</th>
                   <th className="num" title="Market value minus cost basis — the gain or loss if you closed now.">Unrealized</th>
                   <th title="What protects this position: a resting broker stop order, an app-managed stop rule, or nothing (—).">Protection</th>
                 </tr>
