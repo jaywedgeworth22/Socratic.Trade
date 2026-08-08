@@ -343,7 +343,7 @@ export function buildDerivedTiles(view: QuoteView, derived: DerivedResult): Deri
     key: "roe",
     label: "ROE",
     value: typeof m.roe === "number" ? `${m.roe.toFixed(1)}%` : null,
-    title: `Return on equity — provider-reported (FMP ratios-ttm) when available, otherwise EPS ÷ book value per share. Higher = more efficient use of shareholder capital; 20%+ is excellent, negative means losses. ${COMPUTED}`,
+    title: `Return on equity — provider-reported (trailing twelve months) when available, otherwise EPS ÷ book value per share. Higher = more efficient use of shareholder capital; 20%+ is excellent, negative means losses. ${COMPUTED}`,
     tone: typeof m.roe === "number" ? (m.roe >= 0 ? "pos" : "neg") : undefined
   });
 

@@ -113,27 +113,32 @@ export function ReadinessChecklistHero({
   const nextIncomplete = checklist.steps.find((s) => !s.complete);
 
   return (
-    <Card
-      title={
-        <span className="flex items-center gap-1.5">
-          <ListChecks size={13} /> Get ready to trade
-          <span className="font-normal text-[color:var(--con-muted)]">
-            · {checklist.completedCount}/{checklist.totalCount}
+    // data-intro-shield: the splash canvas (intro-canvas.tsx) clips this rect out of
+    // its draw region once its backdrop dissolves, so flying candles pass behind the
+    // checklist instead of drawing through its text (visible around ~800px widths).
+    <div data-intro-shield>
+      <Card
+        title={
+          <span className="flex items-center gap-1.5">
+            <ListChecks size={13} /> Get ready to trade
+            <span className="font-normal text-[color:var(--con-muted)]">
+              · {checklist.completedCount}/{checklist.totalCount}
+            </span>
           </span>
-        </span>
-      }
-    >
-      <p className="mb-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-        Finish these steps so the strategy can scan, propose, and place through your broker. Each
-        row goes straight to the fix. When you&apos;re ready for a cycle, use{" "}
-        <strong className="font-semibold text-[color:var(--con-fg)]">Run once</strong> in the top
-        bar (one control — not duplicated here).
-      </p>
-      <div className="flex flex-col gap-2">
-        {checklist.steps.map((step) => (
-          <StepRow key={step.id} step={step} isNext={nextIncomplete?.id === step.id} />
-        ))}
-      </div>
-    </Card>
+        }
+      >
+        <p className="mb-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+          Finish these steps so the strategy can scan, propose, and place through your broker. Each
+          row goes straight to the fix. When you&apos;re ready for a cycle, use{" "}
+          <strong className="font-semibold text-[color:var(--con-fg)]">Run once</strong> in the top
+          bar.
+        </p>
+        <div className="flex flex-col gap-2">
+          {checklist.steps.map((step) => (
+            <StepRow key={step.id} step={step} isNext={nextIncomplete?.id === step.id} />
+          ))}
+        </div>
+      </Card>
+    </div>
   );
 }

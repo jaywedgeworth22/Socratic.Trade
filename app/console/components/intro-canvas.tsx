@@ -43,6 +43,21 @@ let introStart: number | null = null;
 let introDone = false;
 let MODEL: Model | null = null;
 
+// Chart-phase candle colors follow the live console theme (--con-pos/--con-neg),
+// read via getComputedStyle when the animation starts (the canvas API can't
+// resolve CSS var() strings itself). The hex literals are only the last-resort
+// defaults for the moment before the theme can be read. Module-scoped (not baked
+// into the cached MODEL) so candleAt reads the freshly-resolved values.
+let CHART_POS = "#059669";
+let CHART_NEG = "#dc2626";
+function readIntroColors(el: HTMLElement) {
+  const styles = getComputedStyle(el);
+  const pos = styles.getPropertyValue("--con-pos").trim();
+  const neg = styles.getPropertyValue("--con-neg").trim();
+  if (pos) CHART_POS = pos;
+  if (neg) CHART_NEG = neg;
+}
+
 // Cross-session cache of the real header logo's measured TOP (viewport px), one
 // value per breakpoint bucket ("d" = >=lg desktop bar, "m" = <lg mobile brand row).
 // The real logo's y depends on whether a RealityBanner (~32px, non-live accounts)
@@ -228,7 +243,7 @@ function buildModel(): Model {
     s.bt = s.wt + (wh - bh) * u.off; s.bb = s.bt + bh; s.col = u.col;
   };
   const candleAt = (j: number, t: number, L: Layout): Geo => {
-    if (t < BL[j]) { const g = chartGeom(j, t, L); g.col = g.up ? "#059669" : "#dc2626"; return g; }
+    if (t < BL[j]) { const g = chartGeom(j, t, L); g.col = g.up ? CHART_POS : CHART_NEG; return g; }
     const header = { ...headerGeom(j, L), col: INCOL[j] };
     if (!CENTER_WORDMARK_STEP) {
       // Direct path: each candle flies chart -> header logo in one leg, then ticks.
@@ -279,6 +294,9 @@ export function ConsoleIntro() {
     if (!ctx) { hide(); return; }
     if (!MODEL) { try { MODEL = buildModel(); } catch { hide(); return; } }
     const model = MODEL;
+    // Resolve the theme's pos/neg tokens for the chart-phase candles at animation
+    // start (wrap sits inside .console-root, so the --con-* scope is inherited).
+    readIntroColors(wrap);
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let VW = 0, VH = 0, L = model.layout(1, 1), raf = 0, fading = false, done = false, fadeTimer = 0;
@@ -372,12 +390,32 @@ export function ConsoleIntro() {
       introCurHeader = cur;
       L.header = cur;
       ctx.clearRect(0, 0, VW, VH);
+      // Once the backdrop has dissolved the real page shows through beneath the
+      // flying candles — but they must not draw straight through foreground text.
+      // Content that opts out via [data-intro-shield] (the readiness checklist
+      // hero, whose text sits on the flight path around ~800px widths) gets its
+      // rect clipped OUT, so candles pass visually behind it instead of over it.
+      ctx.save();
+      if (dissolved) {
+        const shields: DOMRect[] = [];
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-intro-shield]"))) {
+          const r = el.getBoundingClientRect();
+          if (r.width > 1 && r.height > 1 && r.bottom > 0 && r.top < VH) shields.push(r);
+        }
+        if (shields.length > 0) {
+          ctx.beginPath();
+          ctx.rect(0, 0, VW, VH);
+          for (const r of shields) ctx.rect(r.left, r.top, r.width, r.height);
+          ctx.clip("evenodd");
+        }
+      }
       for (let j = 0; j < model.M; j++) {
-        const c = model.candleAt(j, t, L); const col = c.col || "#059669";
+        const c = model.candleAt(j, t, L); const col = c.col || CHART_POS;
         ctx.strokeStyle = col; ctx.lineWidth = Math.max(1, c.bw * 0.26); ctx.lineCap = "round";
         ctx.beginPath(); ctx.moveTo(c.x, c.wt); ctx.lineTo(c.x, c.wb); ctx.stroke();
         ctx.fillStyle = col; const bh = Math.max(1.4, c.bb - c.bt); roundRect(ctx, c.x - c.bw / 2, c.bt, c.bw, bh, Math.min(2, c.bw * 0.25)); ctx.fill();
       }
+      ctx.restore();
       // Natural fade waits until the REAL logo exists and the glide has settled on
       // it — revealing the persistent logo under a wordmark that's elsewhere (or
       // under nothing at all, on a slow first load) caused a visible pop/gap.
