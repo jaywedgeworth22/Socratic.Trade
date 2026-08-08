@@ -79,7 +79,7 @@ function notificationDeliveryControl(options: SendNotificationOptions): Notifica
 }
 
 const CHANNEL_LABELS: Record<NotifyChannelId, string> = {
-  push: "Phone push",
+  push: "ntfy.sh",
   pushover: "Pushover",
   webhook: "Webhook",
   email: "Email",

@@ -241,7 +241,7 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
     target: (p) => p.pushTarget || "",
     describe: (cfg) => ({
       id: "push",
-      label: "Phone push (ntfy)",
+      label: "ntfy.sh",
       available: true,
       targetField: "pushTarget",
       targetLabel: "ntfy topic",

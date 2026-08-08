@@ -9,6 +9,10 @@ kill-switch no longer pauses litestream when endpoint is B2. Host spare forensic
 Rollout: `docs/rollouts/2026-08-07-litestream-b2-backup.md`.
 # Status
 
+## Current (2026-08-08 GROK — settings ntfy label)
+
+**Settings → Delivery:** first channel renamed **ntfy.sh** (was "Phone push"); removed "recommended · free" badge. Branch `grok/settings-ntfy-label`.
+
 ## Current (2026-08-07) — docs / GitHub surface refresh
 
 **README + `docs/deployment.md` + strategic-framework + GitHub About** brought in line with

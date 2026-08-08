@@ -107,7 +107,7 @@ describe("truthful notification delivery aggregation", () => {
     );
 
     expect(event.status).toBe("skipped");
-    expect(event.error).toBe("Phone push is not configured by the operator. | Email has no delivery target.");
+    expect(event.error).toBe("ntfy.sh is not configured by the operator. | Email has no delivery target.");
   });
 
   it("records joined, channel-labelled failures when every delivery fails", async () => {
@@ -124,7 +124,7 @@ describe("truthful notification delivery aggregation", () => {
     );
 
     expect(event.status).toBe("failed");
-    expect(event.error).toBe("Phone push: HTTP 500 | Email: Delivery failed.");
+    expect(event.error).toBe("ntfy.sh: HTTP 500 | Email: Delivery failed.");
   });
 
   it("records sent-with-partial-failure and audits a failed legacy webhook", async () => {
