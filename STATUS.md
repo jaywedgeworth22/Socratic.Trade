@@ -9,6 +9,16 @@ kill-switch no longer pauses litestream when endpoint is B2. Host spare forensic
 Rollout: `docs/rollouts/2026-08-07-litestream-b2-backup.md`.
 # Status
 
+## Current (2026-08-08 MONET — data-integrity fixes #2557 #2548)
+
+**Results math stops trusting unverifiable inputs (display/aggregation only):** inferred
+transfers must reconcile against their own sub-period's equity delta (else "inferred —
+unverified" chip, excluded from TWR/day-P&L; kills the phantom $36.5k-withdrawal +56% TWR);
+dead/stale SPY series renders a first-class "benchmark unavailable" state + advisory audit
+instead of fake 0.00%; open lots are reconciled against live broker positions ("ledger
+mismatch" chip; mismatched symbols excluded from wash-sale/early-exit/harvest figures with a
+footnote). Branch `monet/review-fixes-b`; landing operator runs full gate + `land.sh`.
+Rollout: `docs/rollouts/2026-08-08-data-integrity-flow-sanity-ledger.md`.
 ## Current (2026-08-08 MONET — review fixes wave A)
 
 **Review-fixes wave A (#2547 #2549 #2554 #2556 #2562):** real `/console/decisions` index

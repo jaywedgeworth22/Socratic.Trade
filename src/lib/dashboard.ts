@@ -1,4 +1,5 @@
 import {
+  audit,
   dailyExecutionStats,
   getActiveStrategyProfile,
   getAutoResumeOnBoot,
@@ -7,6 +8,7 @@ import {
   getProposalsByIds,
   getStrategyPrompt,
   latestAuditByKind,
+  latestAuditStampByKind,
   listAudit,
   listAuditByKind,
   listNotificationEvents,
@@ -38,7 +40,7 @@ import {
   type PrefetchedFills,
   type PrefetchedPnl
 } from "./performance";
-import { computeSpyBenchmark } from "./benchmark";
+import { computeSpyBenchmarkDetailed, type SpyBenchmarkResult } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { getRobinhoodMcpHealth, type RobinhoodMcpHealth } from "./robinhood";
@@ -124,6 +126,21 @@ function withDeadline<T>(
     }, ms);
   });
   return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
+/** Advisory-audit rate limiter: the dashboard snapshot recomputes on every console load, so an
+ *  ongoing condition (dead SPY feed, unverified inferred transfer) would otherwise write a row
+ *  per refresh. One row per kind per window is plenty for an advisory; uses the stamp-only audit
+ *  read (payload never parsed). Never throws into the snapshot path. */
+const ADVISORY_AUDIT_WINDOW_MS = 6 * 60 * 60 * 1000;
+function auditAdvisoryRateLimited(kind: string, payload: unknown, userId: string, connectedAccountId?: string): void {
+  try {
+    const last = latestAuditStampByKind(kind, userId, connectedAccountId);
+    if (last && Date.now() - Date.parse(last.createdAt) < ADVISORY_AUDIT_WINDOW_MS) return;
+    audit(kind, payload, userId, connectedAccountId);
+  } catch (error) {
+    console.warn(`[dashboard] advisory audit ${kind} failed (non-fatal):`, error);
+  }
 }
 
 export interface AccountReadiness {
@@ -650,14 +667,49 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     // Same-source fills let the benchmark infer deposits/withdrawals (cash delta minus trade
     // cash) so the account return line is time-weighted instead of counting transfers as P&L.
     const benchmarkFills = scorecardSource === "live" ? liveFills : paperFills;
-    const benchmark = await withDeadline(
-      computeSpyBenchmark(tippedCurve, userId, Date.now(), benchmarkFills).catch(() => null),
+    const benchmarkResult = await withDeadline<SpyBenchmarkResult>(
+      computeSpyBenchmarkDetailed(tippedCurve, userId, Date.now(), benchmarkFills).catch((error) => ({
+        comparison: null,
+        unavailable: { reason: "fetch-failed" as const, detail: messageFromUnknownError(error).slice(0, 200) }
+      })),
       4000,
-      () => null,
+      () => ({ comparison: null, unavailable: { reason: "fetch-failed" as const, detail: "timed out after 4000ms" } }),
       "computeSpyBenchmark",
       timedOutSections
     );
-    if (benchmark) performance.benchmark = benchmark;
+    if (benchmarkResult.comparison) {
+      performance.benchmark = benchmarkResult.comparison;
+      // #2557: an inferred transfer failed the equity-delta sanity bound — it was shown but
+      // excluded from TWR. One advisory audit (rate-limited) so the owner can confirm/correct.
+      const unverified = benchmarkResult.comparison.unverifiedFlows;
+      if (unverified && unverified.length > 0) {
+        auditAdvisoryRateLimited(
+          "benchmark_flow_unverified",
+          {
+            benchmarkSymbol: benchmarkResult.comparison.benchmarkSymbol,
+            windowStart: benchmarkResult.comparison.startDate,
+            windowEnd: benchmarkResult.comparison.endDate,
+            flows: unverified,
+            note: "Inferred transfer(s) larger than the sanity bound vs their sub-period equity delta; shown as 'inferred — unverified' and excluded from TWR neutralization."
+          },
+          userId,
+          policy.connectedAccountId
+        );
+      }
+    } else if (benchmarkResult.unavailable) {
+      const { reason, detail } = benchmarkResult.unavailable;
+      // Feed failures get a first-class "benchmark unavailable" state + one advisory audit;
+      // young-account insufficiency keeps the quiet "not computable yet" copy (no audit).
+      if (reason === "fetch-failed" || reason === "no-bars" || reason === "stale-series") {
+        performance.benchmarkUnavailable = benchmarkResult.unavailable;
+        auditAdvisoryRateLimited(
+          "benchmark_unavailable",
+          { benchmarkSymbol: "SPY", reason, detail },
+          userId,
+          policy.connectedAccountId
+        );
+      }
+    }
   }
   const thesisScorecard = accountNumber
     ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills, prefetchedPnl)
@@ -666,6 +718,17 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills, prefetchedPnl)
     : [];
   const redTeamEfficacy = accountNumber ? getDashboardRedTeamEfficacy(userId, policy.connectedAccountId) : undefined;
+  // #2548: live broker book for lot-ledger reconciliation. Only when the positions read succeeded
+  // (portfolio present, no read error) — a failed read must not flag every open lot as an orphan.
+  // Position quantities are signed (shorts negative), matching OpenLot.quantity.
+  let livePositionsBySymbol: Record<string, number> | undefined;
+  if (portfolio && !portfolioReadError) {
+    livePositionsBySymbol = {};
+    for (const position of positions) {
+      const symbol = normalizeSymbol(position.symbol);
+      livePositionsBySymbol[symbol] = (livePositionsBySymbol[symbol] ?? 0) + position.quantity;
+    }
+  }
   const tax = accountNumber
     ? getTaxSummary(
         accountNumber,
@@ -675,7 +738,8 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
         new Date(),
         userId,
         prefetchedFills,
-        prefetchedPnl
+        prefetchedPnl,
+        livePositionsBySymbol
       )
     : undefined;
   const profiles = listStrategyProfiles(userId);

@@ -24,11 +24,12 @@ import { fetchDailyOHLC } from "./history";
 // The external-cash-flow math lives in its own dependency-free module: the console's client
 // components need it, and reaching it through this file dragged history.ts + the db barrel into
 // the browser bundle. See the header of ./cash-flows for the full rationale.
-import { inferExternalCashFlows, isoDate, round2 } from "./cash-flows";
+import { inferExternalCashFlows, isInferredFlowUnverified, isoDate, round2 } from "./cash-flows";
 import type {
   BenchmarkComparison,
   BenchmarkSeriesPoint,
   BenchmarkSubPeriod,
+  BenchmarkUnavailability,
   EquityCurvePoint,
   FillEvent
 } from "./types";
@@ -108,11 +109,24 @@ export function normalizeAgainstBenchmark(
 
   let flowsApplied = 0;
   let netExternalFlows = 0;
+  const unverifiedFlows: Array<{ date: string; amount: number }> = [];
 
   for (let i = 1; i < aligned.length; i++) {
     const prev = aligned[i - 1]!;
     const cur = aligned[i]!;
-    const flow = flowsByDate?.get(cur.date) ?? 0;
+    let flow = flowsByDate?.get(cur.date) ?? 0;
+
+    // Sanity bound (#2557): an inferred transfer must reconcile against its own sub-period's
+    // equity delta. A flow that fails is UNVERIFIED — keep it visible on the sub-period row,
+    // but compute this segment as if no transfer happened (raw equity growth) so a phantom
+    // "withdrawal" can never mint fake TWR.
+    const inferredFlow = flow;
+    let flowUnverified = false;
+    if (flow !== 0 && isInferredFlowUnverified(flow, prev.equity, cur.equity)) {
+      unverifiedFlows.push({ date: cur.date, amount: round2(flow) });
+      flowUnverified = true;
+      flow = 0;
+    }
 
     // ── Account sub-period (flow-neutral TWR) ──────────────────────────────
     // V_end / (V_start + external_flow_at_end). Deposit (+): larger denominator so the
@@ -156,9 +170,12 @@ export function normalizeAgainstBenchmark(
       endDate: cur.date,
       startEquity: round2(prev.equity),
       endEquity: round2(cur.equity),
-      externalFlow: round2(flow),
+      // An unverified flow keeps its inferred amount on the row (owner review), even though
+      // the return math above ignored it.
+      externalFlow: round2(inferredFlow),
       accountReturnPct: round2((accountFactor - 1) * 100),
-      benchmarkReturnPct: round2((spyFactor - 1) * 100)
+      benchmarkReturnPct: round2((spyFactor - 1) * 100),
+      ...(flowUnverified ? { flowUnverified: true } : {})
     });
   }
 
@@ -186,7 +203,8 @@ export function normalizeAgainstBenchmark(
     subPeriods: coalesced,
     ...(flowsDetected
       ? { cashFlowAdjusted: true, netExternalFlows: round2(netExternalFlows) }
-      : { cashFlowAdjusted: false })
+      : { cashFlowAdjusted: false }),
+    ...(unverifiedFlows.length > 0 ? { unverifiedFlows } : {})
   };
 }
 
@@ -247,22 +265,69 @@ export function coalesceSubPeriods(periods: BenchmarkSubPeriod[]): BenchmarkSubP
   return out;
 }
 
+/** Result of the SPY comparison with an honest "why not" when it cannot be computed. */
+export interface SpyBenchmarkResult {
+  comparison: BenchmarkComparison | null;
+  /** Present whenever `comparison` is null, naming the reason (feed failure vs young account). */
+  unavailable?: BenchmarkUnavailability;
+}
+
+/** Calendar-day lag allowed between the last benchmark close and the account window's end before
+ *  the series counts as stale (covers weekends/holidays + a same-day snapshot vs yesterday's close). */
+export const BENCHMARK_STALE_GRACE_DAYS = 5;
+
+/**
+ * Pure staleness gate (#2557): a benchmark series whose last close predates the account window's
+ * end by more than the grace period would map every later account date onto one frozen close —
+ * SPY "0.00%" for every sub-period, and "vs SPY" silently re-printing the account number. That is
+ * a dead feed, not a flat market. Returns the unavailability, or null when the series is usable.
+ * Exported for direct unit testing.
+ */
+export function assessBenchmarkSeries(
+  closes: Array<{ date: string; close: number }>,
+  firstEquityDate: string,
+  lastEquityDate: string,
+  benchmarkSymbol = "SPY",
+  seriesSource?: string
+): BenchmarkUnavailability | null {
+  const valid = closes.filter((c) => Number.isFinite(c.close) && c.close > 0);
+  if (valid.length < 2) {
+    return { reason: "no-bars", detail: `${benchmarkSymbol} history returned ${valid.length} usable close(s)` };
+  }
+  let lastCloseDate = valid[0].date;
+  for (const c of valid) if (c.date > lastCloseDate) lastCloseDate = c.date;
+  const lagMs = Date.parse(lastEquityDate) - Date.parse(lastCloseDate);
+  if (Number.isFinite(lagMs) && lagMs > BENCHMARK_STALE_GRACE_DAYS * 86_400_000) {
+    const source = seriesSource ? ` (source: ${seriesSource})` : "";
+    return {
+      reason: "stale-series",
+      detail: `${benchmarkSymbol} closes end ${lastCloseDate}${source}; account window runs ${firstEquityDate} → ${lastEquityDate}`
+    };
+  }
+  return null;
+}
+
 /**
  * Fetch SPY daily closes and compare them to the account equity curve. userId scopes the history
  * cache (consent-pooled). Optional `fills` (the same source's recorded fills) enable external
- * cash-flow inference so the account line is deposit/withdrawal-aware (TWR). Returns null on any
- * failure or insufficient data so callers degrade gracefully — never throws into the dashboard path.
+ * cash-flow inference so the account line is deposit/withdrawal-aware (TWR). Never throws into
+ * the dashboard path; `comparison` is null on any failure, with `unavailable.reason` saying why —
+ * feed failures (fetch-failed / no-bars / stale-series) are distinguished from the ordinary
+ * young-account insufficient-history state so the UI can render a first-class "benchmark
+ * unavailable" state instead of a fake 0.00% comparison.
  *
  * Synthetic fill-only curves (no real portfolio snapshots) are refused — those start at a fake
  * $100 equity base and are not comparable to SPY for an account holding real capital.
  */
-export async function computeSpyBenchmark(
+export async function computeSpyBenchmarkDetailed(
   equityCurve: EquityCurvePoint[],
   userId?: string,
   now: number = Date.now(),
   fills?: FillEvent[]
-): Promise<BenchmarkComparison | null> {
-  if (!equityCurve || equityCurve.length < 2) return null;
+): Promise<SpyBenchmarkResult> {
+  if (!equityCurve || equityCurve.length < 2) {
+    return { comparison: null, unavailable: { reason: "insufficient-history" } };
+  }
   // Refuse synthetic paper curves (`syntheticPaperCurve` uses equity = 100 + realized with no cash
   // fields). IMPORTANT: do not let a single live tip (which has cash) "upgrade" a synthetic
   // history into a real TWR — that made $100-base fill curves + $100k tip read as +tens of %
@@ -270,19 +335,53 @@ export async function computeSpyBenchmark(
   const realCurve = equityCurve.filter(
     (p) => typeof p.cash === "number" || typeof p.positionsValue === "number"
   );
-  if (realCurve.length < 2) return null;
+  if (realCurve.length < 2) {
+    return { comparison: null, unavailable: { reason: "insufficient-history" } };
+  }
   // Prefer the real-snapshot sub-curve (includes a live tip when present).
   equityCurve = realCurve;
   let bars;
   try {
     bars = await fetchDailyOHLC("SPY", now, userId);
-  } catch {
-    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { comparison: null, unavailable: { reason: "fetch-failed", detail: message.slice(0, 200) } };
   }
-  if (!bars || bars.length < 2) return null;
+  if (!bars || bars.length < 2) {
+    return {
+      comparison: null,
+      unavailable: { reason: "no-bars", detail: `SPY history cascade returned ${bars?.length ?? 0} bar(s)` }
+    };
+  }
   const closes = bars
     .map((b) => ({ date: isoDate(b.time), close: b.close }))
     .filter((b): b is { date: string; close: number } => b.date != null && Number.isFinite(b.close));
+
+  // Staleness gate BEFORE computing: a series frozen before the account window would print
+  // 0.00% for every sub-period (the live 2026-08-06 failure — stale local bars fallback).
+  const equityDates = equityCurve
+    .map((p) => isoDate(p.timestamp))
+    .filter((d): d is string => d != null)
+    .sort();
+  if (equityDates.length >= 2) {
+    const lastBar = bars[bars.length - 1];
+    const seriesSource = typeof lastBar?.source === "string" ? lastBar.source : undefined;
+    const stale = assessBenchmarkSeries(closes, equityDates[0], equityDates[equityDates.length - 1], "SPY", seriesSource);
+    if (stale) return { comparison: null, unavailable: stale };
+  }
+
   const flows = inferExternalCashFlows(equityCurve, fills ?? []);
-  return normalizeAgainstBenchmark(equityCurve, closes, "SPY", flows.size > 0 ? flows : undefined);
+  const comparison = normalizeAgainstBenchmark(equityCurve, closes, "SPY", flows.size > 0 ? flows : undefined);
+  if (!comparison) return { comparison: null, unavailable: { reason: "insufficient-overlap" } };
+  return { comparison };
+}
+
+/** Back-compat wrapper: the comparison alone (null on any failure). Prefer the detailed variant. */
+export async function computeSpyBenchmark(
+  equityCurve: EquityCurvePoint[],
+  userId?: string,
+  now: number = Date.now(),
+  fills?: FillEvent[]
+): Promise<BenchmarkComparison | null> {
+  return (await computeSpyBenchmarkDetailed(equityCurve, userId, now, fills)).comparison;
 }
