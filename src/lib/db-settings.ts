@@ -1,6 +1,7 @@
 // db-settings.ts — user/global settings, internal settings, DataPoolConsent, MarketDataDemand
 // All functions depend on getDb() and audit() from "./db" (the core barrel).
 import { audit } from "./db";
+import { activeAlertMutes, ALERT_MUTE_DURATION_MS, ALERT_MUTE_SETTING_KEY, type AlertMuteMap } from "./alert-mutes";
 import { getDrizzle } from "./db/client";
 import { settings, userSettings, marketDataDemands } from "./db/schema";
 import { eq, and, lte, gt } from "drizzle-orm";
@@ -85,6 +86,30 @@ export function setUserSetting(userId: string, key: string, value: unknown, opti
 
 export function deleteUserSetting(userId: string, key: string): void {
   getDrizzle().delete(userSettings).where(and(eq(userSettings.user_id, userId), eq(userSettings.key, key))).run();
+}
+
+// ── Alert Center per-condition mutes (#2555) ──────────────────────────────────
+// Rendering-only, reversible 24h mutes keyed by alertConditionKey — detection, recording,
+// and delivery are untouched. Key/expiry logic is the pure module src/lib/alert-mutes.ts.
+
+/** Active (non-expired) Alert Center mutes for the user. Read-only — expired entries are
+ *  filtered out of the returned map but only actually deleted on the next write. */
+export function getAlertMutes(userId: string, nowMs: number = Date.now()): AlertMuteMap {
+  const stored = getUserSetting<AlertMuteMap>(userId, ALERT_MUTE_SETTING_KEY, {});
+  return activeAlertMutes(stored && typeof stored === "object" ? stored : {}, nowMs);
+}
+
+/** Set (mute=true, 24h from now) or clear (mute=false) one condition's mute; expired entries
+ *  are pruned on every write. Returns the resulting active mute map. */
+export function setAlertMute(userId: string, conditionKey: string, mute: boolean, nowMs: number = Date.now()): AlertMuteMap {
+  const active = getAlertMutes(userId, nowMs);
+  if (mute) {
+    active[conditionKey] = new Date(nowMs + ALERT_MUTE_DURATION_MS).toISOString();
+  } else {
+    delete active[conditionKey];
+  }
+  setUserSetting(userId, ALERT_MUTE_SETTING_KEY, active);
+  return active;
 }
 
 // ── Shared market-data pool consent ───────────────────────────────────────────

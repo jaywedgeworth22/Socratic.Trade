@@ -124,17 +124,13 @@ export async function embedDisclosures(
       envFlagOn("VECTOR_STORECONTEXTS_DEDUP", true) ? { dedupKeyPrefix: "disclosure" } : undefined
     );
 
-    // Best-effort audit — never let audit failures propagate
-    import("../db")
-      .then(({ audit }) =>
-        audit("disclosure_rag_embed", {
-          ok: !result.error,
-          attempted: result.attempted,
-          indexed: result.indexed,
-          skipped: result.skipped
-        })
-      )
-      .catch(() => {});
+    // Best-effort audit — never let audit failures propagate. Awaited (cheap local write) so
+    // callers/tests observe a consistent audit state, but any failure is swallowed.
+    try {
+      await recordEmbedAudit(result);
+    } catch {
+      /* best-effort */
+    }
 
     return {
       attempted: result.attempted,
@@ -147,4 +143,55 @@ export async function embedDisclosures(
     console.error("[disclosure-rag] embed failed:", msg);
     return { attempted: docs.length, indexed: 0, error: msg };
   }
+}
+
+// ── Audit hygiene (#2553c) ────────────────────────────────────────────────────
+
+/** Internal-settings watermark for the no-op rollup below. */
+export const DISCLOSURE_RAG_NOOP_ROLLUP_KEY = "disclosureRag:noopRollup";
+const NOOP_AUDIT_INTERVAL_MS = 24 * 3600_000;
+
+interface NoopRollupState {
+  cycles: number;
+  attempted: number;
+  lastAuditAt?: string;
+}
+
+/**
+ * Write the `disclosure_rag_embed` audit row — unless the run was a pure no-op (every document
+ * deduped before embedding: indexed=0, not skipped, no error). Content-hash dedup makes that the
+ * COMMON case, and it used to write an identical "Attempted: 310 · Indexed: 0" audit row every
+ * refresh cycle (1–3 min). No-op cycles now accumulate into an internal-settings watermark and
+ * flush as at most ONE daily rollup row carrying the suppressed-cycle count, so the receipt that
+ * the lane is alive survives without the per-minute noise.
+ */
+async function recordEmbedAudit(result: { attempted: number; indexed: number; skipped?: boolean; error?: string }): Promise<void> {
+  const { audit, getInternalSetting, setInternalSetting } = await import("../db");
+  const isNoop = !result.error && !result.skipped && result.indexed === 0;
+  if (!isNoop) {
+    audit("disclosure_rag_embed", {
+      ok: !result.error,
+      attempted: result.attempted,
+      indexed: result.indexed,
+      skipped: result.skipped
+    });
+    return;
+  }
+  const state = getInternalSetting<NoopRollupState>(DISCLOSURE_RAG_NOOP_ROLLUP_KEY) ?? { cycles: 0, attempted: 0 };
+  const cycles = state.cycles + 1;
+  const attempted = state.attempted + result.attempted;
+  const lastAuditMs = state.lastAuditAt ? Date.parse(state.lastAuditAt) : NaN;
+  if (Number.isFinite(lastAuditMs) && Date.now() - lastAuditMs < NOOP_AUDIT_INTERVAL_MS) {
+    setInternalSetting(DISCLOSURE_RAG_NOOP_ROLLUP_KEY, { cycles, attempted, lastAuditAt: state.lastAuditAt });
+    return;
+  }
+  audit("disclosure_rag_embed", {
+    ok: true,
+    indexed: 0,
+    attempted: result.attempted,
+    dedupedCycles: cycles,
+    dedupedAttempted: attempted,
+    rollup: true
+  });
+  setInternalSetting(DISCLOSURE_RAG_NOOP_ROLLUP_KEY, { cycles: 0, attempted: 0, lastAuditAt: new Date().toISOString() });
 }

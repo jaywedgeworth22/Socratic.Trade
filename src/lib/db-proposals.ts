@@ -659,6 +659,67 @@ export function listStalePlacingProposals(
   }));
 }
 
+/** Aggregate health of the adversarial-review lane (#2552): of the proposals in the window that
+ *  CARRY a redTeamVerdict, how many recorded a failed review (`available: false`)? 4-of-5 failed
+ *  reviews in one batch is a model/config problem nobody sees per-card — this is the ownable
+ *  aggregate. User-wide on purpose: critic failures are an infrastructure/model condition, not an
+ *  account condition. Proposals with NO verdict (review never triggered) are excluded from the
+ *  denominator — they are not failures. */
+export interface RedTeamCriticFailureStats {
+  windowDays: number;
+  /** Proposals in the window carrying any redTeamVerdict (ran OR failed). */
+  reviews: number;
+  /** Of those, verdicts with available === false. */
+  failures: number;
+  failureRatePct: number;
+  /** failureKind → count, for the tooltip ("malformed_response: 3"). */
+  byKind: Record<string, number>;
+  /** Most common (model, kind) attribution among failures, when one exists. */
+  topFailure?: { model?: string; kind: string; count: number };
+}
+
+export function getRedTeamCriticFailureStats(userId: string = "local", windowDays = 30): RedTeamCriticFailureStats {
+  const sinceIso = new Date(Date.now() - windowDays * 24 * 3600_000).toISOString();
+  const rows = getDb()
+    .prepare("SELECT proposal FROM trade_proposals WHERE user_id = ? AND created_at >= ?")
+    .all(userId, sinceIso) as Array<{ proposal: string }>;
+  let reviews = 0;
+  let failures = 0;
+  const byKind: Record<string, number> = {};
+  const byAttribution = new Map<string, { model?: string; kind: string; count: number }>();
+  for (const row of rows) {
+    let verdict: { available?: boolean; failureKind?: string; model?: string } | undefined;
+    try {
+      verdict = (JSON.parse(row.proposal) as { redTeamVerdict?: typeof verdict }).redTeamVerdict;
+    } catch {
+      continue;
+    }
+    if (!verdict || typeof verdict !== "object" || typeof verdict.available !== "boolean") continue;
+    reviews += 1;
+    if (verdict.available) continue;
+    failures += 1;
+    const kind = typeof verdict.failureKind === "string" && verdict.failureKind ? verdict.failureKind : "unavailable";
+    byKind[kind] = (byKind[kind] ?? 0) + 1;
+    const model = typeof verdict.model === "string" && verdict.model.trim() ? verdict.model.trim() : undefined;
+    const attributionKey = `${model ?? ""}|${kind}`;
+    const entry = byAttribution.get(attributionKey) ?? { model, kind, count: 0 };
+    entry.count += 1;
+    byAttribution.set(attributionKey, entry);
+  }
+  let topFailure: RedTeamCriticFailureStats["topFailure"];
+  for (const entry of byAttribution.values()) {
+    if (!topFailure || entry.count > topFailure.count) topFailure = entry;
+  }
+  return {
+    windowDays,
+    reviews,
+    failures,
+    failureRatePct: reviews > 0 ? Number(((failures / reviews) * 100).toFixed(1)) : 0,
+    byKind,
+    ...(topFailure ? { topFailure } : {})
+  };
+}
+
 /** Idempotency for chat-drafted proposals: one draft/runId remains one proposal across its entire
  * lifecycle, including retries racing approval or arriving after a fill. */
 export function findProposalIdByRunId(runId: string, userId: string = "local"): string | null {
