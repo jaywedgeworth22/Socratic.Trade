@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ListFilter, ShieldAlert, Zap } from "lucide-react";
+import { ListFilter, ShieldAlert } from "lucide-react";
 import type { PendingProposal } from "@/lib/types";
 import { deriveStateInfo, activeConnectedAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -407,7 +407,7 @@ export default function ApprovalsPage() {
                   <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
                     When a run stages a trade that needs your approval, it shows up here.{SENTENCE_GAP}
                     Need a cycle now? Use <strong className="font-semibold text-[color:var(--con-fg)]">Run once</strong>{" "}
-                    — the <Zap size={12} className="inline-block align-[-1px]" aria-hidden /> lightning button in the
+                    — the <span aria-hidden>⚡</span> lightning button in the
                     top bar
                     {stopped ? (
                       <>
