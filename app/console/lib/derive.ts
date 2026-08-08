@@ -22,7 +22,7 @@ import { isRunAllowedNow, nextMarketOpenHint, previousTradingDayStart } from "@/
 // NOT from "@/lib/benchmark" — that file imports history.ts → the db barrel, and this module is
 // imported by every "use client" console component, so the whole server graph followed it into
 // the browser bundle. @/lib/cash-flows is the dependency-free extraction of the same function.
-import { inferExternalCashFlows } from "@/lib/cash-flows";
+import { inferExternalCashFlows, isInferredFlowUnverified } from "@/lib/cash-flows";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
 
@@ -380,6 +380,10 @@ export function deriveDayPnl(
     const flowMap = inferExternalCashFlows([baseline, fakeCurrent], []);
     // Sum any flows found in the map (there should only be at most 1, keyed by fakeCurrent date)
     for (const v of flowMap.values()) flow += v;
+    // #2557 sanity bound: an inferred transfer must reconcile against the equity move it
+    // supposedly caused. A phantom flow (e.g. a mid-day snapshot glitch read as a $36.5k
+    // withdrawal) must not fabricate day P&L — fall back to the raw equity delta.
+    if (flow !== 0 && isInferredFlowUnverified(flow, baseline.equity, currentEquity)) flow = 0;
   }
 
   const pnl = currentEquity - baseline.equity - flow;

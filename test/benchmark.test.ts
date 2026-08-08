@@ -416,3 +416,115 @@ describe("computeSpyBenchmark synthetic curve guard", () => {
     }
   });
 });
+
+describe("inferred-flow sanity bound (#2557 — phantom $36.5k withdrawal)", () => {
+  it("flags a flow that dwarfs its sub-period's equity move as unverified", async () => {
+    const { isInferredFlowUnverified } = await import("../src/lib/cash-flows");
+    // Live repro: "withdrawal $36,501.38" on a sub-period whose equity moved only −$837.
+    expect(isInferredFlowUnverified(-36_501.38, 100_541, 99_704)).toBe(true);
+  });
+
+  it("keeps real flows verified: flow ≈ equity delta, and small flows under the 2% floor", async () => {
+    const { isInferredFlowUnverified } = await import("../src/lib/cash-flows");
+    // Genuine $80k withdrawal moves equity by ~$80k.
+    expect(isInferredFlowUnverified(-80_000, 100_000, 20_000)).toBe(false);
+    // Genuine $500 deposit on a $100k book on a day the market dipped $400 (delta +$100):
+    // 5×|Δ| = $500 would be borderline, but the 2%-of-equity floor ($2k) keeps it verified.
+    expect(isInferredFlowUnverified(500, 100_000, 100_100)).toBe(false);
+    // Deposit slightly above its equity delta (same-day market dip) is still verified.
+    expect(isInferredFlowUnverified(10_000, 100_000, 108_000)).toBe(false);
+    // Zero / non-flow inputs never flag.
+    expect(isInferredFlowUnverified(0, 100_000, 50_000)).toBe(false);
+  });
+
+  it("excludes an unverified flow from TWR but keeps it visible on the sub-period row", () => {
+    // Equity is basically flat (−0.83%) but the flow map claims a $36.5k withdrawal.
+    // Old behavior: 99_704 / (100_541 − 36_501.38) ⇒ +55.7% fake TWR.
+    const equity = cashCurve([
+      ["2026-08-04T16:00:00Z", 100_541, 30_000],
+      ["2026-08-05T16:00:00Z", 99_704, 29_500]
+    ]);
+    const spy = [
+      { date: "2026-08-04", close: 500 },
+      { date: "2026-08-05", close: 505 }
+    ];
+    const flows = new Map([["2026-08-05", -36_501.38]]);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    // Math ignores the phantom flow: raw equity growth, not +55%.
+    expect(r.accountReturnPct).toBeCloseTo(-0.83, 1);
+    expect(r.cashFlowAdjusted).toBe(false);
+    expect(r.netExternalFlows).toBeUndefined();
+    // The owner still sees the inferred transfer, flagged.
+    expect(r.unverifiedFlows).toEqual([{ date: "2026-08-05", amount: -36_501.38 }]);
+    const seg = r.subPeriods!.find((s) => s.endDate === "2026-08-05")!;
+    expect(seg.flowUnverified).toBe(true);
+    expect(seg.externalFlow).toBeCloseTo(-36_501.38, 2);
+    expect(seg.accountReturnPct).toBeCloseTo(-0.83, 1);
+  });
+
+  it("still neutralizes a verified flow in the same window as an unverified one", () => {
+    const equity = cashCurve([
+      ["2026-08-01T16:00:00Z", 100_000, 100_000],
+      ["2026-08-02T16:00:00Z", 150_000, 150_000], // real $50k deposit (delta ≈ flow)
+      ["2026-08-03T16:00:00Z", 150_100, 150_100] // flat day; phantom flow injected below
+    ]);
+    const spy = [
+      { date: "2026-08-01", close: 500 },
+      { date: "2026-08-02", close: 500 },
+      { date: "2026-08-03", close: 500 }
+    ];
+    const flows = new Map([
+      ["2026-08-02", 50_000],
+      ["2026-08-03", -40_000] // phantom: equity moved +$100
+    ]);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.cashFlowAdjusted).toBe(true);
+    expect(r.netExternalFlows).toBeCloseTo(50_000, 2); // phantom excluded from the net
+    expect(r.unverifiedFlows).toHaveLength(1);
+    expect(r.unverifiedFlows![0].date).toBe("2026-08-03");
+    // TWR: deposit day 150/(100+50)=0%, flat day ≈ +0.07% — no phantom distortion.
+    expect(r.accountReturnPct).toBeGreaterThan(-0.5);
+    expect(r.accountReturnPct).toBeLessThan(0.5);
+  });
+});
+
+describe("benchmark series staleness gate (#2557 — SPY 0.00% co-bug)", () => {
+  it("declares a series stale when its last close predates the account window end", async () => {
+    const { assessBenchmarkSeries } = await import("../src/lib/benchmark");
+    const closes = [
+      { date: "2026-07-20", close: 500 },
+      { date: "2026-07-25", close: 505 }
+    ];
+    const verdict = assessBenchmarkSeries(closes, "2026-07-29", "2026-08-06", "SPY", "history-cache-eod");
+    expect(verdict?.reason).toBe("stale-series");
+    expect(verdict?.detail).toContain("2026-07-25");
+    expect(verdict?.detail).toContain("history-cache-eod");
+  });
+
+  it("allows normal weekend/holiday lag inside the grace window", async () => {
+    const { assessBenchmarkSeries } = await import("../src/lib/benchmark");
+    const closes = [
+      { date: "2026-08-01", close: 500 },
+      { date: "2026-08-04", close: 505 }
+    ];
+    // Window ends 2 calendar days after the last close — ordinary T+1/weekend lag.
+    expect(assessBenchmarkSeries(closes, "2026-07-29", "2026-08-06")).toBeNull();
+  });
+
+  it("reports no-bars when the series has fewer than two usable closes", async () => {
+    const { assessBenchmarkSeries } = await import("../src/lib/benchmark");
+    expect(assessBenchmarkSeries([], "2026-07-29", "2026-08-06")?.reason).toBe("no-bars");
+    expect(assessBenchmarkSeries([{ date: "2026-08-01", close: 0 }], "2026-07-29", "2026-08-06")?.reason).toBe("no-bars");
+  });
+
+  it("computeSpyBenchmarkDetailed names insufficient-history for a synthetic curve (no fake 0.00%)", async () => {
+    const { computeSpyBenchmarkDetailed } = await import("../src/lib/benchmark");
+    const synthetic: EquityCurvePoint[] = [
+      { timestamp: "2026-07-01T16:00:00Z", equity: 100, source: "paper" },
+      { timestamp: "2026-07-15T16:00:00Z", equity: 150, source: "paper" }
+    ];
+    const result = await computeSpyBenchmarkDetailed(synthetic, "local", Date.parse("2026-08-05T16:00:00Z"), []);
+    expect(result.comparison).toBeNull();
+    expect(result.unavailable?.reason).toBe("insufficient-history");
+  });
+});
