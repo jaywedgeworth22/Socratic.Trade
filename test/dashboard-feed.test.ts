@@ -1003,6 +1003,176 @@ describe("dashboard feed helpers", () => {
       expect(feed[i - 1]!.updatedAt >= feed[i]!.updatedAt).toBe(true); // still globally newest-first
     }
   });
+
+  it("routes corpus ingest/embed audit kinds into the System ops bucket (#2553a)", () => {
+    // The console's System collapse keys off OPS_AUDIT_KINDS (isOpsGroup in
+    // app/console/activity/page.tsx) — a kind missing here floods TODAY with standalone cards.
+    for (const kind of [
+      "sec_filing_ingest",
+      "sec_filing_refresh",
+      "disclosure_rag_embed",
+      "fmp_transcript_ingest",
+      "fmp_transcript_refresh",
+      "roic_transcript_ingested",
+      "roic_transcript_refresh",
+      "technical_signal_ingest",
+      "fundamentals_card_ingest"
+    ]) {
+      expect(OPS_AUDIT_KINDS.has(kind), `${kind} must be an ops kind`).toBe(true);
+    }
+
+    // And they build as single-event standalone groups (no runId/proposalId), so every event in
+    // the group is an ops kind — exactly the shape isOpsGroup collapses.
+    const feed = buildUnifiedFeed({
+      audit: [
+        {
+          id: "ing1",
+          createdAt: "2026-08-06T12:00:00.000Z",
+          kind: "sec_filing_ingest",
+          payload: { ticker: "T", accession: "0000732717-26-000015", docType: "10-K", chunks: 412, attempted: 412 }
+        },
+        {
+          id: "emb1",
+          createdAt: "2026-08-06T12:01:00.000Z",
+          kind: "disclosure_rag_embed",
+          payload: { ok: true, attempted: 310, indexed: 4 }
+        }
+      ],
+      notifications: [],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {}
+    });
+    expect(feed).toHaveLength(2);
+    for (const group of feed) {
+      expect(group.events).toHaveLength(1);
+      const kind = (group.events[0]!.raw as { kind?: string }).kind ?? "";
+      expect(OPS_AUDIT_KINDS.has(kind)).toBe(true);
+    }
+  });
+
+  it("folds pre-insert orphan receipts into the persisted proposal's group — no sibling TRADE row (#2553b)", () => {
+    // Live bug: the strategy loop emits per-proposal receipts (stale-quote warning audit +
+    // provider_degraded notification) against a working proposalId, then REGENERATES the id
+    // before inserting the row. The orphan id never resolves, so one action rendered as
+    // "BUY T · Pending" plus a side-less sibling "TRADE T · Pending". The fold pass merges the
+    // orphan's receipts into the persisted group for the same run + symbol.
+    const persisted = proposal({ symbol: "T", side: "buy" });
+    const feed = buildUnifiedFeed({
+      audit: [
+        {
+          id: "a-stale",
+          createdAt: "2026-08-06T14:00:00.000Z",
+          kind: "quote_staleness_warn",
+          payload: { runId: "run-1", proposalId: "pre-insert-id", symbol: "T", side: "buy", ageSec: 159 }
+        }
+      ],
+      notifications: [
+        {
+          id: "n-stale",
+          createdAt: "2026-08-06T14:00:01.000Z",
+          type: "provider_degraded",
+          title: "Stale Quote Warning: T quote was 159s old",
+          status: "sent",
+          payload: { runId: "run-1", proposalId: "pre-insert-id", symbol: "T", side: "buy" }
+        },
+        {
+          id: "n-pending",
+          createdAt: "2026-08-06T14:00:05.000Z",
+          type: "pending_approval",
+          title: "T awaiting approval",
+          status: "sent",
+          payload: { runId: "run-1", proposalId: "persisted-id", proposal: persisted }
+        }
+      ],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {},
+      getProposalById: (id) => (id === "persisted-id" ? { proposal: persisted } : undefined)
+    });
+
+    const propGroups = feed.filter((g) => g.proposalId);
+    expect(propGroups).toHaveLength(1);
+    expect(propGroups[0]!.title).toBe("BUY T");
+    expect(feed.some((g) => g.title.startsWith("TRADE "))).toBe(false);
+    // Both receipts survive as sub-events of the one merged row.
+    const eventIds = propGroups[0]!.events.map((e) => e.id);
+    expect(eventIds).toContain("a-stale");
+    expect(eventIds).toContain("n-stale");
+    expect(eventIds).toContain("n-pending");
+  });
+
+  it("never folds orphan groups across runs, without a resolver, or holding money receipts (#2553b)", () => {
+    const persisted = proposal({ symbol: "T", side: "buy" });
+    const orphanNotification: NotificationEvent = {
+      id: "n-other-run",
+      createdAt: "2026-08-06T14:00:01.000Z",
+      type: "provider_degraded",
+      title: "Stale Quote Warning: T quote was 200s old",
+      status: "sent",
+      payload: { runId: "run-OTHER", proposalId: "orphan-id", symbol: "T" }
+    };
+    const persistedNotification: NotificationEvent = {
+      id: "n-pending",
+      createdAt: "2026-08-06T14:00:05.000Z",
+      type: "pending_approval",
+      title: "T awaiting approval",
+      status: "sent",
+      payload: { runId: "run-1", proposalId: "persisted-id", proposal: persisted }
+    };
+
+    // Different runId → stays its own group (deliberately unmerged; wrong-run receipts must not
+    // attach to an unrelated proposal for the same symbol).
+    const crossRun = buildUnifiedFeed({
+      audit: [],
+      notifications: [orphanNotification, persistedNotification],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {},
+      getProposalById: (id) => (id === "persisted-id" ? { proposal: persisted } : undefined)
+    });
+    expect(crossRun.filter((g) => g.proposalId)).toHaveLength(2);
+
+    // No resolver → no way to tell orphans from persisted ids; nothing folds.
+    const noResolver = buildUnifiedFeed({
+      audit: [],
+      notifications: [
+        { ...orphanNotification, payload: { runId: "run-1", proposalId: "orphan-id", symbol: "T" } },
+        persistedNotification
+      ],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {}
+    });
+    expect(noResolver.filter((g) => g.proposalId)).toHaveLength(2);
+
+    // A group holding a FILL is a real money receipt — never folded away even if its proposalId
+    // no longer resolves.
+    const withFill = buildUnifiedFeed({
+      audit: [],
+      notifications: [persistedNotification],
+      fills: [
+        {
+          id: "f1",
+          runId: "run-1",
+          accountNumber: "A1",
+          source: "paper",
+          symbol: "T",
+          side: "buy",
+          quantity: 1,
+          price: 20,
+          notional: 20,
+          status: "filled",
+          proposalId: "orphan-id",
+          filledAt: "2026-08-06T14:00:02.000Z"
+        }
+      ],
+      orders: [],
+      symbolMetaBySymbol: {},
+      getProposalById: (id) => (id === "persisted-id" ? { proposal: persisted } : undefined)
+    });
+    expect(withFill.filter((g) => g.proposalId)).toHaveLength(2);
+  });
 });
 
 function proposal(input: { symbol: string; side: "buy" | "sell" }) {
