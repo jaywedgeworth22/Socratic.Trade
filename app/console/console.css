@@ -780,19 +780,17 @@
 
 /* Bottom tab bar.
  *
- * Browser (mobile Safari): do NOT pad env(safe-area-inset-bottom) into the
- * content box — that stacks a second empty band under the labels above
- * Safari's floating URL chrome (see 2026-07-18 rollout). Instead MobileTabBar
- * measures the chrome gap, shifts the bar down by 80% of it (negative
- * `bottom`), and paints a solid surface ::after underlay for the remaining
- * 20% + under the translucent URL chrome so the colder page --con-bg grey
- * never flashes around the address bar.
- *
- * Standalone/PWA/fullscreen: keep classic safe-area padding for the home
- * indicator; no chrome-gap shift is applied (measure returns 0). */
+ * bottom:0 with ONLY env(safe-area-inset-bottom) padding (owner mobile punch
+ * list 2026-08-08). The 2026-08-05 chrome-gap shift + ::after underlay is
+ * reverted: shifting the bar down by 80% of the measured gap slid the label
+ * row underneath Safari's floating URL chrome (icons visible, labels hidden)
+ * and the ≥48px underlay painted a dead grey band under the bar. Unlike the
+ * 2026-07-18 "redundant band" (page-grey inside a page-colored bar), any
+ * safe-area padding here sits INSIDE the bar's own painted surface, below the
+ * labels — so it reads as bar, not wasted page. */
 .con-tabbar {
-  padding-bottom: 0;
-  /* Near-opaque surface + blur so page grey cannot tint the bar edge. */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  /* Near-opaque surface + blur so page content cannot ghost through the bar. */
   background: color-mix(in oklab, var(--con-surface) 94%, transparent);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -801,28 +799,6 @@
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .con-tabbar {
     background: var(--con-surface);
-  }
-}
-/* Solid surface underlay below the bar — same token as the bar itself so the
- * region around Safari's floating URL chrome is continuous white/surface,
- * not the colder --con-bg grey. Height set via --con-tabbar-underlay (JS). */
-.con-tabbar::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 100%;
-  height: var(--con-tabbar-underlay, 0px);
-  background: var(--con-surface);
-  pointer-events: none;
-}
-@media (display-mode: standalone), (display-mode: fullscreen) {
-  .con-tabbar {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  /* Underlay unused in standalone — safe-area padding already paints the band. */
-  .con-tabbar::after {
-    height: 0;
   }
 }
 
