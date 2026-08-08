@@ -1,0 +1,35 @@
+name: Auto-merge PRs
+
+# Enable GitHub auto-merge on every non-draft, same-repo PR so green CI
+# lands without a human click (owner fleet policy: always auto-merge).
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, ready_for_review, unlabeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.pull_request.labels.*.name, 'do-not-automerge')
+    steps:
+      - name: Enable auto-merge (squash + delete branch)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          echo "Enabling auto-merge for $PR_URL"
+          if ! gh pr merge --auto --squash --delete-branch "$PR_URL"; then
+            echo "squash auto-merge failed; trying merge commit"
+            gh pr merge --auto --merge --delete-branch "$PR_URL" || {
+              echo "Auto-merge already set, checks pending, or not allowed."
+              exit 0
+            }
+          fi
+
