@@ -19,7 +19,8 @@ import {
   WifiOff,
   X
 } from "lucide-react";
-import { estimatedClosingPnl, isClosingOrder, positionMarkPrice } from "../console/lib/derive";
+import { deriveStateInfo, estimatedClosingPnl, isClosingOrder, positionMarkPrice, type StateInfo } from "../console/lib/derive";
+import type { StrategyAuthority, SystemState } from "@/lib/types";
 import { authorityLabel } from "../console/lib/labels";
 import { requestedExitQuantity } from "@/lib/broker-held-orders";
 import { modelDisplayName } from "../console/lib/models";
@@ -73,8 +74,9 @@ export type MobileSnapshot = {
     activeConnectedAccount?: { id: string; label: string; broker: string; environment: string; accountNumber?: string } | null;
   };
   policy: {
-    systemState: string;
-    strategyAuthority: string;
+    systemState: SystemState;
+    strategyAuthority: StrategyAuthority;
+    runDuringExtendedHours?: boolean;
     holdingHorizon?: string;
     maxOrderNotional?: number;
     maxOrderPctOfNav?: number;
@@ -206,15 +208,17 @@ function liveApprovalText(symbol: string): string {
   return `APPROVE LIVE ${symbol.trim().toUpperCase()}`;
 }
 
-function systemStateLabel(value?: string | null): string {
-  if (!value) return "unknown";
-  const map: Record<string, string> = {
-    active: "Running",
-    halted: "Stopped",
-    close_only: "Close-only",
-    liquidating: "Winding down"
-  };
-  return map[value] ?? value.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+/** Run-state vocabulary comes from the console's shared deriveStateInfo — the PWA
+ *  must never keep its own systemState→label map (it once said "Running" while the
+ *  console said "Paused · market closed" for the same account). Null when there is
+ *  no snapshot yet. */
+export function mobileRunState(policy: MobileSnapshot["policy"] | undefined): StateInfo | null {
+  if (!policy) return null;
+  return deriveStateInfo({
+    systemState: policy.systemState,
+    strategyAuthority: policy.strategyAuthority,
+    ...(typeof policy.runDuringExtendedHours === "boolean" ? { runDuringExtendedHours: policy.runDuringExtendedHours } : {})
+  });
 }
 
 function orderTypeLabel(value?: string): string {
@@ -628,6 +632,7 @@ export function MobilePwaClient() {
     () => getMobileCommandAvailability(snapshot, busyCommand, isOnline, snapshotFreshness),
     [snapshot, busyCommand, isOnline, snapshotFreshness]
   );
+  const runState = mobileRunState(snapshot?.policy);
 
   if (loading) {
     return (
@@ -768,7 +773,9 @@ export function MobilePwaClient() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-wide text-faint">Mode</p>
-              <p className="text-xl font-semibold">{systemStateLabel(snapshot?.readiness.systemState)}</p>
+              <p className="text-xl font-semibold" title={runState?.detail}>
+                {runState?.word ?? "unknown"}
+              </p>
             </div>
             <div className="rounded-md border border-line bg-surface px-3 py-2 text-right">
               <p className="text-xs text-faint">Authority</p>

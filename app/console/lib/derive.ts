@@ -92,8 +92,17 @@ export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, 
 
 // ── Run-state / authority words ──────────────────────────────────────────────
 
+/** The one shared run-state vocabulary. Every surface that names the run state
+ *  (console chrome StateChip, Guardrails Autonomy panel, PWA header) MUST render
+ *  one of these words via deriveStateInfo — never a private systemState→label
+ *  map, which is how the PWA once said "Running" while the console said
+ *  "Paused · market closed" for the same account. */
+export type RunStateWord = "Running" | "Paused · market closed" | "Exit-only" | "Winding down" | "Stopped";
+
 export interface StateInfo {
   state: SystemState;
+  /** State-only vocabulary word — no authority suffix (see RunStateWord). */
+  word: RunStateWord;
   /** Compound plain-words label, e.g. "Running · Ask-first". */
   label: string;
   /** One-line honest explanation. */
@@ -127,6 +136,7 @@ export function deriveStateInfo(
       if (marketOpen === false) {
         return {
           state: "active",
+          word: "Paused · market closed",
           label: "Paused · market closed",
           detail:
             `Scheduled runs pause while the market is closed and resume automatically once it reopens ` +
@@ -140,6 +150,7 @@ export function deriveStateInfo(
       }
       return {
         state: "active",
+        word: "Running",
         label: `Running · ${authority}`,
         detail:
           policy.strategyAuthority === "decide"
@@ -152,6 +163,7 @@ export function deriveStateInfo(
     case "close_only":
       return {
         state: "close_only",
+        word: "Exit-only",
         label: "Exit-only",
         detail: "No new buys. Protective exits keep working. This is the state circuit breakers set.",
         tone: "warn"
@@ -159,6 +171,7 @@ export function deriveStateInfo(
     case "liquidating":
       return {
         state: "liquidating",
+        word: "Winding down",
         label: "Winding down",
         detail: "Only sell orders, until the account is in cash. This sells things.",
         tone: "warn"
@@ -166,6 +179,7 @@ export function deriveStateInfo(
     default:
       return {
         state: "halted",
+        word: "Stopped",
         label: "Stopped",
         detail:
           "Nothing trades — no buys, no sells, and this app's automatic stops are paused too. Broker-held brackets keep resting at the broker. Nothing is sold.",
@@ -330,6 +344,30 @@ function deriveBaseProtection(
     detail: `No ${isShort ? "short " : ""}stop rule is configured and no closing broker stop order is resting for this symbol.`,
     tone: "muted"
   };
+}
+
+/** Count of open short positions the app has deliberately stopped managing because
+ *  shortSellingEnabled is off: every enforcement layer (synthetic stop monitor,
+ *  proactive risk exits, broker-protective-stops) skips shorts entirely while the
+ *  toggle is off — see the muted/unsafe branch in deriveBaseProtection above. This
+ *  only surfaces that existing state as a number for banners; it never gates or
+ *  acts. 0 whenever short selling is on (all shorts managed) or no shorts are held. */
+export function deriveUnmanagedShortCount(
+  positions: EquityPosition[] | undefined,
+  policy: Pick<TradingPolicy, "shortSellingEnabled">
+): number {
+  if (policy.shortSellingEnabled) return 0;
+  return (positions ?? []).filter((p) => p.quantity < 0).length;
+}
+
+/** Advisory banner copy for unmanaged shorts — shared verbatim by the Home
+ *  positions card and the Guardrails Short selling panel so the two surfaces
+ *  can never drift. Null when there is nothing to say. */
+export function unmanagedShortNotice(count: number): string | null {
+  if (count <= 0) return null;
+  return count === 1
+    ? "1 short position is unmanaged while short selling is off — enable shorting to resume protection, or close it."
+    : `${count} short positions are unmanaged while short selling is off — enable shorting to resume protection, or close them.`;
 }
 
 // ── Day P&L (honest: derived from persisted snapshots, labeled as such) ──────
@@ -664,7 +702,7 @@ export function deriveReadinessChecklist(snapshot: DashboardSnapshot): Readiness
       title: "Run once → review Proposals",
       detail: hasRunOnce
         ? "At least one strategy run or proposal is on the record."
-        : "Use Run once in the top bar to generate the first decision trace, then open Proposals to approve or reject. (One control — not duplicated in this checklist.)",
+        : "Use Run once in the top bar to generate the first decision trace, then open Proposals to approve or reject.",
       complete: hasRunOnce,
       // No deep-link to empty Proposals: the action is chrome Run once, not this row.
       href: undefined,

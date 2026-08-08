@@ -87,7 +87,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
   const ordered = active ? [active, ...others] : others;
 
   const label = active
-    ? `${active.label || brokerName(active.broker)}${active.accountNumber ? ` ·· ${active.accountNumber.slice(-4)}` : ""}`
+    ? `${active.label || brokerName(active.broker)}${active.accountNumber ? ` ••${active.accountNumber.slice(-4)}` : ""}`
     : "No connected account";
 
   const close = () => {
@@ -126,9 +126,10 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     }
   };
 
-  // Compact switch row: name + reality/run-state chips on line one, broker ··last4
-  // on a faint second line. The whole row is the switch affordance; the loaded
-  // account is a non-interactive current-state marker (checkmark, accent tint).
+  // Compact switch row: name + reality/run-state chips on line one, broker ••last4
+  // (bullet mask, same convention as iOS) on a faint second line. The whole row is
+  // the switch affordance; the loaded account is a non-interactive current-state
+  // marker (checkmark, accent tint).
   const renderRow = (account: ConnectedAccount) => {
     const r = realityForAccount(account);
     const policy = snapshot.connectedAccountPolicies?.[account.id];
@@ -162,7 +163,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
           </span>
           <span className="mt-0.5 block truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             {brokerName(account.broker)}
-            {last4 ? ` · ·· ${last4}` : ""}
+            {last4 ? ` · ••${last4}` : ""}
             {r.tone !== "live" ? ` · ${r.phrase}` : ""}
           </span>
         </span>
@@ -990,7 +991,7 @@ export function MobileFreshnessBar({
           <span aria-hidden>·</span>
           <span className="con-num inline-flex items-center gap-1.5">
             <ShieldCheck size={12} />
-            Today: {fmtMoney(spend.usedNotional)}
+            Deployed today: {fmtMoney(spend.usedNotional)}
           </span>
         </span>
       ) : (
@@ -1000,7 +1001,7 @@ export function MobileFreshnessBar({
           </span>
           <span className="con-num ml-auto flex items-center gap-1.5" title="Opening orders only. Exits never consume the daily cap.">
             <ShieldCheck size={12} />
-            Today: {fmtMoney(spend.usedNotional)}
+            Deployed today: {fmtMoney(spend.usedNotional)}
           </span>
           {error && (
             <span className="shrink-0 font-semibold text-[color:var(--con-warn)]" title={error}>
@@ -1061,7 +1062,7 @@ export function FreshnessStrip({
         {nextRun && snapshot.policy.systemState === "active" && <span title={fmtExact(nextRun)}>Next run {timeUntil(nextRun)}</span>}
         <span className="con-num flex min-w-32 items-center gap-2" title="Opening orders only. Exits never consume the daily cap.">
           <ShieldCheck size={12} />
-          Today: {fmtMoney(spend.usedNotional)}
+          Deployed today: {fmtMoney(spend.usedNotional)}
           {typeof spend.capNotional === "number" ? ` of ${fmtMoneyWhole(spend.capNotional)}` : ""}
           <Meter value={spend.usedNotional} max={spend.capNotional} className="w-16" />
         </span>

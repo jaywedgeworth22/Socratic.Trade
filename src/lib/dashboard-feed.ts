@@ -793,7 +793,15 @@ function brokerOrderDetail(order: EquityOrder | undefined, fillStatus?: string):
         : isTerminalBrokerState(order.state)
           ? `Broker reported ${readableBrokerState(order.state)}`
           : "Accepted by broker; awaiting fill";
-  return `${prefix}: ${readableBrokerState(order.state)} · Qty ${formattedFilled} / ${formattedTotal} · ${feedOrderTypeLabel(order.type)}`;
+  // Don't restate a state the prefix already names ("Broker reported Expired: Expired",
+  // "Filled by broker: Filled"); working states keep it ("Accepted by broker...: New").
+  const state = readableBrokerState(order.state);
+  const parts = [
+    prefix.toLowerCase().includes(state.toLowerCase()) ? null : state,
+    `Qty ${formattedFilled} / ${formattedTotal}`,
+    feedOrderTypeLabel(order.type)
+  ].filter(Boolean);
+  return `${prefix}: ${parts.join(" · ")}`;
 }
 
 function brokerOrderTitle(order: EquityOrder): string {
