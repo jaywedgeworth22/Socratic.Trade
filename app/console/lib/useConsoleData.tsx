@@ -255,7 +255,7 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       }));
     };
 
-    const markEvent = (type: string, raw?: string) => {
+    const markEvent = (type: string) => {
       if (!mounted.current) return;
       const now = new Date();
       setStream((prev) => ({
@@ -266,23 +266,12 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
         lastEventType: type,
         lastErrorAt: null
       }));
-      if (type === "market-data") {
-        let detail: unknown = undefined;
-        if (raw) {
-          try {
-            detail = JSON.parse(raw);
-          } catch {
-            detail = raw;
-          }
-        }
-        window.dispatchEvent(new CustomEvent("market-data-filled", { detail }));
-      }
       queueRefresh();
     };
 
     const refreshTypes = ["ready", "run-complete", "order", "proposal", "dirty", "market-data", "pending-learned-change"] as const;
     const handlers = refreshTypes.map((type) => {
-      const handler = (event: MessageEvent) => markEvent(type, event.data);
+      const handler = () => markEvent(type);
       events.addEventListener(type, handler);
       return { type, handler };
     });

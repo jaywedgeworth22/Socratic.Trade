@@ -317,7 +317,7 @@ export function BrokerAccountsCard() {
               >
                 {busy === account.id ? "Loading…" : r.tone === "paper" ? (
                   <>
-                    Load <Chip tone="paper" className="ml-1 inline-flex items-center px-1.5 py-0 text-[10px] leading-tight uppercase font-semibold">PAPER</Chip>
+                    Load <Chip tone="paper" className="ml-1 inline-flex items-center px-1.5 py-0 text-[length:var(--con-fs-2xs)] leading-tight uppercase font-semibold">PAPER</Chip>
                   </>
                 ) : r.tone === "live" ? (
                   <>

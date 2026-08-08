@@ -5,9 +5,10 @@
  *  "—" when nothing protects). Money in tabular numerals; missing = "—". */
 
 import { memo } from "react";
+import Link from "next/link";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import type { OptionPosition } from "@/lib/types";
-import { deriveProtection } from "../lib/derive";
+import { deriveProtection, deriveUnmanagedShortCount, unmanagedShortNotice } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { Card, Dash, Empty, SignedText } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
@@ -36,6 +37,9 @@ export const PositionsCard = memo(function PositionsCard({ snapshot }: { snapsho
   const positions = snapshot.positions ?? [];
   const equity = snapshot.portfolio?.totalMarketValue;
   const exposureCap = snapshot.policy.maxSymbolExposurePct;
+  // Advisory only (mirrors the per-row muted protection state): shorts the app's stop
+  // monitors deliberately skip while short selling is off. Same copy as Guardrails.
+  const unmanagedShorts = unmanagedShortNotice(deriveUnmanagedShortCount(positions, snapshot.policy));
 
   // Computed once per position and shared by both the ≥lg table and the
   // <lg card list below, so the two layouts can never drift out of sync.
@@ -56,6 +60,14 @@ export const PositionsCard = memo(function PositionsCard({ snapshot }: { snapsho
   return (
     <>
       <Card title={`Positions (${positions.length})`} padded={false}>
+        {unmanagedShorts && (
+          <div className="border-b border-[color:var(--con-line)] px-4 py-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
+            {unmanagedShorts}{" "}
+            <Link href="/console/guardrails" className="font-semibold text-[color:var(--con-accent)]">
+              Open Guardrails
+            </Link>
+          </div>
+        )}
         {positions.length === 0 ? (
         <Empty>No open positions in this account.</Empty>
       ) : (

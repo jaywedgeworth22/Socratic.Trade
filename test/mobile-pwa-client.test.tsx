@@ -4,6 +4,7 @@ import {
   commandLabel,
   createCoalescedMobileSnapshotLoader,
   getMobileCommandAvailability,
+  mobileRunState,
   MobileSnapshotUnavailable,
   nextDraftAfterCommandAcceptance,
   proposalActionFeedback,
@@ -45,6 +46,26 @@ describe("mobile PWA snapshot truth", () => {
     expect(html).not.toContain("Market Closed");
     expect(html).not.toContain("No pending proposals");
     expect(html).not.toContain("No positions");
+  });
+});
+
+describe("mobile PWA run-state vocabulary (shared with the console — #2554)", () => {
+  it("renders deriveStateInfo's word for every state — never a private systemState→label map", () => {
+    expect(mobileRunState(undefined)).toBeNull();
+    expect(mobileRunState({ systemState: "halted", strategyAuthority: "propose" })?.word).toBe("Stopped");
+    expect(mobileRunState({ systemState: "close_only", strategyAuthority: "propose" })?.word).toBe("Exit-only");
+    expect(mobileRunState({ systemState: "liquidating", strategyAuthority: "propose" })?.word).toBe("Winding down");
+    // Without runDuringExtendedHours the market window is unknowable — plain Running,
+    // same undefined-vs-false rule as the console (see deriveStateInfo).
+    expect(mobileRunState({ systemState: "active", strategyAuthority: "decide" })?.word).toBe("Running");
+  });
+
+  it("says 'Paused · market closed' outside market hours exactly like the console (the PWA header once said 'Running')", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-13T16:00:00Z")); // Saturday noon ET — market closed
+    const info = mobileRunState({ systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false });
+    expect(info?.word).toBe("Paused · market closed");
+    expect(info?.marketOpen).toBe(false);
   });
 });
 

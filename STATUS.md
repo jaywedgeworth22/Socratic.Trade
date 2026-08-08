@@ -19,6 +19,18 @@ instead of fake 0.00%; open lots are reconciled against live broker positions ("
 mismatch" chip; mismatched symbols excluded from wash-sale/early-exit/harvest figures with a
 footnote). Branch `monet/review-fixes-b`; landing operator runs full gate + `land.sh`.
 Rollout: `docs/rollouts/2026-08-08-data-integrity-flow-sanity-ledger.md`.
+## Current (2026-08-08 MONET — review fixes wave A)
+
+**Review-fixes wave A (#2547 #2549 #2554 #2556 #2562):** real `/console/decisions` index
+(Home "All Decisions" no longer 404s); one shared run-state vocabulary (`StateInfo.word`)
+across console chrome / Guardrails / PWA header (+ `runDuringExtendedHours` on the mobile
+snapshot); unmanaged-shorts advisory banner (Home positions + Guardrails Short selling);
+#2547 verified NOT a drift (v2.5.1 annotated tag == locked commit `b454ccb8`, lock-only
+install zero-diff); #2562 copy/polish batch (a–n: intro-canvas theme colors + content
+shield, "Deployed today" chip, feed state dedup, ••last4 mask, full-symbol logo fallback,
+`--con-shadow-up` token, fs-2xs tokens, etc.). Branch `monet/review-fixes-a` (isolated
+worktree; landing operator runs full gates). Rollout:
+`docs/rollouts/2026-08-08-review-fixes-a.md`.
 
 ## Current (2026-08-08 MONET — weekly R2 cold snapshot)
 

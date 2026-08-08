@@ -111,7 +111,8 @@ export default function ScanPage() {
                 : "Captured earlier. Hit Refresh scan for a current view."
             }
           >
-            {isFresh ? "fresh" : <><Ago iso={scan.generatedAt} /> old</>}
+            {/* Ago already renders "…ago" — no trailing "old" (read "1h ago old"). */}
+            {isFresh ? "fresh" : <Ago iso={scan.generatedAt} />}
             {scan.cached ? " · cached" : ""}
           </Chip>
         )}
@@ -348,7 +349,7 @@ function MarketScanTab({
               {scan.dataCoverage.topGaps.slice(0, 6).map((g) => (
                 <span
                   key={g.field}
-                  className="rounded-control border border-current/20 px-1.5 py-0.5 font-mono text-[10px] opacity-90"
+                  className="rounded-control border border-current/20 px-1.5 py-0.5 font-mono text-[length:var(--con-fs-2xs)] opacity-90"
                 >
                   {g.field} {Math.round(g.fillRate * 100)}%
                 </span>

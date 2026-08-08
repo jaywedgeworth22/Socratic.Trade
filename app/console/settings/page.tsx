@@ -778,8 +778,10 @@ function DataSourcesCard() {
           onChange={setShowAdvanced}
           label="Show advanced knobs"
         />
+        {/* Keep this list in sync with the `advanced: true` knob labels in
+            src/lib/source-settings-catalog.ts — it names what the toggle reveals. */}
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Multi-query, HyDE, SEC worker, FMP rights, etc.
+          Multi-query retrieval, HyDE passages, SEC backfill worker, transcript storage rights, etc.
         </span>
       </div>
 
