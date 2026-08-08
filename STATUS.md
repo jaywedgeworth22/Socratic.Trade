@@ -9,6 +9,14 @@ kill-switch no longer pauses litestream when endpoint is B2. Host spare forensic
 Rollout: `docs/rollouts/2026-08-07-litestream-b2-backup.md`.
 # Status
 
+## Current (2026-08-08 MONET — weekly R2 cold snapshot)
+
+**Weekly cold DB snapshot to the idle R2 bucket (second-provider DR):** durable due-job
+(Sunday ~03:17 UTC) runs better-sqlite3 `backup()` → 100 MB-part multipart upload to
+`cold-snapshots/app-<date>.db` in the `AWS_R2_HISTORIC_*` bucket, prunes to newest 4,
+Class A ≥50% budget guard, silent no-op without creds. Branch `monet/r2-cold-snapshot`.
+Rollout: `docs/rollouts/2026-08-08-r2-cold-snapshot.md`.
+
 ## Current (2026-08-08 GROK — settings ntfy label)
 
 **Settings → Delivery:** first channel renamed **ntfy.sh** (was "Phone push"); removed "recommended · free" badge. Branch `grok/settings-ntfy-label`.

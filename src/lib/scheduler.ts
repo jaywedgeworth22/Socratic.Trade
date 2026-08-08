@@ -705,6 +705,24 @@ async function tick(): Promise<void> {
     )
     .catch((err) => console.error("[scheduler] due-jobs intraday sample drain error:", err));
 
+  // Weekly R2 cold snapshot (owner directive 2026-08-08): second-provider disaster
+  // recovery — better-sqlite3 backup() of the live DB, multipart-uploaded to the idle
+  // historic R2 bucket (cold-snapshots/app-<date>.db, newest 4 kept). Durable weekly
+  // due-job (Sunday ~03:17 UTC; survives downtime), silent no-op without the
+  // AWS_R2_HISTORIC_* credentials, budget-guarded against the R2 free tier.
+  void import("./r2-cold-snapshot")
+    .then(({ ensureR2ColdSnapshotJobScheduled, drainR2ColdSnapshotJobs }) =>
+      journalLane("r2-cold-snapshot", {}, async () => {
+        ensureR2ColdSnapshotJobScheduled();
+        const result = await drainR2ColdSnapshotJobs();
+        return {
+          status: result.drained > 0 ? ("ok" as const) : ("skipped" as const),
+          summary: result.drained > 0 ? `drained=${result.drained} last=${result.lastRun?.status ?? "?"}` : undefined,
+        };
+      })
+    )
+    .catch((err) => console.error("[scheduler] r2 cold snapshot error:", err));
+
   try {
 
     // ── Operator-level monthly LLM spend ceiling ──────────────────────────────
