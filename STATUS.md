@@ -24,6 +24,15 @@ final fallback (`orderPriceFallbacks` on the snapshot, age-tagged "· 23h old") 
 card label is one-line "Last". Gates: tsc clean; 12 test files / 161 tests green; lint 0
 errors. Rollout: `docs/rollouts/2026-08-08-review-fixes-e-mobile-punchlist.md`.
 
+## Current (2026-08-08 MONET — review-fixes wave D: mobile #2559 #2551)
+
+**PWA Market metric now renders the real session** (type drift `{label,isOpen}` → raw
+`"closed"|"regular"|"pre"|"post"` token, capitalized like iOS), **iOS stream indicator
+turns green on `: ping` heartbeats** (`events(onConnect:onEvent:)`), and **PWA proposal
+cards get the console Wave-A2 collapsed receipt** (2–3 line thesis with [Sizing]/[Risk]/
+[Stale quote] blocks stripped; "Show full reasoning" expands to full text; approve/reject
+untouched). Branch `monet/review-fixes-d` (IN PR — landing operator runs full gate).
+Rollout: `docs/rollouts/2026-08-08-mobile-review-fixes-d.md`.
 ## Current (2026-08-08 MONET — review-fix wave C: feed/alerts/critic)
 
 **#2553/#2555/#2552 (branch `monet/review-fixes-c`):** ingest/embed audit kinds fold into the

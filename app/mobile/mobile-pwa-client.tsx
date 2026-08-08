@@ -6,6 +6,8 @@ import {
   Activity,
   Bell,
   Check,
+  ChevronDown,
+  ChevronUp,
   CircleStop,
   ExternalLink,
   Loader2,
@@ -25,6 +27,7 @@ import { authorityLabel } from "../console/lib/labels";
 import { requestedExitQuantity } from "@/lib/broker-held-orders";
 import { modelDisplayName } from "../console/lib/models";
 import { redTeamFailureMeta, redTeamVerdictLabel } from "../console/lib/red-team";
+import { splitThesisRationale } from "../console/lib/thesis";
 import { normalizeSymbol } from "@/lib/money";
 
 type CommandStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -37,7 +40,7 @@ export type MobileCommand = {
   updatedAt: string;
   result?: unknown;
 };
-type PendingProposal = {
+export type PendingProposal = {
   id: string;
   accountNumber?: string;
   executionMode?: string;
@@ -50,6 +53,7 @@ type PendingProposal = {
     dollarAmount?: number;
     quantity?: number;
     rationale?: string;
+    greenTeamRationale?: string;
     proposedByModel?: string;
     redTeamVerdict?: {
       verdict?: "approve" | "approve-at-half" | "reject";
@@ -85,7 +89,9 @@ export type MobileSnapshot = {
     maxDailyOrders?: number;
     requireTypedConfirmation?: boolean;
   };
-  marketSession?: { label?: string; isOpen?: boolean };
+  /** Raw session token from the server (`currentMarketSession()` — src/lib/market-hours.ts):
+   *  "closed" | "regular" | "pre" | "post". Typed open so an unknown future token still renders. */
+  marketSession?: string;
   scheduler?: { lastRunAt: string | null; nextRunAt: string | null };
   portfolio?: { totalMarketValue?: number; buyingPower?: number; cash?: number };
   positions?: Array<{ symbol: string; quantity: number; marketValue: number; averageCost?: number }>;
@@ -202,6 +208,91 @@ function estimatedExitPnl(proposal: PendingProposal, positions: MobileSnapshot["
     shares,
     currentPrice: suspicious ? undefined : mark
   });
+}
+
+/** Receipt body of a proposal card — the console Wave-A2 collapsed pattern ported to the PWA.
+ *  Collapsed (default): critic/model line, est. exit P/L, and a 2–3 line thesis summary with
+ *  the [Sizing]/[Risk]/[Stale quote …] audit blocks stripped. "Show full reasoning" expands to
+ *  the proposal's full rationale text (audit blocks and red-team notes included). Approve/
+ *  reject controls live outside this component and are untouched. */
+export function MobileProposalReceipt({
+  pending,
+  positions,
+  defaultExpanded = false
+}: {
+  pending: PendingProposal;
+  positions: MobileSnapshot["positions"];
+  defaultExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const p = pending.proposal;
+  const attribution = modelAttributionLine(pending);
+  const estPnl = estimatedExitPnl(pending, positions);
+  const summary = proposalThesisSummary(p.rationale, p.greenTeamRationale);
+  return (
+    <>
+      {attribution && <p className="mt-1 text-xs text-faint">{attribution}</p>}
+      {estPnl && (
+        <p className="mt-1 text-xs text-faint">
+          Est. P/L:{" "}
+          <span className={estPnl.pnl >= 0 ? "text-emerald-600 dark:text-emerald-300" : "text-red-600 dark:text-red-300"}>
+            {money(estPnl.pnl)} ({estPnl.pnlPct >= 0 ? "+" : ""}
+            {estPnl.pnlPct.toFixed(1)}%)
+          </span>
+        </p>
+      )}
+      {expanded
+        ? p.rationale && <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-muted">{p.rationale}</p>
+        : summary && <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-muted">{summary}</p>}
+      {p.rationale && (
+        <button
+          type="button"
+          className="mt-1 flex min-h-9 items-center gap-1 text-xs font-semibold text-accent"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="h-3.5 w-3.5" aria-hidden /> Hide full reasoning
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3.5 w-3.5" aria-hidden /> Show full reasoning
+            </>
+          )}
+        </button>
+      )}
+    </>
+  );
+}
+
+/** Capitalized market-session token for the Market metric — same treatment as the iOS home
+ *  card (`snapshot.marketSession.capitalized`): "regular" → "Regular", "pre" → "Pre". Missing
+ *  session renders "-" (data unavailable), never a fabricated "Closed". */
+export function marketSessionLabel(value?: string | null): string {
+  const token = value?.trim();
+  if (!token) return "-";
+  return token
+    .split(/[_\s]+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/** Collapsed-card thesis summary (console Wave-A2 port): the green-team thesis with the
+ *  app-appended audit annotations stripped — the "\n\n[Sizing] …" / "\n\n[Risk] …" paragraphs
+ *  (src/lib/strategy-risk.ts, src/lib/strategy.ts) and the inline " [Stale quote backup: …]"
+ *  note (src/lib/policy.ts). They stay visible in the expanded full-reasoning view; this only
+ *  keeps the collapsed 2–3 line summary to the actual thesis. */
+export function proposalThesisSummary(rationale?: string, greenTeamRationale?: string): string | undefined {
+  if (!rationale) return undefined;
+  const green = splitThesisRationale(rationale, greenTeamRationale).greenTeam;
+  // (?:^|\n\n): splitThesisRationale trims its result, so a rationale that is ONLY audit
+  // paragraphs loses the leading blank line — match the block at string start too.
+  const stripped = green
+    .replace(/(?:^|\n\n)\[(?:Sizing|Risk)\][^]*?(?=\n\n|$)/g, "")
+    .replace(/\s*\[Stale quote backup:[^\]]*\]/g, "")
+    .trim();
+  return stripped || undefined;
 }
 
 function liveApprovalText(symbol: string): string {
@@ -838,7 +929,7 @@ export function MobilePwaClient() {
           <Metric label="Equity" value={money(snapshot?.portfolio?.totalMarketValue)} />
           <Metric label="Buying power" value={money(snapshot?.portfolio?.buyingPower)} />
           <Metric label="Account" value={snapshot?.readiness.activeConnectedAccount?.label ?? "None"} />
-          <Metric label="Market" value={snapshot?.marketSession?.label ?? (snapshot?.marketSession?.isOpen ? "Open" : "Closed")} />
+          <Metric label="Market" value={marketSessionLabel(snapshot?.marketSession)} />
         </section>
 
 
@@ -858,7 +949,6 @@ export function MobilePwaClient() {
               const typedText = liveTextByProposal[proposal.id] ?? "";
               const expectedLiveText = liveApprovalText(proposal.proposal.symbol);
               const livePhraseMatches = !willPromptTyped || typedText.trim().toUpperCase() === expectedLiveText;
-              const estPnl = estimatedExitPnl(proposal, snapshot?.positions);
               const trackedCommandId = proposalCommandIds[proposal.id];
               const feedback = proposalActionFeedback({
                 proposalId: proposal.id,
@@ -881,21 +971,7 @@ export function MobilePwaClient() {
                     </div>
                     <p className="text-sm font-medium">{money(proposal.estimatedNotional)}</p>
                   </div>
-                  {modelAttributionLine(proposal) && (
-                    <p className="mt-1 text-xs text-faint">{modelAttributionLine(proposal)}</p>
-                  )}
-                  {estPnl && (
-                    <p className="mt-1 text-xs text-faint">
-                      Est. P/L:{" "}
-                      <span className={estPnl.pnl >= 0 ? "text-emerald-600 dark:text-emerald-300" : "text-red-600 dark:text-red-300"}>
-                        {money(estPnl.pnl)} ({estPnl.pnlPct >= 0 ? "+" : ""}
-                        {estPnl.pnlPct.toFixed(1)}%)
-                      </span>
-                    </p>
-                  )}
-                  {proposal.proposal.rationale && (
-                    <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-muted">{proposal.proposal.rationale}</p>
-                  )}
+                  <MobileProposalReceipt pending={proposal} positions={snapshot?.positions} />
                   {willPromptTyped && (
                     <div className="mt-3">
                       <label className="text-xs font-semibold uppercase tracking-wide text-faint" htmlFor={`mobile-live-${proposal.id}`}>
