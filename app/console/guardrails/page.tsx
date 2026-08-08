@@ -22,6 +22,8 @@ import {
   deriveReality,
   deriveRiskUtilization,
   deriveStateInfo,
+  deriveUnmanagedShortCount,
+  unmanagedShortNotice,
   type UtilizationMeter
 } from "../lib/derive";
 import { fmtExact, fmtMoney, fmtMoneyWhole, fmtNum, fmtPct, timeUntil } from "../lib/format";
@@ -203,6 +205,8 @@ function AccountScopedGuardrailsPage() {
   const policy = snapshot.policy;
   const risk = deriveRiskUtilization(snapshot);
   const exposure = deriveExposureUtilization(snapshot, policy);
+  // Same advisory copy as the Home positions card (shared helper — never drifts).
+  const unmanagedShorts = unmanagedShortNotice(deriveUnmanagedShortCount(snapshot.positions, policy));
 
   // Universe / arrays are replace-whole-value fields → extraPatch.
   const extraPatch: PolicyPatchBody = {};
@@ -289,6 +293,11 @@ function AccountScopedGuardrailsPage() {
             </div>
           ))}
           <div className="con-card-title pt-3">Short selling</div>
+          {unmanagedShorts && (
+            <p className="py-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
+              {unmanagedShorts}
+            </p>
+          )}
           {SHORTS.map((def) => (
             <div key={def.path}>
               <PolicyFieldRow def={def} policy={policy} draft={draft} />

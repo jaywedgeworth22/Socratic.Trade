@@ -46,6 +46,31 @@ export function isoDate(ts: string | number | undefined): string | null {
 export const FLOW_MATERIALITY_PCT_OF_EQUITY = 0.5; // % of prior equity
 export const FLOW_MATERIALITY_MIN_USD = 0.50;
 
+/** Sanity bound for an inferred flow vs its own sub-period's equity move (issue #2557). */
+export const FLOW_SANITY_EQUITY_DELTA_MULT = 5;
+export const FLOW_SANITY_PCT_OF_EQUITY = 2; // % of sub-period start equity
+
+/**
+ * A real external transfer moves account equity by roughly its own size (± the market move in
+ * the same gap). An inferred flow whose magnitude exceeds BOTH 5× the sub-period's |Δequity|
+ * AND 2% of the start equity cannot be reconciled against the equity it supposedly moved —
+ * the live failure was a phantom "withdrawal $36,501.38" inferred on a sub-period whose
+ * equity moved only −$837, which then inflated TWR to +56%. Such a flow is UNVERIFIED:
+ * show it to the owner, but exclude it from TWR neutralization and day-P&L adjustment.
+ * The 2%-of-equity floor keeps genuine small transfers verified even on flat-equity days
+ * (e.g. a $500 deposit offset by a same-day market dip on a $100k book). Pure.
+ */
+export function isInferredFlowUnverified(flow: number, startEquity: number, endEquity: number): boolean {
+  if (!Number.isFinite(flow) || flow === 0) return false;
+  if (!Number.isFinite(startEquity) || !Number.isFinite(endEquity)) return true;
+  const deltaEquity = endEquity - startEquity;
+  const bound = Math.max(
+    FLOW_SANITY_EQUITY_DELTA_MULT * Math.abs(deltaEquity),
+    (FLOW_SANITY_PCT_OF_EQUITY / 100) * Math.max(startEquity, 0)
+  );
+  return Math.abs(flow) > bound;
+}
+
 type CurvePoint = {
   equity: number;
   cash?: number;

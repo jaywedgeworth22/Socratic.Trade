@@ -460,3 +460,19 @@ export function acknowledgeAllAttention(connectedAccountId?: string): Promise<Ac
     body: JSON.stringify({ all: true, filter: "attention", ...(connectedAccountId ? { connectedAccountId } : {}) })
   });
 }
+
+/** Per-condition Alert Center mutes (#2555): conditionKey → mutedUntil ISO. Rendering-only. */
+export interface AlertMutesResult {
+  mutes: Record<string, string>;
+}
+
+export function fetchAlertMutes(): Promise<AlertMutesResult> {
+  return request<AlertMutesResult>("/api/notifications/mute");
+}
+
+export function setAlertConditionMute(key: string, mute: boolean): Promise<AlertMutesResult> {
+  return request<AlertMutesResult>("/api/notifications/mute", {
+    method: "POST",
+    body: JSON.stringify({ key, mute })
+  });
+}

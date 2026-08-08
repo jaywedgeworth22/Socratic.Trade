@@ -2523,6 +2523,10 @@ export interface BenchmarkSubPeriod {
   externalFlow: number;
   accountReturnPct: number;
   benchmarkReturnPct: number;
+  /** True when `externalFlow` failed the equity-delta sanity bound (an inferred transfer must
+   *  roughly reconcile with its own sub-period's equity move). The flow is shown for review but
+   *  EXCLUDED from TWR neutralization — accountReturnPct here is the raw equity growth. */
+  flowUnverified?: boolean;
 }
 
 export interface BenchmarkComparison {
@@ -2545,8 +2549,21 @@ export interface BenchmarkComparison {
   /** True when at least one material external deposit/withdrawal was inferred and neutralized. */
   cashFlowAdjusted?: boolean;
   /** Net inferred external flow over the window in dollars (deposits positive, withdrawals
-   *  negative). Present when cashFlowAdjusted is true. */
+   *  negative). Present when cashFlowAdjusted is true. Excludes unverified flows. */
   netExternalFlows?: number;
+  /** Inferred flows that failed the equity-delta sanity bound (see BenchmarkSubPeriod.flowUnverified):
+   *  shown for owner review, excluded from TWR math and from netExternalFlows. Deposit +, withdrawal −. */
+  unverifiedFlows?: Array<{ date: string; amount: number }>;
+}
+
+/** Why the SPY benchmark comparison could not be computed honestly. Feed failures
+ *  ("fetch-failed" | "no-bars" | "stale-series") mean the SPY series itself is dead/stale —
+ *  render a first-class "benchmark unavailable" state, never a fake 0.00%. The account-side
+ *  reasons ("insufficient-history" | "insufficient-overlap") are the normal young-account state. */
+export interface BenchmarkUnavailability {
+  reason: "insufficient-history" | "fetch-failed" | "no-bars" | "stale-series" | "insufficient-overlap";
+  /** Cheap human-readable why (e.g. last SPY close date + source tier), when known. */
+  detail?: string;
 }
 
 export interface PerformanceSummary {
@@ -2554,6 +2571,10 @@ export interface PerformanceSummary {
   paperEquityCurve: EquityCurvePoint[];
   /** SPY-benchmark comparison for the active execution mode's equity curve (absent when insufficient data). */
   benchmark?: BenchmarkComparison;
+  /** Set when `benchmark` is absent because the SPY series was dead/stale/unfetchable (feed
+   *  failure), so the UI can say WHY instead of a generic "not computable" — and never render
+   *  a fake 0.00% comparison. Absent for the ordinary young-account insufficient-history case. */
+  benchmarkUnavailable?: BenchmarkUnavailability;
   liveRealizedPnl: number;
   paperRealizedPnl: number;
   liveUnrealizedPnl: number;

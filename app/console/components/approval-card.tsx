@@ -24,6 +24,7 @@ import {
 import { estimatedClosingPnl, isClosingOrder, positionMarkPrice, realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, fmtSignedMoney, timeUntil, EM_DASH } from "../lib/format";
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
+import { modelDisplayName } from "../lib/models";
 import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel } from "../lib/red-team";
 import { proposalGreenRationale, proposalHumanReviewReasons } from "../lib/thesis";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -154,24 +155,36 @@ export type RedTeamSummaryChip = {
 export function redTeamCollapsedChip(
   redCard: ReturnType<typeof redTeamCardState>,
   verdict: TradeProposal["redTeamVerdict"] | undefined,
-  overrideApplied?: boolean
+  overrideApplied?: boolean,
+  configuredRedTeamModel?: string | null
 ): RedTeamSummaryChip {
   // Alias used by tests / call sites that prefer the program name.
-  return redTeamSummaryChip(redCard, verdict, overrideApplied);
+  return redTeamSummaryChip(redCard, verdict, overrideApplied, configuredRedTeamModel);
 }
 
 /** Program name for the collapsed-card AI-critic chip (PR-A2). */
 export function redTeamSummaryChip(
   redCard: ReturnType<typeof redTeamCardState>,
   verdict: TradeProposal["redTeamVerdict"] | undefined,
-  overrideApplied?: boolean
+  overrideApplied?: boolean,
+  configuredRedTeamModel?: string | null
 ): RedTeamSummaryChip {
   if (redCard === "verdict-panel" && verdict) {
     if (!verdict.available) {
+      // #2552: the chip carries the CAUSE, not a bare "failed" — the PWA already renders
+      // "Red team FAILED (malformed response) — DeepSeek" and the console hid it. A
+      // not-configured "failure" is a different situation (nothing tried to run) and gets a
+      // muted, distinctly-labeled chip instead of the warn failure treatment.
+      const failureMeta = redTeamFailureMeta(verdict.failureKind);
+      if (verdict.failureKind === "not_configured") {
+        return { tone: "muted", label: "AI critic: not configured", title: failureMeta.title };
+      }
+      const failedModel = redTeamFailureModel(verdict, configuredRedTeamModel);
+      const cause = failedModel ? `${modelDisplayName(failedModel)}: ${failureMeta.label}` : failureMeta.label;
       return {
         tone: "warn",
-        label: "AI critic: failed",
-        title: redTeamFailureMeta(verdict.failureKind).title
+        label: `AI critic failed — ${cause}`,
+        title: verdict.reason ? `${failureMeta.title} ${verdict.reason}` : failureMeta.title
       };
     }
     if (verdict.rejected || verdict.verdict === "reject") {
@@ -302,7 +315,12 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
   const redCard = redTeamCardState(Boolean(p.redTeamVerdict), pending.decision.adversaryUnavailable === true);
   const humanReviewReasons = proposalHumanReviewReasons(p);
   const greenRationale = proposalGreenRationale(p);
-  const redCollapsed = redTeamCollapsedChip(redCard, p.redTeamVerdict, pending.decision.socraticOverride?.applied);
+  const redCollapsed = redTeamCollapsedChip(
+    redCard,
+    p.redTeamVerdict,
+    pending.decision.socraticOverride?.applied,
+    snapshot?.policy.redTeamLlmModel
+  );
   const sizeText =
     typeof p.dollarAmount === "number"
       ? `~${fmtMoney(p.dollarAmount)}`

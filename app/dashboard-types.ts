@@ -138,6 +138,16 @@ export interface DashboardSnapshot {
     vetoDecisions: number;
     /** appliedOverrideVetoes / vetoDecisions (%), 0 when no veto decisions exist. */
     overrideSharePct: number;
+    /** #2552: aggregate critic health — failed reviews / attempted reviews across the user's
+     *  proposals in the trailing window (user-wide; a model/config condition, not an account one). */
+    criticFailure?: {
+      windowDays: number;
+      reviews: number;
+      failures: number;
+      failureRatePct: number;
+      byKind: Record<string, number>;
+      topFailure?: { model?: string; kind: string; count: number };
+    };
   };
   thesisScorecard?: ThesisStat[];
   regimeScorecard?: RegimeStat[];
