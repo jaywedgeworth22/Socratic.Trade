@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { SocraticDecisionCase } from "../src/lib/types";
-import DecisionsIndexPage, { DecisionsList } from "../app/console/decisions/page";
+import DecisionsIndexPage from "../app/console/decisions/page";
+import { DecisionsList } from "../app/console/decisions/decisions-list";
 
 /** Smoke coverage for the /console/decisions index (#2556): the console Home
  *  "All Decisions" link 404'd because this route had no page. The default export
