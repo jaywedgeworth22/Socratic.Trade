@@ -9,6 +9,7 @@ import {
   triagePendingProposals
 } from "../app/console/approvals/triage";
 import { normalizeModelId, redTeamSummaryChip } from "../app/console/components/approval-card";
+import { modelDisplayName } from "../app/console/lib/models";
 import type { RedTeamCardState } from "../app/console/lib/red-team";
 
 type PendingInput = Omit<Partial<PendingProposal>, "proposal" | "decision" | "id" | "createdAt"> & {
@@ -162,18 +163,52 @@ describe("approvals triage helpers", () => {
       expect(redTeamSummaryChip("verdict-panel", { ...baseVerdict, verdict: "reject", rejected: false }).tone).toBe("neg");
     });
 
-    it("maps approve-at-half and failed review", () => {
+    it("maps approve-at-half and failed review (failure chip names the CAUSE — #2552)", () => {
       expect(redTeamSummaryChip("verdict-panel", { ...baseVerdict, verdict: "approve-at-half" }).label).toBe(
         "AI critic: half size"
       );
-      expect(
-        redTeamSummaryChip("verdict-panel", {
-          ...baseVerdict,
-          available: false,
-          reason: "provider error",
-          failureKind: "provider_error"
-        }).label
-      ).toBe("AI critic: failed");
+      const failed = redTeamSummaryChip("verdict-panel", {
+        ...baseVerdict,
+        available: false,
+        reason: "provider error",
+        failureKind: "provider_error"
+      });
+      // Console parity with the PWA's "Red team FAILED (provider error) — <model>" honesty:
+      // the collapsed chip itself carries reviewer + failure kind, not a bare "failed".
+      expect(failed.tone).toBe("warn");
+      expect(failed.label).toBe(`AI critic failed — ${modelDisplayName("openai/gpt-4o")}: provider error`);
+    });
+
+    it("names the failure kind without inventing a reviewer when no model is persisted (#2552)", () => {
+      const failed = redTeamSummaryChip("verdict-panel", {
+        ...baseVerdict,
+        model: undefined,
+        available: false,
+        reason: "The reviewer answered in prose.",
+        failureKind: "malformed_response"
+      });
+      expect(failed.tone).toBe("warn");
+      expect(failed.label).toBe("AI critic failed — malformed response");
+      // The configured model IS a fair attribution when the verdict predates per-proposal stamping.
+      const attributed = redTeamSummaryChip(
+        "verdict-panel",
+        { ...baseVerdict, model: undefined, available: false, failureKind: "timeout" },
+        undefined,
+        "deepseek-chat"
+      );
+      expect(attributed.label).toBe(`AI critic failed — ${modelDisplayName("deepseek-chat")}: timeout`);
+    });
+
+    it("keeps not-configured visually distinct from a real failure (#2552)", () => {
+      const notConfigured = redTeamSummaryChip("verdict-panel", {
+        ...baseVerdict,
+        model: undefined,
+        available: false,
+        reason: "No adversarial model configured.",
+        failureKind: "not_configured"
+      });
+      expect(notConfigured.label).toBe("AI critic: not configured");
+      expect(notConfigured.tone).toBe("muted");
     });
 
     it("maps legacy-unavailable and no-review", () => {

@@ -22,7 +22,8 @@ import {
   getStopPlans,
   userHasAnyLlmCredential,
   listSocraticDecisionCases,
-  listSocraticFrameworkProposals
+  listSocraticFrameworkProposals,
+  getRedTeamCriticFailureStats
 } from "./db";
 import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
 import type { StrategyDecisionLike } from "./dashboard-feed";
@@ -1025,7 +1026,11 @@ function getDashboardRedTeamEfficacy(userId: string, connectedAccountId?: string
     overrideVetoes,
     appliedOverrideVetoes,
     vetoDecisions,
-    overrideSharePct: vetoDecisions > 0 ? Number(((appliedOverrideVetoes / vetoDecisions) * 100).toFixed(1)) : 0
+    overrideSharePct: vetoDecisions > 0 ? Number(((appliedOverrideVetoes / vetoDecisions) * 100).toFixed(1)) : 0,
+    // #2552: aggregate critic health — how often the adversarial review itself failed to run
+    // across the user's proposals in the last 30 days. User-wide by design (model/config
+    // condition, not an account condition).
+    criticFailure: getRedTeamCriticFailureStats(userId)
   };
 }
 

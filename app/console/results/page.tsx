@@ -19,10 +19,12 @@ import {
   redTeamSampleGate,
   redTeamSampleTier
 } from "../lib/red-team-efficacy";
+import { describeRedTeamFailureKind } from "@/lib/red-team-routing";
 import { EquityChart } from "../components/equity-chart";
 import { deriveReality } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
 import { thesisTagLabel } from "../lib/labels";
+import { modelDisplayName } from "../lib/models";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Card, Chip, Dash, Empty, Select, SignedText, Stat } from "../ui/primitives";
@@ -355,6 +357,29 @@ export default function ResultsPage() {
   );
 }
 
+/** #2552: aggregate critic health — failed adversarial reviews / attempted reviews (30d,
+ *  user-wide). A per-card "AI critic failed" chip cannot show that 4 of 5 reviews in one batch
+ *  failed; this is the ownable aggregate for spotting a flaky reviewer model or config. */
+function CriticFailureStat({ criticFailure }: { criticFailure: RedTeamEfficacySnapshot["criticFailure"] }) {
+  const reviews = criticFailure?.reviews ?? 0;
+  const failures = criticFailure?.failures ?? 0;
+  const top = criticFailure?.topFailure;
+  const topText = top
+    ? `mostly ${top.model ? modelDisplayName(top.model) : "unattributed"} · ${describeRedTeamFailureKind(
+        top.kind as Parameters<typeof describeRedTeamFailureKind>[0]
+      )}`
+    : undefined;
+  return (
+    <Stat
+      label={`Critic failure rate (${criticFailure?.windowDays ?? 30}d)`}
+      value={reviews > 0 ? fmtPct(criticFailure?.failureRatePct ?? 0, 1) : <Dash />}
+      sub={reviews > 0 ? [`${failures}/${reviews} reviews failed`, topText].filter(Boolean).join(" · ") : "no reviews attempted in the window"}
+      tone={failures > 0 ? "neg" : reviews > 0 ? "pos" : "muted"}
+      title="Of the proposals whose adversarial review was attempted (a redTeamVerdict exists), the share where the review FAILED to run (timeout, provider error, rate limit, malformed response). User-wide across accounts — critic failures are a model/config condition. Proposals below every review trigger are not counted."
+    />
+  );
+}
+
 function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot | undefined }) {
   if (!efficacy) {
     return (
@@ -368,6 +393,13 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
     return (
       <Card title="Red Team veto efficacy">
         <Empty>No Red Team veto decisions recorded yet.</Empty>
+        {/* Critic health must not hide behind an empty veto history — a batch of failed reviews
+            with zero vetoes is exactly the "nobody sees it in aggregate" case (#2552). */}
+        {(efficacy.criticFailure?.reviews ?? 0) > 0 && (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <CriticFailureStat criticFailure={efficacy.criticFailure} />
+          </div>
+        )}
       </Card>
     );
   }
@@ -428,6 +460,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
           tone={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? (efficacy.avgReturnPct < 0 ? "pos" : efficacy.avgReturnPct > 0 ? "neg" : "muted") : "muted"}
           title="Average side-adjusted forward return of the trades the blocking veto kept out. Negative means the veto avoided losses; positive means it missed winners."
         />
+        <CriticFailureStat criticFailure={efficacy.criticFailure} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
