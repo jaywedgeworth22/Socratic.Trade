@@ -32,11 +32,10 @@
 
 // Bare "fs"/"os"/"path" (not the "node:" scheme) so Next.js webpack can externalize this
 // module for server bundles — same trap as r2-usage.ts / egress-guard.
-import crypto from "node:crypto";
-import { closeSync, existsSync, openSync, readSync, statSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { audit, getDb } from "./db";
+import crypto from "crypto";
+import { closeSync, existsSync, openSync, readSync, statSync, unlinkSync } from "fs";
+import { dirname, join } from "path";
+import { audit, databasePath, getDb } from "./db";
 import { getInternalSetting, setInternalSetting } from "./db-settings";
 import {
   claimDueJobs,
@@ -414,7 +413,10 @@ export async function performR2ColdSnapshot(
   const startedAt = Date.now();
   const isoDate = new Date(now).toISOString().slice(0, 10);
   const key = `${R2_COLD_SNAPSHOT_PREFIX}app-${isoDate}.db`;
-  const tempPath = join(tmpdir(), `agentic-r2snap-${crypto.randomUUID()}.db`);
+  // Snapshot lands beside the live DB on the persistent volume (same filesystem —
+  // no cross-device copy, guaranteed writable) rather than the OS temp dir: the
+  // edge-flavored instrumentation webpack pass cannot resolve the "os" builtin.
+  const tempPath = join(dirname(databasePath()), `.r2snap-${crypto.randomUUID()}.db.tmp`);
   const partSizeBytes = deps.partSizeBytes ?? cfg.partSizeBytes;
   let uploadId: string | undefined;
 

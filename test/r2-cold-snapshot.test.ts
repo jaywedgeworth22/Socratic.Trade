@@ -7,8 +7,10 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { dirname } from "node:path";
 import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { databasePath } from "../src/lib/db";
 import {
   drainR2ColdSnapshotJobs,
   ensureR2ColdSnapshotJobScheduled,
@@ -332,7 +334,8 @@ describe("drainR2ColdSnapshotJobs", () => {
 
     // Temp file removed; job completed.
     expect(captured.path).toBeTruthy();
-    expect(captured.path!.startsWith(tmpdir())).toBe(true);
+    expect(captured.path!.startsWith(dirname(databasePath()))).toBe(true);
+    expect(captured.path!).toMatch(/\.r2snap-.*\.db\.tmp$/);
     expect(existsSync(captured.path!)).toBe(false);
     expect(jobRows().map((r) => r.status)).toEqual(["done"]);
     expect(auditCount("r2_cold_snapshot.success")).toBe(1);
