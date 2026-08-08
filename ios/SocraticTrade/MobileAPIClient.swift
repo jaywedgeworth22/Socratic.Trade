@@ -119,7 +119,11 @@ struct MobileAPIClient {
         let _: WebAuthExchangeResponse = try await send(request)
     }
 
-    func events(onEvent: @escaping () -> Void) async throws {
+    /// `onConnect` fires when the stream response is established and again on every received
+    /// line — including ": ping" comment heartbeats (sent every 25s). Comment frames never reach
+    /// `onEvent`, so before this hook a healthy idle stream kept the connected indicator false
+    /// forever (#2559). `onEvent` still fires only for payload frames.
+    func events(onConnect: @escaping () -> Void = {}, onEvent: @escaping () -> Void) async throws {
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
@@ -130,11 +134,13 @@ struct MobileAPIClient {
             throw MobileAPIError.network(error)
         }
         try Self.requireSuccess(response, body: nil)
+        onConnect()
 
         var parser = SSEFrameAccumulator()
         do {
             for try await line in bytes.lines {
                 try Task.checkCancellation()
+                onConnect()
                 if parser.consume(line: line) {
                     onEvent()
                 }

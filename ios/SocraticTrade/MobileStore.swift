@@ -242,12 +242,18 @@ final class MobileStore: ObservableObject {
         eventTask = Task { [weak self, client] in
             while !Task.isCancelled {
                 do {
-                    try await client.events {
+                    // onConnect fires on stream establishment and every received line (incl.
+                    // ": ping" heartbeats), so the indicator is truthful on a healthy idle stream.
+                    try await client.events(onConnect: {
+                        Task { @MainActor [weak self] in
+                            self?.isStreamConnected = true
+                        }
+                    }, onEvent: {
                         Task { @MainActor [weak self] in
                             self?.isStreamConnected = true
                             self?.scheduleReload()
                         }
-                    }
+                    })
                     if !Task.isCancelled {
                         self?.isStreamConnected = false
                     }
