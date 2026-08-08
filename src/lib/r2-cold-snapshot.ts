@@ -32,10 +32,10 @@
 
 // Bare "fs"/"os"/"path" (not the "node:" scheme) so Next.js webpack can externalize this
 // module for server bundles — same trap as r2-usage.ts / egress-guard.
-import crypto from "crypto";
-import { closeSync, existsSync, openSync, readSync, statSync, unlinkSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import crypto from "node:crypto";
+import { closeSync, existsSync, openSync, readSync, statSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { audit, getDb } from "./db";
 import { getInternalSetting, setInternalSetting } from "./db-settings";
 import {
