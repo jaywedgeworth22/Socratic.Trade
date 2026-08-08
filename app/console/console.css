@@ -51,6 +51,8 @@
 
   --con-shadow: 0 8px 24px -12px rgba(23, 32, 46, 0.18);
   --con-shadow-lg: 0 24px 60px -24px rgba(23, 32, 46, 0.28);
+  /* Upward shadow for bottom-anchored sticky surfaces (.ac-actions). */
+  --con-shadow-up: 0 -10px 24px -14px rgba(23, 32, 46, 0.28);
   --con-scrim: rgba(23, 32, 46, 0.4);
 
   color-scheme: light;
@@ -163,6 +165,7 @@
 
   --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
   --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.8);
+  --con-shadow-up: 0 -10px 30px -14px rgba(0, 0, 0, 0.7);
   --con-scrim: rgba(0, 0, 0, 0.72);
 
   color-scheme: dark;
@@ -200,6 +203,7 @@
 
     --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
     --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.8);
+    --con-shadow-up: 0 -10px 30px -14px rgba(0, 0, 0, 0.7);
     --con-scrim: rgba(0, 0, 0, 0.72);
 
     color-scheme: dark;
@@ -921,7 +925,7 @@
     /* Clear fixed .con-tabbar (content ~3.25rem + optional home-indicator inset). */
     bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
     z-index: 30;
-    box-shadow: 0 -10px 24px -14px rgba(23, 32, 46, 0.28);
+    box-shadow: var(--con-shadow-up);
   }
 }
 @media (min-width: 1024px) {

@@ -263,6 +263,10 @@ export default function ResultsPage() {
                     (perf.benchmark.netExternalFlows ?? 0) < 0 ? "withdrawals" : "deposits"
                   } (deposits +, withdrawals −). Each stretch between transfers is its own sub-period for you and for SPY; overall = product of (1 + r) − 1. Flows are inferred from snapshots and fills, not a broker transfer ledger.`
                 : "No material deposits or withdrawals detected — single continuous period (account equity growth vs SPY over the same dates)."}
+              {(perf.benchmark.unverifiedFlows?.length ?? 0) > 0 &&
+                ` ${perf.benchmark.unverifiedFlows!.length} inferred transfer${
+                  perf.benchmark.unverifiedFlows!.length === 1 ? "" : "s"
+                } failed the sanity check against its own sub-period's equity move — shown below as "inferred — unverified" and excluded from the time-weighted math.`}
             </p>
             {perf.benchmark.subPeriods && perf.benchmark.subPeriods.length > 1 && (
               <div className="mt-3 overflow-x-auto border-t border-[color:var(--con-line)] pt-2">
@@ -287,9 +291,21 @@ export default function ResultsPage() {
                           {fmtMoney(seg.startEquity)} → {fmtMoney(seg.endEquity)}
                         </td>
                         <td className="py-1 pr-2 whitespace-nowrap">
-                          {Math.abs(seg.externalFlow) < 0.01
-                            ? "—"
-                            : `${seg.externalFlow > 0 ? "deposit" : "withdrawal"} ${fmtMoney(Math.abs(seg.externalFlow))}`}
+                          {Math.abs(seg.externalFlow) < 0.01 ? (
+                            "—"
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5">
+                              {seg.externalFlow > 0 ? "deposit" : "withdrawal"} {fmtMoney(Math.abs(seg.externalFlow))}
+                              {seg.flowUnverified && (
+                                <Chip
+                                  tone="warn"
+                                  title="This inferred transfer is far larger than this sub-period's own equity move, so it cannot be reconciled — a real transfer moves equity by roughly its size. It is shown for your review but EXCLUDED from the time-weighted return; this row's return is the raw equity growth."
+                                >
+                                  inferred — unverified
+                                </Chip>
+                              )}
+                            </span>
+                          )}
                         </td>
                         <td className="py-1 pr-2">
                           <SignedText value={seg.accountReturnPct}>{fmtPct(seg.accountReturnPct, 2, true)}</SignedText>
@@ -304,6 +320,23 @@ export default function ResultsPage() {
               </div>
             )}
           </>
+        ) : perf?.benchmarkUnavailable ? (
+          <div className="flex flex-col gap-2">
+            <div>
+              <Chip tone="warn">benchmark unavailable</Chip>
+            </div>
+            <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+              {perf.benchmarkUnavailable.reason === "stale-series"
+                ? "The SPY price series is stale — it ends before your account window, so a comparison would print 0.00% for a dead feed, not a flat market."
+                : perf.benchmarkUnavailable.reason === "no-bars"
+                  ? "No SPY price history was returned by any provider."
+                  : "The SPY price fetch failed."}{" "}
+              Your account return is not compared against a dead benchmark; nothing here is estimated.
+            </p>
+            {perf.benchmarkUnavailable.detail && (
+              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{perf.benchmarkUnavailable.detail}</p>
+            )}
+          </div>
         ) : (
           <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">
             Not computable yet — the comparison needs enough overlapping history between your equity snapshots and SPY.
@@ -745,7 +778,17 @@ function TaxBlock() {
                   .map((lot, i) => (
                     <tr key={`${lot.symbol}-${i}`}>
                       <td className="font-semibold">
-                        <SymbolButton symbol={lot.symbol} />
+                        <span className="inline-flex items-center gap-1.5">
+                          <SymbolButton symbol={lot.symbol} />
+                          {lot.ledgerMismatch && (
+                            <Chip
+                              tone="warn"
+                              title="This symbol's recorded lots disagree with the live broker position (wrong side, wrong size, or no position at all). Its lot-derived figures are suppressed and it is excluded from wash-sale and early-exit tax math."
+                            >
+                              ledger mismatch
+                            </Chip>
+                          )}
+                        </span>
                       </td>
                       <td className="num con-num">{fmtQty(lot.quantity)}</td>
                       <td className="num con-num">{lot.daysHeld}</td>
@@ -765,6 +808,14 @@ function TaxBlock() {
               </tbody>
             </table>
           </div>
+          {(tax.ledgerMismatchedSymbols?.length ?? 0) > 0 && (
+            <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              {tax.ledgerMismatchedSymbols!.length} symbol{tax.ledgerMismatchedSymbols!.length === 1 ? "" : "s"} (
+              {tax.ledgerMismatchedSymbols!.join(", ")}) excluded from wash-sale and early-exit tax figures — the
+              recorded lot ledger disagrees with the live broker positions (see the row chip). The rows stay visible;
+              their money figures are suppressed rather than computed from wrong lots.
+            </p>
+          )}
         </div>
       )}
 

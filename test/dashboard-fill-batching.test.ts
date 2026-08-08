@@ -24,7 +24,10 @@ vi.mock("../src/lib/macro-history", () => ({ fetchMacroHistory: vi.fn(async () =
 vi.mock("../src/lib/market-signals", () => ({ getMarketSignals: vi.fn(async () => ({})) }));
 vi.mock("../src/lib/market-signals/massive", () => ({ fetchMassiveNews: vi.fn(async () => []) }));
 vi.mock("../src/lib/market-internals", () => ({ computeMarketInternals: vi.fn(() => ({ medianEarnYld: undefined })) }));
-vi.mock("../src/lib/benchmark", () => ({ computeSpyBenchmark: vi.fn(async () => null) }));
+vi.mock("../src/lib/benchmark", () => ({
+  computeSpyBenchmark: vi.fn(async () => null),
+  computeSpyBenchmarkDetailed: vi.fn(async () => ({ comparison: null }))
+}));
 vi.mock("../src/lib/web-sources", () => ({
   getCongressDataset: vi.fn(() => undefined),
   getInsiderDataset: vi.fn(() => undefined),

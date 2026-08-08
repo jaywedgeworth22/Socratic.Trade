@@ -54,11 +54,23 @@ const MONOGRAM_FONT_CLASS: Record<TickerLogoSize, string> = {
   lg: "text-base"
 };
 
-/** First 1–2 letters of the base symbol (before any class-share separator),
- *  e.g. "BRK.B" → "BR", "F" → "F". */
+/** The full base symbol (before any class-share separator), e.g. "BRK.B" → "BRK",
+ *  "ZTS" → "ZTS", "F" → "F". Truncating to two letters made the fallback read as a
+ *  DIFFERENT ticker ("ZTS" → "ZT") — longer symbols shrink to fit the tile instead
+ *  (fallbackFontPx below). */
 function monogram(symbol: string): string {
-  const base = symbol.split(/[.\-_]/)[0] || symbol;
-  return base.slice(0, 2);
+  return symbol.split(/[.\-_]/)[0] || symbol;
+}
+
+const TILE_PX: Record<TickerLogoSize, number> = { sm: 20, md: 28, lg: 48 };
+
+/** Fit font size (px) for fallback symbols longer than two characters: ~0.62em
+ *  advance per semibold uppercase glyph, 4px breathing room, floored at 5px so a
+ *  5-letter symbol still renders complete inside the fixed tile. Two characters
+ *  or fewer keep the token font classes (undefined). */
+function fallbackFontPx(size: TickerLogoSize, chars: number): number | undefined {
+  if (chars <= 2) return undefined;
+  return Math.max(5, Math.floor((TILE_PX[size] - 4) / (chars * 0.62)));
 }
 
 export function TickerLogo({
@@ -98,6 +110,8 @@ export function TickerLogo({
   // fallback, otherwise a monogram tile so the slot is never a bare gap.
   if (failed) {
     if (fallback) return <>{fallback}</>;
+    const label = monogram(normalized);
+    const fontPx = fallbackFontPx(size, label.length);
     return (
       <Tooltip content={title}>
         <span
@@ -105,12 +119,13 @@ export function TickerLogo({
           className={cx(
             "con-logo-tile inline-flex shrink-0 select-none items-center justify-center overflow-hidden font-semibold uppercase leading-none",
             SIZE_CLASS[size],
-            MONOGRAM_FONT_CLASS[size],
+            fontPx === undefined && MONOGRAM_FONT_CLASS[size],
             className
           )}
+          style={fontPx === undefined ? undefined : { fontSize: fontPx, letterSpacing: "-0.02em" }}
           aria-hidden="true"
         >
-          {monogram(normalized)}
+          {label}
         </span>
       </Tooltip>
     );
