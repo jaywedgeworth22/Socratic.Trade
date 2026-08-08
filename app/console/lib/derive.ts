@@ -801,6 +801,23 @@ export function positionMarkPrice(
   return Number.isFinite(price) && price > 0 ? price : null;
 }
 
+/** Gross exposure = Σ|marketValue| across the account's open positions. */
+export function grossExposure(positions: Array<Pick<EquityPosition, "marketValue">>): number {
+  return positions.reduce(
+    (sum, position) => sum + (Number.isFinite(position.marketValue) ? Math.abs(position.marketValue) : 0),
+    0
+  );
+}
+
+/** A position's weight — UNSIGNED share of gross exposure, |value| / Σ|values|
+ *  (owner decision 2026-08-08): direction is already carried by the SHORT tag,
+ *  so a short must never render a negative — or "-0.0%" — weight. Undefined
+ *  when the value or the gross total can't answer. */
+export function grossExposureWeightPct(marketValue: number, gross: number): number | undefined {
+  if (!Number.isFinite(marketValue) || !Number.isFinite(gross) || gross <= 0) return undefined;
+  return (Math.abs(marketValue) / gross) * 100;
+}
+
 export interface EstimatedClosingPnl {
   pnl: number;
   pnlPct: number;
