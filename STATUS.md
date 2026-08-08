@@ -9,6 +9,17 @@ kill-switch no longer pauses litestream when endpoint is B2. Host spare forensic
 Rollout: `docs/rollouts/2026-08-07-litestream-b2-backup.md`.
 # Status
 
+## Current (2026-08-08 MONET — review-fix wave C: feed/alerts/critic)
+
+**#2553/#2555/#2552 (branch `monet/review-fixes-c`):** ingest/embed audit kinds fold into the
+activity feed's System collapse; duplicate "BUY X"/"TRADE X" sibling rows merged at derive time
+(pre-insert proposalId orphans); no-op disclosure-embed audits roll up to at most one daily row;
+alert center gains a single expandable "N provider lanes degraded" rollup + reversible per-condition
+24h mutes ("muted N" count); critic-failure chips name the cause (model + kind, not_configured
+distinct) and Results shows a critic failure rate (30d) stat. Gates: tsc clean, focused vitest
+14 files / 143 tests green, lint 0 errors. Rollout:
+`docs/rollouts/2026-08-08-review-fixes-c-feed-alerts-critic.md`.
+
 ## Current (2026-08-08 MONET — weekly R2 cold snapshot)
 
 **Weekly cold DB snapshot to the idle R2 bucket (second-provider DR):** durable due-job
