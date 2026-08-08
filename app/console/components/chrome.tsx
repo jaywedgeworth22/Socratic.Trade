@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, SlidersHorizontal, Sun, UserRound, Zap } from "lucide-react";
+import { Check, ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, SlidersHorizontal, Sun, UserRound } from "lucide-react";
 import type { ConnectedAccount } from "@/lib/types";
 // llm-required is PURE (no node/server imports — see its header), so its message constants are
 // safe to import here: classifyRunFailure matches the server's own 412 summary strings.
@@ -746,9 +746,9 @@ export function RunOnceButton({
             : "Manual runs always ask first — they can only propose, never place on their own."
         }
       >
-        {/* Zap (not Play): Start/Resume already uses Play — two “go” glyphs next to each
-            other read as competing primaries (expert panel 2026-08-04). */}
-        <Zap size={13} />
+        {/* Emoji bolt, not lucide Zap (owner preference 2026-08-08 — the colored emoji
+            reads better than the line icon). Still not Play: Start/Resume owns Play. */}
+        <span aria-hidden className="text-[13px] leading-none">⚡</span>
         {iconOnly ? null : running ? "Running…" : "Run once"}
       </Btn>
 
