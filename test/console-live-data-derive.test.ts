@@ -9,10 +9,12 @@ import {
   deriveRiskUtilization,
   deriveSpend,
   deriveStateInfo,
+  deriveUnmanagedShortCount,
   estimatedClosingPnl,
   isClosingOrder,
   positionMarkPrice,
-  selectEquityWindow
+  selectEquityWindow,
+  unmanagedShortNotice
 } from "../app/console/lib/derive";
 import type { EquityOrder, PerformanceSummary } from "../src/lib/types";
 
@@ -443,5 +445,55 @@ describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
     expect(deriveStateInfo({ systemState: "liquidating", strategyAuthority: "propose" }, closedMarket).label).toBe("Winding down");
     expect(deriveStateInfo({ systemState: "halted", strategyAuthority: "propose" }, closedMarket).label).toBe("Stopped");
     expect(deriveStateInfo({ systemState: "close_only", strategyAuthority: "propose" }, closedMarket).marketOpen).toBeUndefined();
+  });
+
+  it("word is the shared state-only vocabulary — every surface (chrome, Guardrails, PWA) renders it (#2554)", () => {
+    const openMarket = etDate("2026-06-10", 10, 0);
+    const closedMarket = etDate("2026-06-13", 12, 0); // Saturday
+    // Running: word drops the authority suffix that label carries.
+    const running = deriveStateInfo({ systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false }, openMarket);
+    expect(running.word).toBe("Running");
+    expect(running.label).toBe("Running · Ask-first");
+    // Paused-market-closed: word IS the compound phrase — surfaces must not invent "Running".
+    const paused = deriveStateInfo({ systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false }, closedMarket);
+    expect(paused.word).toBe("Paused · market closed");
+    expect(paused.label).toBe(paused.word);
+    // Non-active states: word === label.
+    expect(deriveStateInfo({ systemState: "close_only", strategyAuthority: "propose" }, closedMarket).word).toBe("Exit-only");
+    expect(deriveStateInfo({ systemState: "liquidating", strategyAuthority: "propose" }, closedMarket).word).toBe("Winding down");
+    expect(deriveStateInfo({ systemState: "halted", strategyAuthority: "propose" }, closedMarket).word).toBe("Stopped");
+  });
+});
+
+describe("deriveUnmanagedShortCount / unmanagedShortNotice — shorts skipped while short selling is off (#2549)", () => {
+  const shortPos = (symbol: string): EquityPosition =>
+    ({ symbol, quantity: -5, averageCost: 100, marketValue: -450 }) as EquityPosition;
+  const longPos = { symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1_100 } as EquityPosition;
+
+  it("counts only shorts, and only while shortSellingEnabled is off", () => {
+    expect(deriveUnmanagedShortCount([shortPos("TSLA"), longPos], { shortSellingEnabled: false })).toBe(1);
+    expect(deriveUnmanagedShortCount([shortPos("TSLA"), shortPos("NVDA")], { shortSellingEnabled: false })).toBe(2);
+    // Short selling ON: every short is managed — never a false alarm.
+    expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true })).toBe(0);
+    expect(deriveUnmanagedShortCount([longPos], { shortSellingEnabled: false })).toBe(0);
+    expect(deriveUnmanagedShortCount(undefined, { shortSellingEnabled: false })).toBe(0);
+  });
+
+  it("notice copy is advisory, singular/plural correct, and null when there is nothing to say", () => {
+    expect(unmanagedShortNotice(0)).toBeNull();
+    expect(unmanagedShortNotice(1)).toBe(
+      "1 short position is unmanaged while short selling is off — enable shorting to resume protection, or close it."
+    );
+    expect(unmanagedShortNotice(3)).toBe(
+      "3 short positions are unmanaged while short selling is off — enable shorting to resume protection, or close them."
+    );
+  });
+
+  it("agrees with deriveProtection's per-row muted/unsafe state (same rule, aggregated)", () => {
+    const policy = { riskRules: { stopLossPct: 8 }, shortSellingEnabled: false } as TradingPolicy;
+    const perRow = deriveProtection(shortPos("TSLA"), [], policy);
+    expect(perRow.label).toBeNull();
+    expect(perRow.tone).toBe("muted");
+    expect(deriveUnmanagedShortCount([shortPos("TSLA")], policy)).toBe(1);
   });
 });
