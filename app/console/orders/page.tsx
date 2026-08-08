@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { EquityOrder, EquityPosition } from "@/lib/types";
 import { deriveReality } from "../lib/derive";
-import { cx, fmtExact, fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
+import { cx, fmtExact, fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH, SENTENCE_GAP } from "../lib/format";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Btn, Card, Chip, Dash, Empty, SignedText, type ChipTone } from "../ui/primitives";
@@ -22,6 +22,7 @@ import {
   closingOrderPnl,
   deriveOpenOrders,
   effectiveOrderPrice,
+  fmtAge,
   fmtMinutes,
   isReplaceableType,
   lastScanPrice,
@@ -29,8 +30,10 @@ import {
   orderTypeLabel,
   readableState,
   staleThresholdMinutes,
+  storedPriceFor,
   terminalOrders,
-  type OpenOrderRow
+  type OpenOrderRow,
+  type StoredPrice
 } from "./lib";
 
 const SIDE_LABEL: Record<string, string> = { buy: "BUY", sell: "SELL", short: "SHORT", cover: "COVER" };
@@ -78,6 +81,7 @@ function deriveOrderRowView(
   row: OpenOrderRow,
   quotes: Parameters<typeof lastScanPrice>[0],
   positions: EquityPosition[] | undefined,
+  fallbackPrices: Record<string, StoredPrice> | undefined,
   halted: boolean,
   noAccount: boolean,
   live: boolean
@@ -87,7 +91,9 @@ function deriveOrderRowView(
   const position = matchPosition(positions, order.symbol);
   // "Last price" prefers the held position's own mark over the market-scan cache — see
   // effectiveOrderPrice for why (same snapshot, can't be stale in a way the scan isn't).
-  const price = effectiveOrderPrice(position, scan);
+  // Final fallback: the durable per-symbol store's last-known price (age-tagged), so the
+  // Replace-at-market decision is never staring at a bare "—" for an unheld, unscanned symbol.
+  const price = effectiveOrderPrice(position, scan, storedPriceFor(fallbackPrices, order.symbol));
   const limit = finiteNum(order.limitPrice);
   const stop = finiteNum(order.stopPrice);
   // Gap between the latest known price and the resting limit — how far the market
@@ -127,6 +133,14 @@ function OrderPriceInfo({ view }: { view: ReturnType<typeof deriveOrderRowView> 
       {view.price?.source === "scan" && view.price.asOf && (
         <span className="ml-1 text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
           · quote <Ago iso={view.price.asOf} />
+        </span>
+      )}
+      {view.price?.source === "store" && fmtAge(view.price.asOf) && (
+        <span
+          className="ml-1 text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]"
+          title={`Last stored price from the durable per-symbol store${view.price.provider ? ` (${view.price.provider})` : ""}, as of ${fmtExact(view.price.asOf)} — not a live quote.`}
+        >
+          · {fmtAge(view.price.asOf)} old
         </span>
       )}
       {view.limitGapPct !== undefined && (
@@ -263,10 +277,8 @@ export default function OrdersPage() {
   const thresholdMinutes = staleThresholdMinutes(snapshot.policy);
   const staleCount = rows.filter((r) => r.stale).length;
   const quotes = snapshot.latestStrategyRun?.marketScan?.quotesBySymbol;
+  const fallbackPrices = snapshot.orderPriceFallbacks;
   const multiAccount = snapshot.connectedAccounts.length > 1;
-  const accountLabel =
-    reality.account?.label ||
-    (snapshot.policy.accountNumber ? `Account ·· ${snapshot.policy.accountNumber.slice(-4)}` : null);
 
   const doRefresh = async () => {
     setRefreshing(true);
@@ -279,17 +291,11 @@ export default function OrdersPage() {
 
   return (
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Title + Refresh on ONE row (owner mobile punch list 2026-08-08). The env and
+          account chips that used to sit here duplicated the top banner / account scope
+          switcher, so they're gone. */}
+      <div className="flex items-center justify-between gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Orders</h1>
-        <Chip tone={reality.tone} title={reality.clarification}>
-          {reality.word} · {reality.phrase}
-        </Chip>
-        {accountLabel && (
-          <Chip tone="muted" title="Orders are read from the broker for the active account only.">
-            {accountLabel}
-          </Chip>
-        )}
-        <div className="flex-1" />
         <Btn
           size="sm"
           onClick={() => void doRefresh()}
@@ -302,13 +308,13 @@ export default function OrdersPage() {
 
       <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         Orders originate from approved proposals — there is no manual order-entry here.
+        {multiAccount && (
+          <>
+            {SENTENCE_GAP}Showing the active account only — switch the account scope (top bar) to see another
+            account&apos;s orders.
+          </>
+        )}
       </p>
-
-      {multiAccount && (
-        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Showing the active account only — switch the account scope (top bar) to see another account&apos;s orders.
-        </p>
-      )}
 
       {staleCount > 0 && (
         <div
@@ -350,7 +356,7 @@ export default function OrdersPage() {
                     <th className="num" title="Resting limit price and/or stop trigger price the broker holds for this order. '—' when the broker reported neither (e.g. a market order).">
                       Limit / Stop
                     </th>
-                    <th className="num" title="Latest price this app has for the symbol: this account's OWN held mark (from the same snapshot as the order) when the symbol is currently held, else the most recent market scan, which can be minutes old. '—' when neither is available. Where the order has a limit price, the gap between this price and the limit is shown underneath.">
+                    <th className="num" title="Latest price this app has for the symbol: this account's OWN held mark (from the same snapshot as the order) when the symbol is currently held, else the most recent market scan (can be minutes old), else the durable per-symbol store's last-known price (age-tagged; can be hours or days old). '—' only when none is available. Where the order has a limit price, the gap between this price and the limit is shown underneath.">
                       Last price
                     </th>
                     <th title="Time-in-force: how long the order stays working. DAY/GFD expires at market close; GTC rests until cancelled.">
@@ -381,6 +387,7 @@ export default function OrdersPage() {
                       row={row}
                       quotes={quotes}
                       positions={snapshot.positions}
+                      fallbackPrices={fallbackPrices}
                       companyName={snapshot.symbolMetaBySymbol?.[row.order.symbol]?.companyName}
                       halted={halted}
                       noAccount={noAccount}
@@ -399,6 +406,7 @@ export default function OrdersPage() {
                   row={row}
                   quotes={quotes}
                   positions={snapshot.positions}
+                  fallbackPrices={fallbackPrices}
                   companyName={snapshot.symbolMetaBySymbol?.[row.order.symbol]?.companyName}
                   halted={halted}
                   noAccount={noAccount}
@@ -504,6 +512,7 @@ interface OrderRowProps {
   row: OpenOrderRow;
   quotes: Parameters<typeof lastScanPrice>[0];
   positions: EquityPosition[] | undefined;
+  fallbackPrices: Record<string, StoredPrice> | undefined;
   companyName?: string;
   halted: boolean;
   noAccount: boolean;
@@ -512,8 +521,8 @@ interface OrderRowProps {
   onCancel: () => void;
 }
 
-function OpenOrderTr({ row, quotes, positions, companyName, halted, noAccount, live, onReplace, onCancel }: OrderRowProps) {
-  const view = deriveOrderRowView(row, quotes, positions, halted, noAccount, live);
+function OpenOrderTr({ row, quotes, positions, fallbackPrices, companyName, halted, noAccount, live, onReplace, onCancel }: OrderRowProps) {
+  const view = deriveOrderRowView(row, quotes, positions, fallbackPrices, halted, noAccount, live);
   const order = view.order;
 
   return (
@@ -571,9 +580,11 @@ function OpenOrderTr({ row, quotes, positions, companyName, halted, noAccount, l
         title={
           view.price?.source === "position"
             ? "This account's own held mark for the symbol (marketValue / quantity), from the same snapshot as this order — not a live broker quote."
-            : view.price
-              ? `From the latest market scan${view.price.provider ? ` (${view.price.provider})` : ""}${view.price.asOf ? `, as of ${fmtExact(view.price.asOf)}` : ""} — not a live broker quote.`
-              : "Neither a held position nor the latest market scan covers this symbol, so no recent price is available here."
+            : view.price?.source === "store"
+              ? `Last stored price from the durable per-symbol store${view.price.provider ? ` (${view.price.provider})` : ""}${view.price.asOf ? `, as of ${fmtExact(view.price.asOf)}` : ""} — can be hours or days old; not a live quote.`
+              : view.price
+                ? `From the latest market scan${view.price.provider ? ` (${view.price.provider})` : ""}${view.price.asOf ? `, as of ${fmtExact(view.price.asOf)}` : ""} — not a live broker quote.`
+                : "No held position, market scan, or stored price covers this symbol, so no price is available here."
         }
       >
         <OrderPriceInfo view={view} />
@@ -617,8 +628,8 @@ function OpenOrderTr({ row, quotes, positions, companyName, halted, noAccount, l
  *  laid out as a card: symbol/side/status up top, the load-bearing fields
  *  (size, limit/stop, last price, age) in a small grid, actions at the
  *  bottom. Shown lg:hidden while the table above is hidden below lg. */
-function OpenOrderCard({ row, quotes, positions, companyName, halted, noAccount, live, onReplace, onCancel }: OrderRowProps) {
-  const view = deriveOrderRowView(row, quotes, positions, halted, noAccount, live);
+function OpenOrderCard({ row, quotes, positions, fallbackPrices, companyName, halted, noAccount, live, onReplace, onCancel }: OrderRowProps) {
+  const view = deriveOrderRowView(row, quotes, positions, fallbackPrices, halted, noAccount, live);
   const order = view.order;
   return (
     <div
@@ -678,13 +689,18 @@ function OpenOrderCard({ row, quotes, positions, companyName, halted, noAccount,
           title={
             view.price?.source === "position"
               ? "This account's own held mark for the symbol (marketValue / quantity), from the same snapshot as this order — not a live broker quote."
-              : view.price
-                ? `From the latest market scan${view.price.provider ? ` (${view.price.provider})` : ""}${view.price.asOf ? `, as of ${fmtExact(view.price.asOf)}` : ""} — not a live broker quote.`
-                : "Neither a held position nor the latest market scan covers this symbol, so no recent price is available here."
+              : view.price?.source === "store"
+                ? `Last stored price from the durable per-symbol store${view.price.provider ? ` (${view.price.provider})` : ""}${view.price.asOf ? `, as of ${fmtExact(view.price.asOf)}` : ""} — can be hours or days old; not a live quote.`
+                : view.price
+                  ? `From the latest market scan${view.price.provider ? ` (${view.price.provider})` : ""}${view.price.asOf ? `, as of ${fmtExact(view.price.asOf)}` : ""} — not a live broker quote.`
+                  : "No held position, market scan, or stored price covers this symbol, so no price is available here."
           }
         >
           <div className="flex justify-between items-start gap-0.5">
-            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Last price</span>
+            {/* "Last", not "Last price": the two-word label wrapped to a second line in this
+                narrow card cell (owner mobile punch list 2026-08-08) — the hover keeps the
+                full name, matching the one-line SIZE/AGE labels beside it. */}
+            <span className="whitespace-nowrap text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]" title="Last price">Last</span>
             <div className="con-num text-right">
               <OrderPriceInfo view={view} />
             </div>

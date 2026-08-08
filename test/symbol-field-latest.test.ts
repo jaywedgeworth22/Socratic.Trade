@@ -190,4 +190,52 @@ describe("symbol_field_latest", () => {
     expect(merged.AAPL.peRatio).toBe(28);
     expect(merged.AAPL.price).toBe(201); // newer audit price when present
   });
+
+  it("getSymbolLatestPrices returns only the 'price' field with its own as_of, skipping invalid values", async () => {
+    const { upsertSymbolFieldLatest, getSymbolLatestPrices } = await import("../src/lib/db-fundamentals");
+
+    upsertSymbolFieldLatest([
+      {
+        symbol: "MSFT",
+        field: "price",
+        valueJson: "378.1",
+        source: "yahoo-finance",
+        asOf: "2026-08-07T13:00:00.000Z",
+        fetchedAt: "2026-08-07T13:01:00.000Z"
+      },
+      {
+        // Non-price fields must never leak into the price map.
+        symbol: "MSFT",
+        field: "peRatio",
+        valueJson: "35",
+        source: "yahoo-finance",
+        asOf: "2026-08-07T13:00:00.000Z",
+        fetchedAt: "2026-08-07T13:01:00.000Z"
+      },
+      {
+        // Non-positive stored price is skipped (never surface a fabricated 0).
+        symbol: "ZERO",
+        field: "price",
+        valueJson: "0",
+        source: "yahoo-finance",
+        asOf: "2026-08-07T13:00:00.000Z",
+        fetchedAt: "2026-08-07T13:01:00.000Z"
+      },
+      {
+        // Non-numeric stored price is skipped.
+        symbol: "BAD",
+        field: "price",
+        valueJson: JSON.stringify("not-a-number"),
+        source: "yahoo-finance",
+        asOf: "2026-08-07T13:00:00.000Z",
+        fetchedAt: "2026-08-07T13:01:00.000Z"
+      }
+    ]);
+
+    const prices = getSymbolLatestPrices(["msft", "ZERO", "BAD", "UNSEEN"]);
+    expect(prices).toEqual({
+      MSFT: { price: 378.1, asOf: "2026-08-07T13:00:00.000Z", source: "yahoo-finance" }
+    });
+    expect(getSymbolLatestPrices([])).toEqual({});
+  });
 });

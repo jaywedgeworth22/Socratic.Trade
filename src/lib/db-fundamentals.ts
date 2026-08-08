@@ -165,6 +165,41 @@ export function getSymbolFieldLatest(
   return out;
 }
 
+/** Latest durable price per symbol (field = "price" only — cheaper than loading
+ *  every field via getSymbolFieldLatest). Used by the dashboard snapshot as the
+ *  Orders screen's final "Last price" fallback; each entry keeps its own as_of
+ *  so the UI can age-tag it. Non-finite / non-positive stored values are
+ *  skipped — never surface a fabricated price. */
+export function getSymbolLatestPrices(
+  symbols: string[],
+  database: Database = getDb()
+): Record<string, { price: number; asOf: string; source: string }> {
+  const normalized = Array.from(new Set(symbols.map((s) => normalizeSymbol(s)).filter(Boolean)));
+  if (normalized.length === 0) return {};
+
+  const placeholders = normalized.map(() => "?").join(",");
+  const rows = database
+    .prepare(
+      `SELECT symbol, value_json, source, as_of
+       FROM symbol_field_latest
+       WHERE field = 'price' AND symbol IN (${placeholders})`
+    )
+    .all(...normalized) as Array<{ symbol: string; value_json: string; source: string; as_of: string }>;
+
+  const out: Record<string, { price: number; asOf: string; source: string }> = {};
+  for (const row of rows) {
+    let value: unknown;
+    try {
+      value = JSON.parse(row.value_json);
+    } catch {
+      continue;
+    }
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) continue;
+    out[row.symbol] = { price: value, asOf: row.as_of, source: row.source };
+  }
+  return out;
+}
+
 /** Group latest rows by symbol → field → row (handy for seed builders). */
 export function getSymbolFieldLatestBySymbol(
   symbols: string[],
