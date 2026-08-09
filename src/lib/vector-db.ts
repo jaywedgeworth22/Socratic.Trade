@@ -3,6 +3,7 @@ import crypto from "crypto";
 import * as dbModule from "./db";
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiKeySource } from "./db";
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
+import { deleteStagedEmbeddings, getStagedEmbeddings, stageEmbeddedVectors } from "./db-embed-stage";
 import { logApiHealth } from "./db-health";
 import {
   auditPineconeWuGateSkip,
@@ -103,6 +104,11 @@ export interface StoreContextsResult {
   budgetSkipped?: number;
   /** Count skipped by RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY before any Voyage/Pinecone write. */
   writeUnitBudgetSkipped?: number;
+  /** Count of previously-PAID embeddings replayed from the durable embed_stage table
+   *  (db-embed-stage.ts) with no provider call — the embed-once guarantee in action. Rows only
+   *  exist between a paid embed and its successful Pinecone delivery, so this is non-zero only
+   *  when a prior attempt's upsert failed (WU exhaustion, 429s, network, restart). */
+  embedsFromStage?: number;
   /** Set with skipped when the MONTHLY Pinecone write-unit breaker is active
    *  (pinecone-wu-breaker.ts): the store was refused BEFORE any embed spend or Pinecone call.
    *  Producers should treat this as a clean deferral until `wuExhaustedUntil`, never a failure. */
@@ -2731,18 +2737,71 @@ async function storeContextsImpl(
   }
 
   const reuseExactEmbeddings = options?.reuseExactEmbeddings === true;
+  // Durable embed stage (db-embed-stage.ts, embed-once directive 2026-08-09). Keyed exactly
+  // like the L1 process cache: hashContent() of the EXACT embed-input text + model + embed
+  // revision. Rows only exist between a paid embed and its successful Pinecone delivery, so a
+  // stage hit is always a vector a prior FAILED attempt already paid OpenRouter for.
+  const stageModel = activeEmbeddingModel(userId);
+  const stageRevision = String(currentEmbedRev());
+  // Documents whose vector has a durable stage row this call (consumed hit OR freshly staged);
+  // their rows are deleted only once the vectors are durably delivered to Pinecone.
+  const stageHashByDocument = new Map<ContextDocument, string>();
+  let embedsFromStage = 0;
   const cachedDocumentEmbeddings = new Map<ContextDocument, number[]>();
   const uniqueMissingEmbeddingInputs: string[] = [];
   const missingEmbeddingInputSet = new Set<string>();
   if (reuseExactEmbeddings) {
+    const documentsByMissingInput = new Map<string, ContextDocument[]>();
     for (const document of documentsToStore) {
       const input = documentEmbeddingInput(document);
       const cached = getCachedDocumentEmbedding(input, userId);
       if (cached) {
         cachedDocumentEmbeddings.set(document, cached);
-      } else if (!missingEmbeddingInputSet.has(input)) {
-        missingEmbeddingInputSet.add(input);
-        uniqueMissingEmbeddingInputs.push(input);
+      } else {
+        const siblings = documentsByMissingInput.get(input);
+        if (siblings) siblings.push(document);
+        else documentsByMissingInput.set(input, [document]);
+        if (!missingEmbeddingInputSet.has(input)) {
+          missingEmbeddingInputSet.add(input);
+          uniqueMissingEmbeddingInputs.push(input);
+        }
+      }
+    }
+    // L2 after L1: consuming staged vectors here both skips the provider call below and keeps
+    // already-paid inputs out of the paid-embed ingest-budget accounting.
+    if (uniqueMissingEmbeddingInputs.length > 0) {
+      try {
+        const stagedByHash = getStagedEmbeddings(
+          uniqueMissingEmbeddingInputs.map(hashContent),
+          stageModel,
+          stageRevision
+        );
+        if (stagedByHash.size > 0) {
+          const stillMissing: string[] = [];
+          for (const input of uniqueMissingEmbeddingInputs) {
+            const hash = hashContent(input);
+            const staged = stagedByHash.get(hash);
+            if (staged && isValidEmbedding(staged)) {
+              embedsFromStage += 1;
+              setCachedDocumentEmbedding(input, staged, userId);
+              for (const document of documentsByMissingInput.get(input) ?? []) {
+                cachedDocumentEmbeddings.set(document, [...staged]);
+                stageHashByDocument.set(document, hash);
+              }
+            } else {
+              stillMissing.push(input);
+            }
+          }
+          uniqueMissingEmbeddingInputs.length = 0;
+          uniqueMissingEmbeddingInputs.push(...stillMissing);
+          missingEmbeddingInputSet.clear();
+          for (const input of stillMissing) missingEmbeddingInputSet.add(input);
+        }
+      } catch (err) {
+        console.warn(
+          "[vector-db] embed-stage lookup failed (non-fatal; will embed normally):",
+          err instanceof Error ? err.message : String(err)
+        );
       }
     }
   }
@@ -2901,6 +2960,10 @@ async function storeContextsImpl(
   let indexed = 0;
   let rejectedInvalidEmbeddings = 0;
   const managedRecordBatches: Array<PineconeRecord<RecordMetadata>[]> = [];
+  // Managed two-phase commits keep their embed_stage rows until the committed re-upsert AND
+  // markCommitted() succeed: a mid-commit failure aborts and re-runs the whole document, and
+  // that retry must still find the paid vectors after a process restart.
+  const stageHashesPendingCommit: string[] = [];
   // R10: content_hash of each document actually upserted (not rejected by the R2 integrity
   // guard), keyed by identity against `documentsToStore` — only recorded into document_chunks
   // (via insertDocumentChunks below) when dedup is active for this call.
@@ -3001,6 +3064,35 @@ async function storeContextsImpl(
               setCachedDocumentEmbedding(input, embedding, userId);
               for (const position of missingPositions.get(input) ?? []) resolved[position] = [...embedding];
             }
+            // Durably stage the PAID vectors BEFORE any Pinecone upsert attempt (embed-once):
+            // if the upsert below fails for any reason, the retry replays these rows instead of
+            // paying the provider again. Best-effort — a stage-write failure must never fail the
+            // store (the L1 cache above still covers the in-process retry case).
+            try {
+              stageEmbeddedVectors(missingInputs.map((input, inputIndex) => {
+                const hash = hashContent(input);
+                const positions = missingPositions.get(input) ?? [];
+                for (const position of positions) stageHashByDocument.set(batch[position]!, hash);
+                const representative = batch[positions[0] ?? 0]!;
+                return {
+                  contentHash: hash,
+                  model: stageModel,
+                  revision: stageRevision,
+                  vector: validated.embeddings![inputIndex]!,
+                  symbol: representative.metadata?.symbol ?? "",
+                  source: representative.metadata?.source ?? "",
+                  chunkId: typeof representative.metadata?.chunk_id === "string"
+                    ? representative.metadata.chunk_id
+                    : "",
+                  userScope: userId
+                };
+              }));
+            } catch (err) {
+              console.warn(
+                "[vector-db] embed-stage persist failed (non-fatal):",
+                err instanceof Error ? err.message : String(err)
+              );
+            }
           }
         }
         const complete = Array.from({ length: batch.length }, (_unused, index) => isValidEmbedding(resolved[index])).every(Boolean);
@@ -3010,25 +3102,94 @@ async function storeContextsImpl(
           rejectionReason = "invalid-embedding";
         }
       } else {
-        // See the reuseExactEmbeddings branch above for why embedProvider (not the "voyage"
-        // service arg) drives the health/alert lane.
-        const embedProvider = activeEmbeddingProvider(userId);
-        const response = await withRagApiHealth(
-          "voyage",
-          voyageSource,
-          userId,
-          "embed documents",
-          () => embedDocumentsWithRetry(voyage, embedInputs, voyageSource, userId, options?.leaseGuard),
-          options?.leaseGuard,
-          { durablyTrackedInside: true },
-          { lane: "rag-embed", provider: embedProvider }
-        );
-        assertVectorStoreLease(options?.leaseGuard);
-        meterEmbed(embedInputs, activeEmbeddingModel(userId), userId, embedProvider);
-        const validated = validateDocumentEmbeddingBatch(response.data, batch.length);
-        batchEmbeddings = validated.embeddings;
-        rejected = validated.rejected;
-        rejectionReason = validated.reason;
+        // Durable embed stage (L2) first — a hit is a vector a prior FAILED attempt already
+        // paid for (rows only exist between a paid embed and a successful upsert), so consuming
+        // it is exactly the embed-once guarantee. The always-re-embed refresh semantics of this
+        // branch are otherwise unchanged: after a successful upsert the stage rows are deleted,
+        // so a routine refresh cycle never finds a hit here.
+        const inputHashes = embedInputs.map(hashContent);
+        let stagedByHash = new Map<string, number[]>();
+        try {
+          stagedByHash = getStagedEmbeddings(inputHashes, stageModel, stageRevision);
+        } catch (err) {
+          console.warn(
+            "[vector-db] embed-stage lookup failed (non-fatal; will embed normally):",
+            err instanceof Error ? err.message : String(err)
+          );
+        }
+        const resolved = new Array<number[] | undefined>(batch.length);
+        const toEmbedPositions: number[] = [];
+        for (let indexInBatch = 0; indexInBatch < batch.length; indexInBatch++) {
+          const staged = stagedByHash.get(inputHashes[indexInBatch]!);
+          if (staged && isValidEmbedding(staged)) {
+            resolved[indexInBatch] = [...staged];
+            stageHashByDocument.set(batch[indexInBatch]!, inputHashes[indexInBatch]!);
+            embedsFromStage += 1;
+          } else {
+            toEmbedPositions.push(indexInBatch);
+          }
+        }
+
+        if (toEmbedPositions.length === 0) {
+          batchEmbeddings = resolved as number[][];
+        } else {
+          // See the reuseExactEmbeddings branch above for why embedProvider (not the "voyage"
+          // service arg) drives the health/alert lane.
+          const toEmbedInputs = toEmbedPositions.map((position) => embedInputs[position]!);
+          const embedProvider = activeEmbeddingProvider(userId);
+          const response = await withRagApiHealth(
+            "voyage",
+            voyageSource,
+            userId,
+            "embed documents",
+            () => embedDocumentsWithRetry(voyage, toEmbedInputs, voyageSource, userId, options?.leaseGuard),
+            options?.leaseGuard,
+            { durablyTrackedInside: true },
+            { lane: "rag-embed", provider: embedProvider }
+          );
+          assertVectorStoreLease(options?.leaseGuard);
+          meterEmbed(toEmbedInputs, activeEmbeddingModel(userId), userId, embedProvider);
+          const validated = validateDocumentEmbeddingBatch(response.data, toEmbedInputs.length);
+          if (!validated.embeddings) {
+            rejected = validated.rejected;
+            rejectionReason = validated.reason;
+          } else {
+            // Durably stage the PAID vectors BEFORE any Pinecone upsert attempt (embed-once).
+            // Best-effort — a stage-write failure must never fail the store.
+            try {
+              stageEmbeddedVectors(toEmbedPositions.map((position, embedIndex) => {
+                const document = batch[position]!;
+                stageHashByDocument.set(document, inputHashes[position]!);
+                return {
+                  contentHash: inputHashes[position]!,
+                  model: stageModel,
+                  revision: stageRevision,
+                  vector: validated.embeddings![embedIndex]!,
+                  symbol: document.metadata?.symbol ?? "",
+                  source: document.metadata?.source ?? "",
+                  chunkId: typeof document.metadata?.chunk_id === "string"
+                    ? document.metadata.chunk_id
+                    : "",
+                  userScope: userId
+                };
+              }));
+            } catch (err) {
+              console.warn(
+                "[vector-db] embed-stage persist failed (non-fatal):",
+                err instanceof Error ? err.message : String(err)
+              );
+            }
+            for (let embedIndex = 0; embedIndex < toEmbedPositions.length; embedIndex++) {
+              resolved[toEmbedPositions[embedIndex]!] = validated.embeddings[embedIndex]!;
+            }
+            if (resolved.every((embedding) => isValidEmbedding(embedding))) {
+              batchEmbeddings = resolved as number[][];
+            } else {
+              rejected = Math.max(1, batch.length);
+              rejectionReason = "invalid-embedding";
+            }
+          }
+        }
       }
 
       if (!batchEmbeddings) {
@@ -3082,6 +3243,27 @@ async function storeContextsImpl(
         indexed += records.length;
         if (options?.managedCommit) managedRecordBatches.push(records);
         meterPineconeUpsert(records.length, userId, estimatedWriteUnits);
+        // Delivered: this batch's vectors are now in Pinecone, so their "paid but not yet
+        // delivered" stage rows can go (plain calls delete per batch; managed commits defer
+        // until the committed re-upsert + finalize). Best-effort — a stray row is swept by
+        // the 35-day retention lane, never re-upserted incorrectly.
+        const deliveredStageHashes = batch
+          .map((document) => stageHashByDocument.get(document))
+          .filter((hash): hash is string => typeof hash === "string");
+        if (deliveredStageHashes.length > 0) {
+          if (options?.managedCommit) {
+            stageHashesPendingCommit.push(...deliveredStageHashes);
+          } else {
+            try {
+              deleteStagedEmbeddings(deliveredStageHashes, stageModel, stageRevision);
+            } catch (err) {
+              console.warn(
+                "[vector-db] embed-stage delete failed (non-fatal; retention lane will sweep):",
+                err instanceof Error ? err.message : String(err)
+              );
+            }
+          }
+        }
       }
     }
 
@@ -3125,6 +3307,18 @@ async function storeContextsImpl(
       } catch (error) {
         throw new Error("document-local-commit-finalize-failed", { cause: error });
       }
+      // The document is fully committed (pending + committed upserts + receipts + finalize) —
+      // only now are the managed call's paid vectors provably delivered.
+      if (stageHashesPendingCommit.length > 0) {
+        try {
+          deleteStagedEmbeddings(stageHashesPendingCommit, stageModel, stageRevision);
+        } catch (err) {
+          console.warn(
+            "[vector-db] embed-stage delete failed (non-fatal; retention lane will sweep):",
+            err instanceof Error ? err.message : String(err)
+          );
+        }
+      }
       assertVectorStoreLease(options.leaseGuard);
     }
 
@@ -3141,6 +3335,18 @@ async function storeContextsImpl(
     }
     assertVectorStoreLease(options?.leaseGuard);
     console.log(`[vector-db] Indexed ${indexed}/${validDocuments.length} context document(s).${rejectedInvalidEmbeddings > 0 ? ` (${rejectedInvalidEmbeddings} rejected: malformed embedding)` : ""}`);
+
+    // Receipt for the embed-once guarantee: how many provider embed calls this call avoided by
+    // replaying previously-paid vectors from the durable stage. One audit row per store call
+    // (not per batch) so a large recovery drain cannot flood audit_events.
+    if (embedsFromStage > 0) {
+      audit(
+        "embed_stage_replay",
+        { embedsAvoided: embedsFromStage, attempted: validDocuments.length, indexed, batches: batches.length },
+        userId
+      );
+      console.log(`[vector-db] Embed stage replay: ${embedsFromStage} previously-paid embedding(s) reused without a provider call.`);
+    }
 
     // R10: record newly-indexed content hashes so a repeat storeContexts call with the same
     // dedupKeyPrefix and byte-identical text skips re-embedding next time. Best-effort — a
@@ -3163,13 +3369,14 @@ async function storeContextsImpl(
       at: new Date().toISOString(),
       attempted: validDocuments.length,
       indexed,
+      ...(embedsFromStage > 0 ? { embedsFromStage } : {}),
       ...(budgetSkipped > 0 ? { budgetSkipped } : {}),
       ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {})
     };
     assertVectorStoreLease(options?.leaseGuard);
     setInternalSetting(LAST_INGEST_KEY, lastIngest);
-    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed, rejectedInvalidEmbeddings, ...(budgetSkipped > 0 ? { budgetSkipped } : {}), ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}) }, userId);
-    return { attempted: validDocuments.length, indexed, ...(rejectedInvalidEmbeddings > 0 ? { rejectedInvalidEmbeddings } : {}), ...(budgetSkipped > 0 ? { budgetSkipped } : {}), ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}) };
+    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed, rejectedInvalidEmbeddings, ...(embedsFromStage > 0 ? { embedsFromStage } : {}), ...(budgetSkipped > 0 ? { budgetSkipped } : {}), ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}) }, userId);
+    return { attempted: validDocuments.length, indexed, ...(embedsFromStage > 0 ? { embedsFromStage } : {}), ...(rejectedInvalidEmbeddings > 0 ? { rejectedInvalidEmbeddings } : {}), ...(budgetSkipped > 0 ? { budgetSkipped } : {}), ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}) };
   } catch (err) {
     // Lease loss is a concurrency boundary, not a provider failure. Propagate it without writing
     // success/failure ledgers after ownership has moved to a successor. Voyage receives the abort
@@ -3193,7 +3400,7 @@ async function storeContextsImpl(
         reason: error
       }, options?.leaseGuard);
     }
-    return { attempted: validDocuments.length, indexed, error };
+    return { attempted: validDocuments.length, indexed, error, ...(embedsFromStage > 0 ? { embedsFromStage } : {}) };
   }
 }
 
