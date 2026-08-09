@@ -20,6 +20,7 @@
 // operator action (full rewrite = one large WAL burst), not automated here.
 
 import { getDb } from "./db";
+import { sweepEmbedStage } from "./db-embed-stage";
 import { getInternalSetting, setInternalSetting } from "./db-settings";
 
 /** Kinds whose volume is observability noise (deduped now, but history is heavy). */
@@ -54,6 +55,11 @@ export interface AuditPruneResult {
   auditDefault: number;
   providerDispatch: number;
   providerOutbox: number;
+  /** embed_stage rows removed by the 35-day retention window (db-embed-stage.ts — orphans
+   * whose source document was superseded before any retry consumed them). */
+  embedStageExpired: number;
+  /** embed_stage rows removed oldest-first by the defensive 2 GiB size cap (one audit row). */
+  embedStageCapPruned: number;
 }
 
 export function pruneAuditEvents(now: Date = new Date(), batchLimit: number = AUDIT_PRUNE_BATCH_LIMIT): AuditPruneResult {
@@ -63,7 +69,14 @@ export function pruneAuditEvents(now: Date = new Date(), batchLimit: number = AU
   const provCutoff = new Date(now.getTime() - AUDIT_PRUNE_PROVIDER_DAYS * 24 * 3600_000).toISOString();
   const placeholders = AUDIT_PRUNE_OBSERVABILITY_KINDS.map(() => "?").join(", ");
   let remaining = batchLimit;
-  const result: AuditPruneResult = { auditObservability: 0, auditDefault: 0, providerDispatch: 0, providerOutbox: 0 };
+  const result: AuditPruneResult = {
+    auditObservability: 0,
+    auditDefault: 0,
+    providerDispatch: 0,
+    providerOutbox: 0,
+    embedStageExpired: 0,
+    embedStageCapPruned: 0
+  };
 
   result.auditObservability = db
     .prepare(
@@ -95,6 +108,13 @@ export function pruneAuditEvents(now: Date = new Date(), batchLimit: number = AU
       .prepare(`DELETE FROM provider_usage_outbox WHERE id IN (SELECT id FROM provider_usage_outbox WHERE created_at < ? LIMIT ?)`)
       .run(provCutoff, remaining).changes;
   }
+
+  // embed_stage retention + defensive size cap (db-embed-stage.ts). Steady state deletes
+  // nothing — rows normally live only between a paid embed and its successful Pinecone
+  // delivery; this lane only reaps orphans (superseded documents) and a runaway table.
+  const stageSweep = sweepEmbedStage(now);
+  result.embedStageExpired = stageSweep.expired;
+  result.embedStageCapPruned = stageSweep.capPruned;
   return result;
 }
 

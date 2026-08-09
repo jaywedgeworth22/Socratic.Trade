@@ -3601,6 +3601,26 @@ function migrate(database: Database.Database): void {
       PRIMARY KEY (content_hash)
     );
     CREATE INDEX IF NOT EXISTS idx_document_chunks_symbol ON document_chunks (symbol);
+    -- Durable "paid but not yet delivered" document-embedding stage (db-embed-stage.ts,
+    -- 2026-08-09 embed-once directive). Rows exist only between a successful PAID embed batch
+    -- and the successful Pinecone delivery of those vectors; a retry consumes them by exact
+    -- (content_hash of the embed-input text, model, revision) instead of re-paying OpenRouter.
+    -- vector = Float32Array bytes (dims * 4). Context columns are observability, not replay
+    -- inputs — replay always re-runs storeContexts/storeDocument from the source document.
+    CREATE TABLE IF NOT EXISTS embed_stage (
+      content_hash TEXT NOT NULL,
+      model TEXT NOT NULL,
+      revision TEXT NOT NULL,
+      dims INTEGER NOT NULL,
+      vector BLOB NOT NULL,
+      symbol TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT '',
+      chunk_id TEXT NOT NULL DEFAULT '',
+      user_scope TEXT NOT NULL DEFAULT 'local',
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (content_hash, model, revision)
+    );
+    CREATE INDEX IF NOT EXISTS idx_embed_stage_created ON embed_stage (created_at);
     CREATE TABLE IF NOT EXISTS learned_context (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -4304,3 +4324,4 @@ export * from "./db-retrieval-usefulness";
 export * from "./db-earningscalls";
 export * from "./db-document-abstracts";
 export * from "./db-task-journal";
+export * from "./db-embed-stage";

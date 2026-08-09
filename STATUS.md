@@ -1,3 +1,19 @@
+## Current (2026-08-09 MONET — durable embed stage: embed-once guarantee)
+
+**Branch `monet/embed-stage` (stacked on `monet/pinecone-wu-breaker` / PR #2596; commit-only —
+landing operator lands):** owner directive — a paid OpenRouter document embedding must never be
+paid for twice. New SQLite `embed_stage` table (durable L2 under the process-local L1 cache):
+`storeContextsImpl` persists each paid vector (Float32 BLOB, keyed
+content_hash-of-embed-input + model + embed-rev) AFTER provider validation and BEFORE the
+Pinecone upsert; upsert success deletes the rows (managed commits defer to after
+markCommitted); upsert failure keeps them and every retry path replays them with ZERO provider
+calls — durable across restarts. WU-breaker gate still blocks everything (incl. stage-consume)
+until it lifts; stage replays on resume. Retention: 35d orphan sweep + 2 GiB oldest-first cap in
+the daily audit-prune lane. Receipts: `embed_stage_replay` audit (embeds avoided per store call),
+`embedsFromStage` on results + lastIngest. Gates: tsc clean; 33 test files / 376 tests green
+(incl. new `test/embed-stage.test.ts` 11/11); lint 0 errors. Rollout:
+`docs/rollouts/2026-08-09-embed-stage.md`.
+
 ## Current (2026-08-09 MONET — Pinecone monthly WU exhaustion breaker)
 
 **Branch `monet/pinecone-wu-breaker` (commit-only; landing operator lands):** prod Pinecone

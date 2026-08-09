@@ -454,11 +454,13 @@ async function tick(): Promise<void> {
 
   // Daily audit_events + provider-observability retention (audit-prune.ts):
   // observability kinds 14d, everything else 90d, bounded batches. First-ever
-  // run drains a large backlog over several daily passes.
+  // run drains a large backlog over several daily passes. Also sweeps the
+  // embed_stage table (35d orphan retention + defensive size cap, db-embed-stage.ts).
   void journalLane("audit-prune", {}, () => {
     const result = runAuditPruneIfDue();
     if (!result) return { status: "skipped" as const, summary: "not due" };
-    const total = result.auditObservability + result.auditDefault + result.providerDispatch + result.providerOutbox;
+    const total = result.auditObservability + result.auditDefault + result.providerDispatch +
+      result.providerOutbox + result.embedStageExpired + result.embedStageCapPruned;
     return { status: "ok" as const, summary: `deleted=${total}` };
   }).catch((err) => console.error("[scheduler] audit prune error:", err));
 
