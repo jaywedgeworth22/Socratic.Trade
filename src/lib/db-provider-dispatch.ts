@@ -304,7 +304,11 @@ export function markProviderDispatchStarted(
       ownerToken: candidateOwnerToken,
       leaseExpiresAt: row.dispatch_lease_expires_at
     };
-  })();
+    // IMMEDIATE is currently equivalent (the first statement is already a write, so the writer
+    // lock is taken at that point either way) but states the invariant explicitly: every
+    // transaction in this ledger must hold the write lock from BEGIN, so no future statement
+    // reorder can reintroduce the deferred read-then-write SQLITE_BUSY_SNAPSHOT failure.
+  }).immediate();
   stopLocalProviderDispatchLease(attemptId);
   localProviderDispatchLeases.set(attemptId, {
     ownerToken: lease.ownerToken,
@@ -372,6 +376,18 @@ function insertUsageOutbox(
 /**
  * Settle independently of the caller's business lease. A dispatched outcome always creates one
  * idempotent usage-outbox row; Usage Monitor replay can deliver it after any later crash.
+ *
+ * BEGIN IMMEDIATE is load-bearing, not decoration (prod bug, 2026-08-09). This body READS
+ * (`SELECT status, outcome_code, dispatch_owner_token`) before it WRITES. Under a plain deferred
+ * `BEGIN`, the SELECT takes a WAL read snapshot; if any other connection commits before the
+ * UPDATE, promoting that snapshot to a write returns **SQLITE_BUSY_SNAPSHOT immediately and does
+ * NOT consult `busy_timeout`** — SQLite skips the busy handler because waiting can never make a
+ * stale snapshot current. better-sqlite3 surfaces it as the bare message "database is locked".
+ * That is exactly how a healthy Pinecone call ended up alerting "Pinecone connection failed /
+ * inventory fetch: database is locked" every hour despite `busy_timeout = 60000` in db.ts.
+ * Taking the write lock at BEGIN removes the stale-snapshot window entirely and puts contention
+ * back under the busy handler (wait, then proceed). Repro + receipts:
+ * docs/rollouts/2026-08-09-pinecone-lock-mislabel.md.
  */
 export function settleProviderDispatch(
   attemptId: string,
@@ -421,7 +437,7 @@ export function settleProviderDispatch(
       );
       if (updated.changes !== 1) throw new ProviderDispatchLeaseLostError(attemptId);
       insertUsageOutbox(database, attemptId, outcome, timestamp);
-    })();
+    }).immediate();
   } catch (error) {
     if (error instanceof ProviderDispatchLeaseLostError) {
       const row = database.prepare("SELECT status FROM provider_dispatch_attempts WHERE id = ?")
@@ -480,7 +496,8 @@ export function reconcileStaleProviderDispatches(
       unknown += 1;
     }
     return { released, unknown };
-  })();
+    // IMMEDIATE for the same invariant as the rest of this ledger (see markProviderDispatchStarted).
+  }).immediate();
 }
 
 export interface ResolveStaleProviderDispatchInput {
@@ -494,6 +511,10 @@ export interface ResolveStaleProviderDispatchInput {
  * Explicitly clear a stale-owner deletion blocker after an operator has verified the owning
  * process/deploy is dead. This never changes the fail-closed billing outcome (`unknown`); it only
  * records a durable, audited attestation that a late provider mutation can no longer resume.
+ *
+ * BEGIN IMMEDIATE for the same reason as settleProviderDispatch: this body reads before it writes,
+ * and a deferred read-then-write transaction fails with SQLITE_BUSY_SNAPSHOT ("database is locked")
+ * without ever consulting `busy_timeout`.
  */
 export function resolveStaleProviderDispatch(input: ResolveStaleProviderDispatchInput): boolean {
   const attemptId = input.attemptId.trim();
@@ -556,7 +577,7 @@ export function resolveStaleProviderDispatch(input: ResolveStaleProviderDispatch
       })
     );
     return true;
-  })();
+  }).immediate();
 }
 
 export interface ProviderUsageOutboxRow {

@@ -15,6 +15,23 @@ all retrieval are structurally un-gated. ONE advisory + audit per calendar month
 `/api/admin/rag-coverage` → `providerUsage.pinecone.monthlyWriteUnitPace` even when off. Gates: tsc
 clean; 12 test files / 162 tests green (new `test/pinecone-monthly-pace.test.ts` 10/10); lint 0
 errors. Rollout: `docs/rollouts/2026-08-09-pinecone-trial-throughput-and-monthly-pace.md`.
+## Current (2026-08-09 MONET — "Pinecone connection failed / database is locked" mislabel)
+
+**Branch `monet/pinecone-lock-mislabel` (commit-only; landing operator lands):** the hourly
+owner-visible push titled "Pinecone connection failed" with body `inventory fetch: database is
+locked` was OUR SQLite, not Pinecone. Root cause: `settleProviderDispatch`
+(`src/lib/db-provider-dispatch.ts`) opened a DEFERRED transaction that SELECTs before it UPDATEs,
+so promoting the WAL read snapshot to a write returns `SQLITE_BUSY_SNAPSHOT` ("database is
+locked") instantly WITHOUT consulting `busy_timeout` — which is why the 60s ceiling never absorbed
+it; every ledger transaction now opens `BEGIN IMMEDIATE` (repro receipts in the rollout note).
+Second fix: new `src/lib/local-db-fault.ts` classifies local-SQLite failure signatures, and
+`withRagApiHealth` no longer writes a provider failure row or a `provider_degraded` push for them —
+it records a `local_db_contention` audit row and, past 5 occurrences in 6h, ONE advisory titled
+"Storage Warning: local database contention" (never a vendor name); `alertConnectionFailure` gets
+the same guard for non-RAG lanes. Real Pinecone HTTP/network errors behave exactly as before.
+Gates: tsc clean; 22 test files / 236 tests green (new `test/local-db-fault-classification.test.ts`
+7/7, both new assertions verified to fail without the fix); lint 0 errors. Rollout:
+`docs/rollouts/2026-08-09-pinecone-lock-mislabel.md`.
 
 ## Current (2026-08-09 MONET — durable embed stage: embed-once guarantee)
 
