@@ -13,6 +13,7 @@ dead letters, watch checkpoints advance. Rollout:
 `docs/rollouts/2026-08-09-edgar-403-worker-hardening.md`.
 
 ## Prior (2026-08-09 MONET — trial knobs LIVE in prod + EDGAR shard-field fix)
+## Current (2026-08-09 MONET — trial knobs LIVE in prod + EDGAR shard-field fix)
 
 **Branch `monet/sec-shard-field-fix`:** the trial knob set from the throughput audit is now
 APPLIED in prod (Infisical + Coolify restart; all 7 values verified in the serving process env):
