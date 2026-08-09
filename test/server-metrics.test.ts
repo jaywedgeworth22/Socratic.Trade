@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "../app/api/admin/server-metrics/route";
 import {
   SERVER_METRICS_CACHE_TTL_MS,
@@ -135,6 +135,15 @@ describe("server-metrics provider shape normalization", () => {
 });
 
 describe("server-metrics API route", () => {
+  beforeEach(() => {
+    // The route probes GitHub Actions runners whenever ANY of these tokens resolves — and agent
+    // machines now export GH_TOKEN in every shell (fleet keychain standardization, 2026-08-09),
+    // which added a 5th fetch and broke every pinned call-count below. Hermetic tests must not
+    // inherit machine credentials.
+    vi.stubEnv("GH_TOKEN", "");
+    vi.stubEnv("GITHUB_TOKEN", "");
+    vi.stubEnv("GITHUB_MCP_TOKEN", "");
+  });
   afterEach(() => {
     resetServerMetricsCacheForTests();
     vi.unstubAllEnvs();
