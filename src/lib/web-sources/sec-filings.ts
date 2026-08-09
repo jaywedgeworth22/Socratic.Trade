@@ -185,7 +185,11 @@ interface SubmissionsJson {
   cik?: string | number;
   filings?: {
     recent?: SubmissionsRecent;
-    files?: Array<{ name: string; filingCount: number; filingStart: string; filingEnd: string }>;
+    // EDGAR's real shard fields are filingFrom/filingTo (verified against live
+    // data.sec.gov/submissions/CIK0000320193.json). The earlier filingStart/filingEnd names were
+    // invented and always undefined at runtime — the shard sort below threw on the first issuer
+    // deep enough to need pagination (2026-08-09 full-universe seed).
+    files?: Array<{ name: string; filingCount: number; filingFrom?: string; filingTo?: string }>;
   };
 }
 
@@ -311,7 +315,7 @@ export async function fetchRecentFilings(
   const files = json?.filings?.files;
   if (needsMore && Array.isArray(files) && files.length > 0) {
     // Sort shards in reverse chronological order (newest date first)
-    const sortedFiles = [...files].sort((a, b) => b.filingEnd.localeCompare(a.filingEnd));
+    const sortedFiles = [...files].sort((a, b) => (b.filingTo ?? "").localeCompare(a.filingTo ?? ""));
     for (const file of sortedFiles) {
       const stillNeeds = docTypes.some(dt => (countPerType[dt] ?? 0) < (limitsByType[dt] ?? 0));
       if (!stillNeeds) break;
