@@ -1,11 +1,13 @@
 import {
   claimSecIngestTasks,
   advanceSecIngestTask,
+  deferSecIngestTask,
   failSecIngestTask,
   heartbeatSecIngestTask,
   reconcileSecIngestJob,
   SecIngestTask
 } from "../db-rag-ingest";
+import { pineconeWuExhaustedUntil } from "../pinecone-wu-breaker";
 import { politeFetchText } from "../web-sources/http";
 import { parseFilingHtml } from "../web-sources/sec-parser";
 import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts";
@@ -263,6 +265,23 @@ export class SecIngestWorker {
 
     if (checkpoint === "embed_queued") {
       heartbeat();
+      // Monthly Pinecone write-unit breaker: park the task until the marker expires BEFORE
+      // reading artifacts or spending a single embed token. This is a clean deferral (attempt
+      // refunded, next_retry_at = breaker expiry), NOT a retryable failure — the exponential
+      // failure backoff would otherwise grind hourly retries into a quota that cannot recover
+      // before the 1st of next month, and eventually dead-letter healthy filings.
+      const wuUntil = pineconeWuExhaustedUntil();
+      if (wuUntil) {
+        deferSecIngestTask({
+          taskId: task.id,
+          owner,
+          leaseToken,
+          deferUntil: wuUntil,
+          reasonType: "wu_exhausted_deferred",
+          reason: `Pinecone monthly write units exhausted; deferred until ${wuUntil}`
+        });
+        return;
+      }
       const rawContent = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
       const sectionsJson = await readLocalArtifact(task.cik, task.accession, sequence, "sections.json");
       if (!rawContent || !sectionsJson) throw new Error("Parsed/Raw artifacts missing");
@@ -300,6 +319,18 @@ export class SecIngestWorker {
       }
 
       if (!res.documentComplete) {
+        // Breaker tripped mid-call (raced the gate above): same clean deferral, not a failure.
+        if (res.wuExhausted) {
+          deferSecIngestTask({
+            taskId: task.id,
+            owner,
+            leaseToken,
+            deferUntil: res.wuExhaustedUntil ?? new Date(Date.now() + 6 * 60 * 60_000).toISOString(),
+            reasonType: "wu_exhausted_deferred",
+            reason: `Pinecone monthly write units exhausted mid-store; deferred until ${res.wuExhaustedUntil ?? "next check"}`
+          });
+          return;
+        }
         throw new Error("Ingestion budget or capacity exceeded mid-task");
       }
 

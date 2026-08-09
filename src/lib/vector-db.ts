@@ -4,6 +4,13 @@ import * as dbModule from "./db";
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiKeySource } from "./db";
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { logApiHealth } from "./db-health";
+import {
+  auditPineconeWuGateSkip,
+  isPineconeWuExhaustedError,
+  notePineconeWriteSuccess,
+  pineconeWuExhaustedUntil,
+  tripPineconeWuBreaker
+} from "./pinecone-wu-breaker";
 import { applyOpenRouterClassifierEnrichment } from "./llm-call";
 import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { EARNINGSCALLS_TRANSCRIPT_SOURCE, earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
@@ -96,6 +103,12 @@ export interface StoreContextsResult {
   budgetSkipped?: number;
   /** Count skipped by RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY before any Voyage/Pinecone write. */
   writeUnitBudgetSkipped?: number;
+  /** Set with skipped when the MONTHLY Pinecone write-unit breaker is active
+   *  (pinecone-wu-breaker.ts): the store was refused BEFORE any embed spend or Pinecone call.
+   *  Producers should treat this as a clean deferral until `wuExhaustedUntil`, never a failure. */
+  wuExhausted?: boolean;
+  /** ISO instant the monthly WU breaker expires (first day of next month UTC). */
+  wuExhaustedUntil?: string;
 }
 
 export interface VectorStoreStats {
@@ -1544,13 +1557,23 @@ async function withRagApiHealth<T>(
       keySource: source,
       userId: targetUserId
     });
+    // Eager monthly-WU-breaker clear: a successful Pinecone WRITE proves quota is available
+    // again (plan upgraded mid-month). No-op unless a marker exists and the operation is
+    // write-shaped — see notePineconeWriteSuccess.
+    if (service === "pinecone") notePineconeWriteSuccess(operation);
     return result;
   } catch (error) {
     // Lease cancellation is a concurrency boundary, not provider degradation. The caller converts
     // it to VectorStoreLeaseLostError and must not emit health failures/alerts for the successor's
     // operation.
     assertVectorStoreLease(leaseGuard);
-    const message = `${operation}: ${ragErrorMessage(error)}`;
+    const rawMessage = ragErrorMessage(error);
+    const message = `${operation}: ${rawMessage}`;
+    // Monthly Pinecone write-unit exhaustion is an EXPECTED limit (soft health row, so the lane
+    // never paints hard red STOPPED) and trips the WU breaker instead of the generic hourly
+    // "Pinecone connection failed" alert — one storage_warning notification per episode, and the
+    // early write-gate in storeContexts/storeDocument stops the paid re-embed churn.
+    const wuExhausted = service === "pinecone" && isPineconeWuExhaustedError(rawMessage);
     assertVectorStoreLease(leaseGuard);
     logApiHealth({
       service: loggedService,
@@ -1558,10 +1581,13 @@ async function withRagApiHealth<T>(
       latencyMs: Date.now() - start,
       errorText: message,
       keySource: source,
-      userId: targetUserId
+      userId: targetUserId,
+      ...(wuExhausted ? { soft: true } : {})
     });
     markRagSentryCaptured(error);
-    const alert = alertRagConnectionFailure(loggedService, source, targetUserId, operation, ragErrorMessage(error), leaseGuard, healthLane?.provider);
+    const alert = wuExhausted
+      ? tripPineconeWuBreaker({ message: rawMessage, operation, userId: targetUserId }).then(() => undefined)
+      : alertRagConnectionFailure(loggedService, source, targetUserId, operation, rawMessage, leaseGuard, healthLane?.provider);
     if (leaseGuard) {
       await alert;
       assertVectorStoreLease(leaseGuard);
@@ -2652,6 +2678,18 @@ async function storeContextsImpl(
     })
     .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
+  // Monthly Pinecone write-unit breaker — gate BEFORE dedup bookkeeping, budgets, and (most
+  // importantly) any paid embed call. While the marker is active every upsert would 429, and
+  // because content-hash dedup only records STORED documents, embedding here is pure spend
+  // with no possible benefit. Auto-resumes when the marker expires (first of next month UTC).
+  const wuExhaustedUntil = pineconeWuExhaustedUntil();
+  if (wuExhaustedUntil) {
+    auditPineconeWuGateSkip(
+      { operation: "storeContexts", attempted: validDocuments.length, until: wuExhaustedUntil },
+      userId
+    );
+    return { attempted: validDocuments.length, indexed: 0, skipped: true, wuExhausted: true, wuExhaustedUntil };
+  }
   const privateLedgerAuthority = scope === PRIVATE_SCOPE && !options?.managedCommit
     ? managedVectorLedgerAuthority()
     : undefined;
@@ -3377,6 +3415,25 @@ async function storeDocumentImpl(
   // Empty/whitespace-only input has no commit cardinality. Do not leave an unfinishable
   // expected_vectors=0 row in the durable pending ledger.
   if (chunked.length === 0) return { attempted: 0, indexed: 0, documentComplete: false };
+  // Monthly Pinecone write-unit breaker — refuse BEFORE provider discovery, commit-ledger rows,
+  // and any embed spend. `documentComplete: false` + `wuExhausted` lets producers (SEC ingest
+  // worker, filings backfill, transcripts) park the document until `wuExhaustedUntil` instead of
+  // retry-storming or dead-lettering it.
+  const storeDocWuUntil = pineconeWuExhaustedUntil();
+  if (storeDocWuUntil) {
+    auditPineconeWuGateSkip(
+      { operation: "storeDocument", attempted: chunked.length, until: storeDocWuUntil },
+      userId
+    );
+    return {
+      attempted: chunked.length,
+      indexed: 0,
+      skipped: true,
+      wuExhausted: true,
+      wuExhaustedUntil: storeDocWuUntil,
+      documentComplete: false
+    };
+  }
   const fallbackSymbol = doc.symbol ?? (Array.isArray(doc.ticker) ? doc.ticker[0] : doc.ticker) ?? "";
   const source = doc.source || "sec-edgar";
 

@@ -59,7 +59,11 @@ export const HEALTH_LOG_LANE_CAP = 500;
  * number. Carried alongside `stoppedReason` so a client that cannot import this module (the admin
  * connections page is "use client") discriminates on the kind instead of string-matching the prose.
  */
-export type HealthStoppedReasonKind = "consecutive-failures" | "no-success-ever" | "no-success-this-hour";
+// "expected-limit" is a fourth, ANNOTATION-ONLY kind: never derived from the log here, only
+// stamped by surfaces that know a lane is inside a known quota window (e.g. the Pinecone
+// monthly write-unit breaker in pinecone-wu-breaker.ts). Clients must render it as SOFT
+// (yellow expected-limit), never hard STOPPED.
+export type HealthStoppedReasonKind = "consecutive-failures" | "no-success-ever" | "no-success-this-hour" | "expected-limit";
 // RAG services (Pinecone, embed, rerank) already get their OWN explicit, operation-scoped alert
 // from vector-db.ts's withRagApiHealth -> alertRagConnectionFailure (richer message: which
 // operation failed, usage-limit escalation via alertUsageLimitHit, its own 1h cooldown). Without

@@ -527,6 +527,14 @@ export async function ingestFiling(
   if (!hasIngestTextBudget(userId)) {
     return { skipped: true, chunks: 0, budgetExhausted: true };
   }
+  // Same preflight for the MONTHLY Pinecone write-unit breaker: while it is active every
+  // storeDocument call is refused before embedding anyway, so skip the EDGAR fetch/chunk work
+  // entirely and let the bulk loop stop (budgetExhausted semantics — the accession stays
+  // un-recorded and retries after the marker expires).
+  const { pineconeWuExhaustedUntil } = await import("../pinecone-wu-breaker");
+  if (pineconeWuExhaustedUntil()) {
+    return { skipped: true, chunks: 0, budgetExhausted: true };
+  }
 
   let html: string | null = null;
   const cik = await getCikForTicker(ticker);
@@ -616,7 +624,10 @@ export async function ingestFiling(
   // store's keys-unconfigured skip. A single pathological document that chunks to nothing
   // must not stop the whole run.
   const outOfCapacity =
-    (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0 || result.unconfigured === true;
+    (result.budgetSkipped ?? 0) > 0 ||
+    (result.writeUnitBudgetSkipped ?? 0) > 0 ||
+    result.wuExhausted === true ||
+    result.unconfigured === true;
   const reusedCommitted =
     result.reusedCommitted === true && result.documentComplete === true && result.attempted > 0;
   if ((result.indexed <= 0 && !reusedCommitted) || outOfCapacity) {
