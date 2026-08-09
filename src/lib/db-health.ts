@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 import { getDb } from "./db";
+import { isLocalDbFaultMessage, noteLocalDbFault } from "./local-db-fault";
 
 // `stoppedWorking` is set for a few distinct reasons (see getServiceHealthSummaries). This one is the
 // "5 consecutive failures" condition — the only one strong enough to act on automatically (e.g. the
@@ -568,6 +569,14 @@ async function captureHealthSentryMessage(
   }
 }
 
+/**
+ * Raise the generic "<service> connection failed" provider-degraded alert for a lane.
+ *
+ * A failure whose text is one of OUR OWN SQLite fault shapes never gets here past the
+ * isLocalDbFaultMessage guard in the body — defense in depth for every non-RAG lane; the
+ * Pinecone/RAG lanes are classified earlier, at withRagApiHealth in vector-db.ts (prod bug
+ * 2026-08-09, see docs/rollouts/2026-08-09-pinecone-lock-mislabel.md).
+ */
 export async function alertConnectionFailure(
   service: string,
   keySource: string | null,
@@ -584,6 +593,13 @@ export async function alertConnectionFailure(
   try {
     const targetUserId = userId || "local";
     const actualKeySource = keySource || "none";
+    // Local SQLite contention/misconfiguration incidental to a provider call is OUR fault, not the
+    // vendor's. Never let it mint a "<service> connection failed" push; record it under its real
+    // cause instead (audit row + threshold-gated "local database contention" advisory).
+    if (isLocalDbFaultMessage(errorText)) {
+      await noteLocalDbFault({ lane: service, operation: "connection health", message: errorText, userId: targetUserId });
+      return;
+    }
     // Cool down GLOBAL lanes (env/none) by service+source only — NOT per-user. In a multi-user outage
     // each tenant's failure hits the SAME global dependency, so a userId-scoped cooldown key would let
     // every tenant mint its own cooldown row and re-alert the admin every 6h for the one shared outage.
