@@ -1,4 +1,18 @@
-## Current (2026-08-09 MONET — Pinecone trial throughput audit + monthly WU pace guard)
+## Current (2026-08-09 MONET — trial knobs LIVE in prod + EDGAR shard-field fix)
+
+**Branch `monet/sec-shard-field-fix`:** the trial knob set from the throughput audit is now
+APPLIED in prod (Infisical + Coolify restart; all 7 values verified in the serving process env):
+delay 0ms, batch 32, texts/day 250k, WU/day 2.5M, SEC per-run 200, TTL 6h, ingest worker ON.
+`data/rag-universe-manifest.json` copied onto the prod data volume (the `/app/data` volume mount
+shadows the image's `data/`, so the seeder 500'd ENOENT). First full-universe seed then exposed a
+real bug: `SubmissionsJson.filings.files[]` used invented field names `filingStart/filingEnd`;
+real EDGAR shards carry `filingFrom/filingTo`, so the shard-pagination sort threw
+`undefined.localeCompare` and aborted the seed (test fixture had the same wrong names — suite
+green, prod broken). Fixed with real names + `?? ""` guard. Re-seed after this deploys. Rollout:
+`docs/rollouts/2026-08-09-trial-knobs-applied-and-edgar-shard-fix.md`. Next: re-run seed, watch
+`GET /api/admin/sec-ingest` receipts + `rag_usage` daily volume (expect ~4k → 100k+ records/day).
+
+## Prior (2026-08-09 MONET — Pinecone trial throughput audit + monthly WU pace guard)
 
 **Branch `monet/pinecone-trial-maximize` (commit-only; landing operator lands):** owner wants the
 Pinecone Standard trial used close to full extent, then a drop to free/$20 without a repeat of the
