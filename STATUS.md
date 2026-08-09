@@ -1,3 +1,20 @@
+## Current (2026-08-09 MONET — Pinecone monthly WU exhaustion breaker)
+
+**Branch `monet/pinecone-wu-breaker` (commit-only; landing operator lands):** prod Pinecone
+upserts 429 hourly on the exhausted 2M/month write-unit quota (10-K backfill), re-embedding
+the same docs through paid OpenRouter every cycle. New breaker: detection in
+`withRagApiHealth` trips a marker (`pinecone:wuExhaustedUntil` = 1st of next month UTC,
+ONE storage_warning + audit, health row soft `[expected-limit]`), early gate in
+`storeContexts`/`storeDocument` refuses writes BEFORE any embed spend
+(`wuExhausted` typed skip, ≤1 audit/day), sec_ingest tasks park cleanly via new
+`deferSecIngestTask` (retry_wait at marker expiry, stage attempt refunded — no retry storm
+or dead-letter), sec-filings bulk loop stops at the first gated filing. Auto-clears on
+expiry AND on any successful Pinecone write (plan upgrade); Connections pinecone lane shows
+yellow `LIMIT` "monthly write units exhausted · resumes <date>" instead of red STOPPED.
+Gates: tsc clean; 16 test files / 201 tests green (incl. new
+`test/pinecone-wu-breaker.test.ts`, 9 tests); lint 0 errors. Rollout:
+`docs/rollouts/2026-08-09-pinecone-wu-breaker.md`.
+
 ## Current (2026-08-07 GROK — Litestream → Backblaze B2)
 
 **Active SQLite backup target is Backblaze B2** (`jays-socratic-trade-eu`, eu-central-003).
