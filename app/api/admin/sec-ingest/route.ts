@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSecIngestJobReceipt, reconcileSecIngestJob, type SecIngestJobReceipt } from "@/lib/db-rag-ingest";
+import { getSecIngestJobReceipt, reconcileSecIngestJob, requeueSecIngestDeadLetters, type SecIngestJobReceipt } from "@/lib/db-rag-ingest";
 import { seedSecIngestJobsFromManifest } from "@/lib/rag/sec-ingest-seeder";
 import { padCik } from "@/lib/web-sources/sec-filings";
 import { requireAdmin } from "@/lib/auth/admin";
@@ -92,8 +92,19 @@ export async function POST(request: Request) {
     // no body / not JSON -> action stays undefined (will return error below)
   }
 
+  if (action === "requeue-dead-letter") {
+    // Recovery after an infra-level failure (EDGAR access block, since-fixed bug) buried healthy
+    // tasks: fresh stage-attempt budget, reopens complete_with_errors jobs. Idempotent.
+    try {
+      const result = requeueSecIngestDeadLetters();
+      return NextResponse.json({ ok: true, result });
+    } catch (err) {
+      return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    }
+  }
+
   if (action !== "seed") {
-    return NextResponse.json({ ok: false, error: 'Provide { action: "seed", offset?: number, limit?: number, ciks?: string[] } in the request body.' }, { status: 400 });
+    return NextResponse.json({ ok: false, error: 'Provide { action: "seed" | "requeue-dead-letter", offset?: number, limit?: number, ciks?: string[] } in the request body.' }, { status: 400 });
   }
 
   return withAdminOperationGuard(request, "sec-ingest-seed", async (claim) => {
