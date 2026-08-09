@@ -255,10 +255,18 @@ describe("sec ingest backfill worker under the pace guard", () => {
     expect(parked.stageAttempts).toBe(0);
     expect(mocks.alertStorageWarning).toHaveBeenCalledTimes(1);
 
-    // Owner raises the budget (or drops it to 0): the queue picks straight back up. The task
-    // errors on the EDGAR fetch in this hermetic env — what matters is that it was CLAIMED.
-    delete process.env.PINECONE_MONTHLY_WU_BUDGET;
-    await worker.runTick();
+    // Owner raises the budget (or drops it to 0): the queue picks straight back up. Stub fetch
+    // with a deterministic NON-403 failure so the claim burns a stage attempt on every host:
+    // unstubbed, this reached real EDGAR — 404 on a dev Mac (fail path, attempt kept) but 403 on
+    // GitHub's datacenter IPs, which the worker now DEFERS with an attempt refund, so the
+    // assertion below flapped by network vantage. What matters is that the task was CLAIMED.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("hermetic: no network")));
+    try {
+      delete process.env.PINECONE_MONTHLY_WU_BUDGET;
+      await worker.runTick();
+    } finally {
+      vi.unstubAllGlobals();
+    }
     const resumed = getSecIngestTask(taskId)!;
     expect(resumed.stageAttempts).toBeGreaterThan(0);
   });
