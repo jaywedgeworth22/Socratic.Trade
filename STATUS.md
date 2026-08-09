@@ -1,3 +1,20 @@
+## Current (2026-08-09 MONET — Pinecone trial throughput audit + monthly WU pace guard)
+
+**Branch `monet/pinecone-trial-maximize` (commit-only; landing operator lands):** owner wants the
+Pinecone Standard trial used close to full extent, then a drop to free/$20 without a repeat of the
+hourly-429 mess. (A) Throughput audit — every ingest limiter inventoried with TRIAL vs AFTER values
+for the owner to apply in Infisical (no secrets read/written). Headline: `VECTOR_EMBED_BATCH_DELAY_MS`
+(default 21s, a Voyage-3-RPM artifact) is applied unconditionally between embed batches and pins
+ingest at ~1,371 chunks/h even on OpenRouter bge-m3 — the single biggest lever. OpenRouter embed
+spend is NOT the constraint (~$0.0013 per 1k chunks); post-trial Pinecone STORAGE is. (B) New
+`src/lib/pinecone-monthly-pace.ts` — persisted calendar-month WU counter (fed from
+`meterPineconeUpsert`, resets on month roll), linear month-end projection with a 0.2 elapsed floor
+(mirrors `r2-usage.ts`), `PINECONE_MONTHLY_WU_BUDGET` default 0 = OFF. When projected pace exceeds
+the budget the SEC ingest **backfill queue** stops claiming new tasks; incremental filing ingest and
+all retrieval are structurally un-gated. ONE advisory + audit per calendar month. Number exposed at
+`/api/admin/rag-coverage` → `providerUsage.pinecone.monthlyWriteUnitPace` even when off. Gates: tsc
+clean; 12 test files / 162 tests green (new `test/pinecone-monthly-pace.test.ts` 10/10); lint 0
+errors. Rollout: `docs/rollouts/2026-08-09-pinecone-trial-throughput-and-monthly-pace.md`.
 ## Current (2026-08-09 MONET — "Pinecone connection failed / database is locked" mislabel)
 
 **Branch `monet/pinecone-lock-mislabel` (commit-only; landing operator lands):** the hourly
