@@ -5,6 +5,7 @@ import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiK
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { deleteStagedEmbeddings, getStagedEmbeddings, stageEmbeddedVectors } from "./db-embed-stage";
 import { logApiHealth } from "./db-health";
+import { isLocalDbFaultError, noteLocalDbFault } from "./local-db-fault";
 import {
   auditPineconeWuGateSkip,
   isPineconeWuExhaustedError,
@@ -1575,6 +1576,31 @@ async function withRagApiHealth<T>(
     assertVectorStoreLease(leaseGuard);
     const rawMessage = ragErrorMessage(error);
     const message = `${operation}: ${rawMessage}`;
+    // A LOCAL SQLite failure ("database is locked", "no such table") is not provider evidence.
+    // This wrapper spans the whole durable dispatch cycle — reserve -> mark started -> provider
+    // call -> settle — so a SQLite error from the ledger writes on EITHER side of the network call
+    // arrives here wearing the provider's operation label. Reporting it as a provider outage is
+    // what produced the hourly "Pinecone connection failed / inventory fetch: database is locked"
+    // pushes in prod (2026-08-09) while Pinecone was healthy the whole time. Attribute it to the
+    // real cause and leave the provider lane alone: no failure health row (the call proved nothing
+    // about the provider either way, and inventing a success would be worse), no provider_degraded
+    // notification. The error still propagates unchanged, so caller behavior is identical.
+    if (isLocalDbFaultError(error)) {
+      markRagSentryCaptured(error);
+      const localNote = noteLocalDbFault({
+        lane: loggedService,
+        operation,
+        message: rawMessage,
+        userId: targetUserId
+      });
+      if (leaseGuard) {
+        await localNote;
+        assertVectorStoreLease(leaseGuard);
+      } else {
+        void localNote;
+      }
+      throw error;
+    }
     // Monthly Pinecone write-unit exhaustion is an EXPECTED limit (soft health row, so the lane
     // never paints hard red STOPPED) and trips the WU breaker instead of the generic hourly
     // "Pinecone connection failed" alert — one storage_warning notification per episode, and the
