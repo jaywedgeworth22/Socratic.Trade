@@ -640,3 +640,10 @@ or `~/.secrets/appstore-connect.env` (never print secrets).
 ## Fleet UI copy
 
 Owner copy rules (Title Case headings/buttons; sentence-case values; lowercase compact money; always-inline iOS nav titles; ticker logos): `docs/FLEET-UI-COPY.md` (canonical live board: `/Users/jay/apps/FLEET-UI-COPY.md`).
+
+## Apple Notes close-out (all agents, all apps)
+
+Always put **agent seat name** on note subtitles (`Completion YYYY-MM-DD (GROK)`).
+Write/update living Completion notes for substantial work; update in place when
+anything material changes. Helper: `/Users/jay/apps/apple-notes-coding.sh`
+(`--update`). Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Apple Notes.
