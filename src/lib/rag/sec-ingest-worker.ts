@@ -8,6 +8,7 @@ import {
   SecIngestTask
 } from "../db-rag-ingest";
 import { pineconeWuExhaustedUntil } from "../pinecone-wu-breaker";
+import { pineconeBackfillPaceGate } from "../pinecone-monthly-pace";
 import { politeFetchText } from "../web-sources/http";
 import { parseFilingHtml } from "../web-sources/sec-parser";
 import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts";
@@ -50,7 +51,18 @@ export class SecIngestWorker {
     }
   }
 
-  private async runTick() {
+  /** One polling pass. Public (like `processTask`) so tests can drive a single tick
+   *  deterministically instead of racing the 5s interval. */
+  async runTick() {
+    // Monthly write-unit PACE guard. This queue IS the bulk/backfill lane, so it is the one
+    // producer the pace guard throttles: when the month-end projection exceeds
+    // PINECONE_MONTHLY_WU_BUDGET we simply stop CLAIMING NEW tasks. Already-leased tasks are
+    // untouched (their leases expire and they become claimable again once the throttle lifts or
+    // the month rolls over), incremental filing ingest keeps running, and retrieval is never
+    // affected. Default-off: with no budget configured this is an env read and nothing else.
+    const paceGate = await pineconeBackfillPaceGate("backfill");
+    if (paceGate.throttled) return;
+
     const db = getDb();
     const activeJobs = db.prepare("SELECT id FROM sec_ingest_jobs WHERE status = 'running'").all() as any[];
 
