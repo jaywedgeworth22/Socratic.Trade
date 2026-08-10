@@ -54,3 +54,23 @@ oversize documents skip cheerio entirely and take the single-pass regex `extract
 `parseFilingHtml` in `timeSync` so the remaining cheerio path stays observable. New test:
 oversize routing (`test/sec-parser.test.ts`). The sec-parser↔sec-filings import is circular by
 function-body use only — safe.
+
+## Overnight resolution state (2026-08-10 ~1:10am CT) — site stable, ingest PAUSED, diagnosis continues in daylight
+
+The cheerio cap (PR #2606) deployed and is live (image sha == main HEAD), but resuming the
+ingest still froze in-container health >20s with ZERO `[slow-sync]` lines — a third
+uninstrumented synchronous stretch pins the loop. Remaining suspects, in order: (1) the
+`storeContexts` SQLite commit phase (one big better-sqlite3 transaction: chunk_occurrences +
+document_chunks + FTS5 tokenization + embed_stage blobs for 1,000+ chunks); (2) `ingestCompanyFacts`
+(multi-MB `res.json()` + possibly unbatched per-fact SQLite inserts, runs per task); (3) worker
+`JSON.parse(sectionsJson)` on ~30MB artifacts. Could also be a DB write-lock convoy rather than
+CPU (health reads blocked behind the mega-transaction) — the 20s freezes match curl's cap, not
+necessarily CPU pinning; instrument BOTH (wrap the commit transaction + facts stage in timeSync,
+and log DB wait times) before re-enabling.
+
+Operational state to restore later: `SEC_INGEST_WORKER_ENABLED=off` and
+`SEC_FILING_RAG_MAX_PER_RUN=0` are set in Infisical (site-protective pause); flip back to
+`on`/`200` + `docker restart` after the next fix lands. During the outage window a Coolify
+rolling deploy + manual `docker restart` briefly left TWO app containers running (dual-scheduler
+hazard) — resolved by stopping AND REMOVING the stale one; always `docker ps | grep d83b1ay`
+after mixing restarts with deploys. Queue is durable (3,789 tasks parked); trial has ~20 days.
