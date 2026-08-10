@@ -167,3 +167,54 @@ single-threaded synchronous DB driver sharing a process with an HTTP server. The
 fewer transactions AND periodic yields, not just fewer transactions.
 
 Next: fresh controlled re-enable (worker on, refresh 0, watch armed) once this deploys.
+
+## Round 6 / stopping point (2026-08-10 ~6:15am CT) — yields work, but per-write latency doesn't; likely UNIFIES with the litestream finding
+
+Round-5's sub-batch+yield fix DID work as designed: no more monolithic 60+ second hard freezes.
+But it exposed the deeper problem instead of solving it. Live evidence: the same 665-chunk
+document (task `da75a007...`, retried from the prior round) took **65,930ms even WITH yielding**
+— essentially identical total wall-clock time to the un-yielded round-4 attempt. Yields bound any
+SINGLE synchronous stretch (so the event loop gets control back every ~40 chunks, which is why
+health checks now return in 3-13s bursts instead of one hard 66s block — real, measurable
+progress) but do nothing about the total task duration, because the actual bottleneck is
+**per-write latency, not batching structure**: ~100ms for a single-row FTS5 DELETE+INSERT is
+itself pathological (should be sub-millisecond), and 665 of them at ~100ms each is exactly the
+observed ~66s regardless of how they're grouped.
+
+**Working hypothesis: this UNIFIES with the "separate" litestream finding above, not a third
+distinct bug.** If litestream's WAL checkpoint/compaction is holding the SQLite file lock
+periodically, every synchronous `better-sqlite3` write — no matter how small the transaction —
+pays a lock-wait tax. Small batches don't fix that; they just spread the tax across more
+individually-slow writes instead of one long one. This would explain BOTH symptoms with ONE root
+cause: the intermittent full-freeze stalls seen even with ingest OFF, and the ~100ms/write
+latency inflating ingest task duration when ingest is ON.
+
+**Disabled again** (worker off + restart, site confirmed stable at 0.2-0.6s). Deliberately NOT
+attempting a round 7 tonight — further app-code batching/yielding tweaks are very unlikely to
+help further per the evidence above; the next step needs to attack the actual write-latency
+source.
+
+**Daylight next steps, in order:**
+1. Confirm the litestream-contention hypothesis directly: correlate `[worker] ftsMirrorBatch took
+   Nms` timestamps against litestream's own checkpoint/compaction log lines (both are now
+   timestamped in the same container log) for the SAME task, not just nearby in time.
+2. If confirmed: candidates are (a) raise `busy_timeout` on the better-sqlite3 connection so a
+   lock wait doesn't compound into task-lease expiry — it already waits, just verify the ceiling
+   is generous enough; (b) tune litestream's checkpoint/compaction interval/batch size so it
+   yields the lock more often instead of holding it for a full compaction pass; (c) investigate
+   whether WAL mode + `synchronous=NORMAL` (if not already set) reduces per-write fsync cost.
+3. If NOT confirmed (litestream logs don't correlate): profile the FTS5 write path directly —
+   possible causes include an unindexed/oversized FTS5 tokenizer config, disk I/O saturation from
+   the concurrent trial backfill's Pinecone-side traffic, or box-level disk contention.
+4. Only after (1)-(3) narrow the cause: re-attempt the controlled re-enable protocol used all
+   night (worker on, refresh lane still 0, live health+log watch armed, disable immediately on
+   any stall/slow-sync recurrence).
+
+State to hand off: `SEC_INGEST_WORKER_ENABLED=off`, `SEC_FILING_RAG_MAX_PER_RUN=0` in ST
+Infisical (site-protective pause, unchanged all night). Queue durable (3,700+ tasks parked,
+zero dead-lettered). Trial has ~19 days remaining, $0.76+ of $300 spent. Five real fixes shipped
+and deployed tonight (EDGAR 403 hardening, cheerio cap, lock-window fix, FTS batching, FTS
+sub-batch+yield) — each verified against live production evidence, each documented in this file
+in the order discovered. This was a genuinely hard, multi-layered bug; do not be discouraged that
+it isn't fully resolved — the search space has been narrowed enormously and the remaining
+hypothesis is specific and testable.
