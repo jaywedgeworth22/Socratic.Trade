@@ -22,8 +22,9 @@ name: Sentry CI Report
 # beyond what's needed to read the triggering run.
 #
 # workflows observed (from `ls .github/workflows/`; see each file's `name:`):
-#   CI, Cleanup Actions Caches, Codex Autofix, Effort Issues Sync,
-#   merge-shepherd, Shared package pin check, Playwright Smoke, Security
+#   Auto-merge PRs, Auto-merge congress-trading-shared PRs, CI, Cleanup Actions Caches,
+#   Codex Autofix, Effort Issues Sync, merge-shepherd, Shared package pin check,
+#   Playwright Smoke, Security
 # Reusable-only `_merge-shepherd-impl` executes inside `merge-shepherd` and has no independent
 # workflow_run event; the caller's completion is the observable run.
 #
@@ -40,6 +41,7 @@ on:
   workflow_run:
     workflows:
       - Auto-merge congress-trading-shared PRs
+      - Auto-merge PRs
       - CI
       - Cleanup Actions Caches
       - Codex Autofix

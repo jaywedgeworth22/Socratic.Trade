@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-10 GROK — always-auto-merge workflow (PR #2597).** Non-draft same-repo PRs arm squash auto-merge; `do-not-automerge` disables armed merges; sentry coverage updated. Lands via this unstick pass.
+
 > [!WARNING]
 > **Read the blockquote entries below with suspicion; some are spliced.** This file is
 > `merge=union` in `.gitattributes` (with `STATUS.md` and `docs/EFFORT-LOG.md`) so that
