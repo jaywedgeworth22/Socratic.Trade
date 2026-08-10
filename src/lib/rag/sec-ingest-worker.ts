@@ -10,7 +10,7 @@ import {
 import { pineconeWuExhaustedUntil } from "../pinecone-wu-breaker";
 import { pineconeBackfillPaceGate } from "../pinecone-monthly-pace";
 import { politeFetchText } from "../web-sources/http";
-import { yieldEventLoop } from "../slow-sync-guard";
+import { timeSync, yieldEventLoop } from "../slow-sync-guard";
 import { parseFilingHtml } from "../web-sources/sec-parser";
 import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts";
 import { storeDocument } from "../vector-db";
@@ -251,7 +251,7 @@ export class SecIngestWorker {
       const sectionsJson = await readLocalArtifact(task.cik, task.accession, sequence, "sections.json");
       if (!rawContent || !sectionsJson) throw new Error("Parsed/Raw artifacts missing");
 
-      const sections = JSON.parse(sectionsJson);
+      const sections = timeSync("worker.parseSectionsJson", `${Math.round(sectionsJson.length / 1024)}KB`, () => JSON.parse(sectionsJson));
       const doc = {
         text: rawContent,
         doc_id: vectorDocId,
@@ -324,7 +324,7 @@ export class SecIngestWorker {
       const sectionsJson = await readLocalArtifact(task.cik, task.accession, sequence, "sections.json");
       if (!rawContent || !sectionsJson) throw new Error("Parsed/Raw artifacts missing");
 
-      const sections = JSON.parse(sectionsJson);
+      const sections = timeSync("worker.parseSectionsJson", `${Math.round(sectionsJson.length / 1024)}KB`, () => JSON.parse(sectionsJson));
       const doc = {
         text: rawContent,
         doc_id: vectorDocId,

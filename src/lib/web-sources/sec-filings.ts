@@ -654,14 +654,23 @@ export async function ingestFiling(
   try {
     const { chunkDocument } = await import("../rag/chunk");
     const { insertDocumentChunkFts } = await import("../db");
-    runWithActiveVectorCommitProof(result.managedCommitProof, () => {
+    // Chunk BEFORE entering the commit-proof transaction: chunkDocument is multi-second
+    // synchronous CPU on a big filing, and running it inside `runWithActiveVectorCommitProof`
+    // (which wraps its callback in ONE SQLite write transaction) held the write lock for the
+    // whole chunking pass — queueing every other writer (including request-path telemetry)
+    // behind it for the duration (2026-08-10 event-loop/lock stall incident).
+    const ftsChunks = chunkDocument(document, {});
+    runWithActiveVectorCommitProof(result.managedCommitProof, () => timeSync(
+      "filingFtsMirror",
+      `${document.doc_id} ${ftsChunks.length} chunks`,
+      () => {
       // Mirror the committed chunks into the local FTS table so hybrid/lexical retrieval covers the
       // PRODUCTION filing-body path. Must run inside the transaction so FTS failures rollback
       // and allow the filing ingestion to be retried on subsequent ticks.
       // Use the same managed document key storeDocument writes on chunk_occurrences.accession
       // (doc_id). Bare SEC accessions in FTS cannot join to composite occurrence keys.
       const managedAccession = document.doc_id;
-      for (const chunk of chunkDocument(document, {})) {
+      for (const chunk of ftsChunks) {
         insertDocumentChunkFts(
           chunk.content_hash,
           chunk.ticker[0] ?? ticker,
@@ -679,7 +688,7 @@ export async function ingestFiling(
         chunks: result.attempted,
         attempted: result.attempted
       });
-    });
+    }));
   } catch (err) {
     return { skipped: true, chunks: result.indexed, error: err instanceof Error ? err.message : "document-commit-proof-lost" };
   }

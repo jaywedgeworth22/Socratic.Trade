@@ -29,6 +29,7 @@
 // import, no "node:" import specifiers in this module.
 
 import { audit, getDb } from "./db";
+import { timeSync } from "./slow-sync-guard";
 
 /** Retention for orphaned rows (their source document was superseded before any retry ran). */
 export const EMBED_STAGE_RETENTION_DAYS = 35;
@@ -88,6 +89,10 @@ export function decodeEmbeddingF32(blob: unknown, dims: number): number[] | unde
  */
 export function stageEmbeddedVectors(rows: EmbedStageRowInput[]): number {
   if (rows.length === 0) return 0;
+  return timeSync("stageEmbeddedVectors", `${rows.length} rows`, () => stageEmbeddedVectorsImpl(rows));
+}
+
+function stageEmbeddedVectorsImpl(rows: EmbedStageRowInput[]): number {
   const db = getDb();
   const insert = db.prepare(`
     INSERT OR REPLACE INTO embed_stage

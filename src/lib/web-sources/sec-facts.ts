@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import { getDb } from "../db";
 import { politeFetch } from "./http";
 import { padCik } from "./sec-filings";
+import { timeSync } from "../slow-sync-guard";
 import crypto from "crypto";
 
 const SEC_DATA_BASE = "https://data.sec.gov";
@@ -74,7 +75,10 @@ export async function ingestCompanyFacts(cik: string): Promise<void> {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    db.transaction(() => {
+    // Synchronous triple-nested walk over every concept x unit x entry of a multi-MB
+    // companyfacts JSON inside ONE transaction — a prime event-loop-pin suspect in the
+    // 2026-08-10 stall incident; timeSync makes prod name it if so.
+    timeSync("ingestCompanyFacts.factsTransaction", `cik ${paddedCik}`, () => db.transaction(() => {
       for (const { name: taxonomyName, facts: taxonomyFacts, targets } of taxonomies) {
       for (const [concept, conceptData] of Object.entries(taxonomyFacts)) {
         if (!targets.has(concept)) continue;
@@ -132,7 +136,7 @@ export async function ingestCompanyFacts(cik: string): Promise<void> {
         }
       }
       }
-    })();
+    })());
   } catch (err: any) {
     // Only the explicit 404 no-data path above is swallowed. Operational failures — transient
     // SEC 429/500s, JSON parse errors, SQLite insert failures — must PROPAGATE so the ingest
