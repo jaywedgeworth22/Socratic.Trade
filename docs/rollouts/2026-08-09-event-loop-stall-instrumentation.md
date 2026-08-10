@@ -74,3 +74,21 @@ Operational state to restore later: `SEC_INGEST_WORKER_ENABLED=off` and
 rolling deploy + manual `docker restart` briefly left TWO app containers running (dual-scheduler
 hazard) — resolved by stopping AND REMOVING the stale one; always `docker ps | grep d83b1ay`
 after mixing restarts with deploys. Queue is durable (3,789 tasks parked); trial has ~20 days.
+
+## Round 3 (2026-08-10 ~3:20am CT) — lock-window fix + full sync-path instrumentation
+
+Key structural find: the refresh lane's FTS mirror ran `chunkDocument` (multi-second CPU on big
+filings) INSIDE `runWithActiveVectorCommitProof`, which wraps its callback in ONE SQLite write
+transaction — so the write lock was held for the whole chunking pass and every other writer
+(including request-path telemetry) queued behind it on busy_timeout. That is a lock-convoy
+mechanism fully consistent with the observed in-container health hangs that produced no
+`[slow-sync]` lines. Fixed: chunks are computed BEFORE the transaction; the FTS mirror block is
+timeSync-wrapped as a whole (loop-aggregate visibility).
+
+Also instrumented (warn ≥1s, zero behavior change): `ingestCompanyFacts`'s triple-nested
+facts transaction (per-task, multi-MB JSON walk — remaining prime suspect),
+`persistDocumentReceipts` (chunks+occurrences receipt transaction), `stageEmbeddedVectors`
+(embed-stage blob writes), and the worker's sections `JSON.parse` (~30MB artifacts).
+
+Next: after deploy, controlled re-enable (worker on, refresh still 0) with live health watch —
+the logs now name any residual pin; disable again if stalls recur.

@@ -14,6 +14,7 @@ import {
   tripPineconeWuBreaker
 } from "./pinecone-wu-breaker";
 import { applyOpenRouterClassifierEnrichment } from "./llm-call";
+import { timeSync as timeSyncGuard } from "./slow-sync-guard";
 import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { EARNINGSCALLS_TRANSCRIPT_SOURCE, earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
 import { envFlagOn } from "./rag/env-flag";
@@ -3571,6 +3572,7 @@ function persistDocumentReceipts(
   // savepoints, so either every local receipt commits or neither does; an idempotent retry can then
   // safely overwrite the deterministic Pinecone ids and retry this transaction.
   const db = dbModule.getDb();
+  timeSyncGuard("persistDocumentReceipts", `${chunksToRecord.length} chunks / ${occurrencesToRecord.length} occurrences`, () =>
   db.transaction(() => {
     insertDocumentChunks(chunksToRecord);
     dbModule.insertManagedChunkOccurrences(occurrencesToRecord);
@@ -3611,7 +3613,7 @@ function persistDocumentReceipts(
         occurrence.commitId
       )) throw new Error("chunk_occurrences receipt was not persisted");
     }
-  })();
+  })());
 }
 
 export async function storeDocument(
