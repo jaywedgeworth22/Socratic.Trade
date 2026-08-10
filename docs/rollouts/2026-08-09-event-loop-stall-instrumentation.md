@@ -385,3 +385,19 @@ expertise or a Backblaze-side check.
 known NOT to help — don't waste an intervention on it. Only escalate to a restart for actual
 serving-stall symptoms (health-check timeouts/500s), which remains the only proven effective
 mitigation found tonight.
+
+## Third sustained-outage episode, clean baseline (2026-08-10 ~2:37-2:38pm CT)
+
+Another cluster escalated into a real outage: 6.2s -> 4.1s -> 000/15s -> recovered 0.56s -> 000/15s
+-> 000/15s over ~2 minutes (19:35-19:38 UTC), both SEC ingest lanes still confirmed paused.
+Restarted; recovered immediately (0.27-0.56s over three checks).
+
+This is the THIRD such episode tonight with zero SEC ingest activity (after ~9:27am CT and
+~11:52am CT). The pattern is now well-established: brief self-resolving blips happen continuously
+at a low background rate, and roughly every 1.5-2 hours one of these clusters escalates into a
+genuine multi-minute outage requiring manual restart. The litestream/DB-layer root cause remains
+unfixed and this confirms it recurs reliably on a predictable-ish cadence, independent of any
+ingest activity. The infra-gap finding above (no auto-restart-on-unhealthy) remains the most
+leverage-per-effort mitigation until the root cause itself is fixed — recommend prioritizing that
+watchdog/policy change highly for whoever picks this up, given the ~90-minute recurrence rate
+observed tonight would otherwise require near-continuous human/agent monitoring indefinitely.
