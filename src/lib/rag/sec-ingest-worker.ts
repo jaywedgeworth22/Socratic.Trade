@@ -126,7 +126,29 @@ export class SecIngestWorker {
       heartbeat();
       let content = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
       if (!content) {
-        content = await politeFetchText(task.payload.url as string);
+        try {
+          content = await politeFetchText(task.payload.url as string);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // EDGAR 403 = IP-level automated-access block, not a fault of this task. Mirror the
+          // WU-breaker deferral (attempt refunded) instead of failing: exponential failure
+          // backoff would burn all stage attempts into a block that outlives them and
+          // dead-letter healthy filings — which is exactly what happened on 2026-08-09.
+          if (/^HTTP 403 /.test(msg)) {
+            const { secLimiter } = await import("../web-sources/sec-limiter");
+            const until = secLimiter.pausedUntilIso() ?? new Date(Date.now() + 10 * 60_000).toISOString();
+            deferSecIngestTask({
+              taskId: task.id,
+              owner,
+              leaseToken,
+              deferUntil: until,
+              reasonType: "edgar_403_deferred",
+              reason: `EDGAR 403 (automated-access block); deferred until ${until}`
+            });
+            return;
+          }
+          throw err;
+        }
         await writeLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`, content);
         // writeLocalArtifact swallows filesystem errors, so the await above does not prove the raw
         // filing was persisted. Verify before advancing: otherwise every retry starts from

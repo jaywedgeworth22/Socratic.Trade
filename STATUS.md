@@ -1,3 +1,18 @@
+## Current (2026-08-09 MONET — EDGAR 403 worker hardening)
+
+**Branch `monet/sec-worker-edgar-403`:** minutes after the trial knobs + full-universe seed went
+live, every SEC ingest worker fetch 403'd (`www.sec.gov/Archives`), dead-lettering ~50 tasks.
+Root causes: worker fetched with NO User-Agent (SEC hard-403s undeclared tools; the refresh lane
+passes UA explicitly and kept working), prod lacked `SEC_EDGAR_USER_AGENT` (now set in Infisical),
+secLimiter only reacted to 429 (SEC signals blocks with 403), and the worker burned stage attempts
+into an IP-level block. Fixes: UA auto-injection for `.sec.gov` in `politeFetch`; `report403()`
+global cooldown (`SEC_403_COOLDOWN_SECONDS`, default 600s) + `pausedUntilIso()`; worker defers
+(attempt refunded, `edgar_403_deferred`) instead of failing; `requeueSecIngestDeadLetters` + admin
+`{action:"requeue-dead-letter"}`. 35 tests green incl. 2 new; tsc clean. Post-deploy: requeue
+dead letters, watch checkpoints advance. Rollout:
+`docs/rollouts/2026-08-09-edgar-403-worker-hardening.md`.
+
+## Prior (2026-08-09 MONET — trial knobs LIVE in prod + EDGAR shard-field fix)
 ## Current (2026-08-09 MONET — trial knobs LIVE in prod + EDGAR shard-field fix)
 
 **Branch `monet/sec-shard-field-fix`:** the trial knob set from the throughput audit is now

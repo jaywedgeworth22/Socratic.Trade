@@ -1057,6 +1057,59 @@ export function deferSecIngestTask(input: {
   return defer.immediate() as SecIngestFailureResult;
 }
 
+/**
+ * Operator requeue: put dead-lettered tasks back in play with a fresh stage-attempt budget and
+ * reopen their `complete_with_errors` jobs so the worker will claim them again. For recovery
+ * after an infra-level cause (EDGAR access block, a since-fixed bug) buried healthy filings —
+ * dead-letter is meant for per-task poison, not for fleet-wide outages. Optionally scoped by
+ * jobIds and/or a LIKE pattern on last_error_type.
+ */
+export function requeueSecIngestDeadLetters(
+  options: { jobIds?: string[]; errorTypeLike?: string; now?: Date } = {}
+): { requeuedTasks: number; reopenedJobs: number } {
+  const database = getDb();
+  const nowIso = (options.now ?? new Date()).toISOString();
+  const run = database.transaction(() => {
+    const params: unknown[] = [];
+    let where = "status = 'dead_letter'";
+    if (options.jobIds && options.jobIds.length > 0) {
+      where += ` AND job_id IN (${options.jobIds.map(() => "?").join(",")})`;
+      params.push(...options.jobIds);
+    }
+    if (options.errorTypeLike) {
+      where += " AND COALESCE(last_error_type, '') LIKE ?";
+      params.push(options.errorTypeLike);
+    }
+    const jobRows = database
+      .prepare(`SELECT DISTINCT job_id FROM sec_ingest_tasks WHERE ${where}`)
+      .all(...params) as Array<{ job_id: string }>;
+    const info = database
+      .prepare(
+        `UPDATE sec_ingest_tasks
+         SET status = 'retry_wait', stage_attempts = 0, next_retry_at = ?,
+             lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
+             updated_at = ?
+         WHERE ${where}`
+      )
+      .run(nowIso, nowIso, ...params);
+    let reopenedJobs = 0;
+    for (const row of jobRows) {
+      // complete_with_errors is terminal in JOB_TRANSITIONS by design (nothing may silently
+      // reopen a closed job). Requeue is the one deliberate operator exception, so it updates
+      // directly rather than widening the shared transition map for every caller.
+      const reopened = database
+        .prepare(
+          `UPDATE sec_ingest_jobs SET status = 'running', completed_at = NULL, updated_at = ?
+           WHERE id = ? AND status = 'complete_with_errors'`
+        )
+        .run(nowIso, row.job_id);
+      reopenedJobs += reopened.changes;
+    }
+    return { requeuedTasks: info.changes, reopenedJobs };
+  });
+  return run.immediate() as { requeuedTasks: number; reopenedJobs: number };
+}
+
 export function terminalizeSecIngestTask(input: {
   taskId: string;
   owner: string;
