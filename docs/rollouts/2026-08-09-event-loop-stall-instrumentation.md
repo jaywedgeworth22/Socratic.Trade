@@ -140,3 +140,30 @@ Re-enable attempt disabled again after ~3 min (site + worker both paused) once t
 confirmed — this fix needs its own controlled re-enable pass before considering the incident
 closed. Op note: applying `SEC_INGEST_WORKER_ENABLED` via Infisical alone does NOT take effect
 until the container restarts — always pair the env change with `docker restart`.
+
+## Round 5 (2026-08-10 ~5:50am CT) — round 4 made it WORSE; fixed with sub-batching + yields
+
+The round-4 fix (one transaction for the whole document) was PROVEN WRONG live in production
+within minutes of the round-2 controlled re-enable: `[slow-sync] worker.ftsMirrorBatch held the
+event loop 65977ms (... 665 chunks)` and a second instance at `19079ms (201 chunks)` — roughly
+100ms/chunk, held completely synchronously with ZERO yield points, worse than the original
+per-chunk version in one respect: litestream could not checkpoint AT ALL for the full 66 seconds
+(one giant lock hold instead of many small ones). Disabled again immediately (worker off +
+restart), site confirmed stable.
+
+Real fix: `insertDocumentChunkFtsBatch` now processes rows in sub-batches of 40, each its own
+small transaction, with `await yieldEventLoop()` between sub-batches — bounding any single
+synchronous stretch to ~40 chunks' worth of work while still cutting per-chunk transaction
+overhead by ~40x versus the original. Function is now `async`; both call sites updated
+(`sec-ingest-worker.ts` — the refresh lane doesn't use this helper). Replaced the outer
+`timeSync` wrapper (which measured "held the event loop" — no longer true, since it yields) with
+a plain duration log for visibility only. New test proves multi-sub-batch runs write every row
+exactly once (no drop/dupe across the yield boundary).
+
+Lesson for next time: "wrap it in a transaction" is not automatically a fix for a per-item-lock
+contention problem — if the loop body itself is CPU/IO-bound and long enough in aggregate,
+consolidating locks can trade many-small-holds for one-giant-hold, which is worse for a
+single-threaded synchronous DB driver sharing a process with an HTTP server. The fix needs BOTH
+fewer transactions AND periodic yields, not just fewer transactions.
+
+Next: fresh controlled re-enable (worker on, refresh 0, watch armed) once this deploys.

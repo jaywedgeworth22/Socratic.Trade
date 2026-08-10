@@ -201,8 +201,8 @@ describe("EDGAR 403 handling and dead-letter requeue (2026-08-09 outage class)",
   });
 });
 
-describe("insertDocumentChunkFtsBatch (2026-08-10 lock-contention fix)", () => {
-  it("writes identical rows to the per-chunk loop, in ONE transaction", async () => {
+describe("insertDocumentChunkFtsBatch (2026-08-10 lock-contention fix, sub-batched + yielded)", () => {
+  it("writes identical rows to the per-chunk loop", async () => {
     const { insertDocumentChunkFts, insertDocumentChunkFtsBatch } = await import("../src/lib/db-learning");
     const rows = [
       { contentHash: "hash-a", symbol: "AAPL", source: "sec-edgar", accession: "acc-batch-test", text: "alpha text" },
@@ -210,7 +210,7 @@ describe("insertDocumentChunkFtsBatch (2026-08-10 lock-contention fix)", () => {
       { contentHash: "hash-c", symbol: "AAPL", source: "sec-edgar", accession: "acc-batch-test", text: "gamma text" }
     ];
 
-    insertDocumentChunkFtsBatch(rows);
+    await insertDocumentChunkFtsBatch(rows);
     const batchRows = getDb()
       .prepare("SELECT content_hash, text FROM document_chunks_fts WHERE accession = ? ORDER BY content_hash")
       .all("acc-batch-test") as Array<{ content_hash: string; text: string }>;
@@ -230,6 +230,24 @@ describe("insertDocumentChunkFtsBatch (2026-08-10 lock-contention fix)", () => {
 
   it("no-ops on an empty array instead of opening an empty transaction", async () => {
     const { insertDocumentChunkFtsBatch } = await import("../src/lib/db-learning");
-    expect(() => insertDocumentChunkFtsBatch([])).not.toThrow();
+    await expect(insertDocumentChunkFtsBatch([])).resolves.not.toThrow();
+  });
+
+  it("writes every row correctly across multiple sub-batches (proves the yield boundary doesn't drop or duplicate work)", async () => {
+    const { insertDocumentChunkFtsBatch } = await import("../src/lib/db-learning");
+    // 3 sub-batches at the 40-row internal batch size (2 full + 1 partial).
+    const rows = Array.from({ length: 97 }, (_, i) => ({
+      contentHash: `hash-multi-${i.toString().padStart(3, "0")}`,
+      symbol: "MSFT",
+      source: "sec-edgar",
+      accession: "acc-multi-batch-test",
+      text: `chunk ${i}`
+    }));
+
+    await insertDocumentChunkFtsBatch(rows);
+    const written = getDb()
+      .prepare("SELECT COUNT(*) AS n FROM document_chunks_fts WHERE accession = ?")
+      .get("acc-multi-batch-test") as { n: number };
+    expect(written.n).toBe(97);
   });
 });
