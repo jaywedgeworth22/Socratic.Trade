@@ -402,4 +402,22 @@ describe("SEC Parser and Chunker (Phase 3)", () => {
     const occurrences = parsed.text.split("Item 1A. Risk Factors").length - 1;
     expect(occurrences).toBe(1);
   });
+
+  it("routes oversize documents past cheerio to the regex full-text fallback", () => {
+    // Inline-XBRL monsters (15-50MB) pinned the serving event loop 11-85s inside cheerio
+    // (2026-08-10 incident). Over the cap, parseFilingHtml must return the single-pass
+    // regex extraction as one FULL section — never build a DOM.
+    process.env.SEC_PARSE_CHEERIO_MAX_BYTES = "1000";
+    try {
+      const body = `<p>Revenue grew 12% year over year.</p>`.repeat(100);
+      const html = `<html><body>${body}</body></html>`;
+      expect(html.length).toBeGreaterThan(1000);
+      const parsed = parseFilingHtml(html, { formType: "10-K" });
+      expect(parsed.sections).toHaveLength(1);
+      expect(parsed.sections[0]!.itemCode).toBe("FULL");
+      expect(parsed.text).toContain("Revenue grew 12% year over year.");
+    } finally {
+      delete process.env.SEC_PARSE_CHEERIO_MAX_BYTES;
+    }
+  });
 });
