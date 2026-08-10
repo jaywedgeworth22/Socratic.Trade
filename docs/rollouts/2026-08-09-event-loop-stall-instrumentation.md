@@ -258,3 +258,37 @@ Revised daylight priority order:
 
 Given this is a standing risk during MARKET HOURS unrelated to anything I paused, flagging this
 explicitly rather than treating tonight's "stopping point" as fully closed.
+
+## CRITICAL fix (2026-08-10 ~10:15am CT) — the "pause" env knob was silently ignored all night
+
+Live monitoring caught `[slow-sync] filingFtsMirror held the event loop 5700ms` at ~10:10am CT —
+the REFRESH LANE's own FTS mirror (distinct from the SEC ingest worker), which should have been
+fully paused via `SEC_FILING_RAG_MAX_PER_RUN=0` since the very start of tonight's incident. It
+was NOT paused. Root cause found in `maxFilingsPerRunFromEnv()` (sec-filings.ts): the guard
+`if (Number.isFinite(n) && n > 0) return Math.floor(n)` treated an explicit `n = 0` the same as
+"unconfigured" and fell through to the paid-tier default of **25 filings per run**. Confirmed
+this catalog entry's own default is 25 (never 0), so a resolved `0` can only come from an
+explicit override — there was no ambiguity to resolve in the other direction; the guard was
+simply wrong.
+
+**This means the refresh lane has likely been running at up to 25 filings/run the ENTIRE night**,
+independent of every `SEC_INGEST_WORKER_ENABLED=off` I set — that separate knob correctly gated
+the SEC ingest WORKER queue, but never touched the scheduler-driven refresh lane. This is very
+likely a MAJOR contributor to (possibly the dominant cause of) tonight's stalls, including the
+~9:27am CT "non-ingest" outage escalation above — that finding's "unidentified write burst" may
+simply have BEEN this refresh lane, not some other market-hours activity as hypothesized.
+
+**Fixed two ways:**
+1. Immediate operational stop, independent of the code bug: `SEC_FILING_INGEST_TTL_HOURS` set to
+   87,600 (10 years) in Infisical — the TTL gate (`isFilingIngestDue`) runs BEFORE the buggy cap
+   is even consulted, so this guarantees the lane cannot fire regardless of the code fix's
+   correctness. Restarted; site confirmed stable.
+2. Code fix: `n >= 0` instead of `n > 0` — an explicit 0 is now honored as "process zero filings
+   this run." New regression test proves it: verified to FAIL without the fix (`git stash` the
+   change, test fails as expected) and PASS with it.
+
+**Revises the ~9:27am CT escalation above:** the "risk extends beyond SEC ingest" framing may
+have been describing THIS bug, not a genuinely separate write-burst source. The litestream
+lock-contention mechanism itself is still real and still the deepest root cause, but the
+NON-ingest trigger may not exist — pending re-verification once both lanes are TRULY paused
+(now true, via the TTL gate) and the site is watched for further stalls with a clean baseline.
