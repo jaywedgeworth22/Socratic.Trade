@@ -292,3 +292,61 @@ have been describing THIS bug, not a genuinely separate write-burst source. The 
 lock-contention mechanism itself is still real and still the deepest root cause, but the
 NON-ingest trigger may not exist — pending re-verification once both lanes are TRULY paused
 (now true, via the TTL gate) and the site is watched for further stalls with a clean baseline.
+
+## Clean-baseline observation (2026-08-10 ~11:00am-12:00pm CT, ~2h post both-lanes-genuinely-off)
+
+With BOTH lanes confirmed genuinely paused (worker off via its flag; refresh lane blocked at the
+TTL gate, immune to the n>=0 code fix's correctness) since the ~10:20am CT deploy, the site
+continues to show occasional brief self-resolving stalls: 3.7s/200, 15.0s/000 (single-probe
+timeout, recovered by next check), 14.5s/200, 7.3s/200, 2.5s recovery — roughly one every 5-15
+minutes, none sustained, none requiring a restart. This is CONSISTENT with (and further evidence
+for) the standalone litestream issue: a separate Backblaze B2 replication problem was also found
+in this window (level-1 compaction uploads repeatedly failing `file checksum mismatch`, ~every
+30s for a ~15min stretch around 11:00am CT — raw replica sync itself kept advancing normally, so
+backup continuity was not actually broken, only the higher-level consolidation step).
+
+**Conclusion for this baseline window: the litestream/DB-layer root cause is real and
+independent of both SEC ingest lanes** — brief stalls persist at a low, non-outage-causing rate
+even with zero ingest activity. This confirms the daylight priority order from the ~9:27am CT
+escalation above remains correct: fix the litestream contention (which also seems to correlate
+with, or share a mechanism with, the B2 checksum-mismatch compaction failures) before resuming
+either SEC lane. Not treating every individual sub-15s self-resolving blip as an actionable
+incident going forward — only a genuine sustained outage (3+ min of consecutive failures, as the
+~9:27am CT event was) warrants a restart.
+
+## Second sustained-outage episode, clean baseline (2026-08-10 ~11:52am-11:54am CT)
+
+A cluster of stalls escalated into a genuine sustained outage even with BOTH SEC lanes confirmed
+off since ~10:20am CT: 7.3s -> 000/15s -> 000/15s -> 5.8s -> 000/15s -> 000/15s over ~2 minutes
+(16:52:38-16:54:15 UTC), i.e. worsening rather than self-resolving like the earlier low-grade
+blips. Restarted (`docker restart`); recovered immediately, verified stable (0.26-0.34s over
+three checks).
+
+**This is the second sustained (not self-resolving) outage with zero SEC ingest activity of any
+kind** (the first was the ~9:27am CT episode, which at the time still had the refresh-lane bug
+live — that confound is now removed). This strengthens rather than weakens the litestream/DB-
+layer hypothesis: the underlying contention mechanism can independently produce not just brief
+blips but genuine multi-minute outages, on its own, unrelated to anything this session controls.
+**The site is not fully safe right now even with all app-level ingest paused** — it requires
+either a human noticing and restarting, or ideally an automated restart-on-sustained-failure
+safety net (Coolify/Docker healthcheck-triggered restart) until the underlying litestream/B2
+issue is fixed at the source. Recommend the daylight session (or the owner) consider whether
+Docker's healthcheck restart policy is aggressive enough, or whether a lighter-weight external
+watchdog is warranted as a stopgap.
+
+## Infra gap identified: no auto-recovery for "alive but unresponsive" (2026-08-10 ~12:00pm CT)
+
+Confirmed via `docker inspect`: `restart_policy=unless-stopped`, healthcheck `retries=10 interval=30s`.
+Docker's native healthcheck only marks the container `unhealthy` in its status — it does NOT
+trigger a restart by itself (that requires Swarm mode or an external supervisor). `unless-stopped`
+only restarts on process EXIT. This exact failure mode (process alive, low CPU, but not
+responding to requests — i.e. every outage documented in this file tonight) leaves the container
+sitting `unhealthy` indefinitely with no automated recovery; only a human (or an agent) noticing
+and running `docker restart` brings it back, as happened three times tonight.
+
+**Recommendation for the owner / a future session:** consider whether Coolify has (or can be
+configured with) an unhealthy-container auto-restart policy, or whether a lightweight external
+watchdog (a cron job checking `/api/health` and restarting on N consecutive failures) is
+warranted as a stopgap until the litestream root cause is fixed. This is infra/ops policy, not
+something I'm authorizing myself to change without a decision — flagging it as the concrete,
+actionable half of tonight's "site is not fully safe unattended" finding above.
