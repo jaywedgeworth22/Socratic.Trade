@@ -10,6 +10,7 @@ import {
 import { pineconeWuExhaustedUntil } from "../pinecone-wu-breaker";
 import { pineconeBackfillPaceGate } from "../pinecone-monthly-pace";
 import { politeFetchText } from "../web-sources/http";
+import { yieldEventLoop } from "../slow-sync-guard";
 import { parseFilingHtml } from "../web-sources/sec-parser";
 import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts";
 import { storeDocument } from "../vector-db";
@@ -74,6 +75,9 @@ export class SecIngestWorker {
       });
 
       for (const task of tasks) {
+        // Each task chains synchronous extract/chunk/persist segments; yield between tasks so
+        // queued HTTP requests get served (2026-08-10 event-loop stall incident).
+        await yieldEventLoop();
         try {
           await this.processTask(task);
         } catch (err: any) {
