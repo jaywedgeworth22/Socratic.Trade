@@ -21,7 +21,8 @@ struct MarketsView: View {
                 Button {
                     presentedSheet = .newAlert
                 } label: {
-                    Image(systemName: "bell.badge.plus")
+                    // bell.badge.plus is not a real SF Symbol (console: "No symbol named…").
+                    Image(systemName: "bell.badge")
                 }
                 .accessibilityLabel("Create Price Alert")
             }
