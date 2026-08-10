@@ -41,3 +41,16 @@ candidates cleared so far: the summarizer's Jaccard diversity loop is O(n×8), n
 - After deploy: grep container logs for `[slow-sync]` → the named hot spot gets the targeted
   fix (input cap, algorithmic fix, or worker_thread offload) BEFORE Monday market open if the
   stalls persist at length; verify Uptime Robot goes quiet.
+
+## Follow-up (2026-08-10 ~12:15am CT) — hot spot FOUND and fixed: cheerio on inline-XBRL monsters
+
+Post-deploy evidence: in-container health still froze up to 20s with ZERO `[slow-sync]` lines —
+the pin was in uninstrumented code. Traced to `parseFilingHtml` (`sec-parser.ts`): `cheerio.load`
+builds a full DOM then `$("*").each` walks every node; inline-XBRL 10-Ks run 15-50MB with
+millions of tags, giving the observed 11-85s synchronous pins in the worker's parse checkpoint
+(matches the 846MB RES memory profile too). Fix: `SEC_PARSE_CHEERIO_MAX_BYTES` (default 5MB) —
+oversize documents skip cheerio entirely and take the single-pass regex `extractFilingText`
+(the exact text path the refresh lane already ships to RAG) as one FULL section. Also wrapped
+`parseFilingHtml` in `timeSync` so the remaining cheerio path stays observable. New test:
+oversize routing (`test/sec-parser.test.ts`). The sec-parser↔sec-filings import is circular by
+function-body use only — safe.
