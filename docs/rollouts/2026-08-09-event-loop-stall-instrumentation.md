@@ -292,3 +292,24 @@ have been describing THIS bug, not a genuinely separate write-burst source. The 
 lock-contention mechanism itself is still real and still the deepest root cause, but the
 NON-ingest trigger may not exist — pending re-verification once both lanes are TRULY paused
 (now true, via the TTL gate) and the site is watched for further stalls with a clean baseline.
+
+## Clean-baseline observation (2026-08-10 ~11:00am-12:00pm CT, ~2h post both-lanes-genuinely-off)
+
+With BOTH lanes confirmed genuinely paused (worker off via its flag; refresh lane blocked at the
+TTL gate, immune to the n>=0 code fix's correctness) since the ~10:20am CT deploy, the site
+continues to show occasional brief self-resolving stalls: 3.7s/200, 15.0s/000 (single-probe
+timeout, recovered by next check), 14.5s/200, 7.3s/200, 2.5s recovery — roughly one every 5-15
+minutes, none sustained, none requiring a restart. This is CONSISTENT with (and further evidence
+for) the standalone litestream issue: a separate Backblaze B2 replication problem was also found
+in this window (level-1 compaction uploads repeatedly failing `file checksum mismatch`, ~every
+30s for a ~15min stretch around 11:00am CT — raw replica sync itself kept advancing normally, so
+backup continuity was not actually broken, only the higher-level consolidation step).
+
+**Conclusion for this baseline window: the litestream/DB-layer root cause is real and
+independent of both SEC ingest lanes** — brief stalls persist at a low, non-outage-causing rate
+even with zero ingest activity. This confirms the daylight priority order from the ~9:27am CT
+escalation above remains correct: fix the litestream contention (which also seems to correlate
+with, or share a mechanism with, the B2 checksum-mismatch compaction failures) before resuming
+either SEC lane. Not treating every individual sub-15s self-resolving blip as an actionable
+incident going forward — only a genuine sustained outage (3+ min of consecutive failures, as the
+~9:27am CT event was) warrants a restart.
