@@ -641,9 +641,17 @@ or `~/.secrets/appstore-connect.env` (never print secrets).
 
 Owner copy rules (Title Case headings/buttons; sentence-case values; lowercase compact money; always-inline iOS nav titles; ticker logos): `docs/FLEET-UI-COPY.md` (canonical live board: `/Users/jay/apps/FLEET-UI-COPY.md`).
 
-## Apple Notes close-out (all agents, all apps)
+## Apple Notes close-out (all agents, all apps — 2026-08-09)
 
-Always put **agent seat name** on note subtitles (`Completion YYYY-MM-DD (GROK)`).
-Write/update living Completion notes for substantial work; update in place when
-anything material changes. Helper: `/Users/jay/apps/apple-notes-coding.sh`
+**Title:** `[APP, Agent] short topic` — app acronym(s) + agent **first**.
+Examples: `[UM, Grok] TestFlight first ship` · `[ST, CT, Monet] R2 peer digests`.
+Acronyms: `UM` `ST` `CT` `CTS` `FLEET`. Multi-app: list each (`[ST, CT, Grok] …`).
+Agent display Title Case (`Grok`/`Monet`/`Claude`/…), not ALL-CAPS Slack tags.
+
+**Second body row:** local stamp `Sun, Aug 9, 3:52pm` (create **or** last update —
+refresh on every change). Helper auto-injects/refreshes it.
+
+**Always** write/update living Completion notes for substantial work; update in place.
+Folder **Coding**, pin when able. Helper: `/Users/jay/apps/apple-notes-coding.sh`
 (`--update`). Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Apple Notes.
+

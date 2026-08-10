@@ -53,6 +53,27 @@ class SecRateLimiter {
     console.warn(`[sec-limiter] SEC 429 rate limit hit. Pausing EDGAR requests for ${seconds}s.`);
   }
 
+  /**
+   * Report a 403 from the SEC. EDGAR signals automated-access blocks with 403 (not 429) and no
+   * Retry-After, so this is an IP-level "stop entirely" signal, not a per-request failure —
+   * pause the whole limiter for a cooldown (default 10 min, `SEC_403_COOLDOWN_SECONDS`).
+   */
+  public report403(): void {
+    const configured = Number(process.env.SEC_403_COOLDOWN_SECONDS ?? 600);
+    const seconds = Number.isFinite(configured) && configured > 0 ? Math.max(60, configured) : 600;
+    const until = Date.now() + seconds * 1000;
+    if (until > this.pauseUntil) {
+      this.pauseUntil = until;
+      console.warn(`[sec-limiter] SEC 403 (automated-access block). Pausing EDGAR requests for ${seconds}s.`);
+    }
+  }
+
+  /** ISO instant the current pause ends, or null when not paused. Lets callers defer queued work
+   *  (e.g. the SEC ingest worker) to the same horizon instead of spinning against the block. */
+  public pausedUntilIso(): string | null {
+    return this.pauseUntil > Date.now() ? new Date(this.pauseUntil).toISOString() : null;
+  }
+
   /** Wait and acquire a token before performing an SEC request. */
   public async acquire(): Promise<void> {
     return new Promise<void>((resolve) => {

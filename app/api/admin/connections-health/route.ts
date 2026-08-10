@@ -12,6 +12,7 @@ import {
   intentionalOffHealthReason,
   isIntentionalOffHealthService,
 } from "@/lib/retired-direct-vendors";
+import { pineconeWuExhaustedUntil } from "@/lib/pinecone-wu-breaker";
 
 export const dynamic = "force-dynamic";
 
@@ -150,7 +151,25 @@ export async function GET(request: Request) {
     return NextResponse.json({ service, keySource: keySourceParam ?? null, log, limit, offset });
   }
 
-  const services = withExpectedBackendLanes(getServiceHealthSummaries());
+  let services = withExpectedBackendLanes(getServiceHealthSummaries());
+  // While the monthly Pinecone write-unit breaker is active, the pinecone lane is inside a
+  // KNOWN quota window — annotate it as a soft expected-limit state with the resume date
+  // instead of letting stale failure rows read as a broken integration. Reads still work;
+  // only vector WRITES are paused, and they resume automatically when the marker expires.
+  const wuUntil = pineconeWuExhaustedUntil();
+  if (wuUntil) {
+    const resumes = wuUntil.slice(0, 10);
+    services = services.map((s) =>
+      s.service === "pinecone"
+        ? {
+            ...s,
+            stoppedWorking: true,
+            stoppedReasonKind: "expected-limit" as const,
+            stoppedReason: `monthly write units exhausted · resumes ${resumes}`,
+          }
+        : s
+    );
+  }
   const errorPatterns = getAllErrorPatterns();
 
   return NextResponse.json({

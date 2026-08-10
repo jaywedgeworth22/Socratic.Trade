@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getChunkCoverage, getChunkSourceBreakdown, getInternalSetting, getDb } from "@/lib/db";
 import { getRagUsageSummary } from "@/lib/rag-metering";
+import { pineconeWuPaceState } from "@/lib/pinecone-monthly-pace";
 import { getAllVectorStoreStats, getVectorStoreStats, activeEmbeddingModel, currentEmbedRev, type VectorIndexStats, type VectorStoreStats } from "@/lib/vector-db";
 import { requireAdmin } from "@/lib/auth/admin";
 import { getFmpTranscriptStatus } from "@/lib/web-sources/fmp-transcripts";
@@ -157,7 +158,10 @@ export async function GET(request: Request) {
         monthlyUsageApiAvailable: false,
         note: "Pinecone Database APIs expose per-request usage on operations and live index stats, but not an org-month Write Unit total through the app's normal SDK path. Cross-check provider quota in the Pinecone console; this page shows app-recorded units plus live index inventory.",
         configuredIndexVectors: vectTotal,
-        allVisibleIndexVectors: allVectorTotal
+        allVisibleIndexVectors: allVectorTotal,
+        // App-recorded write units for the current UTC calendar month + the pace projection that
+        // throttles bulk backfill (PINECONE_MONTHLY_WU_BUDGET; enabled=false means off).
+        monthlyWriteUnitPace: pineconeWuPaceState()
       },
       voyage: {
         usageApiAvailable: false,

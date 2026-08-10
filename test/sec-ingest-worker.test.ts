@@ -121,3 +121,82 @@ describe("SEC Ingestion Worker and State Machine (P5)", () => {
     expect(ftsRows[0].accession).toBe(`${accession}:1:document.html`);
   });
 });
+
+describe("EDGAR 403 handling and dead-letter requeue (2026-08-09 outage class)", () => {
+  function makeClaimedTask(idempotencyKey: string, accession: string) {
+    const job = createSecIngestJob({ idempotencyKey, corpusRevision: "corp-v1" });
+    transitionSecIngestJob(job.id, "running");
+    enqueueSecIngestTask({
+      jobId: job.id,
+      accession,
+      cik: "0000798354",
+      symbol: "FI",
+      payload: {
+        url: `https://www.sec.gov/Archives/edgar/data/798354/${accession.replace(/-/g, "")}/doc.htm`,
+        docType: "10-Q",
+        filedAt: "2026-06-30",
+        acceptanceDateTime: "2026-06-30T21:00:00.000Z"
+      }
+    });
+    const claimed = claimSecIngestTasks(job.id, { owner: "test-worker", leaseMs: 60000, limit: 1 });
+    expect(claimed).toHaveLength(1);
+    return { jobId: job.id, task: claimed[0]! };
+  }
+
+  it("defers (not fails) a task when EDGAR answers 403, refunding the stage attempt", async () => {
+    const { task } = makeClaimedTask("idemp-403-defer", "0000798354-26-000031");
+    vi.mocked(politeFetchText).mockRejectedValueOnce(
+      new Error("HTTP 403 for https://www.sec.gov/Archives/edgar/data/798354/000079835426000031/doc.htm")
+    );
+
+    const worker = new SecIngestWorker();
+    await worker.processTask(task);
+
+    const after = getSecIngestTask(task.id);
+    expect(after).not.toBeNull();
+    expect(after!.status).toBe("retry_wait");
+    expect(after!.lastErrorType).toBe("edgar_403_deferred");
+    // Deferral refunds the attempt the claim consumed — a persistent block must never march the
+    // task toward dead_letter.
+    expect(after!.stageAttempts).toBe(0);
+    expect(after!.checkpoint).toBe("discovered");
+  });
+
+  it("requeues dead-lettered tasks and reopens their complete_with_errors job", async () => {
+    const { jobId, task } = makeClaimedTask("idemp-requeue", "0000798354-26-000032");
+    const { failSecIngestTask, sealSecIngestJobIntake, reconcileSecIngestJob, requeueSecIngestDeadLetters, getSecIngestJob } =
+      await import("../src/lib/db-rag-ingest");
+
+    expect(sealSecIngestJobIntake(jobId, 1)).toBe(true);
+    const failed = failSecIngestTask({
+      taskId: task.id,
+      owner: "test-worker",
+      leaseToken: task.leaseToken || "",
+      retryable: false,
+      errorType: "worker-error",
+      error: "HTTP 403 for https://www.sec.gov/Archives/..."
+    });
+    expect(failed.applied).toBe(true);
+    expect(getSecIngestTask(task.id)!.status).toBe("dead_letter");
+    expect(reconcileSecIngestJob(jobId)).toBe("complete_with_errors");
+
+    const result = requeueSecIngestDeadLetters({ jobIds: [jobId] });
+    expect(result.requeuedTasks).toBe(1);
+    expect(result.reopenedJobs).toBe(1);
+
+    const after = getSecIngestTask(task.id)!;
+    expect(after.status).toBe("retry_wait");
+    expect(after.stageAttempts).toBe(0);
+    expect(getSecIngestJob(jobId)!.status).toBe("running");
+
+    // The requeued task is claimable again once its next_retry_at passes.
+    const reclaimed = claimSecIngestTasks(jobId, {
+      owner: "test-worker",
+      leaseMs: 60000,
+      limit: 1,
+      now: new Date(Date.now() + 60_000)
+    });
+    expect(reclaimed).toHaveLength(1);
+    expect(reclaimed[0]!.id).toBe(task.id);
+  });
+});

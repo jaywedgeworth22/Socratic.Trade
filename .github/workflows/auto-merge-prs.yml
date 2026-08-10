@@ -2,6 +2,9 @@ name: Auto-merge PRs
 
 # Enable GitHub auto-merge on every non-draft, same-repo PR so green CI
 # lands without a human click (owner fleet policy: always auto-merge).
+# Hold label: `do-not-automerge` skips arming and disables any already-armed merge.
+# Prefer GH_PAT / SHEPHERD_TOKEN so merges re-trigger post-merge workflows
+# (GITHUB_TOKEN merges are recursion-protected and skip e2e / effort-sync on main).
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, labeled, ready_for_review, unlabeled]
@@ -11,6 +14,25 @@ permissions:
   pull-requests: write
 
 jobs:
+  # When the hold label is present (including mid-flight labeled events),
+  # cancel any already-armed auto-merge so production cannot land against intent.
+  disable-on-hold:
+    runs-on: ubuntu-latest
+    if: >
+      contains(github.event.pull_request.labels.*.name, 'do-not-automerge')
+    steps:
+      - name: Disable auto-merge (hold label)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.SHEPHERD_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          echo "Hold label present; disabling auto-merge for $PR_URL"
+          gh pr merge --disable-auto "$PR_URL" || {
+            echo "disable-auto returned nonzero (already off or not armed); continuing"
+            exit 0
+          }
+
   auto-merge:
     runs-on: ubuntu-latest
     if: >
@@ -20,15 +42,30 @@ jobs:
     steps:
       - name: Enable auto-merge (squash + delete branch)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.SHEPHERD_TOKEN || secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           set -euo pipefail
-          echo "Enabling auto-merge for $PR_URL"
-          if ! gh pr merge --auto --squash --delete-branch "$PR_URL"; then
-            echo "squash auto-merge failed; trying merge commit"
-            gh pr merge --auto --merge --delete-branch "$PR_URL" || {
-              echo "Auto-merge already set, checks pending, or not allowed."
-              exit 0
-            }
+          echo "Enabling auto-merge (squash) for $PR_URL"
+          # Squash only — do not fall back to merge commits (fleet policy + cleaner history).
+          # Treat "already enabled" as success; fail hard on auth/permission/policy errors.
+          out="$(gh pr merge --auto --squash --delete-branch "$PR_URL" 2>&1)" && {
+            echo "$out"
+            exit 0
+          }
+          echo "$out"
+          if echo "$out" | grep -qiE 'already enabled|Pull request is in clean status|Auto merge is already'; then
+            echo "Auto-merge already armed."
+            exit 0
           fi
+          # Also OK if checks are pending / merge blocked only by required checks
+          if echo "$out" | grep -qiE 'is not mergeable|required status check|Review required'; then
+            # gh still arms auto-merge for pending checks in most cases; if it
+            # refused, re-check whether auto-merge is already set.
+            if gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest' | grep -vq null; then
+              echo "Auto-merge armed despite pending checks."
+              exit 0
+            fi
+          fi
+          echo "::error::Failed to enable squash auto-merge for $PR_URL"
+          exit 1

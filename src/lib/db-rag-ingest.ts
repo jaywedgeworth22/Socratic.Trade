@@ -981,6 +981,135 @@ export function failSecIngestTask(input: {
   return fail.immediate() as SecIngestFailureResult;
 }
 
+/**
+ * Cleanly PARK a leased task until a known future instant (e.g. the monthly Pinecone
+ * write-unit breaker expiry) — a deferral, not a failure. Differences from failSecIngestTask:
+ * - `next_retry_at` is set to the caller's instant (clamped to [now+60s, now+35d]) instead of
+ *   an exponential backoff, so the queue does not grind retries against a quota that cannot
+ *   recover before that instant.
+ * - The stage attempt the claim consumed is REFUNDED (stage_attempts - 1): waiting out an
+ *   exhausted provider quota must never march a healthy task toward dead_letter.
+ *   `total_attempts` is deliberately NOT refunded — attempt receipts key on it
+ *   (UNIQUE(task_id, attempt_no)) and history should stay honest.
+ * Same fencing as failSecIngestTask: owner + lease token + unexpired lease + running job.
+ * The attempt receipt closes with outcome 'retry_wait' carrying the defer reason.
+ */
+export function deferSecIngestTask(input: {
+  taskId: string;
+  owner: string;
+  leaseToken: string;
+  /** ISO instant the task becomes claimable again. */
+  deferUntil: string;
+  reasonType: string;
+  reason: string;
+  receipt?: Record<string, unknown>;
+  now?: Date;
+}): SecIngestFailureResult {
+  const reasonType = requiredTerminalReason(input.reasonType, "reasonType");
+  const reason = requiredTerminalReason(input.reason, "reason");
+  const database = getDb();
+  const now = input.now ?? new Date();
+  const nowIso = now.toISOString();
+  const parsed = Date.parse(input.deferUntil);
+  const minMs = now.getTime() + 60_000;
+  const maxMs = now.getTime() + 35 * 24 * 60 * 60_000;
+  const clampedMs = Number.isFinite(parsed) ? Math.min(maxMs, Math.max(minMs, parsed)) : minMs;
+  const nextRetryAt = new Date(clampedMs).toISOString();
+  const defer = database.transaction((): SecIngestFailureResult => {
+    const row = database
+      .prepare(
+        `SELECT t.* FROM sec_ingest_tasks t
+         JOIN sec_ingest_jobs j ON j.id = t.job_id
+         WHERE t.id = ? AND j.status = 'running' AND t.status = 'leased'
+           AND t.lease_owner = ? AND t.lease_token = ? AND t.lease_expires_at > ?`
+      )
+      .get(input.taskId, input.owner, input.leaseToken, nowIso) as RawTaskRow | undefined;
+    if (!row) return { applied: false };
+    const info = database
+      .prepare(
+        `UPDATE sec_ingest_tasks SET status = 'retry_wait', next_retry_at = ?,
+           stage_attempts = CASE WHEN stage_attempts > 0 THEN stage_attempts - 1 ELSE 0 END,
+           lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
+           last_error_type = ?, last_error = ?, last_error_json = NULL, updated_at = ?
+         WHERE id = ? AND status = 'leased' AND lease_owner = ? AND lease_token = ?`
+      )
+      .run(nextRetryAt, reasonType, reason, nowIso, input.taskId, input.owner, input.leaseToken);
+    if (info.changes !== 1) return { applied: false };
+    const attempt = database
+      .prepare(
+        `UPDATE sec_ingest_task_attempts
+         SET outcome = 'retry_wait', finished_at = ?, error_type = ?, error = ?, receipt_json = ?
+         WHERE task_id = ? AND lease_token = ? AND lease_owner = ? AND outcome = 'claimed'`
+      )
+      .run(
+        nowIso,
+        reasonType,
+        reason,
+        input.receipt === undefined ? null : stableSecIngestJson(input.receipt),
+        input.taskId,
+        input.leaseToken,
+        input.owner
+      );
+    if (attempt.changes !== 1) throw new Error("SEC ingest claim has no matching attempt receipt");
+    database.prepare("UPDATE sec_ingest_jobs SET updated_at = ? WHERE id = ?").run(nowIso, row.job_id);
+    return { applied: true, status: "retry_wait", nextRetryAt };
+  });
+  return defer.immediate() as SecIngestFailureResult;
+}
+
+/**
+ * Operator requeue: put dead-lettered tasks back in play with a fresh stage-attempt budget and
+ * reopen their `complete_with_errors` jobs so the worker will claim them again. For recovery
+ * after an infra-level cause (EDGAR access block, a since-fixed bug) buried healthy filings —
+ * dead-letter is meant for per-task poison, not for fleet-wide outages. Optionally scoped by
+ * jobIds and/or a LIKE pattern on last_error_type.
+ */
+export function requeueSecIngestDeadLetters(
+  options: { jobIds?: string[]; errorTypeLike?: string; now?: Date } = {}
+): { requeuedTasks: number; reopenedJobs: number } {
+  const database = getDb();
+  const nowIso = (options.now ?? new Date()).toISOString();
+  const run = database.transaction(() => {
+    const params: unknown[] = [];
+    let where = "status = 'dead_letter'";
+    if (options.jobIds && options.jobIds.length > 0) {
+      where += ` AND job_id IN (${options.jobIds.map(() => "?").join(",")})`;
+      params.push(...options.jobIds);
+    }
+    if (options.errorTypeLike) {
+      where += " AND COALESCE(last_error_type, '') LIKE ?";
+      params.push(options.errorTypeLike);
+    }
+    const jobRows = database
+      .prepare(`SELECT DISTINCT job_id FROM sec_ingest_tasks WHERE ${where}`)
+      .all(...params) as Array<{ job_id: string }>;
+    const info = database
+      .prepare(
+        `UPDATE sec_ingest_tasks
+         SET status = 'retry_wait', stage_attempts = 0, next_retry_at = ?,
+             lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
+             updated_at = ?
+         WHERE ${where}`
+      )
+      .run(nowIso, nowIso, ...params);
+    let reopenedJobs = 0;
+    for (const row of jobRows) {
+      // complete_with_errors is terminal in JOB_TRANSITIONS by design (nothing may silently
+      // reopen a closed job). Requeue is the one deliberate operator exception, so it updates
+      // directly rather than widening the shared transition map for every caller.
+      const reopened = database
+        .prepare(
+          `UPDATE sec_ingest_jobs SET status = 'running', completed_at = NULL, updated_at = ?
+           WHERE id = ? AND status = 'complete_with_errors'`
+        )
+        .run(nowIso, row.job_id);
+      reopenedJobs += reopened.changes;
+    }
+    return { requeuedTasks: info.changes, reopenedJobs };
+  });
+  return run.immediate() as { requeuedTasks: number; reopenedJobs: number };
+}
+
 export function terminalizeSecIngestTask(input: {
   taskId: string;
   owner: string;

@@ -39,6 +39,7 @@ import { activeEmbeddingProvider } from "../vector-db";
 import { resolveSourceNumber } from "../source-settings";
 import { loadCikMap } from "./sec8k";
 import { parseFilingHtml } from "./sec-parser";
+import { timeSync, yieldEventLoop } from "../slow-sync-guard";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -185,7 +186,11 @@ interface SubmissionsJson {
   cik?: string | number;
   filings?: {
     recent?: SubmissionsRecent;
-    files?: Array<{ name: string; filingCount: number; filingStart: string; filingEnd: string }>;
+    // EDGAR's real shard fields are filingFrom/filingTo (verified against live
+    // data.sec.gov/submissions/CIK0000320193.json). The earlier filingStart/filingEnd names were
+    // invented and always undefined at runtime — the shard sort below threw on the first issuer
+    // deep enough to need pagination (2026-08-09 full-universe seed).
+    files?: Array<{ name: string; filingCount: number; filingFrom?: string; filingTo?: string }>;
   };
 }
 
@@ -311,7 +316,7 @@ export async function fetchRecentFilings(
   const files = json?.filings?.files;
   if (needsMore && Array.isArray(files) && files.length > 0) {
     // Sort shards in reverse chronological order (newest date first)
-    const sortedFiles = [...files].sort((a, b) => b.filingEnd.localeCompare(a.filingEnd));
+    const sortedFiles = [...files].sort((a, b) => (b.filingTo ?? "").localeCompare(a.filingTo ?? ""));
     for (const file of sortedFiles) {
       const stillNeeds = docTypes.some(dt => (countPerType[dt] ?? 0) < (limitsByType[dt] ?? 0));
       if (!stillNeeds) break;
@@ -398,6 +403,10 @@ export async function fetchFilingDirectory(cik: string, accession: string): Prom
  *  5. Collapse whitespace runs.
  */
 export function extractFilingText(html: string): string {
+  return timeSync("extractFilingText", `${Math.round(html.length / 1024)}KB html`, () => extractFilingTextImpl(html));
+}
+
+function extractFilingTextImpl(html: string): string {
   // 1, 2, 4. Unified tag extraction in a single pass to minimize massive intermediate string allocations
   let text = html.replace(
     /(<script[\s\S]*?<\/script>)|(<style[\s\S]*?<\/style>)|(<\/?(?:div|p|h[1-6]|li|tr|td|th|table|thead|tbody|tfoot|blockquote|article|section|header|footer|main|aside|figure|figcaption|pre|hr|br)[^>]*>)|(<[^>]+>)/gi,
@@ -527,6 +536,14 @@ export async function ingestFiling(
   if (!hasIngestTextBudget(userId)) {
     return { skipped: true, chunks: 0, budgetExhausted: true };
   }
+  // Same preflight for the MONTHLY Pinecone write-unit breaker: while it is active every
+  // storeDocument call is refused before embedding anyway, so skip the EDGAR fetch/chunk work
+  // entirely and let the bulk loop stop (budgetExhausted semantics — the accession stays
+  // un-recorded and retries after the marker expires).
+  const { pineconeWuExhaustedUntil } = await import("../pinecone-wu-breaker");
+  if (pineconeWuExhaustedUntil()) {
+    return { skipped: true, chunks: 0, budgetExhausted: true };
+  }
 
   let html: string | null = null;
   const cik = await getCikForTicker(ticker);
@@ -616,7 +633,10 @@ export async function ingestFiling(
   // store's keys-unconfigured skip. A single pathological document that chunks to nothing
   // must not stop the whole run.
   const outOfCapacity =
-    (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0 || result.unconfigured === true;
+    (result.budgetSkipped ?? 0) > 0 ||
+    (result.writeUnitBudgetSkipped ?? 0) > 0 ||
+    result.wuExhausted === true ||
+    result.unconfigured === true;
   const reusedCommitted =
     result.reusedCommitted === true && result.documentComplete === true && result.attempted > 0;
   if ((result.indexed <= 0 && !reusedCommitted) || outOfCapacity) {
@@ -896,6 +916,10 @@ async function refreshFilingBodiesUnlocked(
 
       const db = getDb();
       for (const ref of filings) {
+        // Between filings, let queued HTTP requests run: each ingest chains synchronous
+        // extract/chunk/score segments, and back-to-back filings otherwise fuse into one long
+        // event-loop pin (the 2026-08-10 Uptime Robot stalls during the trial backfill).
+        await yieldEventLoop();
         try {
           const existing = db.prepare("SELECT accession FROM sec_filings WHERE accession = ?").get(ref.accession);
           if (!existing) {

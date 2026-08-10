@@ -40,6 +40,13 @@ export async function politeFetch(url: string, options: FetchOptions = {}): Prom
   const { headers, method = "GET", body, timeoutMs = 9000, retries = 1, redirect = "follow" } = options;
   let lastError: unknown;
   const isSec = url.includes(".sec.gov");
+  // EDGAR hard-403s requests without a descriptive User-Agent (fair-access policy), and a call
+  // site that forgets to pass one is invisible until production traffic dies — the SEC ingest
+  // worker shipped exactly that way. Inject the shared SEC UA whenever the caller didn't set one.
+  let effectiveHeaders = headers;
+  if (isSec && !Object.keys(headers ?? {}).some((k) => k.toLowerCase() === "user-agent")) {
+    effectiveHeaders = { ...(headers ?? {}), "user-agent": secUserAgent() };
+  }
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (isSec) {
       const { secLimiter } = await import("./sec-limiter");
@@ -48,11 +55,16 @@ export async function politeFetch(url: string, options: FetchOptions = {}): Prom
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(url, { method, body, headers, redirect, cache: "no-store", signal: controller.signal });
+      const res = await fetch(url, { method, body, headers: effectiveHeaders, redirect, cache: "no-store", signal: controller.signal });
       clearTimeout(timer);
       if (res.status === 429 && isSec) {
         const { secLimiter } = await import("./sec-limiter");
         secLimiter.report429(res.headers.get("retry-after"));
+      }
+      if (res.status === 403 && isSec) {
+        // EDGAR signals automated-access blocks with 403, not 429 — an IP-level stop signal.
+        const { secLimiter } = await import("./sec-limiter");
+        secLimiter.report403();
       }
       if ((res.status === 429 || res.status >= 500) && attempt < retries) {
         await sleep(600 * (attempt + 1));

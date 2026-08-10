@@ -12,6 +12,7 @@
 
 import crypto from "crypto";
 import { audit, getDb } from "./db";
+import { recordPineconeWriteUnits } from "./pinecone-monthly-pace";
 import { pushRagUsage } from "./usage-monitor-push";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -271,6 +272,12 @@ export function meterPineconeQuery(readUnits: number, userId?: string, recordCou
 
 /**
  * Convenience: record a Pinecone upsert.
+ *
+ * Also advances the persisted CALENDAR-MONTH write-unit counter (pinecone-monthly-pace.ts). The
+ * rolling-24h fuse reads `rag_usage` directly, but the monthly pace guard needs a number that
+ * survives ledger pruning and that resets on Pinecone's own billing boundary, so it keeps its own
+ * one-row total. Both are fed from this single post-success call site so they can never disagree
+ * about what was actually delivered. Best-effort and never throws.
  */
 export function meterPineconeUpsert(recordCount: number, userId?: string, estimatedWriteUnits?: number): void {
   recordRagUsage({
@@ -281,6 +288,14 @@ export function meterPineconeUpsert(recordCount: number, userId?: string, estima
     tokensOut: recordCount,
     batchCount: recordCount
   });
+  // Legacy rows charged 5 WUs/record when no estimate was supplied (see
+  // usedPineconeWriteUnitsLast24h in vector-db.ts); keep the month counter on the same basis so a
+  // caller that omits the estimate still contributes a realistic figure instead of zero.
+  recordPineconeWriteUnits(
+    Number.isFinite(estimatedWriteUnits) && (estimatedWriteUnits ?? 0) > 0
+      ? (estimatedWriteUnits as number)
+      : recordCount * 5
+  );
 }
 
 // ── Read ─────────────────────────────────────────────────────────────────────

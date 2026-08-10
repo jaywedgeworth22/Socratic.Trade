@@ -23,7 +23,7 @@ interface ServiceHealthSummary {
   // better-sqlite3 into the browser bundle. Both arrive verbatim on the /api/admin/connections-health
   // `services` payload. Optional because that route also synthesizes placeholder rows for lanes that
   // have never logged a call.
-  stoppedReasonKind?: "consecutive-failures" | "no-success-ever" | "no-success-this-hour" | null;
+  stoppedReasonKind?: "consecutive-failures" | "no-success-ever" | "no-success-this-hour" | "expected-limit" | null;
   laneLogCap?: number;
   /** Product-retired vendor (FMP / Quiver / UW) — render muted OFF, never red STOPPED. */
   intentionalOff?: boolean;
@@ -74,11 +74,17 @@ function relTime(iso: string | null): string {
  *  decide what fails liveness versus what is only `degraded` — keep the two consistent.
  *  A stopped lane with no `stoppedReasonKind` (never-seen shape) counts as HARD: fail loud rather
  *  than silently demoting a real outage to a muted chip.
+ *  "expected-limit" is soft by definition — a KNOWN quota window (e.g. the Pinecone monthly
+ *  write-unit breaker) with a stamped resume date, not a broken integration.
  *  Product-retired vendors (intentionalOff) never count as hard-stopped. */
 export function isHardStopped(s: ServiceHealthSummary): boolean {
   if (s.intentionalOff) return false;
   if (!s.stoppedWorking) return false;
-  return s.stoppedReasonKind !== "no-success-ever" && s.stoppedReasonKind !== "no-success-this-hour";
+  return (
+    s.stoppedReasonKind !== "no-success-ever" &&
+    s.stoppedReasonKind !== "no-success-this-hour" &&
+    s.stoppedReasonKind !== "expected-limit"
+  );
 }
 
 /** Soft degraded only — excludes intentional OFF and hard stops. Exported for unit tests. */
@@ -161,7 +167,13 @@ function ServiceCard({
         {intentionalOff ? (
           <Chip tone="muted">OFF</Chip>
         ) : summary.stoppedWorking ? (
-          hardStopped ? <Chip tone="neg">STOPPED</Chip> : <Chip tone="warn">DEGRADED</Chip>
+          hardStopped ? (
+            <Chip tone="neg">STOPPED</Chip>
+          ) : summary.stoppedReasonKind === "expected-limit" ? (
+            <Chip tone="warn">LIMIT</Chip>
+          ) : (
+            <Chip tone="warn">DEGRADED</Chip>
+          )
         ) : null}
       </div>
 

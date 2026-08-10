@@ -1,3 +1,110 @@
+## Current (2026-08-10 ~2:00am CT GROK — unstick open PR #2597)
+
+**Only open PR after #2603 merged:** #2597 `grok/always-auto-merge-prs` — fleet policy always-auto-merge for non-draft same-repo PRs + `do-not-automerge` hold. Blockers fixed this pass: real `AGENTS.md` conflict (kept main's Apple Notes close-out), `sentry-ci-report.yml` missing the new workflow name (failed `test/sentry-ci-report-workflows.test.ts`), Codex P1s (disable auto on hold label; `GH_PAT`/`SHEPHERD_TOKEN` preferred so post-merge workflows fire; squash-only; fail when arming fails). Next: green `verify` → auto-merge → Coolify auto-deploy. Rollout: `docs/rollouts/2026-08-10-always-auto-merge-prs.md`.
+
+## Prior (was Current)
+## Current (2026-08-09 ~11:45pm CT MONET — event-loop stall instrumentation)
+
+**Branch `monet/sec-worker-edgar-403` (stacked):** Uptime Robot incidents on socratictrade.com — next-server pins 100%+ CPU 11-85s during filing ingests (event loop held by synchronous extract/chunk/score segments chained by the trial knobs). Shipped warn-only timeSync wrappers (extractFilingText / tradeHighlightChunksFromText / chunkDocument) + yieldEventLoop between filings/tasks. Prod names the hot spot in [slow-sync] logs; targeted fix follows. OpenRouter credits $55.50/$165 left (decision traffic, not embeds). Rollout: `docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md`.
+
+## Prior (2026-08-09 MONET — EDGAR 403 worker hardening)
+## Current (2026-08-09 MONET — EDGAR 403 worker hardening)
+
+**Branch `monet/sec-worker-edgar-403`:** minutes after the trial knobs + full-universe seed went
+live, every SEC ingest worker fetch 403'd (`www.sec.gov/Archives`), dead-lettering ~50 tasks.
+Root causes: worker fetched with NO User-Agent (SEC hard-403s undeclared tools; the refresh lane
+passes UA explicitly and kept working), prod lacked `SEC_EDGAR_USER_AGENT` (now set in Infisical),
+secLimiter only reacted to 429 (SEC signals blocks with 403), and the worker burned stage attempts
+into an IP-level block. Fixes: UA auto-injection for `.sec.gov` in `politeFetch`; `report403()`
+global cooldown (`SEC_403_COOLDOWN_SECONDS`, default 600s) + `pausedUntilIso()`; worker defers
+(attempt refunded, `edgar_403_deferred`) instead of failing; `requeueSecIngestDeadLetters` + admin
+`{action:"requeue-dead-letter"}`. 35 tests green incl. 2 new; tsc clean. Post-deploy: requeue
+dead letters, watch checkpoints advance. Rollout:
+`docs/rollouts/2026-08-09-edgar-403-worker-hardening.md`.
+
+## Prior (2026-08-09 MONET — trial knobs LIVE in prod + EDGAR shard-field fix)
+## Current (2026-08-09 MONET — trial knobs LIVE in prod + EDGAR shard-field fix)
+
+**Branch `monet/sec-shard-field-fix`:** the trial knob set from the throughput audit is now
+APPLIED in prod (Infisical + Coolify restart; all 7 values verified in the serving process env):
+delay 0ms, batch 32, texts/day 250k, WU/day 2.5M, SEC per-run 200, TTL 6h, ingest worker ON.
+`data/rag-universe-manifest.json` copied onto the prod data volume (the `/app/data` volume mount
+shadows the image's `data/`, so the seeder 500'd ENOENT). First full-universe seed then exposed a
+real bug: `SubmissionsJson.filings.files[]` used invented field names `filingStart/filingEnd`;
+real EDGAR shards carry `filingFrom/filingTo`, so the shard-pagination sort threw
+`undefined.localeCompare` and aborted the seed (test fixture had the same wrong names — suite
+green, prod broken). Fixed with real names + `?? ""` guard. Re-seed after this deploys. Rollout:
+`docs/rollouts/2026-08-09-trial-knobs-applied-and-edgar-shard-fix.md`. Next: re-run seed, watch
+`GET /api/admin/sec-ingest` receipts + `rag_usage` daily volume (expect ~4k → 100k+ records/day).
+
+## Prior (2026-08-09 MONET — Pinecone trial throughput audit + monthly WU pace guard)
+
+**Branch `monet/pinecone-trial-maximize` (commit-only; landing operator lands):** owner wants the
+Pinecone Standard trial used close to full extent, then a drop to free/$20 without a repeat of the
+hourly-429 mess. (A) Throughput audit — every ingest limiter inventoried with TRIAL vs AFTER values
+for the owner to apply in Infisical (no secrets read/written). Headline: `VECTOR_EMBED_BATCH_DELAY_MS`
+(default 21s, a Voyage-3-RPM artifact) is applied unconditionally between embed batches and pins
+ingest at ~1,371 chunks/h even on OpenRouter bge-m3 — the single biggest lever. OpenRouter embed
+spend is NOT the constraint (~$0.0013 per 1k chunks); post-trial Pinecone STORAGE is. (B) New
+`src/lib/pinecone-monthly-pace.ts` — persisted calendar-month WU counter (fed from
+`meterPineconeUpsert`, resets on month roll), linear month-end projection with a 0.2 elapsed floor
+(mirrors `r2-usage.ts`), `PINECONE_MONTHLY_WU_BUDGET` default 0 = OFF. When projected pace exceeds
+the budget the SEC ingest **backfill queue** stops claiming new tasks; incremental filing ingest and
+all retrieval are structurally un-gated. ONE advisory + audit per calendar month. Number exposed at
+`/api/admin/rag-coverage` → `providerUsage.pinecone.monthlyWriteUnitPace` even when off. Gates: tsc
+clean; 12 test files / 162 tests green (new `test/pinecone-monthly-pace.test.ts` 10/10); lint 0
+errors. Rollout: `docs/rollouts/2026-08-09-pinecone-trial-throughput-and-monthly-pace.md`.
+## Current (2026-08-09 MONET — "Pinecone connection failed / database is locked" mislabel)
+
+**Branch `monet/pinecone-lock-mislabel` (commit-only; landing operator lands):** the hourly
+owner-visible push titled "Pinecone connection failed" with body `inventory fetch: database is
+locked` was OUR SQLite, not Pinecone. Root cause: `settleProviderDispatch`
+(`src/lib/db-provider-dispatch.ts`) opened a DEFERRED transaction that SELECTs before it UPDATEs,
+so promoting the WAL read snapshot to a write returns `SQLITE_BUSY_SNAPSHOT` ("database is
+locked") instantly WITHOUT consulting `busy_timeout` — which is why the 60s ceiling never absorbed
+it; every ledger transaction now opens `BEGIN IMMEDIATE` (repro receipts in the rollout note).
+Second fix: new `src/lib/local-db-fault.ts` classifies local-SQLite failure signatures, and
+`withRagApiHealth` no longer writes a provider failure row or a `provider_degraded` push for them —
+it records a `local_db_contention` audit row and, past 5 occurrences in 6h, ONE advisory titled
+"Storage Warning: local database contention" (never a vendor name); `alertConnectionFailure` gets
+the same guard for non-RAG lanes. Real Pinecone HTTP/network errors behave exactly as before.
+Gates: tsc clean; 22 test files / 236 tests green (new `test/local-db-fault-classification.test.ts`
+7/7, both new assertions verified to fail without the fix); lint 0 errors. Rollout:
+`docs/rollouts/2026-08-09-pinecone-lock-mislabel.md`.
+
+## Current (2026-08-09 MONET — durable embed stage: embed-once guarantee)
+
+**Branch `monet/embed-stage` (stacked on `monet/pinecone-wu-breaker` / PR #2596; commit-only —
+landing operator lands):** owner directive — a paid OpenRouter document embedding must never be
+paid for twice. New SQLite `embed_stage` table (durable L2 under the process-local L1 cache):
+`storeContextsImpl` persists each paid vector (Float32 BLOB, keyed
+content_hash-of-embed-input + model + embed-rev) AFTER provider validation and BEFORE the
+Pinecone upsert; upsert success deletes the rows (managed commits defer to after
+markCommitted); upsert failure keeps them and every retry path replays them with ZERO provider
+calls — durable across restarts. WU-breaker gate still blocks everything (incl. stage-consume)
+until it lifts; stage replays on resume. Retention: 35d orphan sweep + 2 GiB oldest-first cap in
+the daily audit-prune lane. Receipts: `embed_stage_replay` audit (embeds avoided per store call),
+`embedsFromStage` on results + lastIngest. Gates: tsc clean; 33 test files / 376 tests green
+(incl. new `test/embed-stage.test.ts` 11/11); lint 0 errors. Rollout:
+`docs/rollouts/2026-08-09-embed-stage.md`.
+
+## Current (2026-08-09 MONET — Pinecone monthly WU exhaustion breaker)
+
+**Branch `monet/pinecone-wu-breaker` (commit-only; landing operator lands):** prod Pinecone
+upserts 429 hourly on the exhausted 2M/month write-unit quota (10-K backfill), re-embedding
+the same docs through paid OpenRouter every cycle. New breaker: detection in
+`withRagApiHealth` trips a marker (`pinecone:wuExhaustedUntil` = 1st of next month UTC,
+ONE storage_warning + audit, health row soft `[expected-limit]`), early gate in
+`storeContexts`/`storeDocument` refuses writes BEFORE any embed spend
+(`wuExhausted` typed skip, ≤1 audit/day), sec_ingest tasks park cleanly via new
+`deferSecIngestTask` (retry_wait at marker expiry, stage attempt refunded — no retry storm
+or dead-letter), sec-filings bulk loop stops at the first gated filing. Auto-clears on
+expiry AND on any successful Pinecone write (plan upgrade); Connections pinecone lane shows
+yellow `LIMIT` "monthly write units exhausted · resumes <date>" instead of red STOPPED.
+Gates: tsc clean; 16 test files / 201 tests green (incl. new
+`test/pinecone-wu-breaker.test.ts`, 9 tests); lint 0 errors. Rollout:
+`docs/rollouts/2026-08-09-pinecone-wu-breaker.md`.
+
 ## Current (2026-08-07 GROK — Litestream → Backblaze B2)
 
 **Active SQLite backup target is Backblaze B2** (`jays-socratic-trade-eu`, eu-central-003).

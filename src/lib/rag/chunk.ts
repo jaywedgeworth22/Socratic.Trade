@@ -4,6 +4,7 @@
 // each chunk carries a deterministic context header plus a point-in-time `acceptance_datetime`.
 
 import { createHash, randomUUID } from "crypto";
+import { timeSync } from "../slow-sync-guard";
 
 export const DEFAULT_MAX_TOKENS = 480;
 const DEFAULT_OVERLAP_RATIO = 0.12;
@@ -263,6 +264,14 @@ function blockDocument(text: string): Block[] {
  */
 export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): DocumentChunk[] {
   if (!doc?.text || typeof doc.text !== "string") throw new Error("doc.text required");
+  return timeSync(
+    "chunkDocument",
+    `${doc.doc_id || "no-id"} ${Math.round(doc.text.length / 1024)}KB`,
+    () => chunkDocumentImpl(doc, options)
+  );
+}
+
+function chunkDocumentImpl(doc: ChunkInput, options: ChunkOptions = {}): DocumentChunk[] {
   // Enforce bounds to prevent mutable payload-unbound eligibility
   const maxTokens = Math.min(options.maxTokens ?? DEFAULT_MAX_TOKENS, 2048);
   const childMaxTokens = Math.max(80, Math.floor(maxTokens / 3)); // target child size: ~120-130 tokens

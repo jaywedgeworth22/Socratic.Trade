@@ -70,8 +70,8 @@ describe("SEC Backfill Phase 2 Tests", () => {
             {
               name: "CIK0000320193_submissions_001.json",
               filingCount: 1,
-              filingStart: "2020-01-01",
-              filingEnd: "2022-12-31"
+              filingFrom: "2020-01-01",
+              filingTo: "2022-12-31"
             }
           ]
         }

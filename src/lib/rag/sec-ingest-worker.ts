@@ -1,12 +1,16 @@
 import {
   claimSecIngestTasks,
   advanceSecIngestTask,
+  deferSecIngestTask,
   failSecIngestTask,
   heartbeatSecIngestTask,
   reconcileSecIngestJob,
   SecIngestTask
 } from "../db-rag-ingest";
+import { pineconeWuExhaustedUntil } from "../pinecone-wu-breaker";
+import { pineconeBackfillPaceGate } from "../pinecone-monthly-pace";
 import { politeFetchText } from "../web-sources/http";
+import { yieldEventLoop } from "../slow-sync-guard";
 import { parseFilingHtml } from "../web-sources/sec-parser";
 import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts";
 import { storeDocument } from "../vector-db";
@@ -48,7 +52,18 @@ export class SecIngestWorker {
     }
   }
 
-  private async runTick() {
+  /** One polling pass. Public (like `processTask`) so tests can drive a single tick
+   *  deterministically instead of racing the 5s interval. */
+  async runTick() {
+    // Monthly write-unit PACE guard. This queue IS the bulk/backfill lane, so it is the one
+    // producer the pace guard throttles: when the month-end projection exceeds
+    // PINECONE_MONTHLY_WU_BUDGET we simply stop CLAIMING NEW tasks. Already-leased tasks are
+    // untouched (their leases expire and they become claimable again once the throttle lifts or
+    // the month rolls over), incremental filing ingest keeps running, and retrieval is never
+    // affected. Default-off: with no budget configured this is an env read and nothing else.
+    const paceGate = await pineconeBackfillPaceGate("backfill");
+    if (paceGate.throttled) return;
+
     const db = getDb();
     const activeJobs = db.prepare("SELECT id FROM sec_ingest_jobs WHERE status = 'running'").all() as any[];
 
@@ -60,6 +75,9 @@ export class SecIngestWorker {
       });
 
       for (const task of tasks) {
+        // Each task chains synchronous extract/chunk/persist segments; yield between tasks so
+        // queued HTTP requests get served (2026-08-10 event-loop stall incident).
+        await yieldEventLoop();
         try {
           await this.processTask(task);
         } catch (err: any) {
@@ -112,7 +130,29 @@ export class SecIngestWorker {
       heartbeat();
       let content = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
       if (!content) {
-        content = await politeFetchText(task.payload.url as string);
+        try {
+          content = await politeFetchText(task.payload.url as string);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // EDGAR 403 = IP-level automated-access block, not a fault of this task. Mirror the
+          // WU-breaker deferral (attempt refunded) instead of failing: exponential failure
+          // backoff would burn all stage attempts into a block that outlives them and
+          // dead-letter healthy filings — which is exactly what happened on 2026-08-09.
+          if (/^HTTP 403 /.test(msg)) {
+            const { secLimiter } = await import("../web-sources/sec-limiter");
+            const until = secLimiter.pausedUntilIso() ?? new Date(Date.now() + 10 * 60_000).toISOString();
+            deferSecIngestTask({
+              taskId: task.id,
+              owner,
+              leaseToken,
+              deferUntil: until,
+              reasonType: "edgar_403_deferred",
+              reason: `EDGAR 403 (automated-access block); deferred until ${until}`
+            });
+            return;
+          }
+          throw err;
+        }
         await writeLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`, content);
         // writeLocalArtifact swallows filesystem errors, so the await above does not prove the raw
         // filing was persisted. Verify before advancing: otherwise every retry starts from
@@ -263,6 +303,23 @@ export class SecIngestWorker {
 
     if (checkpoint === "embed_queued") {
       heartbeat();
+      // Monthly Pinecone write-unit breaker: park the task until the marker expires BEFORE
+      // reading artifacts or spending a single embed token. This is a clean deferral (attempt
+      // refunded, next_retry_at = breaker expiry), NOT a retryable failure — the exponential
+      // failure backoff would otherwise grind hourly retries into a quota that cannot recover
+      // before the 1st of next month, and eventually dead-letter healthy filings.
+      const wuUntil = pineconeWuExhaustedUntil();
+      if (wuUntil) {
+        deferSecIngestTask({
+          taskId: task.id,
+          owner,
+          leaseToken,
+          deferUntil: wuUntil,
+          reasonType: "wu_exhausted_deferred",
+          reason: `Pinecone monthly write units exhausted; deferred until ${wuUntil}`
+        });
+        return;
+      }
       const rawContent = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
       const sectionsJson = await readLocalArtifact(task.cik, task.accession, sequence, "sections.json");
       if (!rawContent || !sectionsJson) throw new Error("Parsed/Raw artifacts missing");
@@ -300,6 +357,18 @@ export class SecIngestWorker {
       }
 
       if (!res.documentComplete) {
+        // Breaker tripped mid-call (raced the gate above): same clean deferral, not a failure.
+        if (res.wuExhausted) {
+          deferSecIngestTask({
+            taskId: task.id,
+            owner,
+            leaseToken,
+            deferUntil: res.wuExhaustedUntil ?? new Date(Date.now() + 6 * 60 * 60_000).toISOString(),
+            reasonType: "wu_exhausted_deferred",
+            reason: `Pinecone monthly write units exhausted mid-store; deferred until ${res.wuExhaustedUntil ?? "next check"}`
+          });
+          return;
+        }
         throw new Error("Ingestion budget or capacity exceeded mid-task");
       }
 
