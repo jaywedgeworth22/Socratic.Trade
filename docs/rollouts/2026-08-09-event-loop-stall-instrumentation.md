@@ -333,3 +333,20 @@ safety net (Coolify/Docker healthcheck-triggered restart) until the underlying l
 issue is fixed at the source. Recommend the daylight session (or the owner) consider whether
 Docker's healthcheck restart policy is aggressive enough, or whether a lighter-weight external
 watchdog is warranted as a stopgap.
+
+## Infra gap identified: no auto-recovery for "alive but unresponsive" (2026-08-10 ~12:00pm CT)
+
+Confirmed via `docker inspect`: `restart_policy=unless-stopped`, healthcheck `retries=10 interval=30s`.
+Docker's native healthcheck only marks the container `unhealthy` in its status — it does NOT
+trigger a restart by itself (that requires Swarm mode or an external supervisor). `unless-stopped`
+only restarts on process EXIT. This exact failure mode (process alive, low CPU, but not
+responding to requests — i.e. every outage documented in this file tonight) leaves the container
+sitting `unhealthy` indefinitely with no automated recovery; only a human (or an agent) noticing
+and running `docker restart` brings it back, as happened three times tonight.
+
+**Recommendation for the owner / a future session:** consider whether Coolify has (or can be
+configured with) an unhealthy-container auto-restart policy, or whether a lightweight external
+watchdog (a cron job checking `/api/health` and restarting on N consecutive failures) is
+warranted as a stopgap until the litestream root cause is fixed. This is infra/ops policy, not
+something I'm authorizing myself to change without a decision — flagging it as the concrete,
+actionable half of tonight's "site is not fully safe unattended" finding above.
