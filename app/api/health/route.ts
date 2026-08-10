@@ -273,19 +273,15 @@ export async function GET(request: Request) {
     // never let connection health summaries break the health probe
   }
 
-  // OpenRouter prepaid-credit balance. Universal routing (#1703) makes OpenRouter the single point
-  // of failure for every LLM call AND all RAG embedding, so a drained balance = total decision-loop
-  // outage (see docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md). We surface the low-balance
-  // SIGNAL on this PUBLIC probe so an EXTERNAL monitor (Uptime Robot) alerts when the money runs
-  // low — a low balance sets dependencies.openrouter.ok=false (DEGRADE only; never 503, since a
-  // restart can't refill credits and would just restart-loop). Cached + best-effort; a failed READ
-  // never flips ok=false (see openrouter-credits.ts). Omitted entirely when no OpenRouter key is set.
+  // OpenRouter prepaid-credit + per-key limit signal. Universal routing (#1703) makes OpenRouter
+  // the single point of failure for every LLM call AND all RAG embedding, so a drained account
+  // balance OR an exhausted per-key spend limit = decision-loop outage. We surface the SIGNAL on
+  // this PUBLIC probe so Uptime Robot alerts when money runs low for real (management key reads
+  // /credits + /keys; see openrouter-credits.ts). Low/exhausted DEGRADES the probe (never 503 —
+  // a restart can't refill credits). Cached + best-effort; a failed READ never flips ok=false.
   //
-  // The USD FIGURES are operator-only (see the header comment) — the boolean is the alert, the
-  // numbers are an attacker's countdown to a cheap total-outage window. `ok` MUST stay the first
-  // serialized key of this object: the Uptime Robot keyword monitor matches the literal substring
-  // `"openrouterCredits":{"ok":false` (docs/rollouts/2026-07-18-openrouter-credit-health-signal.md),
-  // which is unchanged by this projection.
+  // USD FIGURES and key labels are operator-only. `ok` MUST stay the first serialized key: the
+  // Uptime Robot keyword monitor matches `"openrouterCredits":{"ok":false`.
   try {
     const credits = await getOpenRouterCreditStatus();
     if (credits) {
@@ -299,9 +295,23 @@ export async function GET(request: Request) {
       checks.openrouterCredits = {
         ok: credits.ok,
         ...(detailed
-          ? { remainingUsd: credits.remainingUsd, totalUsd: credits.totalUsd, usedUsd: credits.usedUsd }
+          ? {
+              remainingUsd: credits.remainingUsd,
+              totalUsd: credits.totalUsd,
+              usedUsd: credits.usedUsd,
+              ...(credits.problemKeyLabels?.length
+                ? { problemKeyLabels: credits.problemKeyLabels }
+                : {})
+            }
           : {}),
         thresholdUsd: credits.thresholdUsd,
+        keyLimitThresholdUsd: credits.keyLimitThresholdUsd,
+        source: credits.source,
+        keysChecked: credits.keysChecked,
+        keysWithLimit: credits.keysWithLimit,
+        keysLimitReached: credits.keysLimitReached,
+        keysLimitLow: credits.keysLimitLow,
+        reasons: credits.reasons,
         checkedAt: credits.checkedAt,
         ...(credits.error ? { error: credits.error } : {})
       };

@@ -325,6 +325,7 @@ As of 2026-07-08 (assignment-rule update).
 - **[Socratic.Trade][CODEX sublane] RAG structured-vs-narrative routing boundary (branch `codex/rag-data-routing-20260722`, worktree `/Users/jay/.codex/worktrees/rag-data-routing-20260722`, claimed 2026-07-22) — LOCALLY READY.** Typed, fail-closed information-needs contract now keeps current prices, positions, orders, and financial facts deterministic while filings/transcripts/lessons/narrative research alone enter RAG. Focused routing tests 4/4, scoped lint, TypeScript, and diff check green; slow strategy integration verification deferred under host saturation. No provider, corpus, broker, or production writes.
 
 ## In Progress
+- **[Socratic.Trade][GROK] OpenRouter credit monitor via management key + per-key limits — IN PROGRESS 2026-08-09 11:35pm CT.** Prefer OPENROUTER_ADMIN/MANAGEMENT key; /credits + /keys limit_remaining; UptimeRobot keyword unchanged. Rollout: `docs/rollouts/2026-08-10-openrouter-mgmt-credit-monitor.md`.
 - **[2026-08-07][GROK] Fix paper vs-SPY ~+50% deposit+invest sparse snaps — IN PROGRESS.** Branch `grok/fix-paper-spy-return-again`.
 - **[2026-08-06][GROK] R2 subject Pushover identity + sent-from + fleet stagger + own backup line — IN PROGRESS / landing.** Subject free-tier → that app's PUSHOVER_* token; footer `(sent from APP)`; peer checks UTC phase; digests UM≥08/ST=14/CT≥20; Hetzner 24h floor. Branch `grok/r2-pushover-subject-identity`.
 
