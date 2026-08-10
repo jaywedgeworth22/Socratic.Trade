@@ -15,7 +15,7 @@ import { parseFilingHtml } from "../web-sources/sec-parser";
 import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts";
 import { storeDocument } from "../vector-db";
 import { readLocalArtifact, writeLocalArtifact } from "../web-sources/sec-filings";
-import { insertDocumentChunkFts, getDb } from "../db";
+import { insertDocumentChunkFtsBatch, getDb } from "../db";
 import { chunkDocument } from "./chunk";
 import crypto from "crypto";
 
@@ -384,16 +384,21 @@ export class SecIngestWorker {
         ? JSON.parse(chunksJson)
         : chunkDocument(doc, { maxTokens: 400, overlapRatio: 0.15 });
       // Match storeDocument's doc_id / chunk_occurrences.accession (vectorDocId), not the bare
-      // SEC accession, so corpus-wide lexical joins succeed for worker-ingested filings.
-      for (const chunk of ftsChunks) {
-        insertDocumentChunkFts(
-          chunk.content_hash,
-          task.symbol,
-          "sec-edgar",
-          vectorDocId,
-          chunk.text
-        );
-      }
+      // SEC accession, so corpus-wide lexical joins succeed for worker-ingested filings. Batched
+      // into ONE write transaction instead of one per chunk (2026-08-10: N sequential lock
+      // acquisitions on a large filing were a real contention window against litestream's WAL
+      // checkpoint — see slow-sync-guard.ts header comment).
+      timeSync("worker.ftsMirrorBatch", `${vectorDocId} ${ftsChunks.length} chunks`, () =>
+        insertDocumentChunkFtsBatch(
+          ftsChunks.map((chunk: { content_hash: string; text: string }) => ({
+            contentHash: chunk.content_hash,
+            symbol: task.symbol,
+            source: "sec-edgar",
+            accession: vectorDocId,
+            text: chunk.text
+          }))
+        )
+      );
 
       const ok = advanceSecIngestTask({
         taskId: task.id,
