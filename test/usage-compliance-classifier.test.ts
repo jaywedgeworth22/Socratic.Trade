@@ -82,7 +82,9 @@ describe("OpenRouter classifier enrichment (flat trace, RESOLVED 2026-07-18 shap
     expect(trace.sourceApp).toBe("socratic-trade");
     expect(trace.environment).toBe("test");
     expect(trace.service).toBe("rag");
-    expect(trace.feature).toBe("rag-query-deconstruct");
+    // Internal tag "rag-query-deconstruct" is translated to the owner's OpenRouter classifier
+    // taxonomy at the enrichment boundary (2026-08-10) — the ledger keeps the internal name.
+    expect(trace.feature).toBe("search-fusion-mmr");
     expect(trace.keyRef).toBe("fp1234");
     // The RESOLVED shape: classifier keys sit FLAT under `trace` — never a `metadata` sub-object,
     // and never a bare top-level `metadata` field (the pre-Wave-2 shape this replaces).
@@ -139,6 +141,47 @@ describe("OpenRouter classifier enrichment (flat trace, RESOLVED 2026-07-18 shap
     );
     expect((anthropic.metadata as Record<string, unknown>).user_id).toBe("local");
     expect(anthropic.trace).toBeUndefined();
+  });
+
+  it("translates internal call-site tags to the OpenRouter classifier taxonomy (2026-08-10)", () => {
+    // The owner's Classifiers-beta config defaults feature to "assistant-chat" when trace.feature
+    // is absent/unrecognized — off-taxonomy internal names made the decision engine's spend show
+    // as "assistant chat" on the OpenRouter dashboard. Every internal tag must resolve to a
+    // taxonomy value, and subsystem must derive from the resolved feature (never the "llm" filler).
+    const cases: Array<[string, string, string]> = [
+      ["strategy", "green-team", "strategy"],
+      ["strategy-bear", "green-team", "strategy"],
+      ["red-team", "red-team", "strategy"],
+      ["strategy-tuning", "tuning", "strategy"],
+      ["learning-review", "framework-review", "strategy"],
+      ["post-mortem", "post-mortem", "strategy"],
+      ["outcome-postmortem", "post-mortem", "strategy"],
+      ["proposal-revalidation", "revalidation", "strategy"],
+      ["rag-query-deconstruct", "search-fusion-mmr", "rag"],
+      ["chat", "chat", "chat"],
+      ["chat-salience", "chat-salience", "memory"],
+      ["memory-salience", "memory-salience", "memory"],
+      ["embed", "embed", "rag"],
+      ["rerank", "rerank", "rag"]
+    ];
+    for (const [internal, feature, service] of cases) {
+      const body: Record<string, unknown> = {};
+      applyOpenRouterClassifierEnrichment(body, { feature: internal });
+      const trace = body.trace as Record<string, unknown>;
+      expect(trace.feature, internal).toBe(feature);
+      expect(trace.service, internal).toBe(service);
+    }
+    // Unknown tags pass through verbatim (visible in the console) rather than being silently
+    // funneled into the assistant-chat default by an absent feature.
+    const body: Record<string, unknown> = {};
+    applyOpenRouterClassifierEnrichment(body, { feature: "brand-new-lane", service: "llm" });
+    const trace = body.trace as Record<string, unknown>;
+    expect(trace.feature).toBe("brand-new-lane");
+    expect(trace.service).toBe("strategy");
+    // An explicit caller service that IS a taxonomy subsystem always wins.
+    const body2: Record<string, unknown> = {};
+    applyOpenRouterClassifierEnrichment(body2, { feature: "embed", service: "monitoring" });
+    expect((body2.trace as Record<string, unknown>).service).toBe("monitoring");
   });
 
   it("falls back to the inferred feature tag when the caller passes none (un-migrated call sites)", () => {
@@ -413,7 +456,8 @@ describe("WS1 gap #2: query-deconstruct meters its LLM call + enriches the OpenR
     const trace = sent.trace as Record<string, unknown>;
     expect(trace.sourceApp).toBe("socratic-trade");
     expect(trace.service).toBe("rag");
-    expect(trace.feature).toBe("rag-query-deconstruct");
+    // Taxonomy translation (2026-08-10): internal "rag-query-deconstruct" → "search-fusion-mmr".
+    expect(trace.feature).toBe("search-fusion-mmr");
     expect(sent.user).toBe("local");
     expect(sent.metadata).toBeUndefined();
     // Bounded output cap actually on the wire (the old path sent no cap at all).
