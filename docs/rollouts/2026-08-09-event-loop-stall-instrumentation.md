@@ -313,3 +313,23 @@ with, or share a mechanism with, the B2 checksum-mismatch compaction failures) b
 either SEC lane. Not treating every individual sub-15s self-resolving blip as an actionable
 incident going forward — only a genuine sustained outage (3+ min of consecutive failures, as the
 ~9:27am CT event was) warrants a restart.
+
+## Second sustained-outage episode, clean baseline (2026-08-10 ~11:52am-11:54am CT)
+
+A cluster of stalls escalated into a genuine sustained outage even with BOTH SEC lanes confirmed
+off since ~10:20am CT: 7.3s -> 000/15s -> 000/15s -> 5.8s -> 000/15s -> 000/15s over ~2 minutes
+(16:52:38-16:54:15 UTC), i.e. worsening rather than self-resolving like the earlier low-grade
+blips. Restarted (`docker restart`); recovered immediately, verified stable (0.26-0.34s over
+three checks).
+
+**This is the second sustained (not self-resolving) outage with zero SEC ingest activity of any
+kind** (the first was the ~9:27am CT episode, which at the time still had the refresh-lane bug
+live — that confound is now removed). This strengthens rather than weakens the litestream/DB-
+layer hypothesis: the underlying contention mechanism can independently produce not just brief
+blips but genuine multi-minute outages, on its own, unrelated to anything this session controls.
+**The site is not fully safe right now even with all app-level ingest paused** — it requires
+either a human noticing and restarting, or ideally an automated restart-on-sustained-failure
+safety net (Coolify/Docker healthcheck-triggered restart) until the underlying litestream/B2
+issue is fixed at the source. Recommend the daylight session (or the owner) consider whether
+Docker's healthcheck restart policy is aggressive enough, or whether a lighter-weight external
+watchdog is warranted as a stopgap.
