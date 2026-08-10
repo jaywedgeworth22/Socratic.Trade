@@ -218,3 +218,13 @@ sub-batch+yield) — each verified against live production evidence, each docume
 in the order discovered. This was a genuinely hard, multi-layered bug; do not be discouraged that
 it isn't fully resolved — the search space has been narrowed enormously and the remaining
 hypothesis is specific and testable.
+
+## Additional confirming data point (2026-08-10 ~7:38am CT, ingest still OFF)
+
+A brief self-resolving stall (external health 15s timeout, back to 0.5s by next check) occurred
+with `SEC_INGEST_WORKER_ENABLED=off` confirmed in the live process env — no ingest activity at
+all. A litestream `compaction complete` log line landed in the same minute (12:38:38 UTC vs the
+12:38:26 UTC stall). Another clean timing correlation supporting the litestream-contention
+hypothesis above; no action taken (self-resolved, site healthy). Strengthens the case for
+starting daylight investigation with the litestream-log correlation step rather than the FTS5
+profiling step.
