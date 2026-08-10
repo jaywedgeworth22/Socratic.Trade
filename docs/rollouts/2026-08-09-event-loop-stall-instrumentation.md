@@ -92,3 +92,27 @@ facts transaction (per-task, multi-MB JSON walk — remaining prime suspect),
 
 Next: after deploy, controlled re-enable (worker on, refresh still 0) with live health watch —
 the logs now name any residual pin; disable again if stalls recur.
+
+## Separate finding (2026-08-10 ~4:40am CT) — litestream compaction contention, INDEPENDENT of SEC ingest
+
+While SEC ingest was fully paused (worker off, refresh 0, zero SecIngestWorker log lines for
+15+ min) the site still went unresponsive (external AND in-container health both timed out at
+20s x3; `next-server` was at 32% CPU — not pinned — while curl probes queued and never
+returned). This rules out the ingest pipeline as the cause of THIS stall and points at a
+different mechanism: `better-sqlite3` does synchronous file I/O on Node's single thread, so if
+litestream (a separate OS process) briefly holds an OS-level lock on the SQLite file during WAL
+checkpoint/compaction, the app's synchronous DB calls — and therefore the whole event loop,
+including serving `/api/health` — can block until the lock releases.
+
+Evidence: the container logged `compaction failed: non-contiguous transaction ids` errors at
+09:15:43 and 09:37:41 UTC; the second lands inside the observed stall window. Separately, and
+NOT the direct cause (already gone by restart): the PREVIOUS container instance was stuck
+retrying the exact same broken compaction (byte-identical transaction-id range) every 5 minutes
+for 95+ minutes (08:05-09:40 UTC, `db=prod.db` in that container's log) without ever recovering
+— a genuinely stuck litestream state that a restart cleared.
+
+Action taken: `docker restart` (site restored, 200s at 0.2-0.5s sustained over 32s). No code
+change yet — this needs daylight investigation (litestream version/log-level review, whether
+`busy_timeout` on the better-sqlite3 connection is long enough to ride out a compaction window,
+whether the l0-retention/compaction cadence can be tuned). Filed separately from the SEC-ingest
+stall work above; do not conflate the two root causes.
