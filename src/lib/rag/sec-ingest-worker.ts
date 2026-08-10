@@ -384,21 +384,25 @@ export class SecIngestWorker {
         ? JSON.parse(chunksJson)
         : chunkDocument(doc, { maxTokens: 400, overlapRatio: 0.15 });
       // Match storeDocument's doc_id / chunk_occurrences.accession (vectorDocId), not the bare
-      // SEC accession, so corpus-wide lexical joins succeed for worker-ingested filings. Batched
-      // into ONE write transaction instead of one per chunk (2026-08-10: N sequential lock
-      // acquisitions on a large filing were a real contention window against litestream's WAL
-      // checkpoint — see slow-sync-guard.ts header comment).
-      timeSync("worker.ftsMirrorBatch", `${vectorDocId} ${ftsChunks.length} chunks`, () =>
-        insertDocumentChunkFtsBatch(
-          ftsChunks.map((chunk: { content_hash: string; text: string }) => ({
-            contentHash: chunk.content_hash,
-            symbol: task.symbol,
-            source: "sec-edgar",
-            accession: vectorDocId,
-            text: chunk.text
-          }))
-        )
+      // SEC accession, so corpus-wide lexical joins succeed for worker-ingested filings.
+      // insertDocumentChunkFtsBatch internally sub-batches + yields — see its header comment for
+      // why a single un-yielding transaction (this fix's first attempt) made the 2026-08-10 stall
+      // WORSE (665-chunk filing held the loop 65,977ms with zero yield points, proven live in
+      // prod via the [slow-sync] warning this replaced).
+      const ftsMirrorStart = Date.now();
+      await insertDocumentChunkFtsBatch(
+        ftsChunks.map((chunk: { content_hash: string; text: string }) => ({
+          contentHash: chunk.content_hash,
+          symbol: task.symbol,
+          source: "sec-edgar",
+          accession: vectorDocId,
+          text: chunk.text
+        }))
       );
+      const ftsMirrorMs = Date.now() - ftsMirrorStart;
+      if (ftsMirrorMs >= 5_000) {
+        console.log(`[worker] ftsMirrorBatch took ${ftsMirrorMs}ms (yielded) for ${vectorDocId} (${ftsChunks.length} chunks)`);
+      }
 
       const ok = advanceSecIngestTask({
         taskId: task.id,

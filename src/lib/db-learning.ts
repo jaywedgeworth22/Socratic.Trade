@@ -2,6 +2,7 @@
 // learned-context fact-tier functions, and RAG ingestion (ingested_accessions).
 import { getDb } from "./db";
 import { mergeHorizonRows } from "./outcome-horizons";
+import { yieldEventLoop } from "./slow-sync-guard";
 import type { LearnedContextRow, LearnedContextPendingRow, LearnedContextPendingStatus, SocraticOutcomeHorizonRow } from "./types";
 
 // ── Audit-event helpers ────────────────────────────────────────────────────────
@@ -1565,17 +1566,25 @@ export function insertDocumentChunkFts(
 }
 
 /**
- * Batched form of `insertDocumentChunkFts`: one write transaction for the whole document instead
- * of one auto-commit transaction (and one SQLite write-lock acquire/release) per chunk. A large
- * filing's FTS mirror was previously N sequential lock cycles on the hot ingest path — each a
- * chance to contend with a concurrent litestream WAL checkpoint/compaction (2026-08-10 stall
- * incident: `better-sqlite3` is synchronous, so a lock wait there blocks the whole event loop,
- * including the ingest worker's lease heartbeat, which is why the symptom surfaced as a lease
- * expiry — "Failed to advance checkpoint" — rather than an explicit timeout).
+ * Batched form of `insertDocumentChunkFts`: groups of `INSERT_DOCUMENT_CHUNK_FTS_BATCH_SIZE`
+ * chunks share one write transaction, with an event-loop yield between groups.
+ *
+ * History (2026-08-10 stall incident): the original per-chunk loop did one auto-commit
+ * transaction per chunk — N sequential SQLite write-lock acquire/release cycles, each a chance
+ * to contend with a concurrent litestream WAL checkpoint (`better-sqlite3` is synchronous, so a
+ * lock wait there blocks the whole Node event loop, including the ingest worker's lease
+ * heartbeat — surfacing as a lease-expiry "Failed to advance checkpoint" rather than an explicit
+ * timeout). The FIRST fix wrapped the whole document in ONE transaction, which made it WORSE: a
+ * 665-chunk filing held the event loop synchronously for 65,977ms with zero yield points inside
+ * it — proven live in prod by the `[slow-sync] worker.ftsMirrorBatch` warning this function now
+ * replaces. Small sub-batches with a yield between them bound any single synchronous stretch
+ * while still cutting per-chunk transaction overhead by ~BATCH_SIZE.
  */
-export function insertDocumentChunkFtsBatch(
+const INSERT_DOCUMENT_CHUNK_FTS_BATCH_SIZE = 40;
+
+export async function insertDocumentChunkFtsBatch(
   rows: Array<{ contentHash: string; symbol: string; source: string; accession: string; text: string }>
-): void {
+): Promise<void> {
   if (rows.length === 0) return;
   const db = getDb();
   const del = db.prepare(`
@@ -1586,10 +1595,16 @@ export function insertDocumentChunkFtsBatch(
     INSERT INTO document_chunks_fts (content_hash, symbol, source, accession, text)
     VALUES (?, ?, ?, ?, ?)
   `);
-  db.transaction(() => {
-    for (const row of rows) {
+  const runGroup = db.transaction((group: typeof rows) => {
+    for (const row of group) {
       del.run(row.contentHash, row.symbol, row.source, row.accession);
       ins.run(row.contentHash, row.symbol, row.source, row.accession, row.text);
     }
-  })();
+  });
+  for (let i = 0; i < rows.length; i += INSERT_DOCUMENT_CHUNK_FTS_BATCH_SIZE) {
+    runGroup(rows.slice(i, i + INSERT_DOCUMENT_CHUNK_FTS_BATCH_SIZE));
+    if (i + INSERT_DOCUMENT_CHUNK_FTS_BATCH_SIZE < rows.length) {
+      await yieldEventLoop();
+    }
+  }
 }
