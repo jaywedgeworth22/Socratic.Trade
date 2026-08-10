@@ -1563,3 +1563,33 @@ export function insertDocumentChunkFts(
     VALUES (?, ?, ?, ?, ?)
   `).run(contentHash, symbol, source, accession, text);
 }
+
+/**
+ * Batched form of `insertDocumentChunkFts`: one write transaction for the whole document instead
+ * of one auto-commit transaction (and one SQLite write-lock acquire/release) per chunk. A large
+ * filing's FTS mirror was previously N sequential lock cycles on the hot ingest path — each a
+ * chance to contend with a concurrent litestream WAL checkpoint/compaction (2026-08-10 stall
+ * incident: `better-sqlite3` is synchronous, so a lock wait there blocks the whole event loop,
+ * including the ingest worker's lease heartbeat, which is why the symptom surfaced as a lease
+ * expiry — "Failed to advance checkpoint" — rather than an explicit timeout).
+ */
+export function insertDocumentChunkFtsBatch(
+  rows: Array<{ contentHash: string; symbol: string; source: string; accession: string; text: string }>
+): void {
+  if (rows.length === 0) return;
+  const db = getDb();
+  const del = db.prepare(`
+    DELETE FROM document_chunks_fts
+    WHERE content_hash = ? AND symbol = ? AND source = ? AND accession = ?
+  `);
+  const ins = db.prepare(`
+    INSERT INTO document_chunks_fts (content_hash, symbol, source, accession, text)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  db.transaction(() => {
+    for (const row of rows) {
+      del.run(row.contentHash, row.symbol, row.source, row.accession);
+      ins.run(row.contentHash, row.symbol, row.source, row.accession, row.text);
+    }
+  })();
+}

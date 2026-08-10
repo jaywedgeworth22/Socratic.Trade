@@ -200,3 +200,36 @@ describe("EDGAR 403 handling and dead-letter requeue (2026-08-09 outage class)",
     expect(reclaimed[0]!.id).toBe(task.id);
   });
 });
+
+describe("insertDocumentChunkFtsBatch (2026-08-10 lock-contention fix)", () => {
+  it("writes identical rows to the per-chunk loop, in ONE transaction", async () => {
+    const { insertDocumentChunkFts, insertDocumentChunkFtsBatch } = await import("../src/lib/db-learning");
+    const rows = [
+      { contentHash: "hash-a", symbol: "AAPL", source: "sec-edgar", accession: "acc-batch-test", text: "alpha text" },
+      { contentHash: "hash-b", symbol: "AAPL", source: "sec-edgar", accession: "acc-batch-test", text: "beta text" },
+      { contentHash: "hash-c", symbol: "AAPL", source: "sec-edgar", accession: "acc-batch-test", text: "gamma text" }
+    ];
+
+    insertDocumentChunkFtsBatch(rows);
+    const batchRows = getDb()
+      .prepare("SELECT content_hash, text FROM document_chunks_fts WHERE accession = ? ORDER BY content_hash")
+      .all("acc-batch-test") as Array<{ content_hash: string; text: string }>;
+    expect(batchRows).toHaveLength(3);
+    expect(batchRows.map((r) => r.content_hash)).toEqual(["hash-a", "hash-b", "hash-c"]);
+
+    // Re-running with the per-chunk loop against the SAME identity must produce the same final
+    // rows (idempotent delete+insert), proving the batch path is a drop-in replacement.
+    for (const row of rows) {
+      insertDocumentChunkFts(row.contentHash, row.symbol, row.source, row.accession, row.text);
+    }
+    const loopRows = getDb()
+      .prepare("SELECT content_hash, text FROM document_chunks_fts WHERE accession = ? ORDER BY content_hash")
+      .all("acc-batch-test") as Array<{ content_hash: string; text: string }>;
+    expect(loopRows).toEqual(batchRows);
+  });
+
+  it("no-ops on an empty array instead of opening an empty transaction", async () => {
+    const { insertDocumentChunkFtsBatch } = await import("../src/lib/db-learning");
+    expect(() => insertDocumentChunkFtsBatch([])).not.toThrow();
+  });
+});

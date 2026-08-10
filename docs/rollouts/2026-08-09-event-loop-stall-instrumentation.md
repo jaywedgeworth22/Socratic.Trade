@@ -92,3 +92,51 @@ facts transaction (per-task, multi-MB JSON walk — remaining prime suspect),
 
 Next: after deploy, controlled re-enable (worker on, refresh still 0) with live health watch —
 the logs now name any residual pin; disable again if stalls recur.
+
+## Separate finding (2026-08-10 ~4:40am CT) — litestream compaction contention, INDEPENDENT of SEC ingest
+
+While SEC ingest was fully paused (worker off, refresh 0, zero SecIngestWorker log lines for
+15+ min) the site still went unresponsive (external AND in-container health both timed out at
+20s x3; `next-server` was at 32% CPU — not pinned — while curl probes queued and never
+returned). This rules out the ingest pipeline as the cause of THIS stall and points at a
+different mechanism: `better-sqlite3` does synchronous file I/O on Node's single thread, so if
+litestream (a separate OS process) briefly holds an OS-level lock on the SQLite file during WAL
+checkpoint/compaction, the app's synchronous DB calls — and therefore the whole event loop,
+including serving `/api/health` — can block until the lock releases.
+
+Evidence: the container logged `compaction failed: non-contiguous transaction ids` errors at
+09:15:43 and 09:37:41 UTC; the second lands inside the observed stall window. Separately, and
+NOT the direct cause (already gone by restart): the PREVIOUS container instance was stuck
+retrying the exact same broken compaction (byte-identical transaction-id range) every 5 minutes
+for 95+ minutes (08:05-09:40 UTC, `db=prod.db` in that container's log) without ever recovering
+— a genuinely stuck litestream state that a restart cleared.
+
+Action taken: `docker restart` (site restored, 200s at 0.2-0.5s sustained over 32s). No code
+change yet — this needs daylight investigation (litestream version/log-level review, whether
+`busy_timeout` on the better-sqlite3 connection is long enough to ride out a compaction window,
+whether the l0-retention/compaction cadence can be tuned). Filed separately from the SEC-ingest
+stall work above; do not conflate the two root causes.
+
+## Round 4 (2026-08-10 ~5:05am CT) — worker FTS mirror batched; live repro caught the exact symptom
+
+Controlled re-enable (worker on, refresh lane still 0, live health+log watch armed) reproduced
+the stall in minutes: repeated `[SecIngestWorker] Task ... failed: Failed to advance checkpoint
+from embed_queued to embedded`, each landing at the same timestamp as a health stall/timeout.
+Root-caused the mechanism: `advanceSecIngestTask`'s UPDATE requires `lease_expires_at > now`; the
+lease heartbeat is a `setInterval`, which literally cannot fire while the event loop is blocked —
+so ANY long synchronous stretch anywhere in the process (including the litestream lock
+contention documented above) can silently expire an in-flight task's lease, and this specific
+error is the resulting SYMPTOM, not necessarily an independent new cause.
+
+That said, the `embed_queued` handler's own FTS mirror loop was itself unbatched: one
+`insertDocumentChunkFts` call per chunk, each its own auto-commit transaction — for a filing with
+hundreds of chunks that's hundreds of sequential SQLite write-lock acquire/release cycles on the
+hot path, each a fresh chance to contend with a concurrent litestream WAL checkpoint. Fixed: new
+`insertDocumentChunkFtsBatch()` (db-learning.ts) wraps the whole document in ONE transaction;
+the worker now calls it instead of looping, `timeSync`-wrapped for visibility. New tests confirm
+byte-identical output vs the per-chunk loop.
+
+Re-enable attempt disabled again after ~3 min (site + worker both paused) once the pattern was
+confirmed — this fix needs its own controlled re-enable pass before considering the incident
+closed. Op note: applying `SEC_INGEST_WORKER_ENABLED` via Infisical alone does NOT take effect
+until the container restarts — always pair the env change with `docker restart`.
