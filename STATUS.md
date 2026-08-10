@@ -1,3 +1,8 @@
+## Current (2026-08-10 ~2:00am CT GROK — unstick open PR #2597)
+
+**Only open PR after #2603 merged:** #2597 `grok/always-auto-merge-prs` — fleet policy always-auto-merge for non-draft same-repo PRs + `do-not-automerge` hold. Blockers fixed this pass: real `AGENTS.md` conflict (kept main's Apple Notes close-out), `sentry-ci-report.yml` missing the new workflow name (failed `test/sentry-ci-report-workflows.test.ts`), Codex P1s (disable auto on hold label; `GH_PAT`/`SHEPHERD_TOKEN` preferred so post-merge workflows fire; squash-only; fail when arming fails). Next: green `verify` → auto-merge → Coolify auto-deploy. Rollout: `docs/rollouts/2026-08-10-always-auto-merge-prs.md`.
+
+## Prior (was Current)
 ## Current (2026-08-09 ~11:45pm CT MONET — event-loop stall instrumentation)
 
 **Branch `monet/sec-worker-edgar-403` (stacked):** Uptime Robot incidents on socratictrade.com — next-server pins 100%+ CPU 11-85s during filing ingests (event loop held by synchronous extract/chunk/score segments chained by the trial knobs). Shipped warn-only timeSync wrappers (extractFilingText / tradeHighlightChunksFromText / chunkDocument) + yieldEventLoop between filings/tasks. Prod names the hot spot in [slow-sync] logs; targeted fix follows. OpenRouter credits $55.50/$165 left (decision traffic, not embeds). Rollout: `docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md`.
