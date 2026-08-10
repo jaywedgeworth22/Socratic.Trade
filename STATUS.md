@@ -3,6 +3,7 @@
 **Branch `monet/sec-worker-edgar-403` (stacked):** Uptime Robot incidents on socratictrade.com — next-server pins 100%+ CPU 11-85s during filing ingests (event loop held by synchronous extract/chunk/score segments chained by the trial knobs). Shipped warn-only timeSync wrappers (extractFilingText / tradeHighlightChunksFromText / chunkDocument) + yieldEventLoop between filings/tasks. Prod names the hot spot in [slow-sync] logs; targeted fix follows. OpenRouter credits $55.50/$165 left (decision traffic, not embeds). Rollout: `docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md`.
 
 ## Prior (2026-08-09 MONET — EDGAR 403 worker hardening)
+## Current (2026-08-09 MONET — EDGAR 403 worker hardening)
 
 **Branch `monet/sec-worker-edgar-403`:** minutes after the trial knobs + full-universe seed went
 live, every SEC ingest worker fetch 403'd (`www.sec.gov/Archives`), dead-lettering ~50 tasks.
