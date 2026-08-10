@@ -350,3 +350,38 @@ watchdog (a cron job checking `/api/health` and restarting on N consecutive fail
 warranted as a stopgap until the litestream root cause is fixed. This is infra/ops policy, not
 something I'm authorizing myself to change without a decision — flagging it as the concrete,
 actionable half of tonight's "site is not fully safe unattended" finding above.
+
+## Correction (2026-08-10 ~1:07pm CT) — the litestream B2 compaction anchor is RESTART-RESISTANT, and appears decoupled from site stalls
+
+A stuck level-1 compaction anchor recurred (~6:04pm UTC): repeated `checksum mismatch` uploads
+where the range START txid stayed pinned at `2324d` while the END txid kept growing across six
+consecutive attempts (`2532d→25335→2533c→2534d→2534d(retry)→25359`) — litestream can never
+successfully commit past that anchor point. Proactively restarted while the site was still
+healthy, on the assumption (from earlier tonight) that a restart clears this state.
+
+**That assumption was WRONG.** Post-restart, the anchor was STILL pinned at the exact same
+`2324d` start point, and the end range kept growing across new attempts
+(`5364→5372→537e→537e(retry)`). This means the anchor is not runtime/in-memory retry state that a
+process restart resets — it is very likely rooted in something persistent: on-disk WAL/LTX state,
+the litestream generation/snapshot marker, or the actual B2-side object at that txid range. A
+`docker restart` is NOT an effective remedy for this specific failure mode; do not keep
+restarting for it going forward without a different fix.
+
+**Important secondary finding: despite the compaction failures continuing across the restart,
+site health has stayed normal throughout** (0.2-0.8s response times both before and after the
+restart) and raw replica sync kept advancing the whole time (`txid.replica` progressing normally,
+21 successful level-0 `ltx file uploaded` events in a 90s sample). This suggests the stuck
+compaction anchor and the intermittent serving stalls documented earlier tonight, while both
+litestream-related, may be **more loosely coupled than assumed** — the compaction failure alone
+does not appear to be causing a stall right now. The WAL-lock-contention hypothesis for the
+serving stalls remains the leading theory for THAT symptom; this stuck-compaction-anchor finding
+is a related but possibly separate litestream/B2 problem needing its own investigation
+(litestream version bug, a corrupted local snapshot at that specific txid, or a B2-side object
+issue) — likely NOT solvable by anything this session can safely change without litestream
+expertise or a Backblaze-side check.
+
+**Revised guidance for future sessions:** if this exact recurring pattern is seen again
+(compaction failing repeatedly at a FIXED start txid with a growing end range), a restart is
+known NOT to help — don't waste an intervention on it. Only escalate to a restart for actual
+serving-stall symptoms (health-check timeouts/500s), which remains the only proven effective
+mitigation found tonight.
