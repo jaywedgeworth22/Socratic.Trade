@@ -228,3 +228,33 @@ all. A litestream `compaction complete` log line landed in the same minute (12:3
 hypothesis above; no action taken (self-resolved, site healthy). Strengthens the case for
 starting daylight investigation with the litestream-log correlation step rather than the FTS5
 profiling step.
+
+## IMPORTANT escalation (2026-08-10 ~9:27am CT) — stall recurred from NON-ingest activity; risk picture changes
+
+A sustained outage (3+ min, external health 000/15s-timeout repeatedly) occurred at ~14:24-14:27
+UTC with `SEC_INGEST_WORKER_ENABLED=off` AND `SEC_FILING_RAG_MAX_PER_RUN=0` both confirmed live in
+the process env — zero ingest activity, CPU at 8.3% (not pinned). Root-caused to a burst of 22
+database write transactions in ~6 seconds (litestream `ltx file uploaded` log lines,
+txid 0000000000022e10-0000000000022e25), one of them 10.17MB. This is NOT the SEC ingest
+pipeline — something else in the app generated this write burst (timing, ~9:26am CT weekday,
+is consistent with market-open-adjacent activity: market scan, proposal generation, or a
+scheduled decision cycle). Restarted (`docker restart`); recovered, verified stable (0.2-0.5s).
+
+**This changes tonight's risk assessment: pausing SEC ingest is NOT sufficient to guarantee the
+site stays up.** The litestream-contention mechanism (documented above) can be triggered by ANY
+sufficiently large/bursty write path, not only the ingest worker. This is now the single highest-
+priority daylight item — ahead of resuming the SEC backfill — since it can recur during normal
+trading-hours operation with zero ingest activity at all.
+
+Revised daylight priority order:
+1. Identify what generates large/bursty write bursts during normal operation (market scan?
+   proposal generation? a scheduled decision cycle running near market open?) and whether that
+   path can itself be batched/yielded the same way the SEC ingest FTS mirror was.
+2. Confirm and fix the litestream root cause directly (busy_timeout, checkpoint cadence,
+   synchronous mode) — this now protects ALL write paths, not just ingest, and is higher leverage
+   than any additional ingest-specific batching.
+3. Resume the SEC backfill only after (1)-(2), or accept intermittent stalls as a known risk
+   during any future ingest attempt.
+
+Given this is a standing risk during MARKET HOURS unrelated to anything I paused, flagging this
+explicitly rather than treating tonight's "stopping point" as fully closed.
