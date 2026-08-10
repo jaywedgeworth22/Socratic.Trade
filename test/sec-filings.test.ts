@@ -647,6 +647,22 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     expect(result.attempted).toBe(4);
   });
 
+  it("an explicit SEC_FILING_RAG_MAX_PER_RUN=0 genuinely pauses the lane (2026-08-10 regression)", async () => {
+    // A prior `n > 0` guard silently treated an explicit env of "0" as "unconfigured" and fell
+    // through to the paid-tier default of 25 — a site-protective pause (set to stop the lane
+    // during an incident) was a complete no-op while the operator believed it was in effect.
+    process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0"; // paid tier
+    process.env.SEC_FILING_RAG_MAX_PER_RUN = "0";
+    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL" });
+    mocks.politeFetchText.mockResolvedValueOnce(mockSubmissions("320193", 2));
+
+    const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
+    const result = await refreshFilingBodies(["AAPL"], Date.now(), undefined, { force: true });
+
+    expect(result.attempted).toBe(0);
+    expect(mocks.storeDocument).not.toHaveBeenCalled();
+  });
+
   it("stops the run when the embed budget is exhausted — no doomed body fetches, tail deferred", async () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0"; // paid tier, cap 25
     mocks.hasIngestTextBudget.mockReturnValue(false); // budget already spent

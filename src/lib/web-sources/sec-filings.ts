@@ -746,7 +746,13 @@ function isFreeTier(): boolean {
 
 function maxFilingsPerRunFromEnv(): number {
   const n = resolveSourceNumber("SEC_FILING_RAG_MAX_PER_RUN");
-  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  // This catalog entry's own default is 25 (non-zero), so a resolved 0 can ONLY come from an
+  // explicit operator override (env or per-user setting), never from "unconfigured" — treat it
+  // as authoritative (0 filings this run), not as a signal to fall back to the tier default.
+  // Bug history (2026-08-10): the prior `n > 0` guard silently ignored an explicit
+  // SEC_FILING_RAG_MAX_PER_RUN=0 site-protective pause and fell through to 25 filings/run on the
+  // paid tier — the refresh lane kept running the whole night despite being believed paused.
+  if (Number.isFinite(n) && n >= 0) return Math.floor(n);
   return isFreeTier() ? DEFAULT_MAX_FILINGS_PER_RUN : DEFAULT_PAID_MAX_FILINGS_PER_RUN;
 }
 
