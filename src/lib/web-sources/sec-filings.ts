@@ -39,6 +39,7 @@ import { activeEmbeddingProvider } from "../vector-db";
 import { resolveSourceNumber } from "../source-settings";
 import { loadCikMap } from "./sec8k";
 import { parseFilingHtml } from "./sec-parser";
+import { timeSync, yieldEventLoop } from "../slow-sync-guard";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -402,6 +403,10 @@ export async function fetchFilingDirectory(cik: string, accession: string): Prom
  *  5. Collapse whitespace runs.
  */
 export function extractFilingText(html: string): string {
+  return timeSync("extractFilingText", `${Math.round(html.length / 1024)}KB html`, () => extractFilingTextImpl(html));
+}
+
+function extractFilingTextImpl(html: string): string {
   // 1, 2, 4. Unified tag extraction in a single pass to minimize massive intermediate string allocations
   let text = html.replace(
     /(<script[\s\S]*?<\/script>)|(<style[\s\S]*?<\/style>)|(<\/?(?:div|p|h[1-6]|li|tr|td|th|table|thead|tbody|tfoot|blockquote|article|section|header|footer|main|aside|figure|figcaption|pre|hr|br)[^>]*>)|(<[^>]+>)/gi,
@@ -911,6 +916,10 @@ async function refreshFilingBodiesUnlocked(
 
       const db = getDb();
       for (const ref of filings) {
+        // Between filings, let queued HTTP requests run: each ingest chains synchronous
+        // extract/chunk/score segments, and back-to-back filings otherwise fuse into one long
+        // event-loop pin (the 2026-08-10 Uptime Robot stalls during the trial backfill).
+        await yieldEventLoop();
         try {
           const existing = db.prepare("SELECT accession FROM sec_filings WHERE accession = ?").get(ref.accession);
           if (!existing) {
