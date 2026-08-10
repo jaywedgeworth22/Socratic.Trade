@@ -401,3 +401,66 @@ ingest activity. The infra-gap finding above (no auto-restart-on-unhealthy) rema
 leverage-per-effort mitigation until the root cause itself is fixed — recommend prioritizing that
 watchdog/policy change highly for whoever picks this up, given the ~90-minute recurrence rate
 observed tonight would otherwise require near-continuous human/agent monitoring indefinitely.
+
+## MAJOR FINDING (2026-08-10 ~5:09pm CT) — litestream memory leak, OOM-killed 4x tonight; likely unifies the stuck-compaction-anchor finding
+
+`dmesg` shows the container's litestream process has been repeatedly OOM-killed by the kernel
+inside its 4GB memory cgroup: 20:26:38, 21:18:55, 21:49:08, 22:09:01 UTC (4 kills, exactly
+matching `docker inspect`'s `restartCount=4`, exit code 137/SIGKILL each time — none of these
+coincide with any restart *I* issued, which all landed before 19:38 UTC). Litestream's RSS at
+each kill: ~2.05GB -> ~2.54GB -> ~2.79GB -> ~2.73GB, and the interval between kills is
+**shrinking** (53min -> 30min -> 20min), consistent with a leak that compounds faster each cycle.
+Pinned version: litestream 0.5.12 (`scripts/coolify-prod-start.sh`).
+
+**Leading hypothesis — this likely UNIFIES with the stuck-compaction-anchor finding earlier
+tonight, not a third unrelated bug**: the anchor stuck at txid `2324d` retries a checksum-
+mismatching B2 upload roughly every 30s with an ever-GROWING byte range (confirmed: consecutive
+target filenames' end-txid kept increasing, never resetting). If litestream's retry path doesn't
+free the buffer from the previous failed attempt before building a larger one for the next retry,
+memory grows monotonically with every failed retry — exactly matching the observed leak rate and
+the growing-range evidence already on record. A restart clears the LEAKED MEMORY (fresh process)
+but NOT the underlying stuck anchor (confirmed earlier — same txid persists post-restart), so the
+leak cycle restarts immediately and recurs.
+
+**This reframes the whole night's investigation as (very likely) ONE root cause with TWO
+failure-mode branches**, not three separate problems:
+1. **Crash-and-auto-recover** (this finding): litestream leaks -> OOM-killed -> whole container
+   exits (137) -> Docker's `restart: unless-stopped` catches this and restarts within seconds.
+   This is LIKELY what many of tonight's "isolated self-resolving blips" (dismissed as noise
+   under the established policy) actually were — the crash-recovery cycle is fast enough to look
+   like a brief latency blip to a 30s-interval health probe, not a sustained outage.
+2. **Hang-without-crash** (the WAL-lock-contention finding from earlier): the process stays
+   ALIVE but stops responding (no crash, no auto-restart triggered) — THIS is the failure mode
+   that required the three manual interventions tonight, because Docker's healthcheck marking a
+   container `unhealthy` does not itself trigger a restart (the infra-gap finding still stands
+   for THIS specific sub-mode). Possibly caused by litestream, mid-leak, holding a SQLite file
+   lock at the moment memory pressure or a retry stalls it, blocking the app's synchronous
+   better-sqlite3 calls without actually dying.
+
+**Correction to the "no auto-recovery" infra-gap finding above**: auto-recovery DOES exist and
+DOES work correctly for outright process death (`restart: unless-stopped` is doing its job for
+failure mode 1). The gap is narrower than originally stated — it applies specifically to
+failure mode 2 (alive-but-unresponsive), not to crashes in general.
+
+**Deliberately NOT attempting a fix to litestream's replica/generation state tonight** — this is
+backup-replication state; a wrong manual edit risks corrupting backup continuity, which is a
+hard-to-reverse mistake far worse than the current (still-functioning, per replica-sync evidence)
+situation. This needs either a litestream upgrade past whatever version fixed this retry-leak (if
+it's a known upstream bug — worth checking litestream's GitHub issues for 0.5.12 memory leak
+reports) or a deliberate, researched reset of the stuck local snapshot/generation, done by someone
+with time to verify backup integrity before and after, not as an overnight reactive fix.
+
+**Revised daylight priority order:**
+1. Check litestream's GitHub issues/changelog for a known memory-leak-on-failed-compaction-retry
+   bug around 0.5.12; upgrade if a fix exists (verify carefully — 0.5.14 was previously rolled
+   back for an unrelated tcp_mem exhaustion bug, so re-test thoroughly before trusting a newer
+   version in this environment).
+2. If no known upstream fix: research how to safely reset litestream's stuck replica
+   generation/snapshot for this specific database without a restore (a full restore risks data
+   loss if done carelessly) — likely `litestream generations`/`litestream snapshot` inspection
+   first, understand what's actually corrupted before touching anything.
+3. Consider raising the container's memory limit as a stopgap (delays time-to-OOM, does not fix
+   the leak) if (1) and (2) both need more research time and the shrinking-interval trend
+   continues to worsen.
+4. The auto-restart-on-unhealthy watchdog recommendation (failure mode 2) remains valid and
+   worth doing regardless of the above, since it addresses a genuinely distinct gap.
