@@ -535,3 +535,64 @@ both turned out to be point-in-time snapshots that a subsequent check immediatel
 The only claim that has held up under repeated re-verification: site-serving health itself has
 stayed good throughout, because the crash-and-auto-recover path works. The leak itself has never
 stopped.
+
+## Root cause CONFIRMED (2026-08-11 ~4:30am CT) — stuck B2 compaction anchor at txid `2324d`, growing multipart upload per retry
+
+The prior sections hypothesized "a stuck B2 compaction-anchor retry loop" from circumstantial
+timing evidence only. Direct log evidence from the container that landed the Correction #2 note
+above (started 09:17:36 UTC, i.e. the normal post-merge redeploy, not an OOM restart) confirms
+it precisely:
+
+```
+09:20:00Z ERROR compaction failed ... upload to trading-live/app.db/0001/000000000002324d-000000000002af9d.ltx ... file checksum mismatch
+09:21:46Z ERROR compaction failed ... upload to trading-live/app.db/0001/000000000002324d-000000000002afdb.ltx ... file checksum mismatch
+09:23:34Z ERROR compaction failed ... upload to trading-live/app.db/0001/000000000002324d-000000000002affa.ltx ... file checksum mismatch
+09:25:37Z ERROR compaction failed ... upload to trading-live/app.db/0001/000000000002324d-000000000002b001.ltx ... file checksum mismatch
+```
+
+The **starting txid is pinned at `000000000002324d`** across every retry while the **ending
+txid keeps advancing** (`af9d` → `afdb` → `affa` → `b001`) roughly every 100-115s. This is the
+stuck-anchor mechanism exactly as hypothesized: litestream's level-1 compactor cannot advance
+past `2324d` (the B2 multipart upload's final `close` step fails a checksum check every time),
+so it retries the *entire accumulated range since that anchor* on each attempt — and because the
+anchor never moves, that range grows every cycle, making each retry's multipart buffer bigger
+than the last. This explains both open questions from earlier tonight: why memory keeps climbing
+at all (unbounded retry of a growing range) and why peak severity climbs kill-over-kill (each
+kill starts a fresh process, but the anchor `2324d` persists in the replica state, so the new
+process picks up the same stuck point immediately rather than starting clean).
+
+`docker top` on that same container, 8 minutes after start: `litestream replicate` RSS
+**4.28GB** of a 4.78GB container total (the `next-server` child was only 313MB) — confirming
+litestream itself, not the app, is what's consuming memory, and confirming it happens within
+single-digit minutes of a cold start now, not hours. However, memory is **not monotonic
+minute-to-minute** — a follow-up reading 70s later showed total container memory at 3.658GB
+(down from 4.78GB), consistent with a sawtooth pattern (each failed multipart attempt's buffer
+is at least partially reclaimed before the next retry allocates a new, larger one) rather than a
+smooth ramp. Don't over-read a single high sample as "about to OOM imminently" — but don't read a
+single lower sample as "recovering" either; judge this by the peak-per-kill trend across
+`journalctl`, not by spot-checking `docker stats`.
+
+**No existing kill-switch applies here.** `scripts/coolify-prod-start.sh`'s only replication
+kill-switch (`R2_USAGE_DISABLE_MARKER`, exit code 41) is explicitly scoped to Cloudflare R2
+free-tier quota protection and deliberately *ignores itself* when the configured replica
+endpoint is Backblaze B2 (see the script's own comment: "once `AWS_S3_ENDPOINT` is Backblaze B2
+... ignore the marker so B2/other backup continues"), which is the case here. There is currently
+no generic "disable litestream replication" flag wired into the boot script at all — grepped for
+`LITESTREAM_ENABLED`/`SKIP_LITESTREAM`/similar, none exist. Stopping this reactively would
+require either a code change (add a generic disable flag) or a manual on-box intervention
+(stop/rename the litestream binary invocation), not a config toggle. Deliberately NOT doing
+either unilaterally tonight — this is exactly the class of decision the priority order above
+reserves for daylight investigation, and the site itself remains healthy throughout via the
+existing crash-and-recover path.
+
+**Next steps this unlocks for daylight investigation** (updates the priority order above, does
+not replace it): (1) inspect the B2 bucket `trading-live/app.db/0001/` directly for the LTX file
+at generation matching `2324d` — the checksum mismatch is on litestream's own upload integrity
+check, which usually means either a partial/corrupted prior object at that key blocking a clean
+overwrite, or a genuine data race between two litestream processes (a killed-and-restarted one
+briefly overlapping its predecessor) writing the same key; (2) check whether manually deleting or
+resetting the specific stuck generation via `litestream generations`/`litestream snapshots` (or,
+if unavoidable, a controlled `-no-expand-env restore` to a fresh generation) clears the anchor
+without a full backup discontinuity; (3) only after that's tried, consider adding a proper
+generic litestream-disable boot flag as a safety valve for next time, independent of the
+B2-specific fix.
