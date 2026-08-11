@@ -195,7 +195,7 @@ struct LoginView: View {
 
     private var privacyNote: some View {
         Label(
-            "The app stores only your Socratic Trade session. Broker and provider secrets stay on the backend.",
+            "The app stores only your Socratic Trade session.  Broker and provider secrets stay on the backend.",
             systemImage: "lock.fill"
         )
         .font(.caption)
@@ -228,7 +228,7 @@ struct LoginView: View {
             let tokenData = credential.identityToken,
             let identityToken = String(data: tokenData, encoding: .utf8)
         else {
-            store.error = "Apple did not return an identity token. Try again."
+            store.error = "Apple did not return an identity token.  Try again."
             return
         }
 
@@ -246,7 +246,7 @@ struct LoginView: View {
     private func beginWebAuth(provider: String) {
         store.dismissError()
         guard let verifier = WebAuthCodeVerifier.make() else {
-            store.error = "Could not securely start web sign-in. Try again."
+            store.error = "Could not securely start web sign-in.  Try again."
             return
         }
         guard var callbackComponents = URLComponents(string: "https://socratictrade.com/api/mobile/auth-redirect") else {

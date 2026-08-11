@@ -129,7 +129,7 @@ private struct InsightsBriefCard: View {
         let equity = AppFormat.money(snapshot.portfolio?.totalMarketValue)
         let n = snapshot.pendingProposals.count
         let pending = "\(n) pending proposal\(n == 1 ? "" : "s")"
-        return "\(account) is \(state) with \(equity) in equity, \(snapshot.positions.count) open position\(snapshot.positions.count == 1 ? "" : "s"), and \(pending). Session: \(AppFormat.marketSessionBannerLabel(snapshot.marketSession))."
+        return "\(account) is \(state) with \(equity) in equity, \(snapshot.positions.count) open position\(snapshot.positions.count == 1 ? "" : "s"), and \(pending).  Session: \(AppFormat.marketSessionBannerLabel(snapshot.marketSession))."
     }
 }
 
@@ -213,7 +213,7 @@ private struct InsightsAuthorityCard: View {
                 Label("Backend Remains Authoritative", systemImage: "lock.shield.fill")
                     .font(.headline)
                     .foregroundStyle(AppPalette.accent)
-                Text("This tab summarizes server-returned facts. Broker credentials, provider keys, policy checks, proposal validation, and order placement never move onto the phone.")
+                Text("This tab summarizes server-returned facts.  Broker credentials, provider keys, policy checks, proposal validation, and order placement never move onto the phone.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
