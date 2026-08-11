@@ -119,7 +119,7 @@ function money(value: unknown): string {
 
 function shortTime(value?: string | null): string {
   if (!value) return "-";
-  return new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(value).toLocaleTimeString([], { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
 }
 
 function statusTone(status: CommandStatus): string {

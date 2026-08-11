@@ -532,7 +532,7 @@ export default function OperatorDashboard() {
                       <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-xs)]">
                         <span className="text-[color:var(--con-muted)]">Free tier · checked</span>
                         <span className="con-mono text-[color:var(--con-faint)]">
-                          {new Date(snap.checkedAt).toLocaleString()}
+                          {new Date(snap.checkedAt).toLocaleString(undefined, { timeZone: "America/Chicago" })}
                         </span>
                       </div>
                     </div>
@@ -569,7 +569,7 @@ export default function OperatorDashboard() {
                       {t.model ?? "Unknown Model"}
                     </Chip>
                     <span className="con-mono text-[color:var(--con-faint)]">
-                      {new Date(t.createdAt).toLocaleString()}
+                      {new Date(t.createdAt).toLocaleString(undefined, { timeZone: "America/Chicago" })}
                     </span>
                   </div>
                   {/* The turn text is markdown SOURCE. Interpolating it as a text node made

@@ -93,7 +93,7 @@ export function TranscriptClient() {
                 )}
                 {t.intent && <span className="text-[color:var(--con-muted)]">· {t.intent}</span>}
                 {t.redacted && <span className="text-[color:var(--con-neg)]">· redacted</span>}
-                <span className="ml-auto text-[color:var(--con-faint)]">{new Date(t.createdAt).toLocaleString()}</span>
+                <span className="ml-auto text-[color:var(--con-faint)]">{new Date(t.createdAt).toLocaleString(undefined, { timeZone: "America/Chicago" })}</span>
               </div>
               {long.collapse ? (
                 <details className="con-disclosure">

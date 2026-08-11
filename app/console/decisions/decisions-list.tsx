@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { SocraticDecisionCase } from "@/lib/types";
-import { timeAgo } from "../lib/format";
+import { fmtExact, timeAgo } from "../lib/format";
 import { decisionStatusLabel, thesisTagLabel } from "../lib/labels";
 import { Card, Chip, Empty } from "../ui/primitives";
 
@@ -50,7 +50,7 @@ export function DecisionsList({ decisions }: { decisions: SocraticDecisionCase[]
                 <Chip tone={statusTone(decision.status)}>{decisionStatusLabel(decision.status)}</Chip>
                 <span
                   className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                  title={new Date(decision.createdAt).toLocaleString()}
+                  title={fmtExact(decision.createdAt)}
                 >
                   {timeAgo(decision.createdAt)}
                 </span>

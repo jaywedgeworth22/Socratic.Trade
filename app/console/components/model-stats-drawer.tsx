@@ -269,7 +269,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
             <>
               Cost and latency per call for every model in this picker. Figures marked <strong>live</strong> come from your own
               recent calls in this role{data ? ` (last ${data.sinceDays} days)` : ""}; models without enough live traffic fall
-              back to a standardized offline <strong>benchmark</strong> run{data ? ` (most recently updated ${new Date(data.benchmark.runAt).toLocaleDateString()})` : ""}.
+              back to a standardized offline <strong>benchmark</strong> run{data ? ` (most recently updated ${new Date(data.benchmark.runAt).toLocaleDateString(undefined, { timeZone: "America/Chicago" })})` : ""}.
             </>
           )}
         </p>

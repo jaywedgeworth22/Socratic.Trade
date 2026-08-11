@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, BookOpen, Brain, Database, GitBranch, MessageSquare, Swords, TrendingUp } from "lucide-react";
 import type { SocraticDecisionCase, SocraticDecisionTrace, SocraticEvidenceItem, SocraticFrameworkProposal, SocraticRagAttribution, StrategyRunRow } from "@/lib/types";
-import { fmtMoney, fmtPct, timeAgo, EM_DASH } from "../../lib/format";
+import { fmtExact, fmtMoney, fmtPct, timeAgo, EM_DASH } from "../../lib/format";
 import { authorityLabel, decisionStatusLabel, evidenceKindLabel, feedStatusLabel, frameworkStatusLabel, plainLabel, thesisTagLabel } from "../../lib/labels";
 import { dissentItemsForDisplay } from "../../lib/dissent";
 import { CONSOLE_PAGE_WIDTH } from "../../lib/page-width";
@@ -173,7 +173,7 @@ export default function DecisionTracePage() {
             {authorityLabel(decision.authority).label}
           </Chip>
           {decision.updatedAt && (
-            <Chip tone="muted" title={new Date(decision.updatedAt).toLocaleString()}>
+            <Chip tone="muted" title={fmtExact(decision.updatedAt)}>
               updated {timeAgo(decision.updatedAt)}
             </Chip>
           )}

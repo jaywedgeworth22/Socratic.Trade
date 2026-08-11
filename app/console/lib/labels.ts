@@ -122,3 +122,19 @@ export function authorityLabel(authority?: string | null): { label: string; titl
   if (authority && authority in AUTHORITY_LABELS) return AUTHORITY_LABELS[authority as StrategyAuthority];
   return { label: plainLabel(authority ?? undefined), title: "" };
 }
+
+// ── Login provider (Auth.js provider ids: "google", "github", "apple") ──────
+// plainLabel's defensive Title-Case would render "github" as "Github" — wrong,
+// GitHub's brand casing has an inner capital. Explicit map for the providers
+// this app actually wires up (src/lib/auth/auth.ts); falls back to plainLabel
+// for anything unrecognized so a raw provider id never reaches the user.
+const LOGIN_PROVIDER_LABELS: Record<string, string> = {
+  google: "Google",
+  github: "GitHub",
+  apple: "Apple"
+};
+
+export function loginProviderLabel(raw?: string | null): string {
+  if (!raw) return "";
+  return LOGIN_PROVIDER_LABELS[raw.toLowerCase()] ?? plainLabel(raw);
+}

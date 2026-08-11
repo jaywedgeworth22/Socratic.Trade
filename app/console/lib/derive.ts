@@ -23,6 +23,7 @@ import { isRunAllowedNow, nextMarketOpenHint, previousTradingDayStart } from "@/
 // imported by every "use client" console component, so the whole server graph followed it into
 // the browser bundle. @/lib/cash-flows is the dependency-free extraction of the same function.
 import { inferExternalCashFlows, isInferredFlowUnverified } from "@/lib/cash-flows";
+import { dayKey, startOfCentralDay } from "./format";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
 
@@ -398,7 +399,7 @@ export function deriveDayPnl(
   if (!performance || typeof currentEquity !== "number" || !Number.isFinite(currentEquity)) return null;
   const curve = mode === "broker/live" ? performance.liveEquityCurve : performance.paperEquityCurve;
   if (!curve || curve.length === 0) return null;
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const todayStart = startOfCentralDay(now).getTime();
   let baseline: EquityCurvePoint | undefined;
   for (const point of curve) {
     const t = new Date(point.timestamp).getTime();
@@ -428,8 +429,7 @@ export function deriveDayPnl(
   const pctBase = baseline.equity + flow;
   const pct = pctBase > 0 ? (pnl / pctBase) * 100 : 0;
 
-  const baselineDay = new Date(baseline.timestamp);
-  const baselineDayStart = new Date(baselineDay.getFullYear(), baselineDay.getMonth(), baselineDay.getDate()).getTime();
+  const baselineDayStart = startOfCentralDay(new Date(baseline.timestamp)).getTime();
   const priorSessionStart = previousTradingDayStart(now).getTime();
   const isStaleBaseline = Number.isFinite(baselineDayStart) && baselineDayStart < priorSessionStart;
   return {
@@ -911,14 +911,7 @@ export function deriveRiskUtilization(snapshot: DashboardSnapshot): RiskUtilizat
 
 export function selectEquityWindow(points: EquityCurvePoint[], now = new Date()): { points: EquityCurvePoint[]; label: string } {
   if (points.length < 2) return { points, label: "Equity" };
-  const sameDay = (iso: string) => {
-    const date = new Date(iso);
-    return (
-      date.getFullYear() === now.getFullYear() &&
-      date.getMonth() === now.getMonth() &&
-      date.getDate() === now.getDate()
-    );
-  };
+  const sameDay = (iso: string) => dayKey(iso) === dayKey(now.toISOString());
   const intraday = points.filter((point) => sameDay(point.timestamp));
   if (intraday.length >= 2) return { points: intraday, label: "Intraday mark-to-market" };
   return { points: points.slice(-24), label: "Recent equity" };
