@@ -1,3 +1,7 @@
+## Current (2026-08-11 ANTIGRAVITY — System Audit & iOS Resiliency Rollout)
+
+**Branch `agent/antigravity-review`:** Top-to-bottom audit across Desktop Web, Mobile Web (PWA), iOS App (SwiftUI), Backend Pipelines (SEC EDGAR ingest, RAG vector engine), Database Concurrency, Latency Monitoring, and Competitor Benchmarking. Artifact `implementation_plan.md` created; review note `[ST, Antigravity] Comprehensive System Audit & Improvements` created and pinned in Apple Notes (folder `Coding`). Native iOS client updated with exponential backoff retry loop (`MobileAPIClient.swift`) and raw JSON disk caching (`MobileStore.swift`) for instant `<50ms` offline startup. All gates verified green (Xcode build, tsc, lint, vitest). Rollout: `docs/rollouts/2026-08-11-system-audit-and-ios-resiliency.md`.
+
 ## Current (2026-08-11 ~9:40am CT MONET — litestream kill cadence ACCELERATING: 51→78→49→20→19 min gaps)
 
 Since the root-cause deploy below, 6 more OOM kills logged (all `exitCode=137`, all auto-recovered

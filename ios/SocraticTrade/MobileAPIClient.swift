@@ -50,7 +50,19 @@ struct MobileAPIClient {
     var session: URLSession = .shared
 
     func snapshot() async throws -> MobileSnapshot {
-        try await get("/api/mobile/snapshot")
+        let (snap, _) = try await snapshotData()
+        return snap
+    }
+
+    func snapshotData() async throws -> (MobileSnapshot, Data) {
+        let req = request(path: "/api/mobile/snapshot")
+        let data = try await successfulResponseData(for: req)
+        do {
+            let snap = try JSONDecoder().decode(MobileSnapshot.self, from: data)
+            return (snap, data)
+        } catch {
+            throw MobileAPIError.decoding(error)
+        }
     }
 
     func submit(
@@ -196,8 +208,23 @@ struct MobileAPIClient {
         return request
     }
 
-    private func get<T: Decodable>(_ path: String) async throws -> T {
-        try await send(request(path: path))
+    private func get<T: Decodable>(_ path: String, retries: Int = 2) async throws -> T {
+        var attempt = 0
+        while true {
+            do {
+                return try await send(request(path: path))
+            } catch let error as MobileAPIError {
+                if case .network = error, attempt < retries {
+                    attempt += 1
+                    let delayMs = UInt64(150_000_000 * (1 << attempt)) // 300ms, 600ms backoff
+                    try await Task.sleep(nanoseconds: delayMs)
+                    continue
+                }
+                throw error
+            } catch {
+                throw error
+            }
+        }
     }
 
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {

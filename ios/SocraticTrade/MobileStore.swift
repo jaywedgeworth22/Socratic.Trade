@@ -128,12 +128,24 @@ final class MobileStore: ObservableObject {
     private var loadGeneration = 0
     private var commandAttemptTracker = CommandAttemptTracker()
 
+    private static let cacheKey = "cached_mobile_snapshot_data"
+
+    private static func loadCachedSnapshot() -> MobileSnapshot? {
+        guard let data = UserDefaults.standard.data(forKey: cacheKey) else { return nil }
+        return try? JSONDecoder().decode(MobileSnapshot.self, from: data)
+    }
+
+    private static func saveCachedSnapshot(_ data: Data) {
+        UserDefaults.standard.set(data, forKey: cacheKey)
+    }
+
     init(client: MobileAPIClient, previewSnapshot: MobileSnapshot? = nil) {
         self.client = client
-        snapshot = previewSnapshot
-        isAuthenticated = previewSnapshot != nil
+        let cached = previewSnapshot ?? Self.loadCachedSnapshot()
+        snapshot = cached
+        isAuthenticated = cached != nil
         hasInitialized = previewSnapshot != nil
-        lastUpdatedAt = previewSnapshot == nil ? nil : Date()
+        lastUpdatedAt = cached == nil ? nil : Date()
     }
 
     var isInitialLoading: Bool {
@@ -220,9 +232,10 @@ final class MobileStore: ObservableObject {
             }
         }
         do {
-            let loadedSnapshot = try await client.snapshot()
+            let (loadedSnapshot, rawData) = try await client.snapshotData()
             guard generation == loadGeneration else { return }
             snapshot = loadedSnapshot
+            Self.saveCachedSnapshot(rawData)
             lastUpdatedAt = Date()
             snapshotLoadFailed = false
             isAuthenticated = true
