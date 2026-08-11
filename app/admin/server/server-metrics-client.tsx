@@ -247,7 +247,7 @@ export function ServerMetricsClient() {
     : undefined;
   const asOf = data?.asOf ? new Date(data.asOf) : undefined;
   const hasValidAsOf = asOf && Number.isFinite(asOf.getTime());
-  const formattedAsOf = hasValidAsOf ? asOf.toLocaleString() : "Unavailable";
+  const formattedAsOf = hasValidAsOf ? asOf.toLocaleString(undefined, { timeZone: "America/Chicago" }) : "Unavailable";
 
   // CPU average of last 3 points
   const latestCpuValues = metrics?.cpu?.slice(-3).map(p => p.value) || [];

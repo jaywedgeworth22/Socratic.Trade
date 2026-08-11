@@ -21,6 +21,7 @@ import type { NotificationEventType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPE_LABELS } from "@/lib/dashboard-ui";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
+import { loginProviderLabel } from "../lib/labels";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useAutoSave } from "../lib/useAutoSave";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -55,7 +56,7 @@ const SETTINGS_TOC: ReadonlyArray<{ id: string; label: string }> = [
   { id: "data-sources", label: "Data sources" },
   { id: "confirmation", label: "Confirmation" },
   { id: "boot", label: "Boot" },
-  { id: "you", label: "You" },
+  { id: "you", label: "Account" },
   { id: "appearance", label: "Display" },
   { id: "glossary", label: "Glossary" },
   { id: "danger", label: "Danger" }
@@ -660,7 +661,7 @@ function YouCard() {
   if (!snapshot?.currentUser) return null;
   const user = snapshot.currentUser;
   return (
-    <Card title="You">
+    <Card title="Account">
       <div className="flex flex-wrap items-center gap-2 text-[length:var(--con-fs-sm)]">
         <span className="font-semibold" title="The signed-in user every ALL YOUR ACCOUNTS setting belongs to.">
           {user.name ?? user.email ?? user.userId}
@@ -668,12 +669,12 @@ function YouCard() {
         {user.email && user.name && <span className="text-[color:var(--con-faint)]">{user.email}</span>}
         {user.isAdmin && (
           <Chip tone="accent" title="This login has operator/admin rights on the server.">
-            admin
+            ADMIN
           </Chip>
         )}
         {user.loginProvider && (
           <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title="Which identity provider authenticated this session.">
-            via {user.loginProvider}
+            via {loginProviderLabel(user.loginProvider)}
           </span>
         )}
       </div>

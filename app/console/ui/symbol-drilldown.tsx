@@ -445,7 +445,7 @@ export function SymbolDrilldownSheet({
             title="When this symbol's quote data was captured. The chart above refreshes independently from free daily history."
           >
             Quote data from {usingOverride ? "the scan currently on screen" : scanView ? "the last market scan" : "a live on-demand fetch"} (
-            {new Date(view.asOf).toLocaleString()}).
+            {new Date(view.asOf).toLocaleString(undefined, { timeZone: "America/Chicago" })}).
           </p>
         )}
     </div>

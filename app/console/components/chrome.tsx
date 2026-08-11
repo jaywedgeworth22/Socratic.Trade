@@ -32,6 +32,7 @@ import {
   stopEverything
 } from "../lib/api";
 import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact } from "../lib/format";
+import { loginProviderLabel } from "../lib/labels";
 import type { ConsoleStreamHealth } from "../lib/useConsoleData";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useDirtyActionGuard, useNextUnloadBypass } from "../lib/useDirtyGuard";
@@ -880,7 +881,7 @@ export function UserMenu({
                   <div className="truncate font-semibold">{who}</div>
                   {user.email && user.name && <div className="truncate text-[color:var(--con-muted)]">{user.email}</div>}
                   <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                    {user.loginProvider ? `Signed in via ${user.loginProvider}` : "Signed in"}
+                    {user.loginProvider ? `Signed in via ${loginProviderLabel(user.loginProvider)}` : "Signed in"}
                     {user.isAdmin ? " · operator/admin rights" : ""}
                   </div>
                 </div>
