@@ -5,6 +5,29 @@ Branch `grok/default-light-theme`: light is product default (web + iOS). Dark on
 ## Prior
 
 ## Current (2026-08-10 GROK — iOS invalid SF Symbol)
+## Current (2026-08-11 MONET — server-metrics panel repair + canonical Oracle→Hetzner doc correction)
+
+**No branch (config + docs, direct on `main` — repo-side changes on `monet/*`, see below):**
+ST's admin server-stats panel was fully broken (`degraded: true, stale: true`, Coolify 401 +
+Hetzner 404×2) because `AGENTS.md`/`CLAUDE.md` — and therefore this session's own initial
+answer to the owner — had never caught up with the 2026-08-07 emergency cutover off Oracle Cloud
+(Oracle suspended the account without reason, `docs/rollouts/2026-08-06-ios-login-522-oracle-down.md`)
+to a brand-new Hetzner box (`docs/rollouts/2026-08-07-hetzner-fleet-cutover.md`). Three stale
+values found and corrected: `HETZNER_SERVER_ID` (wrong box) and `COOLIFY_SERVER_UUID` (wrong
+UUID) in ST's Infisical, plus a dead 401 `COOLIFY_SERVER_STATS` token in BOTH ST's Infisical and
+the `~/.secrets/global-api-keys.env` handoff file (fixed from the box's own dedicated, working,
+read-only-scoped token at `/root/.coolify-api-token-stats` — deliberately did NOT substitute the
+broader `COOLIFY_AGENTS` token, preserving the read-only/admin scope separation). Panel verified
+fully live post-fix: `degraded: false, stale: false, cacheAgeSeconds: 0`, real resources
+(`socratic-app`, `congress-trade`, `usage-monitor`). `AGENTS.md`'s hosting section rewritten to
+lead with the real current host: `167.233.254.55` / `fleet-hetzner-nbg1` / Hetzner `cx43` (8 vCPU
+AMD EPYC-Rome, 16 GB RAM, 160 GB NVMe) / Coolify server UUID `jxzqcs3h6g1wiipnnblhismp` / Hetzner
+hardware serial `159792099`. UM's own panel not independently re-verified (no admin credential
+available this session) — UM's hardcoded fallback defaults already match the correct live
+values, so it should work unless UM's own Infisical has a stale explicit override. Rollout:
+`docs/rollouts/2026-08-11-server-metrics-panel-hetzner-config-repair.md`.
+
+## Prior (2026-08-10 GROK — iOS invalid SF Symbol)
 
 **Branch `grok/ios-bell-badge-symbol`:** Assets toolbar used nonexistent SF Symbol
 `bell.badge.plus` (console: `No symbol named 'bell.badge.plus' found in system
