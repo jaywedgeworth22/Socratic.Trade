@@ -1,3 +1,15 @@
+## Current (2026-08-11 ~4:30am CT MONET — litestream leak root cause CONFIRMED, not yet fixed)
+
+The all-night litestream OOM-leak (open since 2026-08-09) has a confirmed root cause now, not
+just a hypothesis: litestream's B2 replica is stuck compacting from txid `2324d` — every retry's
+multipart upload fails with `file checksum mismatch` on close (~every 100s), the anchor never
+advances, so each retry re-uploads a larger accumulated range, which is why memory climbs and why
+peak-per-kill severity keeps growing (2.05→4.82GB across 9 kills so far). No existing kill-switch
+applies (the only one is R2-specific and explicitly no-ops on B2). Site serving health remains
+unaffected throughout (Docker `restart: unless-stopped` recovers every crash in seconds) — this
+is not an outage, but the leak itself remains open. Full evidence + next steps for daylight fix:
+`docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md` (root-cause section, bottom).
+
 ## Current (2026-08-10 GROK — default light theme)
 
 Branch `grok/default-light-theme`: light is product default (web + iOS). Dark only via explicit choice. Rollout: `docs/rollouts/2026-08-10-default-light-theme.md`.
