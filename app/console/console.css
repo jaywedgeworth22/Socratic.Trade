@@ -7,8 +7,10 @@
      Components never hardcode raw hex — they reference the semantic console tokens.
    - Light is the base set; dark overrides it. Resolution order:
        1. explicit choice via [data-theme="light"|"dark"] on .console-root
-          (persisted in localStorage under a console-scoped key), else
-       2. prefers-color-scheme.
+          (persisted in localStorage under a console-scoped key; default light
+          per owner 2026-08-10 — never invent dark from OS on first visit),
+       2. when unset (user chose System only): prefers-color-scheme,
+       3. otherwise stay on the light base tokens.
      The dark token block therefore appears twice (explicit + media query) —
      KEEP THE TWO BLOCKS IDENTICAL.
    - Soft fills and borders are derived from the base palette with color-mix,

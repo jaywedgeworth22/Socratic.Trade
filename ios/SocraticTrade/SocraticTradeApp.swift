@@ -10,6 +10,9 @@ struct SocraticTradeApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(store)
+                // Owner 2026-08-10: light is the product default (no theme
+                // picker on this app yet — do not follow OS dark by default).
+                .preferredColorScheme(.light)
         }
     }
 }

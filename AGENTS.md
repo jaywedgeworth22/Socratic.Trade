@@ -637,6 +637,10 @@ Fleet driver + all three apps (Socratic / Congress / Usage Monitor):
 `CC8UTF7ATG`. Upload needs App Store Connect app record + either Xcode session
 or `~/.secrets/appstore-connect.env` (never print secrets).
 
+## Theme default = light (owner 2026-08-10)
+
+Default product theme is **light** for all fleet apps. Do not ship dark-first or system defaults that land on dark. See `/Users/jay/apps/FLEET-UI-COPY.md` and `/Users/jay/apps/AGENT-SYNC.md`.
+
 ## Fleet UI copy
 
 Owner copy rules (Title Case headings/buttons; sentence-case values; lowercase compact money; always-inline iOS nav titles; ticker logos): `docs/FLEET-UI-COPY.md` (canonical live board: `/Users/jay/apps/FLEET-UI-COPY.md`).
@@ -654,4 +658,12 @@ refresh on every change). Helper auto-injects/refreshes it.
 **Always** write/update living Completion notes for substantial work; update in place.
 Folder **Coding**, pin when able. Helper: `/Users/jay/apps/apple-notes-coding.sh`
 (`--update`). Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Apple Notes.
+
+## Two spaces between sentences (owner — ALL contexts)
+
+Two spaces after sentence terminators in **all** human-readable prose for every
+agent: web, PWA, iOS UI, **App Store Connect listing fields** (description,
+promotional text, What's New, review notes), push/email, help, privacy, owner
+Notes. HTML must preserve the gap (NBSP+space / SENTENCE_GAP). Canonical:
+`/Users/jay/apps/FLEET-UI-COPY.md`.
 

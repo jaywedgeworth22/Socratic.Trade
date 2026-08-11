@@ -9,8 +9,13 @@ const ThemeContext = createContext<{ theme: Theme; toggle: () => void; set: (t: 
   set: () => {}
 });
 
-/** Inline script (run before paint) that applies the saved/system theme to <html> to avoid a flash. */
-export const themeInitScript = `(function(){try{var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.classList.toggle('dark',t==='dark');document.documentElement.dataset.theme=t;}catch(e){document.documentElement.classList.remove('dark');}})();`;
+/**
+ * Inline script (run before paint) that applies the saved theme to <html> to
+ * avoid a flash. Owner ruling 2026-08-10: default is LIGHT — never invent
+ * dark from prefers-color-scheme when the user has not chosen a theme.
+ * Only explicit localStorage "dark" (or a future explicit system path) goes dark.
+ */
+export const themeInitScript = `(function(){try{var t=localStorage.getItem('theme');if(t!=='dark'&&t!=='light'){t='light';}document.documentElement.classList.toggle('dark',t==='dark');document.documentElement.dataset.theme=t;}catch(e){document.documentElement.classList.remove('dark');document.documentElement.dataset.theme='light';}})();`;
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("light");
