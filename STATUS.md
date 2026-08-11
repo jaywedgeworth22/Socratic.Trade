@@ -1,3 +1,13 @@
+## Current (2026-08-11 GROK — OpenRouter management-key credit monitor landing)
+
+**Branch `grok/openrouter-mgmt-credit-monitor`:** redesign `/api/health` `openrouterCredits` to
+prefer `OPENROUTER_MANAGEMENT_KEY` / `OPENROUTER_ADMIN_KEY`, read account prepaid via `/credits`
+and every key's `limit_remaining` via `/keys`, set `ok=false` on account_low | key_limit_reached |
+key_limit_low. Fail-open on read errors; UptimeRobot keyword unchanged
+(`"openrouterCredits":{"ok":false`). Infisical already has `OPENROUTER_ADMIN_KEY` (len=73).
+Focused tests green (14/14). Rollout:
+`docs/rollouts/2026-08-10-openrouter-mgmt-credit-monitor.md`.
+
 ## Current (2026-08-11 ~9:40am CT MONET — litestream kill cadence ACCELERATING: 51→78→49→20→19 min gaps)
 
 Since the root-cause deploy below, 6 more OOM kills logged (all `exitCode=137`, all auto-recovered
