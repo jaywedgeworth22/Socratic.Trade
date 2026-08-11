@@ -464,3 +464,29 @@ with time to verify backup integrity before and after, not as an overnight react
    continues to worsen.
 4. The auto-restart-on-unhealthy watchdog recommendation (failure mode 2) remains valid and
    worth doing regardless of the above, since it addresses a genuinely distinct gap.
+
+## Peer-agent stabilization applied (2026-08-10 ~5:53pm CT, GROK)
+
+GROK independently found the same litestream OOM-kill signature (dmesg exit-137 evidence,
+`RestartCount=4` match) while doing fleet ops work and applied a stabilization: raised the
+container's memory limit from 4GB to **6GB** and pruned old backups (disk 80% -> 44%/48%).
+Verified live: `docker inspect` shows `memlimit=6442450944` (exactly 6GB) and `RestartCount=0`
+(container was recreated with the new limit, not merely restarted — this was very likely a
+Coolify-level config change + redeploy, not a bare `docker restart`).
+
+Shared my mechanism hypothesis (the stuck compaction-anchor retry-leak theory) with GROK via
+Slack before they closed out, flagging that a restart/limit-raise treats the SYMPTOM (delays
+time-to-OOM) rather than the underlying leak — worth checking litestream's generation/snapshot
+state for the specific stuck txid (`2324d`) separately if the leak continues at the new,
+higher ceiling. This is a legitimate and valuable interim mitigation regardless: it durably
+buys significant runway (a 50% larger ceiling against a leak that took 20-55 min to fill 4GB)
+and directly addresses the failure-mode-1 (crash-and-recover) OOM cycle documented above. It does
+NOT address failure-mode-2 (hang-without-crash, the WAL-lock-contention finding) or the root
+leak itself — both remain open for the daylight investigation per the priority order above.
+
+**Updated state for next session:** memory ceiling 6GB (was 4GB), disk headroom restored,
+`RestartCount` reset to 0 (any future kills will show as a small count again, not the misleading
+cumulative-4 from tonight). Watch whether litestream's RSS still grows unbounded toward the new
+6GB ceiling over the coming hours — if it does, the leak is confirmed unfixed and will eventually
+recur (just less frequently); if RSS plateaus, that would be a surprising and useful data point
+suggesting the leak was somehow bounded by something other than pure accumulation.
