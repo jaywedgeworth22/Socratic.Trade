@@ -342,7 +342,7 @@ private struct AlertRow: View {
             Button("Delete Alert", role: .destructive, action: deleteAlert)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes a monitoring safeguard. You can create it again later.")
+            Text("This removes a monitoring safeguard.  You can create it again later.")
         }
     }
 
