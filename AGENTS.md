@@ -659,3 +659,11 @@ refresh on every change). Helper auto-injects/refreshes it.
 Folder **Coding**, pin when able. Helper: `/Users/jay/apps/apple-notes-coding.sh`
 (`--update`). Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Apple Notes.
 
+## Two spaces between sentences (owner — ALL contexts)
+
+Two spaces after sentence terminators in **all** human-readable prose for every
+agent: web, PWA, iOS UI, **App Store Connect listing fields** (description,
+promotional text, What's New, review notes), push/email, help, privacy, owner
+Notes. HTML must preserve the gap (NBSP+space / SENTENCE_GAP). Canonical:
+`/Users/jay/apps/FLEET-UI-COPY.md`.
+
