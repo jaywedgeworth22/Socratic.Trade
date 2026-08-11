@@ -1,3 +1,17 @@
+## Current (2026-08-11 MONET — iOS version regression fix)
+
+PR #2637 accidentally hardcoded `ios/SocraticTrade/Info.plist`'s `CFBundleShortVersionString`
+to the literal `"1.0"` and `CFBundleVersion` to `"1"`, replacing what used to be
+`$(MARKETING_VERSION)`/`$(CURRENT_PROJECT_VERSION)` build-variable substitution. This silently
+broke the owner's version regimen (App Store "Version" goes 1.0.0 -> 1.0.1 -> 1.0.2 per release,
+separate from the internal build number): bumping `MARKETING_VERSION` in the Xcode project would
+no longer have actually changed what ships. Restored both fields to variable-substitution form
+and set `MARKETING_VERSION`=1.0.1 / `CURRENT_PROJECT_VERSION`=2 in both `project.pbxproj`
+(Debug+Release) and `project.yml` — this is the first build after 1.0.0/1.0 already shipped to
+TestFlight. `preferredProjectObjectVersion`/`TARGETED_DEVICE_FAMILY` from #2637 left untouched
+(legitimate fixes, not part of this regression). Rollout:
+`docs/rollouts/2026-08-11-ios-version-regimen-fix.md`.
+
 ## Current (2026-08-11 ANTIGRAVITY — System Audit & iOS Resiliency Rollout)
 
 **Branch `agent/antigravity-review`:** Top-to-bottom audit across Desktop Web, Mobile Web (PWA), iOS App (SwiftUI), Backend Pipelines (SEC EDGAR ingest, RAG vector engine), Database Concurrency, Latency Monitoring, and Competitor Benchmarking. Artifact `implementation_plan.md` created; review note `[ST, Antigravity] Comprehensive System Audit & Improvements` created and pinned in Apple Notes (folder `Coding`). Native iOS client updated with exponential backoff retry loop (`MobileAPIClient.swift`) and raw JSON disk caching (`MobileStore.swift`) for instant `<50ms` offline startup. All gates verified green (Xcode build, tsc, lint, vitest). Rollout: `docs/rollouts/2026-08-11-system-audit-and-ios-resiliency.md`.
