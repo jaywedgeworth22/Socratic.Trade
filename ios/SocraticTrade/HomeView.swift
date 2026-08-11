@@ -354,7 +354,7 @@ private struct StrategyControlsCard: View {
                 SectionHeading(
                     "Agent Controls",
                     subtitle: heroOwnsRunOnce
-                        ? "Start scheduled autonomy or stop broker submissions. Run Once is the primary button above."
+                        ? "Start scheduled autonomy or stop broker submissions.  Run Once is the primary button above."
                         : "Every action is validated and executed by the backend."
                 )
 
@@ -383,7 +383,7 @@ private struct StrategyControlsCard: View {
                 }
                 .tint(AppPalette.negative)
 
-                Text("Stop immediately halts future broker submissions. A broker request already submitted before the halt may still complete; review existing orders under Assets.")
+                Text("Stop immediately halts future broker submissions.  A broker request already submitted before the halt may still complete; review existing orders under Assets.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -694,7 +694,7 @@ private struct AccountSettingsView: View {
                     ConnectedAccountSettingsRow(account: account)
                 }
             } else {
-                Text("No connected accounts. Connect one in Socratic.Trade, then return here to select it.")
+                Text("No connected accounts.  Connect one in Socratic.Trade, then return here to select it.")
                     .foregroundStyle(.secondary)
             }
         }
@@ -718,7 +718,7 @@ private struct AccountSettingsView: View {
                 dismiss()
             }
         } footer: {
-            Text("Signing out clears the app’s local Socratic.Trade session. Broker and provider credentials remain on the backend.")
+            Text("Signing out clears the app’s local Socratic.Trade session.  Broker and provider credentials remain on the backend.")
         }
     }
 
@@ -757,7 +757,7 @@ private struct AccountSettingsView: View {
         } header: {
             Text("Delete Account")
         } footer: {
-            Text("Reviewing is read-only and does not pause the agent. Final confirmation prepares and deletes this app account, its server-stored secrets, proposals, fills, watchlists, alerts, and learned context. Provider-side OAuth grants must be revoked separately.")
+            Text("Reviewing is read-only and does not pause the agent.  Final confirmation prepares and deletes this app account, its server-stored secrets, proposals, fills, watchlists, alerts, and learned context.  Provider-side OAuth grants must be revoked separately.")
         }
     }
 
@@ -827,7 +827,7 @@ private struct ConnectedAccountSettingsRow: View {
             Button("Use Account", role: .destructive, action: activate)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Switch execution context to \(account.label) (\(AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment))). Future approved actions will target this account after backend validation.")
+            Text("Switch execution context to \(account.label) (\(AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment))).  Future approved actions will target this account after backend validation.")
         }
     }
 

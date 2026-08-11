@@ -54,7 +54,7 @@ struct ProposalsView: View {
                 resetConfirmation()
             }
         } message: { proposal in
-            Text("Type exactly “\(expectedConfirmation(for: proposal))”. The backend revalidates the proposal and confirmation before placing anything.")
+            Text("Type exactly “\(expectedConfirmation(for: proposal))”.  The backend revalidates the proposal and confirmation before placing anything.")
         }
     }
 

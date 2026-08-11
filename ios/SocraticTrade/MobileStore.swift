@@ -428,11 +428,11 @@ final class MobileStore: ObservableObject {
             if isAuthenticated {
                 startEvents()
             } else if error == nil {
-                error = "Authentication failed after web sign-in. Try again."
+                error = "Authentication failed after web sign-in.  Try again."
             }
         } catch {
             applyAuthAwareError(error)
-            self.error = "Web sign-in could not be completed. Try again."
+            self.error = "Web sign-in could not be completed.  Try again."
         }
     }
 
@@ -519,7 +519,7 @@ final class MobileStore: ObservableObject {
            !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
             return "Connect an account and configure a symbol universe before running the agent."
         }
-        return "Refresh the latest server state before submitting this action. Stop remains available."
+        return "Refresh the latest server state before submitting this action.  Stop remains available."
     }
 
     private static let protectiveCommands: Set<String> = [
