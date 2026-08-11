@@ -368,10 +368,16 @@ private final class WebAuthContextProvider: NSObject, ASWebAuthenticationPresent
         }
         if let scene = scenes.first {
             // UIWindow.init() is deprecated in iOS 26 — always anchor to a window scene.
+            // Also covers iOS-on-Mac ("Designed for iPad") where the key window can lag.
             return scene.windows.first ?? UIWindow(windowScene: scene)
         }
-        // Running app should always have a scene; avoid deprecated UIWindow().
-        preconditionFailure("No UIWindowScene available for web auth presentation")
+        // Last resort: first connected window across any scene. Never force-crash login
+        // on Mac TF hosts where the scene graph can be briefly empty during launch.
+        if let anyWindow = scenes.flatMap(\.windows).first {
+            return anyWindow
+        }
+        // Absolute fallback for tools that still accept a detached window (should be rare).
+        return ASPresentationAnchor()
     }
 }
 

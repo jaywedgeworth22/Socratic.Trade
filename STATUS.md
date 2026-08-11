@@ -1,3 +1,16 @@
+## Current (2026-08-11 GROK — Mac TF launch RCA + stable Xcode ship pin + OpenRouter monitor)
+
+**Mac:** TestFlight iOS-on-Mac installs but never launches — system amfid/launchd
+`Authentication error` Code=80 / LS **-10671**. Same failure for ST, CT, UM TF apps
+on this host (macOS 27.0 `26A5353q`). Not app-code crash. Rollout:
+`docs/rollouts/2026-08-11-mac-testflight-launch-auth-error.md`.
+
+**Ships:** force `DEVELOPER_DIR=/Applications/Xcode.app` (never Xcode-beta) in
+`scripts/ios-ship-testflight.sh` + fleet `ios-fleet/ship-testflight.sh`.
+
+**Landing:** `grok/openrouter-mgmt-credit-monitor` — OpenRouter management-key
+credit monitor for `/api/health` + Mac RCA docs + small iOS hardening.
+
 ## Current (2026-08-11 GROK — OpenRouter management-key credit monitor landing)
 
 **Branch `grok/openrouter-mgmt-credit-monitor`:** redesign `/api/health` `openrouterCredits` to
