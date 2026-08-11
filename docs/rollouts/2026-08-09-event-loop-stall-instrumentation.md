@@ -508,3 +508,30 @@ stability — but 8 hours clean is not the same claim as "fixed"; the leak's und
 (hypothesized: the stuck B2 compaction-anchor retry loop) has not been confirmed resolved, only
 given enough headroom that it hasn't recurred yet in this window. Continue monitoring; do not
 treat this as closed.
+
+## Correction #2 (2026-08-11 ~4:05am CT) — leak resumed within minutes of the "8h clean" note; peak severity STILL growing
+
+The previous "8-hour clean stretch, real progress" note was accurate when written but stale
+almost immediately: a 9th litestream OOM kill occurred at **09:03:08 UTC**, RSS **4.82GB** — a
+new all-time peak (prior max was 3.16GB). This directly disproves the framing that the leak had
+stabilized; it is continuing, and its PEAK severity is still climbing even under the raised 6GB
+ceiling, not just recurring at the old rate with more headroom. At the current growth trajectory
+(2.05 → 2.54 → 2.79 → 2.73 → 3.14 → [gap] → 4.82 GB across kills), the ceiling-raise mitigation
+has a **finite remaining lifespan** — if peak RSS keeps growing, it will eventually exceed 6GB
+too and crash-looping will resume on a similar cadence to before, just delayed by however long
+this round bought.
+
+**Site health was unaffected by this kill** — `docker`'s `restart: unless-stopped` handled it
+within seconds (0.29s response immediately after), consistent with failure-mode-1 throughout the
+night. This is not an operational emergency right now. It IS confirmation that **the underlying
+leak remains completely unfixed** — raising the memory ceiling was correctly characterized
+earlier as delaying, not solving, and that characterization has now been proven correct by
+direct additional evidence rather than left as a hypothesis.
+
+**Do not report this as "resolved" or "stable" in any future summary without re-checking
+`journalctl` for kills in the intervening window first** — this session's own optimism outpaced
+the evidence twice in one night (the first "2 hours healthy" claim and the "8 hours clean" claim
+both turned out to be point-in-time snapshots that a subsequent check immediately falsified).
+The only claim that has held up under repeated re-verification: site-serving health itself has
+stayed good throughout, because the crash-and-auto-recover path works. The leak itself has never
+stopped.
