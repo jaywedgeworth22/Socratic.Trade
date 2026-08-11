@@ -1,3 +1,15 @@
+## Current (2026-08-11 ~9:40am CT MONET — litestream kill cadence ACCELERATING: 51→78→49→20→19 min gaps)
+
+Since the root-cause deploy below, 6 more OOM kills logged (all `exitCode=137`, all auto-recovered
+in ~1s, site health unaffected each time). The gap between kills has compressed from ~50-80 min
+down to ~19-20 min over the last 3 cycles — consistent with the confirmed root cause (the stuck B2
+compaction anchor persists in the replica's own state across restarts, so un-compacted WAL keeps
+growing across the whole incident, not per-container). **Escalation trigger set:** if the gap
+compresses under ~10 minutes, stop deferring to "daylight" and actively clear the stuck B2
+generation now (see next steps in the rollout note) regardless of local time. Full timeline +
+reasoning: `docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md` (escalation section,
+bottom).
+
 ## Current (2026-08-11 ~4:30am CT MONET — litestream leak root cause CONFIRMED, not yet fixed)
 
 The all-night litestream OOM-leak (open since 2026-08-09) has a confirmed root cause now, not

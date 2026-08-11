@@ -596,3 +596,36 @@ if unavoidable, a controlled `-no-expand-env restore` to a fresh generation) cle
 without a full backup discontinuity; (3) only after that's tried, consider adding a proper
 generic litestream-disable boot flag as a safety valve for next time, independent of the
 B2-specific fix.
+
+## Escalation (2026-08-11 ~9:40am CT) — kill cadence is measurably ACCELERATING, not just recurring at a steady rate
+
+Full `journalctl` timeline of every OOM kill since the root-cause-confirmation deploy above
+(all `exitCode=137`, all auto-recovered by Docker within ~1s, all confirmed by an immediate
+follow-up `200` on `/api/health`):
+
+| kill | UTC time | gap since prior kill |
+|---|---|---|
+| 1 | 11:02:32 | (fresh deploy) |
+| 2 | 11:53:56 | 51 min |
+| 3 | 13:11:31 | 78 min |
+| 4 | 14:00:36 | 49 min |
+| 5 | 14:20:28 | 20 min |
+| 6 | 14:39:07 | 19 min |
+
+The gap has compressed from ~50-80 minutes down to ~20 minutes over the last three cycles. This
+is consistent with — and further supports — the confirmed root cause above: the stuck compaction
+anchor (`2324d`) is **not** container-local state that resets on restart; it persists in the B2
+replica's own generation/snapshot bookkeeping, so every new container process picks up the exact
+same stuck point immediately rather than starting clean. That means the un-compacted WAL range
+litestream is futilely retrying keeps growing **across the whole incident**, not just within a
+single container's uptime — so each successive kill needs less new WAL growth to hit the memory
+ceiling than the last, which is exactly the shrinking-gap pattern observed here.
+
+**This does not change the operational assessment (site health has stayed good through every one
+of these six kills, each recovering in ~1s), but it does change the urgency of the daylight fix**:
+left unaddressed, this trend — if it continues — points toward the gap eventually compressing to
+a genuine crash-loop (kills faster than the ~15-30s a fresh container needs to become healthy
+again), which would be materially different from tonight's "brief blip, unaffected" pattern.
+Continue monitoring the gap trend specifically, not just kill/no-kill, and treat a gap under
+~10 minutes as the trigger to stop deferring this to "daylight" and escalate to an active fix
+(most likely: clear the stuck B2 generation per next-step (2) above) regardless of local time.
