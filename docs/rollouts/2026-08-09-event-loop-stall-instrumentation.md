@@ -490,3 +490,21 @@ cumulative-4 from tonight). Watch whether litestream's RSS still grows unbounded
 6GB ceiling over the coming hours — if it does, the leak is confirmed unfixed and will eventually
 recur (just less frequently); if RSS plateaus, that would be a surprising and useful data point
 suggesting the leak was somehow bounded by something other than pure accumulation.
+
+## Correction (2026-08-11 ~2:40am CT) — GROK's fix took longer to fully stabilize than first reported
+
+Earlier optimistic reads tonight ("zero OOM kills since the fix," "2 hours healthy") were based on
+short dmesg windows that didn't capture the full picture. Full `journalctl` timeline of litestream
+OOM kills since GROK's ~6:53pm CT memory-limit change: **20:26, 21:18, 21:49, 22:09, 22:47 UTC**
+(pre-fix, on the old 4GB limit) **then 23:05, 23:30, 23:47 UTC** (still occurring for ~an hour
+AFTER the fix landed — likely a container that hadn't yet picked up the corrected limit, or the
+already-in-progress leak crossing the new threshold before a fresh process could benefit from it).
+
+**Zero kills logged since 23:47 UTC — an 8-hour clean stretch as of this correction**, spanning
+several container recreations from this session's own subsequent deploys (docs, iOS copy fix,
+server-metrics fix), all of which inherited the corrected 6GB limit and none of which have been
+killed. This is the strongest evidence yet that the higher ceiling is providing real, multi-hour
+stability — but 8 hours clean is not the same claim as "fixed"; the leak's underlying cause
+(hypothesized: the stuck B2 compaction-anchor retry loop) has not been confirmed resolved, only
+given enough headroom that it hasn't recurred yet in this window. Continue monitoring; do not
+treat this as closed.
