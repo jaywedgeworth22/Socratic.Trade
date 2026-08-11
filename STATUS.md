@@ -1,3 +1,9 @@
+## Current (2026-08-10 GROK — default light theme)
+
+Branch `grok/default-light-theme`: light is product default (web + iOS). Dark only via explicit choice. Rollout: `docs/rollouts/2026-08-10-default-light-theme.md`.
+
+## Prior
+
 ## Current (2026-08-10 GROK — iOS invalid SF Symbol)
 
 **Branch `grok/ios-bell-badge-symbol`:** Assets toolbar used nonexistent SF Symbol

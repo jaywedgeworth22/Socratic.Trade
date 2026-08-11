@@ -637,6 +637,10 @@ Fleet driver + all three apps (Socratic / Congress / Usage Monitor):
 `CC8UTF7ATG`. Upload needs App Store Connect app record + either Xcode session
 or `~/.secrets/appstore-connect.env` (never print secrets).
 
+## Theme default = light (owner 2026-08-10)
+
+Default product theme is **light** for all fleet apps. Do not ship dark-first or system defaults that land on dark. See `/Users/jay/apps/FLEET-UI-COPY.md` and `/Users/jay/apps/AGENT-SYNC.md`.
+
 ## Fleet UI copy
 
 Owner copy rules (Title Case headings/buttons; sentence-case values; lowercase compact money; always-inline iOS nav titles; ticker logos): `docs/FLEET-UI-COPY.md` (canonical live board: `/Users/jay/apps/FLEET-UI-COPY.md`).
