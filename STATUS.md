@@ -19,6 +19,19 @@ tests across the 4 touched/related files) green. Full `npm test`/`npm run build`
 commit — see the rollout note for final counts. Does NOT fix the underlying stuck B2 anchor
 itself (that's separate ops work, still open). Rollout:
 `docs/rollouts/2026-08-11-litestream-tier-backup-status.md`.
+## Current (2026-08-12 ~12:08am CT MONET — litestream reset executed; leak appears resolved, monitoring continues)
+
+Escalation trigger from the previous entry fired (kill gap compressed to 5m35s). Owner approved
+proceeding. Executed the previously-planned fix: `docker stop` (clean, 30s), cleared the local
+litestream LTX metadata directly on the host volume path (`litestream reset`'s documented effect
+— never touches the DB file or B2), Coolify `start` (image reused, no rebuild). ~6 min outage.
+Post-restart: litestream started with zero errors (previously every fresh start hit a checksum
+mismatch within 2-3 min, without exception), memory at 374MiB ~4 min in (previous fresh starts
+were multi-GB by this point). Strong early signal, NOT yet confirmed as fixed — several hours of
+clean operation spanning a level-9 snapshot cycle is the real bar. Full detail + what to check if
+it recurs: `docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md` ("Fix executed" section,
+bottom).
+
 ## Current (2026-08-11 MONET — iOS version regression fix)
 
 PR #2637 accidentally hardcoded `ios/SocraticTrade/Info.plist`'s `CFBundleShortVersionString`
