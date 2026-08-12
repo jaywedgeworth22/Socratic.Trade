@@ -19,6 +19,28 @@ tests across the 4 touched/related files) green. Full `npm test`/`npm run build`
 commit — see the rollout note for final counts. Does NOT fix the underlying stuck B2 anchor
 itself (that's separate ops work, still open). Rollout:
 `docs/rollouts/2026-08-11-litestream-tier-backup-status.md`.
+## Current (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
+
+**Branch `ag/desktop-mobile-ux-enhancements`:**
+1. **Desktop Web UX**:
+   - `command-palette.tsx`: Added global hotkeys (`Cmd+K`/`Ctrl+K` command palette toggle, `A` Proposals jump, `R` strategy run-once dispatch, `1-6` tab navigation). Added `<kbd>` badges and `action:run-once` command item.
+   - `approval-card-skeleton.tsx` & `portfolio-overview-skeleton.tsx`: Created animated pulse skeleton loading components matching approval cards and portfolio overview metrics.
+   - `console.css`: Synchronized `.dark` design token values with `app/globals.css`.
+2. **Mobile Web PWA UX**:
+   - Refactored `mobile-pwa-client.tsx` into modular components under `app/mobile/components/` (`MobileHeader.tsx`, `MobileNavBar.tsx`, `MobileHomeTab.tsx`, `MobileProposalsTab.tsx`).
+   - Implemented `usePreventScrollChaining` hook for WebKit boundary top check (`scrollTop === 0` set to `1`) and CSS `overscroll-behavior-y: contain` to prevent iOS Safari body scroll chaining.
+3. **Verification**: `npx tsc --noEmit` clean, `npm run lint` clean (0 errors), `npm test` (83 files / 739 tests passed), `npm run build` clean.
+
+## Current (2026-08-12 ~12:20am CT MONET — new app icon: dollar-sign candlesticks)
+
+Owner supplied a reference image (3D-rendered candlesticks arranged as a "$", green/pink
+palette, light gray grid background) and asked for it as the app icon with a lightened
+background. Replaced `ios/SocraticTrade/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png`
+(previously a "ST" wordmark built from candlesticks) with a processed version of the owner's
+image: background lightened via a saturation-based blend (candlestick colors untouched, smooth
+ramp rather than a hard threshold to avoid speckling in the soft-shadow areas), resized to the
+required 1024x1024, confirmed opaque RGB (no alpha — required for App Store icons). Single-file
+change, no other icon sizes to update (this appiconset uses Xcode's unified single-size format).
 ## Current (2026-08-12 ~12:08am CT MONET — litestream reset executed; leak appears resolved, monitoring continues)
 
 Escalation trigger from the previous entry fired (kill gap compressed to 5m35s). Owner approved
