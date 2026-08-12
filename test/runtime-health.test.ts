@@ -1,15 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
 import {
   assessLitestreamRuntimeHealth,
+  assessLitestreamTierFreshness,
   defaultLitestreamSocketPath,
   defaultLitestreamStatePath,
   getLitestreamRuntimeHealth,
   isLitestreamReplicatingStatus,
+  LITESTREAM_TIER_LABELS,
+  LITESTREAM_TIER_STALE_AFTER_SECONDS,
   parseLitestreamListPayload,
   runtimeReleaseIdentity
 } from "../src/lib/runtime-health";
@@ -437,5 +440,128 @@ describe("Litestream production health decisions", () => {
       liveMode: false,
       processUptimeSeconds: 600
     })).toEqual({ degraded: false, reasons: [] });
+  });
+});
+
+describe("Litestream per-tier compaction freshness", () => {
+  function writeTierFile(statePath: string, tier: "0" | "1" | "9", mtime: Date) {
+    const dir = join(statePath, "ltx", tier);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${tier}-000000000000001-000000000000002.ltx`);
+    writeFileSync(file, "ltx");
+    utimesSync(file, mtime, mtime);
+  }
+
+  it("reports every tier unknown (never crashing) when the state directory does not exist at all", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-missing-"));
+    tempRoots.push(root);
+    const statePath = join(root, "does-not-exist");
+
+    const report = assessLitestreamTierFreshness(statePath, { nowMs: Date.now() });
+    expect(report.degraded).toBe(false);
+    expect(report.tiers).toHaveLength(3);
+    for (const tier of report.tiers) {
+      expect(tier.state).toBe("unknown");
+      expect(tier).not.toHaveProperty("ageSeconds");
+      expect(tier).not.toHaveProperty("newestActivityAt");
+    }
+    // Labels are always present, even for an unknown tier, so the UI has something to render.
+    expect(report.tiers.map((t) => t.label)).toEqual([
+      LITESTREAM_TIER_LABELS["0"],
+      LITESTREAM_TIER_LABELS["1"],
+      LITESTREAM_TIER_LABELS["9"]
+    ]);
+  });
+
+  it("reports unknown (not a crash, not degraded) when no statePath is configured at all", () => {
+    const report = assessLitestreamTierFreshness(undefined);
+    expect(report.degraded).toBe(false);
+    expect(report.tiers.every((t) => t.state === "unknown")).toBe(true);
+  });
+
+  it("reports unknown for a tier directory that exists but has never received a file", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-empty-"));
+    tempRoots.push(root);
+    mkdirSync(join(root, "ltx", "1"), { recursive: true });
+
+    const report = assessLitestreamTierFreshness(root, { nowMs: Date.now() });
+    const tier1 = report.tiers.find((t) => t.tier === "1")!;
+    expect(tier1.state).toBe("unknown");
+    expect(report.degraded).toBe(false);
+  });
+
+  it("marks a tier healthy when its newest file is within threshold, and degraded when it is not", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-fresh-stale-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-11T12:00:00.000Z");
+
+    writeTierFile(root, "0", new Date(now - 30_000)); // 30s old — within the 10-minute threshold
+    writeTierFile(root, "1", new Date(now - 30_000)); // also fresh — within the 4-hour threshold
+
+    const report = assessLitestreamTierFreshness(root, { nowMs: now });
+    const [t0, t1, t9] = report.tiers;
+    expect(t0).toMatchObject({ tier: "0", state: "known", ageSeconds: 30, degraded: false });
+    expect(t1).toMatchObject({ tier: "1", state: "known", ageSeconds: 30, degraded: false });
+    expect(t9.state).toBe("unknown"); // no level-9 file written yet in this fixture
+    expect(report.degraded).toBe(false);
+  });
+
+  // This is the production incident this function exists to catch: level 0 (continuous sync)
+  // keeps succeeding on schedule while level 1 (periodic compaction) is silently wedged for
+  // hours. The existing IPC-based overall signal only reflects level 0 and would report this
+  // database perfectly healthy the whole time — only the per-tier breakdown catches it.
+  it("flags a stuck level-1 compactor even while level 0 stays fresh (the 2026-08-11 incident shape)", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-incident-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-11T12:00:00.000Z");
+
+    writeTierFile(root, "0", new Date(now - 45_000)); // level 0: 45s old, healthy
+    writeTierFile(root, "1", new Date(now - 27 * 3_600_000)); // level 1: 27h old, wedged
+    writeTierFile(root, "9", new Date(now - 10 * 3_600_000)); // level 9: 10h old, within 30h
+
+    const report = assessLitestreamTierFreshness(root, { nowMs: now });
+    const byTier = Object.fromEntries(report.tiers.map((t) => [t.tier, t]));
+
+    expect(byTier["0"]).toMatchObject({ state: "known", degraded: false });
+    expect(byTier["1"]).toMatchObject({ state: "known", degraded: true, ageSeconds: 27 * 3_600 });
+    expect(byTier["9"]).toMatchObject({ state: "known", degraded: false });
+    // The overall report-level flag is true because at least one KNOWN tier is degraded —
+    // this is what app/api/health/route.ts folds into storageDegraded.
+    expect(report.degraded).toBe(true);
+  });
+
+  it("uses the documented default thresholds and accepts a caller-supplied override per tier", () => {
+    expect(LITESTREAM_TIER_STALE_AFTER_SECONDS).toEqual({
+      "0": 10 * 60,
+      "1": 4 * 60 * 60,
+      "9": 30 * 60 * 60
+    });
+
+    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-override-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-11T12:00:00.000Z");
+    writeTierFile(root, "0", new Date(now - 5 * 60_000)); // 5 minutes old
+
+    // Below the default 10-minute threshold: healthy.
+    expect(assessLitestreamTierFreshness(root, { nowMs: now }).tiers[0]).toMatchObject({ degraded: false });
+    // A tighter caller-supplied threshold (1 minute) flips the same data to degraded, proving
+    // the threshold is actually load-bearing and not hardcoded past the options parameter.
+    expect(
+      assessLitestreamTierFreshness(root, { nowMs: now, thresholdsSeconds: { "0": 60 } }).tiers[0]
+    ).toMatchObject({ degraded: true, thresholdSeconds: 60 });
+  });
+
+  it("does not throw when the scan hits the same bounded-entries limit newestFileMtimeMs enforces elsewhere", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-bounded-"));
+    tempRoots.push(root);
+    const dir = join(root, "ltx", "0");
+    mkdirSync(dir, { recursive: true });
+    for (let index = 0; index < 300; index += 1) {
+      writeFileSync(join(dir, `entry-${index}.ltx`), "x");
+    }
+
+    const report = assessLitestreamTierFreshness(root, { nowMs: Date.now() });
+    expect(report.tiers.find((t) => t.tier === "0")!.state).toBe("unknown");
+    expect(report.degraded).toBe(false);
   });
 });

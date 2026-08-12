@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -370,6 +371,54 @@ describe("Connection Health & Failure Routing", () => {
       litestreamDegradedReasons: ["unavailable"]
     });
     expect(body.checks.storageDegraded).toBe(true);
+  });
+
+  // The gap this exists to close: the pre-existing litestream* fields above only ever reflect
+  // level 0 (continuous sync), so a stuck level-1 compactor left production silently unmonitored
+  // for 27+ hours on 2026-08-11 (docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md) —
+  // level 0 kept succeeding the whole time. This reproduces that exact shape against the real
+  // route: a fresh level-0 file (so the OLD signal stays non-degraded) alongside a stale
+  // level-1 file, and asserts the NEW checks.storage.litestreamTiers field is what actually
+  // flags it, and that it alone is sufficient to flip storageDegraded.
+  it("/api/health flags a stuck level-1 compactor via litestreamTiers even while the pre-existing litestream* fields stay non-degraded", async () => {
+    const { healthRoute, db } = await load();
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+
+    const stateRoot = mkdtempSync(join(tmpdir(), "health-route-litestream-tiers-"));
+    try {
+      const writeTierFile = (tier: "0" | "1" | "9", mtime: Date) => {
+        const dir = join(stateRoot, "ltx", tier);
+        mkdirSync(dir, { recursive: true });
+        const file = join(dir, `${tier}.ltx`);
+        writeFileSync(file, "ltx");
+        utimesSync(file, mtime, mtime);
+      };
+      const now = new Date();
+      writeTierFile("0", new Date(now.getTime() - 30_000)); // 30s old — healthy
+      writeTierFile("1", new Date(now.getTime() - 27 * 3_600_000)); // 27h old — wedged
+      // No socket is listening and DB_BOOTSTRAP is not "live", so the pre-existing signal falls
+      // back to a whole-tree file scan (source: "file") — its newest mtime is level 0's, which
+      // is fresh, so the OLD mechanism stays non-degraded (see the "file signal diagnostic-only"
+      // unit test in runtime-health.test.ts). Only the new per-tier field should catch level 1.
+      process.env.LITESTREAM_SOCKET_PATH = join(stateRoot, "missing.sock");
+      process.env.LITESTREAM_STATE_PATH = stateRoot;
+
+      const response = await healthRoute.GET(anonymousHealthRequest());
+      expect(response.status).toBe(200);
+      const body = await response.json();
+
+      expect(body.checks.storage.litestreamDegradedReasons).toEqual([]);
+      expect(body.checks.storage.litestreamTiers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ tier: "0", state: "known", degraded: false }),
+          expect.objectContaining({ tier: "1", state: "known", degraded: true }),
+          expect.objectContaining({ tier: "9", state: "unknown" })
+        ])
+      );
+      expect(body.checks.storageDegraded).toBe(true);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 
   // Alpha Vantage daily-cap exhaustion is a quota failure, not a transient connection blip: it
