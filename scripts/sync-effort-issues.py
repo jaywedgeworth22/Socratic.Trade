@@ -109,6 +109,15 @@ trip GitHub's *secondary* rate limit: the API 403s with "secondary rate limit
     up exactly where this one stopped; a red workflow run for an expected
     partial pass would be noise.
 
+Transport failures
+------------------
+Rate-limit handling only sees requests that produced an HTTP *response*.  A
+connection that dies below that layer — TLS handshake rejected, DNS blip,
+socket reset, a body cut short mid-read — raises out of `http_request` and used
+to kill the whole run.  These are retried separately, with bounded exponential
+backoff, for *idempotent* methods only; see TRANSPORT_RETRY_METHODS for why a
+POST is deliberately never replayed.
+
 Local testing: export GITHUB_TOKEN and GITHUB_REPOSITORY yourself, then run
 `python3 scripts/sync-effort-issues.py [--dry-run]`.
 """
@@ -117,6 +126,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -141,6 +151,25 @@ RATE_LIMIT_RETRY_BUDGET_SECONDS = 300.0
 # Backoff for rate-limited requests when the server sends no Retry-After.
 RATE_LIMIT_BACKOFF_BASE_SECONDS = 15.0
 RATE_LIMIT_BACKOFF_MAX_SECONDS = 120.0
+
+# Transport-level (not HTTP-level) retries. A failure below the HTTP layer never
+# produces a status code, so it bypasses the rate-limit retry in
+# GitHubClient._request entirely and used to abort the whole sync. Seen in the
+# wild: an SSL handshake rejected with "CERTIFICATE_VERIFY_FAILED: self-signed
+# certificate" reaching api.github.com (2026-08-12), and a truncated response
+# body raising http.client.IncompleteRead out of resp.read() *after* a 200 —
+# listing every issue with state=all pulls hundreds of KB across pages, so one
+# mid-body disconnect was enough to fail the run.
+#
+# Only *idempotent* methods are retried. A POST that created an issue but whose
+# response body was truncated has already mutated the repo — replaying it would
+# file a duplicate issue, which is worse than the failure we are fixing. POSTs
+# therefore surface the transport error and let the next scheduled run reconcile
+# (creation is keyed off the board, so a re-run is self-healing).
+TRANSPORT_RETRY_METHODS = frozenset({"GET", "HEAD", "PUT", "PATCH", "DELETE"})
+TRANSPORT_RETRY_ATTEMPTS = 4
+TRANSPORT_BACKOFF_BASE_SECONDS = 2.0
+TRANSPORT_BACKOFF_MAX_SECONDS = 15.0
 
 MIRROR_LABEL = "effort-board"
 STATE_LABELS = {
@@ -291,21 +320,53 @@ def http_request(
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
     if data is not None:
         req.add_header("Content-Type", "application/json")
-    try:
-        # Explicit socket timeout: the default (None) lets a stalled connection
-        # hang the job forever, squatting the single socratic-ci runner and
-        # blocking the whole CI queue (seen twice on 2026-07-29, both runs
-        # had to be cancelled manually after 10+ min stuck in this call).
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-            return resp.status, (json.loads(raw) if raw else {}), dict(resp.headers)
-    except urllib.error.HTTPError as e:
-        raw = e.read()
+
+    retryable = method.upper() in TRANSPORT_RETRY_METHODS
+    attempt = 0
+    while True:
         try:
-            parsed = json.loads(raw) if raw else {}
-        except json.JSONDecodeError:
-            parsed = {"message": raw.decode("utf-8", errors="replace")}
-        return e.code, parsed, dict(e.headers or {})
+            # Explicit socket timeout: the default (None) lets a stalled connection
+            # hang the job forever, squatting the single socratic-ci runner and
+            # blocking the whole CI queue (seen twice on 2026-07-29, both runs
+            # had to be cancelled manually after 10+ min stuck in this call).
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+                return resp.status, (json.loads(raw) if raw else {}), dict(resp.headers)
+        except urllib.error.HTTPError as e:
+            # A real HTTP response, not a transport failure. Return it so
+            # GitHubClient._request can apply its rate-limit backoff. Note this
+            # must stay ahead of URLError below — HTTPError subclasses it.
+            raw = e.read()
+            try:
+                parsed = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                parsed = {"message": raw.decode("utf-8", errors="replace")}
+            return e.code, parsed, dict(e.headers or {})
+        except (
+            http.client.IncompleteRead,
+            http.client.HTTPException,
+            urllib.error.URLError,
+            ConnectionError,
+            TimeoutError,
+            json.JSONDecodeError,
+        ) as e:
+            # json.JSONDecodeError lands here because a body that was cut short
+            # without tripping IncompleteRead still fails to parse — same root
+            # cause, same remedy.
+            attempt += 1
+            if not retryable or attempt >= TRANSPORT_RETRY_ATTEMPTS:
+                raise
+            wait = min(
+                TRANSPORT_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
+                TRANSPORT_BACKOFF_MAX_SECONDS,
+            )
+            print(
+                f"transport error on {method} {url} "
+                f"({type(e).__name__}: {e}) — retrying in {wait:.0f}s "
+                f"(attempt {attempt}/{TRANSPORT_RETRY_ATTEMPTS - 1})",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
 
 
 class RateLimitBudgetExhausted(Exception):

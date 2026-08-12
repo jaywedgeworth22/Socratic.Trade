@@ -1,3 +1,27 @@
+## Current (2026-08-12 CLAUDE — CI scripts: Sentry `app` tag + branchless fingerprint, effort-sync transport retry)
+
+Two python-only CI-support fixes on branch `claude/ci-report-app-tag`
+(worktree `/private/tmp/fx-st-ci`):
+
+1. `scripts/sentry-ci-report.py` had no app identifier, so ST's events in the
+   SHARED `fleet-infra` Sentry project deduped into Congress.Trade's
+   identically-named workflow issues ("CI", "Security", "Effort Issues Sync").
+   Adds `APP = "socratic-trade"` to the message, tags, and fingerprint.
+   Fingerprint is now `[ci-failure, app, workflow]` — branch is a tag only,
+   because merge-queue refs are unique per attempt and were minting a throwaway
+   Sentry issue per queued run.
+2. `scripts/sync-effort-issues.py` `http_request` caught only `HTTPError`, so
+   today's `SSL: CERTIFICATE_VERIFY_FAILED` reaching api.github.com killed the
+   whole run.  Adds bounded exponential-backoff transport retry for idempotent
+   methods only — a `POST` is never replayed, since a truncated create response
+   means the issue already exists and a retry would duplicate it.
+
+Crons `monitor_slug` deliberately left un-namespaced: renaming orphans live
+Sentry monitors, and there is no collision to fix.  Gates and a 15-check
+behavioral harness recorded in the rollout note.
+
+Rollout: `docs/rollouts/2026-08-12-ci-report-app-tag.md`.
+
 ## Current (2026-08-12 GROK — iOS watchlist wrap + account switch + admin + P&L)
 
 Owner Assets screenshot + follow-up.  Four bugs on one branch
