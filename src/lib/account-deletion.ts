@@ -90,6 +90,9 @@ const DELETE_TABLES_BY_USER_ID = [
   // Added 2026-08-12: rolling signal-health diagnostics (src/lib/db-signal-health.ts) —
   // user-scoped learning telemetry like the retrieval-usefulness tables above.
   "signal_health_snapshot",
+  // Added 2026-08-12: truncated-replay lookahead-audit findings (src/lib/db-lookahead-audit.ts) —
+  // user-scoped audit telemetry like signal_health_snapshot.
+  "lookahead_audit_findings",
   // Added 2026-07-16: pending_bracket_teardowns (src/lib/db.ts) — queued bracket sibling-leg
   // teardowns are user-scoped like position_stop_plans.
   "pending_bracket_teardowns",

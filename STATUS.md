@@ -1,3 +1,25 @@
+## Current (2026-08-12 ~2:10pm CT CLAUDE — r3: truncated-replay lookahead audit)
+
+Round 3 slice (freqtrade lookahead-analysis port, scoped per the gap analysis to the two
+genuinely reconstructable subsystems).  New `src/lib/lookahead-audit.ts` (pure/IO split mirroring
+backtest.ts) + `db-lookahead-audit.ts` (migration 75, `lookahead_audit_findings`, deletion-covered):
+a weekly durable per-user due-job samples matured `signal_snapshot` decisions past a watermark,
+recomputes the momentum/liquidity factor sub-scores from daily OHLC truncated to each decision
+date (through the existing pure `scoreFactors`, mirroring decision-time field availability via
+per-field `sources` provenance), and replays RAG evidence by rebuilding the deterministic filings
+query (now shared via `deterministicFilingsRetrievalQuery`; queryHash-guarded so builder drift
+degrades to honest 'unverifiable') with asOf pinned + strictAsOf, diffing chunk ids against the
+persisted candidate-pool `used:true` rows — Jaccard threshold for benign reranker drift, ANY
+post-asOf chunk a hard mismatch.  value/quality/volatility/sentiment/positioning/diversification
+are ALWAYS 'unverifiable' with stored backtestSafety receipts (the coverage gap is visible, never
+silently implied clean); below 20 qualifying observations the aggregate verdict is an honest
+'insufficient_sample'.  Advisory `lookahead_leak` notification fires on mismatch classifications
+only; compact con-* receipts panel on Results.  `LOOKAHEAD_AUDIT_*` knobs (default ON, documented
+kill switch in .env.example).  Gates: tsc clean; test/lookahead-audit.test.ts 17/17;
+persistence-hardening + account-deletion-coverage updated for v75 (25/25); adjacent suites 99/99.
+Rollout: docs/rollouts/2026-08-12-r3-lookahead-audit.md.  Local slice commit on `agent/claude`;
+lands via the round-3 integration lane.  Blockers: none.
+
 ## Current (2026-08-12 ~1:15pm CT CLAUDE — r3: unified ProposalScorecard)
 
 Round 3 slice (dsa Dashboard-contract lesson): one typed, deterministic `ProposalScorecard`

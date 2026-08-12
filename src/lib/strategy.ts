@@ -128,7 +128,7 @@ import {
 } from "./web-sources/fmp-transcripts";
 import { earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
 import { roicTranscriptsEnabled } from "./web-sources/roic-transcripts";
-import { strategyInformationRouting } from "./rag/information-routing";
+import { deterministicFilingsRetrievalQuery, strategyInformationRouting } from "./rag/information-routing";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -1354,7 +1354,7 @@ export async function runStrategyOnce(
             chunk.map(async (sym) => {
               const isDeep = deepSymbols.includes(sym);
               const limit = isDeep ? 8 : 1;
-              const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+              const query = deterministicFilingsRetrievalQuery(sym);
               let variants: string[] = [];
 
               if (wantMultiQuery && isDeep) {

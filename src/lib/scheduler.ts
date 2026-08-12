@@ -747,6 +747,28 @@ async function tick(): Promise<void> {
     )
     .catch((err) => console.error("[scheduler] r2 cold snapshot error:", err));
 
+  // Weekly truncated-replay lookahead audit (freqtrade lookahead-analysis port): recompute
+  // momentum/liquidity factor sub-scores and RAG evidence from data truncated to each sampled
+  // decision's date and diff against what was persisted at decision time; everything else is an
+  // honest 'unverifiable' receipt. Durable per-user due-job (default weekly; LOOKAHEAD_AUDIT_*
+  // knobs; LOOKAHEAD_AUDIT_ENABLED=off is the kill switch). Read-only + advisory — findings and
+  // the lookahead_leak notification gate nothing.
+  void import("./lookahead-audit")
+    .then(({ ensureLookaheadAuditJobsScheduled, drainLookaheadAuditJobs }) =>
+      journalLane("lookahead-audit", {}, async () => {
+        ensureLookaheadAuditJobsScheduled();
+        const result = await drainLookaheadAuditJobs();
+        return {
+          status: result.drained > 0 ? ("ok" as const) : ("skipped" as const),
+          summary:
+            result.drained > 0
+              ? `drained=${result.drained} verdict=${result.lastResult?.verdict.verdict ?? "?"}`
+              : undefined,
+        };
+      })
+    )
+    .catch((err) => console.error("[scheduler] lookahead audit error:", err));
+
   try {
 
     // ── Operator-level monthly LLM spend ceiling ──────────────────────────────

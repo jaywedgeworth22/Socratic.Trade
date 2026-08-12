@@ -103,6 +103,11 @@ export const NOTIFICATION_EVENT_TYPES = [
   // confidenceScore against matured outcomes is decaying. Advisory — nothing halts; sizing only
   // changes under the opt-in policy.tuning.signalHealthAutoThrottle.
   "signal_health",
+  // Lookahead-audit mismatch (src/lib/lookahead-audit.ts): the weekly truncated-replay audit
+  // recomputed a decision-time factor or RAG evidence set from point-in-time data and it differed
+  // beyond tolerance — future data may be leaking into decision inputs. Fired ONLY on 'mismatch'
+  // classifications, never on 'unverifiable'. Advisory — nothing halts or changes sizing.
+  "lookahead_leak",
   // Opt-in daily watchlist summary (default OFF — notification_prefs.watchlistDigestEnabled, see
   // Settings -> Delivery). Delivered via notify() directly (src/lib/watchlist-digest.ts), like the
   // R2 usage digest, so it does NOT go through sendNotification's enabledEvents gate — the member

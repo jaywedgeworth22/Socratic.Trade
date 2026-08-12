@@ -4,7 +4,9 @@
  *  non-blocking notice. The live-approval typed-confirmation contract mirrors
  *  app/api/proposals/[id]/approve/route.ts exactly. */
 
+import type { LookaheadAuditFindingRow } from "@/lib/db-lookahead-audit";
 import type { SignalHealthSnapshotRow } from "@/lib/db-signal-health";
+import type { LookaheadVerdict } from "@/lib/lookahead-audit";
 import type { LlmReasoningEffort, PerformanceSummary, StrategyTuningProposal, SystemState, TradingPolicy } from "@/lib/types";
 
 export class ConsoleApiError extends Error {
@@ -398,6 +400,24 @@ export interface SignalHealthResponse {
 
 export function fetchSignalHealth(): Promise<SignalHealthResponse> {
   return request<SignalHealthResponse>("/api/signal-health");
+}
+
+/** Results-page lookahead-audit panel: truncated-replay findings (newest pass first) plus the
+ *  aggregate verdict from the weekly lookahead-audit lane. Read-only; 'unverifiable' rows are
+ *  deliberate coverage-gap receipts, rendered plainly rather than hidden. */
+export interface LookaheadAuditResponse {
+  enabled: boolean;
+  /** Factor sub-score mismatch tolerance (0-100 points) the classifications used. */
+  tolerancePoints: number;
+  /** Minimum Jaccard similarity for a clean RAG evidence replay. */
+  jaccardMin: number;
+  cadenceDays: number;
+  verdict: LookaheadVerdict;
+  findings: LookaheadAuditFindingRow[];
+}
+
+export function fetchLookaheadAudit(): Promise<LookaheadAuditResponse> {
+  return request<LookaheadAuditResponse>("/api/lookahead-audit");
 }
 
 /** "Import settings from another account" (Strategy page): copies strategy settings — models,
