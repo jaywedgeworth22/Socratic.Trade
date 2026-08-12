@@ -43,7 +43,7 @@ struct ContentView: View {
         .task {
             await bootstrap()
         }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase) { phase in
             handleScenePhase(phase)
         }
     }

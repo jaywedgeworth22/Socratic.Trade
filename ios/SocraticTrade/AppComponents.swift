@@ -347,7 +347,7 @@ struct TickerLogo: View {
         .frame(width: size, height: size)
         .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
         .accessibilityHidden(true)
-        .onChange(of: normalized) { _, _ in failed = false }
+        .onChange(of: normalized) { _ in failed = false }
     }
 
     private var monogramView: some View {
