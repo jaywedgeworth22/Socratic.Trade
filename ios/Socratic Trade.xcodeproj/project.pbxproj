@@ -21,6 +21,7 @@
 		A0B35AC0FE7982512B0E4796 /* ProposalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC1C49575DCB6DA8E8D65CD7 /* ProposalsView.swift */; };
 		ACF83840AA1DAFC72B2A59AE /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761C0F1E45ABE2373664A335 /* ActivityView.swift */; };
 		AD51C8FEF98EF6F4E763A044 /* MarketsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D351D03CEAFD6CD1EB4536FD /* MarketsView.swift */; };
+		C3BB26F6D86DD0C45B1EBEFC /* TabPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728EAC5AE3C4358672EBAEED /* TabPreferencesTests.swift */; };
 		C67CC3242AE041DFAE3A419E /* CandleWordmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D112E8C717D899B0AFF0B6E5 /* CandleWordmarkView.swift */; };
 		CF7E04F6E303A90DA3947D4A /* MobileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B407C6306CC293CF54036A1 /* MobileStore.swift */; };
 		EEFE88508B9B9CC94639E02C /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E9A5E5A0273AC7B97E89D3 /* LoginView.swift */; };
@@ -47,6 +48,7 @@
 		5F94CABB7BE5CB871622BADD /* SocraticTradeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocraticTradeApp.swift; sourceTree = "<group>"; };
 		64D21DA3DA51118F65691FBE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		65E9A5E5A0273AC7B97E89D3 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		728EAC5AE3C4358672EBAEED /* TabPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabPreferencesTests.swift; sourceTree = "<group>"; };
 		761C0F1E45ABE2373664A335 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		89D3AB0C26BB7394334E998E /* MobileAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAPIClient.swift; sourceTree = "<group>"; };
 		8B407C6306CC293CF54036A1 /* MobileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileStore.swift; sourceTree = "<group>"; };
@@ -102,6 +104,7 @@
 			isa = PBXGroup;
 			children = (
 				23A34A6694A3A24320E058E4 /* MobileModelsTests.swift */,
+				728EAC5AE3C4358672EBAEED /* TabPreferencesTests.swift */,
 			);
 			path = SocraticTradeTests;
 			sourceTree = "<group>";
@@ -154,6 +157,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 2630;
 				TargetAttributes = {
+					67CB33DBCE2CA3B6C5A9F6EE = {
+						DevelopmentTeam = CC8UTF7ATG;
+						ProvisioningStyle = Automatic;
+					};
 					D2582043B5817BEFCDC92620 = {
 						DevelopmentTeam = CC8UTF7ATG;
 						ProvisioningStyle = Automatic;
@@ -197,6 +204,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8C402A017E39D5CF92861A85 /* MobileModelsTests.swift in Sources */,
+				C3BB26F6D86DD0C45B1EBEFC /* TabPreferencesTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -296,6 +304,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = CC8UTF7ATG;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -305,7 +315,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = trade.socratic.app.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SocraticTrade.app/SocraticTrade";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Socratic Trade.app/Socratic Trade";
 			};
 			name = Debug;
 		};
@@ -380,6 +390,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = CC8UTF7ATG;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -389,7 +401,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = trade.socratic.app.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SocraticTrade.app/SocraticTrade";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Socratic Trade.app/Socratic Trade";
 			};
 			name = Release;
 		};
@@ -407,6 +419,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = trade.socratic.app;
+				PRODUCT_MODULE_NAME = SocraticTrade;
 				PRODUCT_NAME = "Socratic Trade";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -427,6 +440,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = trade.socratic.app;
+				PRODUCT_MODULE_NAME = SocraticTrade;
 				PRODUCT_NAME = "Socratic Trade";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
