@@ -192,6 +192,8 @@ export interface ApiKeyEntry {
   /** Declared vendor plan tier (free/power/starter/…). Present for optional market-data keys. */
   planTier?: string;
   planTierOptions?: ApiKeyPlanTierOption[];
+  /** Whether the user has temporarily paused this key. */
+  isPaused?: boolean;
   /** ST product retired (e.g. FMP) — show badge, disable add when CT-only. */
   retired?: boolean;
   retiredNote?: string;

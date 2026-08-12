@@ -1,3 +1,17 @@
+## Current (2026-08-12 ANTIGRAVITY — App Icon update, Scout Server, Key Pause/Resume, & macOS Targets)
+
+1. **ST App Icon Update**:
+   - Processed user-supplied 3D candlestick render (`ST` shape), lightened white/silver grid background using saturation-based blend, resized to 1024x1024 opaque RGB PNG, and updated `ios/SocraticTrade/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png`.
+2. **Mac Scout Coordinator Server**:
+   - Created `/api/scout/health` endpoint (`app/api/scout/health/route.ts`) returning health & channel coordination status (`scout.jays.services`).
+3. **API Key Pause/Resume & Dynamic Pipeline Replacement**:
+   - Built `isApiKeyPaused` / `setApiKeyPaused` in `src/lib/db-api-keys.ts` and `POST /api/keys/pause`.
+   - Added **Pause Use / Resume Use** toggle buttons to Settings API Keys UI (`app/console/settings/api-keys.tsx`).
+   - Dynamic Pipeline Replacement: Pausing a key (e.g. LlamaParse, ROIC.ai, Alpaca) forces the provider registry to dynamically swap in the best-suited replacement (LlamaParse → SEC EDGAR/XBRL; ROIC.ai → FMP/SimFin/Wisesheets; Alpaca → Robinhood/Nasdaq).
+4. **macOS & Mac Catalyst Target Support**:
+   - Updated `ios/project.yml` with `macOS: "14.0"`, `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD`, `SUPPORTS_MACCATALYST`, and `TARGETED_DEVICE_FAMILY: "1,2,6"`.
+   - Fixed SwiftUI `onChange` compatibility in `SocraticTradeApp.swift` and `AppComponents.swift`. Xcode build verified clean (`** BUILD SUCCEEDED **`).
+
 ## Current (2026-08-12 ANTIGRAVITY — OSS lessons, Strategy ID fixes, & Dashboard additions)
 
 1. **Bug fixes**:

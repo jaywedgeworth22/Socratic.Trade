@@ -8,7 +8,8 @@ import {
   upsertUserApiKey,
   deleteUserApiKey,
   setUserApiKeyPlanTier,
-  resolveApiKeyWithSource
+  resolveApiKeyWithSource,
+  isApiKeyPaused
 } from "@/lib/db";
 import { checkAdmin } from "@/lib/auth/admin";
 import { resolveRequestUserId } from "@/lib/request-user";
@@ -324,6 +325,7 @@ export async function GET(request: NextRequest) {
         updatedAt: stored?.updatedAt,
         savedLabel: stored?.label,
         ...tiers,
+        isPaused: isApiKeyPaused(userId, entry.service),
         retired: retired || isRetiredMarketDataService(entry.service),
         retiredNote: "retiredNote" in entry ? entry.retiredNote : undefined
       };

@@ -7,6 +7,7 @@ import { resolve } from "path";
 import { getDb, audit } from "./db";
 import { normalizeSymbol } from "./money";
 import { registerPlanTierLookup } from "./provider-tier-plan";
+import { createDurableMap } from "./durable-state";
 import type {
   AccountCapabilities,
   ChatTurn,
@@ -665,9 +666,31 @@ export function credTierForService(service: string): CredTier {
   return API_KEY_TIER[normalizeApiKeyService(service)] ?? "per-user-only";
 }
 
+const pausedKeysMap = createDurableMap<boolean>("api-keys:paused");
+
+export function isApiKeyPaused(userId: string, service: string): boolean {
+  const canonical = normalizeApiKeyService(service);
+  return pausedKeysMap.get(`${userId}:${canonical}`) === true || pausedKeysMap.get(`${LOCAL_USER}:${canonical}`) === true;
+}
+
+export function setApiKeyPaused(userId: string, service: string, isPaused: boolean): boolean {
+  const canonical = normalizeApiKeyService(service);
+  const targetUser = userId || LOCAL_USER;
+  if (isPaused) {
+    pausedKeysMap.set(`${targetUser}:${canonical}`, true);
+  } else {
+    pausedKeysMap.delete(`${targetUser}:${canonical}`);
+  }
+  return isPaused;
+}
+
 export function resolveApiKeyWithSource(service: string, userId?: string): { key?: string; source: ApiKeySource; envVar?: string; service: string } {
   const canonical = normalizeApiKeyService(service);
   const envVar = apiKeyEnvVarForService(canonical);
+
+  if (isApiKeyPaused(userId ?? LOCAL_USER, canonical)) {
+    return { source: "none", envVar, service: canonical };
+  }
 
   // FMP keys must never resolve in Socratic.Trade product code (owner: FMP is CT-only).
   // Admin Connections may still show a retired catalog row; storage POST is rejected.

@@ -251,6 +251,45 @@ export function ApiKeysCard() {
                             {isEditing ? "Close" : entry.source === "user" ? "Replace" : `Add ${credName}`}
                           </Btn>
                         )}
+                        {entry.configured && !retired && (
+                          <Btn
+                            size="sm"
+                            variant={entry.isPaused ? "primary" : "outline"}
+                            disabled={busy !== null}
+                            onClick={async () => {
+                              setBusy(entry.service);
+                              try {
+                                const res = await fetch("/api/keys/pause", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ service: entry.service, isPaused: !entry.isPaused })
+                                });
+                                const data = (await res.json()) as { ok: boolean; isPaused?: boolean; message?: string; error?: string };
+                                if (data.ok) {
+                                  toast.push(
+                                    data.isPaused ? "warn" : "pos",
+                                    `${entry.label} ${data.isPaused ? "PAUSED" : "RESUMED"}`,
+                                    data.message ?? "Key pause state updated."
+                                  );
+                                  await load();
+                                } else {
+                                  toast.push("neg", "Pause toggle failed", data.error ?? "Unknown error");
+                                }
+                              } catch (e) {
+                                toast.push("neg", "Pause toggle failed", String(e));
+                              } finally {
+                                setBusy(null);
+                              }
+                            }}
+                            title={
+                              entry.isPaused
+                                ? "Resume using this key. Features will resume calling it."
+                                : "Pause using this key. The system will dynamically utilize available replacement fallbacks."
+                            }
+                          >
+                            {entry.isPaused ? "Resume Use" : "Pause Use"}
+                          </Btn>
+                        )}
                         {entry.source === "user" && !retired && (
                           <Btn
                             size="sm"
