@@ -38,19 +38,25 @@ interface DurableStateHost {
   __durableStateFlushTimer?: ReturnType<typeof setTimeout> | null;
   __durableStateShutdownHooksRegistered?: boolean;
 }
-const host = globalThis as unknown as DurableStateHost;
 
-// In-memory cache: namespace -> key -> value. Source of truth for reads between flushes.
-const cache: Map<string, Map<string, unknown>> = host.__durableStateCache ?? (host.__durableStateCache = new Map());
-const hydratedNamespaces: Set<string> = host.__durableStateHydratedNamespaces ?? (host.__durableStateHydratedNamespaces = new Set());
+function getHost(): DurableStateHost {
+  return globalThis as unknown as DurableStateHost;
+}
 
-// Pending writes keyed by "namespace key" -- a plain space separator (namespace strings we define
-// ourselves never contain one). Coalesces multiple writes to the same key within one debounce
-// window into one row.
-const pendingWrites: Map<string, unknown> = host.__durableStatePendingWrites ?? (host.__durableStatePendingWrites = new Map());
-// flushTimer/shutdownHooksRegistered are reassigned (not just lazily-created-once like the Map/Set
-// above), so they're read/written directly through `host` rather than mirrored into a local binding
-// that a second module instance wouldn't see updates to.
+function getCache(): Map<string, Map<string, unknown>> {
+  const h = getHost();
+  return h.__durableStateCache ?? (h.__durableStateCache = new Map());
+}
+
+function getHydratedNamespaces(): Set<string> {
+  const h = getHost();
+  return h.__durableStateHydratedNamespaces ?? (h.__durableStateHydratedNamespaces = new Set());
+}
+
+function getPendingWrites(): Map<string, unknown> {
+  const h = getHost();
+  return h.__durableStatePendingWrites ?? (h.__durableStatePendingWrites = new Map());
+}
 
 function nsKeyOf(namespace: string, key: string): string {
   return `${namespace} ${key}`;
@@ -62,10 +68,12 @@ function nsKeyOf(namespace: string, key: string): string {
  *  tracks — instead of keeping a second, easily-inconsistent hydration flag that
  *  resetDurableStateCacheForTests() wouldn't know to clear. */
 export function hasHydratedNamespace(namespace: string): boolean {
-  return hydratedNamespaces.has(namespace);
+  return getHydratedNamespaces().has(namespace);
 }
 
 function ensureHydrated(namespace: string): Map<string, unknown> {
+  const cache = getCache();
+  const hydratedNamespaces = getHydratedNamespaces();
   let ns = cache.get(namespace);
   if (!ns) {
     ns = new Map();
@@ -87,23 +95,26 @@ function ensureHydrated(namespace: string): Map<string, unknown> {
 }
 
 function scheduleFlush(): void {
-  if (host.__durableStateFlushTimer) return;
+  const h = getHost();
+  if (h.__durableStateFlushTimer) return;
   const timer = setTimeout(() => {
-    host.__durableStateFlushTimer = null;
+    h.__durableStateFlushTimer = null;
     flushDurableStateNow();
   }, FLUSH_DEBOUNCE_MS);
   timer.unref?.();
-  host.__durableStateFlushTimer = timer;
+  h.__durableStateFlushTimer = timer;
 }
 
 /** Flush every pending debounced write to SQLite immediately. Idempotent (a no-op with nothing
  *  pending). Call sites needing exact synchronous behavior should pass `flush: "immediate"` to
  *  `createDurableMap` instead of relying on manual flush timing. */
 export function flushDurableStateNow(): void {
-  if (host.__durableStateFlushTimer) {
-    clearTimeout(host.__durableStateFlushTimer);
-    host.__durableStateFlushTimer = null;
+  const h = getHost();
+  if (h.__durableStateFlushTimer) {
+    clearTimeout(h.__durableStateFlushTimer);
+    h.__durableStateFlushTimer = null;
   }
+  const pendingWrites = getPendingWrites();
   if (pendingWrites.size === 0) return;
   const batch = [...pendingWrites.entries()];
   pendingWrites.clear();
@@ -124,8 +135,9 @@ export function flushDurableStateNow(): void {
 }
 
 function registerShutdownFlushOnce(): void {
-  if (host.__durableStateShutdownHooksRegistered) return;
-  host.__durableStateShutdownHooksRegistered = true;
+  const h = getHost();
+  if (h.__durableStateShutdownHooksRegistered) return;
+  h.__durableStateShutdownHooksRegistered = true;
   const flush = () => flushDurableStateNow();
   process.once("SIGTERM", flush);
   process.once("SIGINT", flush);
@@ -161,7 +173,7 @@ export function createDurableMap<T>(namespace: string, options: DurableMapOption
   function persist(key: string, value: T | typeof DELETE_TOMBSTONE): void {
     const nsKey = nsKeyOf(namespace, key);
     if (flushMode === "immediate") {
-      pendingWrites.delete(nsKey); // nothing left for a later debounced flush to redo
+      getPendingWrites().delete(nsKey); // nothing left for a later debounced flush to redo
       try {
         if (value === DELETE_TOMBSTONE) deleteDurableStateValue(namespace, key);
         else setDurableStateValue(namespace, key, value);
@@ -169,7 +181,7 @@ export function createDurableMap<T>(namespace: string, options: DurableMapOption
         console.error(`[durable-state] immediate write failed for ${namespace}/${key}:`, err instanceof Error ? err.message : err);
       }
     } else {
-      pendingWrites.set(nsKey, value);
+      getPendingWrites().set(nsKey, value);
       scheduleFlush();
     }
   }
@@ -210,13 +222,17 @@ export function createDurableMap<T>(namespace: string, options: DurableMapOption
  *  access re-reads from SQLite, and drop any not-yet-flushed pending writes for it. Does NOT delete
  *  the persisted rows themselves — pair with the map's own `.clear()` for that. */
 export function resetDurableStateCacheForTests(namespace?: string): void {
+  const cache = getCache();
+  const hydratedNamespaces = getHydratedNamespaces();
+  const pendingWrites = getPendingWrites();
+  const h = getHost();
   if (!namespace) {
     cache.clear();
     hydratedNamespaces.clear();
     pendingWrites.clear();
-    if (host.__durableStateFlushTimer) {
-      clearTimeout(host.__durableStateFlushTimer);
-      host.__durableStateFlushTimer = null;
+    if (h.__durableStateFlushTimer) {
+      clearTimeout(h.__durableStateFlushTimer);
+      h.__durableStateFlushTimer = null;
     }
     return;
   }
