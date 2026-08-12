@@ -58,7 +58,9 @@ struct AdminPortalWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        // Ephemeral store: the session cookie is copied in fresh on every open, so persisting
+        // it to disk buys nothing and would let the admin session outlive a native sign-out.
+        configuration.websiteDataStore = .nonPersistent()
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true

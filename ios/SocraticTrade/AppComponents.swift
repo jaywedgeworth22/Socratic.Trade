@@ -169,6 +169,18 @@ enum AppFormat {
         }
     }
 
+    /// AccountCapabilities.accountType slug → console wording (app/console/settings/brokers.tsx
+    /// TAXATION_WORD style): never render raw snake_case slugs like "roth_ira" to the user.
+    static func accountTypeWord(_ accountType: String) -> String {
+        switch accountType {
+        case "brokerage": return "brokerage"
+        case "roth_ira": return "Roth IRA"
+        case "traditional_ira": return "traditional IRA"
+        case "crypto_exchange": return "crypto exchange"
+        default: return accountType.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
     /// Humanized command type for Activity / busy strips.
     static func commandLabel(_ commandType: String) -> String {
         if let known = commandLabels[commandType] { return known }

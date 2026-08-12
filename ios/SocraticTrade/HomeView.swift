@@ -839,7 +839,7 @@ private struct ConnectedAccountSettingsRow: View {
         guard let capabilities = account.capabilities else { return nil }
         var parts: [String] = []
         if let accountType = capabilities.accountType, !accountType.isEmpty {
-            parts.append(accountType.lowercased())
+            parts.append(AppFormat.accountTypeWord(accountType))
         }
         if capabilities.marginEnabled == true { parts.append("margin") }
         if capabilities.shortSelling == true { parts.append("shorting") }
