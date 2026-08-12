@@ -1,3 +1,20 @@
+## Current (2026-08-12 ~1:15pm CT CLAUDE — r3: unified ProposalScorecard)
+
+Round 3 slice (dsa Dashboard-contract lesson): one typed, deterministic `ProposalScorecard`
+unifying the decision receipts already on `TradeProposal` — core conclusion (derived from the
+existing rationale, no new LLM call), MA/volume data perspective (recycled from the ATR
+precompute's bars, honestly omitted when absent), sniper price levels (referencePrice + bracket
+legs; secondary entry ONLY via the new `secondaryBuyPullbackPct` owner knob), an action checklist
+that RENDERS already-computed gate state (entry-drift, wash-sale, daily-cap, red-team,
+dataAdjustments — never a new authority), four-bucket signal attribution summing to exactly 100,
+and an append-only decision chain stamped at the existing override/human-approval sites with a
+persistence-time validator that receipts (never drops) malformed chains.  Outcome engine now
+grades sniper stop/take levels against the daily closes it already fetches
+(`outcome.sniperAccuracy`, close-basis disclosed).  Rendered collapsible on the approval card and
+read-only in the decision trace.  Gates: tsc clean; targeted suites 182/182 (23 new).  Rollout:
+docs/rollouts/2026-08-12-r3-proposal-scorecard.md.  Local slice commit on `agent/claude`; lands
+via the round-3 integration lane.  Blockers: none.
+
 ## Current (2026-08-12 ~7:30am CT CLAUDE — external-repo lessons round 2: alpha grading, signal health, cancel-dust)
 
 Round 2 of the owner's external-repo lessons request (broad sweep: TradingAgents, ai-hedge-fund,

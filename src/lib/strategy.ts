@@ -39,7 +39,7 @@ import {
 } from "./db";
 import { accountEquity, recordAndEvaluateDrawdownBreaker } from "./risk-breaker";
 import { clearAccuracyDegradedMarker, evaluateAccuracyBreaker, getAccuracyDegradedMarker, setAccuracyDegradedMarker } from "./accuracy-breaker";
-import { mergeQuoteData, pricePosition52w, scanMarket } from "./market";
+import { computeSignalAttribution, mergeQuoteData, pricePosition52w, scanMarket } from "./market";
 import { deriveMetrics } from "./derived-metrics";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
@@ -100,7 +100,7 @@ import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap, res
 import { assessProtectiveExitRepriceDrift, extendedHoursExitBufferBps, marketableLimitExitPrice, repriceStoredProtectiveExit } from "./protective-exit-routing";
 import type { ProtectiveExitQuote } from "./protective-exit-routing";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
-import { atr, atrStopPct } from "./indicators";
+import { atr, atrStopPct, sma, type OHLCBar } from "./indicators";
 import { computePortfolioHeat, positionRiskUsd, realizedVolPct, volTargetScale, type PortfolioHeatResult } from "./vol-targeting";
 import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
@@ -180,7 +180,7 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillEvent, FillSource, HumanReviewReasonCode, HumanReviewReasonReceipt, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
+import type { ApprovedEscalation, DecisionStep, EquityOrder, EquityPosition, ExecutionMode, FillEvent, FillSource, HumanReviewReasonCode, HumanReviewReasonReceipt, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, ProposalScorecard, ProposalScorecardChecklistItem, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
 import type { PositionStopPlan } from "./db-api-keys";
 import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
@@ -1872,6 +1872,9 @@ export async function runStrategyOnce(
     let calibrationForSizing: ConfidenceCalibrationStat[] | undefined = undefined;
     let realizedVolPctBySymbol: Record<string, number> = {};
     let atrStopPctByOpeningSymbol: Record<string, number> = {};
+    // Scorecard MA/volume context recycled from the SAME bars the opening ATR precompute fetches —
+    // empty whenever that precompute doesn't run (the scorecard omits the fields honestly).
+    let scorecardIndicatorsByOpeningSymbol: Record<string, ScorecardIndicators> = {};
     let bookHeat: PortfolioHeatResult | undefined = undefined;
     
     // Hoisted helpers
@@ -2297,6 +2300,7 @@ export async function runStrategyOnce(
     // materially since the original entry (Codex review, PR #1371) — so opening candidates always
     // get their OWN fresh computation here, never skipped just because the symbol is also held.
     atrStopPctByOpeningSymbol = {};
+    scorecardIndicatorsByOpeningSymbol = {};
     // Checks BOTH an explicit stopPlan on the proposal AND an INHERITED one from stopPlanBySymbol —
     // a scale-in that omits stopPlan (inheriting the symbol's persisted "atr" plan) still gets that
     // plan applied by enrichOpeningProposal below, so the opening ATR precompute must gate the same
@@ -2331,6 +2335,9 @@ export async function runStrategyOnce(
             if (!bars) return;
             const pct = atrStopPct(atr(bars, period), entryEstimate, multiple);
             if (typeof pct === "number") atrStopPctByOpeningSymbol[sym] = pct;
+            // Piggyback the scorecard's MA/volume context on the same (cached) bar series — no
+            // extra fetch, and absent bars simply leave the scorecard fields omitted.
+            scorecardIndicatorsByOpeningSymbol[sym] = scorecardIndicatorsFromBars(bars);
           } catch {
             // best-effort — falls back to the fixed/beta stop for this candidate
           }
@@ -2476,6 +2483,8 @@ export async function runStrategyOnce(
         // rationale-append text below too for backward compatibility with anything reading the string.
         stampRedTeamResult(proposal, redTeamResult);
         if (redTeamResult.rejected) {
+          // Scorecard lifecycle receipt — appended exactly where the rejection is stamped.
+          appendDecisionStep(proposal, "red_team_reject");
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
           // Pre-veto override (Veto B): an available-and-rejecting Bear is ADVISORY when the agent
           // attaches an autonomyOverride thesis to an OPENING and socraticOverrideMode isn't "off".
@@ -2513,6 +2522,7 @@ export async function runStrategyOnce(
               connectedAccountId
             );
             proposal.redTeamVerdict = { ...proposal.redTeamVerdict!, rejected: true, overridden: true };
+            appendDecisionStep(proposal, "override_requested");
             proposal.preVetoReasons = [...(proposal.preVetoReasons ?? []), `red_team_veto: ${redTeamResult.reason}`];
             // fall through to debatedProposals.push(proposal) — NO continue
           } else {
@@ -3486,6 +3496,8 @@ export async function runStrategyOnce(
       });
       decision = overrideResolution.decision;
       if (overrideResolution.applied) {
+        // Scorecard lifecycle receipt — appended exactly where socraticOverride.applied is set.
+        appendDecisionStep(normalizedProposal, "override_applied");
         audit(
           "socratic_override_applied",
           {
@@ -3521,6 +3533,23 @@ export async function runStrategyOnce(
           userId,
           connectedAccountId
         );
+      }
+
+      // Unified ProposalScorecard (r3): assemble the typed decision receipt from the state computed
+      // above (policy decision, red-team verdict, sizing snapshot, brackets, scan quote, ATR-pass
+      // indicators). Deterministic rendering only — a scorecard failure must never block the loop.
+      try {
+        normalizedProposal.scorecard = buildProposalScorecard({
+          proposal: normalizedProposal,
+          decision,
+          policy,
+          quote: marketScan.topCandidates.find(
+            (candidate) => normalizeSymbol(candidate.symbol) === normalizedProposal.symbol
+          ),
+          indicators: scorecardIndicatorsByOpeningSymbol[normalizedProposal.symbol]
+        });
+      } catch (err) {
+        console.warn("[strategy] scorecard assembly failed:", err instanceof Error ? err.message : String(err));
       }
 
       const activeHumanReviewReasons = stampHumanReviewReasons(proposal, normalizedProposal);
@@ -3790,6 +3819,8 @@ export async function runStrategyOnce(
       // skip or not, is recorded — unlike the approval lane (executeProposal), which has no
       // crash-recovery row to insert ahead of the lease and so follows the no-row-on-busy rule as
       // written.
+      // Terminal scorecard lifecycle step: the autonomous decision is final — placement follows.
+      appendDecisionStep(normalizedProposal, "final");
       const refId = crypto.randomUUID();
       const placingCaseInput: SocraticDecisionRecordInput = {
         proposalId,
@@ -6924,6 +6955,250 @@ export function enrichOpeningProposal(
     );
   }
   return next;
+}
+
+// ── Unified ProposalScorecard (external-repo lessons r3) ─────────────────────────────────────────
+// One typed, renderable receipt assembled from decision state the pipeline ALREADY computed —
+// deterministic construction only (the gap analysis warns against a monolithic LLM-authored
+// schema). Every helper here is pure; absent source data means an absent field, never a fake 0.
+
+/** Positive finite number or undefined — scorecard price/volume fields are omitted, never faked. */
+function positiveScorecardNumber(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/** MA/volume context recycled from a daily bar series the run already fetched (the ATR stop
+ * precompute) — this never triggers a fetch of its own. */
+export interface ScorecardIndicators {
+  sma50?: number;
+  sma200?: number;
+  avgVolume20d?: number;
+}
+
+export function scorecardIndicatorsFromBars(bars: OHLCBar[]): ScorecardIndicators {
+  const closes = bars.map((b) => b.close).filter((c): c is number => typeof c === "number" && Number.isFinite(c) && c > 0);
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const sma50 = sma(closes, 50);
+  const sma200 = sma(closes, 200);
+  // Trailing 20-day average volume — requires 20 real volumes; fewer means the field is omitted.
+  const volumes = bars
+    .map((b) => b.volume)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);
+  const tail = volumes.slice(-20);
+  const avgVolume20d = tail.length >= 20 ? Math.round(tail.reduce((sum, v) => sum + v, 0) / tail.length) : undefined;
+  return {
+    ...(typeof sma50 === "number" ? { sma50: round2(sma50) } : {}),
+    ...(typeof sma200 === "number" ? { sma200: round2(sma200) } : {}),
+    ...(avgVolume20d !== undefined ? { avgVolume20d } : {})
+  };
+}
+
+/**
+ * Append one lifecycle step to the proposal's scorecard decision chain, creating the scorecard
+ * shell when needed. Seeds "proposed" as the first step and skips consecutive duplicates (the
+ * "steps change" invariant validateDecisionChain checks at persistence time). Mutates in place,
+ * matching how the strategy loop stamps sizingSnapshot/redTeamVerdict.
+ */
+export function appendDecisionStep(proposal: TradeProposal, step: DecisionStep): void {
+  const scorecard = proposal.scorecard ?? (proposal.scorecard = {});
+  const chain = scorecard.decisionChain ?? (scorecard.decisionChain = []);
+  if (chain.length === 0 && step !== "proposed") chain.push("proposed");
+  if (chain[chain.length - 1] === step) return;
+  chain.push(step);
+}
+
+/** Green-team thesis text: the pre-Red narrative (greenTeamRationale), falling back to the legacy
+ * combined rationale's pre-Red portion. Bounded so the persisted receipt stays compact. */
+function scorecardThesis(proposal: TradeProposal): string {
+  const green = proposal.greenTeamRationale?.trim();
+  const base = green || (proposal.rationale ?? "").split("\n\nRed Team review")[0].trim();
+  return base.length > 360 ? `${base.slice(0, 357)}...` : base;
+}
+
+function scorecardCoreConclusion(
+  proposal: TradeProposal,
+  sniper: ProposalScorecard["sniperPoints"]
+): ProposalScorecard["coreConclusion"] {
+  const money = (v: number) => `$${v.toFixed(2)}`;
+  const thesis = scorecardThesis(proposal);
+  if (proposal.side === "sell" || proposal.side === "cover") {
+    return {
+      thesis,
+      noPositionAdvice: "This is an exit proposal.  With no position there is nothing to do.",
+      hasPositionAdvice: "Reduce or close the position as proposed."
+    };
+  }
+  const short = proposal.side === "short";
+  const noPosition: string[] = [];
+  if (sniper?.idealBuy !== undefined) noPosition.push(`Entry anchor ${money(sniper.idealBuy)}.`);
+  if (sniper?.secondaryBuy !== undefined) {
+    noPosition.push(`Secondary entry on a ${short ? "rally" : "pullback"} to ${money(sniper.secondaryBuy)}.`);
+  }
+  if (sniper?.stopLoss !== undefined) {
+    noPosition.push(`Thesis invalid ${short ? "above" : "below"} ${money(sniper.stopLoss)}.`);
+  }
+  const hasPosition: string[] = [];
+  if (sniper?.stopLoss !== undefined) {
+    hasPosition.push(`Hold while ${short ? "below" : "above"} the ${money(sniper.stopLoss)} stop.`);
+  }
+  if (sniper?.takeProfit !== undefined) {
+    hasPosition.push(`${short ? "Cover" : "Take-profit"} target ${money(sniper.takeProfit)}.`);
+  }
+  return {
+    thesis,
+    noPositionAdvice: noPosition.length > 0 ? noPosition.join("  ") : "No deterministic entry level is attached to this proposal.",
+    hasPositionAdvice: hasPosition.length > 0 ? hasPosition.join("  ") : "No deterministic exit level is attached to this proposal."
+  };
+}
+
+function scorecardDataPerspective(
+  proposal: TradeProposal,
+  quote: MarketQuote | undefined,
+  indicators: ScorecardIndicators | undefined
+): ProposalScorecard["dataPerspective"] {
+  const price = positiveScorecardNumber(proposal.referencePrice) ?? positiveScorecardNumber(quote?.price);
+  if (price === undefined) return undefined;
+  const sma50 = positiveScorecardNumber(indicators?.sma50);
+  const sma200 = positiveScorecardNumber(indicators?.sma200);
+  // Both MAs are required for an alignment verdict; anything less is honestly "unknown".
+  const maAlignment: NonNullable<ProposalScorecard["dataPerspective"]>["maAlignment"] =
+    sma50 !== undefined && sma200 !== undefined
+      ? price > sma50 && price > sma200
+        ? "above_both"
+        : price < sma50 && price < sma200
+          ? "below_both"
+          : "mixed"
+      : "unknown";
+  const current = positiveScorecardNumber(quote?.volume);
+  const avg20d = positiveScorecardNumber(indicators?.avgVolume20d);
+  return {
+    maAlignment,
+    priceVsMa: { price, ...(sma50 !== undefined ? { sma50 } : {}), ...(sma200 !== undefined ? { sma200 } : {}) },
+    volume: { ...(current !== undefined ? { current } : {}), ...(avg20d !== undefined ? { avg20d } : {}) }
+  };
+}
+
+function scorecardSniperPoints(proposal: TradeProposal, policy: TradingPolicy): ProposalScorecard["sniperPoints"] {
+  if (proposal.side !== "buy" && proposal.side !== "short") return undefined;
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const idealBuy = positiveScorecardNumber(proposal.referencePrice);
+  const stopLoss = positiveScorecardNumber(proposal.bracketStopLoss);
+  const takeProfit = positiveScorecardNumber(proposal.bracketTakeProfit);
+  // The secondary entry exists ONLY when the owner set the knob — no silent hardcoded pullback.
+  const pullbackPct = policy.secondaryBuyPullbackPct;
+  const secondaryBuy =
+    idealBuy !== undefined && typeof pullbackPct === "number" && Number.isFinite(pullbackPct) && pullbackPct > 0
+      ? round2(idealBuy * (1 + (proposal.side === "short" ? 1 : -1) * (pullbackPct / 100)))
+      : undefined;
+  if (idealBuy === undefined && secondaryBuy === undefined && stopLoss === undefined && takeProfit === undefined) return undefined;
+  return {
+    ...(idealBuy !== undefined ? { idealBuy } : {}),
+    ...(secondaryBuy !== undefined ? { secondaryBuy } : {}),
+    ...(stopLoss !== undefined ? { stopLoss } : {}),
+    ...(takeProfit !== undefined ? { takeProfit } : {})
+  };
+}
+
+/** A RENDERING of the gate outcomes already computed for this proposal — rows exist only for
+ * checks that actually ran (a disabled guard produces no row), and no row is a new authority. */
+function scorecardActionChecklist(
+  proposal: TradeProposal,
+  decision: PolicyDecision,
+  policy: TradingPolicy
+): ProposalScorecardChecklistItem[] {
+  const items: ProposalScorecardChecklistItem[] = [];
+  const reasons = decision.reasons ?? [];
+  const money = (v: number) => `$${v.toFixed(2)}`;
+
+  // Entry drift — the guard speaks exclusively through its `entry_drift:` reason prefix.
+  if (reasons.some((r) => r.startsWith("entry_drift:"))) {
+    items.push({ id: "entry_drift", label: `Entry drift exceeds the ${policy.maxEntryDriftPct}% guard.`, status: "fail" });
+  } else if ((policy.maxEntryDriftPct ?? 0) > 0 && positiveScorecardNumber(proposal.referencePrice) !== undefined) {
+    items.push({ id: "entry_drift", label: `Entry drift within the ${policy.maxEntryDriftPct}% guard.`, status: "pass" });
+  }
+
+  // Wash sale — the gate runs for BUYs only; decision.washSale is its never-silent audit trail.
+  if (proposal.side === "buy") {
+    const washBlocked = !decision.approved && reasons.some((r) => /wash[- ]sale/i.test(r));
+    if (decision.washSale?.note) {
+      items.push({ id: "wash_sale", label: "Technical wash sale — proceeding with the owner's annotation.", status: "warn" });
+    } else if (decision.washSale) {
+      items.push({
+        id: "wash_sale",
+        label: washBlocked ? "Wash-sale lockout applies to this rebuy." : "Wash-sale lock recorded on this rebuy.",
+        status: washBlocked ? "fail" : "warn"
+      });
+    } else if (washBlocked) {
+      items.push({ id: "wash_sale", label: "Wash-sale lockout applies to this rebuy.", status: "fail" });
+    } else {
+      items.push({ id: "wash_sale", label: "No wash-sale lock applies.", status: "pass" });
+    }
+  }
+
+  // Daily-cap headroom — from the escalation kinds / the sizing snapshot the sizer already wrote.
+  const dailyTripped =
+    decision.escalations?.some((entry) => entry.kind === "daily_notional_cap" || entry.kind === "daily_order_cap") === true ||
+    reasons.some((r) => r === "Daily notional limit would be exceeded." || r === "Daily opening-order count limit would be exceeded.");
+  const remainingDaily = proposal.sizingSnapshot?.remainingDailyNotional;
+  if (dailyTripped) {
+    items.push({ id: "daily_cap", label: "Daily opening cap has no headroom for this order.", status: "fail" });
+  } else if (typeof remainingDaily === "number" && Number.isFinite(remainingDaily)) {
+    items.push({ id: "daily_cap", label: `Daily opening cap leaves ${money(Math.max(0, remainingDaily))} of headroom.`, status: "pass" });
+  }
+
+  // Red Team availability/verdict — mirrors the stamped redTeamVerdict; exempt trades have no row.
+  const verdict = proposal.redTeamVerdict;
+  if (verdict) {
+    if (!verdict.available) {
+      items.push({ id: "red_team", label: "Red Team review could not run — you are the sole reviewer.", status: "warn" });
+    } else if (verdict.rejected || verdict.verdict === "reject") {
+      items.push({ id: "red_team", label: "Red Team rejected this proposal.", status: "fail" });
+    } else if (verdict.verdict === "approve-at-half") {
+      items.push({ id: "red_team", label: "Red Team approved at half size.", status: "warn" });
+    } else {
+      items.push({ id: "red_team", label: "Red Team approved.", status: "pass" });
+    }
+  }
+
+  // Repair-ladder receipts — presence means deterministic corrections were applied (and disclosed).
+  const adjustmentCount = proposal.dataAdjustments?.length ?? 0;
+  items.push(
+    adjustmentCount > 0
+      ? { id: "data_adjustments", label: `${adjustmentCount} deterministic correction${adjustmentCount === 1 ? "" : "s"} receipted.`, status: "warn" }
+      : { id: "data_adjustments", label: "No deterministic corrections were needed.", status: "pass" }
+  );
+
+  return items;
+}
+
+/**
+ * Assemble the full scorecard from already-computed decision state. Preserves any decision chain
+ * accumulated before assembly (the Red Team hooks fire earlier in the run) and seeds "proposed"
+ * when no step was recorded yet. Pure — exported for tests.
+ */
+export function buildProposalScorecard(input: {
+  proposal: TradeProposal;
+  decision: PolicyDecision;
+  policy: TradingPolicy;
+  quote?: MarketQuote;
+  indicators?: ScorecardIndicators;
+}): ProposalScorecard {
+  const { proposal, decision, policy, quote, indicators } = input;
+  const sniperPoints = scorecardSniperPoints(proposal, policy);
+  const dataPerspective = scorecardDataPerspective(proposal, quote, indicators);
+  const signalAttribution = quote ? computeSignalAttribution(quote) : undefined;
+  const decisionChain: DecisionStep[] =
+    proposal.scorecard?.decisionChain && proposal.scorecard.decisionChain.length > 0
+      ? [...proposal.scorecard.decisionChain]
+      : ["proposed"];
+  return {
+    coreConclusion: scorecardCoreConclusion(proposal, sniperPoints),
+    ...(dataPerspective ? { dataPerspective } : {}),
+    ...(sniperPoints ? { sniperPoints } : {}),
+    actionChecklist: scorecardActionChecklist(proposal, decision, policy),
+    ...(signalAttribution ? { signalAttribution } : {}),
+    decisionChain
+  };
 }
 
 export function generateProactiveRiskProposals(

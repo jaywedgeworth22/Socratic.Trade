@@ -32,6 +32,7 @@ import {
   getPolicy,
   getSkippedCounterfactualByRunSymbol,
   getSkippedCounterfactualByRunSymbolHorizon,
+  getProposal,
   getSkippedCounterfactualCoverage,
   getSocraticDecisionCase,
   getSocraticOutcomeCoverage,
@@ -343,6 +344,42 @@ function resolveOutcomeGradingMode(userId: string, connectedAccountId?: string):
   }
 }
 
+/** Input for gradeSniperAccuracy — the scorecard's stop/take levels vs the matured daily closes. */
+export interface SniperAccuracyInput {
+  side?: OrderSide;
+  stopLoss?: number;
+  takeProfit?: number;
+  /** The SAME daily series measureCase already fetched — never a new fetch pipeline. */
+  bars: NormalizedDailyBar[] | null | undefined;
+  /** YYYY-MM-DD of the entry basis; only bars strictly AFTER it participate. */
+  basisDate: string;
+}
+
+/**
+ * Pure sniper-point grading (scorecard r3): did any post-basis DAILY CLOSE breach the proposal's
+ * stop / reach its take-profit?  Close basis only — an intraday touch between closes is invisible
+ * here, which the receipt's `priceBasis` discloses.  Undefined when the proposal carried no
+ * levels or no bars cover the window (the receipt is omitted, never fabricated).
+ */
+export function gradeSniperAccuracy(
+  input: SniperAccuracyInput
+): NonNullable<SocraticDecisionCase["outcome"]>["sniperAccuracy"] | undefined {
+  const positive = (v: number | undefined): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
+  const stop = positive(input.stopLoss);
+  const take = positive(input.takeProfit);
+  if (stop === undefined && take === undefined) return undefined;
+  const bars = (input.bars ?? []).filter((bar) => bar.date > input.basisDate);
+  if (bars.length === 0) return undefined;
+  // Long: stop breaches DOWN, take-profit hits UP. Short: mirrored (price up = loss).
+  const short = input.side === "short";
+  return {
+    ...(stop !== undefined ? { stopHit: bars.some((bar) => (short ? bar.close >= stop : bar.close <= stop)) } : {}),
+    ...(take !== undefined ? { takeProfitHit: bars.some((bar) => (short ? bar.close <= take : bar.close >= take)) } : {}),
+    priceBasis: "daily_close"
+  };
+}
+
 /** Companion alpha grade for a terminal case ('alpha' mode only): verdict + figure from the
  * headline spyExcessPct row, or {} when no resolved horizon carried one (never fabricated). */
 function headlineAlphaFields(
@@ -478,6 +515,26 @@ async function measureCase(
 
   const outcomes = mergeHorizonRows(decisionCase.outcome?.outcomes, [...intradayRows, ...dailyRows]);
 
+  // 3.5) Sniper-point grading (scorecard r3): compare the proposal's persisted stop/take levels
+  // against the SAME daily closes fetched above — a pure additive receipt on the outcome, never a
+  // new fetch pipeline and never a gate. Best-effort: a missing proposal row simply omits it.
+  const sniperAccuracy = (() => {
+    try {
+      const proposalRow = getProposal(decisionCase.proposalId ?? decisionCase.id, ctx.userId);
+      const sniper = proposalRow?.proposal.scorecard?.sniperPoints;
+      if (!sniper) return undefined;
+      return gradeSniperAccuracy({
+        side: decisionCase.side,
+        stopLoss: sniper.stopLoss,
+        takeProfit: sniper.takeProfit,
+        bars,
+        basisDate: new Date(basisAt).toISOString().slice(0, 10)
+      });
+    } catch {
+      return undefined;
+    }
+  })();
+
   // 4) Case-level verdict. Alpha mode ADDS the companion SPY-excess grade on terminal verdicts;
   // the raw status/returnPct are always written unchanged (raw mode is byte-identical to before).
   if (realizedLot) {
@@ -486,6 +543,7 @@ async function measureCase(
       returnPct: realizedLot.returnPct,
       pnlUsd: Number(realizedLot.pnl.toFixed(2)),
       ...(ctx.gradingMode === "alpha" ? headlineAlphaFields(outcomes) : {}),
+      ...(sniperAccuracy ? { sniperAccuracy } : {}),
       note,
       measuredAt: ctx.nowIso,
       outcomes
@@ -501,6 +559,7 @@ async function measureCase(
         status: headline.returnPct > 0 ? "won" : headline.returnPct < 0 ? "lost" : "flat",
         returnPct: headline.returnPct,
         ...(ctx.gradingMode === "alpha" ? headlineAlphaFields(outcomes) : {}),
+        ...(sniperAccuracy ? { sniperAccuracy } : {}),
         note: `${note} Headline horizon: ${headline.horizon}.`,
         measuredAt: ctx.nowIso,
         outcomes
@@ -516,7 +575,7 @@ async function measureCase(
 
   // Still maturing (placed-with-open-lot, or horizons not yet due): write the partial ledger so the
   // memory doc reflects everything measured so far; the job re-visits after recheckMs.
-  return { status: "open", note, measuredAt: ctx.nowIso, outcomes };
+  return { status: "open", note, ...(sniperAccuracy ? { sniperAccuracy } : {}), measuredAt: ctx.nowIso, outcomes };
 }
 
 /** Fire-safe enqueue of the 15m/1h 'sample_intraday_horizon' due-jobs for a decision case whose
@@ -751,6 +810,8 @@ async function writeIntradaySampleRow(
         // Preserve an already-written alpha companion grade — this write only adds a horizon row.
         alphaStatus: decisionCase.outcome?.alphaStatus,
         alphaPct: decisionCase.outcome?.alphaPct,
+        // Same for the sniper-accuracy receipt (written by the daily maturation pass).
+        sniperAccuracy: decisionCase.outcome?.sniperAccuracy,
         note: decisionCase.outcome?.note,
         measuredAt: row.maturedAt ?? new Date().toISOString(),
         outcomes

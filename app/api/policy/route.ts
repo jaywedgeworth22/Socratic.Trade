@@ -321,6 +321,7 @@ async function validatePolicy(
   if (policy.maxPortfolioBeta !== undefined && (!Number.isFinite(policy.maxPortfolioBeta) || policy.maxPortfolioBeta <= 0 || policy.maxPortfolioBeta > 10)) return "maxPortfolioBeta must be a positive number (≤ 10).";
   if (policy.maxAvgCorrelation !== undefined && (!Number.isFinite(policy.maxAvgCorrelation) || policy.maxAvgCorrelation <= 0 || policy.maxAvgCorrelation > 1)) return "maxAvgCorrelation must be between 0 (off) and 1.";
   if (policy.maxEntryDriftPct !== undefined && (!Number.isFinite(policy.maxEntryDriftPct) || policy.maxEntryDriftPct < 0 || policy.maxEntryDriftPct > 100)) return "maxEntryDriftPct must be between 0 (off) and 100.";
+  if (policy.secondaryBuyPullbackPct !== undefined && (!Number.isFinite(policy.secondaryBuyPullbackPct) || policy.secondaryBuyPullbackPct < 0 || policy.secondaryBuyPullbackPct > 100)) return "secondaryBuyPullbackPct must be between 0 (off) and 100.";
   if (policy.tuning?.llmDailyTokenBudget !== undefined && (!Number.isFinite(policy.tuning.llmDailyTokenBudget) || policy.tuning.llmDailyTokenBudget < 0)) return "tuning.llmDailyTokenBudget must be a non-negative number (0 = no limit).";
   if (policy.tuning?.llmDailyCostBudgetUsd !== undefined && (!Number.isFinite(policy.tuning.llmDailyCostBudgetUsd) || policy.tuning.llmDailyCostBudgetUsd < 0)) return "tuning.llmDailyCostBudgetUsd must be a non-negative number (0 = no limit).";
   if (policy.atrStops !== undefined && typeof policy.atrStops !== "boolean") return "atrStops must be a boolean.";
