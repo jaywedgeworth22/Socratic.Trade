@@ -115,6 +115,63 @@ struct PolicySummary: Decodable {
     let maxDailyPctOfNav: Double?
     let maxDailyOrders: Int?
     let requireTypedConfirmation: Bool?
+    /// Mirrors the server snapshot's policy.runDuringExtendedHours (app/api/mobile/snapshot).
+    /// nil ≠ false: older payloads without the field cannot answer the market-window question.
+    let runDuringExtendedHours: Bool?
+}
+
+/// The console's shared run-state vocabulary (app/console/lib/derive.ts `deriveStateInfo`).
+/// The words are load-bearing: this app must never say "Running" while the console says
+/// "Paused · market closed" for the same account.
+enum RunStateWord: String {
+    case running = "Running"
+    case pausedMarketClosed = "Paused · market closed"
+    case exitOnly = "Exit-only"
+    case windingDown = "Winding down"
+    case stopped = "Stopped"
+}
+
+/// Pure mirror of the console's `deriveStateInfo` word selection, using the server-computed
+/// `marketSession` instead of a client clock.  Rules, in console order:
+/// - Only `active` is market-gated.  A closed/pre/post session with extended hours OFF means
+///   scheduled runs are paused, so the word is "Paused · market closed".
+/// - `runDuringExtendedHours == nil` (older payload) makes the market split unanswerable —
+///   keep the plain "Running" claim rather than fabricate a pause.
+/// - An unknown/absent session likewise cannot answer the question — keep "Running".
+func deriveRunStateWord(
+    systemState: String,
+    runDuringExtendedHours: Bool?,
+    marketSession: String?
+) -> RunStateWord {
+    switch systemState.lowercased() {
+    case "active":
+        guard let extendedHours = runDuringExtendedHours else { return .running }
+        switch (marketSession ?? "").lowercased() {
+        case "regular", "open":
+            return .running
+        case "pre", "post":
+            return extendedHours ? .running : .pausedMarketClosed
+        case "closed":
+            return .pausedMarketClosed
+        default:
+            return .running
+        }
+    case "close_only":
+        return .exitOnly
+    case "liquidating":
+        return .windingDown
+    default:
+        return .stopped
+    }
+}
+
+/// Convenience over the snapshot's own policy + market session.
+func deriveRunStateWord(snapshot: MobileSnapshot) -> RunStateWord {
+    deriveRunStateWord(
+        systemState: snapshot.readiness.systemState,
+        runDuringExtendedHours: snapshot.policy.runDuringExtendedHours,
+        marketSession: snapshot.marketSession
+    )
 }
 
 struct PortfolioSummary: Decodable {

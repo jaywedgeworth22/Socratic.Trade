@@ -4,12 +4,12 @@
 	classes = {
 	};
 	objectVersion = 100;
-	preferredProjectObjectVersion = 100;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		0D33482A75E80E8B8393568C /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1414766425B708D8C45691ED /* HomeView.swift */; };
 		16C32102BDAA57BDDC9BC51E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 64D21DA3DA51118F65691FBE /* Assets.xcassets */; };
+		1F37FE2BA14490285C0A0156 /* RunStateDerivationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF789FDEB98C62C5D8A12A7F /* RunStateDerivationTests.swift */; };
 		20459811A20F559A78FC18B3 /* SocraticTradeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F94CABB7BE5CB871622BADD /* SocraticTradeApp.swift */; };
 		4298F7ACB07D50EE61F0ECB9 /* MobileControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FD3EFCF82E664100A11FC33 /* MobileControlView.swift */; };
 		51FE4A579117BE3605C107D9 /* PreviewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C2568FFF3FB30F96619E8E /* PreviewSupport.swift */; };
@@ -22,6 +22,7 @@
 		ACF83840AA1DAFC72B2A59AE /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761C0F1E45ABE2373664A335 /* ActivityView.swift */; };
 		AD51C8FEF98EF6F4E763A044 /* MarketsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D351D03CEAFD6CD1EB4536FD /* MarketsView.swift */; };
 		C3BB26F6D86DD0C45B1EBEFC /* TabPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728EAC5AE3C4358672EBAEED /* TabPreferencesTests.swift */; };
+		C4C5A007566AD8E6187289D7 /* AdminPortalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C59D290B3E70A1F9606F659 /* AdminPortalView.swift */; };
 		C67CC3242AE041DFAE3A419E /* CandleWordmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D112E8C717D899B0AFF0B6E5 /* CandleWordmarkView.swift */; };
 		CF7E04F6E303A90DA3947D4A /* MobileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B407C6306CC293CF54036A1 /* MobileStore.swift */; };
 		EEFE88508B9B9CC94639E02C /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E9A5E5A0273AC7B97E89D3 /* LoginView.swift */; };
@@ -48,6 +49,7 @@
 		5F94CABB7BE5CB871622BADD /* SocraticTradeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocraticTradeApp.swift; sourceTree = "<group>"; };
 		64D21DA3DA51118F65691FBE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		65E9A5E5A0273AC7B97E89D3 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		6C59D290B3E70A1F9606F659 /* AdminPortalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminPortalView.swift; sourceTree = "<group>"; };
 		728EAC5AE3C4358672EBAEED /* TabPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabPreferencesTests.swift; sourceTree = "<group>"; };
 		761C0F1E45ABE2373664A335 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		89D3AB0C26BB7394334E998E /* MobileAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAPIClient.swift; sourceTree = "<group>"; };
@@ -57,6 +59,7 @@
 		D351D03CEAFD6CD1EB4536FD /* MarketsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketsView.swift; sourceTree = "<group>"; };
 		DD460CC2D17E0F0B061B372A /* InsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsView.swift; sourceTree = "<group>"; };
 		EC1C49575DCB6DA8E8D65CD7 /* ProposalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProposalsView.swift; sourceTree = "<group>"; };
+		EF789FDEB98C62C5D8A12A7F /* RunStateDerivationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunStateDerivationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -73,6 +76,7 @@
 			isa = PBXGroup;
 			children = (
 				761C0F1E45ABE2373664A335 /* ActivityView.swift */,
+				6C59D290B3E70A1F9606F659 /* AdminPortalView.swift */,
 				38386F538E5ECC5191294B9A /* AppComponents.swift */,
 				64D21DA3DA51118F65691FBE /* Assets.xcassets */,
 				D112E8C717D899B0AFF0B6E5 /* CandleWordmarkView.swift */,
@@ -104,6 +108,7 @@
 			isa = PBXGroup;
 			children = (
 				23A34A6694A3A24320E058E4 /* MobileModelsTests.swift */,
+				EF789FDEB98C62C5D8A12A7F /* RunStateDerivationTests.swift */,
 				728EAC5AE3C4358672EBAEED /* TabPreferencesTests.swift */,
 			);
 			path = SocraticTradeTests;
@@ -176,7 +181,7 @@
 			);
 			mainGroup = 008B71438D3CFDB4D27347DF;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
+			preferredProjectObjectVersion = 100;
 			productRefGroup = 20E63D98EDABA6D29C136796 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -204,6 +209,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8C402A017E39D5CF92861A85 /* MobileModelsTests.swift in Sources */,
+				1F37FE2BA14490285C0A0156 /* RunStateDerivationTests.swift in Sources */,
 				C3BB26F6D86DD0C45B1EBEFC /* TabPreferencesTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -213,6 +219,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				ACF83840AA1DAFC72B2A59AE /* ActivityView.swift in Sources */,
+				C4C5A007566AD8E6187289D7 /* AdminPortalView.swift in Sources */,
 				96788F467DDE0AEBD26DBE2E /* AppComponents.swift in Sources */,
 				C67CC3242AE041DFAE3A419E /* CandleWordmarkView.swift in Sources */,
 				0D33482A75E80E8B8393568C /* HomeView.swift in Sources */,
