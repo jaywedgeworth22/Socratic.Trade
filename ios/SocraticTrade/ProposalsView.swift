@@ -5,6 +5,7 @@ struct ProposalsView: View {
 
     @State private var confirmingProposal: PendingProposal?
     @State private var confirmationText = ""
+    @State private var presentedSymbol: PresentedSymbol?
 
     var body: some View {
         SnapshotScaffold { snapshot in
@@ -26,13 +27,17 @@ struct ProposalsView: View {
                         rejectDisabled: !store.canSubmit("proposal.reject"),
                         requiresTypedConfirmation: requiresLiveConfirmation(proposal, snapshot: snapshot),
                         approve: { approve(proposal, snapshot: snapshot) },
-                        reject: { reject(proposal) }
+                        reject: { reject(proposal) },
+                        presentedSymbol: $presentedSymbol
                     )
                 }
             }
         }
         .navigationTitle("Proposals")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $presentedSymbol) { presented in
+            SymbolInfoSheet(symbol: presented.symbol)
+        }
         .alert(
             "Confirm Live Order",
             isPresented: Binding(
@@ -165,6 +170,7 @@ private struct ProposalCard: View {
     let requiresTypedConfirmation: Bool
     let approve: () -> Void
     let reject: () -> Void
+    @Binding var presentedSymbol: PresentedSymbol?
 
     private var sideColor: Color {
         switch proposal.proposal.side.lowercased() {
@@ -185,9 +191,13 @@ private struct ProposalCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .center, spacing: 10) {
-                    TickerLogo(symbol: proposal.proposal.symbol, size: 32)
-                    Text(proposal.proposal.symbol.uppercased())
-                        .font(.title2.weight(.bold))
+                    SymbolTapButton(
+                        symbol: proposal.proposal.symbol.uppercased(),
+                        logoSize: 32,
+                        font: .title2.weight(.bold)
+                    ) {
+                        presentedSymbol = PresentedSymbol(symbol: proposal.proposal.symbol)
+                    }
                     StatusPill(proposal.proposal.side.uppercased(), color: sideColor)
                     Spacer()
                     Text(AppFormat.money(proposal.estimatedNotional))

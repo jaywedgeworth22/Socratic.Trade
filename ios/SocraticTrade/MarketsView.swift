@@ -279,6 +279,13 @@ private struct FlowSymbols: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    // The icon alone is ~17pt — below the 44pt HIG minimum tap target, and
+                    // sitting right next to the info button above. Pad the button out to a real
+                    // 44x44 hit area and make the whole padded rect tappable (not just the
+                    // icon's visible pixels) via .contentShape, without touching the sibling
+                    // button's own bounds so the two targets stay non-overlapping.
+                    .padding(14)
+                    .contentShape(Rectangle())
                     .buttonStyle(.plain)
                     .disabled(store.isBusy(operationID) || !store.canSubmit("watchlist.remove"))
                     .accessibilityLabel("Remove \(item.symbol) from watchlist")

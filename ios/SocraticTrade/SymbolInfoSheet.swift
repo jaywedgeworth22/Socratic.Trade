@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// Company-info sheet for a ticker — the mobile counterpart to the web console's symbol
@@ -90,8 +91,25 @@ struct SymbolInfoSheet: View {
         } catch is CancellationError {
             // Sheet dismissed mid-fetch — nothing left to show.
         } catch {
+            // MobileAPIClient's URLSession call wraps a mid-fetch cancellation as
+            // MobileAPIError.network(URLError(.cancelled)) rather than rethrowing
+            // CancellationError, so a sheet dismissed while the fetch is in flight would
+            // otherwise flash a real error state for a fetch nobody is waiting on anymore.
+            // Treat that case — and any lingering Task cancellation — as the same silent
+            // no-op as the CancellationError branch above.
+            guard !Task.isCancelled, !isCancelledNetworkError(error) else { return }
             loadState = .failed(error.localizedDescription)
         }
+    }
+
+    private func isCancelledNetworkError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return urlError.code == .cancelled
+        }
+        if case MobileAPIError.network(let underlying) = error, let urlError = underlying as? URLError {
+            return urlError.code == .cancelled
+        }
+        return false
     }
 }
 
@@ -149,7 +167,6 @@ private struct SymbolInfoStatsCard: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeading("Key Stats")
             LazyVGrid(columns: columns, spacing: 10) {
-                MetricTile(title: "Market Cap", value: AppFormat.money(info.marketCap, compact: true))
                 MetricTile(title: "Volume", value: AppFormat.number(info.volume))
                 MetricTile(title: "P/E Ratio", value: AppFormat.peRatioDisplay(peRatio: info.peRatio, eps: info.eps))
                 MetricTile(title: "EPS", value: AppFormat.money(info.eps))

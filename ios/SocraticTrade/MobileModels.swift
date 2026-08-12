@@ -388,20 +388,12 @@ struct SymbolQuoteInfo: Decodable {
     let beta: Double?
     let fiftyTwoWeekHigh: Double?
     let fiftyTwoWeekLow: Double?
-    let sharesOutstanding: Double?
     let analystRating: String?
     let analystScore: Double?
     let targetMean: Double?
     let targetHigh: Double?
     let targetLow: Double?
     let daysToEarnings: Double?
-
-    /// Derived, not provider-supplied: price x shares outstanding. Nil when either input is
-    /// missing rather than a fabricated estimate.
-    var marketCap: Double? {
-        guard let price, let sharesOutstanding else { return nil }
-        return price * sharesOutstanding
-    }
 }
 
 struct CommandEnvelope: Decodable {
