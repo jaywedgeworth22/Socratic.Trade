@@ -2816,6 +2816,38 @@ const MIGRATIONS: Migration[] = [
           ON lookahead_audit_findings (user_id, created_at DESC);
       `);
     }
+  },
+  {
+    // Point-in-time fundamentals revision chain (qlib/ai-hedge-fund lookahead lesson), scoped to
+    // SEC-XBRL-derived GAAP facts (debtToEquity, revenueGrowth today; future EPS/revenue fields can
+    // reuse the same shape). Mirrors the sec_filings/learned_context superseded_by idiom: a NEW
+    // filing for the SAME (symbol, field, fiscal_period_end) marks the prior LIVE row's
+    // superseded_by (the successor's own filed_at — there is no synthetic id, and symbol/field/
+    // fiscal_period_end are already fixed within a group) instead of overwriting it, so the old row
+    // stays queryable. GLOBAL market data (no user_id column) — deliberately exempt from
+    // DELETE_TABLES_BY_USER_ID, same class as sec_filings/symbol_field_latest/
+    // historical_fundamentals: SEC filings are public-company facts, not account-private. CRUD in
+    // db-fundamentals.ts (recordFundamentalRevision / getFundamentalAsOf).
+    version: 76,
+    name: "fundamental_revisions",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS fundamental_revisions (
+          symbol TEXT NOT NULL,
+          field TEXT NOT NULL,
+          fiscal_period_end TEXT NOT NULL,
+          value REAL NOT NULL,
+          form TEXT NOT NULL,
+          filed_at TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          superseded_by TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (symbol, field, fiscal_period_end, filed_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fundamental_revisions_symbol_field_filed
+          ON fundamental_revisions (symbol, field, filed_at);
+      `);
+    }
   }
 ];
 

@@ -388,6 +388,47 @@ describe("parseCompanyFacts — revenueGrowth (annual 10-K YoY)", () => {
   });
 });
 
+describe("parseCompanyFacts — revisions (point-in-time facts behind the winning scalar)", () => {
+  it("omits `revisions` entirely when no entry carries a `filed` date (existing fixtures/tests are unaffected)", () => {
+    const r = parseCompanyFacts(makeFixture());
+    expect(r.revisions).toBeUndefined();
+  });
+
+  it("emits one debtToEquity revision per distinct filed date at the winning equity period (an original + a 10-K/A restatement)", () => {
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [
+        { end: "2023-12-31", val: 300_000_000, form: "10-K", filed: "2024-02-01" },
+        { end: "2023-12-31", val: 250_000_000, form: "10-K/A", filed: "2024-04-01" }
+      ],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 600_000_000, form: "10-K", filed: "2024-02-01" }]
+    }));
+    expect(r.debtToEquity).toBe(2.4); // winning: 600M / 250M (latest-filed equity wins the scalar)
+    expect(r.revisions).toEqual(
+      expect.arrayContaining([
+        { field: "debtToEquity", fiscalPeriodEnd: "2023-12-31", value: 2.0, form: "10-K", filedAt: "2024-02-01" },
+        { field: "debtToEquity", fiscalPeriodEnd: "2023-12-31", value: 2.4, form: "10-K/A", filedAt: "2024-04-01" }
+      ])
+    );
+  });
+
+  it("emits one revenueGrowth revision per distinct filed date of the current fiscal year's revenue fact", () => {
+    const r = parseCompanyFacts(rawFacts({
+      Revenues: [
+        { start: "2022-01-01", end: "2022-12-31", val: 100_000_000, form: "10-K", filed: "2023-02-01" },
+        { start: "2023-01-01", end: "2023-12-31", val: 110_000_000, form: "10-K", filed: "2024-02-01" },
+        { start: "2023-01-01", end: "2023-12-31", val: 120_000_000, form: "10-K/A", filed: "2024-04-01" }
+      ]
+    }));
+    expect(r.revenueGrowth).toBe(20); // winning: (120M-100M)/100M * 100 (latest-filed 2023 revenue wins)
+    expect(r.revisions).toEqual(
+      expect.arrayContaining([
+        { field: "revenueGrowth", fiscalPeriodEnd: "2023-12-31", value: 10, form: "10-K", filedAt: "2024-02-01" },
+        { field: "revenueGrowth", fiscalPeriodEnd: "2023-12-31", value: 20, form: "10-K/A", filedAt: "2024-04-01" }
+      ])
+    );
+  });
+});
+
 describe("parseTickerCikMap (dual-class tickers)", () => {
   it("preserves every ticker that shares a CIK", () => {
     const map = parseTickerCikMap({
