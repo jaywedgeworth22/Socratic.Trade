@@ -93,7 +93,7 @@ import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat, SkippedCandidateReturn } from "./performance";
 import { buildSpyReturnToNowMap } from "./backtest";
 import type { SituationCandidate } from "./experience-memory";
-import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
+import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, hasFractionalQuantity, isIraTaxRegime } from "./policy";
 import { currentMarketSession } from "./market-hours";
 import { sessionPhrasingReceipt } from "./proposal-phase-guard";
 import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap, resolveDailyOpeningCap } from "./policy-caps";
@@ -3497,6 +3497,11 @@ export async function runStrategyOnce(
       decision = overrideResolution.decision;
       if (overrideResolution.applied) {
         // Scorecard lifecycle receipt — appended exactly where socraticOverride.applied is set.
+        // applied implies requested (resolveSocraticOverride requires autonomyOverride.requested),
+        // and the normal soft-policy-block path never passes the red-team pre-veto append — so the
+        // request step is recorded here too. appendDecisionStep dedups when the pre-veto path
+        // already added it, keeping the validator's request-before-apply invariant true on BOTH paths.
+        appendDecisionStep(normalizedProposal, "override_requested");
         appendDecisionStep(normalizedProposal, "override_applied");
         audit(
           "socratic_override_applied",
@@ -6980,12 +6985,10 @@ export function scorecardIndicatorsFromBars(bars: OHLCBar[]): ScorecardIndicator
   const round2 = (n: number) => Math.round(n * 100) / 100;
   const sma50 = sma(closes, 50);
   const sma200 = sma(closes, 200);
-  // Trailing 20-day average volume — requires 20 real volumes; fewer means the field is omitted.
-  const volumes = bars
-    .map((b) => b.volume)
-    .filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);
-  const tail = volumes.slice(-20);
-  const avgVolume20d = tail.length >= 20 ? Math.round(tail.reduce((sum, v) => sum + v, 0) / tail.length) : undefined;
+  // Trailing 20-day average volume — the window is the LAST 20 BARS (so "20d" is literally true),
+  // and every one of them must carry a real volume; any hole means the field is omitted.
+  const tail = bars.slice(-20).map((b) => b.volume).filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);
+  const avgVolume20d = bars.length >= 20 && tail.length === 20 ? Math.round(tail.reduce((sum, v) => sum + v, 0) / tail.length) : undefined;
   return {
     ...(typeof sma50 === "number" ? { sma50: round2(sma50) } : {}),
     ...(typeof sma200 === "number" ? { sma200: round2(sma200) } : {}),
@@ -7104,16 +7107,31 @@ function scorecardSniperPoints(proposal: TradeProposal, policy: TradingPolicy): 
 function scorecardActionChecklist(
   proposal: TradeProposal,
   decision: PolicyDecision,
-  policy: TradingPolicy
+  policy: TradingPolicy,
+  quote: MarketQuote | undefined
 ): ProposalScorecardChecklistItem[] {
   const items: ProposalScorecardChecklistItem[] = [];
   const reasons = decision.reasons ?? [];
   const money = (v: number) => `$${v.toFixed(2)}`;
 
-  // Entry drift — the guard speaks exclusively through its `entry_drift:` reason prefix.
+  // Entry drift — a fail row comes from the guard's `entry_drift:` reason prefix; a PASS row exists
+  // only when the guard actually evaluated this proposal. Mirrors the gate's full predicate
+  // (policy.ts): an OPENING market/dollar/no-limit order (or a Robinhood fractional limit, which
+  // that adapter routes as a market order) with an entry anchor AND a current scan price. Whole-share
+  // limit entries are excluded by the gate (the broker's limit caps the fill) — no row, never a
+  // fabricated pass. The scan quote here is the same run's scan the gate read its price from.
+  const driftGateEvaluated =
+    (proposal.side === "buy" || proposal.side === "short") &&
+    (policy.maxEntryDriftPct ?? 0) > 0 &&
+    positiveScorecardNumber(proposal.referencePrice) !== undefined &&
+    (proposal.type === "market" ||
+      proposal.dollarAmount != null ||
+      proposal.limitPrice == null ||
+      (proposal.type === "limit" && hasFractionalQuantity(proposal) && policy.activeBroker === "robinhood")) &&
+    positiveScorecardNumber(quote?.price) !== undefined;
   if (reasons.some((r) => r.startsWith("entry_drift:"))) {
     items.push({ id: "entry_drift", label: `Entry drift exceeds the ${policy.maxEntryDriftPct}% guard.`, status: "fail" });
-  } else if ((policy.maxEntryDriftPct ?? 0) > 0 && positiveScorecardNumber(proposal.referencePrice) !== undefined) {
+  } else if (driftGateEvaluated) {
     items.push({ id: "entry_drift", label: `Entry drift within the ${policy.maxEntryDriftPct}% guard.`, status: "pass" });
   }
 
@@ -7195,7 +7213,7 @@ export function buildProposalScorecard(input: {
     coreConclusion: scorecardCoreConclusion(proposal, sniperPoints),
     ...(dataPerspective ? { dataPerspective } : {}),
     ...(sniperPoints ? { sniperPoints } : {}),
-    actionChecklist: scorecardActionChecklist(proposal, decision, policy),
+    actionChecklist: scorecardActionChecklist(proposal, decision, policy, quote),
     ...(signalAttribution ? { signalAttribution } : {}),
     decisionChain
   };

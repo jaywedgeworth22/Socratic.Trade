@@ -5,7 +5,9 @@
  *   2. computeSignalAttribution maps the quote's factor scores into four integer buckets summing
  *      to exactly 100 (largest-remainder rounding), and is undefined without factor scores.
  *   3. The action checklist is a RENDERING of gate state (entry-drift reason, wash-sale audit,
- *      daily-cap escalations, red-team verdict, dataAdjustments) — mirrored, never invented.
+ *      daily-cap escalations, red-team verdict, dataAdjustments) — mirrored, never invented; the
+ *      entry-drift PASS row exists only when the gate's full predicate (opening + gated order
+ *      shape + entry anchor + current scan price) says the guard actually evaluated the proposal.
  *   4. appendDecisionStep seeds "proposed", dedups consecutive steps, and buildProposalScorecard
  *      preserves an accumulated chain; validateDecisionChain flags override_applied without a
  *      preceding override_requested (and repeated/unknown steps).
@@ -201,6 +203,46 @@ describe("buildProposalScorecard population", () => {
     expect(between.dataPerspective?.maAlignment).toBe("mixed");
   });
 
+  it("entry-drift pass row exists ONLY when the guard actually evaluated the proposal", () => {
+    const policy = policyWith({ maxEntryDriftPct: 3 });
+    const quote = quoteWith();
+    const hasDriftRow = (scorecard: ReturnType<typeof buildProposalScorecard>) =>
+      (scorecard.actionChecklist ?? []).some((item) => item.id === "entry_drift");
+    // Whole-share limit entries are deliberately excluded from the gate (the broker's limit caps
+    // the fill) — no row, never a fabricated pass.
+    const wholeShareLimit = buildProposalScorecard({
+      proposal: buyProposal({ referencePrice: 100, type: "limit", limitPrice: 99, quantity: 5, dollarAmount: undefined }),
+      decision: APPROVED,
+      policy,
+      quote
+    });
+    expect(hasDriftRow(wholeShareLimit)).toBe(false);
+    // Exits can carry a referencePrice but the gate only guards openings.
+    const exit = buildProposalScorecard({
+      proposal: buyProposal({ side: "sell", referencePrice: 100, quantity: 5, dollarAmount: undefined }),
+      decision: APPROVED,
+      policy,
+      quote
+    });
+    expect(hasDriftRow(exit)).toBe(false);
+    // No current scan price means the gate never evaluated drift — the row is omitted honestly.
+    const noQuote = buildProposalScorecard({
+      proposal: buyProposal({ referencePrice: 100 }),
+      decision: APPROVED,
+      policy
+    });
+    expect(hasDriftRow(noQuote)).toBe(false);
+    // A Robinhood FRACTIONAL limit IS gated (that adapter routes fractional entries as market
+    // orders) — the pass row exists.
+    const rhFractional = buildProposalScorecard({
+      proposal: buyProposal({ referencePrice: 100, type: "limit", limitPrice: 99, quantity: 1.5, dollarAmount: undefined }),
+      decision: APPROVED,
+      policy: policyWith({ maxEntryDriftPct: 3, activeBroker: "robinhood" }),
+      quote
+    });
+    expect(rhFractional.actionChecklist?.find((item) => item.id === "entry_drift")?.status).toBe("pass");
+  });
+
   it("checklist mirrors failing gate state (entry drift, daily cap, red-team reject, receipts)", () => {
     const proposal = buyProposal({
       referencePrice: 100,
@@ -268,6 +310,15 @@ describe("scorecardIndicatorsFromBars", () => {
     expect(indicators.sma200).toBeUndefined();
     expect(indicators.avgVolume20d).toBeUndefined();
   });
+
+  it("avg volume window is the trailing 20 BARS — a hole inside it omits the field, one outside does not", () => {
+    // A missing volume INSIDE the last 20 bars would silently stretch a "20d" average across more
+    // than 20 sessions — omit instead.
+    const holeInside = Array.from({ length: 40 }, (_, i) => ({ close: 100, volume: i === 30 ? undefined : 1_000 }));
+    expect(scorecardIndicatorsFromBars(holeInside).avgVolume20d).toBeUndefined();
+    const holeOutside = Array.from({ length: 40 }, (_, i) => ({ close: 100, volume: i === 5 ? undefined : 1_000 }));
+    expect(scorecardIndicatorsFromBars(holeOutside).avgVolume20d).toBe(1_000);
+  });
 });
 
 describe("decision chain: appendDecisionStep + validateDecisionChain", () => {
@@ -278,6 +329,18 @@ describe("decision chain: appendDecisionStep + validateDecisionChain", () => {
     appendDecisionStep(proposal, "override_requested");
     appendDecisionStep(proposal, "override_applied");
     expect(proposal.scorecard?.decisionChain).toEqual(["proposed", "red_team_reject", "override_requested", "override_applied"]);
+  });
+
+  it("a socratic override WITHOUT a red-team rejection still validates clean (request precedes apply)", async () => {
+    // Mirrors the strategy loop's overrideResolution.applied branch: on a plain soft-policy block
+    // the red-team pre-veto never appended override_requested, so the branch records the request
+    // step itself right before override_applied.
+    const proposal = buyProposal();
+    appendDecisionStep(proposal, "override_requested");
+    appendDecisionStep(proposal, "override_applied");
+    expect(proposal.scorecard?.decisionChain).toEqual(["proposed", "override_requested", "override_applied"]);
+    const { validateDecisionChain } = await import("../src/lib/db");
+    expect(validateDecisionChain(proposal.scorecard?.decisionChain)).toEqual({ ok: true, problems: [] });
   });
 
   it("buildProposalScorecard preserves an accumulated chain", () => {

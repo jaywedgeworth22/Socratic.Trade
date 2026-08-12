@@ -518,22 +518,26 @@ async function measureCase(
   // 3.5) Sniper-point grading (scorecard r3): compare the proposal's persisted stop/take levels
   // against the SAME daily closes fetched above — a pure additive receipt on the outcome, never a
   // new fetch pipeline and never a gate. Best-effort: a missing proposal row simply omits it.
-  const sniperAccuracy = (() => {
-    try {
-      const proposalRow = getProposal(decisionCase.proposalId ?? decisionCase.id, ctx.userId);
-      const sniper = proposalRow?.proposal.scorecard?.sniperPoints;
-      if (!sniper) return undefined;
-      return gradeSniperAccuracy({
-        side: decisionCase.side,
-        stopLoss: sniper.stopLoss,
-        takeProfit: sniper.takeProfit,
-        bars,
-        basisDate: new Date(basisAt).toISOString().slice(0, 10)
-      });
-    } catch {
-      return undefined;
-    }
-  })();
+  // A pass that cannot recompute (transient bars/proposal miss, or a terminal realized-lot write
+  // that needed no bars) falls back to the receipt already persisted on the case — matching
+  // writeIntradaySampleRow's preservation — instead of silently dropping it.
+  const sniperAccuracy =
+    (() => {
+      try {
+        const proposalRow = getProposal(decisionCase.proposalId ?? decisionCase.id, ctx.userId);
+        const sniper = proposalRow?.proposal.scorecard?.sniperPoints;
+        if (!sniper) return undefined;
+        return gradeSniperAccuracy({
+          side: decisionCase.side,
+          stopLoss: sniper.stopLoss,
+          takeProfit: sniper.takeProfit,
+          bars,
+          basisDate: new Date(basisAt).toISOString().slice(0, 10)
+        });
+      } catch {
+        return undefined;
+      }
+    })() ?? decisionCase.outcome?.sniperAccuracy;
 
   // 4) Case-level verdict. Alpha mode ADDS the companion SPY-excess grade on terminal verdicts;
   // the raw status/returnPct are always written unchanged (raw mode is byte-identical to before).
@@ -567,6 +571,7 @@ async function measureCase(
     }
     return {
       status: "unresolvable",
+      ...(sniperAccuracy ? { sniperAccuracy } : {}),
       note: `${note} No horizon could be measured (${outcomes.map((row) => `${row.horizon}:${row.reason ?? "?"}`).join(", ")}).`,
       measuredAt: ctx.nowIso,
       outcomes
