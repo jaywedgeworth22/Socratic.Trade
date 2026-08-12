@@ -251,6 +251,16 @@ final class MobileStore: ObservableObject {
         if commandType == "account.activate" {
             return snapshot != nil
         }
+        // Cancel is exempt for the same reason, more sharply: a flaky connection — which is what
+        // a stale snapshot usually means — is exactly when someone reaches for the cancel button.
+        // Safe to allow on a stale view because the SERVER re-validates: the mobile lane runs
+        // `cancelWorkingOrder` with `requireWorkingOrder: true` and refuses with 404/409 when the
+        // order is no longer working or is not in the selected account, so a stale tap collects an
+        // honest error instead of cancelling the wrong thing.  Requires any loaded snapshot so we
+        // still have an order row and an account number to send.
+        if commandType == "order.cancel" {
+            return snapshot != nil
+        }
         guard let snapshot, !isSnapshotStale(at: now) else { return false }
         if Self.readinessDependentCommands.contains(commandType) {
             return snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse

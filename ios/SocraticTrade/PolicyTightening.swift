@@ -17,8 +17,11 @@ import SwiftUI
 /// - `strategyAuthority` must be `"propose"` or `"decide"`.
 /// - `["maxOrderNotional", 1, 100_000]` and `["maxDailyNotional", 1, undefined]` — both are
 ///   plain finite numbers with a minimum of 1.
-/// Payloads are `{ "patch": { … } }`, matching
-/// `case "policy.patch": return { patch: normalizePolicyPatch(payload.patch ?? payload) }`.
+/// - `expectedCurrent` is an OPTIONAL precondition of the same scalar fields, compared at
+///   execution time and refused with a 409-shaped `PolicyPatchPreconditionError` on a mismatch.
+/// Payloads are `{ "patch": { … }, "expectedCurrent": { … } }`, matching
+/// `case "policy.patch": { const patch = normalizePolicyPatch(payload.patch ?? payload); const
+/// expectedCurrent = normalizePolicyPreconditions(payload.expectedCurrent); … }`.
 enum PolicyTightening {
     static let commandType = "policy.patch"
 
@@ -125,12 +128,34 @@ enum PolicyTightening {
         return value.isFinite && value >= minimumNotional && value < current
     }
 
+    /// Every payload carries `expectedCurrent`: the values this phone believed were current for
+    /// exactly the fields it is changing.  The server compares them at EXECUTION time and refuses
+    /// the whole patch on a mismatch (`normalizePolicyPreconditions` → `applyPolicyPatch`, the
+    /// same shape as `order.cancel`'s `expectedAccountNumber`).
+    ///
+    /// This is what the tap-time re-check in `isStillATightening` cannot do on its own.
+    /// `policy.patch` is QUEUED, so it can execute minutes later behind a draining
+    /// `strategy.run_once` — and the server enforces no direction.  A reduction tapped against a
+    /// $10,000 cap that the console lowers to $2,000 in that window would land as a LOOSENING,
+    /// which would make this screen's "These controls only tighten" footer false.  With the
+    /// precondition attached the patch is refused instead, and the owner is told the number moved.
     static func authorityPayload() -> [String: Any] {
-        ["patch": ["strategyAuthority": askFirst]]
+        [
+            "patch": ["strategyAuthority": askFirst],
+            // The only current value that offers this row at all (`tightenedAuthority`).
+            "expectedCurrent": ["strategyAuthority": autopilot]
+        ]
     }
 
-    static func capPayload(_ cap: Cap, value: Double) -> [String: Any] {
-        ["patch": [cap.rawValue: value]]
+    static func capPayload(_ cap: Cap, value: Double, current: Double?) -> [String: Any] {
+        var payload: [String: Any] = ["patch": [cap.rawValue: value]]
+        // Omitted rather than sent as null when the snapshot has no value: an unset cap offers no
+        // reduction in the first place (`tightenedCap` returns nil), so claiming an expectation
+        // here would assert something this phone never read.
+        if let current, current.isFinite {
+            payload["expectedCurrent"] = [cap.rawValue: current]
+        }
+        return payload
     }
 
     static func operationID(_ suffix: String) -> String {
@@ -241,15 +266,21 @@ struct GuardrailTighteningSection: View {
     /// was computed when the menu was built, and re-sending a stale one against a cap that has
     /// since dropped would raise it (see `isStillATightening`).  Refusing says so instead of
     /// silently doing nothing.
+    ///
+    /// The same freshly-read cap is sent as the `expectedCurrent` precondition, so the window
+    /// this check cannot see — between submitting and the queued command executing — is closed
+    /// server-side instead of being assumed away.
     private func submit(_ cap: PolicyTightening.Cap, value: Double, operationID: String) {
-        guard PolicyTightening.isStillATightening(cap, value: value, in: store.snapshot?.policy) else {
+        let policy = store.snapshot?.policy
+        guard PolicyTightening.isStillATightening(cap, value: value, in: policy) else {
             store.error = "\(cap.title) changed while that menu was open.  Nothing was sent — reopen it to see the current limit."
             return
         }
+        let payload = PolicyTightening.capPayload(cap, value: value, current: cap.currentValue(in: policy))
         Task {
             await store.submit(
                 PolicyTightening.commandType,
-                payload: PolicyTightening.capPayload(cap, value: value),
+                payload: payload,
                 operationID: operationID
             )
         }

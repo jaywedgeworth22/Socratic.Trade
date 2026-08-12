@@ -182,8 +182,30 @@ adds the iOS half of roadmap item #3 on top.
   path (busy guard + per-order idempotency key + snapshot reload); gated on the wave-2 control
   catalog so an older server hides the control instead of collecting a 400.
 
-Verified: iOS 64/64 XCTests (was 56 on the merged base; +8 new), `npx tsc --noEmit` clean,
-`npm run lint` 0 errors, 59 vitest cases across the merged web surface green.
+Round-2 review close-out (all three reviewer items closed; rollout §7):
+
+- **The queued-loosening gap is CLOSED server-side.**  `policy.patch` now accepts an OPTIONAL
+  `expectedCurrent` precondition — the same shape as `order.cancel`'s `expectedAccountNumber` —
+  carrying the values the client believed were current for the fields it is patching.  Validated
+  at queue time (scalar patchable fields only; unknown/wrong-typed/non-object is a 400) and
+  compared at EXECUTION time before anything merges: a mismatch audits
+  `mobile_policy_patch_precondition_mismatch` and throws `PolicyPatchPreconditionError` (409), so
+  the whole patch is refused rather than partially or silently applied.  Without it, a tightening
+  tapped against a $10,000 cap could execute as a LOOSENING minutes later, behind a draining
+  `strategy.run_once`, if the console lowered that cap meanwhile.  A patch with NO
+  `expectedCurrent` behaves exactly as before (proven by a test that performs the same mid-flight
+  edit and asserts the legacy write still lands) — the web console is unaffected.  The iOS
+  tightening UI now sends the precondition, so the "These controls only tighten" footer is true
+  end to end.
+- **Cancel is exempt from the >180 s snapshot-staleness gate**, like `account.activate`: a flaky
+  connection is exactly when someone reaches for cancel, and the server re-validates
+  (`requireWorkingOrder: true` -> 404/409), so a stale tap gets an honest error, never a wrong
+  cancel.  Still requires a loaded snapshot and still respects the control catalog.
+- **The deep-link focus ring is transient again** — it clears on any tab change and expires four
+  seconds after the link lands, instead of marking one proposal card out for the whole session.
+
+Verified: iOS 68/68 XCTests (56 merged base, +8 cancel, +2 round-1, +2 here), `npx tsc --noEmit`
+clean, `npm run lint` 0 errors, full `npx vitest run` 6369 passed / 51 skipped (552 files).
 
 Next: owner action only — TestFlight shipping.  Follow-ups: render the server's `dustWarning`
 on the card after a cancel; replace-at-market from the phone.

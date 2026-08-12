@@ -92,6 +92,10 @@ final class ControlCatalogTests: XCTestCase {
         // and vice versa: alert.create is absent here, so the app must not offer it.
         XCTAssertFalse(store.serverAdvertises("alert.create"))
         XCTAssertFalse(store.canSubmit("alert.create"))
+        // order.cancel is exempt from the STALENESS gate, not from capability discovery: this
+        // catalog does not advertise it, so the control stays off however fresh the snapshot is.
+        XCTAssertFalse(store.canSubmit("order.cancel"))
+        XCTAssertFalse(store.canSubmit("order.cancel", at: Date(timeIntervalSinceNow: 181)))
         // A halt never depends on the catalog decoding correctly.
         XCTAssertTrue(store.canSubmit("strategy.stop"))
         XCTAssertTrue(store.canSubmit("proposal.reject"))

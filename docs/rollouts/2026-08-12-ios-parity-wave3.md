@@ -217,3 +217,137 @@ Re-verified after the fixes: `Executed 66 tests, with 0 failures (0 unexpected)`
 SUCCEEDED **` (64 + 2 new), and `npx vitest run test/mobile-order-cancel.test.ts
 test/apple-app-site-association-route.test.ts test/orders-cancel-dust-risk-route.test.ts
 test/mobile-api.test.ts` -> 4 files / 21 tests passed.
+
+## 7. Round-2 review close-out (2026-08-12): queued-loosening gap CLOSED, cancel un-gated, focus ring made transient
+
+Two adversarial reviewers passed the branch "ship" and left three items.  All three are closed
+here.  The first is the structural gap §6 left open.
+
+### 7.1 The queued-loosening gap is now closed SERVER-SIDE
+
+**Was:** §6 fixed the phone's tap-time re-check, but `policy.patch` is a QUEUED command (it is not
+in `IMMEDIATE_MOBILE_COMMAND_TYPES`), so it can execute minutes later behind a draining
+`strategy.run_once`.  `applyPolicyPatch` merges verbatim in either direction, so a reduction
+tapped against a $10,000 cap that the console lowered to $2,000 in that window executed as a
+**LOOSENING** — under a footer that reads "These controls only tighten."
+
+**Now:** `policy.patch` accepts an OPTIONAL `expectedCurrent` precondition, modelled directly on
+`order.cancel`'s `expectedAccountNumber` (`src/lib/order-cancel.ts`) — same shape, same
+audit-then-throw style, same 409.
+
+Payload:
+
+```jsonc
+{
+  "patch":           { "maxOrderNotional": 2500 },   // unchanged, as before
+  "expectedCurrent": { "maxOrderNotional": 10000 }   // NEW, optional
+}
+```
+
+- **Validated at the door** (`normalizePolicyPreconditions`).  Keys must be scalar fields
+  `policy.patch` can actually set — the `strategyAuthority` / `holdingHorizon` enums plus every
+  numeric and boolean guardrail (both lists hoisted to `POLICY_PATCH_NUMERIC_FIELDS` /
+  `POLICY_PATCH_BOOLEAN_FIELDS` so the patcher and the guard cannot drift apart).  Anything else
+  — an unknown name, `riskRules`, `blocklist`, a wrong-typed value, a non-object `expectedCurrent`
+  — is a `MobileCommandValidationError` (400) at queue time.  Fail closed on purpose: silently
+  dropping an assertion the caller believes is being enforced is the exact failure this guard
+  exists to prevent, and `asRecord` would have coerced a bad value into an empty, always-passing
+  guard.  `null` is a real expectation meaning "I believed this was unset"; `{}` and `null`
+  overall assert nothing and are dropped so the stored payload keeps its legacy shape.
+- **Enforced at execution time** (`applyPolicyPatch`), BEFORE anything is merged.  On any
+  mismatch: audit `mobile_policy_patch_precondition_mismatch`
+  (`{ field, expected, actual, fields }`, with the user's `connectedAccountId`, mirroring
+  `order_cancel_account_mismatch`), then throw `PolicyPatchPreconditionError` (`status = 409`).
+  The command finishes `failed` with a message naming the field and both values, and a structured
+  `result` (`{ error: "policy_precondition_mismatch", field, expected, actual }`) alongside the
+  existing `LiveApprovalConfirmationError` case.  **All-or-nothing:** a multi-field patch applies
+  none of its fields when one precondition fails, and no `mobile_policy_patch` write event is
+  recorded.
+- **Optional is load-bearing.** A patch with no `expectedCurrent` behaves byte-for-byte as before
+  — legacy last-write-wins — and its stored payload is unchanged (`{ patch: … }`, no empty guard
+  object).  The web console and every existing caller are untouched.  Proven by
+  `test/mobile-policy-precondition.test.ts` -> "keeps a patch WITHOUT preconditions behaving
+  exactly as before", which performs the *same* mid-flight console edit as the refusal test and
+  asserts the queued patch still lands, plus the payload shape and the single audit row.
+- **The phone now sends it.**  `PolicyTightening.authorityPayload()` guards
+  `strategyAuthority: "decide"` (the only value that offers the row at all), and
+  `capPayload(_:value:current:)` guards the cap it is lowering with the value read from the SAME
+  snapshot the tap-time re-check just approved.  No snapshot value -> no key, rather than a
+  claimed expectation the phone never read.
+
+This is what makes the "These controls only tighten" footer true end to end: the phone closes
+every window it can see, and the precondition closes the one it cannot.
+
+**Deployment-order note:** an app build that sends `expectedCurrent` to an OLDER server is not
+rejected — the previous `normalizeCommandPayload` simply ignored unknown payload keys, so the
+patch applies unguarded exactly as it did before this change.  That is the safe direction (no
+400, no lost patch), but it does mean the guarantee only holds once the server side is live; on
+this repo the two ship together and `main` auto-deploys, so the window is a build cycle, not a
+standing condition.
+
+### 7.2 Cancel is no longer gated on snapshot staleness
+
+`MarketsView`'s Cancel went through `store.canSubmit`, whose >180 s staleness gate is backwards
+for this one action: a stale snapshot usually means a flaky connection, and a flaky connection is
+exactly when someone reaches for cancel.  Withholding the only lever that can *reduce* risk is the
+paternalism this repo's product philosophy rules out.
+
+`order.cancel` is now exempt from the staleness gate in `MobileStore.canSubmit`, alongside the
+existing `account.activate` exemption ("that is exactly when users try to switch away from a stuck
+context") and written in the same style.  Safe because the SERVER re-validates: the mobile lane
+runs `cancelWorkingOrder` with `requireWorkingOrder: true` and refuses with 404/409 when the order
+is no longer working or is not in the selected account, so a stale tap collects an honest error
+instead of cancelling the wrong thing.  The exemption is narrow — it still requires a loaded
+snapshot (there must be an order row and an account number to send) and still respects capability
+discovery (a catalog that does not advertise `order.cancel` keeps the control off).
+
+### 7.3 The deep-link focus ring is transient again
+
+`MobileControlView.focusedProposalId` was never cleared, so the accent ring stayed on a linked
+proposal card for the rest of the session — reading as "this one is special" long after it meant
+"here it is."  It now clears on any tab change (the rerouting `selection` binding, with `apply`
+setting the focus *after* the tab move so a link's own jump does not clear it) and expires on its
+own four seconds after the link lands.  Clearing scrolls nothing back: `SnapshotScaffold` only
+acts on a non-nil target.  The deep-link plumbing itself is unchanged.
+
+### Files
+
+Modified:
+- `src/lib/mobile-api.ts` (precondition normalize + enforce + error class + audit)
+- `ios/SocraticTrade/PolicyTightening.swift` (send `expectedCurrent`)
+- `ios/SocraticTrade/MobileStore.swift` (cancel staleness exemption)
+- `ios/SocraticTrade/MobileControlView.swift` (focus-ring lifetime)
+- `ios/SocraticTradeTests/PolicyTighteningTests.swift`,
+  `ios/SocraticTradeTests/MobileModelsTests.swift`,
+  `ios/SocraticTradeTests/ControlCatalogTests.swift`
+- `STATUS.md`, `docs/EFFORT-LOG.md`
+
+New:
+- `test/mobile-policy-precondition.test.ts`
+
+No new `.swift` file, so no `xcodegen generate` and no pbxproj header re-apply was needed.
+
+### Verification (all foreground, full output observed)
+
+```
+cd ios && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
+  -project "Socratic Trade.xcodeproj" -scheme SocraticTrade \
+  -destination 'platform=macOS,variant=Designed for iPad' test
+```
+-> `Executed 68 tests, with 0 failures (0 unexpected)` / `** TEST SUCCEEDED **` (66 + 2 new).
+
+```
+export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
+npx tsc --noEmit     # clean, no output
+npm run lint         # 750 problems (0 errors, 750 warnings) - grandfathered backlog
+npx vitest run test/mobile-policy-precondition.test.ts test/mobile-api.test.ts \
+  test/mobile-order-cancel.test.ts test/policy-caps.test.ts test/policy-normalization.test.ts \
+  test/stale-mobile-commands.test.ts test/mobile-stop-preemption.test.ts \
+  test/console-policy-write-queue.test.ts
+                     # Test Files 8 passed (8) · Tests 47 passed (47)
+npx vitest run       # Test Files 551 passed | 1 skipped (552)
+                     # Tests 6369 passed | 51 skipped (6420)
+```
+
+The full suite was run because `src/lib/mobile-api.ts` is imported broadly; no other caller of
+`applyPolicyPatch` or `normalizePolicyPatch` regressed.

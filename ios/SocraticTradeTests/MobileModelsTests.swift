@@ -90,6 +90,16 @@ final class MobileModelsTests: XCTestCase {
         // and the server executes it immediately outside the strategy.run_once queue.
         XCTAssertTrue(store.canSubmit("account.activate", at: Date(timeIntervalSinceNow: 181)))
         XCTAssertTrue(store.canSubmit("account.activate"))
+        // Cancel is exempt too, and for a sharper reason: a stale snapshot usually means a flaky
+        // connection, which is exactly when someone reaches for cancel.  Gating it there would
+        // withhold the one lever that only ever reduces risk.  The server re-validates the order
+        // (`requireWorkingOrder: true` → 404/409), so a stale tap collects an honest error rather
+        // than cancelling the wrong thing.
+        XCTAssertTrue(store.canSubmit("order.cancel", at: Date(timeIntervalSinceNow: 181)))
+        XCTAssertTrue(store.canSubmit("order.cancel"))
+        // Readiness gating is untouched by the exemption: this fixture has no account and no
+        // universe, and the readiness-dependent commands above still refuse.
+        XCTAssertFalse(store.canSubmit("strategy.run_once", at: Date(timeIntervalSinceNow: 181)))
     }
 
     func testSnapshotDefaultsOptionalCollectionsAndSummaries() throws {

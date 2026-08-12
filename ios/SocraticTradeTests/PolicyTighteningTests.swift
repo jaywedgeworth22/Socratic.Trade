@@ -126,12 +126,57 @@ final class PolicyTighteningTests: XCTestCase {
         let patch = try? XCTUnwrap(authority["patch"] as? [String: Any])
         XCTAssertEqual(patch?["strategyAuthority"] as? String, "propose")
 
-        let capPayload = PolicyTightening.capPayload(.maxDailyNotional, value: 1250)
+        let capPayload = PolicyTightening.capPayload(.maxDailyNotional, value: 1250, current: 10000)
         let capPatch = try? XCTUnwrap(capPayload["patch"] as? [String: Any])
         XCTAssertEqual(capPatch?["maxDailyNotional"] as? Double, 1250)
         // Field names are the server's own TradingPolicy keys, not app-invented aliases.
         XCTAssertEqual(PolicyTightening.Cap.maxOrderNotional.rawValue, "maxOrderNotional")
         XCTAssertEqual(PolicyTightening.Cap.maxDailyNotional.rawValue, "maxDailyNotional")
+    }
+
+    /// The phone's tap-time re-check cannot see the queue: `policy.patch` executes later, and the
+    /// server enforces no direction.  Every payload therefore carries `expectedCurrent` — the
+    /// values this phone read — so the server refuses the patch if they moved in the meantime.
+    /// Without these keys the "These controls only tighten" footer would be a claim the app
+    /// cannot keep.
+    func testEveryPayloadCarriesTheExpectedCurrentPrecondition() throws {
+        let authority = PolicyTightening.authorityPayload()
+        let authorityGuard = try XCTUnwrap(authority["expectedCurrent"] as? [String: Any])
+        // The only authority value that offers the row at all.
+        XCTAssertEqual(authorityGuard["strategyAuthority"] as? String, PolicyTightening.autopilot)
+        XCTAssertEqual(authorityGuard.count, 1)
+
+        let capPayload = PolicyTightening.capPayload(.maxDailyNotional, value: 1250, current: 10000)
+        let capGuard = try XCTUnwrap(capPayload["expectedCurrent"] as? [String: Any])
+        // Guards exactly the field being patched, with the value the snapshot reported.
+        XCTAssertEqual(capGuard["maxDailyNotional"] as? Double, 10000)
+        XCTAssertEqual(capGuard.count, 1)
+
+        // No snapshot value means no expectation was ever read, so none is asserted.  An unset cap
+        // offers no reduction in the first place, so this payload is not reachable from the UI.
+        XCTAssertNil(PolicyTightening.capPayload(.maxOrderNotional, value: 1250, current: nil)["expectedCurrent"])
+        XCTAssertNil(PolicyTightening.capPayload(.maxOrderNotional, value: 1250, current: Double.nan)["expectedCurrent"])
+
+        // The whole payload must survive JSON encoding — it is submitted through JSONSerialization.
+        let encoded = try JSONSerialization.data(withJSONObject: capPayload, options: [.sortedKeys])
+        let decoded = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: [String: Double]]
+        )
+        XCTAssertEqual(decoded["patch"]?["maxDailyNotional"], 1250)
+        XCTAssertEqual(decoded["expectedCurrent"]?["maxDailyNotional"], 10000)
+    }
+
+    /// The precondition is only as good as the value it carries, so it comes from the SAME
+    /// snapshot read the tap-time re-check uses.
+    func testThePreconditionCarriesTheCapTheRecheckJustApproved() throws {
+        let policy = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":10000}"#)
+        let current = try XCTUnwrap(PolicyTightening.Cap.maxOrderNotional.currentValue(in: policy))
+        let option = try XCTUnwrap(PolicyTightening.tightenedCapOptions(current: current, competingPercentCap: nil).first)
+
+        XCTAssertTrue(PolicyTightening.isStillATightening(.maxOrderNotional, value: option, in: policy))
+        let payload = PolicyTightening.capPayload(.maxOrderNotional, value: option, current: current)
+        let expected = try XCTUnwrap(payload["expectedCurrent"] as? [String: Any])
+        XCTAssertEqual(expected["maxOrderNotional"] as? Double, 10000)
     }
 
     func testCapsReadTheirOwnFieldsFromTheSnapshotPolicy() throws {

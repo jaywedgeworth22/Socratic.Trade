@@ -162,6 +162,26 @@ export class MobileCommandValidationError extends Error {
   status = 400;
 }
 
+/**
+ * A `policy.patch` refused at execution time because an `expectedCurrent` precondition no longer
+ * matched what is stored. Same shape and same 409 as `OrderCancelPreconditionError`
+ * (src/lib/order-cancel.ts), which refuses a cancel whose `expectedAccountNumber` has moved.
+ */
+export class PolicyPatchPreconditionError extends Error {
+  status = 409;
+  field: string;
+  expected: PolicyPreconditionValue;
+  actual: PolicyPreconditionValue;
+
+  constructor(message: string, detail: { field: string; expected: PolicyPreconditionValue; actual: PolicyPreconditionValue }) {
+    super(message);
+    this.name = "PolicyPatchPreconditionError";
+    this.field = detail.field;
+    this.expected = detail.expected;
+    this.actual = detail.actual;
+  }
+}
+
 export function isMobileCommandType(value: unknown): value is MobileCommandType {
   return typeof value === "string" && (MOBILE_COMMAND_TYPES as readonly string[]).includes(value);
 }
@@ -305,6 +325,122 @@ function normalizeNotificationEvents(value: unknown): NotificationEventType[] | 
   return value.map(String).filter((item): item is NotificationEventType => allowed.includes(item as NotificationEventType));
 }
 
+/** Numeric guardrails `policy.patch` may set, with the server-side bounds each one accepts. */
+const POLICY_PATCH_NUMERIC_FIELDS: Array<[keyof TradingPolicy, number | undefined, number | undefined]> = [
+  ["maxOrderNotional", 1, 100_000],
+  ["maxOrderPctOfNav", 0.01, 100],
+  ["maxDailyNotional", 1, undefined],
+  ["maxHourlyNotional", 1, undefined],
+  ["maxDailyPctOfNav", 0.01, 100],
+  ["maxSymbolExposurePct", 0.01, 100],
+  ["maxSymbolExposureNotional", 1, undefined],
+  ["maxGrossExposurePct", 0, 100],
+  ["maxNetExposurePct", 0, 100],
+  ["maxDailyOrders", 1, 500],
+  ["maxProposalsPerRun", 1, 25],
+  ["proposalExpiryMinutes", 0, undefined],
+  ["proposalRevalidateCadenceHours", 0, undefined],
+  ["runCadenceMinutes", 1, 24 * 60],
+  ["maxShortOrderNotional", 1, 100_000],
+  ["maxShortExposurePct", 0, 100],
+  ["maxPortfolioBeta", 0.01, 10],
+  ["maxEntryDriftPct", 0, 100],
+  ["maxOrderPctOfAdv", 0, 100],
+  ["volPanicVixThreshold", 0, undefined],
+  ["volPanicVvixThreshold", 0, undefined],
+  ["volPanicSkewThreshold", 0, undefined]
+];
+
+/** Boolean switches `policy.patch` may set. */
+const POLICY_PATCH_BOOLEAN_FIELDS = [
+  "permitExtendedHours",
+  "runDuringExtendedHours",
+  "allowExtendedHoursSyntheticStops",
+  "shortSellingEnabled",
+  "brokerBracketsEnabled",
+  "betaScaledStops",
+  "marketableLimitEntries",
+  "volPanicBrakeEnabled"
+] as const;
+
+type PolicyPreconditionKind = "number" | "boolean" | "text";
+type PolicyPreconditionValue = string | number | boolean | null;
+
+/**
+ * The fields an `expectedCurrent` precondition may name, and how each one compares.
+ *
+ * Deliberately SCALAR-ONLY. A precondition is a promise the server keeps exactly, and "equal"
+ * is only unambiguous for a value a client can read off a snapshot and send back verbatim.
+ * Collections (`includedIndices`, `additionalSymbols`, `blocklist`) and nested objects
+ * (`riskRules`, `taxSettings`, `notificationSettings`) are excluded rather than compared with a
+ * hand-rolled deep-equal whose disagreements would be silent.
+ */
+const POLICY_PRECONDITION_FIELDS: Record<string, PolicyPreconditionKind> = {
+  strategyAuthority: "text",
+  holdingHorizon: "text",
+  ...Object.fromEntries(POLICY_PATCH_NUMERIC_FIELDS.map(([field]) => [field, "number" as const])),
+  ...Object.fromEntries(POLICY_PATCH_BOOLEAN_FIELDS.map((field) => [field, "boolean" as const]))
+};
+
+/**
+ * Optional stale-view guard for `policy.patch`, the exact counterpart of `order.cancel`'s
+ * `expectedAccountNumber` (src/lib/order-cancel.ts): the values the CALLER believed were current
+ * for the fields it is patching. When supplied they must equal what is stored at EXECUTION time,
+ * otherwise the patch is refused outright rather than silently applied against a policy that
+ * moved underneath it.
+ *
+ * This is what makes the phone's "these controls only tighten" footer true END TO END.
+ * `policy.patch` is a QUEUED command (it is not in IMMEDIATE_MOBILE_COMMAND_TYPES), so minutes
+ * can pass behind a draining `strategy.run_once` between the tap and the write — and
+ * `applyPolicyPatch` merges verbatim in either direction. A tightening tapped against a $10,000
+ * cap that the console has since lowered to $2,000 would land as a LOOSENING. The phone's
+ * tap-time re-check closes every window the phone can see; this closes the one it cannot.
+ *
+ * OPTIONAL by construction: a patch that carries no `expectedCurrent` behaves exactly as it
+ * always has. The web console and every existing caller are unaffected.
+ */
+function normalizePolicyPreconditions(raw: unknown): Record<string, PolicyPreconditionValue> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  // A malformed precondition is refused, never coerced away: `asRecord` would quietly turn a
+  // string or array into `{}`, and dropping an assertion the caller believes is being enforced
+  // is the one failure mode this guard exists to prevent.
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new MobileCommandValidationError("expectedCurrent must be an object of policy fields.");
+  }
+  const expected: Record<string, PolicyPreconditionValue> = {};
+  for (const [field, value] of Object.entries(raw as Record<string, unknown>)) {
+    const kind = POLICY_PRECONDITION_FIELDS[field];
+    if (!kind) {
+      throw new MobileCommandValidationError(`expectedCurrent.${field} is not a field policy.patch can guard.`);
+    }
+    // Explicit null means "I believed this was unset" — a real, checkable expectation.
+    if (value === null || value === undefined) {
+      expected[field] = null;
+      continue;
+    }
+    switch (kind) {
+      case "number":
+        expected[field] = finiteNumber(value, `expectedCurrent.${field}`);
+        break;
+      case "boolean":
+        if (typeof value !== "boolean") {
+          throw new MobileCommandValidationError(`expectedCurrent.${field} must be boolean.`);
+        }
+        expected[field] = value;
+        break;
+      case "text": {
+        const text = asOptionalString(value, 64);
+        if (!text) throw new MobileCommandValidationError(`expectedCurrent.${field} must be a string.`);
+        expected[field] = text;
+        break;
+      }
+    }
+  }
+  // An empty object asserts nothing; keep the payload in its legacy shape rather than storing a
+  // guard that would always pass.
+  return Object.keys(expected).length > 0 ? expected : undefined;
+}
+
 function normalizePolicyPatch(raw: unknown): Partial<TradingPolicy> {
   const input = asRecord(raw);
   for (const forbidden of ["userId", "accountNumber", "connectedAccountId", "activeBroker", "apiKey", "apiSecret", "providerSecret"]) {
@@ -333,46 +469,13 @@ function normalizePolicyPatch(raw: unknown): Partial<TradingPolicy> {
   if (input.additionalSymbols !== undefined) patch.additionalSymbols = normalizeSymbols(input.additionalSymbols, "additionalSymbols");
   if (input.blocklist !== undefined) patch.blocklist = normalizeSymbols(input.blocklist, "blocklist");
 
-  const numericFields: Array<[keyof TradingPolicy, number | undefined, number | undefined]> = [
-    ["maxOrderNotional", 1, 100_000],
-    ["maxOrderPctOfNav", 0.01, 100],
-    ["maxDailyNotional", 1, undefined],
-    ["maxHourlyNotional", 1, undefined],
-    ["maxDailyPctOfNav", 0.01, 100],
-    ["maxSymbolExposurePct", 0.01, 100],
-    ["maxSymbolExposureNotional", 1, undefined],
-    ["maxGrossExposurePct", 0, 100],
-    ["maxNetExposurePct", 0, 100],
-    ["maxDailyOrders", 1, 500],
-    ["maxProposalsPerRun", 1, 25],
-    ["proposalExpiryMinutes", 0, undefined],
-    ["proposalRevalidateCadenceHours", 0, undefined],
-    ["runCadenceMinutes", 1, 24 * 60],
-    ["maxShortOrderNotional", 1, 100_000],
-    ["maxShortExposurePct", 0, 100],
-    ["maxPortfolioBeta", 0.01, 10],
-    ["maxEntryDriftPct", 0, 100],
-    ["maxOrderPctOfAdv", 0, 100],
-    ["volPanicVixThreshold", 0, undefined],
-    ["volPanicVvixThreshold", 0, undefined],
-    ["volPanicSkewThreshold", 0, undefined]
-  ];
-  for (const [field, min, max] of numericFields) {
+  for (const [field, min, max] of POLICY_PATCH_NUMERIC_FIELDS) {
     if (input[field] !== undefined) {
       (patch as Record<string, unknown>)[field] = finiteNumber(input[field], String(field), { min, max });
     }
   }
 
-  for (const field of [
-    "permitExtendedHours",
-    "runDuringExtendedHours",
-    "allowExtendedHoursSyntheticStops",
-    "shortSellingEnabled",
-    "brokerBracketsEnabled",
-    "betaScaledStops",
-    "marketableLimitEntries",
-    "volPanicBrakeEnabled"
-  ] as const) {
+  for (const field of POLICY_PATCH_BOOLEAN_FIELDS) {
     if (input[field] !== undefined) {
       if (typeof input[field] !== "boolean") throw new MobileCommandValidationError(`${field} must be boolean.`);
       patch[field] = input[field] as never;
@@ -472,8 +575,14 @@ function normalizeCommandPayload(commandType: MobileCommandType, rawPayload: unk
     }
     case "alert.delete":
       return { alertId: requireString(payload, "alertId") };
-    case "policy.patch":
-      return { patch: normalizePolicyPatch(payload.patch ?? payload) };
+    case "policy.patch": {
+      const patch = normalizePolicyPatch(payload.patch ?? payload);
+      // Optional, and verified server-side when present: the values the phone BELIEVED were
+      // current for the fields it is changing. A client that sends them gets a refusal instead
+      // of a patch landing on a policy that moved while the command sat in the queue.
+      const expectedCurrent = normalizePolicyPreconditions(payload.expectedCurrent);
+      return expectedCurrent ? { patch, expectedCurrent } : { patch };
+    }
     case "consent.set":
       if (typeof payload.accepted !== "boolean") throw new MobileCommandValidationError("accepted must be boolean.");
       return { accepted: payload.accepted };
@@ -758,8 +867,40 @@ async function setStrategyState(userId: string, state: SystemState): Promise<{ o
   return { ok: true, systemState: state };
 }
 
-function applyPolicyPatch(userId: string, patch: Partial<TradingPolicy>): { ok: true; policy: TradingPolicy } {
+/** Stored value as a precondition compares it: absent and null are the same "not set". */
+function policyPreconditionActual(value: unknown): PolicyPreconditionValue {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return value;
+  // Not a scalar, so it cannot equal any accepted expectation. Reported as-is in the receipt.
+  return String(value);
+}
+
+function describePreconditionValue(value: PolicyPreconditionValue): string {
+  return value === null ? "not set" : String(value);
+}
+
+function applyPolicyPatch(
+  userId: string,
+  patch: Partial<TradingPolicy>,
+  expectedCurrent?: Record<string, PolicyPreconditionValue>
+): { ok: true; policy: TradingPolicy } {
   const current = getPolicy(userId);
+  // Fail closed BEFORE anything is merged: a mismatch means the policy moved between the tap and
+  // this write, so the whole patch is refused. Never partially applied, never silently applied.
+  for (const [field, expected] of Object.entries(expectedCurrent ?? {})) {
+    const actual = policyPreconditionActual((current as unknown as Record<string, unknown>)[field]);
+    if (actual === expected) continue;
+    audit(
+      "mobile_policy_patch_precondition_mismatch",
+      { field, expected, actual, fields: Object.keys(patch) },
+      userId,
+      current.connectedAccountId
+    );
+    throw new PolicyPatchPreconditionError(
+      `${field} changed since this was sent — it is ${describePreconditionValue(actual)} now, not the ${describePreconditionValue(expected)} this change was based on.  Nothing was changed.`,
+      { field, expected, actual }
+    );
+  }
   const next: TradingPolicy = {
     ...current,
     ...patch,
@@ -780,7 +921,11 @@ function applyPolicyPatch(userId: string, patch: Partial<TradingPolicy>): { ok: 
   }
   normalizeExclusivePolicyCaps(next, patch);
   setPolicy(next, userId);
-  audit("mobile_policy_patch", { fields: Object.keys(patch) }, userId);
+  audit(
+    "mobile_policy_patch",
+    { fields: Object.keys(patch), ...(expectedCurrent ? { guardedFields: Object.keys(expectedCurrent) } : {}) },
+    userId
+  );
   return { ok: true, policy: getPolicy(userId) };
 }
 
@@ -863,7 +1008,11 @@ async function runCommand(command: MobileCommandRecord): Promise<unknown> {
       return { ok: true, alertId, removed: removeAlert(command.userId, alertId) };
     }
     case "policy.patch":
-      return applyPolicyPatch(command.userId, payload.patch as Partial<TradingPolicy>);
+      return applyPolicyPatch(
+        command.userId,
+        payload.patch as Partial<TradingPolicy>,
+        payload.expectedCurrent as Record<string, PolicyPreconditionValue> | undefined
+      );
     case "consent.set":
       return { ok: true, consent: setDataPoolConsent(command.userId, payload.accepted === true) };
     case "notification.test":
@@ -879,6 +1028,17 @@ async function runCommand(command: MobileCommandRecord): Promise<unknown> {
 }
 
 function errorPayload(error: unknown): { message: string; result?: unknown } {
+  if (error instanceof PolicyPatchPreconditionError) {
+    return {
+      message: error.message,
+      result: {
+        error: "policy_precondition_mismatch",
+        field: error.field,
+        expected: error.expected,
+        actual: error.actual
+      }
+    };
+  }
   if (error instanceof LiveApprovalConfirmationError) {
     return {
       message: error.message,
