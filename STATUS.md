@@ -160,6 +160,36 @@ Sentry monitors, and there is no collision to fix.  Gates and a 15-check
 behavioral harness recorded in the rollout note.
 
 Rollout: `docs/rollouts/2026-08-12-ci-report-app-tag.md`.
+## Current (2026-08-12 MONET — iOS parity wave 3: cancel a working order from the phone)
+
+Branch `monet/ios-order-cancel` (worktree `~/apps/trading-monet-wave3`).  Integration branch:
+merges `monet/ios-parity-wave2` and `monet/order-cancel-server` (both clean, no conflicts) and
+adds the iOS half of roadmap item #3 on top.
+
+- Open orders were the phone's last see-but-cannot-act money surface.  `OrderRow` on the Assets
+  screen now carries a **Cancel Order** button plus swipe-to-cancel, both opening the same
+  confirmation dialog — the same ceremony the alert-delete row already uses.  No typed
+  confirmation: the server requires none for cancel even on a live brokerage account, because
+  cancelling prevents an execution rather than causing one.
+- The control appears only on WORKING orders.  `OrderCancellation.isWorkingState` mirrors the
+  server's `isWorkingOrderState` exactly (`ACTIVE_BROKER_ORDER_STATES` +
+  `EXTRA_WORKING_ORDER_STATES`), so it matches the precondition `cancelWorkingOrder` enforces.
+  `done_for_day` is excluded (terminal, but returned forever in Alpaca history); `pending_cancel`
+  stays cancellable, matching the console — a stuck broker cancel is a reason to ask again.
+- Payload `{ orderId, accountNumber }` where the account number is
+  `readiness.selectedAccountNumber` — the server's stale-view guard, so a cancel queued while
+  looking at one account cannot land on another.  Submitted through the normal `store.submit`
+  path (busy guard + per-order idempotency key + snapshot reload); gated on the wave-2 control
+  catalog so an older server hides the control instead of collecting a 400.
+
+Verified: iOS 64/64 XCTests (was 56 on the merged base; +8 new), `npx tsc --noEmit` clean,
+`npm run lint` 0 errors, 59 vitest cases across the merged web surface green.
+
+Next: owner action only — TestFlight shipping.  Follow-ups: render the server's `dustWarning`
+on the card after a cancel; replace-at-market from the phone.
+
+Rollout: `docs/rollouts/2026-08-12-ios-parity-wave3.md`.
+
 ## Current (2026-08-12 MONET — iOS parity wave 2: guardrail tightening, control catalog, universal links)
 
 Branch `monet/ios-parity-wave2` (worktree `~/apps/trading-monet-wave2`).  Three items, all on

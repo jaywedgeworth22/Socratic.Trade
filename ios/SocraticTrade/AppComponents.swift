@@ -26,6 +26,7 @@ enum AppFormat {
         "proposal.approve": "Approve Proposal",
         "proposal.reject": "Reject Proposal",
         "account.activate": "Switch Account",
+        "order.cancel": "Cancel Order",
         "watchlist.add": "Add to Watchlist",
         "watchlist.remove": "Remove from Watchlist",
         "alert.create": "Create Alert",
