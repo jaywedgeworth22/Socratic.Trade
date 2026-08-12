@@ -93,7 +93,13 @@ export const NOTIFICATION_EVENT_TYPES = [
   "risk_advisory",
   // P2.8: synthetic protective exit is retrying after a persistent broker decline / placement
   // failure. Coalesced to one owner-visible alert per (stop, fingerprint) failure streak.
-  "protective_exit_failing"
+  "protective_exit_failing",
+  // Opt-in daily watchlist summary (default OFF — notification_prefs.watchlistDigestEnabled, see
+  // Settings -> Delivery). Delivered via notify() directly (src/lib/watchlist-digest.ts), like the
+  // R2 usage digest, so it does NOT go through sendNotification's enabledEvents gate — the member
+  // exists here for vocabulary/label consistency across the notification-event surfaces that key
+  // off NotificationEventType, not to duplicate its own on/off switch in Event notifications.
+  "watchlist_digest"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
@@ -2624,6 +2630,10 @@ export interface NotifyPrefs {
   twilioAccountSidSet: boolean;
   twilioAuthTokenSet: boolean;
   twilioFromSet: boolean;
+  /** Opt-in daily watchlist digest (default false — see watchlist-digest.ts). Delivery-scoped
+   *  (notification_prefs), not policy-scoped, because it's "where/whether alerts leave the app"
+   *  like the rest of this interface, not a per-account trading behavior. */
+  watchlistDigestEnabled: boolean;
   updatedAt: string | null;
 }
 
@@ -2641,6 +2651,19 @@ export interface NotifyMessage {
   body: string;
   kind?: string;
   data?: unknown;
+  /**
+   * Pre-rendered alternate bodies for channels with different length constraints (report-renderer.ts
+   * produces these for the watchlist digest). When present, notify() (src/lib/notify.ts) delivers
+   * to each channel the LARGEST tier that fits that channel's CHANNEL_CAPABILITIES.maxBodyChars,
+   * falling back to the smallest tier (then that channel's own existing truncation) when nothing
+   * fits. `body` above remains the default/fallback body and is what every channel gets when
+   * bodyTiers is absent — existing single-body callers are unaffected.
+   */
+  bodyTiers?: {
+    full: string;
+    medium?: string;
+    brief?: string;
+  };
 }
 
 export interface NotifyChannelResult {

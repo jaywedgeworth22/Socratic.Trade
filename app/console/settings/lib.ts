@@ -267,6 +267,8 @@ export interface DeliveryPrefs {
   twilioAccountSid?: string;
   twilioAuthToken?: string;
   twilioFrom?: string;
+  /** Opt-in daily watchlist digest (default false) — see settings/delivery.tsx. */
+  watchlistDigestEnabled?: boolean;
 }
 
 export const EMPTY_DELIVERY_PREFS: DeliveryPrefs = {
@@ -275,7 +277,8 @@ export const EMPTY_DELIVERY_PREFS: DeliveryPrefs = {
   pushoverTarget: "",
   webhookUrl: "",
   email: "",
-  phone: ""
+  phone: "",
+  watchlistDigestEnabled: false
 };
 
 export function fetchDeliverySettings(): Promise<{ channels: DeliveryChannelDescriptor[]; prefs: DeliveryPrefs }> {

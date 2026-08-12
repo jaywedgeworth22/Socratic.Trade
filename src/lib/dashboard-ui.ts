@@ -358,7 +358,8 @@ export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, strin
   option_alert: "Option alert",
   earningscalls_entitlement_blocked: "EarningsCalls plan entitlement blocked",
   risk_advisory: "Risk advisory",
-  protective_exit_failing: "Protective exit failing"
+  protective_exit_failing: "Protective exit failing",
+  watchlist_digest: "Daily watchlist digest"
 };
 
 export function notificationTypeLabel(type?: string | null): string {

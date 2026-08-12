@@ -21,6 +21,7 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { SaveStatus } from "../ui/save-status";
 import { Btn, Card, Field, TextInput, Toggle } from "../ui/primitives";
+import { SENTENCE_GAP } from "../lib/format";
 import {
   fetchDeliverySettings,
   saveDeliveryPrefs,
@@ -189,6 +190,16 @@ export function DeliveryChannelsCard() {
     });
   };
 
+  const toggleDigest = (on: boolean) => {
+    const prevValue = prefs.watchlistDigestEnabled ?? false;
+    const next = { ...prefs, watchlistDigestEnabled: on };
+    setLocal(next);
+    persist(next, {
+      onError: () => setLocal((l) => (l ? { ...l, watchlistDigestEnabled: prevValue } : l)),
+      successToast: { title: `Daily Watchlist Digest ${on ? "on" : "off"}` }
+    });
+  };
+
   const targetValue = (field: TargetField) => prefs[field];
   const setTarget = (field: TargetField, value: string) => setLocal((l) => ({ ...(l ?? prefs), [field]: value }));
 
@@ -269,6 +280,26 @@ export function DeliveryChannelsCard() {
         in Event notifications above; this is how they reach you. Without any channel, events are still recorded in
         Activity, just not pushed anywhere.
       </p>
+
+      <div
+        className="con-row mb-3 flex items-center justify-between gap-4 rounded-control border border-[color:var(--con-line)] px-3 py-2.5"
+        title="Sends a summary of your whole watchlist once a day, shortly after the US market closes. Uses only data the app already collected — no extra provider calls."
+      >
+        <div>
+          <div className="text-[length:var(--con-fs-sm)] font-semibold">Daily Watchlist Digest</div>
+          <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+            {prefs.watchlistDigestEnabled
+              ? <>Sends once a day, after US market close (3:15pm Central).{SENTENCE_GAP}Covers every symbol on your watchlist using only data the app already collected — the last market scan and each symbol&apos;s recent trade proposals.</>
+              : <>Off — no digest is sent.{SENTENCE_GAP}Delivered through the channels enabled above.</>}
+          </p>
+        </div>
+        <Toggle
+          checked={prefs.watchlistDigestEnabled ?? false}
+          disabled={busy}
+          label="Daily Watchlist Digest"
+          onChange={(next) => toggleDigest(next)}
+        />
+      </div>
 
       {loadError && (
         <p className="mb-3 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
