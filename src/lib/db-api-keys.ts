@@ -24,6 +24,7 @@ import type {
   WatchlistItem
 } from "./types";
 import { STOP_PLAN_STYLES } from "./types";
+import { invalidateDashboardSnapshotCache } from "./dashboard-snapshot-cache";
 
 // ── Field-Level Encryption ──────────────────────────────────────────────────
 
@@ -1283,6 +1284,11 @@ export function setActiveConnectedAccount(id: string, userId: string = "local"):
     db.prepare("UPDATE connected_accounts SET is_active = 0 WHERE user_id = ?").run(userId);
     db.prepare("UPDATE connected_accounts SET is_active = 1 WHERE id = ? AND user_id = ?").run(id, userId);
   })();
+  // Drop every cached snapshot for this user.  The next dashboard/mobile
+  // read must assemble against the new active pointer — a 10s stale hit
+  // (or an in-flight compute for the previous account) is why iOS looked
+  // like it refused to switch to Alpaca Paper after Tradier Sandbox.
+  invalidateDashboardSnapshotCache(userId);
 }
 
 export function purgeConnectedAccount(id: string, userId: string = "local"): boolean {

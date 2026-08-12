@@ -747,6 +747,94 @@ extension View {
     }
 }
 
+/// Horizontal wrap that sizes each child to its intrinsic width.
+/// Used by watchlist chips so a logo + ticker + remove control is never
+/// forced into a too-narrow equal-width grid cell (which wrapped `SPCX`
+/// onto two lines).  Layout math is in `WrappingHStackLayout` so XCTest
+/// can cover wrap vs. single-line without hosting SwiftUI.
+struct WrappingHStack: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        return WrappingHStackLayout.place(
+            widths: sizes.map(\.width),
+            heights: sizes.map(\.height),
+            containerWidth: proposal.width ?? .infinity,
+            spacing: spacing,
+            lineSpacing: lineSpacing
+        ).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let result = WrappingHStackLayout.place(
+            widths: sizes.map(\.width),
+            heights: sizes.map(\.height),
+            containerWidth: bounds.width,
+            spacing: spacing,
+            lineSpacing: lineSpacing
+        )
+        for index in subviews.indices {
+            subviews[index].place(
+                at: CGPoint(
+                    x: bounds.minX + result.origins[index].x,
+                    y: bounds.minY + result.origins[index].y
+                ),
+                proposal: ProposedViewSize(sizes[index])
+            )
+        }
+    }
+}
+
+enum WrappingHStackLayout {
+    struct Result: Equatable {
+        var size: CGSize
+        var origins: [CGPoint]
+    }
+
+    static func place(
+        widths: [CGFloat],
+        heights: [CGFloat],
+        containerWidth: CGFloat,
+        spacing: CGFloat,
+        lineSpacing: CGFloat
+    ) -> Result {
+        precondition(widths.count == heights.count)
+        guard !widths.isEmpty else {
+            return Result(size: .zero, origins: [])
+        }
+
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var maxX: CGFloat = 0
+        var origins: [CGPoint] = []
+        origins.reserveCapacity(widths.count)
+
+        for index in widths.indices {
+            let width = widths[index]
+            let height = heights[index]
+            if x > 0 && x + width > containerWidth {
+                y += lineHeight + lineSpacing
+                x = 0
+                lineHeight = 0
+            }
+            origins.append(CGPoint(x: x, y: y))
+            x += width
+            maxX = max(maxX, x)
+            x += spacing
+            lineHeight = max(lineHeight, height)
+        }
+
+        return Result(
+            size: CGSize(width: maxX, height: y + lineHeight),
+            origins: origins
+        )
+    }
+}
+
 struct CommandButton: View {
     let title: String
     let systemImage: String

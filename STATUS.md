@@ -1,3 +1,16 @@
+## Current (2026-08-12 GROK — iOS watchlist wrap + account switch + admin + P&L)
+
+Owner Assets screenshot + follow-up.  Four bugs on one branch
+`grok/ios-watchlist-chip-wrap` (worktree `~/apps/trading-grok-watchlist-chips`):
+
+1. Watchlist chips wrap mid-ticker — content-sized `WrappingHStack` (#2657).
+2. Use-account looks dead, then snaps — keep Switching pill until snapshot.
+3. Tradier Sandbox `$0` P&L — unrealized from positions; realized "—" without fills.
+4. Admin Portal stuck — loading UI, cookie timeout, same-host subframe allow.
+5. Alpaca Paper "won't switch" — activate now invalidates the dashboard snapshot cache.
+
+Rollout: `docs/rollouts/2026-08-12-ios-watchlist-chip-wrap.md`.
+
 ## Current (2026-08-12 ~7:30am CT CLAUDE — external-repo lessons round 2: alpha grading, signal health, cancel-dust)
 
 Round 2 of the owner's external-repo lessons request (broad sweep: TradingAgents, ai-hedge-fund,
