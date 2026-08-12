@@ -29,6 +29,27 @@ declared them — now declared as `$(MARKETING_VERSION)`/`$(CURRENT_PROJECT_VERS
 future regen preserves substitution.  A parallel expert-panel workflow is reviewing web↔iOS
 parity and reports separately.  Rollout: `docs/rollouts/2026-08-12-ios-customizable-tabs.md`.
 
+## Current (2026-08-11 MONET — litestream per-tier backup status: health check + admin panel)
+
+**Branch `monet/backup-status-panel` (committed locally, not pushed — see rollout note for why).**
+Tonight's litestream incident (stuck level-1 B2 compaction anchor, silently wedged 27+ hours —
+see the escalation trail above and `docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md`)
+exposed a real gap: `checks.storage.litestream*` on `/api/health` only ever observes level 0
+(continuous sync) via the IPC socket, so it would NOT have caught this. Added: (1)
+`assessLitestreamTierFreshness()` in `src/lib/runtime-health.ts` — per-compaction-level (0/1/9)
+freshness via local `ltx/<level>/` file mtimes, with documented thresholds (10min/4h/30h) and a
+graceful "unknown" state everywhere litestream isn't configured this way; (2) wired additively
+into `checks.storage.litestreamTiers` on `/api/health` (existing fields untouched) + folds into
+`storageDegraded` + per-tier `alertStorageWarning`; (3) new admin panel `app/admin/backups/` (nav
+entry "Backup Status") showing Continuous Sync / Compaction / Daily Snapshot per-tier health,
+backed by new admin route `app/api/admin/backup-status/route.ts`; (4) tests in
+`test/runtime-health.test.ts` (unit), `test/connection-health-routing.test.ts` (integration,
+reproduces the exact incident shape against the real route), `test/backup-status-route.test.ts`
+(new, admin route). `npx tsc --noEmit` clean, `npm run lint` 0 errors, targeted vitest run (57
+tests across the 4 touched/related files) green. Full `npm test`/`npm run build` run before
+commit — see the rollout note for final counts. Does NOT fix the underlying stuck B2 anchor
+itself (that's separate ops work, still open). Rollout:
+`docs/rollouts/2026-08-11-litestream-tier-backup-status.md`.
 ## Current (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
 
 **Branch `ag/desktop-mobile-ux-enhancements`:**
