@@ -41,7 +41,7 @@ function fixtureArticle(overrides: {
         country: "us",
         type: "equity",
         industry: "Technology",
-        match_score: 12.3,
+        match_score: 55, // healthy real-world match (docs samples run ~12-82); normalizes to 0.55, clear of the 0.35 default gate
         sentiment_score: overrides.sentimentScore,
         highlights: [
           { highlight: "synthetic highlight", sentiment: overrides.sentimentScore, highlighted_in: "title" }
@@ -187,10 +187,9 @@ describe("Marketaux enrichment provider", () => {
 
   it("with the filter ON (default), an entity's match_score below the threshold drops BOTH its headline and its sentiment contribution", async () => {
     const { aggregateMarketauxBySymbol } = await import("../src/lib/marketaux-provider");
-    // match_score is NOT a 0..1 scale (real docs examples run ~12-82) — env overrides bypass the
-    // catalog's UI-facing 0-1 clamp, so this deliberately picks a threshold above the fixture's
-    // match_score: 12.3 to exercise a genuine drop.
-    process.env.NEWS_RELEVANCE_MIN_SCORE = "20";
+    // match_score is normalized /100 onto the knob's 0..1 scale (real docs examples run ~12-82),
+    // so the fixture's match_score: 55 -> 0.55; a 0.9 threshold exercises a genuine drop.
+    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.9";
     const articles = [fixtureArticle({ title: "Weakly matched mention", symbol: "AAPL", sentimentScore: 0.5 })];
     const out = aggregateMarketauxBySymbol(articles, ["AAPL"]);
     expect(out.AAPL).toEqual({}); // dropped entirely, never a fabricated partial row
@@ -198,7 +197,7 @@ describe("Marketaux enrichment provider", () => {
 
   it("with the filter ON (default), an entity's match_score at/above the threshold passes through normally", async () => {
     const { aggregateMarketauxBySymbol } = await import("../src/lib/marketaux-provider");
-    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.1"; // well below the fixture's match_score: 12.3
+    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.1"; // well below the fixture's normalized 0.55
     const articles = [fixtureArticle({ title: "Strongly matched mention", symbol: "AAPL", sentimentScore: 0.5 })];
     const out = aggregateMarketauxBySymbol(articles, ["AAPL"]);
     expect(out.AAPL.headlines).toEqual(["Strongly matched mention"]);
@@ -221,9 +220,9 @@ describe("Marketaux enrichment provider", () => {
 
   it("fires onDropped exactly once per dropped entity, never for unscored or relevant entities", async () => {
     const { aggregateMarketauxBySymbol } = await import("../src/lib/marketaux-provider");
-    process.env.NEWS_RELEVANCE_MIN_SCORE = "20"; // above the fixture's match_score: 12.3
+    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.9"; // above the fixture's normalized 0.55
     const articles = [
-      fixtureArticle({ title: "Below threshold", symbol: "AAPL", sentimentScore: 0.5 }), // match_score 12.3 < 20 -> dropped
+      fixtureArticle({ title: "Below threshold", symbol: "AAPL", sentimentScore: 0.5 }), // 55 -> 0.55 < 0.9 -> dropped
       { title: "Unscored", entities: [{ symbol: "AAPL", sentiment_score: 0.1 }] } // no match_score -> passes
     ];
     let dropped = 0;
@@ -234,7 +233,7 @@ describe("Marketaux enrichment provider", () => {
   it("with the filter OFF, a below-threshold match_score no longer drops the entity", async () => {
     const { aggregateMarketauxBySymbol } = await import("../src/lib/marketaux-provider");
     process.env.NEWS_RELEVANCE_FILTER = "0";
-    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.99"; // would fail the fixture's match_score: 12.3 if filter were on
+    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.99"; // would fail the fixture's normalized 0.55 if the filter were on
     const articles = [fixtureArticle({ title: "Weakly matched mention", symbol: "AAPL", sentimentScore: 0.5 })];
     const out = aggregateMarketauxBySymbol(articles, ["AAPL"]);
     expect(out.AAPL.headlines).toEqual(["Weakly matched mention"]);

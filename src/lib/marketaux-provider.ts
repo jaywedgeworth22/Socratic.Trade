@@ -148,11 +148,9 @@ interface MarketauxEntity {
   sentiment_score?: unknown;
   // Documented (live-verified 2026-08-12, marketaux.com/documentation) as "the overall strength
   // of the matching for the identified entity" — NOT the 0..1 scale its name might suggest; real
-  // example values from the docs' own live response samples run ~12-82. No documented upper
-  // bound. Gated against NEWS_RELEVANCE_MIN_SCORE (0-1, default 0.35) below anyway: on that real-
-  // world range the gate is intentionally conservative — it only excludes a genuinely near-zero
-  // match, never a normal one — which is the same "never drop what the provider didn't clearly
-  // flag as bad" posture AMBIGUOUS_COMPANY_NAMES corroboration takes in news-relevance.ts.
+  // example values from the docs' own live response samples run ~12-82, no documented upper
+  // bound. marketauxEntityIsRelevant() normalizes it /100 (clamped to 0..1) before comparing
+  // against NEWS_RELEVANCE_MIN_SCORE, so the shared 0-1 knob gates all providers on one scale.
   match_score?: unknown;
 }
 
@@ -182,13 +180,19 @@ export function mapMarketauxSentiment(score: number): number {
 
 /** True unless the filter is on AND this entity's own match_score parses AND that value is below
  *  minScore. An entity Marketaux never scored (field absent/unparseable) always passes through —
- *  never drop data the provider didn't itself flag as a weak match. */
+ *  never drop data the provider didn't itself flag as a weak match.
+ *
+ *  match_score is normalized onto the knob's 0..1 scale by dividing by 100 (observed range
+ *  ~12-82, no documented upper bound — values above 100 clamp to 1). Without this the shared
+ *  NEWS_RELEVANCE_MIN_SCORE (0-1) could never exclude anything: every real-world score already
+ *  exceeded 1, so the gate was inert at any UI-settable threshold. */
 function marketauxEntityIsRelevant(entity: MarketauxEntity, filterEnabled: boolean, minScore: number): boolean {
   if (!filterEnabled) return true;
   const raw = entity.match_score;
   const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : undefined;
   if (value === undefined || !Number.isFinite(value)) return true;
-  return value >= minScore;
+  const normalized = Math.max(0, Math.min(1, value / 100));
+  return normalized >= minScore;
 }
 
 /** Groups a batch of articles' matching entities by symbol, producing at most one SymbolEnrichment

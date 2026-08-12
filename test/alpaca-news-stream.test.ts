@@ -69,10 +69,17 @@ describe("filterRelevantStreamSymbols", () => {
     expect(streamRelevanceDroppedAssociationCount()).toBe(1);
   });
 
-  it("respects a raised NEWS_RELEVANCE_MIN_SCORE threshold", async () => {
-    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.99"; // a bare ticker match alone (0.9) no longer clears it
+  it("always trusts provider attribution on single-symbol articles", async () => {
+    // The stream payload carries no company name, so a headline naming the company but not the
+    // ticker scores 0 here — Benzinga's own tag is the only signal, and it must win.
     const { filterRelevantStreamSymbols } = await import("../src/lib/streams/alpaca-news-stream");
-    const kept = filterRelevantStreamSymbols("AAPL reports record quarterly earnings", ["AAPL"]);
-    expect(kept).toEqual([]);
+    const kept = filterRelevantStreamSymbols("Apple beats estimates on services strength", ["AAPL"]);
+    expect(kept).toEqual(["AAPL"]);
+  });
+
+  it("drops only zero-evidence symbols on multi-symbol articles, keeping scored ones", async () => {
+    const { filterRelevantStreamSymbols } = await import("../src/lib/streams/alpaca-news-stream");
+    const kept = filterRelevantStreamSymbols("AAPL reports record quarterly earnings", ["AAPL", "MSFT"]);
+    expect(kept).toEqual(["AAPL"]);
   });
 });

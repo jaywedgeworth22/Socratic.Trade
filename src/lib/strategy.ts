@@ -6833,7 +6833,7 @@ export function enrichOpeningProposal(
       if (next.bracketStopLoss != null && !llmStopValid) {
         next = withReceipt(
           { ...next, bracketStopLoss: undefined },
-          `bracket_stop_invalid_discarded: Proposed stop ${llmStop} sits on the wrong side of the ${round2(bracketAnchorPrice)} entry anchor for a ${proposal.side}; discarded so the per-symbol fallback can price it.`
+          `bracket_stop_invalid_discarded: Proposed stop ${llmStop} sits on the wrong side of the ${round2(bracketAnchorPrice)} entry anchor for a ${proposal.side}; discarded — policy fallback pricing applies when configured.`
         );
       }
     }

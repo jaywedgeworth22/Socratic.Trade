@@ -1,3 +1,31 @@
+## Current (2026-08-12 ~5:40am CT CLAUDE — dsa-lessons round 1: digest, relevance, receipts)
+
+Owner asked for lessons from ZhuLinsen/daily_stock_analysis (62k-star LLM stock-analysis repo),
+then broadened to a moderately broad GitHub sweep.  Research ran as two 15-agent workflows
+(readers -> synthesis -> per-lesson gap analysts); full verdicts + sketches in
+`docs/reviews/2026-08-12-dsa-lessons-gap-analysis.md`.  This lane (branch `agent/claude`) lands
+round 1 — three implemented lessons, each built + adversarially verified + integration-fixed:
+
+1. **Opt-in daily watchlist digest** (default OFF; Settings -> Delivery): typed report context
+   (latest persisted scan quote + proposal trajectory per symbol) -> full/medium/brief renderers ->
+   notify() `bodyTiers` picking the largest tier per channel via new `CHANNEL_CAPABILITIES`
+   (also retires the latent pushover/ntfy truncation gap).  New `trade_proposals.symbol` column
+   + index (migration + backfill).  Fires once per CT day at/after 15:15 CT via a watermark lane.
+2. **News entity-relevance gating** (default ON, real off-switch via `NEWS_RELEVANCE_*` knobs):
+   AV `relevance_score` and Marketaux `match_score` were documented-but-discarded — now parsed and
+   gated (match_score normalized /100 — it was ~12-82, making the 0-1 knob inert until the
+   integration fix); leaf rubric `news-relevance.ts` with ambiguous-company-name corroboration;
+   stream path drops only zero-evidence associations on multi-symbol articles.
+3. **Proposal repair-ladder receipts** (money-path, surgical): `TradeProposal.dataAdjustments`
+   kind-prefixed receipts; deterministic session-vs-phrasing guard (never blocks/rewrites);
+   `confidenceCapDataDegraded` tuning knob; existing bracket-fallback disclosures now also write
+   receipts; approval card renders them.
+
+Gates: lint 0 errors; tsc clean; targeted suites 76/76; full test+build via land.sh at push.
+Next: round-2 implementation (benchmark-alpha grading, signal-health monitor, cancel-dust
+advisory) on this lane after merge; UI lane (`claude/ui-symbol-drawer-fills`) lands separately.
+Blockers: none.
+
 ## Current (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
 
 **Branch `ag/desktop-mobile-ux-enhancements`:**

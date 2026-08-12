@@ -142,12 +142,13 @@ export function renderWatchlistDigestMedium(context: WatchlistReportContext): st
   // (watchlist) order and sort after every symbol that has one — "top movers" is a sort, not a
   // filter, so every watchlist symbol still appears.
   const ranked = context.symbols
-    .map((s, index) => ({ s, index, mag: Math.abs(s.quote?.intradayChangePct ?? -1) }))
+    .map((s, index) => {
+      const pct = s.quote?.intradayChangePct;
+      return { s, index, mag: pct === undefined ? undefined : Math.abs(pct) };
+    })
     .sort((a, b) => {
-      const aHas = a.mag >= 0 && a.s.quote?.intradayChangePct !== undefined;
-      const bHas = b.mag >= 0 && b.s.quote?.intradayChangePct !== undefined;
-      if (aHas && bHas) return b.mag - a.mag;
-      if (aHas !== bHas) return aHas ? -1 : 1;
+      if (a.mag !== undefined && b.mag !== undefined) return b.mag - a.mag;
+      if ((a.mag !== undefined) !== (b.mag !== undefined)) return a.mag !== undefined ? -1 : 1;
       return a.index - b.index;
     })
     .map((r) => r.s);

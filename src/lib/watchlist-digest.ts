@@ -101,8 +101,10 @@ export async function runWatchlistDigestIfDue(
           deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : undefined
         );
         const anySent = results.some((r) => r.ok);
+        // Event name reflects the real outcome: "sent" would overstate delivery when every
+        // channel skipped or failed, so that case gets its own name with the same payload.
         audit(
-          "watchlist_digest.sent",
+          anySent ? "watchlist_digest.sent" : "watchlist_digest.undelivered",
           { userId, symbolCount: context.symbols.length, channelResults: results },
           userId
         );

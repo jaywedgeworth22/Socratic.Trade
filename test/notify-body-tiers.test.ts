@@ -1,3 +1,5 @@
+import { tmpdir } from "os";
+import { join } from "path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getDb, setNotifyPrefs } from "../src/lib/db";
 import { CHANNEL_CAPABILITIES, notify, type NotifyConfig } from "../src/lib/notify";
@@ -22,7 +24,7 @@ const cfg = (): NotifyConfig => ({
 });
 
 beforeAll(() => {
-  process.env.DATABASE_URL = `file:${process.env.TMPDIR ?? "/tmp"}/notify-body-tiers-${Date.now()}.db`;
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-notify-body-tiers-${Date.now()}.db`)}`;
   getDb();
 });
 

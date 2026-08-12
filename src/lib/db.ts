@@ -2728,7 +2728,7 @@ const MIGRATIONS: Migration[] = [
       if (!cols.some((c) => c.name === "symbol")) {
         database.exec("ALTER TABLE trade_proposals ADD COLUMN symbol TEXT");
         database.exec(
-          "UPDATE trade_proposals SET symbol = UPPER(json_extract(proposal, '$.symbol')) WHERE json_extract(proposal, '$.symbol') IS NOT NULL"
+          "UPDATE trade_proposals SET symbol = UPPER(TRIM(json_extract(proposal, '$.symbol'))) WHERE json_extract(proposal, '$.symbol') IS NOT NULL"
         );
       }
       database.exec(

@@ -283,7 +283,7 @@ export function DeliveryChannelsCard() {
 
       <div
         className="con-row mb-3 flex items-center justify-between gap-4 rounded-control border border-[color:var(--con-line)] px-3 py-2.5"
-        title="Sends a summary of your whole watchlist once a day, shortly after the US market closes. Uses only data the app already collected — no extra provider calls."
+        title="Sends a summary of your whole watchlist once a day, shortly after the US market closes.  Uses only data the app already collected — no extra provider calls."
       >
         <div>
           <div className="text-[length:var(--con-fs-sm)] font-semibold">Daily Watchlist Digest</div>
