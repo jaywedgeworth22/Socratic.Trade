@@ -5,7 +5,7 @@ import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiK
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { deleteStagedEmbeddings, getStagedEmbeddings, stageEmbeddedVectors } from "./db-embed-stage";
 import { logApiHealth } from "./db-health";
-import { isLocalDbFaultError, noteLocalDbFault } from "./local-db-fault";
+import { isLocalDbFaultError, localDbFaultReason, noteLocalDbFault } from "./local-db-fault";
 import {
   auditPineconeWuGateSkip,
   isPineconeWuExhaustedError,
@@ -1356,21 +1356,30 @@ async function alertRagConnectionFailure(
       reason: message,
       userSpecific: source === "user"
     };
-    await captureRagSentryMessage("warning", title, {
-      provider: activeProvider ?? service,
-      lane: service,
-      source,
-      operation,
-      userSpecific: source === "user",
-      reason: message
-    }, leaseGuard);
+    // Rate-limit parity with the non-RAG lane. db-health's alertConnectionFailure has always
+    // passed `skipSentry` for 429/rate-limit-shaped text (a 429 is budget/pacing behavior, not a
+    // broken integration), but this RAG path had no equivalent — so OpenRouter 429s paged while
+    // the identical failure on any other provider did not. Suppress the Sentry event only; the
+    // provider_degraded notification below and the alertUsageLimitHit escalation further down
+    // (which is the RIGHT channel for a rate limit, with its own cooldown and recommendation)
+    // both still fire.
+    const limitStatus = ragLimitStatus(message);
+    if (limitStatus !== "rate_limited") {
+      await captureRagSentryMessage("warning", title, {
+        provider: activeProvider ?? service,
+        lane: service,
+        source,
+        operation,
+        userSpecific: source === "user",
+        reason: message
+      }, leaseGuard);
+    }
     assertVectorStoreLease(leaseGuard);
     await sendNotification(
       { type: "provider_degraded", title, payload },
       { userId: targetUserId, directBody: body, assertActive, signal: leaseGuard?.signal }
     );
     assertVectorStoreLease(leaseGuard);
-    const limitStatus = ragLimitStatus(message);
     if (limitStatus) {
       await alertUsageLimitHit(
         {
@@ -1417,6 +1426,14 @@ async function captureRagSentryMessage(
       if (context.provider) scope.setTag("rag.provider", String(context.provider));
       if (context.operation) scope.setTag("rag.operation", String(context.operation));
       if (context.source) scope.setTag("rag.key_source", String(context.source));
+      // Group by the STABLE lane identifier, not by the rendered title. Sentry fingerprints
+      // captureMessage by message text, and these titles are built from DISPLAY names that drift
+      // ("Voyage" vs "voyage", "OpenRouter" vs "OpenRouter embed" vs "OpenRouter rerank") — the
+      // single rag-embed lane fragmented into six Sentry issues that way. `lane` is the health
+      // service id ("rag-embed"/"rag-rerank"/"pinecone"); fall back to `provider` for the few
+      // contexts that carry no lane (e.g. the storeContexts ledger path).
+      const groupKey = context.lane ?? context.provider;
+      if (groupKey) scope.setFingerprint(["rag", String(groupKey)]);
       scope.setContext("rag", context);
       captureMessage(message);
     });
@@ -3417,7 +3434,25 @@ async function storeContextsImpl(
     console.error("[vector-db] Error storing contexts:", err);
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed, error });
     audit("vector_store", { ok: false, attempted: validDocuments.length, indexed, error }, userId);
-    if (!wasRagSentryCaptured(err)) {
+    // A LOCAL SQLite fault is OUR file contending with itself, not the vector store failing.
+    // Both local seams in the managed-commit path (persistReceipts, markCommitted) rethrow as
+    // `new Error("document-…-failed", { cause: sqliteError })`, so the raw "database is locked" /
+    // "no such table" text lives on the CAUSE — classifying `error` (the wrapper's own message)
+    // would match nothing and quietly leave the bug in place. `localDbFaultReason` walks the chain
+    // and hands back the real SQLite text, which is what gets recorded. Attributing this to
+    // "RAG vector store failed" at level=error is the same mislabel class as the 2026-08-09
+    // "Pinecone connection failed / database is locked" pushes (docs/rollouts/
+    // 2026-08-09-pinecone-lock-mislabel.md), just at the storeContexts ledger seam instead of the
+    // provider seam. Control flow is unchanged: the same result object is returned either way.
+    const localDbReason = localDbFaultReason(err);
+    if (localDbReason) {
+      await noteLocalDbFault({
+        lane: "vector-store",
+        operation: "storeContexts",
+        message: localDbReason,
+        userId
+      });
+    } else if (!wasRagSentryCaptured(err)) {
       await captureRagSentryMessage("error", "RAG vector store failed", {
         provider: "pinecone",
         operation: "storeContexts",

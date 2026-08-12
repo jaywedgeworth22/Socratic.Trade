@@ -416,16 +416,22 @@ export async function runHealthLaneReprobeIfDue(
             detail: outcome.detail
           });
         } else {
-          const soft =
-            /429|rate limit|quota|budget|25\/day/i.test(outcome.detail ?? "") ||
-            isSoftHealthFailure(outcome.detail);
+          // ALL probe failures are soft — not just the 429-shaped ones this used to match.
+          //
+          // A re-probe is SYNTHETIC traffic we generate specifically because the lane is already
+          // known-red; it is not user traffic and it is not new evidence worth paging on. Logged
+          // hard, each probe failure re-satisfied the alert gate and minted another Sentry event,
+          // which re-armed the 6h alert cooldown, which kept the lane in the probe candidate set —
+          // a self-sustaining loop that alerted forever on a lane nobody was actually calling.
+          // Soft rows are still stored ok=0, so the lane keeps showing red in Admin Connections
+          // and the probe cadence is unchanged; only the paging stops.
           logApiHealth({
             service: s.service,
             ok: false,
             latencyMs: outcome.latencyMs,
             errorText: outcome.detail,
             keySource: s.keySource ?? undefined,
-            soft
+            soft: true
           });
           const until = parseKnownUnavailabilityUntil(outcome.detail, nowMs);
           const next = until != null && until > nowMs ? until : nowMs + intervalMs;
@@ -440,12 +446,14 @@ export async function runHealthLaneReprobeIfDue(
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        // Same reasoning as the probe_fail branch above: a thrown probe is still a synthetic
+        // probe, so it records red without paging.
         logApiHealth({
           service: s.service,
           ok: false,
           errorText: msg,
           keySource: s.keySource ?? undefined,
-          soft: /abort|timeout|429/i.test(msg)
+          soft: true
         });
         setInternalSetting(laneKey(s.service, s.keySource), new Date(nowMs + intervalMs).toISOString());
         results.push({

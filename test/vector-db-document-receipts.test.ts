@@ -295,6 +295,58 @@ describe("storeDocument receipt transaction", () => {
     warn.mockRestore();
   });
 
+  it("attributes a LOCAL SQLite receipt fault to local contention, not to the vector store", async () => {
+    // The receipt/finalize seams rethrow as `new Error("document-…-failed", { cause: sqliteError })`,
+    // so the raw SQLite text is only reachable through the CAUSE. Before this was walked, a local
+    // write-lock fault surfaced as an error-level "RAG vector store failed" Sentry event blaming
+    // Pinecone — the same mislabel class as the 2026-08-09 "Pinecone connection failed / database
+    // is locked" pushes. Control flow is unaffected: the caller still gets the same wrapper error.
+    //
+    // The trigger raises the literal SQLITE_BUSY message text rather than holding a real write
+    // lock, for the reason this repo already documents in local-db-fault-classification.test.ts:
+    // a genuine held lock would also block the classifier's own audit write.
+    const { getDb } = await import("../src/lib/db");
+    const { storeDocument } = await import("../src/lib/vector-db");
+    const db = getDb();
+    db.prepare("DELETE FROM audit_events WHERE kind = 'local_db_contention'").run();
+    db.exec(`
+      CREATE TRIGGER fail_test_local_db_lock
+      BEFORE INSERT ON chunk_occurrences
+      BEGIN
+        SELECT RAISE(ABORT, 'database is locked');
+      END;
+    `);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const failed = await storeDocument({
+        text: "Local contention probe: the receipt write is the thing that fails here.",
+        doc_id: "LOCAL-DB-FAULT-PROBE:NVDA:2026:Q2",
+        ticker: "NVDA",
+        title: "NVDA local-fault probe",
+        doc_type: "earnings-transcript",
+        source: "fmp-earnings-transcript",
+        published_at: "2026-05-20T20:00:00.000Z",
+        acceptance_datetime: "2026-05-21T01:00:00.000Z"
+      });
+      expect(failed.error).toBe("document-receipt-write-failed");
+
+      const row = db
+        .prepare("SELECT payload FROM audit_events WHERE kind = 'local_db_contention' ORDER BY rowid DESC LIMIT 1")
+        .get() as { payload: string } | undefined;
+      expect(row).toBeDefined();
+      const payload = JSON.parse(row!.payload) as { lane: string; operation: string; reason: string };
+      expect(payload.lane).toBe("vector-store");
+      expect(payload.operation).toBe("storeContexts");
+      // The RAW SQLite text, not the opaque "document-receipt-write-failed" wrapper label.
+      expect(payload.reason).toContain("database is locked");
+    } finally {
+      db.exec("DROP TRIGGER fail_test_local_db_lock");
+      warn.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
   it("does not create a pending commit for whitespace-only input", async () => {
     const { getDb } = await import("../src/lib/db");
     const { storeDocument } = await import("../src/lib/vector-db");
