@@ -43,7 +43,13 @@ struct MobileSnapshot: Decodable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         currentUser = try values.decodeIfPresent(CurrentUser.self, forKey: .currentUser)
-        catalog = try values.decodeIfPresent(ControlCatalog.self, forKey: .catalog)
+        // `try?`, not `try`: `decodeIfPresent` returns nil only for a MISSING or null key — a
+        // catalog of the wrong SHAPE (`"catalog": "v2"`, `commands` not an array, an element
+        // without a string `type`) throws, and that throw would propagate out of this initializer
+        // and fail the WHOLE snapshot decode, blanking the app over a field it treats as
+        // optional.  A catalog that cannot be read must land on nil, which `serverAdvertises`
+        // reads as "the server did not answer" and falls back to the built-in controls.
+        catalog = (try? values.decodeIfPresent(ControlCatalog.self, forKey: .catalog)) ?? nil
         readiness = try values.decode(Readiness.self, forKey: .readiness)
         policy = try values.decode(PolicySummary.self, forKey: .policy)
         marketSession = try values.decodeIfPresent(String.self, forKey: .marketSession) ?? "unknown"

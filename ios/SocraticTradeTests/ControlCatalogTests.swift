@@ -30,6 +30,54 @@ final class ControlCatalogTests: XCTestCase {
         XCTAssertTrue(commandsMissing.advertisedCommandTypes.isEmpty)
     }
 
+    /// A catalog of the wrong SHAPE must not take the snapshot down with it.  `decodeIfPresent`
+    /// returns nil only for a missing/null key, so an unguarded `try` here would throw out of
+    /// `MobileSnapshot.init` and blank the whole app over an optional field.
+    @MainActor
+    func testAMalformedCatalogFallsBackInsteadOfFailingTheWholeSnapshot() throws {
+        let malformedCatalogs = [
+            #""catalog": "v2""#,
+            #""catalog": 2"#,
+            #""catalog": {"version":"two","commands":[{"type":"strategy.stop"}]}"#,
+            #""catalog": {"version":2,"commands":"all"}"#,
+            #""catalog": {"version":2,"commands":[{"type":1}]}"#,
+            #""catalog": {"version":2,"commands":[{"name":"strategy.stop"}]}"#
+        ]
+
+        for catalogField in malformedCatalogs {
+            let json = """
+            {
+              \(catalogField),
+              "readiness": {
+                "hasAccount": true,
+                "hasUniverse": true,
+                "systemState": "active",
+                "strategyAuthority": "decide",
+                "selectedAccountNumber": "account-number",
+                "activeConnectedAccount": null,
+                "commandBacklog": {"queued": 0, "running": 0}
+              },
+              "policy": {"systemState":"active","strategyAuthority":"decide","maxDailyNotional":10000}
+            }
+            """
+            let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8))
+            XCTAssertNil(snapshot.catalog, catalogField)
+            // The rest of the payload still decoded — the snapshot is usable.
+            XCTAssertEqual(snapshot.readiness.systemState, "active", catalogField)
+
+            let store = MobileStore(
+                client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!),
+                previewSnapshot: snapshot
+            )
+            // Unreadable catalog == unanswered question: controls stay available, never silently
+            // disabled by a payload the app could not parse.
+            for commandType in ["order.cancel", "policy.patch", "alert.create", "watchlist.add"] {
+                XCTAssertTrue(store.serverAdvertises(commandType), "\(commandType) — \(catalogField)")
+            }
+            XCTAssertTrue(store.canSubmit("strategy.stop"), catalogField)
+        }
+    }
+
     @MainActor
     func testUnadvertisedCommandsAreRefusedWhileProtectiveOnesStayAvailable() throws {
         let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(catalogSnapshotJSON.utf8))

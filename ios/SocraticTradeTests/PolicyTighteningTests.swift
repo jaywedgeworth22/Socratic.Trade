@@ -63,6 +63,64 @@ final class PolicyTighteningTests: XCTestCase {
         XCTAssertEqual(PolicyTightening.tightenedCapOptions(current: 2, competingPercentCap: nil), [1])
     }
 
+    /// The offered value is absolute and `policy.patch` is queued, so the tap-time re-check is
+    /// what stops a menu built against an older, larger cap from RAISING a cap that dropped in
+    /// the meantime.  The server enforces no direction.
+    func testAStaleOptionIsRefusedOnceTheCapHasMovedUnderIt() throws {
+        let policy = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":10000}"#)
+
+        // Built when the cap was $10,000 and still a tightening.
+        XCTAssertTrue(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: policy))
+
+        // The console (or an earlier queued tighten) has since dropped it to $1,000: re-sending
+        // the $7,500 option would raise it.
+        let lowered = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":1000}"#)
+        XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: lowered))
+        // Equal value is not a tightening either — it would spend a command to change nothing.
+        XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 1000, in: lowered))
+        XCTAssertTrue(PolicyTightening.isStillATightening(.maxOrderNotional, value: 750, in: lowered))
+
+        // The cap became percent-of-NAV based, or vanished, while the menu was open.
+        let percentBased = try snapshotPolicy(
+            #"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":10000,"maxOrderPctOfNav":5}"#
+        )
+        XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: percentBased))
+        let unset = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide"}"#)
+        XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: unset))
+        // No snapshot at all cannot answer "lower than what?".
+        XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: nil))
+
+        // Caps are checked independently — a daily-cap option is judged against the daily cap.
+        let both = try snapshotPolicy(
+            #"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":1000,"maxDailyNotional":10000}"#
+        )
+        XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: both))
+        XCTAssertTrue(PolicyTightening.isStillATightening(.maxDailyNotional, value: 7500, in: both))
+
+        // Every value the menu builder offers passes its own re-check against the same policy.
+        for value in PolicyTightening.tightenedCapOptions(current: 10000, competingPercentCap: nil) {
+            XCTAssertTrue(PolicyTightening.isStillATightening(.maxOrderNotional, value: value, in: policy))
+        }
+    }
+
+    private func snapshotPolicy(_ policyJSON: String) throws -> PolicySummary {
+        let json = """
+        {
+          "readiness": {
+            "hasAccount": true,
+            "hasUniverse": true,
+            "systemState": "active",
+            "strategyAuthority": "decide",
+            "selectedAccountNumber": "account-number",
+            "activeConnectedAccount": null,
+            "commandBacklog": {"queued": 0, "running": 0}
+          },
+          "policy": \(policyJSON)
+        }
+        """
+        return try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8)).policy
+    }
+
     func testPayloadsMatchTheServerPolicyPatchContract() {
         let authority = PolicyTightening.authorityPayload()
         let patch = try? XCTUnwrap(authority["patch"] as? [String: Any])

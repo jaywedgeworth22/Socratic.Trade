@@ -108,6 +108,23 @@ enum PolicyTightening {
         }
     }
 
+    /// Whether `value` is STILL a tightening of `cap` as the policy reads RIGHT NOW.
+    ///
+    /// `tightenedCapOptions` runs when the menu's content is built, but the value it produced is
+    /// an ABSOLUTE number and three things can happen between then and the patch landing:
+    /// an open menu holds its options while a new snapshot arrives, the owner lowers the same cap
+    /// in the web console, and `policy.patch` is a QUEUED mobile command that can execute minutes
+    /// later behind a `strategy.run_once`.  The server enforces no direction on `policy.patch`
+    /// (`normalizePolicyPatch` accepts both, `applyPolicyPatch` merges verbatim), so a stale
+    /// option re-sent against a smaller cap RAISES it — the one outcome this whole file exists to
+    /// prevent.  Re-checking at tap time closes every window the phone can see; the queue latency
+    /// after submission is the server's to close.
+    static func isStillATightening(_ cap: Cap, value: Double, in policy: PolicySummary?) -> Bool {
+        guard cap.competingPercentCap(in: policy) == nil else { return false }
+        guard let current = cap.currentValue(in: policy), current.isFinite else { return false }
+        return value.isFinite && value >= minimumNotional && value < current
+    }
+
     static func authorityPayload() -> [String: Any] {
         ["patch": ["strategyAuthority": askFirst]]
     }
@@ -204,13 +221,7 @@ struct GuardrailTighteningSection: View {
             Menu {
                 ForEach(options, id: \.self) { value in
                     Button(AppFormat.money(value)) {
-                        Task {
-                            await store.submit(
-                                PolicyTightening.commandType,
-                                payload: PolicyTightening.capPayload(cap, value: value),
-                                operationID: operationID
-                            )
-                        }
+                        submit(cap, value: value, operationID: operationID)
                     }
                 }
             } label: {
@@ -223,6 +234,24 @@ struct GuardrailTighteningSection: View {
             }
             .disabled(!store.canSubmit(PolicyTightening.commandType))
             .accessibilityLabel("\(cap.menuTitle), currently \(AppFormat.money(current))")
+        }
+    }
+
+    /// Submits a lowered cap, but only after re-reading the CURRENT snapshot: the value in hand
+    /// was computed when the menu was built, and re-sending a stale one against a cap that has
+    /// since dropped would raise it (see `isStillATightening`).  Refusing says so instead of
+    /// silently doing nothing.
+    private func submit(_ cap: PolicyTightening.Cap, value: Double, operationID: String) {
+        guard PolicyTightening.isStillATightening(cap, value: value, in: store.snapshot?.policy) else {
+            store.error = "\(cap.title) changed while that menu was open.  Nothing was sent — reopen it to see the current limit."
+            return
+        }
+        Task {
+            await store.submit(
+                PolicyTightening.commandType,
+                payload: PolicyTightening.capPayload(cap, value: value),
+                operationID: operationID
+            )
         }
     }
 

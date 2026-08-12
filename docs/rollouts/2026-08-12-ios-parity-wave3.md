@@ -153,3 +153,67 @@ regression.  The resulting pbxproj diff is 8 lines, all of them the two new file
   cancel, matching the console sheet's behaviour of staying open to show it.
 - Follow-up (larger): replace-at-market from the phone — requirements enumerated in the
   order-cancel server rollout note.
+
+## 6. Adversarial money-path review (2026-08-12, follow-up commit)
+
+An adversarial reviewer re-traced the cancel path, the tighten-only invariant, the deep-link
+router, and the catalog decode against this branch.  Two real defects were found and fixed here;
+one structural gap is left open below.
+
+### Fixed
+
+1. **A stale menu option could LOOSEN a cap** — `ios/SocraticTrade/PolicyTightening.swift`.
+   `tightenedCapOptions` runs when the menu's content is built, but the value it yields is an
+   ABSOLUTE number, `policy.patch` is a QUEUED mobile command (not in
+   `IMMEDIATE_MOBILE_COMMAND_TYPES`), and the server enforces no direction on it
+   (`normalizePolicyPatch` accepts both ways; `applyPolicyPatch` merges verbatim).  A menu held
+   open across a snapshot refresh — or opened before the owner lowered the same cap in the web
+   console — would re-send the older, larger number and RAISE the cap, under a footer that reads
+   "These controls only tighten."  Added `PolicyTightening.isStillATightening(_:value:in:)` and a
+   tap-time re-check against `store.snapshot?.policy` before submitting; a refused tap says so in
+   the error banner instead of silently doing nothing.  Covered by
+   `PolicyTighteningTests.testAStaleOptionIsRefusedOnceTheCapHasMovedUnderIt`.
+
+2. **A malformed `catalog` failed the WHOLE snapshot decode** — `ios/SocraticTrade/MobileModels.swift`.
+   `decodeIfPresent` returns nil only for a MISSING or null key; a catalog of the wrong shape
+   (`"catalog": "v2"`, `commands` not an array, an element whose `type` is not a string) throws,
+   and the `try` propagated out of `MobileSnapshot.init` — blanking the entire app over a field
+   the design treats as optional.  Proven by reverting the fix and re-running the new test:
+   `DecodingError.typeMismatch ... Path: catalog`.  Now `try?`, landing on nil, which
+   `serverAdvertises` already reads as "the server did not answer" and falls back to the built-in
+   controls.  Covered by
+   `ControlCatalogTests.testAMalformedCatalogFallsBackInsteadOfFailingTheWholeSnapshot` (6
+   malformed shapes).
+
+### Left open (structural — not fixed here)
+
+- **Queue latency still allows a loosening patch.**  The tap-time re-check closes every window
+  the phone can see, but `policy.patch` is queued: between submission and execution a
+  `strategy.run_once` can drain for minutes while the owner lowers the same cap in the console,
+  and the queued absolute value then raises it.  Closing this needs a server-side precondition
+  (e.g. an `expectedCurrent` on the patch, refused on mismatch — the same shape as
+  `order.cancel`'s `expectedAccountNumber`), which is a command-contract change and an owner
+  call.
+
+### Verified safe (traced end to end, not taken on trust)
+
+- `order.cancel` cannot reach another user's or another account's order.  `cancelWorkingOrder`
+  resolves `getPolicy(userId)` and `getBrokerGateway(policy, userId)` from the session user only;
+  the broker call is always `cancelEquityOrder(policy.accountNumber, orderId)`.
+  `expectedAccountNumber` is a refusal, never a redirect.  `mobile_commands` idempotency dedupe is
+  scoped `WHERE user_id = ? AND idempotency_key = ?`.
+- One implementation, not two: `POST /api/orders/cancel` is now a thin shell over
+  `src/lib/order-cancel.ts`, and `app/console/orders/api.ts` still posts to that route.
+- Fill-between-render-and-tap surfaces honestly (409 naming the state, or 404), and a failed
+  command's server message reaches the banner through `reconcileTrackedCommands`.
+- Deep links are navigation-only: `DeepLinkDestination` is `.tab`/`.proposal`, and
+  `focusedProposalId` only scrolls and rings a card.  https-only, exact-host, no subdomain or
+  suffix match; the custom scheme is rejected for content routes.
+- `/.well-known/apple-app-site-association` genuinely routes under a dot-prefixed `app/` directory
+  (verified live, not just by importing the module): `curl` against `next dev` returned
+  `200 ct=application/json` with the expected body.
+
+Re-verified after the fixes: `Executed 66 tests, with 0 failures (0 unexpected)` / `** TEST
+SUCCEEDED **` (64 + 2 new), and `npx vitest run test/mobile-order-cancel.test.ts
+test/apple-app-site-association-route.test.ts test/orders-cancel-dust-risk-route.test.ts
+test/mobile-api.test.ts` -> 4 files / 21 tests passed.
