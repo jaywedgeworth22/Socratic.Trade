@@ -104,9 +104,15 @@ function ttlMs(): number {
 }
 
 function timeoutMs(): number {
-  // Kept short: the enforce path awaits this at run entry, so a hung monitor must not stall a
+  // Bounded: the enforce path awaits this at run entry, so a hung monitor must not stall a
   // scheduled cycle for long. Fail-open returns null after the timeout (no enforcement).
-  return numEnv("USAGE_BUDGET_TIMEOUT_MS", 2500);
+  //
+  // 8000, not the original 2500 (2026-08-12): this is a cross-internet call to usage.jays.services
+  // and 2.5s aborted healthy-but-slow responses often enough to be a top "usage-monitor connection
+  // failed" source. The health-lane re-probe for this exact host already uses 8000
+  // (health-lane-reprobe.ts), so the two agree now instead of the probe passing while the real
+  // read times out. Overridable via USAGE_BUDGET_TIMEOUT_MS.
+  return numEnv("USAGE_BUDGET_TIMEOUT_MS", 8000);
 }
 
 function alertCooldownMs(): number {
@@ -208,11 +214,15 @@ async function fetchBudgetStatus(fetchImpl: typeof fetch = fetch): Promise<Budge
     const json = await res.json().catch(() => null);
     return parseBudgetStatus(json);
   } catch (err) {
+    // Soft: this read is explicitly FAIL-OPEN (the catch returns null and the caller does not
+    // enforce), so an abort/network blip changes no behavior and must not page at level=error.
+    // The row is still stored ok=0, so Admin Connections shows the lane honestly.
     logApiHealth({
       service: "usage-monitor",
       ok: false,
       latencyMs: Date.now() - start,
       errorText: err instanceof Error ? err.message : String(err),
+      soft: true,
     });
     return null;
   } finally {

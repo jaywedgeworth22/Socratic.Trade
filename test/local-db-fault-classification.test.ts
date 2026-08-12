@@ -170,6 +170,40 @@ describe("local-DB fault classification", () => {
     expect(isLocalDbFaultError(undefined)).toBe(false);
   });
 
+  it("sees through a re-wrapping seam and reports the RAW SQLite text", async () => {
+    const { isLocalDbFaultError, localDbFaultReason } = await import("../src/lib/local-db-fault");
+
+    // vector-db.ts's managed-commit seams rethrow local receipt/finalize failures as
+    // `new Error("document-…-failed", { cause: sqliteError })`. The wrapper's own message matches
+    // no pattern and carries no `code`, so classifying it alone is a silent no-op — the exact trap
+    // that made an earlier attempt at this fix do nothing.
+    const wrapped = new Error("document-local-commit-finalize-failed", {
+      cause: new Error("database is locked")
+    });
+    expect(isLocalDbFaultError(wrapped)).toBe(true);
+    expect(localDbFaultReason(wrapped)).toBe("database is locked");
+
+    // The `code`-only variant survives wrapping too.
+    const snapshot = new Error("database is locked") as Error & { code: string };
+    snapshot.code = "SQLITE_BUSY_SNAPSHOT";
+    expect(localDbFaultReason(new Error("document-receipt-write-failed", { cause: snapshot }))).toBe(
+      "database is locked"
+    );
+
+    // A wrapped PROVIDER failure must still read as a provider failure.
+    expect(
+      isLocalDbFaultError(new Error("document-receipt-write-failed", { cause: new Error(PINECONE_NETWORK_ERROR) }))
+    ).toBe(false);
+    expect(localDbFaultReason(new Error("document-receipt-write-failed"))).toBeNull();
+
+    // Bounded walk: a self-referential chain terminates instead of spinning.
+    const cyclic = new Error("wrapper-a") as Error & { cause?: unknown };
+    const inner = new Error("wrapper-b") as Error & { cause?: unknown };
+    cyclic.cause = inner;
+    inner.cause = cyclic;
+    expect(isLocalDbFaultError(cyclic)).toBe(false);
+  });
+
   it("a local DB failure during vector inventory does NOT fail the pinecone lane or push provider_degraded", async () => {
     mocks.listPaginated.mockResolvedValue({ vectors: [{ id: "vec-1" }], pagination: undefined });
     mocks.fetchRecords.mockResolvedValue({

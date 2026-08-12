@@ -60,7 +60,10 @@ function ttlMs(): number {
 }
 
 function timeoutMs(): number {
-  return numEnv("USAGE_MONITOR_KNOBS_TIMEOUT_MS", 2500);
+  // 8000, not the original 2500 (2026-08-12) — same reasoning as usage-budget.ts's timeoutMs:
+  // a cross-internet read whose failure is fail-open, sharing the "usage-monitor" health lane, and
+  // matching the 8000 the health-lane re-probe already uses against this host.
+  return numEnv("USAGE_MONITOR_KNOBS_TIMEOUT_MS", 8000);
 }
 
 // ── Response parsing ─────────────────────────────────────────────────────────────
@@ -126,11 +129,14 @@ async function fetchKnobMap(fetchImpl: typeof fetch = fetch): Promise<Record<str
     const json = await res.json().catch(() => null);
     return mergeKnobMap(json);
   } catch (err) {
+    // Soft: fail-open (returns null; callers fall back to the cached/default knob map), so an
+    // abort or network blip changes no behavior and must not page at level=error. Still ok=0.
     logApiHealth({
       service: "usage-monitor",
       ok: false,
       latencyMs: Date.now() - start,
       errorText: err instanceof Error ? err.message : String(err),
+      soft: true,
     });
     return null;
   } finally {
