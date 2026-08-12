@@ -301,6 +301,16 @@ private struct AlertRow: View {
 
     private var operationID: String { "alert.delete:\(alert.id)" }
 
+    /// Trigger receipt, e.g. "Triggered at $205.00 · Jul 21, 2026, 10:00 AM".
+    private var triggeredDetail: String? {
+        guard alert.status == "triggered" else { return nil }
+        var parts: [String] = []
+        if let price = alert.triggeredPrice { parts.append("at \(AppFormat.money(price))") }
+        if let at = alert.triggeredAt { parts.append(AppFormat.dateTime(at)) }
+        guard !parts.isEmpty else { return nil }
+        return "Triggered \(parts.joined(separator: " · "))"
+    }
+
     var body: some View {
         AppCard {
             HStack(spacing: 12) {
@@ -316,6 +326,11 @@ private struct AlertRow: View {
                     Text("\(alert.op) \(AppFormat.money(alert.price))")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    if let triggeredDetail {
+                        Text(triggeredDetail)
+                            .font(.caption)
+                            .foregroundStyle(AppPalette.positive)
+                    }
                     Text(alert.note?.isEmpty == false ? alert.note! : alert.status.capitalized)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -333,6 +348,15 @@ private struct AlertRow: View {
                 .disabled(store.isBusy(operationID) || !store.canSubmit("alert.delete"))
                 .accessibilityLabel("Delete \(alert.symbol) alert")
             }
+        }
+        // Same ceremony as the trash button: the swipe opens the existing confirmation dialog.
+        .swipeRevealAction(
+            title: "Delete",
+            systemImage: "trash",
+            tint: AppPalette.negative,
+            isEnabled: !store.isBusy(operationID) && store.canSubmit("alert.delete")
+        ) {
+            confirmingDeletion = true
         }
         .confirmationDialog(
             "Delete \(alert.symbol) price alert?",

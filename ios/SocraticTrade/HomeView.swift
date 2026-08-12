@@ -156,13 +156,9 @@ private struct ReadyHomeHero: View {
 
     private var pendingCount: Int { snapshot.pendingProposals.count }
 
-    private var stateColor: Color {
-        switch snapshot.readiness.systemState.lowercased() {
-        case "active": return AppPalette.positive
-        case "close_only", "liquidating": return AppPalette.warning
-        default: return AppPalette.negative
-        }
-    }
+    /// Console-shared run-state word — market-aware, so this pill can never claim
+    /// "Running" while the console says "Paused · market closed".
+    private var runState: RunStateWord { deriveRunStateWord(snapshot: snapshot) }
 
     var body: some View {
         AppCard {
@@ -195,9 +191,9 @@ private struct ReadyHomeHero: View {
                     Spacer()
                     VStack(alignment: .trailing, spacing: 6) {
                         StatusPill(
-                            snapshot.readiness.systemState.replacingOccurrences(of: "_", with: " ").capitalized,
-                            color: stateColor,
-                            systemImage: snapshot.readiness.systemState == "active" ? "bolt.fill" : "pause.fill"
+                            runState.rawValue,
+                            color: runState.pillColor,
+                            systemImage: runState.pillSystemImage
                         )
                         Text(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority))
                             .font(.caption.weight(.medium))
@@ -268,13 +264,7 @@ private struct AgentOverviewCard: View {
     let snapshot: MobileSnapshot
     var showInlineReadiness: Bool = true
 
-    private var stateColor: Color {
-        switch snapshot.readiness.systemState.lowercased() {
-        case "active": return AppPalette.positive
-        case "close_only", "liquidating": return AppPalette.warning
-        default: return AppPalette.negative
-        }
-    }
+    private var runState: RunStateWord { deriveRunStateWord(snapshot: snapshot) }
 
     var body: some View {
         AppCard {
@@ -289,9 +279,9 @@ private struct AgentOverviewCard: View {
                     }
                     Spacer()
                     StatusPill(
-                        snapshot.readiness.systemState.replacingOccurrences(of: "_", with: " ").capitalized,
-                        color: stateColor,
-                        systemImage: snapshot.readiness.systemState == "active" ? "bolt.fill" : "pause.fill"
+                        runState.rawValue,
+                        color: runState.pillColor,
+                        systemImage: runState.pillSystemImage
                     )
                 }
 
@@ -373,6 +363,17 @@ private struct StrategyControlsCard: View {
                     }
                 }
 
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        closeOnlyButton
+                        windDownButton
+                    }
+                    VStack(spacing: 10) {
+                        closeOnlyButton
+                        windDownButton
+                    }
+                }
+
                 CommandButton(
                     "Stop Agent",
                     systemImage: "stop.fill",
@@ -383,7 +384,7 @@ private struct StrategyControlsCard: View {
                 }
                 .tint(AppPalette.negative)
 
-                Text("Stop immediately halts future broker submissions.  A broker request already submitted before the halt may still complete; review existing orders under Assets.")
+                Text("Close Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop immediately halts future broker submissions.  A broker request already submitted before the halt may still complete; review existing orders under Assets.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -422,6 +423,30 @@ private struct StrategyControlsCard: View {
         ) {
             submit("strategy.start")
         }
+    }
+
+    // Protective de-risk states (labels match AppFormat.commandLabels; the store always
+    // allows protective commands, same as Stop — no extra ceremony beyond existing controls).
+    private var closeOnlyButton: some View {
+        CommandButton(
+            "Close Only",
+            systemImage: "arrow.down.right.circle",
+            isBusy: store.isBusy("strategy.close_only")
+        ) {
+            submit("strategy.close_only")
+        }
+        .tint(AppPalette.warning)
+    }
+
+    private var windDownButton: some View {
+        CommandButton(
+            "Wind Down",
+            systemImage: "tray.and.arrow.down",
+            isBusy: store.isBusy("strategy.liquidating")
+        ) {
+            submit("strategy.liquidating")
+        }
+        .tint(AppPalette.warning)
     }
 }
 
@@ -654,6 +679,7 @@ private struct AccountSettingsView: View {
 
     @State private var deleteIdentity = ""
     @State private var deletePhrase = ""
+    @State private var showingAdminPortal = false
 
     var body: some View {
         NavigationStack {
@@ -661,6 +687,7 @@ private struct AccountSettingsView: View {
                 identitySection
                 accountsSection
                 policySection
+                adminSection
                 sessionSection
                 deletionSection
             }
@@ -669,6 +696,23 @@ private struct AccountSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $showingAdminPortal) {
+                AdminPortalView()
+            }
+        }
+    }
+
+    /// Owner-only row — rendered solely when the server marks the session admin.
+    @ViewBuilder
+    private var adminSection: some View {
+        if store.snapshot?.currentUser?.isAdmin == true {
+            Section("Admin") {
+                Button {
+                    showingAdminPortal = true
+                } label: {
+                    Label("Admin Portal", systemImage: "wrench.and.screwdriver")
                 }
             }
         }
@@ -790,6 +834,25 @@ private struct ConnectedAccountSettingsRow: View {
     private var operationID: String { "account.activate:\(account.id)" }
     private var canActivate: Bool { store.canSubmit("account.activate") }
 
+    /// Quiet sentence-case capability summary, e.g. "cash · margin · shorting · options L2".
+    private var capabilitiesLine: String? {
+        guard let capabilities = account.capabilities else { return nil }
+        var parts: [String] = []
+        if let accountType = capabilities.accountType, !accountType.isEmpty {
+            parts.append(AppFormat.accountTypeWord(accountType))
+        }
+        if capabilities.marginEnabled == true { parts.append("margin") }
+        if capabilities.shortSelling == true { parts.append("shorting") }
+        if capabilities.optionsTrading == true {
+            if let level = capabilities.optionsLevel {
+                parts.append("options L\(level)")
+            } else {
+                parts.append("options")
+            }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
@@ -798,6 +861,16 @@ private struct ConnectedAccountSettingsRow: View {
                 Text(AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let capabilitiesLine {
+                    Text(capabilitiesLine)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if account.isDraining == true {
+                    Text("draining — existing orders wind down before removal")
+                        .font(.caption2)
+                        .foregroundStyle(AppPalette.warning)
+                }
             }
             Spacer()
             if account.isActive == true {

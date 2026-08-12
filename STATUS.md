@@ -1,3 +1,21 @@
+## Current (2026-08-12 MONET — iOS parity wave 1: decision-critical fields, protective controls, swipe actions, admin portal)
+
+**Branch `monet/ios-parity-wave1`** (stacked on `monet/ios-customizable-tabs`, PR #2647): First
+wave of the iOS parity roadmap — all zero-backend, rendering already-decoded snapshot data and
+dispatching existing command types.  (1) Proposal cards now show price drift (reference → current
+price with signed %), last revalidation time, and the Red Team failure kind when the verdict is
+unavailable (console `describeRedTeamFailureKind` wording).  (2) Home gains Close Only + Wind Down
+protective controls beside Stop (`strategy.close_only` / `strategy.liquidating`, same
+CommandButton/store.submit pattern, no added ceremony).  (3) `policy.runDuringExtendedHours` is now
+decoded and a pure `deriveRunStateWord` mirrors the console's `deriveStateInfo` vocabulary — the
+app can no longer say "Running" while the console says "Paused · market closed" (7 new XCTests).
+(4) Swipe-to-reject on proposal cards (reject ONLY, never approve) and swipe-to-delete on alert
+rows via a new ScrollView-compatible `swipeRevealAction`; watchlist swipe skipped (chip grid, not
+rows — one-tap remove already exists).  (5) Triggered alerts show `triggeredAt`/`triggeredPrice`.
+(6) Account sheet rows show capabilities + draining state.  (7) New `AdminPortalView` (admin-only
+row) hosts /admin in a navigation-fenced WKWebView with native-session cookie handoff.  28/28
+tests pass.  Rollout: `docs/rollouts/2026-08-12-ios-parity-wave1.md`.
+
 ## Current (2026-08-12 MONET — iOS customizable tab bar + xcodegen version-regression root cause)
 
 **Branch `monet/ios-customizable-tabs`:** The iOS app's tab bar is now owner-customizable with
