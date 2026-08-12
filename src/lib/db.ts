@@ -129,7 +129,7 @@ export function resetDbForTesting(): void {
 // PRAGMA user_version — replacing the old habit of adding another unversioned ALTER to
 // migrate() (no ordering/stamp; diverged across worktrees).
 const SCHEMA_BASELINE = 1;
-type Migration = { version: number; name: string; up: (db: Database.Database) => void };
+export type Migration = { version: number; name: string; up: (db: Database.Database) => void };
 
 function quoteSqlIdentifier(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
@@ -2894,7 +2894,13 @@ export function runMigrations(database: Database.Database, migrations: Migration
       m.up(database);
       database.pragma(`user_version = ${m.version}`);
     });
-    apply();
+    // BEGIN IMMEDIATE, not the default DEFERRED: during a rolling deploy the outgoing container
+    // commits continuously, and a deferred migration transaction that reads before writing dies
+    // with an INSTANT SQLITE_BUSY on the WAL snapshot upgrade — busy_timeout never applies to
+    // that path (proven in prod: deployment pyqxv16i, 2026-08-12, migration 72 crash-looped the
+    // incoming container and Coolify rolled back).  Taking the write lock up front makes the
+    // 60s busy_timeout do its job while the old container's short writes drain.
+    apply.immediate();
     current = m.version;
     console.log(`[db] applied migration ${m.version} (${m.name})`);
   }

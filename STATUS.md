@@ -18,6 +18,37 @@ dedicated agent, adversarially verified, and integration-fixed:
 
 Gates: tsc clean, targeted suites 82/82; full lint/test/build via land.sh at push.  Rollout:
 docs/rollouts/2026-08-12-external-lessons-round2.md.  Blockers: none.
+## Current (2026-08-12 ~6:40am CT CLAUDE — HOTFIX: boot migrations vs rolling deploys)
+
+PR #2652's auto-deploy failed (deployment pyqxv16i): the incoming container crash-looped on
+SQLITE_BUSY loading the instrumentation hook and Coolify rolled back (prod stayed up on the old
+build).  Root cause: runMigrations used better-sqlite3's default DEFERRED transaction — under a
+rolling deploy the outgoing container commits continuously, and the WAL snapshot upgrade throws
+an instant SQLITE_BUSY that busy_timeout does not cover.  Fix: apply migrations via BEGIN
+IMMEDIATE (apply.immediate()) so the 60s busy_timeout works; new child-process contention
+regression test.  This PR's own deploy applying migration 72 is the live proof.  Blockers: none.
+
+## Current (2026-08-12 ~6:20am CT CLAUDE — symbol drawer everywhere + iOS fills redesign)
+
+Owner requests: ticker/logo clicks open the Market Scan company drawer on every surface
+("all aspects of the site anywhere really"), and the iOS Activity fill cards get bolder/larger
+text + a denser layout (screenshot critique).  Branch `claude/ui-symbol-drawer-fills`.
+
+Web: closed every remaining un-wired symbol render (order cancel/replace sheets, live-approve
+sheets, decisions rows via a stretched-link restructure, admin data-catalog + rag-coverage with
+SymbolDrawerProvider newly mounted in the admin layout).  Fixed a real crash the sweep exposed:
+SymbolDrilldownSheet's unconditional useConsoleData() throw outside the console shell — new
+useConsoleDataOptional(), with an honest "not available here" exposure state.  Mobile PWA
+deferred honestly (drawer depends on con-* tokens the PWA does not load).
+
+iOS: FillActivityRow/CommandActivityRow typography bumped (ticker title3 bold, notional title3
+semibold, date footnote) with tighter AppCard padding; new SymbolInfoSheet (same /api/quote
+cascade as the web drawer) tappable from fills, positions, orders, watchlist, flow chips,
+alerts, and proposals; 44pt remove target restored; derived marketCap removed (no fabrication).
+
+Verified: tsc/lint/targeted vitest green; xcodebuild green (incl. post-merge with #2647 tabs +
+parity wave); browser check — AAPL click opens the "AAPL details" con-drawer with live data;
+admin routes 200.  Rollout: docs/rollouts/2026-08-12-ui-symbol-drawer-fills.md.  Blockers: none.
 
 ## Current (2026-08-12 ~5:40am CT CLAUDE — dsa-lessons round 1: digest, relevance, receipts)
 

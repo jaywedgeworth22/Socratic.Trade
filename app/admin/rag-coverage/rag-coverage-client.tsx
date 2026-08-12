@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Btn, Card, Chip, Meter, Segmented, Stat, TextInput, type ChipTone } from "../../console/ui/primitives";
+import { SymbolButton } from "../../console/ui/symbol-drilldown";
 import { describeProbeNetworkError, describeProbeStatus, type ProbeErrorDescription } from "../lib/probe-error";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -191,7 +192,9 @@ function TickerRow({ coverage }: { coverage: TickerCoverage }) {
   const maxChunks = 200; // reasonable visual scale cap
   return (
     <div className="flex items-center gap-3 border-b border-[color:var(--con-line)] py-2 text-[length:var(--con-fs-sm)] last:border-0">
-      <div className="con-mono w-16 shrink-0 font-semibold">{coverage.symbol}</div>
+      <div className="con-mono w-16 shrink-0 font-semibold">
+        <SymbolButton symbol={coverage.symbol} />
+      </div>
       <div className="min-w-0 flex-1">
         <Meter value={coverage.chunks} max={maxChunks} />
         <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">

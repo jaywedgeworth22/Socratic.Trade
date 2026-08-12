@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { MarketQuote, MarketQuoteSummary } from "@/lib/types";
-import { useConsoleData } from "../lib/useConsoleData";
+import { useConsoleDataOptional } from "../lib/useConsoleData";
 import { cx, fmtMoney, fmtPct, EM_DASH } from "../lib/format";
 import { Chip } from "./primitives";
 import { useSymbolDrawer } from "./symbol-drawer";
@@ -243,7 +243,13 @@ export function SymbolDrilldownSheet({
    *  the drilldown can never disagree with the row the user clicked. */
   quote?: MarketQuote;
 }) {
-  const { snapshot } = useConsoleData();
+  // Optional: /admin mounts SymbolDrawerProvider without ConsoleDataProvider (no dashboard
+  // snapshot fetch there by design — see app/admin/layout.tsx). `hasAccountData` distinguishes
+  // "no provider, so exposure is genuinely unknown" from "provider present, snapshot just hasn't
+  // loaded/has nothing" — the two need different copy below (see ExposureSection call).
+  const consoleData = useConsoleDataOptional();
+  const hasAccountData = consoleData !== null;
+  const snapshot = consoleData?.snapshot ?? null;
   const { updateDrawerTitle } = useSymbolDrawer();
   const normalized = symbol.trim().toUpperCase();
   const history = useHistory(normalized, true);
@@ -396,8 +402,18 @@ export function SymbolDrilldownSheet({
         )}
         {history.status === "ready" && <PriceHistoryChart bars={history.bars} />}
 
-        {/* Your exposure — account truth, available even when the scan didn't know the symbol */}
-        <ExposureSection symbol={normalized} position={position} pending={pending} orders={recentOrders} />
+        {/* Your exposure — account truth, available even when the scan didn't know the symbol.
+            Outside the console (no ConsoleDataProvider) there is no account snapshot to read at
+            all, so say that plainly instead of letting ExposureSection's normal empty state
+            ("no position, no pending ideas, no recent orders") assert a negative it can't know. */}
+        {hasAccountData ? (
+          <ExposureSection symbol={normalized} position={position} pending={pending} orders={recentOrders} />
+        ) : (
+          <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
+            Account exposure (position, pending ideas, recent orders) isn&apos;t available here — open{" "}
+            {normalized} from the console for that.
+          </p>
+        )}
 
         {scanView && derived ? (
           <>

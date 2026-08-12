@@ -13,6 +13,7 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Btn, Chip } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
+import { SymbolButton } from "../ui/symbol-drilldown";
 import { cancelOrder, OrdersApiError } from "./api";
 import { orderTypeLabel, readableState, type OpenOrderRow } from "./lib";
 
@@ -73,7 +74,7 @@ export function CancelOrderSheet({
   return (
     <Sheet open={open} onClose={close} title="Cancel working order" tone={live ? "live" : undefined}>
       <div className="flex flex-wrap items-center gap-2 text-[length:var(--con-fs-md)] font-bold">
-        {sideWord} {order.symbol}
+        {sideWord} <SymbolButton symbol={order.symbol} className="text-inherit" />
         <span className="text-[length:var(--con-fs-sm)] font-normal text-[color:var(--con-muted)]">
           {orderTypeLabel(order.type)} · {readableState(order.state)}
         </span>

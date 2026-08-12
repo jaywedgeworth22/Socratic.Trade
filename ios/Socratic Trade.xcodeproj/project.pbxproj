@@ -3,8 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 100;
-	preferredProjectObjectVersion = 100;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -12,6 +11,7 @@
 		16C32102BDAA57BDDC9BC51E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 64D21DA3DA51118F65691FBE /* Assets.xcassets */; };
 		1F37FE2BA14490285C0A0156 /* RunStateDerivationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF789FDEB98C62C5D8A12A7F /* RunStateDerivationTests.swift */; };
 		20459811A20F559A78FC18B3 /* SocraticTradeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F94CABB7BE5CB871622BADD /* SocraticTradeApp.swift */; };
+		27D79C4CCEC77B61D399EE85 /* SymbolInfoSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3125CC92E339D3923013056 /* SymbolInfoSheet.swift */; };
 		4298F7ACB07D50EE61F0ECB9 /* MobileControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FD3EFCF82E664100A11FC33 /* MobileControlView.swift */; };
 		51FE4A579117BE3605C107D9 /* PreviewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C2568FFF3FB30F96619E8E /* PreviewSupport.swift */; };
 		5601AC0021A8D0D6F3C5E27F /* MobileAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89D3AB0C26BB7394334E998E /* MobileAPIClient.swift */; };
@@ -56,6 +56,7 @@
 		89D3AB0C26BB7394334E998E /* MobileAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAPIClient.swift; sourceTree = "<group>"; };
 		8B407C6306CC293CF54036A1 /* MobileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileStore.swift; sourceTree = "<group>"; };
 		8FD3EFCF82E664100A11FC33 /* MobileControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileControlView.swift; sourceTree = "<group>"; };
+		A3125CC92E339D3923013056 /* SymbolInfoSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolInfoSheet.swift; sourceTree = "<group>"; };
 		D112E8C717D899B0AFF0B6E5 /* CandleWordmarkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CandleWordmarkView.swift; sourceTree = "<group>"; };
 		D351D03CEAFD6CD1EB4536FD /* MarketsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketsView.swift; sourceTree = "<group>"; };
 		DD460CC2D17E0F0B061B372A /* InsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsView.swift; sourceTree = "<group>"; };
@@ -92,6 +93,7 @@
 				37C2568FFF3FB30F96619E8E /* PreviewSupport.swift */,
 				EC1C49575DCB6DA8E8D65CD7 /* ProposalsView.swift */,
 				5F94CABB7BE5CB871622BADD /* SocraticTradeApp.swift */,
+				A3125CC92E339D3923013056 /* SymbolInfoSheet.swift */,
 			);
 			path = SocraticTrade;
 			sourceTree = "<group>";
@@ -234,6 +236,7 @@
 				51FE4A579117BE3605C107D9 /* PreviewSupport.swift in Sources */,
 				A0B35AC0FE7982512B0E4796 /* ProposalsView.swift in Sources */,
 				20459811A20F559A78FC18B3 /* SocraticTradeApp.swift in Sources */,
+				27D79C4CCEC77B61D399EE85 /* SymbolInfoSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
