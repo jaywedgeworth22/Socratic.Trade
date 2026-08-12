@@ -74,17 +74,11 @@ private struct LaunchStateView: View {
         ZStack {
             AppPalette.background.ignoresSafeArea()
             VStack(spacing: 16) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(AppPalette.accent.gradient)
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: 32, weight: .semibold))
-                        .foregroundStyle(.white)
+                VStack(spacing: 8) {
+                    CandleWordmarkView(text: "SOCRATIC", height: 28)
+                    CandleWordmarkView(text: "TRADE", height: 28)
                 }
-                .frame(width: 70, height: 70)
                 ProgressView()
-                Text("Socratic.Trade")
-                    .font(.headline)
             }
         }
     }

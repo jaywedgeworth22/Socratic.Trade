@@ -41,10 +41,22 @@ private let tickerReds: [Color] = [
     Color(red: 0xe1 / 255, green: 0x1d / 255, blue: 0x48 / 255)  // #e11d48
 ]
 
-private enum CandleWordmarkModel {
-    static let shared: (wm: Wordmark, units: [TickerUnit]) = {
-        (sampleWordmark("SOCRATIC TRADE"), buildTickerUnits(count: 12))
-    }()
+private class CandleWordmarkModel {
+    static let shared = CandleWordmarkModel()
+    
+    private var cache: [String: Wordmark] = [:]
+    let units: [TickerUnit]
+    
+    private init() {
+        self.units = CandleWordmarkModel.buildTickerUnits(count: 12)
+    }
+    
+    func wordmark(for text: String) -> Wordmark {
+        if let wm = cache[text] { return wm }
+        let wm = CandleWordmarkModel.sampleWordmark(text)
+        cache[text] = wm
+        return wm
+    }
 
     private static func mulberry32(_ seed: UInt32) -> () -> Double {
         var a = seed
@@ -77,52 +89,51 @@ private enum CandleWordmarkModel {
         let H = Int(ceil(fontPx * 1.5))
         let W = Int(ceil(total) + padX * 2)
 
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        var pixelData = [UInt8](repeating: 0, count: W * H * 4)
-        guard let ctx = CGContext(
-            data: &pixelData,
-            width: W,
-            height: H,
-            bitsPerComponent: 8,
-            bytesPerRow: W * 4,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: W, height: H), format: format)
+        let image = renderer.image { ctx in
+            // Clear background
+            UIColor.clear.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
+            
+            let baseline = fontPx * 1.1
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: UIColor.white
+            ]
+            var x = padX
+            for i in 0..<chars.count {
+                if chars[i] != " " {
+                    let s = String(chars[i]) as NSString
+                    let drawY = baseline - font.ascender
+                    s.draw(at: CGPoint(x: x, y: drawY), withAttributes: attrs)
+                }
+                x += widths[i] + tracking
+            }
+        }
+
+        guard let cgImage = image.cgImage,
+              let data = cgImage.dataProvider?.data,
+              let ptr = CFDataGetBytePtr(data) else {
             return ([], 1, 1)
         }
 
-        // CoreGraphics is bottom-up; flip so y=0 is top (matches web canvas).
-        ctx.translateBy(x: 0, y: CGFloat(H))
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.setFillColor(UIColor.clear.cgColor)
-        ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
-        ctx.setFillColor(UIColor.white.cgColor)
-
-        var x = padX
-        let baseline = fontPx * 1.1
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: UIColor.white
-        ]
-        UIGraphicsPushContext(ctx)
-        for i in 0..<chars.count {
-            if chars[i] != " " {
-                let s = String(chars[i]) as NSString
-                // draw(at:) y is the top of the text box in flipped UIKit coords when using
-                // attributed draw with baseline ≈ font ascender from top of glyph box.
-                let drawY = baseline - font.ascender
-                s.draw(at: CGPoint(x: x, y: drawY), withAttributes: attrs)
-            }
-            x += widths[i] + tracking
+        let bytesPerRow = cgImage.bytesPerRow
+        let bpp = cgImage.bitsPerPixel / 8
+        let alphaInfo = cgImage.alphaInfo
+        let alphaOffset: Int
+        switch alphaInfo {
+        case .premultipliedFirst, .first, .noneSkipFirst:
+            alphaOffset = 0
+        default:
+            alphaOffset = 3
         }
-        UIGraphicsPopContext()
 
         func alphaAt(xx: Int, yy: Int) -> UInt8 {
-            // After flip, pixel buffer is still physical bottom-up. Convert top-origin yy
-            // to buffer row: physical row = H - 1 - yy.
-            let row = H - 1 - yy
-            guard xx >= 0, xx < W, row >= 0, row < H else { return 0 }
-            return pixelData[(row * W + xx) * 4 + 3]
+            guard xx >= 0, xx < W, yy >= 0, yy < H else { return 0 }
+            let offset = yy * bytesPerRow + xx * bpp + alphaOffset
+            return ptr[offset]
         }
 
         var x0 = W, x1 = 0, y0 = H, y1 = 0
@@ -231,11 +242,13 @@ private enum CandleWordmarkModel {
 
 /// Animated candlestick wordmark (web `HeaderLogo` parity).
 struct CandleWordmarkView: View {
+    var text: String = "SOCRATIC TRADE"
     var height: CGFloat = 28
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var displayWidth: CGFloat {
-        max(1, height * wordmarkAR)
+        let wm = CandleWordmarkModel.shared.wordmark(for: text)
+        return max(1, height * wm.ar)
     }
 
     var body: some View {
@@ -248,13 +261,13 @@ struct CandleWordmarkView: View {
             }
             .frame(width: displayWidth, height: height)
             .accessibilityElement()
-            .accessibilityLabel("Socratic Trade")
+            .accessibilityLabel(text)
         }
     }
 
     private func drawTicker(context: GraphicsContext, size: CGSize, tick: Int) {
         let model = CandleWordmarkModel.shared
-        let wm = model.wm
+        let wm = model.wordmark(for: text)
         let units = model.units
         let P = units.count
         guard P > 0, wm.ncol > 0, !wm.cells.isEmpty else { return }
