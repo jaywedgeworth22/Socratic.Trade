@@ -112,6 +112,10 @@ final class MobileStore: ObservableObject {
     @Published private(set) var lastUpdatedAt: Date?
     @Published private(set) var isStreamConnected = false
     @Published private(set) var busyOperations: Set<String> = []
+    /// Account the user asked to switch to.  Stays set until a snapshot
+    /// reports that id as active, so the Use row does not go idle while the
+    /// (often slow) post-switch snapshot is still in flight.
+    @Published private(set) var pendingAccountId: String?
     @Published private(set) var deletionRequest: AccountDeletionRequest?
     @Published private(set) var isDeletingAccount = false
     @Published private(set) var isSigningIn = false
@@ -158,6 +162,22 @@ final class MobileStore: ObservableObject {
 
     func isBusy(_ operationID: String) -> Bool {
         busyOperations.contains(operationID)
+    }
+
+    func isAccountActive(_ account: ConnectedAccount) -> Bool {
+        if let pendingAccountId {
+            return account.id == pendingAccountId
+        }
+        return account.isActive == true
+    }
+
+    func displayedActiveAccount(in snapshot: MobileSnapshot) -> ConnectedAccount? {
+        if let pendingAccountId,
+           let pending = snapshot.connectedAccounts.first(where: { $0.id == pendingAccountId }) {
+            return pending
+        }
+        return snapshot.readiness.activeConnectedAccount
+            ?? snapshot.connectedAccounts.first(where: { $0.isActive == true })
     }
 
     /// Derive on-card approve/reject feedback: sending → queued/running → succeeded/failed.
@@ -232,7 +252,8 @@ final class MobileStore: ObservableObject {
             }
         }
         do {
-            let (loadedSnapshot, rawData) = try await client.snapshotData()
+            let timeout: TimeInterval = pendingAccountId == nil ? 30 : 45
+            let (loadedSnapshot, rawData) = try await client.snapshotData(timeout: timeout)
             guard generation == loadGeneration else { return }
             snapshot = loadedSnapshot
             Self.saveCachedSnapshot(rawData)
@@ -240,6 +261,11 @@ final class MobileStore: ObservableObject {
             snapshotLoadFailed = false
             isAuthenticated = true
             error = nil
+            if let pendingAccountId,
+               loadedSnapshot.connectedAccounts.contains(where: { $0.id == pendingAccountId && $0.isActive == true })
+                || loadedSnapshot.readiness.activeConnectedAccount?.id == pendingAccountId {
+                self.pendingAccountId = nil
+            }
             reconcileTrackedCommands(loadedSnapshot.recentCommands)
         } catch is CancellationError {
             return
@@ -317,6 +343,9 @@ final class MobileStore: ObservableObject {
             payload: payload
         )
         busyOperations.insert(operationID)
+        if commandType == "account.activate", let accountId = payload["accountId"] as? String {
+            pendingAccountId = accountId
+        }
         let proposalId = payload["proposalId"] as? String
         let proposalAction: ProposalActionFeedback.ProposalAction? = {
             switch commandType {
@@ -339,14 +368,28 @@ final class MobileStore: ObservableObject {
             if let proposalId, proposalAction != nil {
                 proposalCommandIds[proposalId] = command.id
             }
-            // Immediate commands (account.activate, stop, …) return terminal in the POST body.
-            // Clear the busy spinner before the snapshot reload so the Use button does not
-            // stay locked for the duration of a slow /api/mobile/snapshot fetch.
-            reconcileTrackedCommands([command])
-            await load()
-            // A deduplicated request can already be terminal even if it has fallen out of the
-            // latest snapshot page. Reconcile that direct response as a final fallback.
-            reconcileTrackedCommands([command])
+            // Stop / other immediate commands return terminal in the POST body, so
+            // drop the spinner before the snapshot reload.  Account switch is the
+            // exception: the Use row must stay busy until the new snapshot arrives,
+            // otherwise the sheet looks dead and then snaps to the requested account.
+            if commandType == "account.activate" {
+                if command.didFail {
+                    pendingAccountId = nil
+                    reconcileTrackedCommands([command])
+                } else {
+                    await load()
+                    if let pending = pendingAccountId,
+                       snapshot?.readiness.activeConnectedAccount?.id != pending,
+                       snapshot?.connectedAccounts.first(where: { $0.id == pending })?.isActive != true {
+                        error = "Switched accounts.  Waiting for the new portfolio to load."
+                    }
+                    reconcileTrackedCommands([command])
+                }
+            } else {
+                reconcileTrackedCommands([command])
+                await load()
+                reconcileTrackedCommands([command])
+            }
             if command.didFail, let proposalId, let proposalAction {
                 let detail = command.error?.trimmingCharacters(in: .whitespacesAndNewlines)
                 proposalNotices[proposalId] = (
@@ -358,9 +401,11 @@ final class MobileStore: ObservableObject {
             }
             return !command.didFail
         } catch is CancellationError {
+            if commandType == "account.activate" { pendingAccountId = nil }
             busyOperations.remove(operationID)
             return false
         } catch let caught {
+            if commandType == "account.activate" { pendingAccountId = nil }
             if shouldReleaseCommandAttempt(after: caught) {
                 commandAttemptTracker.release(operationID: operationID)
             }
@@ -471,6 +516,7 @@ final class MobileStore: ObservableObject {
         snapshotLoadFailed = false
         deletionRequest = nil
         busyOperations = []
+        pendingAccountId = nil
         proposalCommandIds = [:]
         proposalNotices = [:]
         commandAttemptTracker.removeAll()

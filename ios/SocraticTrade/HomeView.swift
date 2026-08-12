@@ -146,12 +146,14 @@ private struct ReadyHomeHero: View {
     let onReviewProposals: () -> Void
 
     private var usesLiveMetrics: Bool {
-        snapshot.readiness.activeConnectedAccount?.environment == "live"
+        AccountMetrics.usesLiveMetrics(environment: store.displayedActiveAccount(in: snapshot)?.environment)
     }
 
     private var openPnl: Double? {
-        guard let performance = snapshot.performance else { return nil }
-        return usesLiveMetrics ? performance.liveUnrealizedPnl : performance.paperUnrealizedPnl
+        let ledger = snapshot.performance.flatMap {
+            usesLiveMetrics ? $0.liveUnrealizedPnl : $0.paperUnrealizedPnl
+        }
+        return AccountMetrics.displayedUnrealized(positions: snapshot.positions, ledger: ledger)
     }
 
     private var pendingCount: Int { snapshot.pendingProposals.count }
@@ -167,14 +169,14 @@ private struct ReadyHomeHero: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             // Paper-only badge — owner does not want "Live" called out (paper is still real capital).
-                            if snapshot.readiness.activeConnectedAccount?.environment.lowercased() == "paper" {
+                            if store.displayedActiveAccount(in: snapshot)?.environment.lowercased() == "paper" {
                                 StatusPill(
                                     "PAPER",
                                     color: AppPalette.accent.opacity(0.85),
                                     systemImage: "doc.text"
                                 )
                             }
-                            Text(snapshot.readiness.activeConnectedAccount?.label ?? "Ready")
+                            Text(store.displayedActiveAccount(in: snapshot)?.label ?? "Ready")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -484,14 +486,33 @@ private struct PortfolioOverviewCard: View {
 }
 
 private struct PerformanceOverviewCard: View {
+    @EnvironmentObject private var store: MobileStore
     let snapshot: MobileSnapshot
 
     private var usesLiveMetrics: Bool {
-        snapshot.readiness.activeConnectedAccount?.environment == "live"
+        AccountMetrics.usesLiveMetrics(environment: store.displayedActiveAccount(in: snapshot)?.environment)
+    }
+
+    private var realized: Double? {
+        let ledger = snapshot.performance.flatMap {
+            usesLiveMetrics ? $0.liveRealizedPnl : $0.paperRealizedPnl
+        }
+        let hasFills = (snapshot.performance?.fills?.isEmpty == false)
+        return AccountMetrics.displayedRealized(ledger: ledger, hasFillHistory: hasFills)
+    }
+
+    private var unrealized: Double? {
+        let ledger = snapshot.performance.flatMap {
+            usesLiveMetrics ? $0.liveUnrealizedPnl : $0.paperUnrealizedPnl
+        }
+        return AccountMetrics.displayedUnrealized(positions: snapshot.positions, ledger: ledger)
     }
 
     private var accountSubtitle: String? {
-        guard let account = snapshot.readiness.activeConnectedAccount else {
+        if store.pendingAccountId != nil {
+            return "refreshing the selected account"
+        }
+        guard let account = store.displayedActiveAccount(in: snapshot) else {
             return "no active account"
         }
         // Paper only — never "live account" (owner: all accounts are real; paper is the exception).
@@ -508,13 +529,13 @@ private struct PerformanceOverviewCard: View {
                 LazyVGrid(columns: columns, spacing: 10) {
                     MetricTile(
                         title: "Realized P&L",
-                        value: AppFormat.money(usesLiveMetrics ? performance.liveRealizedPnl : performance.paperRealizedPnl),
-                        tint: pnlColor(usesLiveMetrics ? performance.liveRealizedPnl : performance.paperRealizedPnl)
+                        value: AppFormat.money(realized),
+                        tint: pnlColor(realized)
                     )
                     MetricTile(
                         title: "Unrealized P&L",
-                        value: AppFormat.money(usesLiveMetrics ? performance.liveUnrealizedPnl : performance.paperUnrealizedPnl),
-                        tint: pnlColor(usesLiveMetrics ? performance.liveUnrealizedPnl : performance.paperUnrealizedPnl)
+                        value: AppFormat.money(unrealized),
+                        tint: pnlColor(unrealized)
                     )
                     MetricTile(
                         title: "Win Rate",
@@ -733,6 +754,24 @@ private struct AccountSettingsView: View {
     @ViewBuilder
     private var accountsSection: some View {
         Section("Connected Accounts") {
+            if store.pendingAccountId != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        if store.isRefreshing || store.hasActiveCommandWork {
+                            ProgressView()
+                        }
+                        Text("Switching accounts — portfolio reload can take a few seconds.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !store.isRefreshing && !store.hasActiveCommandWork {
+                        Button("Retry Portfolio Refresh") {
+                            Task { await store.load() }
+                        }
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
             if let accounts = store.snapshot?.connectedAccounts, !accounts.isEmpty {
                 ForEach(accounts) { account in
                     ConnectedAccountSettingsRow(account: account)
@@ -873,9 +912,17 @@ private struct ConnectedAccountSettingsRow: View {
                 }
             }
             Spacer()
-            if account.isActive == true {
-                StatusPill("Active", color: AppPalette.positive, systemImage: "checkmark")
-            } else if store.isBusy(operationID) {
+            if store.isAccountActive(account) {
+                if store.pendingAccountId == account.id {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        StatusPill("Switching", color: AppPalette.accent, systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .accessibilityLabel("Switching to \(account.label)")
+                } else {
+                    StatusPill("Active", color: AppPalette.positive, systemImage: "checkmark")
+                }
+            } else if store.isBusy(operationID) || store.pendingAccountId == account.id {
                 ProgressView()
                     .accessibilityLabel("Switching to \(account.label)")
             } else {

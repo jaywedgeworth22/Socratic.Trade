@@ -194,6 +194,39 @@ struct Position: Decodable, Identifiable {
     let industry: String?
 }
 
+enum AccountMetrics {
+    static func usesLiveMetrics(environment: String?) -> Bool {
+        environment?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "live"
+    }
+
+    /// Open P&L from the broker position list (mark − cost).  The fill-ledger
+    /// unrealized fields report $0 when marks were never applied, which is why
+    /// a Tradier Sandbox book with many positions looked like it had no P&L.
+    static func unrealizedFromPositions(_ positions: [Position]) -> Double? {
+        var total = 0.0
+        var counted = 0
+        for position in positions {
+            guard let averageCost = position.averageCost else { continue }
+            total += position.marketValue - position.quantity * averageCost
+            counted += 1
+        }
+        return counted > 0 ? total : nil
+    }
+
+    static func displayedUnrealized(positions: [Position], ledger: Double?) -> Double? {
+        if let fromPositions = unrealizedFromPositions(positions) {
+            return fromPositions
+        }
+        return ledger
+    }
+
+    /// `$0.00` from an empty fill ledger is not a measured result — show "—".
+    static func displayedRealized(ledger: Double?, hasFillHistory: Bool) -> Double? {
+        if !hasFillHistory { return nil }
+        return ledger
+    }
+}
+
 struct EquityOrder: Decodable, Identifiable {
     let id: String
     let symbol: String

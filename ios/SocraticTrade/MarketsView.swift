@@ -238,64 +238,79 @@ private struct WatchlistSection: View {
 }
 
 private struct FlowSymbols: View {
-    @EnvironmentObject private var store: MobileStore
-
     let items: [WatchlistItem]
     @Binding var presentedSymbol: PresentedSymbol?
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+        // Content-sized wrap — do not use LazyVGrid(.adaptive(minimum: 92)).
+        // That cell was narrower than logo + ticker + 44pt remove, so `SPCX`
+        // and `XOM` wrapped mid-symbol.  Issue #2657.
+        WrappingHStack(spacing: 8, lineSpacing: 8) {
             ForEach(items) { item in
-                let operationID = "watchlist.remove:\(item.symbol)"
-                // Two sibling buttons, not nested: tapping the logo/symbol opens company info;
-                // tapping the trailing x removes the watch. Both stay real, separately labeled
-                // buttons for VoiceOver.
-                HStack(spacing: 6) {
-                    Button {
-                        presentedSymbol = PresentedSymbol(symbol: item.symbol)
-                    } label: {
-                        HStack(spacing: 6) {
-                            TickerLogo(symbol: item.symbol, size: 18)
-                            Text(item.symbol)
-                                .font(.subheadline.weight(.semibold))
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(item.symbol) company info")
-
-                    Button {
-                        Task {
-                            await store.submit(
-                                "watchlist.remove",
-                                payload: ["symbol": item.symbol],
-                                operationID: operationID
-                            )
-                        }
-                    } label: {
-                        if store.isBusy(operationID) {
-                            ProgressView().controlSize(.mini)
-                        } else {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    // The icon alone is ~17pt — below the 44pt HIG minimum tap target, and
-                    // sitting right next to the info button above. Pad the button out to a real
-                    // 44x44 hit area and make the whole padded rect tappable (not just the
-                    // icon's visible pixels) via .contentShape, without touching the sibling
-                    // button's own bounds so the two targets stay non-overlapping.
-                    .padding(14)
-                    .contentShape(Rectangle())
-                    .buttonStyle(.plain)
-                    .disabled(store.isBusy(operationID) || !store.canSubmit("watchlist.remove"))
-                    .accessibilityLabel("Remove \(item.symbol) from watchlist")
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 8)
-                .background(AppPalette.accent.opacity(0.1), in: Capsule())
+                WatchlistChip(item: item, presentedSymbol: $presentedSymbol)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct WatchlistChip: View {
+    @EnvironmentObject private var store: MobileStore
+
+    let item: WatchlistItem
+    @Binding var presentedSymbol: PresentedSymbol?
+
+    private var operationID: String { "watchlist.remove:\(item.symbol)" }
+
+    var body: some View {
+        // Two sibling buttons, not nested: tapping the logo/symbol opens
+        // company info; tapping the trailing x removes the watch.  Both stay
+        // real, separately labeled buttons for VoiceOver.
+        HStack(spacing: 6) {
+            Button {
+                presentedSymbol = PresentedSymbol(symbol: item.symbol)
+            } label: {
+                HStack(spacing: 6) {
+                    TickerLogo(symbol: item.symbol, size: 18)
+                    Text(item.symbol)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(item.symbol) company info")
+
+            Button {
+                Task {
+                    await store.submit(
+                        "watchlist.remove",
+                        payload: ["symbol": item.symbol],
+                        operationID: operationID
+                    )
+                }
+            } label: {
+                Group {
+                    if store.isBusy(operationID) {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                // Icon is ~17pt — below the 44pt HIG minimum.  A fixed 44×44
+                // frame keeps the hit area without the old `.padding(14)`
+                // fighting the chip's intrinsic width.
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isBusy(operationID) || !store.canSubmit("watchlist.remove"))
+            .accessibilityLabel("Remove \(item.symbol) from watchlist")
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 2)
+        .background(AppPalette.accent.opacity(0.1), in: Capsule())
     }
 }
 
