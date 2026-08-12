@@ -105,6 +105,67 @@ export function describeBrokerMinimumOrderBlock(
   return undefined;
 }
 
+const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Returns a human-readable ADVISORY when cancelling a partially-filled entry order (buy/short)
+ * would leave the already-filled portion stranded below the broker's minimum order notional —
+ * dust the owner may not be able to exit as a standalone order later (oss-lessons r2, freqtrade).
+ *
+ * ADVISORY ONLY: the caller must execute the cancel unconditionally regardless of this return
+ * value — cancel is the operator's emergency lever and this must never block or delay it. Returns
+ * undefined for anything that isn't this specific shape:
+ *  - exit sides (sell/cover) — cancelling an exit never CREATES a new position fragment;
+ *  - whole-share orders (`isFractionalOrDollarBased` false) — a broker's fractional/dollar-based
+ *    floor doesn't apply to whole-share sizing;
+ *  - nothing filled yet, or `remaining` (quantity - filledQuantity) isn't positive — either the
+ *    order hasn't started filling or there's nothing left for the cancel to interrupt;
+ *  - the resulting position quantity is unknown, or is materially larger than the filled quantity
+ *    (epsilon-compared magnitudes, mirroring isFullPositionExit) — that's scaling INTO an existing
+ *    larger holding, not creating a new dust fragment;
+ *  - no known per-broker floor, or no usable price to value the filled portion (`averagePrice`
+ *    when the broker has reported one, else the caller-supplied `currentPrice` fallback).
+ */
+export function describeCancelDustRisk(
+  order: {
+    side?: OrderSide;
+    quantity?: number;
+    dollarAmount?: number;
+    filledQuantity?: number;
+    averagePrice?: number;
+    /** Current market price fallback for orders the broker hasn't reported an averagePrice for
+     *  yet — no `review` is available at cancel time to source a price from. */
+    currentPrice?: number;
+    symbol?: string;
+  },
+  positionQuantity: number | undefined,
+  activeBroker: TradingPolicy["activeBroker"]
+): string | undefined {
+  if (order.side !== "buy" && order.side !== "short") return undefined;
+  if (!isFractionalOrDollarBased(order)) return undefined;
+
+  const filledQuantity = order.filledQuantity ?? 0;
+  if (!(filledQuantity > 0)) return undefined;
+  const remaining = (order.quantity ?? 0) - filledQuantity;
+  if (!(remaining > 0)) return undefined;
+
+  if (positionQuantity == null) return undefined;
+  // Short positions are stored with NEGATIVE quantities — compare magnitudes (isFullPositionExit).
+  if (Math.abs(Math.abs(positionQuantity) - filledQuantity) > FULL_POSITION_QTY_EPSILON) return undefined;
+
+  const minNotional = brokerMinOrderNotional(activeBroker);
+  if (minNotional === undefined) return undefined;
+
+  const price = order.averagePrice ?? order.currentPrice;
+  if (price == null || !(price > 0)) return undefined;
+  const filledNotional = filledQuantity * price;
+  if (!(filledNotional > 0) || filledNotional >= minNotional) return undefined;
+
+  const symbol = order.symbol ?? "this symbol";
+  return `Cancelling now will leave ${round6(filledQuantity)} sh (~$${round2(filledNotional).toFixed(2)}) of ${symbol} already filled — below the broker's $${minNotional.toFixed(2)} minimum order size and may be stranded as unsellable dust.`;
+}
+
 /** Result of planning a bump-to-floor: the sizing patch to apply to the order, plus the
  *  before/after notionals for the audit trail. The patch always carries BOTH sizing keys — the
  *  bumped one set, the other explicitly `undefined` — because broker gateways prefer `quantity`
@@ -122,9 +183,6 @@ export interface BrokerMinimumBumpPlan {
 // dollar threshold but the order prices at execution time, so land ~0.5% above the floor rather
 // than exactly on it and lose the race to a one-tick move.
 const BUMP_QTY_CUSHION = 1.005;
-
-const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
-const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // A reviewed notional this small is more likely a broker-estimate artifact than a real price
 // signal (e.g. Robinhood's review parse falls back through several raw fields). Refuse to use it
@@ -241,6 +299,26 @@ export function shouldAlertBrokerMinimumOrderBlock(userId: string, accountNumber
   const key = `${SUB_MINIMUM_ALERT_COOLDOWN_PREFIX}:${userId}:${accountNumber}:${symbol}`;
   const last = getInternalSetting<string>(key);
   if (last && Date.now() - Date.parse(last) < SUB_MINIMUM_ALERT_COOLDOWN_MS) return false;
+  setInternalSetting(key, new Date().toISOString());
+  return true;
+}
+
+const CANCEL_DUST_ALERT_COOLDOWN_PREFIX = "cancelDustRiskAlertSent";
+// Same rationale as SUB_MINIMUM_ALERT_COOLDOWN_MS: a dust-producing cancel is a one-off event to
+// surface, not a recurring condition worth re-alerting on every subsequent cancel of the same
+// symbol within the window.
+const CANCEL_DUST_ALERT_COOLDOWN_MS = 24 * 60 * 60_000; // 24 hours
+
+/**
+ * Cooldown-gated: returns true (and marks the cooldown) at most once per (user, accountNumber,
+ * symbol) per `CANCEL_DUST_ALERT_COOLDOWN_MS` window — same pattern as
+ * shouldAlertBrokerMinimumOrderBlock. Callers must still execute the cancel unconditionally
+ * regardless of this return value; it only gates whether an outward alert fires for this cancel.
+ */
+export function shouldAlertCancelDustRisk(userId: string, accountNumber: string, symbol: string): boolean {
+  const key = `${CANCEL_DUST_ALERT_COOLDOWN_PREFIX}:${userId}:${accountNumber}:${symbol}`;
+  const last = getInternalSetting<string>(key);
+  if (last && Date.now() - Date.parse(last) < CANCEL_DUST_ALERT_COOLDOWN_MS) return false;
   setInternalSetting(key, new Date().toISOString());
   return true;
 }
