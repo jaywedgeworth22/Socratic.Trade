@@ -369,6 +369,41 @@ struct MobileCommand: Decodable, Identifiable {
     }
 }
 
+/// On-demand single-symbol quote + fundamentals — the mobile counterpart of the web console's
+/// `/api/quote` fetch used by the symbol drilldown drawer (app/console/ui/symbol-drilldown.tsx),
+/// decoded from that same flattened response. Every field is optional and rendered as an honest
+/// "—"/"n/a" (see `AppFormat`) when the provider cascade didn't return it — never fabricated.
+struct SymbolQuoteInfo: Decodable {
+    let symbol: String
+    let companyName: String?
+    let price: Double?
+    let intradayChangePct: Double?
+    let asOf: String?
+    let sector: String?
+    let industry: String?
+    let volume: Double?
+    let peRatio: Double?
+    let eps: Double?
+    let dividendYield: Double?
+    let beta: Double?
+    let fiftyTwoWeekHigh: Double?
+    let fiftyTwoWeekLow: Double?
+    let sharesOutstanding: Double?
+    let analystRating: String?
+    let analystScore: Double?
+    let targetMean: Double?
+    let targetHigh: Double?
+    let targetLow: Double?
+    let daysToEarnings: Double?
+
+    /// Derived, not provider-supplied: price x shares outstanding. Nil when either input is
+    /// missing rather than a fabricated estimate.
+    var marketCap: Double? {
+        guard let price, let sharesOutstanding else { return nil }
+        return price * sharesOutstanding
+    }
+}
+
 struct CommandEnvelope: Decodable {
     let command: MobileCommand
     let deduped: Bool?

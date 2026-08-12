@@ -23,6 +23,7 @@
 		AD51C8FEF98EF6F4E763A044 /* MarketsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D351D03CEAFD6CD1EB4536FD /* MarketsView.swift */; };
 		C67CC3242AE041DFAE3A419E /* CandleWordmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D112E8C717D899B0AFF0B6E5 /* CandleWordmarkView.swift */; };
 		CF7E04F6E303A90DA3947D4A /* MobileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B407C6306CC293CF54036A1 /* MobileStore.swift */; };
+		9F532F35FD75170AB22B8EEE /* SymbolInfoSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73EED094EEBEE4CDEB189EE3 /* SymbolInfoSheet.swift */; };
 		EEFE88508B9B9CC94639E02C /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E9A5E5A0273AC7B97E89D3 /* LoginView.swift */; };
 /* End PBXBuildFile section */
 
@@ -55,6 +56,7 @@
 		D351D03CEAFD6CD1EB4536FD /* MarketsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketsView.swift; sourceTree = "<group>"; };
 		DD460CC2D17E0F0B061B372A /* InsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsView.swift; sourceTree = "<group>"; };
 		EC1C49575DCB6DA8E8D65CD7 /* ProposalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProposalsView.swift; sourceTree = "<group>"; };
+		73EED094EEBEE4CDEB189EE3 /* SymbolInfoSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolInfoSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -85,6 +87,7 @@
 				37C2568FFF3FB30F96619E8E /* PreviewSupport.swift */,
 				EC1C49575DCB6DA8E8D65CD7 /* ProposalsView.swift */,
 				5F94CABB7BE5CB871622BADD /* SocraticTradeApp.swift */,
+				73EED094EEBEE4CDEB189EE3 /* SymbolInfoSheet.swift */,
 			);
 			path = SocraticTrade;
 			sourceTree = "<group>";
@@ -218,6 +221,7 @@
 				51FE4A579117BE3605C107D9 /* PreviewSupport.swift in Sources */,
 				A0B35AC0FE7982512B0E4796 /* ProposalsView.swift in Sources */,
 				20459811A20F559A78FC18B3 /* SocraticTradeApp.swift in Sources */,
+				9F532F35FD75170AB22B8EEE /* SymbolInfoSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
