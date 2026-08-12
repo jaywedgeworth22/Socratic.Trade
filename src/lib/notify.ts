@@ -355,6 +355,36 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
 
 const CHANNEL_ORDER: NotifyChannelId[] = ["push", "pushover", "webhook", "email", "sms"];
 
+/**
+ * Per-channel body length budget for tiered delivery (NotifyMessage.bodyTiers). sms matches the
+ * SMS channel's own existing `.slice(0, 1500)` above (kept in sync deliberately, not derived, so
+ * a future change to one is easy to spot missing the other). email/webhook are "effectively
+ * unbounded" for a digest-sized body — generous caps, not the provider's real limit.
+ */
+export const CHANNEL_CAPABILITIES: Record<NotifyChannelId, { maxBodyChars: number }> = {
+  sms: { maxBodyChars: 1500 },
+  pushover: { maxBodyChars: 1024 },
+  push: { maxBodyChars: 4000 },
+  email: { maxBodyChars: 100_000 },
+  webhook: { maxBodyChars: 100_000 }
+};
+
+/**
+ * Pick the LARGEST tier that fits `channelId`'s cap, falling back to the smallest available tier
+ * (letting that channel's own existing truncation — e.g. sms's slice — handle the rest) when even
+ * `brief` doesn't fit. Returns `msg.body` unchanged when bodyTiers is absent, so every existing
+ * single-body caller is byte-for-byte unaffected.
+ */
+function selectTieredBody(msg: NotifyMessage, channelId: NotifyChannelId): string {
+  const tiers = msg.bodyTiers;
+  if (!tiers) return msg.body;
+  const cap = CHANNEL_CAPABILITIES[channelId].maxBodyChars;
+  const ordered = [tiers.full, tiers.medium, tiers.brief].filter(
+    (t): t is string => typeof t === "string"
+  );
+  return ordered.find((t) => t.length <= cap) ?? ordered[ordered.length - 1] ?? msg.body;
+}
+
 /** UI metadata: which channels exist, which are admin-usable, and the target each needs. */
 export function describeChannels(cfg: NotifyConfig = loadNotifyConfig()): NotifyChannelDescriptor[] {
   return CHANNEL_ORDER.map((id) => CHANNELS[id].describe(cfg));
@@ -390,6 +420,9 @@ export async function notify(
       results.push({ channel: id, ok: false, skipped: "no_target" });
       continue;
     }
+    // bodyTiers (watchlist digest, etc.) picks the largest tier that fits THIS channel's cap; a
+    // plain single-body message (bodyTiers absent) passes msg.body through unchanged.
+    const channelMsg: NotifyMessage = msg.bodyTiers ? { ...msg, body: selectTieredBody(msg, id) } : msg;
     // Deliver with bounded retry: a transient blip (the ~7% "fetch failed"/timeout to ntfy/resend seen
     // in prod) must not silently drop a critical alert. Permanent failures (4xx/bad target) fail fast.
     const attempts = Math.max(1, cfg.retryAttempts);
@@ -400,7 +433,7 @@ export async function notify(
       assertNotifyActive(deps);
       usedAttempts = attempt;
       try {
-        await channel.send(target, msg, {
+        await channel.send(target, channelMsg, {
           cfg,
           fetchImpl,
           timeoutMs: cfg.timeoutMs,

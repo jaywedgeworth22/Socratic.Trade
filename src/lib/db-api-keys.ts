@@ -1746,11 +1746,13 @@ export function getNotifyPrefs(userId: string = "local"): NotifyPrefs {
   const row = getDb().prepare("SELECT * FROM notification_prefs WHERE user_id = ?").get(userId) as
     | { user_id: string; channels: string; push_target: string; pushover_target: string; webhook_url: string; email: string; phone: string;
         pushover_app_token?: string; twilio_account_sid?: string; twilio_auth_token?: string; twilio_from?: string;
+        watchlist_digest_enabled?: number;
         updated_at: string | null }
     | undefined;
   if (!row) {
     return { userId, channels: [], pushTarget: "", pushoverTarget: "", webhookUrl: "", email: "", phone: "",
-      pushoverAppTokenSet: false, twilioAccountSidSet: false, twilioAuthTokenSet: false, twilioFromSet: false, updatedAt: null };
+      pushoverAppTokenSet: false, twilioAccountSidSet: false, twilioAuthTokenSet: false, twilioFromSet: false,
+      watchlistDigestEnabled: false, updatedAt: null };
   }
   let channels: NotifyChannelId[] = [];
   try {
@@ -1771,6 +1773,7 @@ export function getNotifyPrefs(userId: string = "local"): NotifyPrefs {
     twilioAccountSidSet: Boolean(row.twilio_account_sid),
     twilioAuthTokenSet: Boolean(row.twilio_auth_token),
     twilioFromSet: Boolean(row.twilio_from),
+    watchlistDigestEnabled: row.watchlist_digest_enabled === 1,
     updatedAt: row.updated_at
   };
 }
@@ -1793,7 +1796,8 @@ export function getNotifyPrefsSecrets(userId: string = "local"): NotifyPrefsSecr
 export function setNotifyPrefs(
   userId: string,
   partial: { channels?: unknown; pushTarget?: unknown; pushoverTarget?: unknown; webhookUrl?: unknown; email?: unknown; phone?: unknown;
-             pushoverAppToken?: unknown; twilioAccountSid?: unknown; twilioAuthToken?: unknown; twilioFrom?: unknown }
+             pushoverAppToken?: unknown; twilioAccountSid?: unknown; twilioAuthToken?: unknown; twilioFrom?: unknown;
+             watchlistDigestEnabled?: unknown }
 ): NotifyPrefs {
   const next: NotifyPrefs = { ...getNotifyPrefs(userId), userId };
   if (Array.isArray(partial.channels)) {
@@ -1804,14 +1808,15 @@ export function setNotifyPrefs(
   if (typeof partial.webhookUrl === "string") next.webhookUrl = partial.webhookUrl.trim();
   if (typeof partial.email === "string") next.email = partial.email.trim();
   if (typeof partial.phone === "string") next.phone = partial.phone.trim();
+  if (typeof partial.watchlistDigestEnabled === "boolean") next.watchlistDigestEnabled = partial.watchlistDigestEnabled;
   next.updatedAt = new Date().toISOString();
   getDb()
     .prepare(
-      `INSERT INTO notification_prefs (user_id, channels, push_target, pushover_target, webhook_url, email, phone, updated_at)
-       VALUES (@userId, @channels, @pushTarget, @pushoverTarget, @webhookUrl, @email, @phone, @updatedAt)
+      `INSERT INTO notification_prefs (user_id, channels, push_target, pushover_target, webhook_url, email, phone, watchlist_digest_enabled, updated_at)
+       VALUES (@userId, @channels, @pushTarget, @pushoverTarget, @webhookUrl, @email, @phone, @watchlistDigestEnabled, @updatedAt)
        ON CONFLICT(user_id) DO UPDATE SET
          channels = excluded.channels, push_target = excluded.push_target, pushover_target = excluded.pushover_target, webhook_url = excluded.webhook_url,
-         email = excluded.email, phone = excluded.phone, updated_at = excluded.updated_at`
+         email = excluded.email, phone = excluded.phone, watchlist_digest_enabled = excluded.watchlist_digest_enabled, updated_at = excluded.updated_at`
     )
     .run({
       userId,
@@ -1821,6 +1826,7 @@ export function setNotifyPrefs(
       webhookUrl: next.webhookUrl,
       email: next.email,
       phone: next.phone,
+      watchlistDigestEnabled: next.watchlistDigestEnabled ? 1 : 0,
       updatedAt: next.updatedAt
     });
 
