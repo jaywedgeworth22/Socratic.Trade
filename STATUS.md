@@ -1,3 +1,13 @@
+## Current (2026-08-12 ~12:20am CT MONET — new app icon: dollar-sign candlesticks)
+
+Owner supplied a reference image (3D-rendered candlesticks arranged as a "$", green/pink
+palette, light gray grid background) and asked for it as the app icon with a lightened
+background. Replaced `ios/SocraticTrade/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png`
+(previously a "ST" wordmark built from candlesticks) with a processed version of the owner's
+image: background lightened via a saturation-based blend (candlestick colors untouched, smooth
+ramp rather than a hard threshold to avoid speckling in the soft-shadow areas), resized to the
+required 1024x1024, confirmed opaque RGB (no alpha — required for App Store icons). Single-file
+change, no other icon sizes to update (this appiconset uses Xcode's unified single-size format).
 ## Current (2026-08-12 ~12:08am CT MONET — litestream reset executed; leak appears resolved, monitoring continues)
 
 Escalation trigger from the previous entry fired (kill gap compressed to 5m35s). Owner approved
