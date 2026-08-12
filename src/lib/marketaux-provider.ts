@@ -71,7 +71,9 @@
 
 import type { MarketEnrichmentProvider, SymbolEnrichment } from "./data-providers";
 import { fetchWithRetry } from "./data-providers";
+import { audit } from "./db";
 import { normalizeSymbol } from "./money";
+import { resolveSourceBool, resolveSourceNumber } from "./source-settings";
 
 const MARKETAUX_BASE_URL = "https://api.marketaux.com/v1";
 
@@ -144,6 +146,14 @@ const HEADLINES_PER_SYMBOL = 5;
 interface MarketauxEntity {
   symbol?: unknown;
   sentiment_score?: unknown;
+  // Documented (live-verified 2026-08-12, marketaux.com/documentation) as "the overall strength
+  // of the matching for the identified entity" — NOT the 0..1 scale its name might suggest; real
+  // example values from the docs' own live response samples run ~12-82. No documented upper
+  // bound. Gated against NEWS_RELEVANCE_MIN_SCORE (0-1, default 0.35) below anyway: on that real-
+  // world range the gate is intentionally conservative — it only excludes a genuinely near-zero
+  // match, never a normal one — which is the same "never drop what the provider didn't clearly
+  // flag as bad" posture AMBIGUOUS_COMPANY_NAMES corroboration takes in news-relevance.ts.
+  match_score?: unknown;
 }
 
 interface MarketauxArticle {
@@ -170,17 +180,34 @@ export function mapMarketauxSentiment(score: number): number {
   return Math.max(0, Math.min(100, Math.round(scaled)));
 }
 
+/** True unless the filter is on AND this entity's own match_score parses AND that value is below
+ *  minScore. An entity Marketaux never scored (field absent/unparseable) always passes through —
+ *  never drop data the provider didn't itself flag as a weak match. */
+function marketauxEntityIsRelevant(entity: MarketauxEntity, filterEnabled: boolean, minScore: number): boolean {
+  if (!filterEnabled) return true;
+  const raw = entity.match_score;
+  const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : undefined;
+  if (value === undefined || !Number.isFinite(value)) return true;
+  return value >= minScore;
+}
+
 /** Groups a batch of articles' matching entities by symbol, producing at most one SymbolEnrichment
- *  per requested symbol. A symbol with no matching entity in any article gets `{}` (never a
- *  fabricated headline or sentiment). `sentiment` is the mean of every matching entity's
- *  sentiment_score across the whole batch, mapped through mapMarketauxSentiment(). */
+ *  per requested symbol. A symbol with no matching (and, when the relevance filter is on,
+ *  sufficiently relevant) entity in any article gets `{}` (never a fabricated headline or
+ *  sentiment). `sentiment` is the mean of every matching entity's sentiment_score across the
+ *  whole batch, mapped through mapMarketauxSentiment(). `onDropped`, when given, fires once per
+ *  entity dropped for low match_score — the caller's aggregate counter for observability; never
+ *  called on the common (unscored or relevant) path. */
 export function aggregateMarketauxBySymbol(
   articles: MarketauxArticle[],
-  symbols: string[]
+  symbols: string[],
+  onDropped?: (symbol: string) => void
 ): Record<string, SymbolEnrichment> {
   const wanted = new Set(symbols);
   const headlinesBySymbol = new Map<string, string[]>();
   const sentimentAccBySymbol = new Map<string, { sum: number; count: number }>();
+  const filterEnabled = resolveSourceBool("NEWS_RELEVANCE_FILTER");
+  const minScore = resolveSourceNumber("NEWS_RELEVANCE_MIN_SCORE");
 
   for (const article of articles) {
     const title = typeof article.title === "string" ? article.title.trim() : "";
@@ -190,6 +217,13 @@ export function aggregateMarketauxBySymbol(
       const entity = rawEntity as MarketauxEntity;
       const symbol = typeof entity.symbol === "string" ? entity.symbol.trim().toUpperCase() : "";
       if (!symbol || !wanted.has(symbol)) continue;
+
+      // Below-threshold match_score drops BOTH the headline and the sentiment contribution for
+      // this entity — a weak match shouldn't half-count toward either.
+      if (!marketauxEntityIsRelevant(entity, filterEnabled, minScore)) {
+        onDropped?.(symbol);
+        continue;
+      }
 
       if (title) {
         const list = headlinesBySymbol.get(symbol) ?? [];
@@ -280,6 +314,10 @@ export class MarketauxEnrichmentProvider implements MarketEnrichmentProvider {
     const groups: string[][] = [];
     for (let i = 0; i < misses.length; i += groupSize) groups.push(misses.slice(i, i + groupSize));
 
+    // Aggregate-only counter for the whole enrich() call (never per-headline) — see the audit()
+    // call after the loop below.
+    let droppedForRelevance = 0;
+
     for (let i = 0; i < groups.length; i += CONCURRENCY) {
       const chunk = groups.slice(i, i + CONCURRENCY);
       await Promise.all(
@@ -293,7 +331,7 @@ export class MarketauxEnrichmentProvider implements MarketEnrichmentProvider {
           }
           try {
             const articles = await this.fetchArticles(group);
-            const bySymbol = aggregateMarketauxBySymbol(articles, group);
+            const bySymbol = aggregateMarketauxBySymbol(articles, group, () => { droppedForRelevance++; });
             for (const symbol of group) {
               const data = bySymbol[symbol] ?? {};
               marketauxCache.set(symbol, { expiresAt: now + marketauxTtlMs(), data });
@@ -308,6 +346,14 @@ export class MarketauxEnrichmentProvider implements MarketEnrichmentProvider {
           }
         })
       );
+    }
+
+    // Single bounded audit row for the whole call, never per-headline — only written when the
+    // filter actually dropped something this run (audit_events is a hash-chained log; a prior
+    // production incident from an unbounded per-event audit payload is documented in
+    // audit-bounded-run.ts, so this stays a small aggregate, not a row per drop).
+    if (droppedForRelevance > 0) {
+      audit("news_relevance.dropped", { provider: this.name, droppedCount: droppedForRelevance, minScore: resolveSourceNumber("NEWS_RELEVANCE_MIN_SCORE") }, "local");
     }
 
     return result;

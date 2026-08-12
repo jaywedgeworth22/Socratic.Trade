@@ -1023,6 +1023,90 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
   });
 });
 
+// NEWS_RELEVANCE_FILTER / NEWS_RELEVANCE_MIN_SCORE gating of Finnhub's /company-news headlines.
+// Finnhub's endpoint is already scoped to the symbol server-side but carries no native per-
+// headline relevance score, so this applies news-relevance.ts's headline-text rubric directly —
+// see the section comment above newsRelevanceFilterEnabled (data-providers.ts).
+describe("Finnhub company-news relevance gating", () => {
+  const originalFilter = process.env.NEWS_RELEVANCE_FILTER;
+  const originalMinScore = process.env.NEWS_RELEVANCE_MIN_SCORE;
+
+  beforeEach(() => {
+    delete process.env.NEWS_RELEVANCE_FILTER;
+    delete process.env.NEWS_RELEVANCE_MIN_SCORE;
+  });
+
+  afterEach(() => {
+    if (originalFilter) process.env.NEWS_RELEVANCE_FILTER = originalFilter;
+    else delete process.env.NEWS_RELEVANCE_FILTER;
+    if (originalMinScore) process.env.NEWS_RELEVANCE_MIN_SCORE = originalMinScore;
+    else delete process.env.NEWS_RELEVANCE_MIN_SCORE;
+  });
+
+  it("with the filter ON (default), drops an irrelevant headline that mentions neither the ticker nor the company name", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("profile2")) return new Response(JSON.stringify({ name: "Apple Inc." }));
+      if (url.includes("company-news")) {
+        return new Response(JSON.stringify([
+          { headline: "AAPL reports record quarterly revenue" },
+          { headline: "Regional bakery chain opens new downtown location" }
+        ]));
+      }
+      return new Response(JSON.stringify({}));
+    });
+
+    const provider = new FinnhubEnrichmentProvider("test-key");
+    const res = await provider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
+    expect(res.AAPL?.headlines).toEqual(["AAPL reports record quarterly revenue"]);
+  });
+
+  it("with the filter OFF, keeps every headline Finnhub returned (pre-filter byte-identical behavior)", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.NEWS_RELEVANCE_FILTER = "0";
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("profile2")) return new Response(JSON.stringify({ name: "Apple Inc." }));
+      if (url.includes("company-news")) {
+        return new Response(JSON.stringify([
+          { headline: "AAPL reports record quarterly revenue" },
+          { headline: "Regional bakery chain opens new downtown location" }
+        ]));
+      }
+      return new Response(JSON.stringify({}));
+    });
+
+    const provider = new FinnhubEnrichmentProvider("test-key");
+    const res = await provider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
+    expect(res.AAPL?.headlines).toEqual([
+      "AAPL reports record quarterly revenue",
+      "Regional bakery chain opens new downtown location"
+    ]);
+  });
+
+  it("an ambiguous company name (Apple) with no finance-event term is dropped even though Finnhub scoped the article to this symbol", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("profile2")) return new Response(JSON.stringify({ name: "Apple Inc." }));
+      if (url.includes("company-news")) {
+        return new Response(JSON.stringify([
+          { headline: "She picked up an apple from the fruit stand on her walk" }
+        ]));
+      }
+      return new Response(JSON.stringify({}));
+    });
+
+    const provider = new FinnhubEnrichmentProvider("test-key");
+    const res = await provider.enrich(["AAPL"], skipDaysToEarningsCalendar("AAPL"));
+    expect(res.AAPL?.headlines).toBeUndefined(); // zero surviving headlines -> no coverage, never fabricated
+  });
+});
+
 describe("Finnhub /calendar/earnings — daysToEarnings fallback (2026-08-02)", () => {
   // Real sample response shape from Finnhub's own docs schema (finnhub.io/docs/api/earnings-calendar,
   // pulled 2026-08-02 via the page's embedded `window.docSchema` — no key needed to read the schema
@@ -1768,6 +1852,128 @@ describe("Alpha Vantage Warning Detection", () => {
       expect(res2.AAPL).toEqual({});
       expect(fetchCount).toBe(2);
     });
+  });
+});
+
+// NEWS_RELEVANCE_FILTER / NEWS_RELEVANCE_MIN_SCORE gating of AV's NEWS_SENTIMENT feed — see the
+// section comment above alphaVantageItemIsRelevant (data-providers.ts) for the never-drop-
+// unscored-data contract this mirrors from marketaux-provider.ts's match_score gating.
+describe("Alpha Vantage NEWS_SENTIMENT relevance gating (relevance_score)", () => {
+  const originalFilter = process.env.NEWS_RELEVANCE_FILTER;
+  const originalMinScore = process.env.NEWS_RELEVANCE_MIN_SCORE;
+
+  beforeEach(() => {
+    __resetAlphaVantageDailyBudgetForTests();
+    __resetKeyPoolRegistryForTests();
+    delete process.env.NEWS_RELEVANCE_FILTER;
+    delete process.env.NEWS_RELEVANCE_MIN_SCORE;
+  });
+
+  afterEach(() => {
+    if (originalFilter) process.env.NEWS_RELEVANCE_FILTER = originalFilter;
+    else delete process.env.NEWS_RELEVANCE_FILTER;
+    if (originalMinScore) process.env.NEWS_RELEVANCE_MIN_SCORE = originalMinScore;
+    else delete process.env.NEWS_RELEVANCE_MIN_SCORE;
+  });
+
+  function feedResponse(items: Array<{ title: string; relevanceScore?: string; sentimentScore?: string }>) {
+    return new Response(JSON.stringify({
+      feed: items.map((it) => ({
+        title: it.title,
+        ticker_sentiment: [
+          {
+            ticker: "AAPL",
+            ...(it.sentimentScore !== undefined && { ticker_sentiment_score: it.sentimentScore }),
+            ...(it.relevanceScore !== undefined && { relevance_score: it.relevanceScore })
+          }
+        ]
+      }))
+    }));
+  }
+
+  it("with the filter ON (default), an item below the relevance threshold is dropped from BOTH headlines and the sentiment average", async () => {
+    const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.35";
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("function=EARNINGS_CALENDAR")) {
+        return new Response("symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n");
+      }
+      return feedResponse([{ title: "AAPL barely mentioned in roundup", relevanceScore: "0.1", sentimentScore: "0.5" }]);
+    });
+
+    const provider = new AlphaVantageEnrichmentProvider("test-key");
+    const res = await provider.enrich(["AAPL"]);
+    expect(res.AAPL).toEqual({}); // dropped entirely — never a fabricated partial row
+  });
+
+  it("with the filter ON (default), an item at/above the relevance threshold passes through normally", async () => {
+    const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.35";
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("function=EARNINGS_CALENDAR")) {
+        return new Response("symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n");
+      }
+      return feedResponse([{ title: "AAPL reports record quarterly revenue", relevanceScore: "0.9", sentimentScore: "0.5" }]);
+    });
+
+    const provider = new AlphaVantageEnrichmentProvider("test-key");
+    const res = await provider.enrich(["AAPL"]);
+    expect(res.AAPL?.headlines).toEqual(["AAPL reports record quarterly revenue"]);
+    expect(res.AAPL?.sentiment).toBe(100);
+  });
+
+  it("an item with NO relevance_score at all passes through even with the filter ON — never drop data AV didn't score", async () => {
+    const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.99"; // would fail almost anything WITH a score
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("function=EARNINGS_CALENDAR")) {
+        return new Response("symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n");
+      }
+      return feedResponse([{ title: "AAPL unscored mention", sentimentScore: "0.2" }]); // no relevance_score field
+    });
+
+    const provider = new AlphaVantageEnrichmentProvider("test-key");
+    const res = await provider.enrich(["AAPL"]);
+    expect(res.AAPL?.headlines).toEqual(["AAPL unscored mention"]);
+    expect(res.AAPL?.sentiment).toBe(70); // 50 + 0.2*100
+  });
+
+  it("with the filter OFF, a below-threshold relevance_score no longer drops the item", async () => {
+    const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.NEWS_RELEVANCE_FILTER = "0";
+    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.99"; // would fail the 0.1 relevance_score if filter were on
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("function=EARNINGS_CALENDAR")) {
+        return new Response("symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n");
+      }
+      return feedResponse([{ title: "AAPL barely mentioned in roundup", relevanceScore: "0.1", sentimentScore: "0.5" }]);
+    });
+
+    const provider = new AlphaVantageEnrichmentProvider("test-key");
+    const res = await provider.enrich(["AAPL"]);
+    expect(res.AAPL?.headlines).toEqual(["AAPL barely mentioned in roundup"]);
+    expect(res.AAPL?.sentiment).toBe(100);
+  });
+
+  it("parseAlphaVantageNewsSentiment (RapidAPI failover lane) applies the same relevance gating", async () => {
+    const { parseAlphaVantageNewsSentiment } = await import("../src/lib/data-providers");
+    process.env.NEWS_RELEVANCE_MIN_SCORE = "0.35";
+    const payload = {
+      feed: [
+        { title: "Relevant AAPL headline", ticker_sentiment: [{ ticker: "AAPL", ticker_sentiment_score: "0.5", relevance_score: "0.9" }] },
+        { title: "Barely-relevant AAPL mention", ticker_sentiment: [{ ticker: "AAPL", ticker_sentiment_score: "0.5", relevance_score: "0.05" }] }
+      ]
+    };
+    const parsed = parseAlphaVantageNewsSentiment(payload, "AAPL");
+    expect(parsed.headlines).toEqual(["Relevant AAPL headline"]);
   });
 });
 

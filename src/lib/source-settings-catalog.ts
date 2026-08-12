@@ -354,6 +354,31 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     defaultValue: 25,
     min: 1,
     max: 100
+  },
+
+  // ── News relevance gating (DSA lesson: providers' own relevance scores were parsed then
+  // thrown away, and providers with no native score attributed every headline that merely named
+  // a symbol/company — even an ambiguous common word like "Apple" or "Target" with nothing
+  // finance-related in the sentence). See src/lib/news-relevance.ts. ─────────────────────────
+  {
+    id: "NEWS_RELEVANCE_FILTER",
+    group: "enrichment",
+    label: "News relevance filter",
+    description:
+      "Keep only headlines/sentiment a provider (or, lacking a provider score, this app's own headline-text rubric) scores as actually about the symbol.  Off restores every headline a provider tags to the symbol, including ambiguous common-word company name matches.",
+    type: "boolean",
+    defaultValue: true
+  },
+  {
+    id: "NEWS_RELEVANCE_MIN_SCORE",
+    group: "enrichment",
+    label: "News relevance minimum score",
+    description:
+      "Minimum 0-1 relevance score a headline must clear to count toward a symbol's news/sentiment.  Applies to provider-native scores (Alpha Vantage relevance_score, Marketaux match_score) and to this app's own headline-text rubric alike.",
+    type: "number",
+    defaultValue: 0.35,
+    min: 0,
+    max: 1
   }
 ] as const;
 
