@@ -26,6 +26,58 @@ Next: round-2 implementation (benchmark-alpha grading, signal-health monitor, ca
 advisory) on this lane after merge; UI lane (`claude/ui-symbol-drawer-fills`) lands separately.
 Blockers: none.
 
+## Current (2026-08-12 MONET — iOS parity wave 1: decision-critical fields, protective controls, swipe actions, admin portal)
+
+**Branch `monet/ios-parity-wave1`** (stacked on `monet/ios-customizable-tabs`, PR #2647): First
+wave of the iOS parity roadmap — all zero-backend, rendering already-decoded snapshot data and
+dispatching existing command types.  (1) Proposal cards now show price drift (reference → current
+price with signed %), last revalidation time, and the Red Team failure kind when the verdict is
+unavailable (console `describeRedTeamFailureKind` wording).  (2) Home gains Close Only + Wind Down
+protective controls beside Stop (`strategy.close_only` / `strategy.liquidating`, same
+CommandButton/store.submit pattern, no added ceremony).  (3) `policy.runDuringExtendedHours` is now
+decoded and a pure `deriveRunStateWord` mirrors the console's `deriveStateInfo` vocabulary — the
+app can no longer say "Running" while the console says "Paused · market closed" (7 new XCTests).
+(4) Swipe-to-reject on proposal cards (reject ONLY, never approve) and swipe-to-delete on alert
+rows via a new ScrollView-compatible `swipeRevealAction`; watchlist swipe skipped (chip grid, not
+rows — one-tap remove already exists).  (5) Triggered alerts show `triggeredAt`/`triggeredPrice`.
+(6) Account sheet rows show capabilities + draining state.  (7) New `AdminPortalView` (admin-only
+row) hosts /admin in a navigation-fenced WKWebView with native-session cookie handoff.  28/28
+tests pass.  Rollout: `docs/rollouts/2026-08-12-ios-parity-wave1.md`.
+
+## Current (2026-08-12 MONET — iOS customizable tab bar + xcodegen version-regression root cause)
+
+**Branch `monet/ios-customizable-tabs`:** The iOS app's tab bar is now owner-customizable with
+the exact web mobile-tabs semantics (`app/console/lib/mobile-tabs.ts` parity: pin/unpin, min 2 /
+max 4, canonical-order bar, always-present More surface keeping every screen reachable), using
+the native system `TabView` so the Liquid Glass appearance is preserved.  Programmatic tab jumps
+to unpinned screens reroute into the More stack.  8 new XCTests pin the contract.  Along the
+way, found and killed the ROOT CAUSE of the 2026-08-11 version regression: `xcodegen generate`
+was rewriting Info.plist's version keys to literal `1.0`/`1` because `project.yml` never
+declared them — now declared as `$(MARKETING_VERSION)`/`$(CURRENT_PROJECT_VERSION)` so any
+future regen preserves substitution.  A parallel expert-panel workflow is reviewing web↔iOS
+parity and reports separately.  Rollout: `docs/rollouts/2026-08-12-ios-customizable-tabs.md`.
+
+## Current (2026-08-11 MONET — litestream per-tier backup status: health check + admin panel)
+
+**Branch `monet/backup-status-panel` (committed locally, not pushed — see rollout note for why).**
+Tonight's litestream incident (stuck level-1 B2 compaction anchor, silently wedged 27+ hours —
+see the escalation trail above and `docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md`)
+exposed a real gap: `checks.storage.litestream*` on `/api/health` only ever observes level 0
+(continuous sync) via the IPC socket, so it would NOT have caught this. Added: (1)
+`assessLitestreamTierFreshness()` in `src/lib/runtime-health.ts` — per-compaction-level (0/1/9)
+freshness via local `ltx/<level>/` file mtimes, with documented thresholds (10min/4h/30h) and a
+graceful "unknown" state everywhere litestream isn't configured this way; (2) wired additively
+into `checks.storage.litestreamTiers` on `/api/health` (existing fields untouched) + folds into
+`storageDegraded` + per-tier `alertStorageWarning`; (3) new admin panel `app/admin/backups/` (nav
+entry "Backup Status") showing Continuous Sync / Compaction / Daily Snapshot per-tier health,
+backed by new admin route `app/api/admin/backup-status/route.ts`; (4) tests in
+`test/runtime-health.test.ts` (unit), `test/connection-health-routing.test.ts` (integration,
+reproduces the exact incident shape against the real route), `test/backup-status-route.test.ts`
+(new, admin route). `npx tsc --noEmit` clean, `npm run lint` 0 errors, targeted vitest run (57
+tests across the 4 touched/related files) green. Full `npm test`/`npm run build` run before
+commit — see the rollout note for final counts. Does NOT fix the underlying stuck B2 anchor
+itself (that's separate ops work, still open). Rollout:
+`docs/rollouts/2026-08-11-litestream-tier-backup-status.md`.
 ## Current (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
 
 **Branch `ag/desktop-mobile-ux-enhancements`:**

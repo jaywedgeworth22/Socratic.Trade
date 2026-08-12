@@ -13,6 +13,7 @@ import {
   Activity,
   Brain,
   Database,
+  DatabaseBackup,
   Layers,
   Server,
   FileText,
@@ -80,6 +81,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Server Stats",
     desc: "Host node metrics and Coolify application resource statuses.",
     icon: Server
+  },
+  {
+    href: "/admin/backups",
+    label: "Backup Status",
+    desc: "Litestream SQLite replication per compaction tier: continuous sync, compaction, daily snapshot.",
+    icon: DatabaseBackup
   },
   {
     href: "/admin/transcript",

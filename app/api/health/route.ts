@@ -5,6 +5,7 @@ import type { RagEmbedRerankProvider } from "@/lib/rag-metering";
 import { getProviderTierStatus } from "@/lib/provider-tier";
 import {
   assessLitestreamRuntimeHealth,
+  assessLitestreamTierFreshness,
   defaultLitestreamStatePath,
   getLitestreamRuntimeHealth,
   runtimeReleaseIdentity
@@ -340,9 +341,10 @@ export async function GET(request: Request) {
     } catch {}
 
     const liveMode = process.env.DB_BOOTSTRAP === "live";
+    const litestreamStatePath = process.env.LITESTREAM_STATE_PATH?.trim() || defaultLitestreamStatePath(dbPath);
     const freshness = await getLitestreamRuntimeHealth({
       dbPath,
-      statePath: process.env.LITESTREAM_STATE_PATH?.trim() || defaultLitestreamStatePath(dbPath),
+      statePath: litestreamStatePath,
       // File metadata does not prove an R2 upload and may be expensive to scan. In live
       // mode the bounded IPC source is therefore the only accepted runtime signal.
       allowFileFallback: !liveMode
@@ -354,6 +356,15 @@ export async function GET(request: Request) {
       processUptimeSeconds: release.processUptimeSeconds,
       latestLocalActivityAtMs: latestLocalActivityAtMs || null
     });
+
+    // Per-compaction-level freshness (level 0 continuous / level 1 compaction / level 9 daily
+    // snapshot). This is the gap the IPC `/list` signal above cannot see: it reports the
+    // database's overall last-sync time, which tracks level 0 and stays fresh even while a
+    // higher compaction level is silently wedged — exactly what happened in production on
+    // 2026-08-11 (a stuck level-1 B2 compaction anchor ran undetected for 27+ hours). Always a
+    // local file-mtime read (no S3/B2 calls), so unlike the IPC source above it is not gated on
+    // liveMode — there is no other signal for this data in any mode.
+    const litestreamTiers = assessLitestreamTierFreshness(litestreamStatePath);
 
     // Byte counts are operator-only (see the header comment); every litestream/backup-continuity
     // field below stays public because the credential-less deploy-verify runbook reads exactly
@@ -367,7 +378,8 @@ export async function GET(request: Request) {
       litestreamLastSyncAt: freshness.state === "known" ? freshness.lastSyncAt : null,
       litestreamTimestampState: freshness.state === "known" ? freshness.timestampState : null,
       litestreamSource: freshness.source,
-      litestreamDegradedReasons: litestreamAssessment.reasons
+      litestreamDegradedReasons: litestreamAssessment.reasons,
+      litestreamTiers: litestreamTiers.tiers
     };
 
     // Thresholds:
@@ -375,7 +387,7 @@ export async function GET(request: Request) {
     const diskLow = freeBytes > 0 && freeBytes < 1024 * 1024 * 1024;
     const walLarge = walSizeBytes > 500 * 1024 * 1024;
 
-    if (diskLow || walLarge || litestreamAssessment.degraded) {
+    if (diskLow || walLarge || litestreamAssessment.degraded || litestreamTiers.degraded) {
       checks.storageDegraded = true;
 
       // Send a one-shot needs-attention notification/alert via the notifier if not sent recently
@@ -394,6 +406,14 @@ export async function GET(request: Request) {
           void alertStorageWarning("litestream_state_unreadable", "Litestream runtime status is unavailable in DB_BOOTSTRAP=live mode — replication freshness cannot be confirmed.");
         } else if (reason === "invalid-sync-time") {
           void alertStorageWarning("litestream_sync_time_invalid", "Litestream reported an invalid or materially future last-sync timestamp.");
+        }
+      }
+      for (const tier of litestreamTiers.tiers) {
+        if (tier.state === "known" && tier.degraded) {
+          void alertStorageWarning(
+            `litestream_tier_${tier.tier}_stale`,
+            `Litestream "${tier.label}" (level ${tier.tier}) has not written a new local LTX file in ${Math.round(tier.ageSeconds / 60)} minutes (threshold ${Math.round(tier.thresholdSeconds / 60)} min).`
+          );
         }
       }
     }
