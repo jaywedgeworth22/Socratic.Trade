@@ -8,7 +8,7 @@
  *  - Run once (wired; disabled with a reason when blocked)
  *  - data freshness strip */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Check, ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, SlidersHorizontal, Sun, UserRound } from "lucide-react";
 import type { ConnectedAccount } from "@/lib/types";
@@ -695,7 +695,7 @@ export function RunOnceButton({
 
   const preflight = deriveRunBlock(snapshot);
 
-  const run = async () => {
+  const run = useCallback(async () => {
     // Blocked runs still respond to the click: they open the "why" sheet with
     // the route to the fix, instead of being a dead disabled button.
     if (preflight) {
@@ -726,7 +726,15 @@ export function RunOnceButton({
     } finally {
       setRunning(false);
     }
-  };
+  }, [preflight, refresh, toast]);
+
+  useEffect(() => {
+    const onRunOnce = () => {
+      void run();
+    };
+    window.addEventListener("console:run-once", onRunOnce);
+    return () => window.removeEventListener("console:run-once", onRunOnce);
+  }, [run]);
 
   return (
     <>
