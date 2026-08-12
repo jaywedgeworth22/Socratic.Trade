@@ -378,6 +378,13 @@ final class MobileStore: ObservableObject {
         }
     }
 
+    /// On-demand single-symbol quote for `SymbolInfoSheet`. Unlike `load()`, this does not touch
+    /// `snapshot`/`error`/`isRefreshing` — the sheet owns its own loading/error state, and
+    /// `client` is otherwise private to this store, so views reach it through this passthrough.
+    func fetchSymbolQuote(_ symbol: String) async throws -> SymbolQuoteInfo {
+        try await client.symbolQuote(symbol)
+    }
+
     func loadAccountDeletionPreview() async {
         guard !isDeletingAccount else { return }
         isDeletingAccount = true

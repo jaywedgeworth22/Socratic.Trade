@@ -305,3 +305,13 @@ export function useConsoleData(): ConsoleData {
   if (!ctx) throw new Error("useConsoleData must be used inside ConsoleDataProvider");
   return ctx;
 }
+
+/** Non-throwing variant for surfaces mounted outside the console shell (e.g. /admin, which
+ *  deliberately skips the dashboard snapshot fetch — see app/admin/layout.tsx). Callers must
+ *  treat `null` as "this context has no account data available", not as "no data yet" (that
+ *  distinction matters: a section that reads `snapshot` through this hook has to say so
+ *  honestly rather than rendering the ordinary "nothing here" empty state a real snapshot's
+ *  absence of rows would produce). */
+export function useConsoleDataOptional(): ConsoleData | null {
+  return useContext(ConsoleDataContext);
+}

@@ -1,3 +1,25 @@
+## Current (2026-08-12 ~6:20am CT CLAUDE — symbol drawer everywhere + iOS fills redesign)
+
+Owner requests: ticker/logo clicks open the Market Scan company drawer on every surface
+("all aspects of the site anywhere really"), and the iOS Activity fill cards get bolder/larger
+text + a denser layout (screenshot critique).  Branch `claude/ui-symbol-drawer-fills`.
+
+Web: closed every remaining un-wired symbol render (order cancel/replace sheets, live-approve
+sheets, decisions rows via a stretched-link restructure, admin data-catalog + rag-coverage with
+SymbolDrawerProvider newly mounted in the admin layout).  Fixed a real crash the sweep exposed:
+SymbolDrilldownSheet's unconditional useConsoleData() throw outside the console shell — new
+useConsoleDataOptional(), with an honest "not available here" exposure state.  Mobile PWA
+deferred honestly (drawer depends on con-* tokens the PWA does not load).
+
+iOS: FillActivityRow/CommandActivityRow typography bumped (ticker title3 bold, notional title3
+semibold, date footnote) with tighter AppCard padding; new SymbolInfoSheet (same /api/quote
+cascade as the web drawer) tappable from fills, positions, orders, watchlist, flow chips,
+alerts, and proposals; 44pt remove target restored; derived marketCap removed (no fabrication).
+
+Verified: tsc/lint/targeted vitest green; xcodebuild green (incl. post-merge with #2647 tabs +
+parity wave); browser check — AAPL click opens the "AAPL details" con-drawer with live data;
+admin routes 200.  Rollout: docs/rollouts/2026-08-12-ui-symbol-drawer-fills.md.  Blockers: none.
+
 ## Current (2026-08-12 ~5:40am CT CLAUDE — dsa-lessons round 1: digest, relevance, receipts)
 
 Owner asked for lessons from ZhuLinsen/daily_stock_analysis (62k-star LLM stock-analysis repo),

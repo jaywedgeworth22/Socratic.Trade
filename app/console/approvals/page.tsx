@@ -13,6 +13,7 @@ import { ApprovalCard } from "../components/approval-card";
 import { AlertCenter } from "../components/alert-center";
 import { Card, Chip, Btn, Select, TextInput } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
+import { SymbolButton } from "../ui/symbol-drilldown";
 import {
   approvalEstimatedNotional,
   approvalIsLive,
@@ -548,7 +549,8 @@ function BulkLiveApproveSheet({
           <div key={proposal.id} className="flex items-center justify-between gap-3 border-b border-[color:var(--con-line)] px-3 py-2 last:border-b-0">
             <div>
               <div className="font-semibold">
-                {proposal.proposal.side.toUpperCase()} {proposal.proposal.symbol}
+                {proposal.proposal.side.toUpperCase()}{" "}
+                <SymbolButton symbol={proposal.proposal.symbol} className="text-inherit" />
               </div>
               <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
                 {proposal.accountNumber ? `account ...${proposal.accountNumber.slice(-4)}` : "active live account"}

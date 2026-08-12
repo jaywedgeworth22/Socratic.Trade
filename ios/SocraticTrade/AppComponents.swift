@@ -192,6 +192,26 @@ enum AppFormat {
             .joined(separator: " ")
     }
 
+    /// Central time, explicitly labeled — fleet convention for any user-facing timestamp that
+    /// shows a timezone. Used by SymbolInfoSheet's quote-as-of line; other mobile timestamps
+    /// intentionally stay device-local (unchanged, out of scope here).
+    static func dateTimeCentral(_ value: String?) -> String {
+        guard let date = date(value) else { return "—" }
+        let central = TimeZone(identifier: "America/Chicago") ?? .current
+        return date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, timeZone: central)) + " CT"
+    }
+
+    /// P/E display per the repo's P/E honesty convention (mirrors
+    /// app/console/ui/drilldown-data.ts `peDisplay`): eps decides the no-ratio state first —
+    /// negative/zero trailing earnings render "n/a" (a real, computed "no ratio" state, not
+    /// missing data); a strictly positive ratio renders as a number; anything else means the
+    /// data simply wasn't available.
+    static func peRatioDisplay(peRatio: Double?, eps: Double?) -> String {
+        if let eps, eps <= 0 { return "n/a" }
+        if let peRatio, peRatio > 0 { return peRatio.formatted(.number.precision(.fractionLength(1))) }
+        return "—"
+    }
+
     private static func date(_ value: String?) -> Date? {
         guard let value else { return nil }
         if let parsed = ISO8601DateFormatter.withFractionalSeconds.date(from: value) {
@@ -213,15 +233,17 @@ private extension ISO8601DateFormatter {
 
 struct AppCard<Content: View>: View {
     private let content: Content
+    private let padding: CGFloat
 
-    init(@ViewBuilder content: () -> Content) {
+    init(padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
+        self.padding = padding
         self.content = content()
     }
 
     var body: some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            .padding(padding)
             .background(AppPalette.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -380,6 +402,38 @@ struct TickerLogo: View {
             .font(.system(size: max(9, size * 0.38), weight: .semibold, design: .rounded))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Identifiable wrapper for `.sheet(item:)` presentation of `SymbolInfoSheet` from any list row.
+/// Each screen that shows symbols (Activity, Markets) owns one `@State private var
+/// presentedSymbol: PresentedSymbol?` and threads it down as a `Binding` to `SymbolTapButton`.
+struct PresentedSymbol: Identifiable, Equatable {
+    let symbol: String
+    var id: String { symbol }
+}
+
+/// Tappable ticker logo + symbol text that opens `SymbolInfoSheet` for `symbol` — the mobile
+/// counterpart to the web console's `SymbolButton` (app/console/ui/symbol-drilldown.tsx). Wrap
+/// wherever a row shows a symbol; pass `action` to set the screen's `presentedSymbol` state.
+/// A real button (not a bare tap gesture), so it carries button accessibility traits for free —
+/// only the accessible label needs to be supplied here.
+struct SymbolTapButton: View {
+    let symbol: String
+    var logoSize: CGFloat = 26
+    var font: Font = .headline
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                TickerLogo(symbol: symbol, size: logoSize)
+                Text(symbol)
+                    .font(font)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(symbol) company info")
     }
 }
 
