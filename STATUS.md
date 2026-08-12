@@ -1,3 +1,35 @@
+## Current (2026-08-12 MONET - iOS APNs push: entitlement, registration, tap-routing, sign-out)
+
+Branch `monet/apns-ios` (worktree `~/apps/trading-monet-apns-ios`).  The DEVICE half of push -
+no `src/**` or `app/api/**` file touched; a parallel agent owns the sender and
+`POST /api/mobile/push/register`.
+
+- **Entitlement** `aps-environment: production` added to BOTH `ios/SocraticTrade/SocraticTrade.entitlements`
+  AND `ios/project.yml` - xcodegen rewrites the former from the latter, so editing one alone is
+  silently undone by the next regen.  `production` is correct because TestFlight and the App Store
+  are the same APNs endpoint; Xcode's automatic signing substitutes `development` for local runs
+  (verified in the built bundle's `embedded.mobileprovision`).
+- **Environment resolved from the signature**, not `#if DEBUG`: `APNSEnvironment.current` reads
+  `aps-environment` out of the embedded provisioning profile.  Assuming TestFlight is sandbox is a
+  silent `400 BadDeviceToken` forever, so an unreadable profile on a device resolves to production
+  and the simulator always to sandbox.
+- **Permission** is requested on first Proposals visit while signed in - never at cold start -
+  with a manual "Turn On Alerts" in Account & Settings, which also states the real state (denied /
+  failed / registered + which APNs environment).
+- **Foreground banner** suppressed only while the SSE stream is connected; shown when it is down,
+  because the screen is then stale and the notification is the only signal.
+- **Tap routing reuses one router**: `DeepLink.destination(for:)` -> the same `pendingDeepLink`
+  slot `onOpenURL` fills -> the same rerouting tab `selection` binding.  That parser is NOT on
+  `main`; it was copied byte-identical from the unlanded peer branch `origin/monet/ios-order-cancel`,
+  so `MobileControlView.swift`/`SocraticTradeApp.swift` need a small manual merge when either lands.
+- **Sign-out** withdraws the token before cookies are cleared (a delete after that is
+  unauthenticated) and also calls `unregisterForRemoteNotifications()`, so a failed delete still
+  ends in a server-side `410 Unregistered` cleanup.
+
+Verified: `xcodebuild -scheme SocraticTrade -destination 'platform=macOS,variant=Designed for iPad' test`
+-> `** TEST SUCCEEDED **`, **Executed 70 tests, with 0 failures** (44 before).  End-to-end delivery
+still needs a real device plus the server half.  Rollout: `docs/rollouts/2026-08-12-apns-push-ios.md`.
+
 ## Current (2026-08-12 CLAUDE - connection-health alert noise, root-caused)
 
 Branch `claude/health-alert-noise` (worktree `/private/tmp/fx-st-health`).  Sentry carried ~28

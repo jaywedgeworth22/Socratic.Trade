@@ -505,8 +505,19 @@ final class MobileStore: ObservableObject {
         error = nil
     }
 
+    /// Explicit sign-out.  The push token is withdrawn FIRST and awaited: `clearLocalSession`
+    /// deletes the session cookies, and a delete sent after that would arrive unauthenticated
+    /// and leave this device registered to receive the signed-out user's alerts.
+    func signOut() async {
+        await PushNotificationCoordinator.shared.signOutAndForgetToken()
+        clearLocalSession()
+    }
+
     func clearLocalSession() {
         stopEvents()
+        // Also reached when a session simply expires, where no authenticated delete is
+        // possible — drop the local belief that this device is registered.
+        PushNotificationCoordinator.shared.forgetTokenLocally()
         for cookie in HTTPCookieStorage.shared.cookies ?? [] where client.ownsCookie(cookie) {
             HTTPCookieStorage.shared.deleteCookie(cookie)
         }

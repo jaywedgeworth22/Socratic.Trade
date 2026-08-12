@@ -50,6 +50,15 @@ struct ProposalsView: View {
         }
         .navigationTitle("Proposals")
         .navigationBarTitleDisplayMode(.inline)
+        // The only place the app asks for notification permission on its own.  This screen is
+        // "things are waiting for your judgment" — the exact subject of a push — so the prompt
+        // arrives with context, from a signed-in owner who has already seen the app.  It never
+        // fires at cold start, and it asks once (the coordinator returns immediately unless the
+        // system status is still notDetermined).
+        .task {
+            guard store.isAuthenticated else { return }
+            await PushNotificationCoordinator.shared.requestAuthorizationOnAlertScreen()
+        }
         .sheet(item: $presentedSymbol) { presented in
             SymbolInfoSheet(symbol: presented.symbol)
         }

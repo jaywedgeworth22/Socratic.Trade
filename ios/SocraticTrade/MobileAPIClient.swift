@@ -46,6 +46,11 @@ struct SSEFrameAccumulator {
 }
 
 struct MobileAPIClient {
+    /// The one origin this app talks to.  Shared so the push coordinator (which cannot be
+    /// handed the store's client) targets the same host — and therefore the same
+    /// `HTTPCookieStorage.shared` session — instead of a second hardcoded string that can drift.
+    static let productionBaseURL = URL(string: "https://socratictrade.com")!
+
     let baseURL: URL
     var session: URLSession = .shared
 
@@ -101,6 +106,26 @@ struct MobileAPIClient {
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "accept")
         return try await send(request)
+    }
+
+    /// Session-authed APNs token registration.  The response body is not consumed: the only
+    /// thing the app needs to know is whether the server accepted the token, which is the
+    /// status code.
+    func registerPushToken(_ registration: PushRegistrationRequest) async throws {
+        var request = request(path: "/api/mobile/push/register", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: registration.jsonBody)
+        _ = try await successfulResponseData(for: request)
+    }
+
+    /// Sign-out counterpart.  Sends the token so the server drops the exact row rather than
+    /// every token the session's user owns — signing out of one device must not silence
+    /// another one the same owner is still signed in on.
+    func unregisterPushToken(_ token: String) async throws {
+        var request = request(path: "/api/mobile/push/register", method: "DELETE")
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["token": token])
+        _ = try await successfulResponseData(for: request)
     }
 
     func accountDeletionPreview() async throws -> AccountDeletionRequest {
