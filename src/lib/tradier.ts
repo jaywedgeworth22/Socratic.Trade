@@ -14,7 +14,7 @@ import type {
   EquityOrderInput,
   OptionPosition
 } from "./types";
-import { normalizeSymbol } from "./money";
+import { normalizeSymbol, roundCents } from "./money";
 import { isRejectedOrCanceledState } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { logApiHealth } from "./db-health";
@@ -728,8 +728,8 @@ class TradierBrokerGateway implements BrokerGateway {
         "quantity[0]": String(wholeQty),
         "type[0]": mapTradierTypeWrite(input.type)
       };
-      if (input.limitPrice != null) bracketForm["price[0]"] = input.limitPrice;
-      if (input.stopPrice != null) bracketForm["stop[0]"] = input.stopPrice;
+      if (input.limitPrice != null) bracketForm["price[0]"] = roundCents(input.limitPrice);
+      if (input.stopPrice != null) bracketForm["stop[0]"] = roundCents(input.stopPrice);
 
       let legIndex = 1;
       if (hasTakeProfit) {
@@ -737,7 +737,7 @@ class TradierBrokerGateway implements BrokerGateway {
         bracketForm[`side[${legIndex}]`] = exitSide;
         bracketForm[`quantity[${legIndex}]`] = String(wholeQty);
         bracketForm[`type[${legIndex}]`] = "limit";
-        bracketForm[`price[${legIndex}]`] = input.bracketTakeProfit;
+        bracketForm[`price[${legIndex}]`] = roundCents(input.bracketTakeProfit!);
         legIndex += 1;
       }
       if (hasStopLoss) {
@@ -745,8 +745,8 @@ class TradierBrokerGateway implements BrokerGateway {
         bracketForm[`side[${legIndex}]`] = exitSide;
         bracketForm[`quantity[${legIndex}]`] = String(wholeQty);
         bracketForm[`type[${legIndex}]`] = input.bracketStopLimit != null ? "stop_limit" : "stop";
-        bracketForm[`stop[${legIndex}]`] = input.bracketStopLoss;
-        if (input.bracketStopLimit != null) bracketForm[`price[${legIndex}]`] = input.bracketStopLimit;
+        bracketForm[`stop[${legIndex}]`] = roundCents(input.bracketStopLoss!);
+        if (input.bracketStopLimit != null) bracketForm[`price[${legIndex}]`] = roundCents(input.bracketStopLimit);
       }
 
       let bracketBody: { order?: Record<string, unknown> };

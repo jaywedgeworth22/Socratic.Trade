@@ -3296,7 +3296,7 @@ export async function runStrategyOnce(
       // then re-prove ownership again immediately before a broker placement below.
       lockGuard.assertOwned();
       const normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
-      let proposalId = crypto.randomUUID();
+      const proposalId = crypto.randomUUID();
       const preparedBrokerShape = preparedBrokerShapes.get(proposal);
       let proposalTradability = preparedBrokerShape?.tradability;
       if (!proposalTradability) {
@@ -3614,7 +3614,7 @@ export async function runStrategyOnce(
           continue;
         }
 
-        proposalId = crypto.randomUUID();
+        lockGuard.assertOwned();
         lockGuard.assertOwned();
         insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
@@ -3655,7 +3655,6 @@ export async function runStrategyOnce(
       if (heldExit) {
         const heldReason = brokerHeldExitBlockReason(heldExit);
         const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
-        proposalId = crypto.randomUUID();
         insertRunProposal({
           userId,
           executionMode,
@@ -3693,7 +3692,6 @@ export async function runStrategyOnce(
       // authority — raising cash by selling is the user's call. (Identified by tradeThesisTag so it's
       // robust to any reordering by the cluster gate.)
       if (sellToFundMode === "propose" && normalizedProposal.tradeThesisTag === "Sell-to-Fund") {
-        proposalId = crypto.randomUUID();
         insertProposalWithSocraticDecision(
           { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
           { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
@@ -3714,7 +3712,6 @@ export async function runStrategyOnce(
         // which is authority-aware — held/openings read "routed to human approval" and an opt-in
         // de-risk exit reads "surfaced for your approval" under propose authority (never falsely
         // "proceeding") — so no separate corrective note is needed here.
-        const proposalId = crypto.randomUUID();
         const primaryHumanReviewReason = activeHumanReviewReasons[0];
         insertProposalWithSocraticDecision(
           { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },

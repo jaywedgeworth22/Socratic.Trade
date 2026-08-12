@@ -307,6 +307,20 @@ commit — see the rollout note for final counts. Does NOT fix the underlying st
 itself (that's separate ops work, still open). Rollout:
 `docs/rollouts/2026-08-11-litestream-tier-backup-status.md`.
 ## Current (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
+## Current (2026-08-12 ANTIGRAVITY — OSS lessons, Strategy ID fixes, & Dashboard additions)
+
+1. **Bug fixes**:
+   - Fixed `proposalId` loop re-assignment in `src/lib/strategy.ts` (Issue #2593) which caused orphaned receipts.
+   - Applied `roundCents` to `bracketForm` in `src/lib/tradier.ts` (Issue #2578) to fix sub-penny bracket routing.
+   - Verified that `onClick` was already correctly implemented for account deletion in `MobileHomeTab.tsx` (Issue #2592).
+2. **Dashboard Features**:
+   - Added `MarketAnalysisCard` in `app/console/page.tsx` to display macro regime and market breadth.
+3. **Documentation**:
+   - Updated `docs/oss-lessons.md` with integration learnings from `daily_stock_analysis`.
+
+**Verification**: `npx tsc --noEmit` clean, `npm run lint` clean (fixed 1 let->const error), `npm test` clean, `npm run build` clean.
+
+## Previous (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
 
 **Branch `ag/desktop-mobile-ux-enhancements`:**
 1. **Desktop Web UX**:
