@@ -1,3 +1,15 @@
+## Current (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
+
+**Branch `ag/desktop-mobile-ux-enhancements`:**
+1. **Desktop Web UX**:
+   - `command-palette.tsx`: Added global hotkeys (`Cmd+K`/`Ctrl+K` command palette toggle, `A` Proposals jump, `R` strategy run-once dispatch, `1-6` tab navigation). Added `<kbd>` badges and `action:run-once` command item.
+   - `approval-card-skeleton.tsx` & `portfolio-overview-skeleton.tsx`: Created animated pulse skeleton loading components matching approval cards and portfolio overview metrics.
+   - `console.css`: Synchronized `.dark` design token values with `app/globals.css`.
+2. **Mobile Web PWA UX**:
+   - Refactored `mobile-pwa-client.tsx` into modular components under `app/mobile/components/` (`MobileHeader.tsx`, `MobileNavBar.tsx`, `MobileHomeTab.tsx`, `MobileProposalsTab.tsx`).
+   - Implemented `usePreventScrollChaining` hook for WebKit boundary top check (`scrollTop === 0` set to `1`) and CSS `overscroll-behavior-y: contain` to prevent iOS Safari body scroll chaining.
+3. **Verification**: `npx tsc --noEmit` clean, `npm run lint` clean (0 errors), `npm test` (83 files / 739 tests passed), `npm run build` clean.
+
 ## Current (2026-08-12 ~12:20am CT MONET — new app icon: dollar-sign candlesticks)
 
 Owner supplied a reference image (3D-rendered candlesticks arranged as a "$", green/pink

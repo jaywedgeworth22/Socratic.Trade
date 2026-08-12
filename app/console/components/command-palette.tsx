@@ -22,6 +22,7 @@ interface Command {
   id: string;
   label: string;
   hint?: string;
+  hotkey?: string;
   keywords: string;
   run: () => void;
 }
@@ -82,6 +83,48 @@ export function CommandPalette() {
         // palette commands navigate — opening over it would route around it.
         if (hasBlockingFocusTrap()) return;
         setOpen((o) => !o);
+        return;
+      }
+
+      if (hasBlockingFocusTrap()) return;
+
+      const target = e.target as HTMLElement | null;
+      const isInput =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable);
+
+      if (isInput) return;
+
+      // 1-6 for tab navigation
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && /^[1-6]$/.test(e.key)) {
+        const index = parseInt(e.key, 10) - 1;
+        const dest = DESTINATIONS[index];
+        if (dest) {
+          e.preventDefault();
+          if (checkNav(undefined, dest.href)) {
+            router.push(dest.href);
+          }
+        }
+        return;
+      }
+
+      // A / a for approve / proposals
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        if (checkNav(undefined, "/console/approvals")) {
+          router.push("/console/approvals");
+        }
+        return;
+      }
+
+      // R / r for run-once
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && (e.key === "r" || e.key === "R")) {
+        e.preventDefault();
+        window.dispatchEvent(new Event("console:run-once"));
+        return;
       }
     };
     const onOpen = () => {
@@ -94,14 +137,15 @@ export function CommandPalette() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener(CMDK_EVENT, onOpen);
     };
-  }, []);
+  }, [checkNav, router]);
 
   const commands = useMemo<Command[]>(
     () => [
-      ...DESTINATIONS.map((d) => ({
+      ...DESTINATIONS.map((d, idx) => ({
         id: `nav:${d.href}`,
         label: d.label,
         hint: d.desc,
+        hotkey: idx < 6 ? `${idx + 1}` : d.href === "/console/approvals" ? "A" : undefined,
         keywords: `${d.label} ${d.href} ${d.desc}`.toLowerCase(),
         run: () => {
           if (checkNav(undefined, d.href)) {
@@ -109,6 +153,14 @@ export function CommandPalette() {
           }
         }
       })),
+      {
+        id: "action:run-once",
+        label: "Run once strategy",
+        hint: "Execute manual strategy run",
+        hotkey: "R",
+        keywords: "run once strategy manual execute start r",
+        run: () => window.dispatchEvent(new Event("console:run-once"))
+      },
       {
         id: "action:theme",
         label: "Toggle theme",
@@ -210,6 +262,7 @@ export function CommandPalette() {
               >
                 <span className="con-cmdk-item-label">{c.label}</span>
                 {c.hint && <span className="con-cmdk-item-hint">{c.hint}</span>}
+                {c.hotkey && <kbd className="con-kbd text-[10px] ml-auto mr-1">{c.hotkey}</kbd>}
                 {i === active && <CornerDownLeft size={13} className="con-cmdk-enter" aria-hidden />}
               </li>
             ))
