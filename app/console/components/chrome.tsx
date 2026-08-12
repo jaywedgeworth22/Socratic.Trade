@@ -8,9 +8,9 @@
  *  - Run once (wired; disabled with a reason when blocked)
  *  - data freshness strip */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, SlidersHorizontal, Sun, UserRound, Zap } from "lucide-react";
+import { Check, ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, SlidersHorizontal, Sun, UserRound } from "lucide-react";
 import type { ConnectedAccount } from "@/lib/types";
 // llm-required is PURE (no node/server imports — see its header), so its message constants are
 // safe to import here: classifyRunFailure matches the server's own 412 summary strings.
@@ -32,6 +32,7 @@ import {
   stopEverything
 } from "../lib/api";
 import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact } from "../lib/format";
+import { loginProviderLabel } from "../lib/labels";
 import type { ConsoleStreamHealth } from "../lib/useConsoleData";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useDirtyActionGuard, useNextUnloadBypass } from "../lib/useDirtyGuard";
@@ -87,7 +88,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
   const ordered = active ? [active, ...others] : others;
 
   const label = active
-    ? `${active.label || brokerName(active.broker)}${active.accountNumber ? ` ·· ${active.accountNumber.slice(-4)}` : ""}`
+    ? `${active.label || brokerName(active.broker)}${active.accountNumber ? ` ••${active.accountNumber.slice(-4)}` : ""}`
     : "No connected account";
 
   const close = () => {
@@ -126,9 +127,10 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     }
   };
 
-  // Compact switch row: name + reality/run-state chips on line one, broker ··last4
-  // on a faint second line. The whole row is the switch affordance; the loaded
-  // account is a non-interactive current-state marker (checkmark, accent tint).
+  // Compact switch row: name + reality/run-state chips on line one, broker ••last4
+  // (bullet mask, same convention as iOS) on a faint second line. The whole row is
+  // the switch affordance; the loaded account is a non-interactive current-state
+  // marker (checkmark, accent tint).
   const renderRow = (account: ConnectedAccount) => {
     const r = realityForAccount(account);
     const policy = snapshot.connectedAccountPolicies?.[account.id];
@@ -162,7 +164,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
           </span>
           <span className="mt-0.5 block truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             {brokerName(account.broker)}
-            {last4 ? ` · ·· ${last4}` : ""}
+            {last4 ? ` · ••${last4}` : ""}
             {r.tone !== "live" ? ` · ${r.phrase}` : ""}
           </span>
         </span>
@@ -693,7 +695,7 @@ export function RunOnceButton({
 
   const preflight = deriveRunBlock(snapshot);
 
-  const run = async () => {
+  const run = useCallback(async () => {
     // Blocked runs still respond to the click: they open the "why" sheet with
     // the route to the fix, instead of being a dead disabled button.
     if (preflight) {
@@ -724,7 +726,15 @@ export function RunOnceButton({
     } finally {
       setRunning(false);
     }
-  };
+  }, [preflight, refresh, toast]);
+
+  useEffect(() => {
+    const onRunOnce = () => {
+      void run();
+    };
+    window.addEventListener("console:run-once", onRunOnce);
+    return () => window.removeEventListener("console:run-once", onRunOnce);
+  }, [run]);
 
   return (
     <>
@@ -745,9 +755,9 @@ export function RunOnceButton({
             : "Manual runs always ask first — they can only propose, never place on their own."
         }
       >
-        {/* Zap (not Play): Start/Resume already uses Play — two “go” glyphs next to each
-            other read as competing primaries (expert panel 2026-08-04). */}
-        <Zap size={13} />
+        {/* Emoji bolt, not lucide Zap (owner preference 2026-08-08 — the colored emoji
+            reads better than the line icon). Still not Play: Start/Resume owns Play. */}
+        <span aria-hidden className="text-[13px] leading-none">⚡</span>
         {iconOnly ? null : running ? "Running…" : "Run once"}
       </Btn>
 
@@ -879,7 +889,7 @@ export function UserMenu({
                   <div className="truncate font-semibold">{who}</div>
                   {user.email && user.name && <div className="truncate text-[color:var(--con-muted)]">{user.email}</div>}
                   <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                    {user.loginProvider ? `Signed in via ${user.loginProvider}` : "Signed in"}
+                    {user.loginProvider ? `Signed in via ${loginProviderLabel(user.loginProvider)}` : "Signed in"}
                     {user.isAdmin ? " · operator/admin rights" : ""}
                   </div>
                 </div>
@@ -990,7 +1000,7 @@ export function MobileFreshnessBar({
           <span aria-hidden>·</span>
           <span className="con-num inline-flex items-center gap-1.5">
             <ShieldCheck size={12} />
-            Today: {fmtMoney(spend.usedNotional)}
+            Deployed today: {fmtMoney(spend.usedNotional)}
           </span>
         </span>
       ) : (
@@ -1000,7 +1010,7 @@ export function MobileFreshnessBar({
           </span>
           <span className="con-num ml-auto flex items-center gap-1.5" title="Opening orders only. Exits never consume the daily cap.">
             <ShieldCheck size={12} />
-            Today: {fmtMoney(spend.usedNotional)}
+            Deployed today: {fmtMoney(spend.usedNotional)}
           </span>
           {error && (
             <span className="shrink-0 font-semibold text-[color:var(--con-warn)]" title={error}>
@@ -1061,7 +1071,7 @@ export function FreshnessStrip({
         {nextRun && snapshot.policy.systemState === "active" && <span title={fmtExact(nextRun)}>Next run {timeUntil(nextRun)}</span>}
         <span className="con-num flex min-w-32 items-center gap-2" title="Opening orders only. Exits never consume the daily cap.">
           <ShieldCheck size={12} />
-          Today: {fmtMoney(spend.usedNotional)}
+          Deployed today: {fmtMoney(spend.usedNotional)}
           {typeof spend.capNotional === "number" ? ` of ${fmtMoneyWhole(spend.capNotional)}` : ""}
           <Meter value={spend.usedNotional} max={spend.capNotional} className="w-16" />
         </span>

@@ -143,19 +143,46 @@ The old preview-provisioning scripts (`setup-agent-previews.sh`, `sync-preview-l
 dead after the preview retirement; the pre-push hook they used to install is now installed
 by `scripts/land.sh`). The "Preview freshness policy" section below is historical.
 
-Hosting is now Coolify on Oracle Cloud (`141.148.182.224`,
-dashboard + API `https://host.jays.services` — direct DNS, no Mac dependency; migrated
-July 2026 from Hetzner to Oracle Cloud; DB rollback path is the litestream R2 replica).
-**The dashboard moved off the apex (owner-directed): `jays.services`
-(apex) now CNAMEs to the Mac Cloudflare tunnel and does NOT reach Coolify — any tool or
+**PRODUCTION HOST MOVED AGAIN, 2026-08-07 — READ THIS FIRST, IT SUPERSEDES EVERY OLDER
+"Oracle Cloud" NOTE BELOW.** Oracle Cloud suspended the account without warning or stated
+reason on 2026-08-06 (`141.148.182.224` went hard-down, fleet-wide 522s — see
+`docs/rollouts/2026-08-06-ios-login-522-oracle-down.md`). The fleet cut over the next day to a
+**brand-new Hetzner server** — this is NOT a return to the old (pre-Oracle) Hetzner boxes, which
+really were deleted; it is a freshly-provisioned replacement. Full cutover record:
+`docs/rollouts/2026-08-07-hetzner-fleet-cutover.md`.
+
+**Current production host (single shared box for ST + CT + UM + Coolify):**
+- **Public IP:** `167.233.254.55` — hostname `fleet-hetzner-nbg1` (Hetzner Nuremberg/NBG1)
+- **Spec:** Hetzner `cx43` — 8 vCPU (AMD EPYC-Rome), 16 GB RAM, 160 GB NVMe (`/` is a 150G
+  partition on it, ~45% used as of 2026-08-11)
+- **Tailscale:** `100.69.77.26`
+- **Coolify:** `4.1.2`, dashboard + API still at `https://host.jays.services` (unchanged)
+- **This app's Coolify server UUID:** `jxzqcs3h6g1wiipnnblhismp` (there is only ONE Coolify
+  server registered — do not confuse with any app/service UUID)
+- **Hetzner hardware serial / server-metrics `HETZNER_SERVER_ID`:** `159792099`
+- Oracle account remains suspended (not resolved as of this writing); the old Oracle host
+  `141.148.182.224` is dead and any doc/script still targeting it is describing history, not
+  current infrastructure.
+
+**The dashboard is off the apex (owner-directed, predates this cutover): `jays.services`
+(apex) CNAMEs to the Mac Cloudflare tunnel and does NOT reach Coolify — any tool or
 script calling `https://jays.services/api/v1/...` must use
 `https://host.jays.services/api/v1/...` instead.** The box hosts
-`socratic-trade-prod` (= `socratictrade.com`, see the production stanza below).
+`socratic-app` (Coolify app name; = `socratictrade.com`, see the production stanza below).
 **MAC RUNNER RETIRED & DELETED (OWNER DIRECTIVE, 2026-07-21):** The Mac host self-hosted runner `trading-live-mac` is permanently stopped, uninstalled, and deleted from GitHub settings. **DO NOT EVER START, RE-REGISTER, OR REFERENCE `trading-live-mac` OR `trading-live` RUNNER LABELS AGAIN.**
 
-**Fleet CI = GitHub-hosted only (2026-07-29):** Workflows use `ubuntu-latest`. Self-hosted Oracle/Coolify Actions runners (`socratic-ci`, `oracle-ci`, `fleet-ci-*`) are **retired** — do not reintroduce `[self-hosted, …]` labels. Production app hosting remains Coolify on Oracle Cloud (`141.148.182.224`, dashboard/API `https://host.jays.services`).
+**Fleet CI = GitHub-hosted only (2026-07-29):** Workflows use `ubuntu-latest`. Self-hosted Oracle/Coolify Actions runners (`socratic-ci`, `oracle-ci`, `fleet-ci-*`) are **retired** — do not reintroduce `[self-hosted, …]` labels. (Note: the current host's live server-metrics panel still LISTS these old runner names as registered Coolify resources as of 2026-08-11 — that is stale Coolify-side registration cleanup, a separate issue from the CI workflow retirement, which is real and unaffected.)
 
-**Hetzner servers DELETED (owner directive, 2026-07-31):** both Hetzner boxes are gone — the old prod host (`135.181.192.190`, retired in the July Oracle migration) and the CI build server `ci-cpx32` (`77.42.35.209`, Coolify server uuid `cantpgkbuwe71n1iqzu4qel6`). There is nothing to migrate back to and no runner registrations to clean up (GitHub shows none; the fleet's `oracle-*-ci` runners for the *other* repos live on Oracle). `scripts/monitor-coolify-runners.sh` and `scripts/ops/fleet-site-watchdog.sh` were deleted the same day (both monitored dead boxes); `scripts/sync-provider-knobs.sh` defaults now point at the Oracle host but its box-env read path needs rework (app env lives in Coolify's DB, not a `/data/coolify` tree). Rollout: `docs/rollouts/2026-07-31-hetzner-servers-deleted.md`.
+**Old Hetzner boxes (pre-Oracle) DELETED (owner directive, 2026-07-31) — historical, do not
+confuse with the current post-Oracle-suspension Hetzner box above:** the old prod host
+(`135.181.192.190`, retired in the July Oracle migration) and the CI build server `ci-cpx32`
+(`77.42.35.209`, Coolify server uuid `cantpgkbuwe71n1iqzu4qel6`) were genuinely deleted and stayed
+deleted — the current `167.233.254.55` box is a separate, later, freshly-provisioned server, not
+a resurrection of either of these. `scripts/monitor-coolify-runners.sh` and
+`scripts/ops/fleet-site-watchdog.sh` were deleted the same day (both monitored those dead boxes);
+`scripts/sync-provider-knobs.sh` defaults point at the old Oracle host and need updating for the
+current Hetzner host (app env lives in Coolify's DB, not a `/data/coolify` tree). Rollout:
+`docs/rollouts/2026-07-31-hetzner-servers-deleted.md`.
 
 **Coolify tokens (do not mix — 2026-07-30):** `COOLIFY_SERVER_STATS` is **read-only** (website server-stats only). `COOLIFY_AGENTS` is **full** deploy/admin (agent ops / GH deploy only). Never store `COOLIFY_AGENTS` as the app's `COOLIFY_API_TOKEN`. Infisical must keep both keys; if `COOLIFY_API_TOKEN` exists for metrics it must equal the read-only stats token. **Never run bare `infisical secrets`** (it prints every value into the transcript) — use `scripts/infisical-secrets-safe.sh`. Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Secret handoff.
 **Build caveats:** the box's `concurrent_builds` is
@@ -636,3 +663,34 @@ Fleet driver + all three apps (Socratic / Congress / Usage Monitor):
 `/Users/jay/apps/ios-fleet/README.md`. Bundle ID `trade.socratic.app`, team
 `CC8UTF7ATG`. Upload needs App Store Connect app record + either Xcode session
 or `~/.secrets/appstore-connect.env` (never print secrets).
+
+## Theme default = light (owner 2026-08-10)
+
+Default product theme is **light** for all fleet apps. Do not ship dark-first or system defaults that land on dark. See `/Users/jay/apps/FLEET-UI-COPY.md` and `/Users/jay/apps/AGENT-SYNC.md`.
+
+## Fleet UI copy
+
+Owner copy rules (Title Case headings/buttons; sentence-case values; lowercase compact money; always-inline iOS nav titles; ticker logos): `docs/FLEET-UI-COPY.md` (canonical live board: `/Users/jay/apps/FLEET-UI-COPY.md`).
+
+## Apple Notes close-out (all agents, all apps — 2026-08-09)
+
+**Title:** `[APP, Agent] short topic` — app acronym(s) + agent **first**.
+Examples: `[UM, Grok] TestFlight first ship` · `[ST, CT, Monet] R2 peer digests`.
+Acronyms: `UM` `ST` `CT` `CTS` `FLEET`. Multi-app: list each (`[ST, CT, Grok] …`).
+Agent display Title Case (`Grok`/`Monet`/`Claude`/…), not ALL-CAPS Slack tags.
+
+**Second body row:** local stamp `Sun, Aug 9, 3:52pm` (create **or** last update —
+refresh on every change). Helper auto-injects/refreshes it.
+
+**Always** write/update living Completion notes for substantial work; update in place.
+Folder **Coding**, pin when able. Helper: `/Users/jay/apps/apple-notes-coding.sh`
+(`--update`). Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Apple Notes.
+
+## Two spaces between sentences (owner — ALL contexts)
+
+Two spaces after sentence terminators in **all** human-readable prose for every
+agent: web, PWA, iOS UI, **App Store Connect listing fields** (description,
+promotional text, What's New, review notes), push/email, help, privacy, owner
+Notes. HTML must preserve the gap (NBSP+space / SENTENCE_GAP). Canonical:
+`/Users/jay/apps/FLEET-UI-COPY.md`.
+

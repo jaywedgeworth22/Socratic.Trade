@@ -11,12 +11,16 @@ enum MobileAPIError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unauthorized:
-            return "Your session expired. Sign in again."
+            return "Your session expired.  Sign in again."
         case .serverError(let statusCode, let message):
+            // Cloudflare edge codes when the origin (socratictrade.com backend) is unreachable.
+            if (521...523).contains(statusCode) {
+                return "Socratic Trade servers are unreachable right now (Cloudflare \(statusCode)).  Try again in a few minutes."
+            }
             if let message, !message.isEmpty {
                 return "\(message) (\(statusCode))"
             }
-            return "The server returned an error (\(statusCode)). Try again."
+            return "The server returned an error (\(statusCode)).  Try again."
         case .network(let error):
             return "Network error: \(error.localizedDescription)"
         case .decoding:
@@ -46,7 +50,19 @@ struct MobileAPIClient {
     var session: URLSession = .shared
 
     func snapshot() async throws -> MobileSnapshot {
-        try await get("/api/mobile/snapshot")
+        let (snap, _) = try await snapshotData()
+        return snap
+    }
+
+    func snapshotData() async throws -> (MobileSnapshot, Data) {
+        let req = request(path: "/api/mobile/snapshot")
+        let data = try await successfulResponseData(for: req)
+        do {
+            let snap = try JSONDecoder().decode(MobileSnapshot.self, from: data)
+            return (snap, data)
+        } catch {
+            throw MobileAPIError.decoding(error)
+        }
     }
 
     func submit(
@@ -115,7 +131,11 @@ struct MobileAPIClient {
         let _: WebAuthExchangeResponse = try await send(request)
     }
 
-    func events(onEvent: @escaping () -> Void) async throws {
+    /// `onConnect` fires when the stream response is established and again on every received
+    /// line — including ": ping" comment heartbeats (sent every 25s). Comment frames never reach
+    /// `onEvent`, so before this hook a healthy idle stream kept the connected indicator false
+    /// forever (#2559). `onEvent` still fires only for payload frames.
+    func events(onConnect: @escaping () -> Void = {}, onEvent: @escaping () -> Void) async throws {
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
@@ -126,11 +146,13 @@ struct MobileAPIClient {
             throw MobileAPIError.network(error)
         }
         try Self.requireSuccess(response, body: nil)
+        onConnect()
 
         var parser = SSEFrameAccumulator()
         do {
             for try await line in bytes.lines {
                 try Task.checkCancellation()
+                onConnect()
                 if parser.consume(line: line) {
                     onEvent()
                 }
@@ -186,8 +208,23 @@ struct MobileAPIClient {
         return request
     }
 
-    private func get<T: Decodable>(_ path: String) async throws -> T {
-        try await send(request(path: path))
+    private func get<T: Decodable>(_ path: String, retries: Int = 2) async throws -> T {
+        var attempt = 0
+        while true {
+            do {
+                return try await send(request(path: path))
+            } catch let error as MobileAPIError {
+                if case .network = error, attempt < retries {
+                    attempt += 1
+                    let delayMs = UInt64(150_000_000 * (1 << attempt)) // 300ms, 600ms backoff
+                    try await Task.sleep(nanoseconds: delayMs)
+                    continue
+                }
+                throw error
+            } catch {
+                throw error
+            }
+        }
     }
 
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
@@ -229,13 +266,19 @@ struct MobileAPIClient {
     }
 
     private static func serverMessage(from data: Data?) -> String? {
-        guard
-            let data,
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return nil
+        guard let data, !data.isEmpty else { return nil }
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return object["error"] as? String ?? object["message"] as? String
         }
-        return object["error"] as? String ?? object["message"] as? String
+        // Cloudflare often returns plain text like "error code: 522" when origin is down.
+        if let text = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty,
+           text.count < 200,
+           !text.hasPrefix("<") {
+            return text
+        }
+        return nil
     }
 }
 

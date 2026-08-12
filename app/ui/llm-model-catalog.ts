@@ -33,8 +33,9 @@ export const CUSTOM_MODEL_ID_SEED = "custom-model-id";
  * Sentinel model id meaning "rotate through all eligible curated models — a different one each
  * run" (comparative-measurement option for accruing attributed history across models on any real
  * broker account). Persisted as-is on policy.llmModel / policy.redTeamLlmModel; the strategy
- * run substitutes the concrete round-robin pick at run start (src/lib/model-rotation.ts — models
- * with no resolvable provider key are skipped). Keep the literal in sync with
+ * run substitutes a concrete representation-weighted pick at run start (src/lib/model-rotation.ts —
+ * models with no resolvable provider key are skipped; models underrepresented in recent rotation
+ * history are twice as likely to be picked). Keep the literal in sync with
  * LLM_MODEL_ROTATION_SENTINEL in src/lib/llm-request.ts.
  */
 export const ROTATE_ALL_MODELS_ID = "__rotate__";

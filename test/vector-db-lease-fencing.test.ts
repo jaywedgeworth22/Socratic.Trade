@@ -115,6 +115,10 @@ beforeEach(() => {
   getDb().prepare("DELETE FROM notification_events").run();
   getDb().prepare("DELETE FROM settings WHERE key LIKE 'vectorStore:%' OR key LIKE 'usageLimitAlert:%'").run();
   getDb().exec("DELETE FROM provider_usage_outbox; DELETE FROM provider_dispatch_attempts;");
+  // Isolation for the durable embed stage (db-embed-stage.ts): a lease-loss abort AFTER a paid
+  // embed deliberately leaves staged rows behind, and a later test using the same context()
+  // text would replay them and never reach an embed-side abort hook.
+  getDb().prepare("DELETE FROM embed_stage").run();
   mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
   mocks.createIndex.mockResolvedValue(undefined);
   mocks.describeIndex.mockResolvedValue({ metric: "cosine" });

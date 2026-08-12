@@ -22,7 +22,8 @@ import { isRunAllowedNow, nextMarketOpenHint, previousTradingDayStart } from "@/
 // NOT from "@/lib/benchmark" — that file imports history.ts → the db barrel, and this module is
 // imported by every "use client" console component, so the whole server graph followed it into
 // the browser bundle. @/lib/cash-flows is the dependency-free extraction of the same function.
-import { inferExternalCashFlows } from "@/lib/cash-flows";
+import { inferExternalCashFlows, isInferredFlowUnverified } from "@/lib/cash-flows";
+import { dayKey, startOfCentralDay } from "./format";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
 
@@ -92,8 +93,17 @@ export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, 
 
 // ── Run-state / authority words ──────────────────────────────────────────────
 
+/** The one shared run-state vocabulary. Every surface that names the run state
+ *  (console chrome StateChip, Guardrails Autonomy panel, PWA header) MUST render
+ *  one of these words via deriveStateInfo — never a private systemState→label
+ *  map, which is how the PWA once said "Running" while the console said
+ *  "Paused · market closed" for the same account. */
+export type RunStateWord = "Running" | "Paused · market closed" | "Exit-only" | "Winding down" | "Stopped";
+
 export interface StateInfo {
   state: SystemState;
+  /** State-only vocabulary word — no authority suffix (see RunStateWord). */
+  word: RunStateWord;
   /** Compound plain-words label, e.g. "Running · Ask-first". */
   label: string;
   /** One-line honest explanation. */
@@ -127,6 +137,7 @@ export function deriveStateInfo(
       if (marketOpen === false) {
         return {
           state: "active",
+          word: "Paused · market closed",
           label: "Paused · market closed",
           detail:
             `Scheduled runs pause while the market is closed and resume automatically once it reopens ` +
@@ -140,6 +151,7 @@ export function deriveStateInfo(
       }
       return {
         state: "active",
+        word: "Running",
         label: `Running · ${authority}`,
         detail:
           policy.strategyAuthority === "decide"
@@ -152,6 +164,7 @@ export function deriveStateInfo(
     case "close_only":
       return {
         state: "close_only",
+        word: "Exit-only",
         label: "Exit-only",
         detail: "No new buys. Protective exits keep working. This is the state circuit breakers set.",
         tone: "warn"
@@ -159,6 +172,7 @@ export function deriveStateInfo(
     case "liquidating":
       return {
         state: "liquidating",
+        word: "Winding down",
         label: "Winding down",
         detail: "Only sell orders, until the account is in cash. This sells things.",
         tone: "warn"
@@ -166,6 +180,7 @@ export function deriveStateInfo(
     default:
       return {
         state: "halted",
+        word: "Stopped",
         label: "Stopped",
         detail:
           "Nothing trades — no buys, no sells, and this app's automatic stops are paused too. Broker-held brackets keep resting at the broker. Nothing is sold.",
@@ -332,6 +347,30 @@ function deriveBaseProtection(
   };
 }
 
+/** Count of open short positions the app has deliberately stopped managing because
+ *  shortSellingEnabled is off: every enforcement layer (synthetic stop monitor,
+ *  proactive risk exits, broker-protective-stops) skips shorts entirely while the
+ *  toggle is off — see the muted/unsafe branch in deriveBaseProtection above. This
+ *  only surfaces that existing state as a number for banners; it never gates or
+ *  acts. 0 whenever short selling is on (all shorts managed) or no shorts are held. */
+export function deriveUnmanagedShortCount(
+  positions: EquityPosition[] | undefined,
+  policy: Pick<TradingPolicy, "shortSellingEnabled">
+): number {
+  if (policy.shortSellingEnabled) return 0;
+  return (positions ?? []).filter((p) => p.quantity < 0).length;
+}
+
+/** Advisory banner copy for unmanaged shorts — shared verbatim by the Home
+ *  positions card and the Guardrails Short selling panel so the two surfaces
+ *  can never drift. Null when there is nothing to say. */
+export function unmanagedShortNotice(count: number): string | null {
+  if (count <= 0) return null;
+  return count === 1
+    ? "1 short position is unmanaged while short selling is off — enable shorting to resume protection, or close it."
+    : `${count} short positions are unmanaged while short selling is off — enable shorting to resume protection, or close them.`;
+}
+
 // ── Day P&L (honest: derived from persisted snapshots, labeled as such) ──────
 
 export interface DayPnl {
@@ -360,7 +399,7 @@ export function deriveDayPnl(
   if (!performance || typeof currentEquity !== "number" || !Number.isFinite(currentEquity)) return null;
   const curve = mode === "broker/live" ? performance.liveEquityCurve : performance.paperEquityCurve;
   if (!curve || curve.length === 0) return null;
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const todayStart = startOfCentralDay(now).getTime();
   let baseline: EquityCurvePoint | undefined;
   for (const point of curve) {
     const t = new Date(point.timestamp).getTime();
@@ -380,14 +419,17 @@ export function deriveDayPnl(
     const flowMap = inferExternalCashFlows([baseline, fakeCurrent], []);
     // Sum any flows found in the map (there should only be at most 1, keyed by fakeCurrent date)
     for (const v of flowMap.values()) flow += v;
+    // #2557 sanity bound: an inferred transfer must reconcile against the equity move it
+    // supposedly caused. A phantom flow (e.g. a mid-day snapshot glitch read as a $36.5k
+    // withdrawal) must not fabricate day P&L — fall back to the raw equity delta.
+    if (flow !== 0 && isInferredFlowUnverified(flow, baseline.equity, currentEquity)) flow = 0;
   }
 
   const pnl = currentEquity - baseline.equity - flow;
   const pctBase = baseline.equity + flow;
   const pct = pctBase > 0 ? (pnl / pctBase) * 100 : 0;
 
-  const baselineDay = new Date(baseline.timestamp);
-  const baselineDayStart = new Date(baselineDay.getFullYear(), baselineDay.getMonth(), baselineDay.getDate()).getTime();
+  const baselineDayStart = startOfCentralDay(new Date(baseline.timestamp)).getTime();
   const priorSessionStart = previousTradingDayStart(now).getTime();
   const isStaleBaseline = Number.isFinite(baselineDayStart) && baselineDayStart < priorSessionStart;
   return {
@@ -664,7 +706,7 @@ export function deriveReadinessChecklist(snapshot: DashboardSnapshot): Readiness
       title: "Run once → review Proposals",
       detail: hasRunOnce
         ? "At least one strategy run or proposal is on the record."
-        : "Use Run once in the top bar to generate the first decision trace, then open Proposals to approve or reject. (One control — not duplicated in this checklist.)",
+        : "Use Run once in the top bar to generate the first decision trace, then open Proposals to approve or reject.",
       complete: hasRunOnce,
       // No deep-link to empty Proposals: the action is chrome Run once, not this row.
       href: undefined,
@@ -757,6 +799,23 @@ export function positionMarkPrice(
   if (!Number.isFinite(position.marketValue)) return null;
   const price = position.marketValue / position.quantity;
   return Number.isFinite(price) && price > 0 ? price : null;
+}
+
+/** Gross exposure = Σ|marketValue| across the account's open positions. */
+export function grossExposure(positions: Array<Pick<EquityPosition, "marketValue">>): number {
+  return positions.reduce(
+    (sum, position) => sum + (Number.isFinite(position.marketValue) ? Math.abs(position.marketValue) : 0),
+    0
+  );
+}
+
+/** A position's weight — UNSIGNED share of gross exposure, |value| / Σ|values|
+ *  (owner decision 2026-08-08): direction is already carried by the SHORT tag,
+ *  so a short must never render a negative — or "-0.0%" — weight. Undefined
+ *  when the value or the gross total can't answer. */
+export function grossExposureWeightPct(marketValue: number, gross: number): number | undefined {
+  if (!Number.isFinite(marketValue) || !Number.isFinite(gross) || gross <= 0) return undefined;
+  return (Math.abs(marketValue) / gross) * 100;
 }
 
 export interface EstimatedClosingPnl {
@@ -852,14 +911,7 @@ export function deriveRiskUtilization(snapshot: DashboardSnapshot): RiskUtilizat
 
 export function selectEquityWindow(points: EquityCurvePoint[], now = new Date()): { points: EquityCurvePoint[]; label: string } {
   if (points.length < 2) return { points, label: "Equity" };
-  const sameDay = (iso: string) => {
-    const date = new Date(iso);
-    return (
-      date.getFullYear() === now.getFullYear() &&
-      date.getMonth() === now.getMonth() &&
-      date.getDate() === now.getDate()
-    );
-  };
+  const sameDay = (iso: string) => dayKey(iso) === dayKey(now.toISOString());
   const intraday = points.filter((point) => sameDay(point.timestamp));
   if (intraday.length >= 2) return { points: intraday, label: "Intraday mark-to-market" };
   return { points: points.slice(-24), label: "Recent equity" };

@@ -139,7 +139,7 @@ export function AllocationCard({ snapshot }: { snapshot: DashboardSnapshot }) {
             >
               <div className="flex items-baseline justify-between gap-3 text-[length:var(--con-fs-sm)]">
                 <span className={cx("truncate font-semibold", s.kind === "cash" && "text-[color:var(--con-muted)]")}>
-                  {s.symbol ? <SymbolButton symbol={s.symbol} showLogo={false} className="text-inherit" /> : s.label}
+                  {s.symbol ? <SymbolButton symbol={s.symbol} className="text-inherit" /> : s.label}
                   {s.kind === "sector" && typeof s.count === "number" && (
                     <span className="ml-1.5 font-normal text-[color:var(--con-faint)]">×{s.count}</span>
                   )}

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { getTaxSummary, getWashSaleLockedSymbols, getWashSaleLockedSymbolsForUser } from "../src/lib/tax";
+import { getTaxSummary, getWashSaleLockedSymbols, getWashSaleLockedSymbolsForUser, reconcileOpenLotsAgainstPositions } from "../src/lib/tax";
 import type { FillEvent } from "../src/lib/types";
 
 beforeAll(() => {
@@ -249,5 +249,96 @@ describe("tax — washSaleMinLossUsd materiality floor", () => {
     );
     expect(locked.has("SSSS")).toBe(true); // strict account: -$5 locks
     expect(locked.has("LLLL")).toBe(false); // lax account: -$5 < $100 floor
+  });
+});
+
+describe("tax — lot ledger vs live positions (#2548)", () => {
+  it("reconcileOpenLotsAgainstPositions flags sign flips, orphans, and magnitude gaps", () => {
+    const lots = [
+      { symbol: "T", quantity: 91.119 }, // live case: ledger long, broker book short −1.881
+      { symbol: "AXP", quantity: 5 }, // orphan lot: no position at all
+      { symbol: "AAPL", quantity: 10 }, // healthy: matches
+      { symbol: "MSFT", quantity: 50 }, // magnitude gap: broker holds 100
+      { symbol: "NVDA", quantity: 3.0000001 } // fractional dust vs 3 — NOT a mismatch
+    ];
+    const mismatched = reconcileOpenLotsAgainstPositions(lots, {
+      T: -1.881,
+      AAPL: 10,
+      MSFT: 100,
+      NVDA: 3
+    });
+    expect(mismatched.has("T")).toBe(true);
+    expect(mismatched.has("AXP")).toBe(true);
+    expect(mismatched.has("MSFT")).toBe(true);
+    expect(mismatched.has("AAPL")).toBe(false);
+    expect(mismatched.has("NVDA")).toBe(false);
+  });
+
+  it("flags the row, suppresses lot-derived money figures, and skips harvest for a mismatched symbol", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "LEDGER_MM_T";
+    // Ledger: open long lot of 91.119 T (the un-closed FIFO state from the live bug).
+    insertFillEvent(fill({ id: "lm1", side: "buy", quantity: 91.119, price: 27, notional: 2460.21, accountNumber: a, symbol: "T", filledAt: daysAgo(13) }));
+    // A healthy loser for the harvest control.
+    insertFillEvent(fill({ id: "lm2", side: "buy", quantity: 2, price: 100, notional: 200, accountNumber: a, symbol: "NVDA", filledAt: daysAgo(20) }));
+
+    // Broker book: T is SHORT −1.881 (sign flip vs the ledger), NVDA matches.
+    const tax = getTaxSummary(a, "paper", { T: 25, NVDA: 90 }, undefined, NOW, "local", undefined, undefined, { T: -1.881, NVDA: 2 });
+    expect(tax.ledgerMismatchedSymbols).toEqual(["T"]);
+    const tLot = tax.openLots.find((l) => l.symbol === "T");
+    expect(tLot?.ledgerMismatch).toBe(true);
+    // T is marked down $2/share — but the lot is wrong, so NO money figures from it.
+    expect(tLot?.unrealizedGain).toBeUndefined();
+    expect(tLot?.earlyExitTaxPremium).toBeUndefined();
+    expect(tax.harvestCandidates.some((h) => h.symbol === "T")).toBe(false);
+    // Healthy symbol untouched: flagged false, harvest still works.
+    const nvdaLot = tax.openLots.find((l) => l.symbol === "NVDA");
+    expect(nvdaLot?.ledgerMismatch).toBeUndefined();
+    expect(nvdaLot?.unrealizedGain).toBeCloseTo(-20);
+    expect(tax.harvestCandidates.find((h) => h.symbol === "NVDA")?.unrealizedLoss).toBeCloseTo(-20);
+  });
+
+  it("flags an orphan lot (ledger open, broker book flat — the AXP case)", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "LEDGER_MM_AXP";
+    insertFillEvent(fill({ id: "lo1", side: "buy", quantity: 5, price: 240, notional: 1200, accountNumber: a, symbol: "AXP", filledAt: daysAgo(37) }));
+
+    const tax = getTaxSummary(a, "paper", { AXP: 250 }, undefined, NOW, "local", undefined, undefined, {});
+    expect(tax.ledgerMismatchedSymbols).toEqual(["AXP"]);
+    expect(tax.openLots.find((l) => l.symbol === "AXP")?.ledgerMismatch).toBe(true);
+    expect(tax.openLots.find((l) => l.symbol === "AXP")?.unrealizedGain).toBeUndefined();
+  });
+
+  it("excludes a mismatched symbol's wash-sale flag from the disallowed aggregate", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "LEDGER_MM_WASH";
+    // Wash sale on ZZWS: buy → loss sale → rebuy within 30d. The rebuy leaves an open lot.
+    insertFillEvent(fill({ id: "wm1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: a, symbol: "ZZWS", filledAt: daysAgo(40) }));
+    insertFillEvent(fill({ id: "wm2", side: "sell", quantity: 1, price: 90, notional: 90, accountNumber: a, symbol: "ZZWS", filledAt: daysAgo(10) }));
+    insertFillEvent(fill({ id: "wm3", side: "buy", quantity: 1, price: 92, notional: 92, accountNumber: a, symbol: "ZZWS", filledAt: daysAgo(5) }));
+
+    // Without positions: the wash sale is flagged as before.
+    const trusted = getTaxSummary(a, "paper", {}, undefined, NOW);
+    expect(trusted.washSales.length).toBe(1);
+    expect(trusted.disallowedWashSaleLoss).toBeCloseTo(10);
+    expect(trusted.ledgerMismatchedSymbols).toBeUndefined();
+
+    // Broker book contradicts the ledger (no ZZWS position) → wash-sale math for it is dropped,
+    // not silently computed from wrong lots.
+    const reconciled = getTaxSummary(a, "paper", {}, undefined, NOW, "local", undefined, undefined, {});
+    expect(reconciled.ledgerMismatchedSymbols).toEqual(["ZZWS"]);
+    expect(reconciled.washSales.length).toBe(0);
+    expect(reconciled.disallowedWashSaleLoss).toBeCloseTo(0);
+  });
+
+  it("no live position map = no reconciliation (previous behavior unchanged)", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "LEDGER_MM_OFF";
+    insertFillEvent(fill({ id: "off1", side: "buy", quantity: 5, price: 10, notional: 50, accountNumber: a, symbol: "GHOST", filledAt: daysAgo(10) }));
+    const tax = getTaxSummary(a, "paper", { GHOST: 12 }, undefined, NOW);
+    expect(tax.ledgerMismatchedSymbols).toBeUndefined();
+    const lot = tax.openLots.find((l) => l.symbol === "GHOST");
+    expect(lot?.ledgerMismatch).toBeUndefined();
+    expect(lot?.unrealizedGain).toBeCloseTo(10);
   });
 });

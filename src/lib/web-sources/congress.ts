@@ -718,7 +718,7 @@ export function coerceCongressTrade(raw: unknown): CongressTrade | null {
   // other sources.
   const sideRaw = (pickStr(o, ["side", "type", "transactionType", "txType", "action"]) ?? "").toLowerCase();
   let side: "buy" | "sell" | undefined;
-  if (sideRaw === "p" || /(buy|purchase|acqui)/.test(sideRaw)) side = "buy";
+  if (sideRaw === "p" || sideRaw === "b" || /(buy|purchase|acqui)/.test(sideRaw)) side = "buy";
   else if (sideRaw === "s" || sideRaw.startsWith("s_") || /(sell|sale|dispos)/.test(sideRaw)) side = "sell";
   if (!side) return null;
 

@@ -1,63 +1,91 @@
 import AuthenticationServices
 import SwiftUI
 
+/// Native login — visual parity with `app/login/page.tsx`:
+/// candlestick wordmark, accent-dot value bullets, Google (accent) / GitHub (outline) / Apple.
 struct LoginView: View {
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var store: MobileStore
 
+    /// Keep in sync with `LOGIN_VALUE_BULLETS` in `app/login/page.tsx`.
+    private static let valueBullets = [
+        "Review and approve proposals",
+        "Track positions, orders, and performance",
+        "Control the backend agent without moving credentials onto the device"
+    ]
+
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [AppPalette.accent.opacity(0.22), AppPalette.background, AppPalette.background],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            // Web login: plain `bg-bg` (#eef1f5 light / #0a0a0a dark) — no accent mesh.
+            loginBackground
+                .ignoresSafeArea()
 
             ScrollView {
-                VStack(spacing: 28) {
+                VStack(spacing: 24) {
                     brand
                     valueCard
                     signIn
                     privacyNote
                 }
-                .frame(maxWidth: 560)
+                .frame(maxWidth: 400)
                 .padding(.horizontal, 24)
-                .padding(.vertical, 54)
+                .padding(.vertical, 48)
                 .frame(maxWidth: .infinity)
             }
         }
     }
 
-    private var brand: some View {
-        VStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(AppPalette.accent.gradient)
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.system(size: 38, weight: .semibold))
-                    .foregroundStyle(.white)
+    private var loginBackground: Color {
+        // Match globals.css --bg light/dark
+        Color(uiColor: UIColor { traits in
+            if traits.userInterfaceStyle == .dark {
+                return UIColor(red: 0x0a / 255, green: 0x0a / 255, blue: 0x0a / 255, alpha: 1)
             }
-            .frame(width: 82, height: 82)
-            .shadow(color: AppPalette.accent.opacity(0.28), radius: 20, y: 10)
+            return UIColor(red: 0xee / 255, green: 0xf1 / 255, blue: 0xf5 / 255, alpha: 1)
+        })
+    }
 
-            VStack(spacing: 5) {
-                Text("Socratic Trade")
-                    .font(.largeTitle.weight(.bold))
-                Text("Control remote for your trading agent")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-        }
+    private var brand: some View {
+        // Web: HeaderLogo height={20}; slightly taller on phone for legibility.
+        CandleWordmarkView(height: 24)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 4)
     }
 
     private var valueCard: some View {
-        AppCard {
-            VStack(alignment: .leading, spacing: 14) {
-                LoginFeature(systemImage: "checklist", text: "Review and approve proposals on the go")
-                LoginFeature(systemImage: "chart.xyaxis.line", text: "Track positions, orders, and performance")
-                LoginFeature(systemImage: "bolt.shield.fill", text: "Full desk stays on desktop — phone is a control remote")
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Self.valueBullets, id: \.self) { text in
+                HStack(alignment: .top, spacing: 10) {
+                    Circle()
+                        .fill(AppPalette.accent)
+                        .frame(width: 6, height: 6)
+                        .padding(.top, 6)
+                    Text(text)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
             }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(uiColor: UIColor { traits in
+                if traits.userInterfaceStyle == .dark {
+                    // --surface dark ≈ rgba(22,22,22,0.78)
+                    return UIColor(red: 22 / 255, green: 22 / 255, blue: 22 / 255, alpha: 0.78)
+                }
+                // --surface light ≈ white glass
+                return UIColor(white: 1, alpha: 0.65)
+            }),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06), lineWidth: 1)
         }
     }
 
@@ -73,47 +101,93 @@ struct LoginView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(13)
-                .background(AppPalette.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+                .background(AppPalette.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            // Order matches web login: Google → GitHub → Apple
+            webAuthButton(
+                provider: "google",
+                title: "Sign in with Google",
+                style: .accent
+            ) {
+                GoogleMark()
+            }
+
+            webAuthButton(
+                provider: "github",
+                title: "Sign in with GitHub",
+                style: .outline
+            ) {
+                GitHubMark()
             }
 
             SignInWithAppleButton(
-                .continue,
+                .signIn,
                 onRequest: configure,
                 onCompletion: complete
             )
             .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: 52)
+            .frame(height: 48)
             // Apple's ASAuthorizationAppleIDButton hard-caps width at 375pt. Stretching the
             // UIKit host wider (e.g. 392pt after horizontal padding) trips unsatisfiable
             // NSAutoresizingMaskLayoutConstraints in the console. Do not follow this with
             // another maxWidth:.infinity — that re-expands the UIKit host and revives the conflict.
             .frame(maxWidth: 375)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .disabled(store.isSigningIn)
             .overlay {
                 if store.isSigningIn {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Color.black.opacity(0.35))
                     ProgressView()
                         .tint(.white)
                 }
             }
-
-            webAuthButton(provider: "google", title: "Sign in with Google", systemImage: "g.circle.fill", tint: .blue)
-            webAuthButton(provider: "github", title: "Sign in with GitHub", systemImage: "chevron.left.forwardslash.chevron.right", tint: .gray)
         }
     }
 
-    private func webAuthButton(provider: String, title: String, systemImage: String, tint: Color) -> some View {
+    private enum WebAuthStyle {
+        case accent
+        case outline
+    }
+
+    private func webAuthButton<Icon: View>(
+        provider: String,
+        title: String,
+        style: WebAuthStyle,
+        @ViewBuilder icon: () -> Icon
+    ) -> some View {
         Button {
             beginWebAuth(provider: provider)
         } label: {
-            Label(title, systemImage: systemImage)
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 52)
-                .foregroundStyle(.white)
-                .background(tint, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            HStack(spacing: 8) {
+                icon()
+                    .frame(width: 18, height: 18)
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 48)
+            .foregroundStyle(style == .accent ? Color.white : Color.primary)
+            .background {
+                switch style {
+                case .accent:
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(AppPalette.accent)
+                case .outline:
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(uiColor: UIColor { traits in
+                            if traits.userInterfaceStyle == .dark {
+                                return UIColor(red: 22 / 255, green: 22 / 255, blue: 22 / 255, alpha: 0.78)
+                            }
+                            return UIColor(white: 1, alpha: 0.65)
+                        }))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.1), lineWidth: 1)
+                        }
+                }
+            }
         }
         .disabled(store.isSigningIn)
         .accessibilityHint("Opens the secure Socratic Trade sign-in page")
@@ -121,12 +195,13 @@ struct LoginView: View {
 
     private var privacyNote: some View {
         Label(
-            "The app stores only your Socratic Trade session. Broker and provider secrets stay on the backend.",
+            "The app stores only your Socratic Trade session.  Broker and provider secrets stay on the backend.",
             systemImage: "lock.fill"
         )
         .font(.caption)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
+        .padding(.top, 4)
     }
 
     private func configure(_ request: ASAuthorizationAppleIDRequest) {
@@ -153,7 +228,7 @@ struct LoginView: View {
             let tokenData = credential.identityToken,
             let identityToken = String(data: tokenData, encoding: .utf8)
         else {
-            store.error = "Apple did not return an identity token. Try again."
+            store.error = "Apple did not return an identity token.  Try again."
             return
         }
 
@@ -171,7 +246,7 @@ struct LoginView: View {
     private func beginWebAuth(provider: String) {
         store.dismissError()
         guard let verifier = WebAuthCodeVerifier.make() else {
-            store.error = "Could not securely start web sign-in. Try again."
+            store.error = "Could not securely start web sign-in.  Try again."
             return
         }
         guard var callbackComponents = URLComponents(string: "https://socratictrade.com/api/mobile/auth-redirect") else {
@@ -221,19 +296,54 @@ struct LoginView: View {
     }
 }
 
-private struct LoginFeature: View {
-    let systemImage: String
-    let text: String
+// MARK: - Provider marks (match web button icons)
 
+private struct GoogleMark: View {
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .foregroundStyle(AppPalette.accent)
-                .frame(width: 28)
-            Text(text)
-                .font(.subheadline)
-            Spacer(minLength: 0)
+        // Multicolor "G" ring — Google brand colors from app/login/page.tsx GoogleIcon.
+        Canvas { context, size in
+            let blue = Color(red: 0x42 / 255, green: 0x85 / 255, blue: 0xF4 / 255)
+            let green = Color(red: 0x34 / 255, green: 0xA8 / 255, blue: 0x53 / 255)
+            let yellow = Color(red: 0xFB / 255, green: 0xBC / 255, blue: 0x05 / 255)
+            let red = Color(red: 0xEA / 255, green: 0x43 / 255, blue: 0x35 / 255)
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            let radius = size.width * 0.42
+            let lw = size.width * 0.18
+
+            func arc(_ start: Double, _ end: Double, _ color: Color) {
+                var p = Path()
+                p.addArc(
+                    center: center,
+                    radius: radius,
+                    startAngle: .degrees(start),
+                    endAngle: .degrees(end),
+                    clockwise: false
+                )
+                context.stroke(p, with: .color(color), style: StrokeStyle(lineWidth: lw, lineCap: .butt))
+            }
+            arc(-35, 20, blue)
+            arc(20, 120, green)
+            arc(120, 220, yellow)
+            arc(220, 325, red)
+            context.fill(
+                Path(CGRect(
+                    x: size.width * 0.48,
+                    y: size.height * 0.42,
+                    width: size.width * 0.42,
+                    height: size.width * 0.16
+                )),
+                with: .color(blue)
+            )
         }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct GitHubMark: View {
+    var body: some View {
+        Image(systemName: "chevron.left.forwardslash.chevron.right")
+            .font(.system(size: 12, weight: .semibold))
+            .accessibilityHidden(true)
     }
 }
 
@@ -252,10 +362,16 @@ private final class WebAuthSessionManager {
 
 private final class WebAuthContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: { $0.isKeyWindow }) ?? ASPresentationAnchor()
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        if let keyWindow = scenes.flatMap(\.windows).first(where: \.isKeyWindow) {
+            return keyWindow
+        }
+        if let scene = scenes.first {
+            // UIWindow.init() is deprecated in iOS 26 — always anchor to a window scene.
+            return scene.windows.first ?? UIWindow(windowScene: scene)
+        }
+        // Running app should always have a scene; avoid deprecated UIWindow().
+        preconditionFailure("No UIWindowScene available for web auth presentation")
     }
 }
 

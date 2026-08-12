@@ -128,12 +128,24 @@ final class MobileStore: ObservableObject {
     private var loadGeneration = 0
     private var commandAttemptTracker = CommandAttemptTracker()
 
+    private static let cacheKey = "cached_mobile_snapshot_data"
+
+    private static func loadCachedSnapshot() -> MobileSnapshot? {
+        guard let data = UserDefaults.standard.data(forKey: cacheKey) else { return nil }
+        return try? JSONDecoder().decode(MobileSnapshot.self, from: data)
+    }
+
+    private static func saveCachedSnapshot(_ data: Data) {
+        UserDefaults.standard.set(data, forKey: cacheKey)
+    }
+
     init(client: MobileAPIClient, previewSnapshot: MobileSnapshot? = nil) {
         self.client = client
-        snapshot = previewSnapshot
-        isAuthenticated = previewSnapshot != nil
+        let cached = previewSnapshot ?? Self.loadCachedSnapshot()
+        snapshot = cached
+        isAuthenticated = cached != nil
         hasInitialized = previewSnapshot != nil
-        lastUpdatedAt = previewSnapshot == nil ? nil : Date()
+        lastUpdatedAt = cached == nil ? nil : Date()
     }
 
     var isInitialLoading: Bool {
@@ -220,9 +232,10 @@ final class MobileStore: ObservableObject {
             }
         }
         do {
-            let loadedSnapshot = try await client.snapshot()
+            let (loadedSnapshot, rawData) = try await client.snapshotData()
             guard generation == loadGeneration else { return }
             snapshot = loadedSnapshot
+            Self.saveCachedSnapshot(rawData)
             lastUpdatedAt = Date()
             snapshotLoadFailed = false
             isAuthenticated = true
@@ -242,12 +255,18 @@ final class MobileStore: ObservableObject {
         eventTask = Task { [weak self, client] in
             while !Task.isCancelled {
                 do {
-                    try await client.events {
+                    // onConnect fires on stream establishment and every received line (incl.
+                    // ": ping" heartbeats), so the indicator is truthful on a healthy idle stream.
+                    try await client.events(onConnect: {
+                        Task { @MainActor [weak self] in
+                            self?.isStreamConnected = true
+                        }
+                    }, onEvent: {
                         Task { @MainActor [weak self] in
                             self?.isStreamConnected = true
                             self?.scheduleReload()
                         }
-                    }
+                    })
                     if !Task.isCancelled {
                         self?.isStreamConnected = false
                     }
@@ -422,11 +441,11 @@ final class MobileStore: ObservableObject {
             if isAuthenticated {
                 startEvents()
             } else if error == nil {
-                error = "Authentication failed after web sign-in. Try again."
+                error = "Authentication failed after web sign-in.  Try again."
             }
         } catch {
             applyAuthAwareError(error)
-            self.error = "Web sign-in could not be completed. Try again."
+            self.error = "Web sign-in could not be completed.  Try again."
         }
     }
 
@@ -513,7 +532,7 @@ final class MobileStore: ObservableObject {
            !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
             return "Connect an account and configure a symbol universe before running the agent."
         }
-        return "Refresh the latest server state before submitting this action. Stop remains available."
+        return "Refresh the latest server state before submitting this action.  Stop remains available."
     }
 
     private static let protectiveCommands: Set<String> = [

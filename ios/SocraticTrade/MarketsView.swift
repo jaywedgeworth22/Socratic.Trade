@@ -7,22 +7,24 @@ struct MarketsView: View {
 
     var body: some View {
         SnapshotScaffold { snapshot in
-            MarketSessionCard(snapshot: snapshot)
             PositionsSection(positions: snapshot.positions)
             OrdersSection(orders: snapshot.orders)
             WatchlistSection(ticker: $ticker, items: snapshot.watchlist)
             AlertsSection(alerts: snapshot.alerts)
         }
-        .navigationTitle("Markets")
+        .navigationTitle("Assets")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
+                // Always open the composer; Create is gated inside. Disabling the toolbar
+                // button when the snapshot is briefly stale made it look permanently broken.
                 Button {
                     presentedSheet = .newAlert
                 } label: {
-                    Image(systemName: "bell.badge.plus")
+                    // bell.badge.plus is not a real SF Symbol (console: "No symbol named…").
+                    Image(systemName: "bell.badge")
                 }
-                .accessibilityLabel("Create price alert")
-                .disabled(!store.canSubmit("alert.create"))
+                .accessibilityLabel("Create Price Alert")
             }
         }
         .sheet(item: $presentedSheet) { sheet in
@@ -40,44 +42,6 @@ private enum MarketsSheet: String, Identifiable {
     var id: String { rawValue }
 }
 
-private struct MarketSessionCard: View {
-    let snapshot: MobileSnapshot
-
-    private var sessionColor: Color {
-        switch snapshot.marketSession {
-        case "regular": return AppPalette.positive
-        case "pre", "post": return AppPalette.warning
-        default: return .secondary
-        }
-    }
-
-    var body: some View {
-        AppCard {
-            HStack {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("US equities")
-                        .font(.headline)
-                    Text(sessionDescription)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                StatusPill(snapshot.marketSession.capitalized, color: sessionColor, systemImage: "clock")
-            }
-        }
-    }
-
-    private var sessionDescription: String {
-        switch snapshot.marketSession {
-        case "regular": return "Regular session is open"
-        case "pre": return "Pre-market session"
-        case "post": return "Post-market session"
-        case "closed": return "Market is closed"
-        default: return "Session status unavailable"
-        }
-    }
-}
-
 private struct PositionsSection: View {
     let positions: [Position]
 
@@ -86,7 +50,7 @@ private struct PositionsSection: View {
             SectionHeading("Positions", subtitle: "Current broker holdings")
             if positions.isEmpty {
                 EmptyStateCard(
-                    title: "No open positions",
+                    title: "No Open Positions",
                     message: "Holdings from the selected broker account will appear here.",
                     systemImage: "square.stack.3d.up"
                 )
@@ -107,6 +71,7 @@ private struct PositionRow: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
+                        TickerLogo(symbol: position.symbol, size: 26)
                         Text(position.symbol)
                             .font(.headline)
                         if position.quantity < 0 {
@@ -140,10 +105,10 @@ private struct OrdersSection: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            SectionHeading("Orders", subtitle: "Open and recent broker orders")
+            SectionHeading("Orders", subtitle: "Open and Recent Broker Orders")
             if orders.isEmpty {
                 EmptyStateCard(
-                    title: "No orders reported",
+                    title: "No Orders Reported",
                     message: "Broker orders for the selected account will appear here.",
                     systemImage: "doc.text.magnifyingglass"
                 )
@@ -171,6 +136,7 @@ private struct OrderRow: View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
+                    TickerLogo(symbol: order.symbol, size: 24)
                     Text(order.symbol)
                         .font(.headline)
                     StatusPill(order.side.uppercased(), color: sideColor)
@@ -194,7 +160,7 @@ private struct OrderRow: View {
     }
 
     private var orderDescription: String {
-        var values = [order.type.capitalized]
+        var values = [AppFormat.orderTypeLabel(order.type)]
         if let quantity = order.quantity { values.append("\(AppFormat.number(quantity)) shares") }
         if let filled = order.filledQuantity, filled > 0 { values.append("\(AppFormat.number(filled)) filled") }
         if let limit = order.limitPrice { values.append("@ \(AppFormat.money(limit))") }
@@ -281,6 +247,7 @@ private struct FlowSymbols: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
+                        TickerLogo(symbol: item.symbol, size: 18)
                         Text(item.symbol)
                             .font(.subheadline.weight(.semibold))
                         if store.isBusy(operationID) {
@@ -310,11 +277,11 @@ private struct AlertsSection: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            SectionHeading("Price alerts", subtitle: "Create a new alert from the bell button")
+            SectionHeading("Price Alerts", subtitle: "Create a New Alert from the Bell Button")
             if alerts.isEmpty {
                 EmptyStateCard(
-                    title: "No price alerts",
-                    message: "Set above or below thresholds to keep watch without opening the app.",
+                    title: "No Price Alerts",
+                    message: "Set above or below thresholds to keep watch without opening the app",
                     systemImage: "bell"
                 )
             } else {
@@ -337,11 +304,18 @@ private struct AlertRow: View {
     var body: some View {
         AppCard {
             HStack(spacing: 12) {
-                Image(systemName: alert.status == "armed" ? "bell.fill" : "bell.badge.fill")
-                    .foregroundStyle(alert.status == "armed" ? AppPalette.accent : AppPalette.positive)
+                TickerLogo(symbol: alert.symbol, size: 26)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("\(alert.symbol) \(alert.op) \(AppFormat.money(alert.price))")
-                        .font(.headline)
+                    HStack(spacing: 6) {
+                        Text(alert.symbol)
+                            .font(.headline)
+                        Image(systemName: alert.status == "armed" ? "bell.fill" : "bell.badge.fill")
+                            .font(.caption)
+                            .foregroundStyle(alert.status == "armed" ? AppPalette.accent : AppPalette.positive)
+                    }
+                    Text("\(alert.op) \(AppFormat.money(alert.price))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     Text(alert.note?.isEmpty == false ? alert.note! : alert.status.capitalized)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -368,7 +342,7 @@ private struct AlertRow: View {
             Button("Delete Alert", role: .destructive, action: deleteAlert)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes a monitoring safeguard. You can create it again later.")
+            Text("This removes a monitoring safeguard.  You can create it again later.")
         }
     }
 

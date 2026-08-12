@@ -19,10 +19,12 @@ import {
   redTeamSampleGate,
   redTeamSampleTier
 } from "../lib/red-team-efficacy";
+import { describeRedTeamFailureKind } from "@/lib/red-team-routing";
 import { EquityChart } from "../components/equity-chart";
 import { deriveReality } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
 import { thesisTagLabel } from "../lib/labels";
+import { modelDisplayName } from "../lib/models";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Card, Chip, Dash, Empty, Select, SignedText, Stat } from "../ui/primitives";
@@ -261,6 +263,10 @@ export default function ResultsPage() {
                     (perf.benchmark.netExternalFlows ?? 0) < 0 ? "withdrawals" : "deposits"
                   } (deposits +, withdrawals −). Each stretch between transfers is its own sub-period for you and for SPY; overall = product of (1 + r) − 1. Flows are inferred from snapshots and fills, not a broker transfer ledger.`
                 : "No material deposits or withdrawals detected — single continuous period (account equity growth vs SPY over the same dates)."}
+              {(perf.benchmark.unverifiedFlows?.length ?? 0) > 0 &&
+                ` ${perf.benchmark.unverifiedFlows!.length} inferred transfer${
+                  perf.benchmark.unverifiedFlows!.length === 1 ? "" : "s"
+                } failed the sanity check against its own sub-period's equity move — shown below as "inferred — unverified" and excluded from the time-weighted math.`}
             </p>
             {perf.benchmark.subPeriods && perf.benchmark.subPeriods.length > 1 && (
               <div className="mt-3 overflow-x-auto border-t border-[color:var(--con-line)] pt-2">
@@ -285,9 +291,21 @@ export default function ResultsPage() {
                           {fmtMoney(seg.startEquity)} → {fmtMoney(seg.endEquity)}
                         </td>
                         <td className="py-1 pr-2 whitespace-nowrap">
-                          {Math.abs(seg.externalFlow) < 0.01
-                            ? "—"
-                            : `${seg.externalFlow > 0 ? "deposit" : "withdrawal"} ${fmtMoney(Math.abs(seg.externalFlow))}`}
+                          {Math.abs(seg.externalFlow) < 0.01 ? (
+                            "—"
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5">
+                              {seg.externalFlow > 0 ? "deposit" : "withdrawal"} {fmtMoney(Math.abs(seg.externalFlow))}
+                              {seg.flowUnverified && (
+                                <Chip
+                                  tone="warn"
+                                  title="This inferred transfer is far larger than this sub-period's own equity move, so it cannot be reconciled — a real transfer moves equity by roughly its size. It is shown for your review but EXCLUDED from the time-weighted return; this row's return is the raw equity growth."
+                                >
+                                  inferred — unverified
+                                </Chip>
+                              )}
+                            </span>
+                          )}
                         </td>
                         <td className="py-1 pr-2">
                           <SignedText value={seg.accountReturnPct}>{fmtPct(seg.accountReturnPct, 2, true)}</SignedText>
@@ -302,6 +320,23 @@ export default function ResultsPage() {
               </div>
             )}
           </>
+        ) : perf?.benchmarkUnavailable ? (
+          <div className="flex flex-col gap-2">
+            <div>
+              <Chip tone="warn">benchmark unavailable</Chip>
+            </div>
+            <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+              {perf.benchmarkUnavailable.reason === "stale-series"
+                ? "The SPY price series is stale — it ends before your account window, so a comparison would print 0.00% for a dead feed, not a flat market."
+                : perf.benchmarkUnavailable.reason === "no-bars"
+                  ? "No SPY price history was returned by any provider."
+                  : "The SPY price fetch failed."}{" "}
+              Your account return is not compared against a dead benchmark; nothing here is estimated.
+            </p>
+            {perf.benchmarkUnavailable.detail && (
+              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{perf.benchmarkUnavailable.detail}</p>
+            )}
+          </div>
         ) : (
           <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">
             Not computable yet — the comparison needs enough overlapping history between your equity snapshots and SPY.
@@ -355,6 +390,29 @@ export default function ResultsPage() {
   );
 }
 
+/** #2552: aggregate critic health — failed adversarial reviews / attempted reviews (30d,
+ *  user-wide). A per-card "AI critic failed" chip cannot show that 4 of 5 reviews in one batch
+ *  failed; this is the ownable aggregate for spotting a flaky reviewer model or config. */
+function CriticFailureStat({ criticFailure }: { criticFailure: RedTeamEfficacySnapshot["criticFailure"] }) {
+  const reviews = criticFailure?.reviews ?? 0;
+  const failures = criticFailure?.failures ?? 0;
+  const top = criticFailure?.topFailure;
+  const topText = top
+    ? `mostly ${top.model ? modelDisplayName(top.model) : "unattributed"} · ${describeRedTeamFailureKind(
+        top.kind as Parameters<typeof describeRedTeamFailureKind>[0]
+      )}`
+    : undefined;
+  return (
+    <Stat
+      label={`Critic failure rate (${criticFailure?.windowDays ?? 30}d)`}
+      value={reviews > 0 ? fmtPct(criticFailure?.failureRatePct ?? 0, 1) : <Dash />}
+      sub={reviews > 0 ? [`${failures}/${reviews} reviews failed`, topText].filter(Boolean).join(" · ") : "no reviews attempted in the window"}
+      tone={failures > 0 ? "neg" : reviews > 0 ? "pos" : "muted"}
+      title="Of the proposals whose adversarial review was attempted (a redTeamVerdict exists), the share where the review FAILED to run (timeout, provider error, rate limit, malformed response). User-wide across accounts — critic failures are a model/config condition. Proposals below every review trigger are not counted."
+    />
+  );
+}
+
 function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot | undefined }) {
   if (!efficacy) {
     return (
@@ -368,6 +426,13 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
     return (
       <Card title="Red Team veto efficacy">
         <Empty>No Red Team veto decisions recorded yet.</Empty>
+        {/* Critic health must not hide behind an empty veto history — a batch of failed reviews
+            with zero vetoes is exactly the "nobody sees it in aggregate" case (#2552). */}
+        {(efficacy.criticFailure?.reviews ?? 0) > 0 && (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <CriticFailureStat criticFailure={efficacy.criticFailure} />
+          </div>
+        )}
       </Card>
     );
   }
@@ -428,6 +493,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
           tone={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? (efficacy.avgReturnPct < 0 ? "pos" : efficacy.avgReturnPct > 0 ? "neg" : "muted") : "muted"}
           title="Average side-adjusted forward return of the trades the blocking veto kept out. Negative means the veto avoided losses; positive means it missed winners."
         />
+        <CriticFailureStat criticFailure={efficacy.criticFailure} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
@@ -520,7 +586,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
                   {efficacy.records.map((record) => (
                     <tr key={`${record.runId}:${record.symbol}`}>
                       <td className="font-semibold">
-                        <SymbolButton symbol={record.symbol} showLogo={false} />
+                        <SymbolButton symbol={record.symbol} />
                       </td>
                       <td className="capitalize">{record.side ?? EM_DASH}</td>
                       <td title={record.reason ?? undefined}>{record.thesisTag ? thesisTagLabel(record.thesisTag) : EM_DASH}</td>
@@ -683,7 +749,7 @@ function TaxBlock() {
           <div className="flex flex-wrap gap-1.5">
             {tax.lockedSymbols.map((s) => (
               <Chip key={s} tone="warn" title="Rebuying within 30 days of the loss would forfeit the loss deduction. The buy gate enforces this automatically.">
-                <SymbolButton symbol={s} showLogo={false} className="text-inherit" /> locked
+                <SymbolButton symbol={s} className="text-inherit" /> locked
               </Chip>
             ))}
           </div>
@@ -712,7 +778,17 @@ function TaxBlock() {
                   .map((lot, i) => (
                     <tr key={`${lot.symbol}-${i}`}>
                       <td className="font-semibold">
-                        <SymbolButton symbol={lot.symbol} showLogo={false} />
+                        <span className="inline-flex items-center gap-1.5">
+                          <SymbolButton symbol={lot.symbol} />
+                          {lot.ledgerMismatch && (
+                            <Chip
+                              tone="warn"
+                              title="This symbol's recorded lots disagree with the live broker position (wrong side, wrong size, or no position at all). Its lot-derived figures are suppressed and it is excluded from wash-sale and early-exit tax math."
+                            >
+                              ledger mismatch
+                            </Chip>
+                          )}
+                        </span>
                       </td>
                       <td className="num con-num">{fmtQty(lot.quantity)}</td>
                       <td className="num con-num">{lot.daysHeld}</td>
@@ -732,6 +808,14 @@ function TaxBlock() {
               </tbody>
             </table>
           </div>
+          {(tax.ledgerMismatchedSymbols?.length ?? 0) > 0 && (
+            <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              {tax.ledgerMismatchedSymbols!.length} symbol{tax.ledgerMismatchedSymbols!.length === 1 ? "" : "s"} (
+              {tax.ledgerMismatchedSymbols!.join(", ")}) excluded from wash-sale and early-exit tax figures — the
+              recorded lot ledger disagrees with the live broker positions (see the row chip). The rows stay visible;
+              their money figures are suppressed rather than computed from wrong lots.
+            </p>
+          )}
         </div>
       )}
 
@@ -741,7 +825,7 @@ function TaxBlock() {
           <div className="flex flex-wrap gap-1.5">
             {tax.harvestCandidates.slice(0, 8).map((h) => (
               <Chip key={h.symbol} tone="muted">
-                <SymbolButton symbol={h.symbol} showLogo={false} className="text-inherit" /> {fmtSignedMoney(h.unrealizedLoss)}
+                <SymbolButton symbol={h.symbol} className="text-inherit" /> {fmtSignedMoney(h.unrealizedLoss)}
               </Chip>
             ))}
           </div>

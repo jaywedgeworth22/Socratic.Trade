@@ -4,12 +4,17 @@ import {
   commandLabel,
   createCoalescedMobileSnapshotLoader,
   getMobileCommandAvailability,
+  marketSessionLabel,
+  MobileProposalReceipt,
+  mobileRunState,
   MobileSnapshotUnavailable,
   nextDraftAfterCommandAcceptance,
   proposalActionFeedback,
+  proposalThesisSummary,
   requestMobileSnapshot,
   strategyAuthorityLabel,
-  type MobileSnapshot
+  type MobileSnapshot,
+  type PendingProposal
 } from "../app/mobile/mobile-pwa-client";
 
 afterEach(() => vi.useRealTimers());
@@ -33,6 +38,24 @@ function mobileSnapshot(overrides: Partial<MobileSnapshot["readiness"]> = {}): M
   };
 }
 
+describe("mobile PWA market session", () => {
+  it("renders the server's raw session token capitalized like iOS", () => {
+    // The server sends the plain MarketSession union (src/lib/market-hours.ts), not an object —
+    // this literal is also the compile-time regression for the old { label, isOpen } type drift.
+    const snapshot: MobileSnapshot = { ...mobileSnapshot(), marketSession: "regular" };
+    expect(marketSessionLabel(snapshot.marketSession)).toBe("Regular");
+    expect(marketSessionLabel("pre")).toBe("Pre");
+    expect(marketSessionLabel("post")).toBe("Post");
+    expect(marketSessionLabel("closed")).toBe("Closed");
+  });
+
+  it("shows a dash for a missing session instead of fabricating Closed", () => {
+    expect(marketSessionLabel(undefined)).toBe("-");
+    expect(marketSessionLabel(null)).toBe("-");
+    expect(marketSessionLabel("  ")).toBe("-");
+  });
+});
+
 describe("mobile PWA snapshot truth", () => {
   it("renders an unavailable state without synthesizing account or market truth", () => {
     const html = renderToStaticMarkup(
@@ -45,6 +68,26 @@ describe("mobile PWA snapshot truth", () => {
     expect(html).not.toContain("Market Closed");
     expect(html).not.toContain("No pending proposals");
     expect(html).not.toContain("No positions");
+  });
+});
+
+describe("mobile PWA run-state vocabulary (shared with the console — #2554)", () => {
+  it("renders deriveStateInfo's word for every state — never a private systemState→label map", () => {
+    expect(mobileRunState(undefined)).toBeNull();
+    expect(mobileRunState({ systemState: "halted", strategyAuthority: "propose" })?.word).toBe("Stopped");
+    expect(mobileRunState({ systemState: "close_only", strategyAuthority: "propose" })?.word).toBe("Exit-only");
+    expect(mobileRunState({ systemState: "liquidating", strategyAuthority: "propose" })?.word).toBe("Winding down");
+    // Without runDuringExtendedHours the market window is unknowable — plain Running,
+    // same undefined-vs-false rule as the console (see deriveStateInfo).
+    expect(mobileRunState({ systemState: "active", strategyAuthority: "decide" })?.word).toBe("Running");
+  });
+
+  it("says 'Paused · market closed' outside market hours exactly like the console (the PWA header once said 'Running')", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-13T16:00:00Z")); // Saturday noon ET — market closed
+    const info = mobileRunState({ systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false });
+    expect(info?.word).toBe("Paused · market closed");
+    expect(info?.marketOpen).toBe(false);
   });
 });
 
@@ -252,5 +295,72 @@ describe("mobile PWA proposal action feedback", () => {
         trackedCommand: { status: "succeeded", commandType: "proposal.approve" }
       })
     ).toEqual({ phase: "failed", action: "approve", message: "Command failed." });
+  });
+});
+
+describe("mobile PWA collapsed proposal receipts", () => {
+  const thesis = "Momentum breakout above the 50-day with rising volume and improving margins.";
+  const fullRationale =
+    `${thesis} [Stale quote backup: quote timestamp is 120s old (max 60s); no usable entry price to pin a limit — not blocked.]` +
+    `\n\n[Sizing] Realized vol 22.0% suggests trimming to 60% of max.` +
+    `\n\n[Risk] Earnings in 2 trading day(s)` +
+    `\n\nRed Team Review Survived: the bear case was considered and rejected.`;
+
+  function pendingProposal(): PendingProposal {
+    return {
+      id: "prop-receipt-1",
+      executionMode: "broker/paper",
+      estimatedNotional: 250,
+      proposal: {
+        symbol: "AAPL",
+        side: "buy",
+        type: "market",
+        dollarAmount: 250,
+        rationale: fullRationale,
+        proposedByModel: "openai/gpt-5.2"
+      }
+    };
+  }
+
+  it("strips the [Sizing]/[Risk]/[Stale quote] audit blocks from the summary only", () => {
+    const summary = proposalThesisSummary(fullRationale);
+    expect(summary).toBe(thesis);
+    expect(summary).not.toContain("[Sizing]");
+    expect(summary).not.toContain("[Risk]");
+    expect(summary).not.toContain("Stale quote");
+    expect(summary).not.toContain("Red Team");
+    // Prefers the exact persisted green-team rationale when present (console parity).
+    expect(proposalThesisSummary(`exact thesis\n\nchecks text`, "exact thesis")).toBe("exact thesis");
+    expect(proposalThesisSummary(undefined)).toBeUndefined();
+    expect(proposalThesisSummary("\n\n[Risk] only an audit note")).toBeUndefined();
+  });
+
+  it("defaults collapsed: summary thesis + critic line + expand affordance, no audit blocks", () => {
+    const html = renderToStaticMarkup(<MobileProposalReceipt pending={pendingProposal()} positions={[]} />);
+    expect(html).toContain(thesis);
+    expect(html).toContain("Show full reasoning");
+    expect(html).toContain("Proposed by");
+    expect(html).not.toContain("[Sizing]");
+    expect(html).not.toContain("[Risk]");
+    expect(html).not.toContain("Stale quote");
+    expect(html).not.toContain("Hide full reasoning");
+  });
+
+  it("expanded shows the full rationale text including the audit blocks", () => {
+    const html = renderToStaticMarkup(
+      <MobileProposalReceipt pending={pendingProposal()} positions={[]} defaultExpanded />
+    );
+    expect(html).toContain("[Sizing] Realized vol 22.0%");
+    expect(html).toContain("[Risk] Earnings in 2 trading day(s)");
+    expect(html).toContain("Stale quote backup");
+    expect(html).toContain("Hide full reasoning");
+  });
+
+  it("renders no reasoning toggle when the proposal has no rationale", () => {
+    const noRationale = pendingProposal();
+    noRationale.proposal.rationale = undefined;
+    const html = renderToStaticMarkup(<MobileProposalReceipt pending={noRationale} positions={[]} />);
+    expect(html).not.toContain("Show full reasoning");
+    expect(html).not.toContain("Hide full reasoning");
   });
 });

@@ -83,15 +83,17 @@ export function TranscriptClient() {
                   intent, redaction, and when are what you scan an audit view for, and they
                   must stay readable whether or not the body is collapsed. */}
               <div className="mb-1 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
+                {/* Display label only — the persisted role stays "assistant"; the product
+                    calls this voice the Coach everywhere else. */}
                 <span className={t.role === "assistant" ? "font-medium text-[color:var(--con-accent)]" : "font-medium text-[color:var(--con-fg)]"}>
-                  {t.role === "assistant" ? "Assistant" : "You"}
+                  {t.role === "assistant" ? "Coach" : "You"}
                 </span>
                 {t.role === "assistant" && (
                   <span className="con-chip con-mono">{t.model ?? "—"}</span>
                 )}
                 {t.intent && <span className="text-[color:var(--con-muted)]">· {t.intent}</span>}
                 {t.redacted && <span className="text-[color:var(--con-neg)]">· redacted</span>}
-                <span className="ml-auto text-[color:var(--con-faint)]">{new Date(t.createdAt).toLocaleString()}</span>
+                <span className="ml-auto text-[color:var(--con-faint)]">{new Date(t.createdAt).toLocaleString(undefined, { timeZone: "America/Chicago" })}</span>
               </div>
               {long.collapse ? (
                 <details className="con-disclosure">

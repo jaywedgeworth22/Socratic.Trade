@@ -1,4 +1,8 @@
 import * as cheerio from "cheerio";
+import { timeSync } from "../slow-sync-guard";
+// Circular with sec-filings.ts (it imports parseFilingHtml from here) — safe: both modules use
+// each other's exports only inside function bodies, never at module-init time.
+import { extractFilingText } from "./sec-filings";
 
 export interface ParsedBlock {
   type: "heading" | "paragraph" | "table";
@@ -442,7 +446,32 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: stri
  * caller proves the filing is a 10-K; otherwise raw parsed titles are kept
  * (Item 1 is "Financial Statements" on a 10-Q, not "Business").
  */
+/**
+ * Cheerio builds a full DOM then walks every node — on inline-XBRL monsters (15-50MB HTML,
+ * millions of tags) that pins the serving event loop for tens of seconds (the 2026-08-10
+ * socratictrade.com Uptime Robot incidents: 11-85s freezes traced to the ingest worker's parse
+ * checkpoint). Documents over this cap take the proven single-pass regex extractor instead
+ * (same text path the refresh lane ships to RAG today) as one FULL section — linear, no DOM.
+ */
+function cheerioMaxBytes(): number {
+  const configured = Number(process.env.SEC_PARSE_CHEERIO_MAX_BYTES ?? 5_000_000);
+  return Number.isFinite(configured) && configured > 0 ? configured : 5_000_000;
+}
+
 export function parseFilingHtml(html: string, options?: { formType?: string }): ParsedFiling {
+  return timeSync("parseFilingHtml", `${Math.round(html.length / 1024)}KB html`, () => {
+    if (html.length > cheerioMaxBytes()) {
+      console.warn(
+        `[sec-parser] ${Math.round(html.length / 1024)}KB html exceeds cheerio cap; using regex full-text fallback`
+      );
+      const text = extractFilingText(html);
+      return { text, sections: [{ itemCode: "FULL", itemTitle: "Full filing text", text }] };
+    }
+    return parseFilingHtmlImpl(html, options);
+  });
+}
+
+function parseFilingHtmlImpl(html: string, options?: { formType?: string }): ParsedFiling {
   const formType = options?.formType;
   const $ = cheerio.load(html);
 

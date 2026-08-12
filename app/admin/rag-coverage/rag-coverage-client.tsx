@@ -121,7 +121,7 @@ function fmtRelDate(iso: string | null): string {
     if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
     if (days < 30) return `${days}d ago`;
-    return d.toLocaleDateString();
+    return d.toLocaleDateString(undefined, { timeZone: "America/Chicago" });
   } catch {
     return iso;
   }

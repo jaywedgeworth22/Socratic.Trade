@@ -657,7 +657,21 @@ export const OPS_AUDIT_KINDS = new Set([
   "due_jobs_intraday_sample_drain",
   "vector_store",
   "recoverable_issue",
-  "llm_cache_usage"
+  "llm_cache_usage",
+  // Corpus ingest/embed receipts (#2553a): a 10-K backlog drain used to open TODAY with ~30
+  // "Sec filing ingest" cards plus per-cycle "Disclosure rag embed" rows before any trading
+  // event. None of these carry a runId/proposalId, so each rendered as its own standalone card
+  // instead of folding into the System collapse. They are pure data-pipeline housekeeping.
+  "sec_filing_ingest",
+  "sec_filing_refresh",
+  "disclosure_rag_embed",
+  "fmp_transcript_ingest",
+  "fmp_transcript_refresh",
+  "roic_transcript_ingested",
+  "roic_transcript_refresh",
+  "technical_signal_ingest",
+  "fundamentals_card_ingest",
+  "sec8k_rag_backlog_truncated"
 ]);
 
 /** Audit kinds that are a one-shot settings/preference log entry, not a lifecycle action with a
@@ -793,7 +807,15 @@ function brokerOrderDetail(order: EquityOrder | undefined, fillStatus?: string):
         : isTerminalBrokerState(order.state)
           ? `Broker reported ${readableBrokerState(order.state)}`
           : "Accepted by broker; awaiting fill";
-  return `${prefix}: ${readableBrokerState(order.state)} · Qty ${formattedFilled} / ${formattedTotal} · ${feedOrderTypeLabel(order.type)}`;
+  // Don't restate a state the prefix already names ("Broker reported Expired: Expired",
+  // "Filled by broker: Filled"); working states keep it ("Accepted by broker...: New").
+  const state = readableBrokerState(order.state);
+  const parts = [
+    prefix.toLowerCase().includes(state.toLowerCase()) ? null : state,
+    `Qty ${formattedFilled} / ${formattedTotal}`,
+    feedOrderTypeLabel(order.type)
+  ].filter(Boolean);
+  return `${prefix}: ${parts.join(" · ")}`;
 }
 
 function brokerOrderTitle(order: EquityOrder): string {
@@ -906,6 +928,7 @@ export function buildUnifiedFeed(input: {
   const symbolByGroupId = new Map<string, string>();
   const sideByGroupId = new Map<string, "buy" | "sell" | "short" | "cover" | undefined>();
   const accountIdByGroupId = new Map<string, string>();
+  const runIdByGroupId = new Map<string, string>();
 
   // Helper to extract symbol and side from a proposal lookup
   const lookupProposalInfo = (proposalId: string) => {
@@ -962,6 +985,8 @@ export function buildUnifiedFeed(input: {
     if (symbol) symbolByGroupId.set(groupId, symbol);
     if (side) sideByGroupId.set(groupId, side);
     if (event.connectedAccountId) accountIdByGroupId.set(groupId, event.connectedAccountId);
+    const auditRunId = stringValue(payload.runId);
+    if (auditRunId) runIdByGroupId.set(groupId, auditRunId);
 
     // P3 #1: Coalesce consecutive identical audit events (feed storm resilience)
     const existingGroup = groupEvents[groupId];
@@ -1018,6 +1043,7 @@ export function buildUnifiedFeed(input: {
     }
     if (symbol) symbolByGroupId.set(groupId, symbol);
     if (side) sideByGroupId.set(groupId, side);
+    if (notifRunId) runIdByGroupId.set(groupId, notifRunId);
     // Notifications are USER-wide rows: carry their account attribution onto the group so
     // another account's proposal/fill alerts can be filtered out of this account's feed (#10).
     if (event.connectedAccountId) accountIdByGroupId.set(groupId, event.connectedAccountId);
@@ -1050,6 +1076,7 @@ export function buildUnifiedFeed(input: {
     }
     if (symbol) symbolByGroupId.set(groupId, symbol);
     if (side) sideByGroupId.set(groupId, side);
+    if (fill.runId) runIdByGroupId.set(groupId, fill.runId);
 
     addSubEvent(groupId, subEvent);
   }
@@ -1080,6 +1107,47 @@ export function buildUnifiedFeed(input: {
     if (side) sideByGroupId.set(groupId, side);
 
     addSubEvent(groupId, subEvent);
+  }
+
+  // Pre-insert receipt fold (#2553b): the strategy loop generates a working proposal id up
+  // front, emits per-proposal receipts against it (quote-staleness warnings, escalation audits),
+  // and then REGENERATES the id just before persisting the row in several branches
+  // (src/lib/strategy.ts). Those pre-insert receipts carry a proposalId that never lands in
+  // trade_proposals, so one action used to render as TWO sibling rows — the persisted "BUY X"
+  // group plus a side-less orphan "TRADE X" group. Fold each orphan prop group (its proposalId
+  // does not resolve) into the persisted proposal group for the same run + symbol; every receipt
+  // survives as a sub-event of the one merged row. Orphans holding fill/order events are real
+  // money receipts and are never folded away.
+  if (input.getProposalById) {
+    const resolvedGroupByRunSymbol = new Map<string, string>();
+    const groupIds = Object.keys(groupEvents);
+    for (const groupId of groupIds) {
+      const pid = proposalIdByGroupId.get(groupId);
+      if (!pid || !input.getProposalById(pid)) continue;
+      const runId = runIdByGroupId.get(groupId);
+      const symbol = symbolByGroupId.get(groupId);
+      if (!runId || !symbol) continue;
+      const key = `${runId}|${symbol}`;
+      if (!resolvedGroupByRunSymbol.has(key)) resolvedGroupByRunSymbol.set(key, groupId);
+    }
+    for (const groupId of groupIds) {
+      const pid = proposalIdByGroupId.get(groupId);
+      if (!pid || input.getProposalById(pid)) continue;
+      const events = groupEvents[groupId];
+      if (!events || events.some((ev) => ev.type === "fill" || ev.type === "order")) continue;
+      const runId = runIdByGroupId.get(groupId);
+      const symbol = symbolByGroupId.get(groupId);
+      if (!runId || !symbol) continue;
+      const target = resolvedGroupByRunSymbol.get(`${runId}|${symbol}`);
+      if (!target || target === groupId) continue;
+      groupEvents[target]!.push(...events);
+      delete groupEvents[groupId];
+      proposalIdByGroupId.delete(groupId);
+      symbolByGroupId.delete(groupId);
+      sideByGroupId.delete(groupId);
+      accountIdByGroupId.delete(groupId);
+      runIdByGroupId.delete(groupId);
+    }
   }
 
   const unifiedGroups: UnifiedActivityGroup[] = [];

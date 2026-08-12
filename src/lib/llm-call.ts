@@ -53,13 +53,72 @@ export interface LlmClassifierTag {
  * unexpected throw are caught and logged, degrading to the un-enriched `base` body rather than
  * failing a paid LLM request over telemetry metadata.
  */
+/**
+ * The owner's OpenRouter "Socratic Trade Classifier" (Classifiers beta, Gemini Flash Lite) reads
+ * `trace.feature`/`trace.service` and maps them into a FIXED taxonomy — and when `trace.feature`
+ * is absent or unrecognized it guesses, with a configured default of "assistant-chat". Our
+ * internal call-site tags (ledger `context` names like "strategy"/"learning-review") are NOT
+ * taxonomy values, which is why the OpenRouter dashboard showed the decision engine's spend as
+ * "assistant chat" (2026-08-10). Translate at this single choke point; internal ledger names
+ * stay unchanged.
+ */
+const CLASSIFIER_FEATURE_TAXONOMY: Record<string, string> = {
+  strategy: "green-team",
+  // The Bear side argues within the Socratic proposal debate — it is not the Red Team reviewer.
+  "strategy-bear": "green-team",
+  "red-team": "red-team",
+  "strategy-tuning": "tuning",
+  "learning-review": "framework-review",
+  "post-mortem": "post-mortem",
+  "outcome-postmortem": "post-mortem",
+  "proposal-revalidation": "revalidation",
+  "rag-query-deconstruct": "search-fusion-mmr",
+  chat: "chat",
+  "chat-salience": "chat-salience",
+  "memory-salience": "memory-salience",
+  embed: "embed",
+  rerank: "rerank",
+  "search-fusion-mmr": "search-fusion-mmr"
+};
+
+/** Subsystem taxonomy: strategy | rag | chat | memory | monitoring. Derived from the resolved
+ *  feature; an explicit caller-passed service wins only when it is itself a taxonomy value. */
+const CLASSIFIER_SUBSYSTEM_BY_FEATURE: Record<string, string> = {
+  "green-team": "strategy",
+  "red-team": "strategy",
+  tuning: "strategy",
+  "post-mortem": "strategy",
+  revalidation: "strategy",
+  "framework-review": "strategy",
+  embed: "rag",
+  rerank: "rag",
+  "search-fusion-mmr": "rag",
+  chat: "chat",
+  "chat-salience": "memory",
+  "memory-salience": "memory"
+};
+
+const CLASSIFIER_SUBSYSTEMS = new Set(["strategy", "rag", "chat", "memory", "monitoring"]);
+
+export function resolveClassifierTaxonomy(tag: LlmClassifierTag): { feature?: string; service: string } {
+  const feature = tag.feature ? CLASSIFIER_FEATURE_TAXONOMY[tag.feature] ?? tag.feature : undefined;
+  // Never emit an off-taxonomy subsystem (the old "llm" filler): explicit-and-valid wins, then
+  // derive from the resolved feature, then the taxonomy's safest default.
+  const service =
+    tag.service && CLASSIFIER_SUBSYSTEMS.has(tag.service)
+      ? tag.service
+      : (feature && CLASSIFIER_SUBSYSTEM_BY_FEATURE[feature]) || "strategy";
+  return { feature, service };
+}
+
 export function applyOpenRouterClassifierEnrichment(base: Record<string, unknown>, tag: LlmClassifierTag): void {
   try {
+    const taxonomy = resolveClassifierTaxonomy(tag);
     const enrichment = openrouterRequestEnrichment({
       sourceApp: CLASSIFIER_SOURCE_APP,
       environment: classifierEnvironment(),
-      service: tag.service || "llm",
-      feature: tag.feature,
+      service: taxonomy.service,
+      feature: taxonomy.feature,
       keyRef: tag.keyRef,
       gitSha: classifierGitSha(),
       // OpenRouter documents a 128-char cap on `user`; truncate rather than let the shared

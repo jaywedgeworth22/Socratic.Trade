@@ -672,10 +672,20 @@ function ThesisNarrative({
             <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-neg)]">
               Red Team review
             </div>
-            <Chip tone={!redTeam.available ? "warn" : redTeam.rejected ? "neg" : "pos"}>
+            <Chip
+              tone={!redTeam.available ? "warn" : redTeam.rejected ? "neg" : "pos"}
+              title={!redTeam.available ? redTeamFailureMeta(redTeam.failureKind).title : undefined}
+            >
               {redTeamVerdictLabel(redTeam, decision?.policyDecision?.socraticOverride?.applied, status)}
             </Chip>
           </div>
+          {!redTeam.available && (
+            // #2552 parity with the PWA: name the CAUSE (which reviewer, which failure) instead
+            // of only the outcome — the reviewer model is only shown when one actually ran.
+            <p className="mt-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
+              Red Team failed{redTeam.model ? ` — ${redTeam.model}` : ""} ({redTeamFailureMeta(redTeam.failureKind).label})
+            </p>
+          )}
           <p className="mt-1">{redTeam.reason}</p>
         </section>
       )}
@@ -1065,7 +1075,7 @@ function EvidenceCard({ title, meta, metaTitle, body, symbol, quote, tone = "acc
     <article className={`con-evidence-card con-evidence-${tone}`}>
       <div className="flex items-start justify-between gap-3">
         {symbol ? (
-          <SymbolButton symbol={symbol} quote={quote} showLogo={false}>
+          <SymbolButton symbol={symbol} quote={quote}>
             {title}
           </SymbolButton>
         ) : (

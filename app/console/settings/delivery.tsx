@@ -1,6 +1,6 @@
 "use client";
 
-/** Delivery channels — where out-of-app alerts actually go (phone push,
+/** Delivery channels — where out-of-app alerts actually go (ntfy.sh,
  *  webhook, email, SMS). Reads GET /api/notifications (channel availability +
  *  saved prefs), writes POST /api/notifications, and exercises every enabled
  *  channel via the existing test endpoint. A channel can only be enabled when
@@ -30,7 +30,7 @@ import {
 } from "./lib";
 
 const CHANNEL_TITLE: Record<DeliveryChannelDescriptor["id"], string> = {
-  push: "A push notification on your phone via a notification app — usually the fastest and cheapest channel.",
+  push: "Alerts via ntfy.sh — subscribe to a topic in the ntfy app or any ntfy-compatible client.",
   pushover: "Pushover push notifications to your phone. Paste your own application API token + user key below — no server setup needed.",
   webhook: "An HTTPS POST with a JSON payload to any URL you control (chat webhooks get rich embeds).",
   email: "An email per alert. Needs the server operator to have configured an email provider.",
@@ -298,16 +298,12 @@ export function DeliveryChannelsCard() {
                     <span className="text-[length:var(--con-fs-sm)] font-semibold" title={CHANNEL_TITLE[ch.id]}>
                       {ch.label}
                     </span>
-                    {ch.id === "push" && ch.available && (
+                    {ch.id === "push" && ch.available && ch.provider === "pushover" && (
                       <span
                         className="rounded-full border border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)] px-2 py-0.5 text-[length:var(--con-fs-2xs)] font-bold uppercase tracking-wide text-[color:var(--con-pos)]"
-                        title={
-                          ch.provider === "pushover"
-                            ? "Phone push via Pushover — paste your Pushover user key as the target. Server needs PUSHOVER_APP_TOKEN + NOTIFY_PUSH_PROVIDER=pushover."
-                            : "Phone push via ntfy (free topic) or Pushover (server: NOTIFY_PUSH_PROVIDER=pushover + PUSHOVER_APP_TOKEN). Paste the topic or user key below."
-                        }
+                        title="Push via Pushover — paste your Pushover user key as the target. Server needs PUSHOVER_APP_TOKEN + NOTIFY_PUSH_PROVIDER=pushover."
                       >
-                        {ch.provider === "pushover" ? "pushover" : "recommended · free"}
+                        pushover
                       </span>
                     )}
                     {!ch.available && (

@@ -23,6 +23,7 @@ import { storeDocument } from "../vector-db";
 import { jaccardSimilarity } from "./dedupe-similar";
 import { tokenize } from "./hybrid";
 import { chunkDocument, type ChunkInput } from "./chunk";
+import { timeSync } from "../slow-sync-guard";
 
 /** Bump when extractive algorithm changes so existing abstracts re-generate once. */
 export const DOCUMENT_HIGHLIGHT_MODEL = "extractive-highlights-v2";
@@ -306,6 +307,17 @@ function shingleSet(text: string): Set<string> {
  * diversity via Jaccard shingles; expanded keyword/numeric scoring.
  */
 export function tradeHighlightChunksFromText(
+  text: string,
+  opts: TradeHighlightOptions = {}
+): HighlightChunk[] {
+  return timeSync(
+    "tradeHighlightChunksFromText",
+    `${Math.round(text.length / 1024)}KB text`,
+    () => tradeHighlightChunksFromTextImpl(text, opts)
+  );
+}
+
+function tradeHighlightChunksFromTextImpl(
   text: string,
   opts: TradeHighlightOptions = {}
 ): HighlightChunk[] {

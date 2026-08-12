@@ -46,6 +46,31 @@ export function isoDate(ts: string | number | undefined): string | null {
 export const FLOW_MATERIALITY_PCT_OF_EQUITY = 0.5; // % of prior equity
 export const FLOW_MATERIALITY_MIN_USD = 0.50;
 
+/** Sanity bound for an inferred flow vs its own sub-period's equity move (issue #2557). */
+export const FLOW_SANITY_EQUITY_DELTA_MULT = 5;
+export const FLOW_SANITY_PCT_OF_EQUITY = 2; // % of sub-period start equity
+
+/**
+ * A real external transfer moves account equity by roughly its own size (± the market move in
+ * the same gap). An inferred flow whose magnitude exceeds BOTH 5× the sub-period's |Δequity|
+ * AND 2% of the start equity cannot be reconciled against the equity it supposedly moved —
+ * the live failure was a phantom "withdrawal $36,501.38" inferred on a sub-period whose
+ * equity moved only −$837, which then inflated TWR to +56%. Such a flow is UNVERIFIED:
+ * show it to the owner, but exclude it from TWR neutralization and day-P&L adjustment.
+ * The 2%-of-equity floor keeps genuine small transfers verified even on flat-equity days
+ * (e.g. a $500 deposit offset by a same-day market dip on a $100k book). Pure.
+ */
+export function isInferredFlowUnverified(flow: number, startEquity: number, endEquity: number): boolean {
+  if (!Number.isFinite(flow) || flow === 0) return false;
+  if (!Number.isFinite(startEquity) || !Number.isFinite(endEquity)) return true;
+  const deltaEquity = endEquity - startEquity;
+  const bound = Math.max(
+    FLOW_SANITY_EQUITY_DELTA_MULT * Math.abs(deltaEquity),
+    (FLOW_SANITY_PCT_OF_EQUITY / 100) * Math.max(startEquity, 0)
+  );
+  return Math.abs(flow) > bound;
+}
+
 type CurvePoint = {
   equity: number;
   cash?: number;
@@ -164,15 +189,30 @@ export function inferExternalCashFlows(
           deltaPos != null &&
           ((deltaCash < -threshold && deltaPos > threshold) || (deltaCash > threshold && deltaPos < -threshold))
         ) {
-          // Cash and positions moved in opposite directions — usually a trade.
-          // Exception: large cash+equity drop while positions only absorb a fraction of the cash
-          // (withdraw most, leave/invest a remainder) — still an external withdrawal of ≈ Δequity.
+          // Cash and positions moved in opposite directions — usually a trade (cash↔stock).
+          // Without fills we cannot see the trade notional, so a pure conversion would look
+          // like a withdrawal (cash down) or deposit (cash up). Default: flow = 0.
+          //
+          // Exceptions — concurrent EXTERNAL capital with trading in the same sparse gap
+          // (common on paper accounts: deposit then invest between rare snapshots):
+          //   1. Large cash+equity drop while positions only absorb a fraction of the cash
+          //      (withdraw most, leave/invest a remainder) → flow ≈ Δequity (withdrawal).
+          //   2. Material residual equity change vs the cash↔stock swap size → transfer
+          //      dominates (deposit then buy, or sell then withdraw). Pure trade + modest
+          //      mark-to-market keeps |Δequity| small vs the swap, so flow stays 0.
+          const swapped = Math.min(Math.abs(deltaCash), Math.abs(deltaPos));
+          const residualIsTransfer =
+            Math.abs(deltaEquity) >= Math.max(threshold, 0.25 * swapped);
           if (
             deltaCash < -threshold &&
             deltaEquity < -threshold &&
             deltaPos >= -threshold &&
             Math.abs(deltaCash) > Math.abs(deltaPos) * 2
           ) {
+            flow = deltaEquity;
+          } else if (residualIsTransfer) {
+            // Deposit+invest (Δequity ≈ deposit) or sell+withdraw: neutralize the external $
+            // so TWR does not report e.g. 66k→99k as +50% alpha vs SPY.
             flow = deltaEquity;
           } else {
             flow = 0;

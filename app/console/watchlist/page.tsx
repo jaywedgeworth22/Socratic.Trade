@@ -244,7 +244,7 @@ export default function WatchlistPage() {
                   return (
                     <tr key={item.symbol}>
                       <td className="con-mono font-semibold">
-                        <SymbolButton symbol={item.symbol} showLogo={false} />
+                        <SymbolButton symbol={item.symbol} />
                       </td>
                       <td
                         className="num con-num"
@@ -380,7 +380,7 @@ export default function WatchlistPage() {
                   }
                 >
                   <span className="con-mono font-semibold">
-                    <SymbolButton symbol={alert.symbol} showLogo={false} />
+                    <SymbolButton symbol={alert.symbol} />
                   </span>
                   <span className="con-num text-[length:var(--con-fs-sm)]">
                     {alert.op === ">" ? "above" : "below"} {fmtMoney(alert.price)}

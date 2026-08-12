@@ -7,8 +7,10 @@
      Components never hardcode raw hex — they reference the semantic console tokens.
    - Light is the base set; dark overrides it. Resolution order:
        1. explicit choice via [data-theme="light"|"dark"] on .console-root
-          (persisted in localStorage under a console-scoped key), else
-       2. prefers-color-scheme.
+          (persisted in localStorage under a console-scoped key; default light
+          per owner 2026-08-10 — never invent dark from OS on first visit),
+       2. when unset (user chose System only): prefers-color-scheme,
+       3. otherwise stay on the light base tokens.
      The dark token block therefore appears twice (explicit + media query) —
      KEEP THE TWO BLOCKS IDENTICAL.
    - Soft fills and borders are derived from the base palette with color-mix,
@@ -51,6 +53,8 @@
 
   --con-shadow: 0 8px 24px -12px rgba(23, 32, 46, 0.18);
   --con-shadow-lg: 0 24px 60px -24px rgba(23, 32, 46, 0.28);
+  /* Upward shadow for bottom-anchored sticky surfaces (.ac-actions). */
+  --con-shadow-up: 0 -10px 24px -14px rgba(23, 32, 46, 0.28);
   --con-scrim: rgba(23, 32, 46, 0.4);
 
   color-scheme: light;
@@ -136,33 +140,34 @@
    Near-black neutral charcoal (no teal/navy cast). Surfaces step up in grey only. */
 .console-root[data-theme="dark"] {
   --con-bg: #0a0a0a;
-  --con-surface: #141414;
-  --con-surface-2: #1a1a1a;
-  --con-surface-3: #242424;
-  --con-line: rgba(255, 255, 255, 0.09);
-  --con-line-strong: rgba(255, 255, 255, 0.16);
+  --con-surface: rgba(22, 22, 22, 0.78);
+  --con-surface-2: rgba(30, 30, 30, 0.72);
+  --con-surface-3: rgba(42, 42, 42, 0.68);
+  --con-line: rgba(255, 255, 255, 0.08);
+  --con-line-strong: rgba(255, 255, 255, 0.14);
 
   --con-fg: #f0f0f0;
-  --con-muted: #a8a8a8;
-  --con-faint: #8a8a8a;
+  --con-muted: #b0b0b0;
+  --con-faint: #969696;
 
   --con-accent: var(--brand-accent-dark);
-  --con-accent-contrast: #071316;
-  --con-pos: #37c58c;
+  --con-accent-contrast: #04130d;
+  --con-pos: #34d399;
   --con-pos-contrast: #04170e;
-  --con-neg: #f0635e;
+  --con-neg: #fb5e74;
   --con-neg-contrast: #1c0605;
-  --con-warn: #e5aa4b;
+  --con-warn: #fbbf24;
   --con-warn-contrast: #201302;
-  --con-info: #22d3ee;
+  --con-info: #60a5fa;
   --con-info-contrast: #061f26;
 
   --con-none: #94a3b8;
   --con-paper: #98a3ff;
-  --con-live: #ff5d5d;
+  --con-live: #fb5e74;
 
   --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
   --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.8);
+  --con-shadow-up: 0 -10px 30px -14px rgba(0, 0, 0, 0.7);
   --con-scrim: rgba(0, 0, 0, 0.72);
 
   color-scheme: dark;
@@ -173,33 +178,34 @@
 @media (prefers-color-scheme: dark) {
   .console-root:not([data-theme="light"]) {
     --con-bg: #0a0a0a;
-    --con-surface: #141414;
-    --con-surface-2: #1a1a1a;
-    --con-surface-3: #242424;
-    --con-line: rgba(255, 255, 255, 0.09);
-    --con-line-strong: rgba(255, 255, 255, 0.16);
+    --con-surface: rgba(22, 22, 22, 0.78);
+    --con-surface-2: rgba(30, 30, 30, 0.72);
+    --con-surface-3: rgba(42, 42, 42, 0.68);
+    --con-line: rgba(255, 255, 255, 0.08);
+    --con-line-strong: rgba(255, 255, 255, 0.14);
 
     --con-fg: #f0f0f0;
-    --con-muted: #a8a8a8;
-    --con-faint: #8a8a8a;
+    --con-muted: #b0b0b0;
+    --con-faint: #969696;
 
     --con-accent: var(--brand-accent-dark);
-    --con-accent-contrast: #071316;
-    --con-pos: #37c58c;
+    --con-accent-contrast: #04130d;
+    --con-pos: #34d399;
     --con-pos-contrast: #04170e;
-    --con-neg: #f0635e;
+    --con-neg: #fb5e74;
     --con-neg-contrast: #1c0605;
-    --con-warn: #e5aa4b;
+    --con-warn: #fbbf24;
     --con-warn-contrast: #201302;
-    --con-info: #22d3ee;
+    --con-info: #60a5fa;
     --con-info-contrast: #061f26;
 
     --con-none: #94a3b8;
     --con-paper: #98a3ff;
-    --con-live: #ff5d5d;
+    --con-live: #fb5e74;
 
     --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
     --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.8);
+    --con-shadow-up: 0 -10px 30px -14px rgba(0, 0, 0, 0.7);
     --con-scrim: rgba(0, 0, 0, 0.72);
 
     color-scheme: dark;
@@ -776,19 +782,17 @@
 
 /* Bottom tab bar.
  *
- * Browser (mobile Safari): do NOT pad env(safe-area-inset-bottom) into the
- * content box — that stacks a second empty band under the labels above
- * Safari's floating URL chrome (see 2026-07-18 rollout). Instead MobileTabBar
- * measures the chrome gap, shifts the bar down by 80% of it (negative
- * `bottom`), and paints a solid surface ::after underlay for the remaining
- * 20% + under the translucent URL chrome so the colder page --con-bg grey
- * never flashes around the address bar.
- *
- * Standalone/PWA/fullscreen: keep classic safe-area padding for the home
- * indicator; no chrome-gap shift is applied (measure returns 0). */
+ * bottom:0 with ONLY env(safe-area-inset-bottom) padding (owner mobile punch
+ * list 2026-08-08). The 2026-08-05 chrome-gap shift + ::after underlay is
+ * reverted: shifting the bar down by 80% of the measured gap slid the label
+ * row underneath Safari's floating URL chrome (icons visible, labels hidden)
+ * and the ≥48px underlay painted a dead grey band under the bar. Unlike the
+ * 2026-07-18 "redundant band" (page-grey inside a page-colored bar), any
+ * safe-area padding here sits INSIDE the bar's own painted surface, below the
+ * labels — so it reads as bar, not wasted page. */
 .con-tabbar {
-  padding-bottom: 0;
-  /* Near-opaque surface + blur so page grey cannot tint the bar edge. */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  /* Near-opaque surface + blur so page content cannot ghost through the bar. */
   background: color-mix(in oklab, var(--con-surface) 94%, transparent);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -797,28 +801,6 @@
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .con-tabbar {
     background: var(--con-surface);
-  }
-}
-/* Solid surface underlay below the bar — same token as the bar itself so the
- * region around Safari's floating URL chrome is continuous white/surface,
- * not the colder --con-bg grey. Height set via --con-tabbar-underlay (JS). */
-.con-tabbar::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 100%;
-  height: var(--con-tabbar-underlay, 0px);
-  background: var(--con-surface);
-  pointer-events: none;
-}
-@media (display-mode: standalone), (display-mode: fullscreen) {
-  .con-tabbar {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  /* Underlay unused in standalone — safe-area padding already paints the band. */
-  .con-tabbar::after {
-    height: 0;
   }
 }
 
@@ -921,7 +903,7 @@
     /* Clear fixed .con-tabbar (content ~3.25rem + optional home-indicator inset). */
     bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
     z-index: 30;
-    box-shadow: 0 -10px 24px -14px rgba(23, 32, 46, 0.28);
+    box-shadow: var(--con-shadow-up);
   }
 }
 @media (min-width: 1024px) {

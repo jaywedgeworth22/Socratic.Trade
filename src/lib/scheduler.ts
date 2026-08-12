@@ -454,11 +454,13 @@ async function tick(): Promise<void> {
 
   // Daily audit_events + provider-observability retention (audit-prune.ts):
   // observability kinds 14d, everything else 90d, bounded batches. First-ever
-  // run drains a large backlog over several daily passes.
+  // run drains a large backlog over several daily passes. Also sweeps the
+  // embed_stage table (35d orphan retention + defensive size cap, db-embed-stage.ts).
   void journalLane("audit-prune", {}, () => {
     const result = runAuditPruneIfDue();
     if (!result) return { status: "skipped" as const, summary: "not due" };
-    const total = result.auditObservability + result.auditDefault + result.providerDispatch + result.providerOutbox;
+    const total = result.auditObservability + result.auditDefault + result.providerDispatch +
+      result.providerOutbox + result.embedStageExpired + result.embedStageCapPruned;
     return { status: "ok" as const, summary: `deleted=${total}` };
   }).catch((err) => console.error("[scheduler] audit prune error:", err));
 
@@ -704,6 +706,24 @@ async function tick(): Promise<void> {
       journalLane("due-job-intraday-drain", {}, () => drainDueIntradaySampleJobs())
     )
     .catch((err) => console.error("[scheduler] due-jobs intraday sample drain error:", err));
+
+  // Weekly R2 cold snapshot (owner directive 2026-08-08): second-provider disaster
+  // recovery — better-sqlite3 backup() of the live DB, multipart-uploaded to the idle
+  // historic R2 bucket (cold-snapshots/app-<date>.db, newest 4 kept). Durable weekly
+  // due-job (Sunday ~03:17 UTC; survives downtime), silent no-op without the
+  // AWS_R2_HISTORIC_* credentials, budget-guarded against the R2 free tier.
+  void import("./r2-cold-snapshot")
+    .then(({ ensureR2ColdSnapshotJobScheduled, drainR2ColdSnapshotJobs }) =>
+      journalLane("r2-cold-snapshot", {}, async () => {
+        ensureR2ColdSnapshotJobScheduled();
+        const result = await drainR2ColdSnapshotJobs();
+        return {
+          status: result.drained > 0 ? ("ok" as const) : ("skipped" as const),
+          summary: result.drained > 0 ? `drained=${result.drained} last=${result.lastRun?.status ?? "?"}` : undefined,
+        };
+      })
+    )
+    .catch((err) => console.error("[scheduler] r2 cold snapshot error:", err));
 
   try {
 

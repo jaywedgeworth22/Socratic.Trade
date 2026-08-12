@@ -1,4 +1,363 @@
+## Current (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
+
+**Branch `ag/desktop-mobile-ux-enhancements`:**
+1. **Desktop Web UX**:
+   - `command-palette.tsx`: Added global hotkeys (`Cmd+K`/`Ctrl+K` command palette toggle, `A` Proposals jump, `R` strategy run-once dispatch, `1-6` tab navigation). Added `<kbd>` badges and `action:run-once` command item.
+   - `approval-card-skeleton.tsx` & `portfolio-overview-skeleton.tsx`: Created animated pulse skeleton loading components matching approval cards and portfolio overview metrics.
+   - `console.css`: Synchronized `.dark` design token values with `app/globals.css`.
+2. **Mobile Web PWA UX**:
+   - Refactored `mobile-pwa-client.tsx` into modular components under `app/mobile/components/` (`MobileHeader.tsx`, `MobileNavBar.tsx`, `MobileHomeTab.tsx`, `MobileProposalsTab.tsx`).
+   - Implemented `usePreventScrollChaining` hook for WebKit boundary top check (`scrollTop === 0` set to `1`) and CSS `overscroll-behavior-y: contain` to prevent iOS Safari body scroll chaining.
+3. **Verification**: `npx tsc --noEmit` clean, `npm run lint` clean (0 errors), `npm test` (83 files / 739 tests passed), `npm run build` clean.
+
+## Current (2026-08-12 ~12:20am CT MONET — new app icon: dollar-sign candlesticks)
+
+Owner supplied a reference image (3D-rendered candlesticks arranged as a "$", green/pink
+palette, light gray grid background) and asked for it as the app icon with a lightened
+background. Replaced `ios/SocraticTrade/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png`
+(previously a "ST" wordmark built from candlesticks) with a processed version of the owner's
+image: background lightened via a saturation-based blend (candlestick colors untouched, smooth
+ramp rather than a hard threshold to avoid speckling in the soft-shadow areas), resized to the
+required 1024x1024, confirmed opaque RGB (no alpha — required for App Store icons). Single-file
+change, no other icon sizes to update (this appiconset uses Xcode's unified single-size format).
+## Current (2026-08-12 ~12:08am CT MONET — litestream reset executed; leak appears resolved, monitoring continues)
+
+Escalation trigger from the previous entry fired (kill gap compressed to 5m35s). Owner approved
+proceeding. Executed the previously-planned fix: `docker stop` (clean, 30s), cleared the local
+litestream LTX metadata directly on the host volume path (`litestream reset`'s documented effect
+— never touches the DB file or B2), Coolify `start` (image reused, no rebuild). ~6 min outage.
+Post-restart: litestream started with zero errors (previously every fresh start hit a checksum
+mismatch within 2-3 min, without exception), memory at 374MiB ~4 min in (previous fresh starts
+were multi-GB by this point). Strong early signal, NOT yet confirmed as fixed — several hours of
+clean operation spanning a level-9 snapshot cycle is the real bar. Full detail + what to check if
+it recurs: `docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md` ("Fix executed" section,
+bottom).
+
+## Current (2026-08-11 MONET — iOS version regression fix)
+
+PR #2637 accidentally hardcoded `ios/SocraticTrade/Info.plist`'s `CFBundleShortVersionString`
+to the literal `"1.0"` and `CFBundleVersion` to `"1"`, replacing what used to be
+`$(MARKETING_VERSION)`/`$(CURRENT_PROJECT_VERSION)` build-variable substitution. This silently
+broke the owner's version regimen (App Store "Version" goes 1.0.0 -> 1.0.1 -> 1.0.2 per release,
+separate from the internal build number): bumping `MARKETING_VERSION` in the Xcode project would
+no longer have actually changed what ships. Restored both fields to variable-substitution form
+and set `MARKETING_VERSION`=1.0.1 / `CURRENT_PROJECT_VERSION`=2 in both `project.pbxproj`
+(Debug+Release) and `project.yml` — this is the first build after 1.0.0/1.0 already shipped to
+TestFlight. `preferredProjectObjectVersion`/`TARGETED_DEVICE_FAMILY` from #2637 left untouched
+(legitimate fixes, not part of this regression). Rollout:
+`docs/rollouts/2026-08-11-ios-version-regimen-fix.md`.
+
+## Current (2026-08-11 ANTIGRAVITY — System Audit & iOS Resiliency Rollout)
+
+**Branch `agent/antigravity-review`:** Top-to-bottom audit across Desktop Web, Mobile Web (PWA), iOS App (SwiftUI), Backend Pipelines (SEC EDGAR ingest, RAG vector engine), Database Concurrency, Latency Monitoring, and Competitor Benchmarking. Artifact `implementation_plan.md` created; review note `[ST, Antigravity] Comprehensive System Audit & Improvements` created and pinned in Apple Notes (folder `Coding`). Native iOS client updated with exponential backoff retry loop (`MobileAPIClient.swift`) and raw JSON disk caching (`MobileStore.swift`) for instant `<50ms` offline startup. All gates verified green (Xcode build, tsc, lint, vitest). Rollout: `docs/rollouts/2026-08-11-system-audit-and-ios-resiliency.md`.
+
+## Current (2026-08-11 ~9:40am CT MONET — litestream kill cadence ACCELERATING: 51→78→49→20→19 min gaps)
+
+Since the root-cause deploy below, 6 more OOM kills logged (all `exitCode=137`, all auto-recovered
+in ~1s, site health unaffected each time). The gap between kills has compressed from ~50-80 min
+down to ~19-20 min over the last 3 cycles — consistent with the confirmed root cause (the stuck B2
+compaction anchor persists in the replica's own state across restarts, so un-compacted WAL keeps
+growing across the whole incident, not per-container). **Escalation trigger set:** if the gap
+compresses under ~10 minutes, stop deferring to "daylight" and actively clear the stuck B2
+generation now (see next steps in the rollout note) regardless of local time. Full timeline +
+reasoning: `docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md` (escalation section,
+bottom).
+
+## Current (2026-08-11 ~4:30am CT MONET — litestream leak root cause CONFIRMED, not yet fixed)
+
+The all-night litestream OOM-leak (open since 2026-08-09) has a confirmed root cause now, not
+just a hypothesis: litestream's B2 replica is stuck compacting from txid `2324d` — every retry's
+multipart upload fails with `file checksum mismatch` on close (~every 100s), the anchor never
+advances, so each retry re-uploads a larger accumulated range, which is why memory climbs and why
+peak-per-kill severity keeps growing (2.05→4.82GB across 9 kills so far). No existing kill-switch
+applies (the only one is R2-specific and explicitly no-ops on B2). Site serving health remains
+unaffected throughout (Docker `restart: unless-stopped` recovers every crash in seconds) — this
+is not an outage, but the leak itself remains open. Full evidence + next steps for daylight fix:
+`docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md` (root-cause section, bottom).
+
+## Current (2026-08-10 GROK — default light theme)
+
+Branch `grok/default-light-theme`: light is product default (web + iOS). Dark only via explicit choice. Rollout: `docs/rollouts/2026-08-10-default-light-theme.md`.
+
+## Prior
+
+## Current (2026-08-10 GROK — iOS invalid SF Symbol)
+## Current (2026-08-11 MONET — server-metrics panel repair + canonical Oracle→Hetzner doc correction)
+
+**No branch (config + docs, direct on `main` — repo-side changes on `monet/*`, see below):**
+ST's admin server-stats panel was fully broken (`degraded: true, stale: true`, Coolify 401 +
+Hetzner 404×2) because `AGENTS.md`/`CLAUDE.md` — and therefore this session's own initial
+answer to the owner — had never caught up with the 2026-08-07 emergency cutover off Oracle Cloud
+(Oracle suspended the account without reason, `docs/rollouts/2026-08-06-ios-login-522-oracle-down.md`)
+to a brand-new Hetzner box (`docs/rollouts/2026-08-07-hetzner-fleet-cutover.md`). Three stale
+values found and corrected: `HETZNER_SERVER_ID` (wrong box) and `COOLIFY_SERVER_UUID` (wrong
+UUID) in ST's Infisical, plus a dead 401 `COOLIFY_SERVER_STATS` token in BOTH ST's Infisical and
+the `~/.secrets/global-api-keys.env` handoff file (fixed from the box's own dedicated, working,
+read-only-scoped token at `/root/.coolify-api-token-stats` — deliberately did NOT substitute the
+broader `COOLIFY_AGENTS` token, preserving the read-only/admin scope separation). Panel verified
+fully live post-fix: `degraded: false, stale: false, cacheAgeSeconds: 0`, real resources
+(`socratic-app`, `congress-trade`, `usage-monitor`). `AGENTS.md`'s hosting section rewritten to
+lead with the real current host: `167.233.254.55` / `fleet-hetzner-nbg1` / Hetzner `cx43` (8 vCPU
+AMD EPYC-Rome, 16 GB RAM, 160 GB NVMe) / Coolify server UUID `jxzqcs3h6g1wiipnnblhismp` / Hetzner
+hardware serial `159792099`. UM's own panel not independently re-verified (no admin credential
+available this session) — UM's hardcoded fallback defaults already match the correct live
+values, so it should work unless UM's own Infisical has a stale explicit override. Rollout:
+`docs/rollouts/2026-08-11-server-metrics-panel-hetzner-config-repair.md`.
+
+## Prior (2026-08-10 GROK — iOS invalid SF Symbol)
+
+**Branch `grok/ios-bell-badge-symbol`:** Assets toolbar used nonexistent SF Symbol
+`bell.badge.plus` (console: `No symbol named 'bell.badge.plus' found in system
+symbol set` — blank create-alert icon). Replaced with valid `bell.badge`. Rest of
+the owner’s console dump (QUIC / `nw_connection_*` / PointerUI / “cannot add
+handler”) is system noise. Rollout:
+`docs/rollouts/2026-08-10-ios-invalid-sf-symbol-bell-badge.md`.
+
+## Prior (2026-08-10 ~2:00am CT GROK — unstick open PR #2597)
+
+**Only open PR after #2603 merged:** #2597 `grok/always-auto-merge-prs` — fleet policy always-auto-merge for non-draft same-repo PRs + `do-not-automerge` hold. Blockers fixed this pass: real `AGENTS.md` conflict (kept main's Apple Notes close-out), `sentry-ci-report.yml` missing the new workflow name (failed `test/sentry-ci-report-workflows.test.ts`), Codex P1s (disable auto on hold label; `GH_PAT`/`SHEPHERD_TOKEN` preferred so post-merge workflows fire; squash-only; fail when arming fails). Next: green `verify` → auto-merge → Coolify auto-deploy. Rollout: `docs/rollouts/2026-08-10-always-auto-merge-prs.md`.
+
+## Prior (2026-08-09 ~11:45pm CT MONET — event-loop stall instrumentation)
+
+**Branch `monet/sec-worker-edgar-403` (stacked):** Uptime Robot incidents on socratictrade.com — next-server pins 100%+ CPU 11-85s during filing ingests (event loop held by synchronous extract/chunk/score segments chained by the trial knobs). Shipped warn-only timeSync wrappers (extractFilingText / tradeHighlightChunksFromText / chunkDocument) + yieldEventLoop between filings/tasks. Prod names the hot spot in [slow-sync] logs; targeted fix follows. OpenRouter credits $55.50/$165 left (decision traffic, not embeds). Rollout: `docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md`.
+
+## Prior (2026-08-09 MONET — EDGAR 403 worker hardening)
+## Current (2026-08-09 MONET — EDGAR 403 worker hardening)
+
+**Branch `monet/sec-worker-edgar-403`:** minutes after the trial knobs + full-universe seed went
+live, every SEC ingest worker fetch 403'd (`www.sec.gov/Archives`), dead-lettering ~50 tasks.
+Root causes: worker fetched with NO User-Agent (SEC hard-403s undeclared tools; the refresh lane
+passes UA explicitly and kept working), prod lacked `SEC_EDGAR_USER_AGENT` (now set in Infisical),
+secLimiter only reacted to 429 (SEC signals blocks with 403), and the worker burned stage attempts
+into an IP-level block. Fixes: UA auto-injection for `.sec.gov` in `politeFetch`; `report403()`
+global cooldown (`SEC_403_COOLDOWN_SECONDS`, default 600s) + `pausedUntilIso()`; worker defers
+(attempt refunded, `edgar_403_deferred`) instead of failing; `requeueSecIngestDeadLetters` + admin
+`{action:"requeue-dead-letter"}`. 35 tests green incl. 2 new; tsc clean. Post-deploy: requeue
+dead letters, watch checkpoints advance. Rollout:
+`docs/rollouts/2026-08-09-edgar-403-worker-hardening.md`.
+
+## Prior (2026-08-09 MONET — trial knobs LIVE in prod + EDGAR shard-field fix)
+## Current (2026-08-09 MONET — trial knobs LIVE in prod + EDGAR shard-field fix)
+
+**Branch `monet/sec-shard-field-fix`:** the trial knob set from the throughput audit is now
+APPLIED in prod (Infisical + Coolify restart; all 7 values verified in the serving process env):
+delay 0ms, batch 32, texts/day 250k, WU/day 2.5M, SEC per-run 200, TTL 6h, ingest worker ON.
+`data/rag-universe-manifest.json` copied onto the prod data volume (the `/app/data` volume mount
+shadows the image's `data/`, so the seeder 500'd ENOENT). First full-universe seed then exposed a
+real bug: `SubmissionsJson.filings.files[]` used invented field names `filingStart/filingEnd`;
+real EDGAR shards carry `filingFrom/filingTo`, so the shard-pagination sort threw
+`undefined.localeCompare` and aborted the seed (test fixture had the same wrong names — suite
+green, prod broken). Fixed with real names + `?? ""` guard. Re-seed after this deploys. Rollout:
+`docs/rollouts/2026-08-09-trial-knobs-applied-and-edgar-shard-fix.md`. Next: re-run seed, watch
+`GET /api/admin/sec-ingest` receipts + `rag_usage` daily volume (expect ~4k → 100k+ records/day).
+
+## Prior (2026-08-09 MONET — Pinecone trial throughput audit + monthly WU pace guard)
+
+**Branch `monet/pinecone-trial-maximize` (commit-only; landing operator lands):** owner wants the
+Pinecone Standard trial used close to full extent, then a drop to free/$20 without a repeat of the
+hourly-429 mess. (A) Throughput audit — every ingest limiter inventoried with TRIAL vs AFTER values
+for the owner to apply in Infisical (no secrets read/written). Headline: `VECTOR_EMBED_BATCH_DELAY_MS`
+(default 21s, a Voyage-3-RPM artifact) is applied unconditionally between embed batches and pins
+ingest at ~1,371 chunks/h even on OpenRouter bge-m3 — the single biggest lever. OpenRouter embed
+spend is NOT the constraint (~$0.0013 per 1k chunks); post-trial Pinecone STORAGE is. (B) New
+`src/lib/pinecone-monthly-pace.ts` — persisted calendar-month WU counter (fed from
+`meterPineconeUpsert`, resets on month roll), linear month-end projection with a 0.2 elapsed floor
+(mirrors `r2-usage.ts`), `PINECONE_MONTHLY_WU_BUDGET` default 0 = OFF. When projected pace exceeds
+the budget the SEC ingest **backfill queue** stops claiming new tasks; incremental filing ingest and
+all retrieval are structurally un-gated. ONE advisory + audit per calendar month. Number exposed at
+`/api/admin/rag-coverage` → `providerUsage.pinecone.monthlyWriteUnitPace` even when off. Gates: tsc
+clean; 12 test files / 162 tests green (new `test/pinecone-monthly-pace.test.ts` 10/10); lint 0
+errors. Rollout: `docs/rollouts/2026-08-09-pinecone-trial-throughput-and-monthly-pace.md`.
+## Current (2026-08-09 MONET — "Pinecone connection failed / database is locked" mislabel)
+
+**Branch `monet/pinecone-lock-mislabel` (commit-only; landing operator lands):** the hourly
+owner-visible push titled "Pinecone connection failed" with body `inventory fetch: database is
+locked` was OUR SQLite, not Pinecone. Root cause: `settleProviderDispatch`
+(`src/lib/db-provider-dispatch.ts`) opened a DEFERRED transaction that SELECTs before it UPDATEs,
+so promoting the WAL read snapshot to a write returns `SQLITE_BUSY_SNAPSHOT` ("database is
+locked") instantly WITHOUT consulting `busy_timeout` — which is why the 60s ceiling never absorbed
+it; every ledger transaction now opens `BEGIN IMMEDIATE` (repro receipts in the rollout note).
+Second fix: new `src/lib/local-db-fault.ts` classifies local-SQLite failure signatures, and
+`withRagApiHealth` no longer writes a provider failure row or a `provider_degraded` push for them —
+it records a `local_db_contention` audit row and, past 5 occurrences in 6h, ONE advisory titled
+"Storage Warning: local database contention" (never a vendor name); `alertConnectionFailure` gets
+the same guard for non-RAG lanes. Real Pinecone HTTP/network errors behave exactly as before.
+Gates: tsc clean; 22 test files / 236 tests green (new `test/local-db-fault-classification.test.ts`
+7/7, both new assertions verified to fail without the fix); lint 0 errors. Rollout:
+`docs/rollouts/2026-08-09-pinecone-lock-mislabel.md`.
+
+## Current (2026-08-09 MONET — durable embed stage: embed-once guarantee)
+
+**Branch `monet/embed-stage` (stacked on `monet/pinecone-wu-breaker` / PR #2596; commit-only —
+landing operator lands):** owner directive — a paid OpenRouter document embedding must never be
+paid for twice. New SQLite `embed_stage` table (durable L2 under the process-local L1 cache):
+`storeContextsImpl` persists each paid vector (Float32 BLOB, keyed
+content_hash-of-embed-input + model + embed-rev) AFTER provider validation and BEFORE the
+Pinecone upsert; upsert success deletes the rows (managed commits defer to after
+markCommitted); upsert failure keeps them and every retry path replays them with ZERO provider
+calls — durable across restarts. WU-breaker gate still blocks everything (incl. stage-consume)
+until it lifts; stage replays on resume. Retention: 35d orphan sweep + 2 GiB oldest-first cap in
+the daily audit-prune lane. Receipts: `embed_stage_replay` audit (embeds avoided per store call),
+`embedsFromStage` on results + lastIngest. Gates: tsc clean; 33 test files / 376 tests green
+(incl. new `test/embed-stage.test.ts` 11/11); lint 0 errors. Rollout:
+`docs/rollouts/2026-08-09-embed-stage.md`.
+
+## Current (2026-08-09 MONET — Pinecone monthly WU exhaustion breaker)
+
+**Branch `monet/pinecone-wu-breaker` (commit-only; landing operator lands):** prod Pinecone
+upserts 429 hourly on the exhausted 2M/month write-unit quota (10-K backfill), re-embedding
+the same docs through paid OpenRouter every cycle. New breaker: detection in
+`withRagApiHealth` trips a marker (`pinecone:wuExhaustedUntil` = 1st of next month UTC,
+ONE storage_warning + audit, health row soft `[expected-limit]`), early gate in
+`storeContexts`/`storeDocument` refuses writes BEFORE any embed spend
+(`wuExhausted` typed skip, ≤1 audit/day), sec_ingest tasks park cleanly via new
+`deferSecIngestTask` (retry_wait at marker expiry, stage attempt refunded — no retry storm
+or dead-letter), sec-filings bulk loop stops at the first gated filing. Auto-clears on
+expiry AND on any successful Pinecone write (plan upgrade); Connections pinecone lane shows
+yellow `LIMIT` "monthly write units exhausted · resumes <date>" instead of red STOPPED.
+Gates: tsc clean; 16 test files / 201 tests green (incl. new
+`test/pinecone-wu-breaker.test.ts`, 9 tests); lint 0 errors. Rollout:
+`docs/rollouts/2026-08-09-pinecone-wu-breaker.md`.
+
+## Current (2026-08-07 GROK — Litestream → Backblaze B2)
+
+**Active SQLite backup target is Backblaze B2** (`jays-socratic-trade-eu`, eu-central-003).
+Infisical ST prod `AWS_*` repointed to scoped key `fleet-socratic-backup`; prior R2
+credentials preserved as `AWS_R2_HISTORIC_*` (R2 objects left in place — historic).
+Code: `litestream.coolify.yml` (force-path-style, 7d retention, 60s sync); R2 free-tier
+kill-switch no longer pauses litestream when endpoint is B2. Host spare forensic
+`app.db.*` copies pruned after integrity_check=ok. Branch `grok/litestream-b2-backup`.
+Rollout: `docs/rollouts/2026-08-07-litestream-b2-backup.md`.
+# Status
+
+## Current (2026-08-08 MONET — review-fix wave E: owner mobile punch list)
+
+**Branch `monet/review-fixes-e` (isolated worktree, commit-only — landing operator lands):**
+owner iPhone-Safari punch list. New owner-wide `SENTENCE_GAP` (NBSP+space) sentence separator
+applied to this wave's copy; Proposals empty state merged to one paragraph naming the ⚡
+lightning Run-once button; Orders header de-chipped (env + account chips duplicated the top
+banner) with Refresh on the h1 row and a merged intro; mobile tab bar restored to
+`bottom:0` + env(safe-area-inset-bottom) only (the 2026-08-05 chrome-gap shift itself hid the
+labels under Safari's URL chrome and its ≥48px underlay was the grey buffer — reverted);
+Positions weight is now the UNSIGNED share of gross exposure (kills "-0.0%" short artifacts;
+fmtPct never renders negative zero); Orders LAST PRICE gains a durable `symbol_field_latest`
+final fallback (`orderPriceFallbacks` on the snapshot, age-tagged "· 23h old") and the mobile
+card label is one-line "Last". Gates: tsc clean; 12 test files / 161 tests green; lint 0
+errors. Rollout: `docs/rollouts/2026-08-08-review-fixes-e-mobile-punchlist.md`.
+
+## Current (2026-08-08 MONET — review-fixes wave D: mobile #2559 #2551)
+
+**PWA Market metric now renders the real session** (type drift `{label,isOpen}` → raw
+`"closed"|"regular"|"pre"|"post"` token, capitalized like iOS), **iOS stream indicator
+turns green on `: ping` heartbeats** (`events(onConnect:onEvent:)`), and **PWA proposal
+cards get the console Wave-A2 collapsed receipt** (2–3 line thesis with [Sizing]/[Risk]/
+[Stale quote] blocks stripped; "Show full reasoning" expands to full text; approve/reject
+untouched). Branch `monet/review-fixes-d` (IN PR — landing operator runs full gate).
+Rollout: `docs/rollouts/2026-08-08-mobile-review-fixes-d.md`.
+## Current (2026-08-08 MONET — review-fix wave C: feed/alerts/critic)
+
+**#2553/#2555/#2552 (branch `monet/review-fixes-c`):** ingest/embed audit kinds fold into the
+activity feed's System collapse; duplicate "BUY X"/"TRADE X" sibling rows merged at derive time
+(pre-insert proposalId orphans); no-op disclosure-embed audits roll up to at most one daily row;
+alert center gains a single expandable "N provider lanes degraded" rollup + reversible per-condition
+24h mutes ("muted N" count); critic-failure chips name the cause (model + kind, not_configured
+distinct) and Results shows a critic failure rate (30d) stat. Gates: tsc clean, focused vitest
+14 files / 143 tests green, lint 0 errors. Rollout:
+`docs/rollouts/2026-08-08-review-fixes-c-feed-alerts-critic.md`.
+## Current (2026-08-08 MONET — data-integrity fixes #2557 #2548)
+
+**Results math stops trusting unverifiable inputs (display/aggregation only):** inferred
+transfers must reconcile against their own sub-period's equity delta (else "inferred —
+unverified" chip, excluded from TWR/day-P&L; kills the phantom $36.5k-withdrawal +56% TWR);
+dead/stale SPY series renders a first-class "benchmark unavailable" state + advisory audit
+instead of fake 0.00%; open lots are reconciled against live broker positions ("ledger
+mismatch" chip; mismatched symbols excluded from wash-sale/early-exit/harvest figures with a
+footnote). Branch `monet/review-fixes-b`; landing operator runs full gate + `land.sh`.
+Rollout: `docs/rollouts/2026-08-08-data-integrity-flow-sanity-ledger.md`.
+## Current (2026-08-08 MONET — review fixes wave A)
+
+**Review-fixes wave A (#2547 #2549 #2554 #2556 #2562):** real `/console/decisions` index
+(Home "All Decisions" no longer 404s); one shared run-state vocabulary (`StateInfo.word`)
+across console chrome / Guardrails / PWA header (+ `runDuringExtendedHours` on the mobile
+snapshot); unmanaged-shorts advisory banner (Home positions + Guardrails Short selling);
+#2547 verified NOT a drift (v2.5.1 annotated tag == locked commit `b454ccb8`, lock-only
+install zero-diff); #2562 copy/polish batch (a–n: intro-canvas theme colors + content
+shield, "Deployed today" chip, feed state dedup, ••last4 mask, full-symbol logo fallback,
+`--con-shadow-up` token, fs-2xs tokens, etc.). Branch `monet/review-fixes-a` (isolated
+worktree; landing operator runs full gates). Rollout:
+`docs/rollouts/2026-08-08-review-fixes-a.md`.
+
+## Current (2026-08-08 MONET — weekly R2 cold snapshot)
+
+**Weekly cold DB snapshot to the idle R2 bucket (second-provider DR):** durable due-job
+(Sunday ~03:17 UTC) runs better-sqlite3 `backup()` → 100 MB-part multipart upload to
+`cold-snapshots/app-<date>.db` in the `AWS_R2_HISTORIC_*` bucket, prunes to newest 4,
+Class A ≥50% budget guard, silent no-op without creds. Branch `monet/r2-cold-snapshot`.
+Rollout: `docs/rollouts/2026-08-08-r2-cold-snapshot.md`.
+
+## Current (2026-08-08 GROK — settings ntfy label)
+
+**Settings → Delivery:** first channel renamed **ntfy.sh** (was "Phone push"); removed "recommended · free" badge. Branch `grok/settings-ntfy-label`.
+
+## Current (2026-08-07) — docs / GitHub surface refresh
+
+**README + `docs/deployment.md` + strategic-framework + GitHub About** brought in line with
+supported brokers (**Alpaca**, **Tradier**, **Robinhood**), Hetzner Coolify host, app uuid
+`socratic-app`, dockerfile + auto-deploy on main, no Test-mode/local sim, fleet UI copy pointer.
+Branch `grok/docs-github-refresh`.
+
+---
+
+## Current (2026-08-06 MONET representation-weighted model rotation)
+
+**"__rotate__" now samples representation-weighted instead of round-robin** (owner request:
+underrepresented models 2x as likely as overrepresented, which can still be picked). Weights come
+from the rotation's own committed `model_rotation_pick` audits (30d window, per user/account/seat;
+below-median or zero-usage = weight 2, else 1); commit-late + same-model guarantee + fail-closed
+behavior unchanged; injectable RNG for deterministic tests. Branch `monet/rotation-weighted`
+(committed, NOT yet pushed — landing operator runs the full gate + `land.sh`). Rollout:
+`docs/rollouts/2026-08-06-rotation-representation-weighted.md`.
+
+## Current (2026-08-06 MONET full-product review + deploy-freeze repair)
+## Current (2026-08-07 GROK — iOS login brand parity)
+
+**iOS login restyled to match website** (`app/login/page.tsx`): candlestick "SOCRATIC TRADE" wordmark (`CandleWordmarkView`, port of `candle-ticker.ts`), accent-dot value bullets, plain `--bg` surface, Google/GitHub/Apple button order and styles. PR [#2574](https://github.com/jaywedgeworth22/Socratic.Trade/pull/2574) (branch `grok/ios-login-brand`, auto-merge armed). `xcodebuild` BUILD SUCCEEDED. Rollout: `docs/rollouts/2026-08-07-ios-login-brand.md`.
+
+## Prior (2026-08-06 MONET full-product review + deploy-freeze repair)
+
+
+## Production host (2026-08-07)
+
+**Hetzner** `167.233.254.55` (Coolify + all apps). ST live with L9 repaired DB. CT/UM live on fresh schema. See `docs/rollouts/2026-08-07-hetzner-fleet-cutover.md`.
+
+**MONET (this seat; posts earlier today were tagged CLAUDE before the owner re-ruled the seat) ran the owner-requested full-product review** (live signed-in prod session +
+12-agent workflow): findings in `docs/reviews/2026-08-06-claude-full-product-review.md`,
+handoff in `docs/rollouts/2026-08-06-claude-full-product-review.md`, issues labeled
+`product-review-2026-08-06`. Highest-urgency discoveries:
+
+- **Deploy freeze (P0): all five 2026-08-06 deploys failed** — Coolify's SSH exec stream
+  dies mid-build (exit 255, "disconnected by user"), correlated with CT OCR load on the
+  shared box; prod sat on `6b47a886` while main advanced 4 merges. Zombie helper
+  `onlrw5mgf4s2pw9he4udt2kg` (13.5h) removed; webhook redelivered; retry on a quiet box
+  progressed past every earlier failure point (see rollout note for final status).
+- **Litestream→R2 was PAUSED (P0)** since Aug 4 (free-tier kill-switch). **Superseded
+  2026-08-07 GROK:** active replica → **Backblaze B2** (see Current header); R2 left
+  historic. Cross-app R2 free-tier noise may still alert but must not stop B2 backups.
+- **Results page shows +56.47% vs SPY on a flat account (P1)** — phantom inferred
+  $36.5k withdrawal + SPY series silently 0.00% everywhere; and the tax open-lots ledger
+  contradicts live positions (T long 91 sh vs actual short −1.881). Overlaps GROK's
+  `grok/fix-account-return-pct`.
+- **Two unmanaged shorts (P1)**: PG/T shorts sit unprotected because every enforcement
+  layer skips shorts while `shortSellingEnabled` is off (`app/console/lib/derive.ts`).
+- **Shared-package drift (P1)**: manifest pins `congress-trading-shared#v2.5.1`, lockfile
+  ships 2.5.0 — the filingDate member-skill dependency is not actually deployed.
+
 ## Current (2026-08-06 GROK user source settings)
+## Current (2026-08-06 GROK — iOS login 522 / Oracle host down)
+
+**iOS Sign-In failures (Apple 522 banner; Google/GitHub CF interstitial) are a production origin outage, not OAuth wiring.** UptimeRobot + curl confirm Cloudflare **522** on socratictrade.com / congress.trade / usage.jays.services / host.jays.services; Tailscale `usage-monitor-oracle` offline; public IP no ping; OCI API keys 401 so agents cannot SOFTRESET. **Owner action: OCI Console reboot in us-phoenix-1.** Branch `grok/ios-login-522-and-anchor`: iOS 26 `ASPresentationAnchor` deprecation fix + clearer 521–523 error copy. Rollout: `docs/rollouts/2026-08-06-ios-login-522-oracle-down.md`.
+
+## Prior (2026-08-06 GROK user source settings)
 
 **Per-user source knobs + FMP toggles restored; plan tiers for all market-data sources (branch `grok/plan-tiers-all-sources`).** Rollouts: `docs/rollouts/2026-08-06-user-source-settings-ui.md`, `docs/rollouts/2026-08-06-plan-tiers-all-data-sources.md`.
 
@@ -314,8 +673,8 @@ tests, build clean. Rollout: `docs/rollouts/2026-08-02-data-provider-round2.md`.
 | In flight (MONET) | `monet/exit0-outage-audit` — exit-0 outage RCA + exit-code hardening (PR pending). `monet/broker-mutation-mutex-pr2` LANDED as #2361 (§7 slice 3 COMPLETE; corrected in place — was listed in flight); its deploy is also the freshness-lane re-enable live test. Landed today: #2350, #2352, #2354, #2360, #2361. Rollout: `docs/rollouts/2026-08-02-account-mutation-lease-pr2.md` |
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
-| Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded, litestream replicating |
-| Data providers | `dataProvidersDegraded=true` — FMP plan probe 403, Massive capped to ~2y history (unchanged, owner decision pending) |
+| Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded. ~~litestream replicating~~ **CORRECTED 2026-08-06 (MONET): litestream→R2 is PAUSED (kill-switch since Aug 4) — no continuous DB backup; owner decision to resume** |
+| Data providers | `dataProvidersDegraded=true` — Massive capped to ~2y history (owner decision pending); filingapi STOPPED 6d. ~~FMP plan probe 403~~ (stale: FMP retired on ST 2026-08-04, health lanes show OFF by design) |
 
 ## Blockers
 
@@ -387,3 +746,7 @@ Fixed `gpt-5.4-mini` regex inclusion in reasoning model capabilities which was c
 
 **2026-08-04 — Revert accidental marketScan in from-draft preview (Antigravity).**
 Fixed `test/chat-draft-policy.test.ts` test regression. A previous commit accidentally added a `fetchFreshQuotesCascade` call to the preview evaluation in `app/api/proposals/from-draft/route.ts`. Since the mock test broker returns real time quotes, this caused the "scan-less" preview to actually fetch a fresh quote and skip the expected `staleness_gate` block in tests. Reverted the addition so the preview returns to its scan-less state. All 10/10 tests pass, `land.sh` executed.
+## Current (2026-08-07 GROK)
+
+- **Fix paper vs-SPY +50%**: deposit+invest sparse snapshots without fills no longer count as alpha (`grok/fix-paper-spy-return-again`).
+

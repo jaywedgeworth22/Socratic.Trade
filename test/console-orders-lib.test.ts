@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { closingOrderPnl, deriveOpenOrders, effectiveOrderPrice, matchPosition } from "../app/console/orders/lib";
+import {
+  closingOrderPnl,
+  deriveOpenOrders,
+  effectiveOrderPrice,
+  fmtAge,
+  matchPosition,
+  storedPriceFor
+} from "../app/console/orders/lib";
 import type { EquityOrder, EquityPosition, TradingPolicy } from "../src/lib/types";
 
 function order(overrides: Partial<EquityOrder> = {}): EquityOrder {
@@ -72,6 +79,31 @@ describe("effectiveOrderPrice — held position's own mark beats the market-scan
     expect(effectiveOrderPrice(undefined, null)).toBeNull();
   });
 
+  it("falls back to the durable stored price (age-tagged) when neither held nor scanned", () => {
+    const stored = { price: 378.1, asOf: "2026-07-14T15:00:00.000Z", source: "yahoo-finance" };
+    expect(effectiveOrderPrice(undefined, null, stored)).toEqual({
+      price: 378.1,
+      source: "store",
+      asOf: stored.asOf,
+      provider: stored.source
+    });
+  });
+
+  it("never lets the stored price beat a held mark or a scan quote", () => {
+    const stored = { price: 1, asOf: "2026-07-14T15:00:00.000Z", source: "yahoo-finance" };
+    expect(effectiveOrderPrice(heldLong, scan, stored)).toEqual({ price: 125, source: "position" });
+    expect(effectiveOrderPrice(undefined, scan, stored)).toEqual({
+      price: 118,
+      source: "scan",
+      asOf: scan.asOf,
+      provider: scan.provider
+    });
+  });
+
+  it("returns null when only an invalid stored price exists (never invent)", () => {
+    expect(effectiveOrderPrice(undefined, null, null)).toBeNull();
+  });
+
   it("falls back to the scan when the position is flat (nothing to mark)", () => {
     const flat: EquityPosition = { symbol: "AAPL", quantity: 0, averageCost: 100, marketValue: 0 };
     expect(effectiveOrderPrice(flat, scan)).toEqual({
@@ -80,6 +112,41 @@ describe("effectiveOrderPrice — held position's own mark beats the market-scan
       asOf: scan.asOf,
       provider: scan.provider
     });
+  });
+});
+
+describe("storedPriceFor — durable-store fallback lookup from the snapshot map", () => {
+  const fallbacks = {
+    MSFT: { price: 378.1, asOf: "2026-07-14T15:00:00.000Z", source: "yahoo-finance" }
+  };
+
+  it("finds the stored price by normalized symbol", () => {
+    expect(storedPriceFor(fallbacks, " msft ")?.price).toBe(378.1);
+  });
+
+  it("returns null for symbols the store doesn't cover, or no map at all", () => {
+    expect(storedPriceFor(fallbacks, "AAPL")).toBeNull();
+    expect(storedPriceFor(undefined, "MSFT")).toBeNull();
+  });
+
+  it("rejects non-positive / non-finite stored prices", () => {
+    expect(storedPriceFor({ MSFT: { price: 0, asOf: "2026-07-14T15:00:00.000Z" } }, "MSFT")).toBeNull();
+    expect(storedPriceFor({ MSFT: { price: Number.NaN, asOf: "2026-07-14T15:00:00.000Z" } }, "MSFT")).toBeNull();
+  });
+});
+
+describe("fmtAge — coarse age tags for stored prices", () => {
+  const now = Date.parse("2026-08-08T12:00:00.000Z");
+
+  it("renders minutes, hours, and days coarsely", () => {
+    expect(fmtAge("2026-08-08T11:48:00.000Z", now)).toBe("12m");
+    expect(fmtAge("2026-08-07T13:00:00.000Z", now)).toBe("23h");
+    expect(fmtAge("2026-08-05T11:00:00.000Z", now)).toBe("3d");
+  });
+
+  it("returns null for missing/unparseable timestamps (no tag, never invented)", () => {
+    expect(fmtAge(undefined, now)).toBeNull();
+    expect(fmtAge("not-a-date", now)).toBeNull();
   });
 });
 
