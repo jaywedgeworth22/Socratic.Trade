@@ -92,6 +92,9 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // Trigger: run when >= 5 new lessons pile up, OR the oldest un-reviewed one is >= 7 days old.
   learningReviewMinNewLessons: 5,
   learningReviewMaxWaitDays: 7,
+  // Outcome grading stays on raw side-adjusted returns by default (byte-identical behavior).
+  // "alpha" is the opt-in benchmark-relative companion grade — see TradingPolicy.outcomeGradingMode.
+  outcomeGradingMode: "raw",
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
   // Account-relative by default: four full-sized 5%-of-NAV openings can fit in one day. A user can

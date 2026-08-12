@@ -251,6 +251,27 @@ export function computeIntradayHorizonRows(input: IntradayHorizonInput): Socrati
   return rows;
 }
 
+/** Longest resolved horizon that actually carries a benchmark figure wins the ALPHA headline:
+ * 1w > 1d > 1h > 15m (mirrors pickHeadlineRow in outcome-engine.ts), but ONLY over rows with a
+ * defined spyExcessPct — today that is the daily horizons; 15m/1h have no intraday SPY basis.
+ * Returns undefined when no row qualifies (never fabricated). */
+export function pickHeadlineAlpha(
+  outcomes: SocraticOutcomeHorizonRow[] | undefined
+): SocraticOutcomeHorizonRow | undefined {
+  const priority: Array<SocraticOutcomeHorizonRow["horizon"]> = ["1w", "1d", "1h", "15m"];
+  for (const horizon of priority) {
+    const row = (outcomes ?? []).find(
+      (r) =>
+        r.horizon === horizon &&
+        r.resolution === "ok" &&
+        typeof r.spyExcessPct === "number" &&
+        Number.isFinite(r.spyExcessPct)
+    );
+    if (row) return row;
+  }
+  return undefined;
+}
+
 /** Merge previously-persisted horizon rows with newly-computed ones: an existing TERMINAL row
  * (ok or unresolvable) is never overwritten; new rows fill the gaps. Order: 15m, 1h, 1d, 1w.
  *

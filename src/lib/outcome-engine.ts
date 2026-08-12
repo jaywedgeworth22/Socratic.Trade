@@ -63,6 +63,7 @@ import {
   INTRADAY_HORIZONS,
   mergeHorizonRows,
   normalizeDailyBars,
+  pickHeadlineAlpha,
   UNRESOLVABLE_AFTER_TRADING_DAYS,
   type NormalizedDailyBar
 } from "./outcome-horizons";
@@ -73,7 +74,7 @@ import {
   type UntrustedPromptField
 } from "./prompt-safety";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
-import type { FillEvent, OrderSide, SocraticDecisionCase, SocraticOutcomeHorizonRow } from "./types";
+import type { FillEvent, OrderSide, OutcomeGradingMode, SocraticDecisionCase, SocraticOutcomeHorizonRow } from "./types";
 
 /** Collect string leaves under a path for advisory injection scanning (bounded). */
 function flattenPromptScanFields(value: unknown, path: string, out: UntrustedPromptField[] = [], depth = 0): UntrustedPromptField[] {
@@ -157,6 +158,7 @@ export async function matureSocraticDecisionOutcomes(
   const lessonBatchCap = boundedInteger(options.lessonBatchCap, 0, 20, DEFAULT_LESSON_BATCH_CAP);
   const fetchOHLC = options.fetchOHLC ?? fetchDailyOHLC;
   const fetchQuote = options.fetchQuote ?? defaultQuoteFetcher;
+  const gradingMode = resolveOutcomeGradingMode(userId, options.connectedAccountId);
 
   const cases = listSocraticDecisionCasesNeedingOutcome(userId, {
     limit,
@@ -182,10 +184,28 @@ export async function matureSocraticDecisionOutcomes(
 
   for (const decisionCase of cases) {
     try {
-      const outcome = await measureCase(decisionCase, { userId, now, nowIso, nowDate, getBars, spyBars, fetchQuote });
+      const outcome = await measureCase(decisionCase, { userId, now, nowIso, nowDate, getBars, spyBars, fetchQuote, gradingMode });
       if (!outcome) continue; // nothing decidable yet (e.g. awaiting fill reconciliation)
       const updated = await writeSocraticDecisionOutcome(decisionCase.id, outcome, userId);
       measured += 1;
+      // THE alpha-mode observability signal: the market's beta and the decision's quality disagreed
+      // (e.g. raw 'won' but SPY-excess 'lost'). Receipted once — terminal cases are never re-measured.
+      if (outcome.alphaStatus && outcome.alphaStatus !== outcome.status) {
+        audit(
+          "outcome_alpha_grading",
+          {
+            event: "divergence",
+            decisionId: decisionCase.id,
+            symbol: decisionCase.symbol,
+            rawStatus: outcome.status,
+            alphaStatus: outcome.alphaStatus,
+            alphaPct: outcome.alphaPct,
+            returnPct: outcome.returnPct
+          },
+          userId,
+          decisionCase.connectedAccountId
+        );
+      }
       if (TERMINAL_OUTCOME_STATUSES.has(outcome.status)) {
         closed += 1;
         if (outcome.status === "unresolvable") unresolvable += 1;
@@ -205,6 +225,27 @@ export async function matureSocraticDecisionOutcomes(
   const lessonCandidates = newlyClosed.filter(
     (c) => c.outcome && c.outcome.status !== "unresolvable" && c.outcome.outcomes.some((row) => row.resolution === "ok")
   );
+  // Alpha mode additionally wants alphaStatus resolved before grading a lesson — but a case whose
+  // spyExcessPct could not be measured falls back to RAW grading with a receipt (never blocks
+  // lesson generation; the candidate list is unchanged either way).
+  if (gradingMode === "alpha") {
+    for (const candidate of lessonCandidates) {
+      if (!candidate.outcome?.alphaStatus) {
+        audit(
+          "outcome_alpha_grading",
+          {
+            event: "raw_fallback",
+            reason: "no_spy_excess",
+            decisionId: candidate.id,
+            symbol: candidate.symbol,
+            rawStatus: candidate.outcome?.status
+          },
+          userId,
+          options.connectedAccountId
+        );
+      }
+    }
+  }
   if (lessonCandidates.length > 0 && isOverLlmBudget(userId, options.connectedAccountId)) {
     lessonsSkipped = lessonCandidates.length;
     audit(
@@ -217,7 +258,7 @@ export async function matureSocraticDecisionOutcomes(
     let index = 0;
     for (; index < Math.min(lessonCandidates.length, lessonBatchCap); index += 1) {
       const candidate = lessonCandidates[index];
-      const result = await generatePostMortemLessons(candidate, userId, options.llm).catch((err) => {
+      const result = await generatePostMortemLessons(candidate, userId, options.llm, gradingMode).catch((err) => {
         console.warn("[outcome-engine] post-mortem lesson pass failed:", err instanceof Error ? err.message : String(err));
         return { written: false, skippedReason: "llm_error" as string | undefined };
       });
@@ -287,6 +328,30 @@ interface MeasureContext {
   getBars: (symbol: string) => Promise<NormalizedDailyBar[] | null>;
   spyBars: NormalizedDailyBar[];
   fetchQuote: OutcomeQuoteFetcher;
+  gradingMode: OutcomeGradingMode;
+}
+
+/** Read the owner's grading-mode knob, failing OPEN to "raw" — a settings-store failure must never
+ * stall outcome maturation (same contract as getUserSourceSettingsMap, source-settings.ts). */
+function resolveOutcomeGradingMode(userId: string, connectedAccountId?: string): OutcomeGradingMode {
+  try {
+    return getPolicy(userId, connectedAccountId).outcomeGradingMode ?? "raw";
+  } catch {
+    return "raw";
+  }
+}
+
+/** Companion alpha grade for a terminal case ('alpha' mode only): verdict + figure from the
+ * headline spyExcessPct row, or {} when no resolved horizon carried one (never fabricated). */
+function headlineAlphaFields(
+  outcomes: SocraticOutcomeHorizonRow[]
+): Pick<NonNullable<SocraticDecisionCase["outcome"]>, "alphaStatus" | "alphaPct"> {
+  const row = pickHeadlineAlpha(outcomes);
+  if (!row || typeof row.spyExcessPct !== "number") return {};
+  return {
+    alphaStatus: row.spyExcessPct > 0 ? "won" : row.spyExcessPct < 0 ? "lost" : "flat",
+    alphaPct: row.spyExcessPct
+  };
 }
 
 async function measureCase(
@@ -411,12 +476,14 @@ async function measureCase(
 
   const outcomes = mergeHorizonRows(decisionCase.outcome?.outcomes, [...intradayRows, ...dailyRows]);
 
-  // 4) Case-level verdict.
+  // 4) Case-level verdict. Alpha mode ADDS the companion SPY-excess grade on terminal verdicts;
+  // the raw status/returnPct are always written unchanged (raw mode is byte-identical to before).
   if (realizedLot) {
     return {
       status: realizedLot.pnl > 0 ? "won" : realizedLot.pnl < 0 ? "lost" : "flat",
       returnPct: realizedLot.returnPct,
       pnlUsd: Number(realizedLot.pnl.toFixed(2)),
+      ...(ctx.gradingMode === "alpha" ? headlineAlphaFields(outcomes) : {}),
       note,
       measuredAt: ctx.nowIso,
       outcomes
@@ -431,6 +498,7 @@ async function measureCase(
       return {
         status: headline.returnPct > 0 ? "won" : headline.returnPct < 0 ? "lost" : "flat",
         returnPct: headline.returnPct,
+        ...(ctx.gradingMode === "alpha" ? headlineAlphaFields(outcomes) : {}),
         note: `${note} Headline horizon: ${headline.horizon}.`,
         measuredAt: ctx.nowIso,
         outcomes
@@ -674,7 +742,17 @@ async function writeIntradaySampleRow(
     const status = decisionCase.outcome?.status ?? "open";
     await writeSocraticDecisionOutcome(
       payload.caseId,
-      { status, returnPct: decisionCase.outcome?.returnPct, pnlUsd: decisionCase.outcome?.pnlUsd, note: decisionCase.outcome?.note, measuredAt: row.maturedAt ?? new Date().toISOString(), outcomes },
+      {
+        status,
+        returnPct: decisionCase.outcome?.returnPct,
+        pnlUsd: decisionCase.outcome?.pnlUsd,
+        // Preserve an already-written alpha companion grade — this write only adds a horizon row.
+        alphaStatus: decisionCase.outcome?.alphaStatus,
+        alphaPct: decisionCase.outcome?.alphaPct,
+        note: decisionCase.outcome?.note,
+        measuredAt: row.maturedAt ?? new Date().toISOString(),
+        outcomes
+      },
       userId
     );
     return true;
@@ -742,7 +820,8 @@ Respond with STRICT JSON only (no markdown, no prose outside the JSON):
 async function generatePostMortemLessons(
   decisionCase: SocraticDecisionCase,
   userId: string,
-  llmOverride?: OutcomeLessonLlm
+  llmOverride?: OutcomeLessonLlm,
+  gradingMode: OutcomeGradingMode = "raw"
 ): Promise<LessonPassResult> {
   const outcome = decisionCase.outcome;
   if (!outcome) return { written: false, skippedReason: "no_outcome" };
@@ -762,7 +841,26 @@ async function generatePostMortemLessons(
     dissent: decisionCase.dissent.slice(0, 6).map((item) => ({ title: item.title, summary: truncate(item.summary, 300) })),
     evidence: decisionCase.evidence.slice(0, 6).map((item) => ({ kind: item.kind, title: item.title, summary: truncate(item.summary, 300) })),
     coachNotes: decisionCase.coachNotes.slice(-5),
-    realizedOutcome: outcome
+    realizedOutcome: outcome,
+    // Alpha mode: make the benchmark-relative grade explicit so the post-mortem judges DECISION
+    // QUALITY (SPY-excess), not market beta. The raw-fallback note is honest disclosure, not a gate.
+    ...(gradingMode === "alpha"
+      ? {
+          outcomeGrading:
+            outcome.alphaStatus !== undefined
+              ? {
+                  mode: "alpha",
+                  alphaStatus: outcome.alphaStatus,
+                  alphaPct: outcome.alphaPct,
+                  note: "Judge the belief on the SPY-excess (alpha) figures, not the raw return alone."
+                }
+              : {
+                  mode: "alpha",
+                  fallback: "raw",
+                  note: "spyExcessPct was unmeasurable for this case; graded on raw return."
+                }
+        }
+      : {})
   };
   const contained = containPromptDataTree(rawUserPayload, "unknown", "outcomePostMortem");
   const injectionFindings = scanForInjectionAttempts(

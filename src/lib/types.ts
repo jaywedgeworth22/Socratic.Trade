@@ -30,6 +30,11 @@ export type StrategyAuthority = "propose" | "decide";
 export type SellToFundBuyMode = "off" | "suggest" | "propose" | "automated";
 
 export type LlmReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+/** How the learning loop GRADES decision outcomes: "raw" = side-adjusted return alone (the
+ * original behavior); "alpha" = additionally judge against the same-window SPY-excess return
+ * (spyExcessPct), so a rising market's beta can't teach the loop that every long was a good
+ * decision. See TradingPolicy.outcomeGradingMode. */
+export type OutcomeGradingMode = "raw" | "alpha";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
@@ -989,6 +994,16 @@ export interface TradingPolicy {
    *  corrupted lingers when new learning is slow. Default 7. */
   learningReviewMaxWaitDays?: number;
   /**
+   * How the learning loop GRADES decision outcomes (default "raw" — byte-identical to before this
+   * knob existed). "alpha" adds a COMPANION grade from the headline horizon's SPY-excess return
+   * (spyExcessPct): lesson gating and the post-mortem prompt then cite alpha instead of letting a
+   * rising market's beta mark every long a winner, and retrieval-usefulness weighting reads the
+   * ':alpha' stat rows. The raw status is ALWAYS still written; a case with no measurable
+   * spyExcessPct falls back to raw grading WITH a receipt (outcome_alpha_grading) — lesson
+   * generation is never blocked. Owner-adjustable preference, not a cage.
+   */
+  outcomeGradingMode?: OutcomeGradingMode;
+  /**
    * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).
    * When non-empty, a TRANSIENT primary failure (HTTP 429/5xx or timeout) transparently re-issues the
    * SAME request against each model in order; the first success serves the run. The failover is
@@ -1633,6 +1648,13 @@ export interface SocraticDecisionCase {
     status: "open" | "won" | "lost" | "flat" | "unknown" | "unresolvable";
     returnPct?: number;
     pnlUsd?: number;
+    /** Benchmark-alpha COMPANION verdict (written only under outcomeGradingMode "alpha"): the sign
+     * of the headline spyExcessPct (pickHeadlineAlpha, outcome-horizons.ts). Never replaces
+     * `status` — raw grading remains the primary record. Undefined in "raw" mode or when no
+     * resolved horizon carried spyExcessPct (never fabricated). */
+    alphaStatus?: "won" | "lost" | "flat";
+    /** The headline spyExcessPct behind alphaStatus. */
+    alphaPct?: number;
     note?: string;
     measuredAt?: string;
     outcomes: SocraticOutcomeHorizonRow[];
