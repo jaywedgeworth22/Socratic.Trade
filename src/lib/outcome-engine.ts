@@ -241,7 +241,9 @@ export async function matureSocraticDecisionOutcomes(
             rawStatus: candidate.outcome?.status
           },
           userId,
-          options.connectedAccountId
+          // The case's own account, not the run filter — an unfiltered maturation pass would
+          // otherwise strip per-account attribution from this receipt.
+          candidate.connectedAccountId
         );
       }
     }

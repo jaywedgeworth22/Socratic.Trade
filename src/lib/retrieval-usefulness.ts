@@ -200,9 +200,12 @@ function outcomeGradingModeFor(userId: string): OutcomeGradingMode {
 }
 
 function kindStatsFor(userId: string, now: number): KindStats {
-  const cached = kindStatsCache.get(userId);
-  if (cached && now - cached.at < KIND_STATS_TTL_MS) return cached.stats;
   const mode = outcomeGradingModeFor(userId);
+  // The mode is part of the cache key's validity: a cached entry built under the other grading
+  // mode must not be served for up to a TTL after the owner flips the knob (the mode read itself
+  // is cheap — the stats DB read is what the cache exists to avoid).
+  const cached = kindStatsCache.get(userId);
+  if (cached && cached.mode === mode && now - cached.at < KIND_STATS_TTL_MS) return cached.stats;
   // Kind-level ('' doc_id) rows, split by grading mode: raw uses only the plain-horizon rows
   // (byte-identical selection to before the alpha ledger existed); alpha uses only the ':alpha'
   // rows. Prefer the headline horizon (raw only — no 'headline:alpha' row exists), fall back to

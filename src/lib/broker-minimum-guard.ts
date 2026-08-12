@@ -147,8 +147,22 @@ export function describeCancelDustRisk(
 
   const filledQuantity = order.filledQuantity ?? 0;
   if (!(filledQuantity > 0)) return undefined;
-  const remaining = (order.quantity ?? 0) - filledQuantity;
-  if (!(remaining > 0)) return undefined;
+
+  const price = order.averagePrice ?? order.currentPrice;
+  if (price == null || !(price > 0)) return undefined;
+  const filledNotional = filledQuantity * price;
+
+  // Remaining-to-fill: share-sized orders compare quantities; dollar-sized orders (quantity
+  // undefined) compare the ordered notional against what has filled.  Without the dollar branch,
+  // `(quantity ?? 0) - filled` went negative and the advisory silently never fired for the order
+  // type most likely to strand fractional dust.
+  const remaining =
+    order.quantity !== undefined
+      ? order.quantity - filledQuantity
+      : order.dollarAmount !== undefined
+        ? (order.dollarAmount - filledNotional) / price
+        : 0;
+  if (!(remaining > FULL_POSITION_QTY_EPSILON)) return undefined;
 
   if (positionQuantity == null) return undefined;
   // Short positions are stored with NEGATIVE quantities — compare magnitudes (isFullPositionExit).
@@ -156,10 +170,6 @@ export function describeCancelDustRisk(
 
   const minNotional = brokerMinOrderNotional(activeBroker);
   if (minNotional === undefined) return undefined;
-
-  const price = order.averagePrice ?? order.currentPrice;
-  if (price == null || !(price > 0)) return undefined;
-  const filledNotional = filledQuantity * price;
   if (!(filledNotional > 0) || filledNotional >= minNotional) return undefined;
 
   const symbol = order.symbol ?? "this symbol";

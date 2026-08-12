@@ -390,6 +390,9 @@ export function fetchAccountPerformance(id: string): Promise<AccountPerformanceR
 export interface SignalHealthResponse {
   minObservations: number;
   topK: number;
+  /** Round-trip transaction-cost estimate (bps) debited for the "net" figure in the Gross vs net
+   *  stat — server-provided so the UI copy never drifts from signal-health.ts's actual constant. */
+  costRoundTripBps: number;
   horizons: Array<{ horizon: string; snapshots: SignalHealthSnapshotRow[] }>;
 }
 

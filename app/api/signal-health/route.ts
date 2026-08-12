@@ -1,6 +1,7 @@
 import { listSignalHealthSnapshots } from "@/lib/db";
 import { resolveRequestUserId } from "@/lib/request-user";
 import {
+  SIGNAL_HEALTH_COST_ROUND_TRIP_BPS,
   SIGNAL_HEALTH_HORIZONS,
   SIGNAL_HEALTH_MIN_OBSERVATIONS,
   SIGNAL_HEALTH_TOP_K
@@ -18,6 +19,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     minObservations: SIGNAL_HEALTH_MIN_OBSERVATIONS,
     topK: SIGNAL_HEALTH_TOP_K,
+    costRoundTripBps: SIGNAL_HEALTH_COST_ROUND_TRIP_BPS,
     horizons: SIGNAL_HEALTH_HORIZONS.map((horizon) => ({
       horizon,
       snapshots: listSignalHealthSnapshots(userId, { horizon, limit: 30 })

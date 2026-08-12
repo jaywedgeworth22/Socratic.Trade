@@ -511,7 +511,7 @@ function SignalHealthCard() {
             <Stat
               label="Gross vs net"
               value={`${fmtPct(latest.grossReturnPct, 2, true)} / ${fmtPct(latest.netOfCostReturnPct, 2, true)}`}
-              sub="mean matured return, net of 20 bps round-trip"
+              sub={`mean matured return, net of ${data.costRoundTripBps}bps round-trip`}
               tone={latest.netOfCostReturnPct > 0 ? "pos" : latest.netOfCostReturnPct < 0 ? "neg" : "muted"}
               title="Mean side-adjusted matured return across observations, gross and after debiting the round-trip transaction-cost estimate.  A signal that only wins gross is not a signal."
             />

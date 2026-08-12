@@ -308,6 +308,36 @@ describe("describeCancelDustRisk", () => {
     );
     expect(warning).toContain("AAPL");
   });
+
+  // Regression guard for the dollar-based `remaining` fix: a dollar-sized order NEVER carries
+  // `quantity`, so the old `(order.quantity ?? 0) - filledQuantity` computation was ALWAYS negative
+  // for these orders (0 - anything filled), which meant the advisory could never fire for a
+  // dollar-based partial fill — exactly the order shape most likely to strand fractional dust.
+  it("warns on a dollar-based partial fill whose fill is the whole resulting position, below the floor", async () => {
+    const { describeCancelDustRisk } = await import("../src/lib/broker-minimum-guard");
+    // $5 dollar order, only 0.02 sh @ $20 = $0.40 filled so far (well below Robinhood's $1 floor
+    // and well short of the $5 target) -- quantity is undefined (dollar-based), not 0.
+    const warning = describeCancelDustRisk(
+      { side: "buy", dollarAmount: 5, filledQuantity: 0.02, averagePrice: 20, symbol: "AAPL" },
+      0.02,
+      "robinhood"
+    );
+    expect(warning).toContain("AAPL");
+    expect(warning).toContain("$0.40");
+    expect(warning).toContain("$1.00");
+  });
+
+  it("does NOT warn on a fully-filled dollar-based order (nothing left for the cancel to interrupt)", async () => {
+    const { describeCancelDustRisk } = await import("../src/lib/broker-minimum-guard");
+    // Filled notional ($0.40) equals the dollar target ($0.40) -- fully filled -- even though that
+    // notional is itself below the floor, isolating the "fully filled" no-op from the floor check.
+    const warning = describeCancelDustRisk(
+      { side: "buy", dollarAmount: 0.4, filledQuantity: 0.02, averagePrice: 20, symbol: "AAPL" },
+      0.02,
+      "robinhood"
+    );
+    expect(warning).toBeUndefined();
+  });
 });
 
 describe("shouldAlertCancelDustRisk cooldown", () => {

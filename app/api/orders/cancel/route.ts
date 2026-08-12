@@ -65,7 +65,12 @@ export async function POST(request: Request) {
     );
   }
   const gateway = getBrokerGateway(policy, userId);
-  const dust = await computeCancelDustWarning(gateway, policy.accountNumber, String(orderId), policy.activeBroker);
+  // Time-bound the advisory pre-fetch: the cancel must never wait behind a hung broker READ.
+  // If the reads don't answer quickly, skip the advisory and cancel immediately.
+  const dust = await Promise.race([
+    computeCancelDustWarning(gateway, policy.accountNumber, String(orderId), policy.activeBroker),
+    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2500))
+  ]);
   if (dust) {
     audit(
       "order_cancel_dust_risk",
