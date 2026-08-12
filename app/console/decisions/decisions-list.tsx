@@ -24,11 +24,17 @@ function statusTone(status: SocraticDecisionCase["status"]): "pos" | "neg" | "mu
  *  the button's own stopPropagation. So the Link is a full-row absolute
  *  overlay (z-index/DOM-order "stretched link" pattern) instead of a
  *  wrapper: it and the visible row content are siblings, not ancestor and
- *  descendant. The content span is `relative` and comes after the overlay
- *  in DOM order, so it paints above the overlay and SymbolButton's own
- *  click always wins there; the overlay still catches every other pixel of
- *  the row (and keeps full native link behavior — keyboard, right-click,
- *  ctrl/cmd-click into a new tab, prefetch). */
+ *  descendant. The content spans stay `static` (NOT `relative`) so they
+ *  paint in normal flow, below the overlay — CSS always stacks positioned
+ *  descendants above non-positioned ones regardless of DOM order, so a
+ *  `relative` content span (even with no z-index) would sit on top of the
+ *  overlay across its whole box and swallow clicks the row's Link should
+ *  get. Only SymbolButton itself is lifted (`relative z-[1]`) above the
+ *  overlay so it stays clickable; the timestamp keeps its own `relative
+ *  z-[1]` purely so its hover title tooltip still fires (a deliberate
+ *  non-navigating exception, not a bug). Everything else — side label,
+ *  thesis-tag chip, thesis text, status chip — falls through to the Link,
+ *  same as empty row space. */
 export function DecisionsList({ decisions }: { decisions: SocraticDecisionCase[] }) {
   return (
     <Card padded={false}>
@@ -49,10 +55,10 @@ export function DecisionsList({ decisions }: { decisions: SocraticDecisionCase[]
                   aria-label={`View decision trace: ${symbolLabel}${sideLabel}, ${decisionStatusLabel(decision.status)}`}
                   className="absolute inset-0"
                 />
-                <span className="relative min-w-0">
+                <span className="min-w-0">
                   <span className="flex flex-wrap items-center gap-1.5">
                     {decision.symbol ? (
-                      <SymbolButton symbol={decision.symbol} className="text-[length:var(--con-fs-sm)]" />
+                      <SymbolButton symbol={decision.symbol} className="relative z-[1] text-[length:var(--con-fs-sm)]" />
                     ) : (
                       <span className="text-[length:var(--con-fs-sm)] font-semibold">Portfolio</span>
                     )}
@@ -69,10 +75,10 @@ export function DecisionsList({ decisions }: { decisions: SocraticDecisionCase[]
                     </span>
                   )}
                 </span>
-                <span className="relative flex shrink-0 flex-col items-end gap-1">
+                <span className="flex shrink-0 flex-col items-end gap-1">
                   <Chip tone={statusTone(decision.status)}>{decisionStatusLabel(decision.status)}</Chip>
                   <span
-                    className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+                    className="relative z-[1] text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
                     title={fmtExact(decision.createdAt)}
                   >
                     {timeAgo(decision.createdAt)}
