@@ -60,9 +60,10 @@ private struct SchedulerActivityCard: View {
                 HStack {
                     SectionHeading("Scheduler")
                     Spacer()
+                    // Shared market-aware run-state vocabulary (console deriveStateInfo parity).
                     StatusPill(
-                        snapshot.readiness.systemState == "active" ? "Running" : "Paused",
-                        color: snapshot.readiness.systemState == "active" ? AppPalette.positive : .secondary,
+                        deriveRunStateWord(snapshot: snapshot).rawValue,
+                        color: deriveRunStateWord(snapshot: snapshot).pillColor,
                         systemImage: "timer"
                     )
                 }

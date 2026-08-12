@@ -63,7 +63,7 @@ describe("/api/admin/backup-status", () => {
       const body = await res.json();
 
       expect(body.overall).toMatchObject({ state: "unknown", source: "none", degraded: false });
-      expect(body.tiers).toHaveLength(3);
+      expect(body.tiers).toHaveLength(5);
       for (const tier of body.tiers) {
         expect(tier.state).toBe("unknown");
       }

@@ -156,6 +156,31 @@ enum AppFormat {
         return String(display)
     }
 
+    /// Red Team failure-kind slug → console wording (src/lib/red-team-routing.ts
+    /// `describeRedTeamFailureKind`): "not configured", "provider error", …, else "unavailable".
+    static func redTeamFailureKindLabel(_ failureKind: String?) -> String {
+        switch failureKind {
+        case "not_configured": return "not configured"
+        case "timeout": return "timeout"
+        case "provider_error": return "provider error"
+        case "rate_limited": return "rate limited"
+        case "malformed_response": return "malformed response"
+        default: return "unavailable"
+        }
+    }
+
+    /// AccountCapabilities.accountType slug → console wording (app/console/settings/brokers.tsx
+    /// TAXATION_WORD style): never render raw snake_case slugs like "roth_ira" to the user.
+    static func accountTypeWord(_ accountType: String) -> String {
+        switch accountType {
+        case "brokerage": return "brokerage"
+        case "roth_ira": return "Roth IRA"
+        case "traditional_ira": return "traditional IRA"
+        case "crypto_exchange": return "crypto exchange"
+        default: return accountType.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
     /// Humanized command type for Activity / busy strips.
     static func commandLabel(_ commandType: String) -> String {
         if let known = commandLabels[commandType] { return known }
@@ -601,6 +626,124 @@ private struct SnapshotStatusBanner: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 4)
+    }
+}
+
+/// Presentation for the shared run-state vocabulary (tones mirror console deriveStateInfo:
+/// running=pos, paused=muted, exit-only/winding-down=warn, stopped=neg).
+extension RunStateWord {
+    var pillColor: Color {
+        switch self {
+        case .running: return AppPalette.positive
+        case .pausedMarketClosed: return .secondary
+        case .exitOnly, .windingDown: return AppPalette.warning
+        case .stopped: return AppPalette.negative
+        }
+    }
+
+    var pillSystemImage: String {
+        switch self {
+        case .running: return "bolt.fill"
+        case .pausedMarketClosed: return "moon.zzz.fill"
+        case .exitOnly, .windingDown: return "arrow.down.right.circle"
+        case .stopped: return "pause.fill"
+        }
+    }
+}
+
+/// Trailing swipe-reveal action for card rows inside ScrollView stacks (SwiftUI's
+/// `.swipeActions` is List-only).  Swiping left reveals one action button; tapping it fires
+/// `perform` and closes.  The gesture needs a mostly-horizontal drag, so vertical scrolling
+/// keeps working.  This adds a faster path to EXISTING actions only — same handlers, same
+/// ceremony — never a new kind of confirmation.
+struct SwipeRevealAction: ViewModifier {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    let isEnabled: Bool
+    let perform: () -> Void
+
+    @State private var offset: CGFloat = 0
+    @State private var isOpen = false
+
+    private let actionWidth: CGFloat = 88
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: offset)
+            .background(alignment: .trailing) {
+                if offset < 0 {
+                    Button(action: fire) {
+                        VStack(spacing: 5) {
+                            Image(systemName: systemImage)
+                                .font(.body.weight(.semibold))
+                            Text(title)
+                                .font(.caption.weight(.semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .frame(width: actionWidth)
+                        .frame(maxHeight: .infinity)
+                        .background(tint, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(title)
+                }
+            }
+            // Plain .gesture (not highPriority): the ScrollView keeps winning vertical pans.
+            .gesture(dragGesture, including: isEnabled ? .all : .subviews)
+            .onTapGesture {
+                if isOpen { close() }
+            }
+            .animation(.snappy(duration: 0.22), value: offset)
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 24, coordinateSpace: .local)
+            .onChanged { value in
+                guard isEnabled else { return }
+                // Mostly-horizontal drags only, so the scroll view keeps vertical swipes.
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                let base = isOpen ? -actionWidth : 0
+                offset = min(0, max(-actionWidth - 26, base + value.translation.width))
+            }
+            .onEnded { value in
+                guard isEnabled else { return }
+                if offset < -actionWidth * 0.55 {
+                    offset = -actionWidth
+                    isOpen = true
+                } else {
+                    close()
+                }
+            }
+    }
+
+    private func fire() {
+        close()
+        perform()
+    }
+
+    private func close() {
+        offset = 0
+        isOpen = false
+    }
+}
+
+extension View {
+    /// See `SwipeRevealAction`.
+    func swipeRevealAction(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        isEnabled: Bool = true,
+        perform: @escaping () -> Void
+    ) -> some View {
+        modifier(SwipeRevealAction(
+            title: title,
+            systemImage: systemImage,
+            tint: tint,
+            isEnabled: isEnabled,
+            perform: perform
+        ))
     }
 }
 

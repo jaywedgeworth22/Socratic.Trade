@@ -1,3 +1,49 @@
+## Current (2026-08-12 ~5:40am CT CLAUDE — dsa-lessons round 1: digest, relevance, receipts)
+
+Owner asked for lessons from ZhuLinsen/daily_stock_analysis (62k-star LLM stock-analysis repo),
+then broadened to a moderately broad GitHub sweep.  Research ran as two 15-agent workflows
+(readers -> synthesis -> per-lesson gap analysts); full verdicts + sketches in
+`docs/reviews/2026-08-12-dsa-lessons-gap-analysis.md`.  This lane (branch `agent/claude`) lands
+round 1 — three implemented lessons, each built + adversarially verified + integration-fixed:
+
+1. **Opt-in daily watchlist digest** (default OFF; Settings -> Delivery): typed report context
+   (latest persisted scan quote + proposal trajectory per symbol) -> full/medium/brief renderers ->
+   notify() `bodyTiers` picking the largest tier per channel via new `CHANNEL_CAPABILITIES`
+   (also retires the latent pushover/ntfy truncation gap).  New `trade_proposals.symbol` column
+   + index (migration + backfill).  Fires once per CT day at/after 15:15 CT via a watermark lane.
+2. **News entity-relevance gating** (default ON, real off-switch via `NEWS_RELEVANCE_*` knobs):
+   AV `relevance_score` and Marketaux `match_score` were documented-but-discarded — now parsed and
+   gated (match_score normalized /100 — it was ~12-82, making the 0-1 knob inert until the
+   integration fix); leaf rubric `news-relevance.ts` with ambiguous-company-name corroboration;
+   stream path drops only zero-evidence associations on multi-symbol articles.
+3. **Proposal repair-ladder receipts** (money-path, surgical): `TradeProposal.dataAdjustments`
+   kind-prefixed receipts; deterministic session-vs-phrasing guard (never blocks/rewrites);
+   `confidenceCapDataDegraded` tuning knob; existing bracket-fallback disclosures now also write
+   receipts; approval card renders them.
+
+Gates: lint 0 errors; tsc clean; targeted suites 76/76; full test+build via land.sh at push.
+Next: round-2 implementation (benchmark-alpha grading, signal-health monitor, cancel-dust
+advisory) on this lane after merge; UI lane (`claude/ui-symbol-drawer-fills`) lands separately.
+Blockers: none.
+
+## Current (2026-08-12 MONET — iOS parity wave 1: decision-critical fields, protective controls, swipe actions, admin portal)
+
+**Branch `monet/ios-parity-wave1`** (stacked on `monet/ios-customizable-tabs`, PR #2647): First
+wave of the iOS parity roadmap — all zero-backend, rendering already-decoded snapshot data and
+dispatching existing command types.  (1) Proposal cards now show price drift (reference → current
+price with signed %), last revalidation time, and the Red Team failure kind when the verdict is
+unavailable (console `describeRedTeamFailureKind` wording).  (2) Home gains Close Only + Wind Down
+protective controls beside Stop (`strategy.close_only` / `strategy.liquidating`, same
+CommandButton/store.submit pattern, no added ceremony).  (3) `policy.runDuringExtendedHours` is now
+decoded and a pure `deriveRunStateWord` mirrors the console's `deriveStateInfo` vocabulary — the
+app can no longer say "Running" while the console says "Paused · market closed" (7 new XCTests).
+(4) Swipe-to-reject on proposal cards (reject ONLY, never approve) and swipe-to-delete on alert
+rows via a new ScrollView-compatible `swipeRevealAction`; watchlist swipe skipped (chip grid, not
+rows — one-tap remove already exists).  (5) Triggered alerts show `triggeredAt`/`triggeredPrice`.
+(6) Account sheet rows show capabilities + draining state.  (7) New `AdminPortalView` (admin-only
+row) hosts /admin in a navigation-fenced WKWebView with native-session cookie handoff.  28/28
+tests pass.  Rollout: `docs/rollouts/2026-08-12-ios-parity-wave1.md`.
+
 ## Current (2026-08-12 MONET — iOS customizable tab bar + xcodegen version-regression root cause)
 
 **Branch `monet/ios-customizable-tabs`:** The iOS app's tab bar is now owner-customizable with

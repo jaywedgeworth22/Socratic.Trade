@@ -16,6 +16,7 @@ import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
+import { runWatchlistDigestIfDue } from "./watchlist-digest";
 import { runAuditPruneIfDue } from "./audit-prune";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth } from "./broker-health";
 import { sendNotification } from "./notifications";
@@ -556,6 +557,13 @@ async function tick(): Promise<void> {
   // Separate watermark from the 6h check; disable with R2_USAGE_DAILY_DIGEST=off.
   void journalLane("r2-usage-daily-digest", {}, () => runR2UsageDailyDigestIfDue())
     .catch((err) => console.error("[scheduler] r2 usage digest error:", err));
+
+  // Opt-in daily watchlist digest (owner default OFF, per-user Settings -> Delivery toggle):
+  // once per Central-Time day, at/after 15:15 CT (shortly after US market close), summarizes the
+  // watchlist from data the app already persisted (last market scan + recent proposals per
+  // symbol) — no provider or LLM calls. Resolves its own due users internally; self-guarded.
+  void journalLane("watchlist-digest", {}, () => runWatchlistDigestIfDue())
+    .catch((err) => console.error("[scheduler] watchlist digest error:", err));
 
   // 10-K/10-Q bodies and default-OFF FMP transcripts have separate producer cadences, request
   // budgets, and cursors. They share the durable RAG_REINDEX operation lease and this demand-first

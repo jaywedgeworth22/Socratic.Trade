@@ -25,7 +25,15 @@ export const SOURCE_SETTINGS_USER_KEY = "source_settings";
 export type SourceSettingsMap = Record<string, boolean | number | string>;
 
 export function getUserSourceSettingsMap(userId: string = LOCAL_USER): SourceSettingsMap {
-  return getUserSetting<SourceSettingsMap>(userId, SOURCE_SETTINGS_USER_KEY, {});
+  // Fail-open: resolvers below sit on enrichment/data-plane hot paths (e.g. the news-relevance
+  // knobs read inside provider enrich() calls), where a settings-store failure must degrade to
+  // env/catalog defaults — never abort the caller. Also keeps DB-mocking tests from having to
+  // stub the settings table just because a provider consults a knob.
+  try {
+    return getUserSetting<SourceSettingsMap>(userId, SOURCE_SETTINGS_USER_KEY, {});
+  } catch {
+    return {};
+  }
 }
 
 export function setUserSourceSettingsMap(

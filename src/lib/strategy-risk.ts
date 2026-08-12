@@ -6,6 +6,7 @@ import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
 import { normalizeSymbol } from "./money";
 import { ThesisRegimeStat, ThesisStat, PrefetchedFills, getThesisScorecard, getThesisRegimeScorecard, ConfidenceCalibrationStat, getConfidenceCalibration, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, calibratedConviction } from "./performance";
 import { estimateNotional, applyOpeningOrderHeadroom } from "./policy";
+import { degradedCoreInputs } from "./proposal-phase-guard";
 import { accountEquity } from "./risk-breaker";
 import { bracketWholeShareMinimum, brokerLabel, brokerMinimumDollarNotional, estimateOpeningProposalNotional, formatWholeDollars, openingPolicyNotionalCap, openingRiskCapacity } from "./strategy";
 import { StressPositionInput, stressScenario } from "./stress-scenario";
@@ -503,8 +504,31 @@ export function applyDeterministicSizing(
   const corrobWinRate = policy.tuning?.corroborationWinRatePct ?? 58;
   const corrobEdge = policy.tuning?.corroborationEdgePct ?? 0;
   const corroborated = winRate >= corrobWinRate && avgReturn > corrobEdge;
-  const conviction = corroborated ? rawConviction : Math.min(rawConviction, convictionCap);
+  const uncorroboratedConviction = corroborated ? rawConviction : Math.min(rawConviction, convictionCap);
   const convictionCapBinds = !corroborated && rawConviction > convictionCap;
+
+  // Degraded-data confidence cap (receipts ladder): when the proposal's CORE scan inputs were
+  // observably degraded (degradedCoreInputs reads only the symbol's own quote off the marketScan
+  // already in scope — an honest signal at this seam, never an invented proxy), cap confidence's
+  // UPSIDE contribution exactly like the uncorroborated cap above and compose AFTER it. Same knob
+  // semantics too (`?? default`; 1 never binds; explicit 0 removes the contribution). No marketScan
+  // → no claim, no cap. When it BINDS, a kind-prefixed dataAdjustments receipt (below) names which
+  // inputs were degraded — a visible haircut, never a silent one.
+  const degradedCap = policy.tuning?.confidenceCapDataDegraded ?? 0.7;
+  const degradedInputs = degradedCoreInputs(proposal.symbol, marketScan);
+  const conviction = degradedInputs.length > 0 ? Math.min(uncorroboratedConviction, degradedCap) : uncorroboratedConviction;
+  const degradedCapBinds = degradedInputs.length > 0 && uncorroboratedConviction > degradedCap;
+  const degradedCapReceipt = degradedCapBinds
+    ? `confidence_capped_degraded_data: AI conviction capped to ${degradedCap} for sizing (was ${uncorroboratedConviction.toFixed(2)}).  Degraded core inputs: ${degradedInputs.join("; ")}.`
+    : null;
+  if (degradedCapBinds) {
+    audit(
+      "sizing_degraded_data_cap_applied",
+      { symbol: normalizeSymbol(proposal.symbol), side: proposal.side, cap: degradedCap, preCapConviction: Number(uncorroboratedConviction.toFixed(4)), degradedInputs },
+      userId,
+      policy.connectedAccountId
+    );
+  }
 
   // Edge-aware Kelly-lite: scale by win rate AND conviction AND the realized EDGE.
   // A thesis that wins often but with no/negative expectancy shouldn't get full size;
@@ -784,6 +808,7 @@ export function applyDeterministicSizing(
 
   return {
     ...proposal,
+    ...(degradedCapReceipt ? { dataAdjustments: [...(proposal.dataAdjustments ?? []), degradedCapReceipt] } : {}),
     dollarAmount: targetNotional,
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
     rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + brokerMinNote + (unproven

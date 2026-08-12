@@ -25,6 +25,7 @@ export type AppAAnalystRow = AnalystRow & { source?: string | null };
 import type { EnrichmentSources } from "./types";
 
 import {
+  audit,
   cancelUndispatchedProviderReservation,
   hasDataPoolConsent,
   markProviderDispatchStarted,
@@ -47,6 +48,8 @@ import { NasdaqCalendarEnrichmentProvider } from "./nasdaq-calendar-provider";
 import { WisesheetsEnrichmentProvider, resolveWisesheetsApiKey } from "./wisesheets-provider";
 import { SimFinEnrichmentProvider, resolveSimFinApiKey } from "./simfin-provider";
 import { MarketauxEnrichmentProvider, resolveMarketauxApiKey } from "./marketaux-provider";
+import { scoreHeadlineRelevance } from "./news-relevance";
+import { resolveSourceBool, resolveSourceNumber } from "./source-settings";
 import { getStreamedHeadlines } from "./streams/news-store";
 import { BROWSER_UA, politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
@@ -81,6 +84,20 @@ function cacheScopeForKeySource(source: ApiKeySource, userId: string | undefined
 function shareUserKeyedEnrichment(): boolean {
   const value = (process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY ?? "off").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+// ── News-relevance gating knobs (source-settings-catalog.ts, group "enrichment") ───────────────
+// Shared by every provider below that either carries its own native relevance score (Alpha
+// Vantage relevance_score, Marketaux match_score — see marketaux-provider.ts) or falls back to
+// news-relevance.ts's headline-text rubric (Finnhub company-news; the Alpaca/Benzinga stream in
+// streams/alpaca-news-stream.ts). Default ON — see NEWS_RELEVANCE_FILTER's catalog description
+// for the off-switch contract.
+function newsRelevanceFilterEnabled(): boolean {
+  return resolveSourceBool("NEWS_RELEVANCE_FILTER");
+}
+
+function newsRelevanceMinScore(): number {
+  return resolveSourceNumber("NEWS_RELEVANCE_MIN_SCORE");
 }
 
 function enrichmentCacheKey(prefix: string, symbol: string, scope: CacheScope, userId: string | undefined): string {
@@ -2998,6 +3015,13 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     const toDate = new Date(now).toISOString().split("T")[0];
     const fromDate = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
+    // Finnhub carries no native per-headline relevance score (unlike Alpha Vantage/Marketaux) —
+    // resolved ONCE for the whole call, and accumulated into a single bounded audit row below
+    // rather than logged per symbol/headline.
+    const relevanceFilterEnabled = newsRelevanceFilterEnabled();
+    const relevanceMinScore = newsRelevanceMinScore();
+    let relevanceDroppedCount = 0;
+
     // Finnhub (60/min free) is NOT quota-capped here: each symbol fires separate per-symbol calls, so the
     // PACER (withProviderLimit minIntervalMs, provider-rate-limit.ts) spaces them under the per-minute cap
     // while still covering EVERY symbol over time — scan-size-agnostic without dropping coverage. Only
@@ -3023,11 +3047,44 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
                 this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`)
               ]);
 
-              // News → headlines + fallback sentiment
+              // Company profile → sector + industry + company name. Computed BEFORE the news
+              // block below (moved up from its original position after it) so the relevance
+              // filter can use companyName as a corroborating signal alongside the ticker.
+              let sector: string | undefined;
+              let industry: string | undefined;
+              let companyName: string | undefined;
+              if (profileRaw.status === "fulfilled") {
+                const profile = profileRaw.value as Record<string, unknown>;
+                if (profile?.finnhubIndustry) { sector = String(profile.finnhubIndustry); industry = String(profile.finnhubIndustry); }
+                if (profile?.sector) sector = String(profile.sector);
+                if (typeof profile?.name === "string" && profile.name.trim()) companyName = profile.name.trim();
+              }
+
+              // News → headlines + fallback sentiment. Finnhub's /company-news is already scoped
+              // to this symbol server-side, but carries no native per-headline relevance score —
+              // when the filter is on, this app's own text rubric (news-relevance.ts) decides
+              // which of the returned headlines actually name the symbol/company, scanning the
+              // full window Finnhub returned (not just the first 5) so a relevant headline
+              // further down the list isn't crowded out by irrelevant early ones. Disabled ->
+              // the exact original first-5 slice, byte-identical.
               let headlines: string[] = [];
               let sentiment: number | undefined;
               if (newsRaw.status === "fulfilled" && Array.isArray(newsRaw.value)) {
-                headlines = (newsRaw.value as Array<{ headline: string }>).slice(0, 5).map((n) => n.headline).filter(Boolean);
+                const articles = newsRaw.value as Array<{ headline?: unknown }>;
+                if (relevanceFilterEnabled) {
+                  for (const article of articles) {
+                    const headline = typeof article.headline === "string" ? article.headline : "";
+                    if (!headline) continue;
+                    if (headlines.length >= 5) break;
+                    if (scoreHeadlineRelevance(headline, symbol, companyName).score >= relevanceMinScore) {
+                      headlines.push(headline);
+                    } else {
+                      relevanceDroppedCount++;
+                    }
+                  }
+                } else {
+                  headlines = articles.slice(0, 5).map((n) => (typeof n.headline === "string" ? n.headline : "")).filter(Boolean);
+                }
                 if (headlines.length > 0) sentiment = scoreHeadlines(headlines);
               }
 
@@ -3053,17 +3110,6 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
                 if (score !== undefined) {
                   analystBySource = { [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), counts } };
                 }
-              }
-
-              // Company profile → sector + industry + company name
-              let sector: string | undefined;
-              let industry: string | undefined;
-              let companyName: string | undefined;
-              if (profileRaw.status === "fulfilled") {
-                const profile = profileRaw.value as Record<string, unknown>;
-                if (profile?.finnhubIndustry) { sector = String(profile.finnhubIndustry); industry = String(profile.finnhubIndustry); }
-                if (profile?.sector) sector = String(profile.sector);
-                if (typeof profile?.name === "string" && profile.name.trim()) companyName = profile.name.trim();
               }
 
               // Basic financials → P/E, dividend yield, EPS, average volume
@@ -3121,6 +3167,12 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
           })
         );
       }
+    }
+
+    // Single bounded audit row for the whole enrich() call, never per-headline — see the
+    // matching comment on MarketauxEnrichmentProvider.enrich() (marketaux-provider.ts).
+    if (relevanceDroppedCount > 0) {
+      audit("news_relevance.dropped", { provider: this.name, droppedCount: relevanceDroppedCount, minScore: relevanceMinScore }, this.userId ?? "local");
     }
 
     // ── /calendar/earnings fallback for daysToEarnings ──────────────────────────────────────
@@ -4094,6 +4146,46 @@ export function alphaVantageDaysToEarnings(reportDateMs: number, now: number = D
   return days >= 0 ? days : undefined;
 }
 
+// ── NEWS_SENTIMENT relevance gating (NEWS_RELEVANCE_FILTER / NEWS_RELEVANCE_MIN_SCORE) ─────────
+// AV's NEWS_SENTIMENT is queried with `tickers=SYMBOL` but that param does a loose association
+// match — articles that barely mention the symbol still come back, each carrying its OWN
+// per-ticker `relevance_score` (0..1 string, AV-documented) that both NEWS_SENTIMENT parse sites
+// below (the native provider's own inline parse, and the shared parseAlphaVantageNewsSentiment
+// used by the RapidAPI failover lane) used to throw away entirely. An item with no
+// ticker_sentiment entry for the symbol, or an unparseable/absent relevance_score, is data AV
+// never scored for this symbol — never treated as irrelevant, only ever filtered on an EXPLICIT
+// low score (mirrors marketaux-provider.ts's match_score contract). Disabled
+// (NEWS_RELEVANCE_FILTER=false) reproduces the exact pre-filter behavior byte-for-byte.
+interface AlphaVantageTickerSentimentEntry {
+  ticker?: string;
+  ticker_sentiment_score?: string;
+  relevance_score?: string;
+}
+
+function alphaVantageTargetTicker(
+  item: Record<string, unknown>,
+  symbol: string
+): AlphaVantageTickerSentimentEntry | undefined {
+  const arr = Array.isArray(item.ticker_sentiment) ? (item.ticker_sentiment as AlphaVantageTickerSentimentEntry[]) : [];
+  return arr.find((t) => t.ticker === symbol);
+}
+
+/** True unless the filter is on AND AV scored this item's relevance to `symbol` below `minScore`
+ *  — see the section comment above for the never-drop-unscored-data contract. */
+function alphaVantageItemIsRelevant(
+  item: Record<string, unknown>,
+  symbol: string,
+  filterEnabled: boolean,
+  minScore: number
+): boolean {
+  if (!filterEnabled) return true;
+  const target = alphaVantageTargetTicker(item, symbol);
+  if (!target || typeof target.relevance_score !== "string") return true;
+  const relevance = Number(target.relevance_score);
+  if (!Number.isFinite(relevance)) return true;
+  return relevance >= minScore;
+}
+
 export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "alpha-vantage";
   readonly costTier = "paid" as const;
@@ -4210,6 +4302,14 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
     }
 
     this.allExhaustedLogged = false;
+
+    // Relevance-filter knobs resolved ONCE for the whole call; drop counts accumulate across
+    // every symbol/chunk below into a single bounded audit row (never per-headline) — see the
+    // audit() call after the loop.
+    const relevanceFilterEnabled = newsRelevanceFilterEnabled();
+    const relevanceMinScore = newsRelevanceMinScore();
+    let relevanceDroppedHeadlines = 0;
+    let relevanceDroppedSentimentSamples = 0;
 
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
       // All-exhausted fast-fail, checked once per CONCURRENCY-sized chunk BEFORE dispatching any
@@ -4367,9 +4467,16 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
             if (payload && Array.isArray(payload.feed)) {
               const feed = payload.feed as Array<Record<string, unknown>>;
 
-              // Extract headlines
-              headlines = feed
-                .slice(0, 5)
+              // Extract headlines — relevance-gated within the SAME top-5 candidate window as the
+              // pre-filter behavior (never a wider scan), so a low-relevance item in that window
+              // is dropped rather than replaced by a later feed item.
+              const headlineCandidates = feed.slice(0, 5);
+              headlines = headlineCandidates
+                .filter((item) => {
+                  const relevant = alphaVantageItemIsRelevant(item, symbol, relevanceFilterEnabled, relevanceMinScore);
+                  if (!relevant) relevanceDroppedHeadlines++;
+                  return relevant;
+                })
                 .map(item => typeof item.title === "string" ? item.title.trim() : "")
                 .filter(Boolean);
 
@@ -4378,8 +4485,11 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
               let scoreCount = 0;
 
               for (const item of feed.slice(0, 20)) { // look at top 20 news items
-                const tickerArr = Array.isArray(item.ticker_sentiment) ? item.ticker_sentiment : [];
-                const targetTicker = tickerArr.find((t: { ticker?: string }) => t.ticker === symbol);
+                if (!alphaVantageItemIsRelevant(item, symbol, relevanceFilterEnabled, relevanceMinScore)) {
+                  relevanceDroppedSentimentSamples++;
+                  continue;
+                }
+                const targetTicker = alphaVantageTargetTicker(item, symbol);
                 if (targetTicker && typeof targetTicker.ticker_sentiment_score === "string") {
                   const score = Number(targetTicker.ticker_sentiment_score);
                   if (Number.isFinite(score)) {
@@ -4415,6 +4525,16 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
             result[symbol] = {};
           }
         })
+      );
+    }
+
+    // Single bounded audit row for the whole enrich() call, never per-headline — see the
+    // matching comment on MarketauxEnrichmentProvider.enrich() (marketaux-provider.ts).
+    if (relevanceDroppedHeadlines > 0 || relevanceDroppedSentimentSamples > 0) {
+      audit(
+        "news_relevance.dropped",
+        { provider: this.name, droppedHeadlines: relevanceDroppedHeadlines, droppedSentimentSamples: relevanceDroppedSentimentSamples, minScore: relevanceMinScore },
+        this.userId ?? "local"
       );
     }
 
@@ -4993,7 +5113,10 @@ export function parseAlphaVantageOverview(payload: Record<string, unknown>): Sym
 
 /**
  * Parse Alpha Vantage NEWS_SENTIMENT feed (native or RapidAPI — byte-identical shape) into
- * sentiment 0–100 + up to 5 headlines. Shared by the RapidAPI failover lane.
+ * sentiment 0–100 + up to 5 headlines. Shared by the RapidAPI failover lane. Relevance-gated by
+ * the same alphaVantageItemIsRelevant contract as the native provider's own inline parse above —
+ * see that section's comment for the never-drop-unscored-data rule and the disabled-knob
+ * byte-identical guarantee.
  */
 export function parseAlphaVantageNewsSentiment(
   payload: Record<string, unknown>,
@@ -5001,16 +5124,20 @@ export function parseAlphaVantageNewsSentiment(
 ): Pick<SymbolEnrichment, "sentiment" | "headlines"> {
   if (!payload || !Array.isArray(payload.feed)) return {};
   const feed = payload.feed as Array<Record<string, unknown>>;
+  const filterEnabled = newsRelevanceFilterEnabled();
+  const minScore = newsRelevanceMinScore();
+
   const headlines = feed
     .slice(0, 5)
+    .filter((item) => alphaVantageItemIsRelevant(item, symbol, filterEnabled, minScore))
     .map((item) => (typeof item.title === "string" ? item.title.trim() : ""))
     .filter(Boolean);
 
   let scoreSum = 0;
   let scoreCount = 0;
   for (const item of feed.slice(0, 20)) {
-    const tickerArr = Array.isArray(item.ticker_sentiment) ? item.ticker_sentiment : [];
-    const targetTicker = tickerArr.find((t: { ticker?: string }) => t.ticker === symbol);
+    if (!alphaVantageItemIsRelevant(item, symbol, filterEnabled, minScore)) continue;
+    const targetTicker = alphaVantageTargetTicker(item, symbol);
     if (targetTicker && typeof targetTicker.ticker_sentiment_score === "string") {
       const score = Number(targetTicker.ticker_sentiment_score);
       if (Number.isFinite(score)) {

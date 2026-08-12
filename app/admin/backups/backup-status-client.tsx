@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Card, Chip, Dot, Btn, Toggle, type ChipTone } from "../../console/ui/primitives";
-import { DatabaseBackup, RefreshCw, ShieldCheck, ShieldAlert, HelpCircle, Layers, Clock } from "lucide-react";
+import { DatabaseBackup, RefreshCw, ShieldCheck, ShieldAlert, HelpCircle, Hourglass, Layers, Layers2, Clock } from "lucide-react";
 import { asRecord, readText } from "@/lib/server-metrics-shapes";
 
-// Mirrors src/lib/runtime-health.ts's LitestreamCompactionTier ("0" | "1" | "9") — kept as a
+// Mirrors src/lib/runtime-health.ts's LitestreamCompactionTier ("0"|"1"|"2"|"3"|"9") — kept as a
 // plain string union here (not imported) because this file is a client component and the
 // source of truth is a server-only lib; the API response is the actual contract, parsed
 // defensively below like every other admin panel that reads an untrusted JSON boundary.
-type TierId = "0" | "1" | "9";
+type TierId = "0" | "1" | "2" | "3" | "9";
 
 interface TierFreshness {
   tier: TierId;
@@ -38,7 +38,7 @@ interface BackupStatusData {
   asOf: string;
 }
 
-const KNOWN_TIER_IDS: readonly TierId[] = ["0", "1", "9"];
+const KNOWN_TIER_IDS: readonly TierId[] = ["0", "1", "2", "3", "9"];
 
 function parseTier(value: unknown): TierFreshness | undefined {
   const record = asRecord(value);
@@ -121,12 +121,16 @@ function formatDuration(seconds: number): string {
 const TIER_ICON: Record<TierId, React.ComponentType<{ size?: number | string; className?: string }>> = {
   "0": RefreshCw,
   "1": Layers,
+  "2": Layers2,
+  "3": Hourglass,
   "9": DatabaseBackup
 };
 
 const TIER_DESCRIPTION: Record<TierId, string> = {
   "0": "Raw WAL pages streamed to B2 continuously (litestream.coolify.yml syncs every 60s). The fastest-moving signal — it proves the app is writing and litestream is alive, but a healthy level 0 does NOT prove compaction or snapshots are working.",
   "1": "Periodic compaction merges level-0 segments into a denser replica. Runs on litestream's own internal cadence, not continuously — quiet gaps between runs are normal, a gap past the threshold below is not. A stuck compactor here can run for a long time without affecting level 0 at all, which is exactly what happened in production on 2026-08-11 (undetected for 27+ hours).",
+  "2": "Second-stage compaction merging level-1 output into larger segments (5-minute monitor; output only appears when enough level-1 input has accumulated, so quiet stretches are normal). The 2026-08-12 production wedge lived exactly here — a byte-identical \"non-contiguous transaction ids\" retry every 5 minutes that the original 0/1/9 monitor could not see.",
+  "3": "Third-stage rollup on an hourly monitor — same accumulation caveat as level 2, watched for the same reason: any level can wedge independently while every other level stays green.",
   "9": "Full daily snapshot (`snapshot.interval: 24h` in litestream.coolify.yml) — the point-in-time restore floor if every incremental LTX file were lost."
 };
 
