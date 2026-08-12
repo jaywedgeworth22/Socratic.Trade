@@ -1,3 +1,13 @@
+## Current (2026-08-12 ~6:40am CT CLAUDE — HOTFIX: boot migrations vs rolling deploys)
+
+PR #2652's auto-deploy failed (deployment pyqxv16i): the incoming container crash-looped on
+SQLITE_BUSY loading the instrumentation hook and Coolify rolled back (prod stayed up on the old
+build).  Root cause: runMigrations used better-sqlite3's default DEFERRED transaction — under a
+rolling deploy the outgoing container commits continuously, and the WAL snapshot upgrade throws
+an instant SQLITE_BUSY that busy_timeout does not cover.  Fix: apply migrations via BEGIN
+IMMEDIATE (apply.immediate()) so the 60s busy_timeout works; new child-process contention
+regression test.  This PR's own deploy applying migration 72 is the live proof.  Blockers: none.
+
 ## Current (2026-08-12 ~6:20am CT CLAUDE — symbol drawer everywhere + iOS fills redesign)
 
 Owner requests: ticker/logo clicks open the Market Scan company drawer on every surface
