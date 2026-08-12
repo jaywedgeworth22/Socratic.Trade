@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
 import type { ConnectedAccount, EquityCurvePoint, PerformanceSummary } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
-import { ConsoleApiError, fetchAccountPerformance } from "../lib/api";
+import { ConsoleApiError, fetchAccountPerformance, fetchSignalHealth, type SignalHealthResponse } from "../lib/api";
 import {
   buildRedTeamModelRows,
   RED_TEAM_EFFICACY_MIN_RESOLVED,
@@ -22,7 +22,7 @@ import {
 import { describeRedTeamFailureKind } from "@/lib/red-team-routing";
 import { EquityChart } from "../components/equity-chart";
 import { deriveReality } from "../lib/derive";
-import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
+import { fmtExact, fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH, SENTENCE_GAP } from "../lib/format";
 import { thesisTagLabel } from "../lib/labels";
 import { modelDisplayName } from "../lib/models";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
@@ -374,6 +374,7 @@ export default function ResultsPage() {
         />
       </div>
       <RedTeamEfficacyCard efficacy={snapshot.redTeamEfficacy} />
+      <SignalHealthCard />
 
       {/* Tax */}
       <Card
@@ -387,6 +388,167 @@ export default function ResultsPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+/** Signal health (r2 lesson: health): rolling diagnostics of the AI's OWN confidenceScore against
+ *  matured decision outcomes, from the daily signal-health snapshot rows. Measurement, never
+ *  fabrication — a horizon below the observation floor shows an honest empty state, and every
+ *  figure is arithmetic over matured outcomes (no estimates). Compact by design; a dedicated page
+ *  is a follow-up. */
+function SignalHealthCard() {
+  const [state, setState] = useState<
+    { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: SignalHealthResponse }
+  >({ status: "loading" });
+  const [horizon, setHorizon] = useState<string>("1d");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchSignalHealth();
+        if (cancelled) return;
+        setState({ status: "ready", data });
+        // Land on the first horizon that actually has data so the default view is never
+        // an empty tab while another horizon has history.
+        const withData = data.horizons.find((h) => h.snapshots.length > 0);
+        if (withData) setHorizon(withData.horizon);
+      } catch (error) {
+        if (cancelled) return;
+        setState({
+          status: "error",
+          message: error instanceof ConsoleApiError ? error.message : "Could not load signal health."
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const advisoryChip = (
+    <Chip tone="muted" title="Rolling rank IC of the AI's own confidence scores against matured side-adjusted outcome returns.  Advisory diagnostics — sizing only changes under the opt-in signal-health auto-throttle.">
+      confidence vs outcomes
+    </Chip>
+  );
+
+  if (state.status === "loading") {
+    return (
+      <Card title="Signal health" action={advisoryChip}>
+        <Empty>Loading signal health…</Empty>
+      </Card>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <Card title="Signal health" action={advisoryChip}>
+        <Empty>{state.message}</Empty>
+      </Card>
+    );
+  }
+
+  const { data } = state;
+  const selected = data.horizons.find((h) => h.horizon === horizon) ?? data.horizons[0];
+  const latest = selected?.snapshots[0];
+  const anyData = data.horizons.some((h) => h.snapshots.length > 0);
+
+  if (!anyData || !selected) {
+    return (
+      <Card title="Signal health" action={advisoryChip}>
+        <Empty>
+          Not enough matured decisions to measure signal health yet.{SENTENCE_GAP}It needs at least {data.minObservations}{" "}
+          decisions with matured outcomes per horizon; nothing is estimated in the meantime.
+        </Empty>
+      </Card>
+    );
+  }
+
+  const slope = latest?.rollingRankICSlope;
+  return (
+    <Card
+      title="Signal health"
+      action={
+        <div className="flex items-center gap-2">
+          {advisoryChip}
+          <Select value={selected.horizon} onChange={(event) => setHorizon(event.target.value)} aria-label="Signal-health horizon">
+            {data.horizons.map((h) => (
+              <option key={h.horizon} value={h.horizon}>
+                {h.horizon} horizon
+              </option>
+            ))}
+          </Select>
+        </div>
+      }
+    >
+      {!latest ? (
+        <Empty>
+          No {selected.horizon}-horizon snapshot yet — this horizon has fewer than {data.minObservations} decisions with
+          matured outcomes.{SENTENCE_GAP}Nothing is estimated in the meantime.
+        </Empty>
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat
+              label={`Rank IC (${latest.horizon})`}
+              value={<SignedText value={latest.rankIC}>{latest.rankIC.toFixed(3)}</SignedText>}
+              sub={`t ${latest.tStat.toFixed(2)} · ${latest.nObservations} decisions over ${latest.nDates} days`}
+              tone={latest.rankIC > 0 ? "pos" : latest.rankIC < 0 ? "neg" : "muted"}
+              title="Pooled Spearman rank correlation between the AI's confidence score and the matured side-adjusted return.  Positive means higher confidence really did precede better outcomes."
+            />
+            <Stat
+              label="Trend"
+              value={slope !== undefined ? <SignedText value={slope}>{`${slope > 0 ? "+" : ""}${slope.toFixed(4)}`}</SignedText> : <Dash />}
+              sub={slope !== undefined ? "rolling rank-IC slope, per window" : "needs a second daily snapshot"}
+              tone={slope !== undefined ? (slope < 0 ? "neg" : "pos") : "muted"}
+              title="OLS slope of the rolling rank-IC series.  A sustained negative slope is the drift alarm's trigger — signal decay shows here weeks before the equity curve."
+            />
+            <Stat
+              label={`Top-${data.topK} churn`}
+              value={latest.topKChurnPct !== undefined ? fmtPct(latest.topKChurnPct, 1) : <Dash />}
+              sub={latest.topKChurnPct !== undefined ? "mean Jaccard distance, consecutive days" : "needs two decision days"}
+              title="How much the AI's highest-confidence names reshuffle day to day.  High churn means conviction is flipping names faster than a thesis should."
+            />
+            <Stat
+              label="Gross vs net"
+              value={`${fmtPct(latest.grossReturnPct, 2, true)} / ${fmtPct(latest.netOfCostReturnPct, 2, true)}`}
+              sub={`mean matured return, net of ${data.costRoundTripBps}bps round-trip`}
+              tone={latest.netOfCostReturnPct > 0 ? "pos" : latest.netOfCostReturnPct < 0 ? "neg" : "muted"}
+              title="Mean side-adjusted matured return across observations, gross and after debiting the round-trip transaction-cost estimate.  A signal that only wins gross is not a signal."
+            />
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="con-table">
+              <thead>
+                <tr>
+                  <th title="Confidence-score quantile — Q1 lowest confidence, top bucket highest.">Confidence bucket</th>
+                  <th className="num">n</th>
+                  <th className="num">Avg return</th>
+                  <th className="num">Hit rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {latest.quantileBuckets.map((bucket, index) => (
+                  <tr key={bucket.bucket}>
+                    <td className="font-semibold">
+                      Q{bucket.bucket}
+                      {index === 0 ? " (lowest)" : index === latest.quantileBuckets.length - 1 ? " (highest)" : ""}
+                    </td>
+                    <td className="num con-num">{bucket.n}</td>
+                    <td className="num">
+                      <SignedText value={bucket.avgReturn}>{fmtPct(bucket.avgReturn, 2, true)}</SignedText>
+                    </td>
+                    <td className="num con-num">{fmtPct(bucket.hitRate * 100, 1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            A healthy signal rises from Q1 to the top bucket.{SENTENCE_GAP}Updated {fmtExact(latest.createdAt)} CT.
+          </p>
+        </>
+      )}
+    </Card>
   );
 }
 

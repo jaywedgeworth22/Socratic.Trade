@@ -60,11 +60,15 @@ export interface MarketReplaceResult {
   remainingQuantity: number;
 }
 
-/** Mirror of ExecutedOrder in src/lib/types.ts (the cancel route's response). */
+/** Mirror of ExecutedOrder in src/lib/types.ts (the cancel route's response), plus the optional
+ *  cancel-dust advisory (src/lib/broker-minimum-guard.ts describeCancelDustRisk) the route
+ *  attaches when cancelling left an already-filled fragment below the broker's minimum order
+ *  size. ADVISORY ONLY — its presence never means the cancel didn't go through. */
 export interface CancelOrderResult {
   orderId?: string;
   refId?: string;
   state?: string;
+  dustWarning?: string;
 }
 
 async function parseBody(res: Response): Promise<unknown> {

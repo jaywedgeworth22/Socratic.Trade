@@ -359,6 +359,7 @@ export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, strin
   earningscalls_entitlement_blocked: "EarningsCalls plan entitlement blocked",
   risk_advisory: "Risk advisory",
   protective_exit_failing: "Protective exit failing",
+  signal_health: "Signal health drift",
   watchlist_digest: "Daily watchlist digest"
 };
 

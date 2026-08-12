@@ -690,6 +690,20 @@ async function tick(): Promise<void> {
       .catch((err) => console.error(`[scheduler] retrieval-usefulness join error for ${userId}:`, err));
   }
 
+  // Once-per-day signal-health refresh (r2 lesson: health): pure-arithmetic rolling diagnostics of
+  // the LLM's OWN confidenceScore against matured decision outcomes (rank IC + t-stat, quantile
+  // buckets, top-K churn, gross vs net) persisted as signal_health_snapshot rows; a confirmed
+  // rank-IC drift raises an advisory signal_health alarm — sizing only changes under the opt-in
+  // policy.tuning.signalHealthAutoThrottle. SQLite-only, no provider or LLM calls; self-guarded
+  // (UTC-day marker) like the retrieval-usefulness join above.
+  for (const userId of listUsers()) {
+    void import("./signal-health")
+      .then(({ runSignalHealthRefreshIfDue }) =>
+        journalLane("signal-health-refresh", { userId }, () => runSignalHealthRefreshIfDue(userId))
+      )
+      .catch((err) => console.error(`[scheduler] signal-health refresh error for ${userId}:`, err));
+  }
+
   // Atlas public-repo port: evaluate armed price alerts against live quotes every tick.
   void journalLane("price-alert-check", {}, () => checkAllUserPriceAlerts())
     .catch((err) => console.error("[scheduler] price-alert check error:", err));

@@ -1,3 +1,23 @@
+## Current (2026-08-12 ~7:30am CT CLAUDE — external-repo lessons round 2: alpha grading, signal health, cancel-dust)
+
+Round 2 of the owner's external-repo lessons request (broad sweep: TradingAgents, ai-hedge-fund,
+freqtrade, qlib, RD-Agent, FinMem).  Three definitive wins land in this PR, each built by a
+dedicated agent, adversarially verified, and integration-fixed:
+
+1. **Opt-in benchmark-alpha outcome grading** (`policy.outcomeGradingMode`, default raw,
+   byte-identical): alpha mode grades decisions against SPY over the same window, cites alpha in
+   the post-mortem prompt, writes divergence receipts (raw won / alpha lost = beta-not-skill),
+   and keeps an :alpha stat ledger in retrieval-usefulness weighting.
+2. **Live signal-health monitor**: daily lane computing rank IC of the LLM's own confidence vs
+   matured outcomes (90-day window), quantile buckets, top-K churn, gross-vs-net; edge-triggered
+   drift alarms via notify(); optional auto-throttle knob (default OFF); Signal Health card on
+   Results (migration 74 — first migration shipping under the new BEGIN IMMEDIATE boot path).
+3. **Cancel-dust advisory** (advisory ONLY, never blocks): partial-fill cancels that would
+   strand a below-broker-minimum fragment warn in the cancel sheet + audit; pre-fetch is
+   time-bounded so the emergency cancel lever can never wait on a hung broker read.
+
+Gates: tsc clean, targeted suites 82/82; full lint/test/build via land.sh at push.  Rollout:
+docs/rollouts/2026-08-12-external-lessons-round2.md.  Blockers: none.
 ## Current (2026-08-12 ~6:40am CT CLAUDE — HOTFIX: boot migrations vs rolling deploys)
 
 PR #2652's auto-deploy failed (deployment pyqxv16i): the incoming container crash-looped on

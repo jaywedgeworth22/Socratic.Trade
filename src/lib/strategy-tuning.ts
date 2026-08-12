@@ -41,6 +41,7 @@ import {
   type SectorStat,
   type ThesisStat
 } from "./performance";
+import { pickHeadlineAlpha } from "./outcome-horizons";
 import { getReflectionSummary } from "./post-mortem";
 import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
@@ -520,16 +521,27 @@ export async function proposeStrategyTuning(
   try {
     const cases = listSocraticDecisionCases(userId, { limit: 10, connectedAccountId: accountId });
     decisionMemory = cases.length > 0
-      ? cases.map((c) => ({
-          ...(c.symbol ? { symbol: c.symbol } : {}),
-          action: c.action,
-          createdAt: c.createdAt,
-          thesis: c.thesis.length > 200 ? `${c.thesis.slice(0, 200)}…` : c.thesis,
-          ...(c.outcome
-            ? { outcome: `${c.outcome.status}${typeof c.outcome.returnPct === "number" ? ` ${c.outcome.returnPct.toFixed(2)}%` : ""}` }
-            : {}),
-          ...(c.lessons.length > 0 ? { lessons: c.lessons.slice(0, 3) } : {})
-        }))
+      ? cases.map((c) => {
+          // Headline SPY-excess figure, when a resolved horizon carried one — so the review can see
+          // decision quality (alpha) next to the raw return, whatever the grading mode. Never fabricated.
+          const alphaRow = c.outcome ? pickHeadlineAlpha(c.outcome.outcomes) : undefined;
+          const alphaSuffix =
+            alphaRow && typeof alphaRow.spyExcessPct === "number"
+              ? ` (vs SPY ${alphaRow.spyExcessPct >= 0 ? "+" : ""}${alphaRow.spyExcessPct}%)`
+              : "";
+          return {
+            ...(c.symbol ? { symbol: c.symbol } : {}),
+            action: c.action,
+            createdAt: c.createdAt,
+            thesis: c.thesis.length > 200 ? `${c.thesis.slice(0, 200)}…` : c.thesis,
+            ...(c.outcome
+              ? {
+                  outcome: `${c.outcome.status}${typeof c.outcome.returnPct === "number" ? ` ${c.outcome.returnPct.toFixed(2)}%` : ""}${alphaSuffix}`
+                }
+              : {}),
+            ...(c.lessons.length > 0 ? { lessons: c.lessons.slice(0, 3) } : {})
+          };
+        })
       : undefined;
   } catch {
     decisionMemory = undefined;
