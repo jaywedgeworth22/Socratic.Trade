@@ -164,6 +164,14 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(liveApprovalConfirmationText(forSymbol: " aapl "), "APPROVE LIVE AAPL")
     }
 
+    // Rewritten 2026-08-12: this test predates the test target ever being RUNNABLE (a
+    // TEST_HOST mismatch plus a module-name mismatch meant it had never executed), and
+    // its original tail was authored against an imagined tracker that kept one attempt
+    // per fingerprint.  The real tracker deliberately keeps ONE attempt per operationID
+    // (a changed intent under the same operation REPLACES the old attempt — the old key
+    // must never be reused for a different payload), while double-submit protection for
+    // in-flight operations lives a layer up in MobileStore.busyOperations.  The
+    // assertions below pin the real, safe semantics.
     func testCommandAttemptTrackerReusesOnlyTheSameUnresolvedAction() {
         var tracker = CommandAttemptTracker()
         let first = tracker.idempotencyKey(
@@ -176,15 +184,11 @@ final class MobileModelsTests: XCTestCase {
             commandType: "proposal.approve",
             payload: ["proposalId": "proposal-1"]
         )
-        let changedIntent = tracker.idempotencyKey(
-            operationID: "proposal.approve:proposal-1",
-            commandType: "proposal.approve",
-            payload: ["proposalId": "proposal-2"]
-        )
-
+        // Same operation, same intent: the key is reused so the server dedupes retries.
         XCTAssertEqual(first, retry)
-        XCTAssertNotEqual(first, changedIntent)
 
+        // A queued (non-terminal) command keeps the attempt alive: no resolution is
+        // emitted and the key still dedupes further retries of the same intent.
         let queued = decodeCommand(
             #"{"id":"command-1","commandType":"proposal.approve","status":"queued","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:30:00.000Z"}"#
         )
@@ -199,23 +203,42 @@ final class MobileModelsTests: XCTestCase {
             )
         )
 
-        let failed = decodeCommand(
-            #"{"id":"command-1","commandType":"proposal.approve","status":"failed","error":"Proposal expired","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}"#
+        // Changed intent under the same operation must NOT reuse the old key — the
+        // stale attempt is replaced outright (one attempt per operationID).
+        let changedIntent = tracker.idempotencyKey(
+            operationID: "proposal.approve:proposal-1",
+            commandType: "proposal.approve",
+            payload: ["proposalId": "proposal-2"]
         )
+        XCTAssertNotEqual(first, changedIntent)
+
+        // A distinct operation tracks independently and resolves on its terminal
+        // command; the resolved attempt is released, so a later retry of that same
+        // operation mints a FRESH key (a retry after failure is a new command — the
+        // server must not dedupe-swallow it).
+        let secondOp = tracker.idempotencyKey(
+            operationID: "proposal.approve:proposal-9",
+            commandType: "proposal.approve",
+            payload: ["proposalId": "proposal-9"]
+        )
+        let failed = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"failed","error":"Proposal expired","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}"#
+        )
+        tracker.track(failed, operationID: "proposal.approve:proposal-9")
         XCTAssertEqual(
             tracker.reconcile([failed]),
             [CommandAttemptTracker.Resolution(
-                operationID: "proposal.approve:proposal-1",
+                operationID: "proposal.approve:proposal-9",
                 status: "failed",
                 error: "Proposal expired"
             )]
         )
         let resolvedThenRetried = tracker.idempotencyKey(
-            operationID: "proposal.approve:proposal-1",
+            operationID: "proposal.approve:proposal-9",
             commandType: "proposal.approve",
-            payload: ["proposalId": "proposal-1"]
+            payload: ["proposalId": "proposal-9"]
         )
-        XCTAssertNotEqual(first, resolvedThenRetried)
+        XCTAssertNotEqual(secondOp, resolvedThenRetried)
     }
 
     @MainActor

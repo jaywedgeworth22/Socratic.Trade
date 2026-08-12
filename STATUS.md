@@ -1,3 +1,16 @@
+## Current (2026-08-12 MONET — iOS customizable tab bar + xcodegen version-regression root cause)
+
+**Branch `monet/ios-customizable-tabs`:** The iOS app's tab bar is now owner-customizable with
+the exact web mobile-tabs semantics (`app/console/lib/mobile-tabs.ts` parity: pin/unpin, min 2 /
+max 4, canonical-order bar, always-present More surface keeping every screen reachable), using
+the native system `TabView` so the Liquid Glass appearance is preserved.  Programmatic tab jumps
+to unpinned screens reroute into the More stack.  8 new XCTests pin the contract.  Along the
+way, found and killed the ROOT CAUSE of the 2026-08-11 version regression: `xcodegen generate`
+was rewriting Info.plist's version keys to literal `1.0`/`1` because `project.yml` never
+declared them — now declared as `$(MARKETING_VERSION)`/`$(CURRENT_PROJECT_VERSION)` so any
+future regen preserves substitution.  A parallel expert-panel workflow is reviewing web↔iOS
+parity and reports separately.  Rollout: `docs/rollouts/2026-08-12-ios-customizable-tabs.md`.
+
 ## Current (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
 
 **Branch `ag/desktop-mobile-ux-enhancements`:**
