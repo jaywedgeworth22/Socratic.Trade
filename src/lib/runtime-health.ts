@@ -199,6 +199,121 @@ function newestFileMtimeMs(target: string): number | null {
   return newestMs;
 }
 
+/**
+ * Litestream 0.5.x compaction levels this app's config actually exercises
+ * (litestream.coolify.yml): level 0 is the continuously-synced raw LTX stream, level 1 is
+ * the first periodic compaction pass, and level 9 is the daily full snapshot
+ * (`snapshot.interval: 24h`). Levels 2-8 are unused here.
+ */
+export type LitestreamCompactionTier = "0" | "1" | "9";
+
+/** Plain-English names for the admin UI and alert text. */
+export const LITESTREAM_TIER_LABELS: Record<LitestreamCompactionTier, string> = {
+  "0": "Continuous Sync",
+  "1": "Compaction",
+  "9": "Daily Snapshot"
+};
+
+/**
+ * Per-tier staleness thresholds (seconds) — a finer-grained COMPLEMENT to
+ * LITESTREAM_STALE_AFTER_SECONDS above, not a replacement. That constant, and the IPC
+ * `/list` signal it grades, only describe the database's overall last-sync time, which
+ * tracks level 0 and keeps reporting fresh even when a higher compaction level is wedged.
+ * That gap is exactly what let a stuck level-1 B2 compaction anchor run silently for 27+
+ * hours in production on 2026-08-11 (level 0 kept succeeding every ~60s the entire time —
+ * see docs/rollouts/2026-08-09-event-loop-stall-instrumentation.md) before anyone noticed.
+ * Reasoning per tier:
+ *   - level 0: litestream.coolify.yml syncs every 60s. 10 minutes is ~10x that cadence,
+ *     generous headroom for one missed tick while still catching a genuinely stuck sync
+ *     in minutes rather than hours.
+ *   - level 1: compaction is periodic, not continuous, so healthy operation naturally goes
+ *     quiet between runs — there is no fixed interval to anchor a tight threshold to. 4
+ *     hours tolerates ordinary gaps while catching a stuck compactor (this incident's
+ *     failure mode) in a few hours instead of the 27+ hours it actually took.
+ *   - level 9: `snapshot.interval: 24h`. 30 hours (24h + 6h buffer) rides out one
+ *     delayed/retried run without false-alarming on ordinary scheduling jitter.
+ */
+export const LITESTREAM_TIER_STALE_AFTER_SECONDS: Record<LitestreamCompactionTier, number> = {
+  "0": 10 * 60,
+  "1": 4 * 60 * 60,
+  "9": 30 * 60 * 60
+};
+
+export type LitestreamTierFreshness =
+  | {
+      tier: LitestreamCompactionTier;
+      label: string;
+      state: "known";
+      newestActivityAt: string;
+      ageSeconds: number;
+      thresholdSeconds: number;
+      degraded: boolean;
+    }
+  | {
+      tier: LitestreamCompactionTier;
+      label: string;
+      state: "unknown";
+      thresholdSeconds: number;
+    };
+
+export interface LitestreamTierFreshnessReport {
+  tiers: LitestreamTierFreshness[];
+  degraded: boolean;
+}
+
+/**
+ * Per-compaction-level freshness via local file mtimes under `<statePath>/ltx/<level>/`
+ * (Litestream 0.5.x's local LTX cache, which this app's Next.js process can read directly —
+ * same container, same `/app/data` volume, no SSH or S3/B2 API calls needed). This
+ * complements getLitestreamRuntimeHealth's IPC `/list` read rather than duplicating it: see
+ * LITESTREAM_TIER_STALE_AFTER_SECONDS above for why a per-tier local signal is necessary at
+ * all.
+ *
+ * Mirrors fileFallback()'s bounded-scan and fail-safe philosophy: a missing state directory,
+ * a missing/never-populated tier subdirectory, an unreadable path, or a scan that hits
+ * newestFileMtimeMs's entry/depth bounds all report `state: "unknown"` for that tier rather
+ * than throwing or guessing — this must stay safe to call in any environment (tests, local
+ * dev, other apps) where Litestream either isn't running or isn't configured with this
+ * directory layout at all.
+ */
+export function assessLitestreamTierFreshness(
+  statePath: string | undefined,
+  options: {
+    nowMs?: number;
+    thresholdsSeconds?: Partial<Record<LitestreamCompactionTier, number>>;
+  } = {}
+): LitestreamTierFreshnessReport {
+  const nowMs = options.nowMs ?? Date.now();
+  const tiers = (["0", "1", "9"] as const).map((tier): LitestreamTierFreshness => {
+    const thresholdSeconds = options.thresholdsSeconds?.[tier] ?? LITESTREAM_TIER_STALE_AFTER_SECONDS[tier];
+    const label = LITESTREAM_TIER_LABELS[tier];
+    if (!statePath) return { tier, label, state: "unknown", thresholdSeconds };
+
+    let newestMs: number | null = null;
+    try {
+      newestMs = newestFileMtimeMs(join(statePath, "ltx", tier));
+    } catch {
+      newestMs = null;
+    }
+    if (newestMs === null || !(newestMs > 0)) {
+      return { tier, label, state: "unknown", thresholdSeconds };
+    }
+
+    const ageSeconds = Math.max(0, Math.round((nowMs - newestMs) / 1000));
+    return {
+      tier,
+      label,
+      state: "known",
+      newestActivityAt: new Date(newestMs).toISOString(),
+      ageSeconds,
+      thresholdSeconds,
+      degraded: ageSeconds > thresholdSeconds
+    };
+  });
+
+  return { tiers, degraded: tiers.some((t) => t.state === "known" && t.degraded) };
+}
+
 function fileFallback(statePath: string | undefined, nowMs: number): LitestreamRuntimeHealth | null {
   if (!statePath) return null;
   try {
