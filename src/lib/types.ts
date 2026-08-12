@@ -777,7 +777,7 @@ export interface ConnectedAccount {
    * Broker identifier. Add new values here when connecting a new venue
    * (e.g. "coinbase" for a crypto exchange) and wire a matching BrokerGateway.
    */
-  broker: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier";
+  broker: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier" | "etoro" | "public" | "webull";
   environment: "paper" | "live";
   /**
    * @deprecated Use capabilities.accountType instead for new accounts.
@@ -1120,7 +1120,7 @@ export interface TradingPolicy {
   tuning?: TuningSettings;
   triggerSettings?: TriggerSettings;
   activeProfileId?: string;
-  activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier";
+  activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier" | "etoro" | "public" | "webull";
   // SHORT_SELLING: Feature gate for short/cover order sides.
   // When true, policy.ts will allow short/cover proposals through (with stricter
   // guardrails). When false or absent, short/cover proposals are unconditionally

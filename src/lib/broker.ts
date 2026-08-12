@@ -2,6 +2,9 @@ import type { BrokerGateway, EquityOrderInput, ExecutedOrder, TradingPolicy } fr
 import { getRobinhoodGateway, getTestGateway } from "./robinhood";
 import { getAlpacaGateway } from "./alpaca";
 import { getTradierGateway } from "./tradier";
+import { getEToroGateway } from "./etoro";
+import { getPublicGateway } from "./public-broker";
+import { getWebullGateway } from "./webull";
 import { audit, getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { deriveExecutionState } from "./execution-mode";
 import { assertLivePreflight } from "./preflight-live-guard";
@@ -23,6 +26,15 @@ function resolveGateway(policy: TradingPolicy, userId: string): BrokerGateway {
   }
   if (policy.activeBroker === "tradier") {
     return getTradierGateway(userId, policy.connectedAccountId);
+  }
+  if (policy.activeBroker === "etoro") {
+    return getEToroGateway(userId, policy.connectedAccountId);
+  }
+  if (policy.activeBroker === "public") {
+    return getPublicGateway(userId, policy.connectedAccountId);
+  }
+  if (policy.activeBroker === "webull") {
+    return getWebullGateway(userId, policy.connectedAccountId);
   }
   // No connected account: an account is an account, and with none connected the app cannot
   // place orders. There is no local-simulation fallback.

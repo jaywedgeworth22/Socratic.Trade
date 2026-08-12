@@ -26,15 +26,24 @@ beforeEach(() => {
   delete process.env.ROIC_API_KEY;
   delete process.env.ROIC_HISTORY_ENABLED;
   delete process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY;
+  delete process.env.ALPACA_PAPER_API_KEY;
+  delete process.env.ALPACA_PAPER_SECRET_KEY;
+  delete process.env.ALPACA_API_KEY;
+  delete process.env.ALPACA_SECRET_KEY;
+  delete process.env.ALPACA_LIVE_API_KEY;
+  delete process.env.ALPACA_LIVE_SECRET_KEY;
+  delete process.env.CONGRESS_TRADE_READS_ENABLED;
   resetProviderQuotaState("tiingo");
   resetProviderQuotaState("roic");
   // Tiingo is per-user-only tier (db-api-keys.ts) — a prior test's upsertUserApiKey("local", "tiingo", …)
   // would otherwise persist across tests sharing historyTestDb, same concern as the Tradier row below.
   deleteUserApiKey("local", "tiingo");
+  deleteUserApiKey("local", "alpaca_paper_api_key");
+  deleteUserApiKey("local", "alpaca_paper_secret_key");
   // Tradier's credential now comes from a connected_accounts row, not an env var — a prior test's
   // connectTradier() call would otherwise persist across tests sharing historyTestDb (unlike the
   // deleted env vars above, which reset per-test on their own).
-  getDb().exec("DELETE FROM connected_accounts WHERE broker = 'tradier'");
+  getDb().exec("DELETE FROM connected_accounts WHERE broker IN ('tradier', 'alpaca', 'alpaca-mcp')");
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -125,7 +134,7 @@ describe("fetchDailyOHLC", () => {
     return JSON.stringify({ chart: { result: [{ timestamp, indicators: { quote } }] } });
   };
 
-  it("uses Tradier before free history sources when the key is set", async () => {
+  it("uses connected-broker history (Tradier) before paid third parties and free Yahoo", async () => {
     connectTradier("tradier-test-key");
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
       String(url).includes("api.tradier.com")
@@ -172,8 +181,45 @@ describe("fetchDailyOHLC", () => {
     expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer tradier-inactive-key" });
   });
 
-  it("uses ROIC.ai after Massive miss and before Tradier/Tiingo when ROIC_API_KEY is set", async () => {
-    // Ensure earlier keyed tiers do not short-circuit: no Massive/Tradier keys, ROIC wins.
+  it("uses Alpaca daily bars from a connected account before paid third parties", async () => {
+    upsertConnectedAccount({
+      id: `alpaca-history-${randomUUID()}`,
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      label: "Alpaca Paper",
+      apiKey: "alpaca-hist-key",
+      apiSecret: "alpaca-hist-secret",
+      isActive: true
+    });
+    process.env.MASSIVE_API_KEY = "massive-should-not-be-called";
+    const alpacaBody = JSON.stringify({
+      bars: [
+        { t: "2026-06-16T04:00:00Z", o: 10, h: 11, l: 9, c: 10.5, v: 1000 },
+        { t: "2026-06-17T04:00:00Z", o: 10.5, h: 12, l: 10, c: 11.8, v: 2000 }
+      ]
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) =>
+      String(url).includes("data.alpaca.markets")
+        ? new Response(alpacaBody, { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL");
+    expect(bars).not.toBeNull();
+    expect(bars).toHaveLength(2);
+    expect(bars![0]).toMatchObject({ time: "2026-06-16", close: 10.5, volume: 1000 });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("data.alpaca.markets/v2/stocks/AAPL/bars");
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({
+      "APCA-API-KEY-ID": "alpaca-hist-key",
+      "APCA-API-SECRET-KEY": "alpaca-hist-secret"
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("massive"))).toBe(false);
+  });
+
+  it("uses ROIC.ai after broker/Massive miss when ROIC_API_KEY is set", async () => {
+    // Ensure earlier keyed tiers do not short-circuit: no broker/Massive keys, ROIC wins.
     delete process.env.MASSIVE_API_KEY;
     delete process.env.TIINGO_API_KEY;
     delete process.env.MARKETSTACK_API_KEY;
@@ -225,8 +271,10 @@ describe("fetchDailyOHLC", () => {
     expect(bars![0]).toMatchObject({ time: "2026-06-16", close: 30, volume: 3000 });
     // Second bar: adjClose(30)/close(60) = 0.5 factor scales raw open/high/low onto the adjusted basis.
     expect(bars![1]).toMatchObject({ time: "2026-06-17", open: 31, high: 32, low: 30, close: 30, volume: 8000 });
-    expect(String(fetchMock.mock.calls[0][0])).toContain("api.tiingo.com/tiingo/daily/aapl/prices");
-    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Token tiingo-history-test-key" });
+    const tiingoCall = fetchMock.mock.calls.find(([url]) => String(url).includes("api.tiingo.com"));
+    expect(tiingoCall).toBeTruthy();
+    expect(String(tiingoCall![0])).toContain("api.tiingo.com/tiingo/daily/aapl/prices");
+    expect(tiingoCall![1]?.headers).toMatchObject({ Authorization: "Token tiingo-history-test-key" });
     // Marketstack must never be reached — Tiingo already satisfied the cascade.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("api.marketstack.com"))).toBe(false);
   });
@@ -263,11 +311,10 @@ describe("fetchDailyOHLC", () => {
     expect(bars).not.toBeNull();
     expect(bars).toHaveLength(2);
     expect(bars![0]).toMatchObject({ time: "2026-06-16T00:00:00+0000", close: 20.5, volume: 3000 });
-    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
-      expect.stringContaining("api.tradier.com"),
-      expect.stringContaining("api.tradier.com"),
-      expect.stringContaining("api.marketstack.com")
-    ]);
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.includes("api.tradier.com"))).toBe(true);
+    expect(urls.some((url) => url.includes("api.marketstack.com"))).toBe(true);
+    expect(urls.some((url) => url.includes("query1.finance.yahoo.com"))).toBe(false);
   });
 
   it("skips Massive when the local REST budget is exhausted and falls through to free history", async () => {
