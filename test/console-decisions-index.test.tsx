@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SocraticDecisionCase } from "../src/lib/types";
 import DecisionsIndexPage from "../app/console/decisions/page";
 import { DecisionsList } from "../app/console/decisions/decisions-list";
+import { SymbolDrawerProvider } from "../app/console/ui/symbol-drawer";
 
 /** Smoke coverage for the /console/decisions index (#2556): the console Home
  *  "All Decisions" link 404'd because this route had no page. The default export
@@ -41,8 +42,12 @@ describe("console decisions index (#2556)", () => {
   });
 
   it("lists symbol, side, thesis tag, status, and age, linking each row to its trace", () => {
+    // The symbol renders as a SymbolButton (opens the company drawer), which needs
+    // a SymbolDrawerProvider ancestor — see app/console/ui/symbol-drawer.tsx.
     const html = renderToStaticMarkup(
-      <DecisionsList decisions={[decisionCase(), decisionCase({ id: "dec 2", symbol: undefined, side: undefined, status: "rejected", thesisTag: undefined })]} />
+      <SymbolDrawerProvider>
+        <DecisionsList decisions={[decisionCase(), decisionCase({ id: "dec 2", symbol: undefined, side: undefined, status: "rejected", thesisTag: undefined })]} />
+      </SymbolDrawerProvider>
     );
     expect(html).toContain("NVDA");
     expect(html).toContain("BUY");

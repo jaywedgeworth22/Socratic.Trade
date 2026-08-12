@@ -957,7 +957,8 @@ function LiveApproveSheet({
       <div className="mb-3 rounded-control border border-[color:var(--con-live-border)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
         <div className="font-bold">Brokerage account</div>
         <p className="con-num mt-1">
-          {SIDE_LABEL[pending.proposal.side] ?? pending.proposal.side.toUpperCase()} {pending.proposal.symbol} — estimated{" "}
+          {SIDE_LABEL[pending.proposal.side] ?? pending.proposal.side.toUpperCase()}{" "}
+          <SymbolButton symbol={pending.proposal.symbol} className="text-inherit" /> — estimated{" "}
           <strong>{fmtMoney(notional)}</strong>
           {pending.accountNumber ? ` from account ·· ${pending.accountNumber.slice(-4)}` : ""}
         </p>
