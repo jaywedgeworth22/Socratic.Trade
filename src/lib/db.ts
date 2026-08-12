@@ -2753,6 +2753,38 @@ const MIGRATIONS: Migration[] = [
         // Table might not exist in isolated tests
       }
     }
+  },
+  {
+    // Signal-health monitor (r2 lesson: health): rolling pure-arithmetic diagnostics of the LLM's
+    // OWN confidenceScore against matured decision outcomes — rank IC + t-stat, quantile buckets,
+    // top-K churn, gross-vs-net — one snapshot row per (user, UTC day, horizon), written by the
+    // daily signal-health-refresh lane (src/lib/signal-health.ts). CRUD in db-signal-health.ts.
+    // Rows exist only when the observation floor is met — an under-sampled day writes nothing
+    // rather than a fabricated diagnostic.
+    version: 74,
+    name: "signal_health_snapshot",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS signal_health_snapshot (
+          user_id TEXT NOT NULL,
+          period_end TEXT NOT NULL,
+          horizon TEXT NOT NULL,
+          rank_ic REAL NOT NULL,
+          t_stat REAL NOT NULL,
+          n_observations INTEGER NOT NULL,
+          n_dates INTEGER NOT NULL,
+          quantile_buckets TEXT NOT NULL,
+          top_k_churn_pct REAL,
+          gross_return_pct REAL NOT NULL,
+          net_of_cost_return_pct REAL NOT NULL,
+          rolling_rank_ic_slope REAL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, period_end, horizon)
+        );
+        CREATE INDEX IF NOT EXISTS idx_signal_health_user_horizon
+          ON signal_health_snapshot (user_id, horizon, period_end DESC);
+      `);
+    }
   }
 ];
 
@@ -4368,3 +4400,4 @@ export * from "./db-earningscalls";
 export * from "./db-document-abstracts";
 export * from "./db-task-journal";
 export * from "./db-embed-stage";
+export * from "./db-signal-health";

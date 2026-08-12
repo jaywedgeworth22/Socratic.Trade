@@ -4,6 +4,7 @@
  *  non-blocking notice. The live-approval typed-confirmation contract mirrors
  *  app/api/proposals/[id]/approve/route.ts exactly. */
 
+import type { SignalHealthSnapshotRow } from "@/lib/db-signal-health";
 import type { LlmReasoningEffort, PerformanceSummary, StrategyTuningProposal, SystemState, TradingPolicy } from "@/lib/types";
 
 export class ConsoleApiError extends Error {
@@ -382,6 +383,18 @@ export interface AccountPerformanceResult {
  *  sends an accountNumber from the client. */
 export function fetchAccountPerformance(id: string): Promise<AccountPerformanceResult> {
   return request<AccountPerformanceResult>(`/api/connected-accounts/${encodeURIComponent(id)}/performance`);
+}
+
+/** Results-page signal-health section: per-horizon snapshot history (newest first) from the daily
+ *  signal-health-refresh lane. Read-only; empty series render an honest empty state. */
+export interface SignalHealthResponse {
+  minObservations: number;
+  topK: number;
+  horizons: Array<{ horizon: string; snapshots: SignalHealthSnapshotRow[] }>;
+}
+
+export function fetchSignalHealth(): Promise<SignalHealthResponse> {
+  return request<SignalHealthResponse>("/api/signal-health");
 }
 
 /** "Import settings from another account" (Strategy page): copies strategy settings — models,

@@ -99,6 +99,10 @@ export const NOTIFICATION_EVENT_TYPES = [
   // P2.8: synthetic protective exit is retrying after a persistent broker decline / placement
   // failure. Coalesced to one owner-visible alert per (stop, fingerprint) failure streak.
   "protective_exit_failing",
+  // Signal-health drift alarm (src/lib/signal-health.ts): the rolling rank IC of the LLM's own
+  // confidenceScore against matured outcomes is decaying. Advisory — nothing halts; sizing only
+  // changes under the opt-in policy.tuning.signalHealthAutoThrottle.
+  "signal_health",
   // Opt-in daily watchlist summary (default OFF — notification_prefs.watchlistDigestEnabled, see
   // Settings -> Delivery). Delivered via notify() directly (src/lib/watchlist-digest.ts), like the
   // R2 usage digest, so it does NOT go through sendNotification's enabledEvents gate — the member
@@ -307,6 +311,16 @@ export interface TuningSettings {
    * dataAdjustments — visible, never a silent haircut.
    */
   confidenceCapDataDegraded?: number;
+  /**
+   * Signal-health auto-throttle (default OFF — the drift alarm only notifies/logs). When true and
+   * a CONFIRMED confidence-drift alarm is active (signal-health.ts: declining rolling rank IC of
+   * the LLM's own confidenceScore vs matured outcomes), conviction's UPSIDE contribution to sizing
+   * is capped at the convictionCapUncorroborated value even for corroborated theses — a decaying
+   * confidence signal shouldn't ride realized-edge corroboration to full size. When it binds, a
+   * `confidence_capped_signal_drift: …` receipt is appended to dataAdjustments (visible, never a
+   * silent haircut). Owner-adjustable; turning it off restores today's sizing exactly.
+   */
+  signalHealthAutoThrottle?: boolean;
   /**
    * Deterministic fundamentals hard-veto on BUYS, applied model-free in deterministicBearFilter
    * (independent of the Bull/Bear LLMs). Veto a buy when the candidate's free-cash-flow yield is
