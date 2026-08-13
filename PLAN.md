@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-13 GROK — Claude r4 leftover pickup (`grok/claude-r4-pickup`).** Cherry-pick five unpushed r4 slices (benchmarks, ATR pullback, ops panel, opspanel fixes, data-age) onto current main.  No new schema version (main already at 78).  Prompt version lands as `agentic-strategy@2.5.0`.  Advisory-tail leftover stays with Monet #2682.  Rollout: `docs/rollouts/2026-08-13-claude-r4-pickup.md`.
+
 > **2026-08-13 GROK — fleet alert triage (`grok/fleet-alerts-aug13`).** Fix RH MCP extra args (#2576), cap Pinecone metadata under 40960, classify engine-overloaded 429s as transient (no usage-limit page), and stop the ST-health keyword monitor from pairing 503 deploys as "credits low." CT senate scout handshake reuse is the follow-up in the CT lane. Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
 
 

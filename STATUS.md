@@ -1,3 +1,26 @@
+## Current (2026-08-13 GROK — Claude r4 leftover pickup)
+
+Claude hit quota mid Round 4.  `origin/agent/claude` is gone; five local r4 commits sat on
+`~/apps/trading-claude` at `40d5c087`.  r3 already merged as #2666.  Toggles slice yielded to
+Monet and merged as #2682 (migration 78).  APNs claimed migration 77.
+
+Picked up in a new worktree (`~/apps/trading-grok-r4`, branch `grok/claude-r4-pickup`) from
+`origin/main` `77bbb77f`.  Cherry-picked oldest-first:
+
+1. `1ac172a9` outcome benchmarks (`^GSPC` + GICS sector, ETF fallback)
+2. `9f7f870f` ATR-derived `secondaryBuy` pullback
+3. `293d4bb5` server-knob Operations panel
+4. `cb645a02` congress-stream level-based resume + honest effect copy
+5. `40d5c087` strategist prompt data-age stamps
+
+No schema bump in these five (main stays at 78).  Conflicts: `vector-db.ts` kept main's
+`resolveSourceBool` and r4's `serverKnobBool`; `STRATEGY_PROMPT_VERSION` bumped to
+`agentic-strategy@2.5.0` because main already used 2.4.0 for the venue-contract prompt.
+Advisory-tail reword / settings-surface sweep is NOT in these five commits (it rode Monet
+#2682) — left alone.
+
+Rollout: `docs/rollouts/2026-08-13-claude-r4-pickup.md`.
+
 ## Current (2026-08-13 ~3:20pm CT MONET - HONEST SERVER STATS: fabricated CI runners deleted)
 
 `/admin/server` was showing six GitHub Actions runners that do not exist -- `socratic-ci`,
