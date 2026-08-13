@@ -380,7 +380,6 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     portfolioReadError?: string;
     currentPrices: Record<string, number>;
   }> = (async () => {
-    let accounts: BrokerageAccount[] = [];
     let brokerAccountReadError: string | undefined;
     const handleAccountsReadFailure = (message: string) => {
       brokerAccountReadError = message;
@@ -397,9 +396,11 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
         accountNumber: policy.accountNumber
       });
     };
-    if (gateway) {
+
+    const accountsPromise = (async () => {
+      if (!gateway) return [];
       try {
-        accounts = await withDeadline(
+        return await withDeadline(
           gateway.getAccounts(),
           6000,
           () => {
@@ -411,14 +412,120 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
         );
       } catch (error) {
         handleAccountsReadFailure(messageFromUnknownError(error));
+        return [];
       }
-    }
-    // Resilience: a live getAccounts() that fails or returns empty (a transient broker/MCP enumeration
-    // miss) must not make the configured account vanish from the snapshot — which made the readiness
-    // badge false-warn "not available for agentic execution". Backfill any stored connected account the
-    // live list didn't return, deriving agenticAllowed from the account type so the selected account
-    // always resolves to a definitive status.
-    const liveAccounts = accounts.slice();
+    })();
+
+    let portfolioReadError: string | undefined;
+    const handlePortfolioReadFailure = (accountNumber: string, message: string) => {
+      portfolioReadError = message;
+      console.warn("Failed to fetch portfolio:", message);
+      recordRecoverableIssue({
+        source: "broker",
+        operation: "dashboard.getPortfolioBundle",
+        severity: "error",
+        message,
+        fallback: "Dashboard snapshot continues without live portfolio, positions, options, and orders.",
+        userId,
+        connectedAccountId: policy.connectedAccountId,
+        broker: policy.activeBroker,
+        accountNumber
+      });
+    };
+
+    const portfolioChainPromise = (async () => {
+      let targetAccountNumber = policy.accountNumber;
+      if (!targetAccountNumber) {
+        const rawAccounts = await accountsPromise;
+        const liveAccountNumbers = new Set(rawAccounts.map((account) => account.accountNumber));
+        const tempAccounts = rawAccounts.slice();
+        for (const connected of connectedAccounts) {
+          if (!connected.accountNumber || liveAccountNumbers.has(connected.accountNumber)) continue;
+          tempAccounts.push({
+            accountNumber: connected.accountNumber,
+            label: connected.label,
+            agenticAllowed: connectedAccountAgenticFallback(connected),
+            capabilities: connected.capabilities
+          });
+        }
+        targetAccountNumber = tempAccounts.find((account) => account.agenticAllowed)?.accountNumber;
+      }
+
+      let portfolio: Portfolio | undefined;
+      let positions: EquityPosition[] = [];
+      let options: OptionPosition[] = [];
+      let orders: EquityOrder[] = [];
+      let currentPrices: Record<string, number> = {};
+
+      if (targetAccountNumber && gateway) {
+        try {
+          [portfolio, positions, orders] = await withDeadline<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
+            Promise.all([
+              gateway.getPortfolio(targetAccountNumber),
+              gateway.getEquityPositions(targetAccountNumber),
+              gateway.getEquityOrders(targetAccountNumber)
+            ]),
+            8000,
+            () => {
+              handlePortfolioReadFailure(targetAccountNumber as string, "Timed out waiting for portfolio, positions, and orders after 8000ms.");
+              return [undefined, [], []];
+            },
+            "portfolio/positions/orders",
+            timedOutSections
+          );
+        } catch (error) {
+          handlePortfolioReadFailure(targetAccountNumber, messageFromUnknownError(error));
+        }
+
+        if (gateway.getOptionPositions) {
+          try {
+            options = await withDeadline<OptionPosition[]>(
+              gateway.getOptionPositions(targetAccountNumber),
+              8000,
+              () => [],
+              "gateway.getOptionPositions",
+              timedOutSections
+            );
+          } catch (err) {
+            console.warn("[Dashboard] options positions unavailable (non-fatal):", err);
+          }
+        }
+        if (options.length > 0) {
+          checkAndDispatchOptionAlerts(userId, policy.connectedAccountId || "", targetAccountNumber, options, gateway).catch((err) =>
+            console.warn("[OptionAlerts] failed:", err)
+          );
+        }
+
+        if (portfolio) {
+          const priceSymbols = Array.from(new Set(positions.map((p) => normalizeSymbol(p.symbol))));
+          const quotes: Record<string, BrokerQuote> = priceSymbols.length > 0
+            ? await withDeadline(
+                gateway.getEquityQuotes(targetAccountNumber, priceSymbols),
+                6000,
+                () => ({}),
+                "gateway.getEquityQuotes",
+                timedOutSections
+              )
+            : {};
+          currentPrices = Object.fromEntries(
+            Object.values(quotes)
+              .filter((quote) => typeof quote.price === "number" && quote.price > 0)
+              .map((quote) => [normalizeSymbol(quote.symbol), quote.price as number] as const)
+          );
+          for (const position of positions) {
+            const symbol = normalizeSymbol(position.symbol);
+            if (!(symbol in currentPrices) && position.quantity > 0) currentPrices[symbol] = position.marketValue / position.quantity;
+          }
+        }
+      }
+
+      return { accountNumber: targetAccountNumber, portfolio, positions, options, orders, currentPrices };
+    })();
+
+    const [rawAccounts, portfolioData] = await Promise.all([accountsPromise, portfolioChainPromise]);
+
+    const liveAccounts = rawAccounts.slice();
+    const accounts = rawAccounts.slice();
     const liveAccountNumbers = new Set(liveAccounts.map((account) => account.accountNumber));
     let storedBackfillCount = 0;
     let selectedAccountWasBackfilled = false;
@@ -451,100 +558,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
       });
     }
 
-    const accountNumber = policy.accountNumber ?? accounts.find((account) => account.agenticAllowed)?.accountNumber;
-    let portfolio: Portfolio | undefined;
-    let positions: EquityPosition[] = [];
-    let options: OptionPosition[] = [];
-    let orders: EquityOrder[] = [];
-    let portfolioReadError: string | undefined;
-    const handlePortfolioReadFailure = (message: string) => {
-      portfolioReadError = message;
-      console.warn("Failed to fetch portfolio:", message);
-      recordRecoverableIssue({
-        source: "broker",
-        operation: "dashboard.getPortfolioBundle",
-        severity: "error",
-        message,
-        fallback: "Dashboard snapshot continues without live portfolio, positions, options, and orders.",
-        userId,
-        connectedAccountId: policy.connectedAccountId,
-        broker: policy.activeBroker,
-        accountNumber
-      });
-    };
-    if (accountNumber && gateway) {
-      try {
-        [portfolio, positions, orders] = await withDeadline<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
-          Promise.all([
-            gateway.getPortfolio(accountNumber),
-            gateway.getEquityPositions(accountNumber),
-            gateway.getEquityOrders(accountNumber)
-          ]),
-          8000,
-          () => {
-            handlePortfolioReadFailure("Timed out waiting for portfolio, positions, and orders after 8000ms.");
-            return [undefined, [], []];
-          },
-          "portfolio/positions/orders",
-          timedOutSections
-        );
-      } catch (error) {
-        handlePortfolioReadFailure(messageFromUnknownError(error));
-      }
-      // Option positions are best-effort: a transient failure (notably an MCP
-      // tool error) must not crash the whole dashboard bundle. Wrap the fetch in
-      // the same withDeadline guard the portfolio/positions/orders legs use — the
-      // try/catch only handles a REJECTION, so a HUNG options/MCP endpoint would
-      // otherwise hang the whole snapshot forever (the catch never runs and the
-      // dashboard never renders). Time out to an empty list like the other legs.
-      if (gateway.getOptionPositions) {
-        try {
-          options = await withDeadline<OptionPosition[]>(
-            gateway.getOptionPositions(accountNumber),
-            8000,
-            () => [],
-            "gateway.getOptionPositions",
-            timedOutSections
-          );
-        } catch (err) {
-          console.warn("[Dashboard] options positions unavailable (non-fatal):", err);
-        }
-      }
-      if (options.length > 0) {
-        checkAndDispatchOptionAlerts(userId, policy.connectedAccountId || "", accountNumber, options, gateway).catch((err) =>
-          console.warn("[OptionAlerts] failed:", err)
-        );
-      }
-    }
-
-    // Live current-price map (broker quotes for held symbols) so P&L is marked to the same prices
-    // the broker reports. An account is an account: `portfolio`/`positions` are always the real
-    // broker-reported values for the active account — there is no locally-projected alternative.
-    let currentPrices: Record<string, number> = {};
-    if (accountNumber && gateway && portfolio) {
-      const priceSymbols = Array.from(new Set(positions.map((p) => normalizeSymbol(p.symbol))));
-      const quotes: Record<string, BrokerQuote> = priceSymbols.length > 0
-        ? await withDeadline(
-            gateway.getEquityQuotes(accountNumber, priceSymbols),
-            6000,
-            () => ({}),
-            "gateway.getEquityQuotes",
-            timedOutSections
-          )
-        : {};
-      currentPrices = Object.fromEntries(
-        Object.values(quotes)
-          .filter((quote) => typeof quote.price === "number" && quote.price > 0)
-          .map((quote) => [normalizeSymbol(quote.symbol), quote.price as number] as const)
-      );
-      // Fall back to the live position's mark when a broker quote is missing.
-      for (const position of positions) {
-        const symbol = normalizeSymbol(position.symbol);
-        if (!(symbol in currentPrices) && position.quantity > 0) currentPrices[symbol] = position.marketValue / position.quantity;
-      }
-    }
-
-    return { accounts, liveAccounts, brokerAccountReadError, accountNumber, portfolio, positions, options, orders, portfolioReadError, currentPrices };
+    return { accounts, liveAccounts, brokerAccountReadError, accountNumber: portfolioData.accountNumber, portfolio: portfolioData.portfolio, positions: portfolioData.positions, options: portfolioData.options, orders: portfolioData.orders, portfolioReadError, currentPrices: portfolioData.currentPrices };
   })();
 
   const robinhoodMcpHealthPromise: Promise<RobinhoodMcpHealth | undefined> =

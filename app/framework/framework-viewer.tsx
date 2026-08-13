@@ -26,35 +26,39 @@ function passesBrowserChecks(): boolean {
   return true;
 }
 
+let cachedFrameworkContent: FrameworkContent | null = null;
+
 export function FrameworkViewer() {
-  const [state, setState] = useState<LoadState>({ phase: "loading" });
+  const [state, setState] = useState<LoadState>(() =>
+    cachedFrameworkContent ? { phase: "ready", content: cachedFrameworkContent } : { phase: "loading" }
+  );
 
   useEffect(() => {
     let cancelled = false;
+    if (cachedFrameworkContent) return;
     if (!passesBrowserChecks()) {
       setState({ phase: "unavailable" });
       return;
     }
-    // Small real-time delay so the fetch demonstrably comes from executing
-    // page script. Deliberately setTimeout, not requestAnimationFrame — rAF
-    // is throttled to zero in background tabs and would strand the page on
-    // the loading state until focused.
-    const timer = setTimeout(async () => {
+
+    const loadContent = async () => {
       try {
         const res = await fetch("/api/framework/content", {
           headers: { "x-framework-viewer": "1" },
-          cache: "no-store"
+          cache: "default"
         });
         if (!res.ok) throw new Error(`status ${res.status}`);
         const data = (await res.json()) as { content: FrameworkContent };
+        cachedFrameworkContent = data.content;
         if (!cancelled) setState({ phase: "ready", content: data.content });
       } catch {
         if (!cancelled) setState({ phase: "unavailable" });
       }
-    }, 150);
+    };
+
+    void loadContent();
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
   }, []);
 
