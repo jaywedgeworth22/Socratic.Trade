@@ -73,6 +73,26 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertTrue(oldestPersistedVerdict.rejected)
     }
 
+    func testPresentedMarketItemIdentifiesFillPositionAndCompany() throws {
+        let fill = try JSONDecoder().decode(
+            FillEvent.self,
+            from: Data(#"{"id":"fill-1","symbol":"GOOG","side":"buy","quantity":2,"price":343.94,"notional":687.88,"status":"filled","filledAt":"2026-08-13T20:00:00.000Z"}"#.utf8)
+        )
+        let position = try JSONDecoder().decode(
+            Position.self,
+            from: Data(#"{"symbol":"GOOG","quantity":10,"marketValue":3439.4,"averageCost":300,"sector":"Technology","industry":"Internet Content & Information"}"#.utf8)
+        )
+
+        XCTAssertEqual(PresentedMarketItem.company("GOOG").id, "company:GOOG")
+        XCTAssertEqual(PresentedMarketItem.fill(fill).id, "fill:fill-1")
+        XCTAssertEqual(PresentedMarketItem.position(position).id, "position:GOOG")
+        XCTAssertEqual(PresentedMarketItem.fill(fill).symbol, "GOOG")
+        XCTAssertEqual(PresentedMarketItem.position(position).symbol, "GOOG")
+        XCTAssertEqual(PresentedMarketItem.fill(fill).fill?.id, "fill-1")
+        XCTAssertNil(PresentedMarketItem.company("GOOG").fill)
+        XCTAssertEqual(PresentedMarketItem.position(position).position?.quantity, 10)
+    }
+
     @MainActor
     func testCommandSafetyGatesReadinessAndStalenessButKeepsProtectiveActions() throws {
         let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))

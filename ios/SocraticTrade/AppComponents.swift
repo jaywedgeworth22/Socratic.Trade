@@ -417,6 +417,41 @@ struct PresentedSymbol: Identifiable, Equatable {
     var id: String { symbol }
 }
 
+/// Sheet payload for a company quote, a fill, or a position.  Fill/position cards
+/// present `.fill` / `.position` so tapping anywhere on the card opens trade or
+/// position facts plus the same company stats the logo used to open alone.
+enum PresentedMarketItem: Identifiable, Equatable {
+    case company(String)
+    case fill(FillEvent)
+    case position(Position)
+
+    var id: String {
+        switch self {
+        case .company(let symbol): return "company:\(symbol)"
+        case .fill(let fill): return "fill:\(fill.id)"
+        case .position(let position): return "position:\(position.symbol)"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .company(let symbol): return symbol
+        case .fill(let fill): return fill.symbol
+        case .position(let position): return position.symbol
+        }
+    }
+
+    var fill: FillEvent? {
+        if case .fill(let fill) = self { return fill }
+        return nil
+    }
+
+    var position: Position? {
+        if case .position(let position) = self { return position }
+        return nil
+    }
+}
+
 /// Tappable ticker logo + symbol text that opens `SymbolInfoSheet` for `symbol` — the mobile
 /// counterpart to the web console's `SymbolButton` (app/console/ui/symbol-drilldown.tsx). Wrap
 /// wherever a row shows a symbol; pass `action` to set the screen's `presentedSymbol` state.

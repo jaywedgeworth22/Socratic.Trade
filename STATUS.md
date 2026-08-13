@@ -1,3 +1,18 @@
+## Current (2026-08-13 GROK — quote sheet Key Stats + fill/position card tap)
+
+Owner GOOG screenshot: price + volume only; P/E, EPS, yield, beta, 52W high/low were dashes.
+Cause: `/api/quote` returned the Yahoo **chart** floor (price/volume/name) and waited 6s for
+the full cascade.  Yahoo quoteSummary's crumb handshake + 8s timeout routinely misses that
+budget.  The route also never read or wrote `symbol_field_latest`, so previously saved
+fundamentals were invisible and opening a ticker never updated the store.
+
+Fix (branch `grok/quote-sheet-durable-and-card-tap`, issue #2686): seed from the durable
+store, map 52w from chart meta, add a keyless v7 quote for PE/EPS/div/beta, persist the
+merge.  iOS fill and position cards are full-card taps that open fill/position facts plus
+the company sheet.
+
+Rollout: `docs/rollouts/2026-08-13-quote-sheet-durable-and-card-tap.md`.
+
 ## Current (2026-08-13 ~3:20pm CT MONET - HONEST SERVER STATS: fabricated CI runners deleted)
 
 `/admin/server` was showing six GitHub Actions runners that do not exist -- `socratic-ci`,

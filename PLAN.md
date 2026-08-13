@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-13 GROK — quote sheet Key Stats + fill/position card tap (`grok/quote-sheet-durable-and-card-tap`).** `/api/quote` seeds `symbol_field_latest`, maps 52w from the Yahoo chart floor, fetches keyless v7 PE/EPS/div/beta, and writes the merge back so Key Stats stay visible when the 6s cascade times out.  iOS fill/position cards open the whole card.  Issue #2686.  Rollout: `docs/rollouts/2026-08-13-quote-sheet-durable-and-card-tap.md`.
+
 > **2026-08-13 GROK — fleet alert triage (`grok/fleet-alerts-aug13`).** Fix RH MCP extra args (#2576), cap Pinecone metadata under 40960, classify engine-overloaded 429s as transient (no usage-limit page), and stop the ST-health keyword monitor from pairing 503 deploys as "credits low." CT senate scout handshake reuse is the follow-up in the CT lane. Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
 
 

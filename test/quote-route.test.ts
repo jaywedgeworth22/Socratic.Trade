@@ -8,11 +8,23 @@ vi.mock("@/lib/rate-limit", async (importActual) => {
   const actual = await importActual<typeof import("../src/lib/rate-limit")>();
   return { ...actual, enforceRateLimit: vi.fn(() => null) };
 });
-vi.mock("@/lib/yahoo-finance", () => ({ fetchYahooFinanceQuote: vi.fn() }));
+vi.mock("@/lib/yahoo-finance", () => ({
+  fetchYahooFinanceQuote: vi.fn(),
+  fetchYahooFinanceQuoteDetails: vi.fn()
+}));
+vi.mock("@/lib/on-demand-quote", async (importActual) => {
+  const actual = await importActual<typeof import("../src/lib/on-demand-quote")>();
+  return {
+    ...actual,
+    loadDurableQuoteSeed: vi.fn(async () => ({})),
+    persistOnDemandQuote: vi.fn()
+  };
+});
 
 import { getEnrichmentProvider } from "@/lib/data-providers";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { fetchYahooFinanceQuote } from "@/lib/yahoo-finance";
+import { fetchYahooFinanceQuote, fetchYahooFinanceQuoteDetails } from "@/lib/yahoo-finance";
+import { loadDurableQuoteSeed, persistOnDemandQuote } from "@/lib/on-demand-quote";
 import { resetQuoteSingleFlightForTests } from "../src/lib/quote-singleflight";
 
 describe("/api/quote", () => {
@@ -32,6 +44,8 @@ describe("/api/quote", () => {
       syntheticAsk: true,
       syntheticSpread: true
     });
+    vi.mocked(fetchYahooFinanceQuoteDetails).mockResolvedValue(undefined);
+    vi.mocked(loadDurableQuoteSeed).mockResolvedValue({});
   });
 
   afterEach(() => vi.useRealTimers());
@@ -69,6 +83,83 @@ describe("/api/quote", () => {
       companyName: "yahoo-finance",
       price: "yahoo-finance",
       peRatio: "fmp"
+    });
+    expect(persistOnDemandQuote).toHaveBeenCalledWith(
+      "LRCX",
+      expect.objectContaining({ price: 77.5, peRatio: 24.1 })
+    );
+  });
+
+  it("surfaces durable PE/EPS/52w when the cascade times out and Yahoo details are empty", async () => {
+    vi.useFakeTimers();
+    const enrich = vi.fn(() => new Promise<Record<string, never>>(() => undefined));
+    vi.mocked(getEnrichmentProvider).mockReturnValue({
+      name: "slow-test",
+      configured: true,
+      enrich
+    });
+    vi.mocked(loadDurableQuoteSeed).mockResolvedValue({
+      peRatio: 26.4,
+      eps: 8.12,
+      fiftyTwoWeekHigh: 208.7,
+      fiftyTwoWeekLow: 142.66,
+      sources: { peRatio: "yahoo-finance", eps: "yahoo-finance" }
+    });
+    const { GET } = await import("../app/api/quote/route");
+
+    const pending = GET(new Request("http://localhost/api/quote?symbol=GOOG"));
+    await vi.advanceTimersByTimeAsync(6_000);
+    const response = await pending;
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      symbol: "GOOG",
+      price: 77.5,
+      volume: 2_500_000,
+      peRatio: 26.4,
+      eps: 8.12,
+      fiftyTwoWeekHigh: 208.7,
+      fiftyTwoWeekLow: 142.66
+    });
+  });
+
+  it("uses keyless Yahoo v7 details for PE/EPS/52w when the store and cascade are empty", async () => {
+    vi.mocked(getEnrichmentProvider).mockReturnValue({
+      name: "test",
+      configured: true,
+      enrich: vi.fn().mockResolvedValue({ LRCX: {} })
+    });
+    vi.mocked(fetchYahooFinanceQuoteDetails).mockResolvedValue({
+      companyName: "Lam Research Corporation",
+      price: 77.5,
+      bid: 77.42,
+      ask: 77.58,
+      prevClose: 76,
+      volume: 2_500_000,
+      asOf: "2026-07-15T15:00:00.000Z",
+      peRatio: 29.1,
+      eps: 2.66,
+      dividendYield: 0.89,
+      beta: 1.45,
+      fiftyTwoWeekHigh: 113.0,
+      fiftyTwoWeekLow: 56.32,
+      syntheticBid: false,
+      syntheticAsk: false
+    });
+    const { GET } = await import("../app/api/quote/route");
+
+    const response = await GET(new Request("http://localhost/api/quote?symbol=LRCX"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      peRatio: 29.1,
+      eps: 2.66,
+      dividendYield: 0.89,
+      beta: 1.45,
+      fiftyTwoWeekHigh: 113.0,
+      fiftyTwoWeekLow: 56.32
     });
   });
 
@@ -176,6 +267,7 @@ describe("/api/quote", () => {
     expect(response.status).toBe(400);
     expect(enrich).not.toHaveBeenCalled();
     expect(fetchYahooFinanceQuote).not.toHaveBeenCalled();
+    expect(fetchYahooFinanceQuoteDetails).not.toHaveBeenCalled();
   });
 
   it("returns 429 when rate limited", async () => {

@@ -19,6 +19,106 @@ export interface YahooFinanceQuote {
   syntheticBid?: boolean;
   /** true when the ASK was derived from price (Yahoo reported no real ask). */
   syntheticAsk?: boolean;
+  /**
+   * Optional keyless fundamentals.  Present when the chart meta or the v7 quote
+   * endpoint actually returned them — never fabricated.  `dividendYield` is
+   * percentage points (0.32 = 0.32%), matching YahooFinanceEnrichmentProvider.
+   */
+  peRatio?: number;
+  eps?: number;
+  dividendYield?: number;
+  beta?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+}
+
+function optionalFinite(value: unknown): number | undefined {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function optionalPositive(value: unknown): number | undefined {
+  const n = optionalFinite(value);
+  return n !== undefined && n > 0 ? n : undefined;
+}
+
+/** Yahoo `trailingAnnualDividendYield` is a fraction (0.0032 = 0.32%). */
+export function yahooDividendYieldPercent(raw: unknown): number | undefined {
+  const n = optionalFinite(raw);
+  if (n === undefined || n < 0) return undefined;
+  return Math.round(n * 10000) / 100;
+}
+
+export function yahooFundamentalsFromRecord(row: Record<string, unknown>): Pick<
+  YahooFinanceQuote,
+  "peRatio" | "eps" | "dividendYield" | "beta" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow"
+> {
+  const peRatio = optionalPositive(row.trailingPE ?? row.peRatio);
+  const eps = optionalFinite(row.epsTrailingTwelveMonths ?? row.eps);
+  const dividendYield = yahooDividendYieldPercent(
+    row.trailingAnnualDividendYield ?? row.dividendYieldFraction
+  );
+  const beta = optionalFinite(row.beta);
+  const fiftyTwoWeekHigh = optionalPositive(row.fiftyTwoWeekHigh);
+  const fiftyTwoWeekLow = optionalPositive(row.fiftyTwoWeekLow);
+  return {
+    ...(peRatio !== undefined ? { peRatio } : {}),
+    ...(eps !== undefined ? { eps } : {}),
+    ...(dividendYield !== undefined ? { dividendYield } : {}),
+    ...(beta !== undefined ? { beta } : {}),
+    ...(fiftyTwoWeekHigh !== undefined ? { fiftyTwoWeekHigh } : {}),
+    ...(fiftyTwoWeekLow !== undefined ? { fiftyTwoWeekLow } : {})
+  };
+}
+
+export function mapYahooV7QuoteItem(
+  item: Record<string, unknown> & {
+    symbol?: string;
+    regularMarketPrice?: number;
+    bid?: number;
+    ask?: number;
+    regularMarketPreviousClose?: number;
+    regularMarketVolume?: number;
+    regularMarketTime?: number;
+    longName?: string;
+    shortName?: string;
+  }
+): YahooFinanceQuote | undefined {
+  const price = Number(item.regularMarketPrice);
+  if (!Number.isFinite(price) || price <= 0) return undefined;
+  const prevClose = item.regularMarketPreviousClose ? Number(item.regularMarketPreviousClose) : price;
+  const syntheticBid = !(item.bid && item.bid > 0);
+  const syntheticAsk = !(item.ask && item.ask > 0);
+  const hasRealSpread = !syntheticBid && !syntheticAsk;
+  const bid = syntheticBid ? price * 0.999 : Number(item.bid);
+  const ask = syntheticAsk ? price * 1.001 : Number(item.ask);
+  const volume = Number(item.regularMarketVolume ?? 0);
+  const t = Number(item.regularMarketTime);
+  const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
+  const companyName = [item.longName, item.shortName]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+    ?.trim();
+  return {
+    ...(companyName ? { companyName } : {}),
+    price,
+    bid,
+    ask,
+    prevClose,
+    volume,
+    asOf,
+    syntheticBid,
+    syntheticAsk,
+    ...(hasRealSpread ? {} : { syntheticSpread: true }),
+    ...yahooFundamentalsFromRecord(item)
+  };
+}
+
+/** Keyless v7 quote for one symbol — PE/EPS/div/beta/52w without the crumb handshake. */
+export async function fetchYahooFinanceQuoteDetails(
+  symbol: string
+): Promise<YahooFinanceQuote | undefined> {
+  const mapped = await fetchYahooFinanceQuotesBatch([symbol]);
+  return mapped.get(symbol.toUpperCase().trim());
 }
 
 export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinanceQuote | undefined> {
@@ -44,6 +144,9 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinan
     // regularMarketTime is Unix seconds; convert to ISO for a real "as of" timestamp.
     const t = Number(meta.regularMarketTime);
     const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
+    // Chart meta often includes the 52-week range on the same payload as price/volume.
+    // PE/EPS/div/beta live on the v7 quote endpoint (see fetchYahooFinanceQuoteDetails).
+    const fundamentals = yahooFundamentalsFromRecord(meta);
     // The chart endpoint returns NO real bid/ask. We derive a rough spread from price ONLY so
     // downstream code has a placeholder, and mark it synthetic so it is never mistaken for a real
     // quoted ask (which would wrongly anchor ask-relative limit-price math).
@@ -58,7 +161,8 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinan
       // Fully synthetic single-quote fallback: both sides derived from price.
       syntheticBid: true,
       syntheticAsk: true,
-      syntheticSpread: true
+      syntheticSpread: true,
+      ...fundamentals
     };
   } catch {
     clearTimeout(timeout);
@@ -85,7 +189,7 @@ export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<M
       if (!response.ok) continue;
       const payload = await response.json() as {
         quoteResponse?: {
-          result?: Array<{
+          result?: Array<Record<string, unknown> & {
             symbol: string;
             regularMarketPrice?: number;
             bid?: number;
@@ -102,36 +206,8 @@ export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<M
 
       for (const item of items) {
         if (!item.symbol) continue;
-        const price = Number(item.regularMarketPrice);
-        if (!Number.isFinite(price) || price <= 0) continue;
-        const prevClose = item.regularMarketPreviousClose ? Number(item.regularMarketPreviousClose) : price;
-        // Track each side independently so a one-sided quote keeps its REAL side (a real bid must not
-        // be blanket-tagged synthetic just because the ask had to be derived, and vice versa).
-        const syntheticBid = !(item.bid && item.bid > 0);
-        const syntheticAsk = !(item.ask && item.ask > 0);
-        const hasRealSpread = !syntheticBid && !syntheticAsk;
-        const bid = syntheticBid ? price * 0.999 : Number(item.bid);
-        const ask = syntheticAsk ? price * 1.001 : Number(item.ask);
-        const volume = Number(item.regularMarketVolume ?? 0);
-        const t = Number(item.regularMarketTime);
-        const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
-
-        result.set(item.symbol.toUpperCase().trim(), {
-          price,
-          bid,
-          ask,
-          prevClose,
-          volume,
-          asOf,
-          // Side-specific synthetic flags set EXPLICITLY (true AND false) so a consumer that falls back
-          // to the coarse `syntheticSpread` when a side flag is absent (e.g. market.ts) never mislabels
-          // a real side: a one-sided quote's real side now carries an explicit `false`, so the fallback
-          // only fires for producers that genuinely don't set side flags. `syntheticSpread` stays true
-          // only when BOTH sides were derived (back-compat for any coarse-only consumer).
-          syntheticBid,
-          syntheticAsk,
-          ...(hasRealSpread ? {} : { syntheticSpread: true })
-        });
+        const mapped = mapYahooV7QuoteItem(item);
+        if (mapped) result.set(item.symbol.toUpperCase().trim(), mapped);
       }
     } catch (err) {
       clearTimeout(timeout);
