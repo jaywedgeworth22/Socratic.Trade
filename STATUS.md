@@ -1,3 +1,10 @@
+## Current (2026-08-12 GROK — broker cascade + Webull/eToro/Public + CopyTrader intel)
+
+**Branch `grok/broker-webull-etoro-public`:** connected brokers (Tradier / Alpaca / Robinhood)
+now sit in front of paid history providers; Public + eToro gateways + Webull connect stub;
+CopyTrader observe/allowlist framework (official eToro API only).  Owner must mint keys.
+Rollout: `docs/rollouts/2026-08-12-broker-cascade-and-copy-intel.md`.
+
 ## Current (2026-08-12 CLAUDE - connection-health alert noise, root-caused)
 
 Branch `claude/health-alert-noise` (worktree `/private/tmp/fx-st-health`).  Sentry carried ~28

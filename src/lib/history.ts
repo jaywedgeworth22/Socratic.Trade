@@ -3,7 +3,10 @@
 // Two consumers share this: the technical connector (`web-sources/technical.ts`, which
 // only reads closes) and the symbol-drilldown price chart (`/api/history`, which needs
 // full candles). Sources cascade keyed-first then free:
-// local flat-files → imported/App A → Massive → ROIC.ai → Tradier → Tiingo → Marketstack → Yahoo.
+// local flat-files → imported/App A → connected brokers (Tradier / Alpaca / Robinhood)
+// → Massive → ROIC.ai → Tiingo → Marketstack → Yahoo.
+// Broker-owned bars come BEFORE paid third parties so a connected venue lifts Massive/ROIC/Tiingo
+// spend and is usually the same tape the account would fill against.
 // Keyed providers are reliable from datacenter IPs; the free Yahoo
 // endpoint is frequently rate-limited (HTTP 429) or bot-challenged server-side, so a keyed
 // provider is strongly recommended. Server-side only; cached briefly. Never fabricates —
@@ -25,7 +28,7 @@ import path from "path";
 import zlib from "zlib";
 import type { OHLCBar } from "./indicators";
 export type { OHLCBar };
-import { normalizeSymbol } from "./money";
+import { normalizeSymbol, toAlpacaSymbol } from "./money";
 import { audit, fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, upsertImportedPrices, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
 import { expiresAtRespectingMarketClose } from "./market-hours";
@@ -218,6 +221,7 @@ export async function fetchDailyOHLC(
     tiingo: resolveApiKeyWithSource("tiingo", userId)
   };
   const tradierCredential = resolveTradierHistoryCredential();
+  const alpacaHistory = resolveAlpacaHistoryCredential(userId);
   const privateCacheKey = historyCacheKey(symbol, userId, "private");
   const poolCacheKey = historyCacheKey(symbol, userId, "pool");
   const sharedCacheKey = historyCacheKey(symbol, userId, "shared");
@@ -259,25 +263,36 @@ export async function fetchDailyOHLC(
     ...(opts?.skipAppATier
       ? []
       : [{ scope: "shared" as const, sourceId: "congress.trade", fetch: () => fetchAppAHistory(symbol) }]),
+    // Connected-broker tier BEFORE paid third parties: a connected venue is already paid
+    // for by the account, matches the fill tape, and lifts Massive/ROIC/Tiingo spend.
+    {
+      scope: "shared",
+      sourceId: "tradier",
+      fetch: () => fetchTradier(symbol, startDate, tradierCredential.key, tradierCredential.baseUrl)
+    },
+    {
+      scope: cacheScopeForKeySource(alpacaHistory.source, userId),
+      sourceId: "alpaca",
+      fetch: () => fetchAlpacaDaily(symbol, startDate, alpacaHistory.apiKey, alpacaHistory.secretKey)
+    },
+    ...(userId
+      ? [
+          {
+            scope: cacheScopeForKeySource("user", userId),
+            sourceId: "robinhood",
+            fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year", userId })
+          }
+        ]
+      : []),
     {
       scope: cacheScopeForKeySource(keySources.massive.source, userId),
       sourceId: "massive",
       fetch: () => fetchMassive(symbol, startDate, keySources.massive.key)
     },
-    // ROIC.ai historical daily prices (v3 stock-prices). Operator-key only; seats after Massive
-    // so a healthy Massive plan still wins, but ROIC covers Massive free-tier history gaps and
-    // feeds App A via /api/market/* peer reads without CT holding a ROIC key.
     {
       scope: cacheScopeForKeySource(keySources.roic.source, userId),
       sourceId: "roic",
       fetch: () => fetchRoic(symbol, startDate, keySources.roic.key)
-    },
-    // Always "shared" — sourced from the owner's own connected broker account, not a per-user key
-    // or consent-gated pool contribution (see resolveTradierHistoryCredential's doc comment).
-    {
-      scope: "shared",
-      sourceId: "tradier",
-      fetch: () => fetchTradier(symbol, startDate, tradierCredential.key, tradierCredential.baseUrl)
     },
     {
       scope: cacheScopeForKeySource(keySources.tiingo.source, userId),
@@ -289,15 +304,6 @@ export async function fetchDailyOHLC(
       sourceId: "marketstack",
       fetch: () => fetchMarketstack(symbol, keySources.marketstack.key)
     },
-    ...(userId
-      ? [
-          {
-            scope: cacheScopeForKeySource("user", userId),
-            sourceId: "robinhood",
-            fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year", userId })
-          }
-        ]
-      : []),
     { scope: "shared", sourceId: "yahoo-finance", fetch: () => fetchYahoo(symbol) }
   ];
 
@@ -548,12 +554,100 @@ interface TradierHistoryResponse {
  * sourced from a broker connection instead. Sandbox vs production tracks the connection's own
  * `environment`, matching tradier.ts's own derivation for order placement.
  */
+/**
+ * Alpaca daily bars come from a CONNECTED Alpaca account (the requesting user, else
+ * the owner's local connection).  We do not fall back to leftover env paper keys —
+ * those would silently spend the operator credential on every tenant history miss.
+ */
+function resolveAlpacaHistoryCredential(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
+  const scoped = userId ? getConnectedAccountByBroker("alpaca", userId) ?? getConnectedAccountByBroker("alpaca-mcp", userId) : undefined;
+  const acct = scoped ?? getConnectedAccountByBroker("alpaca", "local") ?? getConnectedAccountByBroker("alpaca-mcp", "local");
+  return {
+    apiKey: acct?.apiKey?.trim() || undefined,
+    secretKey: acct?.apiSecret?.trim() || undefined,
+    source: scoped ? "user" : "env"
+  };
+}
+
 function resolveTradierHistoryCredential(): { key?: string; baseUrl: string } {
   const acct = getConnectedAccountByBroker("tradier", "local");
   return {
     key: acct?.apiKey?.trim() || undefined,
     baseUrl: acct?.environment === "live" ? "https://api.tradier.com" : "https://sandbox.tradier.com"
   };
+}
+
+interface AlpacaDailyBar {
+  t?: string;
+  o?: number;
+  h?: number;
+  l?: number;
+  c?: number;
+  v?: number;
+}
+interface AlpacaBarsResponse {
+  bars?: AlpacaDailyBar[] | Record<string, AlpacaDailyBar[]>;
+  next_page_token?: string | null;
+}
+
+/**
+ * Alpaca IEX daily bars from the market-data credential already on a connected
+ * Alpaca account (or the operator paper key).  Same tape as the snapshot
+ * cascade.  No extra third-party key.
+ */
+async function fetchAlpacaDaily(
+  symbol: string,
+  startDate: string,
+  apiKey: string | undefined,
+  secretKey: string | undefined
+): Promise<OHLCBar[] | null> {
+  if (!apiKey || !secretKey) return null;
+  const alpacaSymbol = toAlpacaSymbol(symbol);
+  try {
+    const bars: OHLCBar[] = [];
+    let pageToken: string | undefined;
+    for (let page = 0; page < 8; page += 1) {
+      const params = new URLSearchParams({
+        timeframe: "1Day",
+        start: `${startDate}T00:00:00Z`,
+        adjustment: "split",
+        limit: "10000",
+        feed: "iex"
+      });
+      if (pageToken) params.set("page_token", pageToken);
+      const url = `https://data.alpaca.markets/v2/stocks/${encodeURIComponent(alpacaSymbol)}/bars?${params.toString()}`;
+      const json = await politeFetchJson<AlpacaBarsResponse>(url, {
+        headers: {
+          "APCA-API-KEY-ID": apiKey,
+          "APCA-API-SECRET-KEY": secretKey,
+          Accept: "application/json"
+        }
+      });
+      const raw = Array.isArray(json?.bars)
+        ? json.bars
+        : json?.bars && typeof json.bars === "object"
+          ? (json.bars[alpacaSymbol] ?? json.bars[symbol] ?? [])
+          : [];
+      for (const d of raw) {
+        if (typeof d.c !== "number" || !Number.isFinite(d.c) || !d.t) continue;
+        bars.push({
+          time: d.t.slice(0, 10),
+          open: numOrUndef(d.o),
+          high: numOrUndef(d.h),
+          low: numOrUndef(d.l),
+          close: d.c,
+          volume: numOrUndef(d.v)
+        });
+      }
+      pageToken = json?.next_page_token ?? undefined;
+      if (!pageToken) break;
+    }
+    recordProviderCall("alpaca", { service: "market-data", ok: true });
+    return bars.length >= 2 ? bars : null;
+  } catch {
+    recordProviderCall("alpaca", { service: "market-data", ok: false });
+    return null;
+  }
 }
 
 /** Tradier daily history — brokerage-grade, generous rate limits. Best primary source. */

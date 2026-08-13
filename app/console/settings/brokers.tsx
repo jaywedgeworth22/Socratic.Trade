@@ -18,6 +18,7 @@ import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primit
 import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle, Pencil, Check, X, Info } from "lucide-react";
 import {
   connectAlpacaAccount,
+  connectKeyPairBroker,
   connectTradierAccount,
   disconnectAccount,
   fetchRobinhoodHealth,
@@ -37,6 +38,12 @@ function brokerName(broker: ConnectedAccount["broker"]): string {
       return "Robinhood";
     case "tradier":
       return "Tradier";
+    case "etoro":
+      return "eToro";
+    case "public":
+      return "Public";
+    case "webull":
+      return "Webull";
     default:
       return broker;
   }
@@ -49,18 +56,6 @@ const TAXATION_WORD: Record<TaxationType, string> = {
 };
 
 const BROKER_ROADMAP = [
-  {
-    name: "Public.com",
-    status: "Needs API approval",
-    detail:
-      "Public.com is listed here so the intended broker set is visible, but this app does not have a Public.com trading gateway yet."
-  },
-  {
-    name: "eToro",
-    status: "Partner/API gated",
-    detail:
-      "eToro support needs an approved API path before account sync or order placement can be implemented safely."
-  },
   {
     name: "IBKR",
     status: "Gateway required",
@@ -78,6 +73,7 @@ export function BrokerAccountsCard() {
   const [capabilitiesAccount, setCapabilitiesAccount] = useState<ConnectedAccount | null>(null);
   const [alpacaOpen, setAlpacaOpen] = useState(false);
   const [tradierOpen, setTradierOpen] = useState(false);
+  const [extraOpen, setExtraOpen] = useState<"etoro" | "public" | "webull" | null>(null);
   // Inline rename of an account's cosmetic display name. `renaming` holds the id being edited
   // and the working input value; the broker account number is never touched by this.
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
@@ -398,6 +394,33 @@ export function BrokerAccountsCard() {
           >
             Connect Tradier
           </Btn>
+          <Btn
+            size="sm"
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() => setExtraOpen("public")}
+            title="Link Public.com with the Individual API secret from Account Settings → Security → API. Live only."
+          >
+            Connect Public
+          </Btn>
+          <Btn
+            size="sm"
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() => setExtraOpen("etoro")}
+            title="Link eToro with x-api-key + x-user-key from Settings → Trading → API Key Management."
+          >
+            Connect eToro
+          </Btn>
+          <Btn
+            size="sm"
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() => setExtraOpen("webull")}
+            title="Link Webull OpenAPI App Key + App Secret after Developer Tool approval. Unofficial APIs are not used."
+          >
+            Connect Webull
+          </Btn>
         </div>
       }
     >
@@ -521,6 +544,14 @@ export function BrokerAccountsCard() {
         onClose={() => setTradierOpen(false)}
         onConnected={async () => {
           setTradierOpen(false);
+          await refresh();
+        }}
+      />
+      <ExtraBrokerConnectSheet
+        broker={extraOpen}
+        onClose={() => setExtraOpen(null)}
+        onConnected={async () => {
+          setExtraOpen(null);
           await refresh();
         }}
       />
@@ -819,6 +850,100 @@ function TradierConnectSheet({
             ) : "Connect Sandbox"}
           </Btn>
         </div>
+      </div>
+    </Sheet>
+  );
+}
+
+function ExtraBrokerConnectSheet({
+  broker,
+  onClose,
+  onConnected
+}: {
+  broker: "etoro" | "public" | "webull" | null;
+  onClose: () => void;
+  onConnected: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [label, setLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [apiSecret, setApiSecret] = useState("");
+  const [environment, setEnvironment] = useState<"paper" | "live">("paper");
+  const [busy, setBusy] = useState(false);
+  if (!broker) return null;
+
+  const copy =
+    broker === "public"
+      ? {
+          title: "Connect Public",
+          hint: "Paste the Individual API secret from public.com Account Settings → Security → API.  This is live-only.  Do not share the secret."
+        }
+      : broker === "etoro"
+        ? {
+            title: "Connect eToro",
+            hint: "Paste the application x-api-key and the user x-user-key from eToro Settings → Trading → API Key Management.  Demo keys stay paper; Real keys are live."
+          }
+        : {
+            title: "Connect Webull",
+            hint: "Paste official OpenAPI App Key + App Secret after Developer Tool approval.  Unofficial Webull libraries are never used for orders."
+          };
+
+  const submit = async () => {
+    if (broker === "public" && !apiSecret.trim() && !apiKey.trim()) {
+      toast.push("warn", "Public API secret is required");
+      return;
+    }
+    if (broker !== "public" && (!apiKey.trim() || !apiSecret.trim())) {
+      toast.push("warn", "Both keys are required");
+      return;
+    }
+    setBusy(true);
+    try {
+      await connectKeyPairBroker(broker, {
+        label: label.trim() || undefined,
+        apiKey: apiKey.trim() || undefined,
+        apiSecret: (apiSecret.trim() || apiKey.trim()) || undefined,
+        environment: broker === "public" ? "live" : environment
+      });
+      toast.push("pos", `${copy.title.replace("Connect ", "")} account connected`);
+      setLabel("");
+      setApiKey("");
+      setApiSecret("");
+      setEnvironment("paper");
+      await onConnected();
+    } catch (error) {
+      toast.push("neg", "Could not connect", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet open={broker !== null} onClose={onClose} title={copy.title}>
+      <div className="flex flex-col gap-3">
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{copy.hint}</p>
+        <Field label="Label (optional)" htmlFor="extra-label">
+          <TextInput id="extra-label" value={label} onChange={(e) => setLabel(e.target.value)} />
+        </Field>
+        {broker !== "public" && (
+          <Field label={broker === "etoro" ? "x-api-key" : "App Key"} htmlFor="extra-key">
+            <TextInput id="extra-key" type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          </Field>
+        )}
+        <Field label={broker === "public" ? "API secret" : broker === "etoro" ? "x-user-key" : "App Secret"} htmlFor="extra-secret">
+          <TextInput id="extra-secret" type="password" autoComplete="off" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} />
+        </Field>
+        {broker !== "public" && (
+          <Field label="Environment" htmlFor="extra-env">
+            <Select id="extra-env" value={environment} onChange={(e) => setEnvironment(e.target.value === "live" ? "live" : "paper")}>
+              <option value="paper">{broker === "etoro" ? "Demo" : "Sandbox"}</option>
+              <option value="live">{broker === "etoro" ? "Real" : "Production"}</option>
+            </Select>
+          </Field>
+        )}
+        <Btn variant="primary" disabled={busy} onClick={() => void submit()}>
+          {busy ? "Connecting…" : "Connect"}
+        </Btn>
       </div>
     </Sheet>
   );

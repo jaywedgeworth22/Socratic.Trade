@@ -181,6 +181,12 @@ function brokerDisplayName(broker: AccountReadiness["broker"] | undefined): stri
       return "Test";
     case "tradier":
       return "Tradier";
+    case "etoro":
+      return "eToro";
+    case "public":
+      return "Public";
+    case "webull":
+      return "Webull";
     default:
       return "broker";
   }
