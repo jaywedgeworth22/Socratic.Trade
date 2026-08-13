@@ -476,6 +476,7 @@ final class MobileStore: ObservableObject {
             await load()
             if isAuthenticated {
                 startEvents()
+                await claimPushTokenForCurrentSession()
             }
         } catch {
             applyAuthAwareError(error)
@@ -492,6 +493,7 @@ final class MobileStore: ObservableObject {
             await load()
             if isAuthenticated {
                 startEvents()
+                await claimPushTokenForCurrentSession()
             } else if error == nil {
                 error = "Authentication failed after web sign-in.  Try again."
             }
@@ -503,6 +505,21 @@ final class MobileStore: ObservableObject {
 
     func dismissError() {
         error = nil
+    }
+
+    /// Re-register this device's APNs token under the session that just began.
+    ///
+    /// Registration is otherwise only attempted at cold start, for a session that was ALREADY
+    /// restored — which leaves a real window on a shared device: when one owner's session expires
+    /// (`clearLocalSession` drops only the local belief; it cannot send an authenticated delete,
+    /// and the system token stays valid) and a DIFFERENT account signs in, the server row still
+    /// belongs to the previous owner and still delivers their alerts to this phone until the next
+    /// cold launch.  Registering here hands the token to the new session immediately — the server
+    /// reassigns the row on conflict — and it is also what gets push working on a first sign-in
+    /// without making the owner relaunch the app.  Never prompts: it re-asserts an existing grant
+    /// only, and does nothing when notifications were never authorized.
+    private func claimPushTokenForCurrentSession() async {
+        await PushNotificationCoordinator.shared.registerIfAlreadyAuthorized()
     }
 
     /// Explicit sign-out.  The push token is withdrawn FIRST and awaited: `clearLocalSession`

@@ -77,6 +77,42 @@ describe("POST /api/mobile/push/register", () => {
     expect(listActiveDeviceTokens(userIdForEmail(second)).map((d) => d.token)).toEqual([token]);
   });
 
+  it("does NOT re-enable the apns channel a user turned off (the app re-registers every launch)", async () => {
+    const { POST } = await import("../app/api/mobile/push/register/route");
+    const { userIdForEmail } = await import("../src/lib/auth/identity");
+    const { getNotifyPrefs, setNotifyPrefs } = await import("../src/lib/db");
+    const email = `optout-${randomUUID()}@example.com`;
+    const token = hexToken("route-opt-out");
+    const userId = userIdForEmail(email);
+
+    await POST(request(email, "POST", { token, environment: "production" }));
+    expect(getNotifyPrefs(userId).channels).toContain("apns");
+
+    // The owner turns "iPhone push" off in Settings -> Delivery.
+    setNotifyPrefs(userId, { channels: getNotifyPrefs(userId).channels.filter((c) => c !== "apns") });
+
+    // Every subsequent app launch re-registers the same live token. The off-switch must hold.
+    await POST(request(email, "POST", { token, environment: "production" }));
+    await POST(request(email, "POST", { token, environment: "production" }));
+    expect(getNotifyPrefs(userId).channels).not.toContain("apns");
+  });
+
+  it("re-enables the channel when a device comes back after sign-out (disabled row = fresh opt-in)", async () => {
+    const { POST, DELETE } = await import("../app/api/mobile/push/register/route");
+    const { userIdForEmail } = await import("../src/lib/auth/identity");
+    const { getNotifyPrefs } = await import("../src/lib/db");
+    const email = `rejoin-${randomUUID()}@example.com`;
+    const token = hexToken("route-rejoin");
+    const userId = userIdForEmail(email);
+
+    await POST(request(email, "POST", { token, environment: "production" }));
+    await DELETE(request(email, "DELETE", { token }));
+    expect(getNotifyPrefs(userId).channels).not.toContain("apns");
+
+    await POST(request(email, "POST", { token, environment: "production" }));
+    expect(getNotifyPrefs(userId).channels).toContain("apns");
+  });
+
   it("rejects a malformed token, a bad environment, and a mismatched bundle id", async () => {
     const { POST } = await import("../app/api/mobile/push/register/route");
     const email = `bad-${randomUUID()}@example.com`;
