@@ -776,9 +776,10 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     setInternalSetting("webSource:sec10k:lastAttempt", twoDaysAgo);
 
     const { isFilingIngestDue } = await import("../src/lib/web-sources/sec-filings");
-    // Default weekly TTL: 2 days ago is NOT due yet.
+    // Weekly pin: 2 days ago is NOT due yet.
+    process.env.SEC_FILING_INGEST_TTL_HOURS = "168";
     expect(isFilingIngestDue()).toBe(false);
-    // Daily cadence: 2 days ago IS due.
+    // Paid daily cadence (catalog default 24h): 2 days ago IS due.
     process.env.SEC_FILING_INGEST_TTL_HOURS = "24";
     expect(isFilingIngestDue()).toBe(true);
   });

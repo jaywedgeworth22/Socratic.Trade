@@ -34,8 +34,10 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 | `LANDING_PAGE_ENABLED` | **ON** (unset) | Live | Set `off` only for private deploys. Pages: `/welcome`, `/how-it-works`, `/strategy`. |
 | `CSP_ENABLED` | off | **Yes** (report-only) | Set `on`. Keep `CSP_REPORT_ONLY` unset/on. Watch `[csp-report]` logs. **Do not** set `CSP_REPORT_ONLY=off` until clean. |
 | `USAGE_BUDGET_ENFORCE` | off | **Yes** | Set `on` when usage-monitor budget-status is trusted. Fail-open on monitor outage. |
-| `VECTOR_EMBED_CLEAN_TEXT` | off | **Yes** (rev-tagged) | Set `on` → new vectors `embed_rev=2`. Reindex/backfill before treating corpus as one space; never purge rev-1 early. |
-| `RAG_EMBED_DISCLOSURES` | off | **Yes** (cost) | Product/cost decision; parser path tested. Expect Voyage/Pinecone spend. |
+| `VECTOR_EMBED_CLEAN_TEXT` | off (prod Infisical **on** 2026-08-12) | **Yes** (rev-tagged) | Set `on` → new vectors `embed_rev=2`. Reindex/backfill before treating corpus as one space; never purge rev-1 early. |
+| `RAG_EMBED_DISCLOSURES` | off (prod Infisical **on** 2026-08-12) | **Yes** (cost) | Parser path tested. OpenRouter/bge-m3 + Pinecone spend. |
+| `RAG_MULTIQUERY` | off (prod Infisical **on** 2026-08-12) | **Yes** (paid embed + run-budget) | Facet sub-queries. Guarded by `RAG_RUN_BUDGET_ENABLED`. |
+| `RAG_HYDE` | off (prod Infisical **on** 2026-08-12) | **Yes** (needs MULTIQUERY) | One cheap LLM draft per pass (`gpt-5.4-mini`). |
 | `RAG_PERSIST_CANDIDATE_POOL` | off | **Yes** (canary) | Short diagnostic canaries only; watch DB growth. Keep `…_FULL` off. |
 
 ---
@@ -44,8 +46,6 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 
 | Flag / gate | Default | Blocker |
 |-------------|---------|---------|
-| `RAG_MULTIQUERY` | off | Paid embed/query amplification — cost canary + run-budget headroom |
-| `RAG_HYDE` | off | Needs MULTIQUERY on; adds LLM draft call per pass |
 | `VECTOR_ASOF_STRICT` | off | Needs as_of_epoch_ms coverage proof before fail-closed undated drops |
 | `WEB_SOURCE_SEC8K_FULL_BODY` | off | FTS/corpus budget + backlog health |
 | `SEC_INGEST_WORKER_ENABLED` | off | Seed via `/api/admin/sec-ingest`; confirm queue/DLQ first |
@@ -113,6 +113,24 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 | API-usage-monitor | Oracle cutover / writer ownership; iOS; R2 entitlements |
 | congress-trading-shared | Consumer pin upgrades; classifier enrichment contract |
 | Fleet infra | Litestream R2; Mac runners banned; Coolify CI capacity |
+
+---
+
+## Settings portal vs Infisical (owner 2026-08-12)
+
+**Infisical is the sole source of truth for runtime secrets.** Coolify should only hold the
+Infisical bootstrap (`INFISICAL_CLIENT_ID` / `_SECRET` / `_PROJECT_ID` / `_ENV` / shared twin),
+`REQUIRE_SECRETS_MANAGER`, and host process knobs (`NODE_ENV`, `PORT`, `HOSTNAME`,
+`DB_BOOTSTRAP`, `NODE_OPTIONS`). Product knobs live in Infisical and/or Settings.
+
+**Should be editable in Settings → Data Sources** (user override → Infisical/env → catalog):
+every `SOURCE_SETTINGS_CATALOG` id — FMP intent, SEC/RAG cadence, transcript budgets, news
+relevance, Public execution, enrichment toggles.
+
+**Stay Infisical-only (do not put values in the portal):**
+API keys and tokens, `ADMIN_*` / `OPS_*` tokens, `DATABASE_URL`, Litestream/R2/B2/AWS creds,
+`AUTH_*` secrets, Twilio auth token (the From number can stay a setting if we add it), Slack
+bot token, Pinecone/OpenRouter/Voyage keys, Coolify tokens, Infisical identities themselves.
 
 ---
 
