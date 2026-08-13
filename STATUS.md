@@ -1,3 +1,34 @@
+## Current (2026-08-13 ~3:45pm CT MONET — iOS ship pipeline repair)
+
+Bot-merged PRs land on `main` and dispatch NOTHING — not CI, not ios-ship.  ST is
+not exempt: PR #2675 (merged by `github-actions[bot]`, sha `ca38bb2979`) has 27
+runs on that sha and zero are `event: push`, while #2680 (human-merged) gets the
+full set.  Cause is GitHub's `GITHUB_TOKEN` recursion guard; `auto-merge-prs.yml`
+claimed to prefer `GH_PAT`/`SHEPHERD_TOKEN` but neither secret exists, so the
+fallback chain always resolved to `GITHUB_TOKEN`.
+
+Fixed on branch `monet/ship-pipeline-fix` (worktree `~/apps/trading-monet-shipfix`):
+auto-merge workflows + `merge-shepherd.sh` refuse to merge without an elevated
+token (self-activating the moment the owner adds one); `ci.yml` gains an hourly
+backstop cron with a fail-closed redundancy skip; `ios-ship.yml` drops the
+undocumented 1h rate override (fleet standing gate is 2.5h — ASC upload gaps went
+2.80h/2.58h before it, 1.60h/1.34h after) and gains `fetch-depth: 0`; a sha256 pin
+(`scripts/ios-fleet.sha256` + `ios-fleet-pin.sh`) guards the untracked shared
+tooling; `ios/project.yml` + pbxproj now record the actually-shipped 1.0.6 instead
+of a stale 1.0.1.
+
+Shared, UNVERSIONED tooling edits (live for all four fleet apps immediately;
+backup at `/Users/jay/apps/ios-fleet/.backup-monet-20260813/`): `ensure-tf-ready`
+now targets the build THIS run uploaded instead of "newest" (which is the previous
+ship for the first minutes after upload), and renders the mandatory TestFlight
+"What to Test" note.  Notes publishing is OPT-IN and defaults to a dry render —
+owner sign-off needed before any tester sees auto-generated copy.
+
+Gates (node 24): lint 0 errors / 764 warnings (grandfathered), `tsc --noEmit`
+clean, vitest 563 files passed + 1 skipped and 6520 tests passed + 51 skipped in
+691.67s, `npm run build` clean.  No PR opened yet.  Rollout:
+`docs/rollouts/2026-08-13-ios-ship-pipeline-repair.md`.
+
 ## Current (2026-08-13 ~2:20pm CT CLAUDE — HOTFIX: adaptive FTS-mirror batching)
 
 The ingestion re-enable reproduced the 08-10 event-loop stall (ftsMirrorBatch 119s pinned

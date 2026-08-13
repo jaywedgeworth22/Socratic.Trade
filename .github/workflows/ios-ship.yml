@@ -37,7 +37,15 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
+      # fetch-depth: 0 is load-bearing, not hygiene. The default depth-1 checkout
+      # leaves the runner workspace with exactly ONE commit (verified 2026-08-13:
+      # `git rev-parse --is-shallow-repository` -> true, `rev-list --count HEAD` -> 1),
+      # so `git log <last-shipped-sha>..HEAD` fails with "unknown revision" and the
+      # TestFlight "What to Test" release notes the fleet ship script now generates
+      # would silently come out empty on every CI ship.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
 
       - name: Assert stable Xcode 26 (never beta)
         run: |
@@ -52,9 +60,22 @@ jobs:
               ;;
           esac
 
+      # Route through the in-repo wrapper, not the runtime fleet path directly.
+      # The wrapper verifies scripts/ios-fleet.sha256 first, so a change to the
+      # untracked /Users/jay/apps/ios-fleet tooling cannot silently alter what this
+      # repo ships (it is not a git repo -- no history, no review, and apps.json
+      # there carries this app's version train).
+      #
+      # No IOS_TF_MIN_INTERVAL_SEC here. That variable is a PER-RUN override; this
+      # workflow used to pin it to 3600, which quietly halved the documented fleet
+      # standing gate of 2.5h (DEFAULT_MIN_INTERVAL_SEC=9000 in the fleet script,
+      # 2.5h in its README). Live evidence of the halving, consecutive ST upload
+      # gaps from App Store Connect: 2.80h and 2.58h before the override, then 1.60h
+      # and 1.34h after. The commit that added it (d6c79765) was fixing trailing
+      # commits stranded by the no-push-event defect -- and the `schedule` cron it
+      # added in the same commit already fixes that, because once the interval
+      # expires the next 30-minute tick sees HEAD != last-shipped sha and ships.
+      # If the owner wants 1h, change DEFAULT_MIN_INTERVAL_SEC + the fleet README
+      # together so it applies fleet-wide and stays documented.
       - name: Ship SocraticTrade to TestFlight
-        env:
-          IOS_TF_MIN_INTERVAL_SEC: 3600
-        run: |
-          bash /Users/jay/apps/ios-fleet/ship-testflight.sh socratic \
-            --repo-root "$GITHUB_WORKSPACE"
+        run: bash scripts/ios-ship-testflight.sh

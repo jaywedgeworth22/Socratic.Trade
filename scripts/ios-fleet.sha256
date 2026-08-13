@@ -1,0 +1,7 @@
+# sha256 pin for the shared iOS ship tooling in /Users/jay/apps/ios-fleet.
+# That directory is not a git repo; this file is the repo's record of
+# exactly which tooling revision is allowed to ship this app.
+# Refresh with: bash scripts/ios-fleet-pin.sh --update  (then land it in a PR)
+ed9a2904f7dc32342db79d01fe3da6edea8242483b388ee726dae71d4907f7ef  ship-testflight.sh
+a12673317591b0c5ea543e3a7090eab1a5d582190b19af3251e0103a4a4b1036  asc-api.mjs
+1a3ff2d360f4e0b5af71783125463d2aad77d34b8a9387c7f56b3283290afbf2  apps.json
