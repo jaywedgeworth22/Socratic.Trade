@@ -43,6 +43,7 @@
 // precedent in src/lib/data-providers.ts (runWebullUnofficialScript) for the same reason.
 import { accessSync, constants } from "fs";
 import { dirname, join } from "path";
+import { deleteDurableStateValue, getDurableStateValue, setDurableStateValue } from "./db-durable-state";
 import type {
   LitestreamRemoteInventorySnapshot,
   LitestreamRemoteLevelSummary
@@ -232,20 +233,74 @@ export async function collectLitestreamRemoteInventory(options: {
   return { collectedAt, status, levels, levelErrors, skippedReason: null };
 }
 
-// The snapshot lives in module memory rather than the database: `next start` serves the
-// scheduler and every API route from one process, so the reader and the writer are the same
-// process, and a restart correctly reports "not collected yet" instead of resurrecting numbers
-// from a previous replica state.
+// CORRECTION (2026-08-13): this used to claim "`next start` serves the scheduler and every API
+// route from one process, so the reader and the writer are the same process" and kept the
+// snapshot in a bare module-level variable on that basis. That assumption was false in
+// production: Next's build gives the scheduler (reached via instrumentation.ts's register()) and
+// the API route handlers SEPARATE instantiations of this module, each with its own
+// `cachedInventory` binding, even though both run inside the same OS process. The writer's
+// assignment and the reader's lookup were therefore never the same variable — proven by
+// production `task_journal` evidence: the `litestream-remote-inventory` lane logged 932
+// successful runs / 0 errors in 24h (the collector genuinely works), while `/api/health` reported
+// `remoteInventoryState: "missing"` the entire time (the reader never saw any of them). See
+// docs/rollouts/2026-08-13-durable-inventory-cache.md.
+//
+// Fix: `getLitestreamRemoteInventory` now reads the snapshot back from `durable_state`
+// (src/lib/db-durable-state.ts) on every call, so any module instance / any process on the box
+// sees the same row. `cachedInventory` remains as a same-process fallback for when the durable
+// read itself fails (e.g. the DB is briefly unavailable) — it is NOT the source of truth.
+//
+// One consequence of moving to durable storage: the snapshot now survives a process restart
+// (the app auto-deploys on every merge to main, so restarts are frequent) instead of resetting to
+// "not collected yet". That is intentional, not a regression — a slightly-old-but-real snapshot
+// beats manufacturing another few-minute "missing" window on every deploy, and it is never shown
+// as fresher than it is: assessLitestreamTierFreshness (runtime-health.ts) ages any snapshot out
+// past LITESTREAM_REMOTE_INVENTORY_MAX_AGE_SECONDS (90 minutes) into an explained
+// "remote-inventory-stale", the same honest-state handling a slow collector already gets today.
+//
+// `lastAttemptAtMs` (the 30-minute collection gate) deliberately STAYS in-memory-only — see the
+// comment on refreshLitestreamRemoteInventoryIfDue below for why that is safe.
+const DURABLE_NAMESPACE = "litestream";
+const DURABLE_INVENTORY_KEY = "remote-inventory";
+
 let cachedInventory: LitestreamRemoteInventorySnapshot | null = null;
 let lastAttemptAtMs = 0;
 
+/** Writes through to durable storage (source of truth) and updates the same-process fallback. */
+function persistLitestreamRemoteInventory(snapshot: LitestreamRemoteInventorySnapshot | null): void {
+  cachedInventory = snapshot;
+  try {
+    if (snapshot === null) {
+      deleteDurableStateValue(DURABLE_NAMESPACE, DURABLE_INVENTORY_KEY);
+    } else {
+      setDurableStateValue(DURABLE_NAMESPACE, DURABLE_INVENTORY_KEY, snapshot);
+    }
+  } catch (error) {
+    // Best-effort: a durable-state write failing must not crash the collector or the caller.
+    // The in-memory fallback above still has the latest value for THIS process, even if other
+    // processes/module instances won't see it until the write succeeds.
+    console.error("[litestream-remote-inventory] durable persist failed:", error instanceof Error ? error.message : error);
+  }
+}
+
 export function getLitestreamRemoteInventory(): LitestreamRemoteInventorySnapshot | null {
+  try {
+    const persisted = getDurableStateValue<LitestreamRemoteInventorySnapshot>(DURABLE_NAMESPACE, DURABLE_INVENTORY_KEY);
+    if (persisted !== undefined) return persisted;
+  } catch (error) {
+    console.error("[litestream-remote-inventory] durable read failed, falling back to in-process cache:", error instanceof Error ? error.message : error);
+  }
+  // Reached only when the durable row is genuinely absent (nothing collected yet anywhere) or
+  // the read itself failed — in both cases the in-process value (real if THIS process is the
+  // one that collected it, null otherwise) is the best available answer.
   return cachedInventory;
 }
 
-/** Test/refresh seam — lets route tests exercise the rendering path without spawning anything. */
+/** Test/refresh seam — lets route tests prime a snapshot (and clear it) without spawning
+ *  anything. Also the single write path production code uses; see
+ *  refreshLitestreamRemoteInventoryIfDue below. */
 export function setLitestreamRemoteInventoryCache(snapshot: LitestreamRemoteInventorySnapshot | null): void {
-  cachedInventory = snapshot;
+  persistLitestreamRemoteInventory(snapshot);
 }
 
 export function resetLitestreamRemoteInventoryCadence(): void {
@@ -260,9 +315,24 @@ export interface LitestreamRemoteInventoryRunResult {
 /**
  * Scheduler entry point. Cadence-gated, self-guarded, and never throws into the tick.
  *
- * Deliberately NOT leader-gated: the snapshot is consumed by the `/api/health` and admin
- * routes served by THIS process, so each process needs its own. There is one production
- * container, so this is also one collector.
+ * Deliberately NOT leader-gated: there is one production container, so there is only ever one
+ * scheduler tick loop to begin with — nothing to elect a leader among.
+ *
+ * `lastAttemptAtMs` (and the `cachedInventory`-derived ok-vs-retry interval above) deliberately
+ * STAY in-memory-only rather than moving to durable_state alongside the snapshot itself. That is
+ * safe, not an oversight: this function is only ever called from src/lib/scheduler.ts's `tick()`,
+ * which itself only ever runs from the ONE `setInterval` callback `startScheduler()` registers —
+ * the same closure, over the same module instance's `lastAttemptAtMs`/`cachedInventory`
+ * bindings, for the entire life of the process. There is no second writer instance for this
+ * cadence gate to lose track of, unlike the snapshot itself, which genuinely does need to cross
+ * module instances to reach the API routes. Production evidence backs this: the
+ * `litestream-remote-inventory` lane fired on every ~63s scheduler tick (932 runs/24h) but only
+ * ran the real (multi-second, B2-listing) collection 32 times — matching the 30-minute cadence
+ * exactly, which is only possible if `lastAttemptAtMs` held its value correctly across all 932
+ * ticks. Making this durable would add a DB round trip to every tick for no correctness gain,
+ * and risks the opposite failure this file's cost comment warns about: a debounced durable write
+ * that hasn't landed yet by the next ~60s tick could make the gate re-fire far more often than
+ * every 30 minutes, turning ~430 B2 LIST calls/day into tens of thousands.
  */
 export async function refreshLitestreamRemoteInventoryIfDue(options: {
   dbPath?: string;
@@ -286,11 +356,14 @@ export async function refreshLitestreamRemoteInventoryIfDue(options: {
 
   try {
     const snapshot = await collectLitestreamRemoteInventory({ dbPath, env: options.env, nowMs });
-    cachedInventory = snapshot;
+    // Persists durably (source of truth for every reader) and updates the same-process fallback.
+    persistLitestreamRemoteInventory(snapshot);
     return { ran: true, status: snapshot.status };
   } catch (error) {
     // A total failure must not wipe the previous snapshot: stale-but-labelled data is more
-    // useful than none, and assessLitestreamTierFreshness ages it out on its own.
+    // useful than none, and assessLitestreamTierFreshness ages it out on its own. Not calling
+    // persistLitestreamRemoteInventory here is exactly what preserves that — neither the
+    // in-memory fallback nor the durable row are touched.
     console.error("[litestream-remote-inventory] collection failed:", error);
     return { ran: true, status: "failed" };
   }
