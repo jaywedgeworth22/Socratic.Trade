@@ -251,3 +251,31 @@ describe("insertDocumentChunkFtsBatch (2026-08-10 lock-contention fix, sub-batch
     expect(written.n).toBe(97);
   });
 });
+
+describe("nextFtsBatchGroupSize (2026-08-13 adaptive stretch budget)", () => {
+  it("halves after an over-budget group, floored at 1", async () => {
+    const { nextFtsBatchGroupSize } = await import("../src/lib/db-learning");
+    expect(nextFtsBatchGroupSize(8, 6600)).toBe(4);
+    expect(nextFtsBatchGroupSize(1, 6600)).toBe(1);
+  });
+
+  it("doubles after a fast group, capped at 40", async () => {
+    const { nextFtsBatchGroupSize } = await import("../src/lib/db-learning");
+    expect(nextFtsBatchGroupSize(8, 10)).toBe(16);
+    expect(nextFtsBatchGroupSize(40, 10)).toBe(40);
+  });
+
+  it("holds steady inside the comfort band", async () => {
+    const { nextFtsBatchGroupSize } = await import("../src/lib/db-learning");
+    expect(nextFtsBatchGroupSize(8, 200)).toBe(8);
+  });
+
+  it("converges from the 119s incident shape: 165ms/row halves 8 -> 1 within three groups", async () => {
+    const { nextFtsBatchGroupSize } = await import("../src/lib/db-learning");
+    let size = 8;
+    size = nextFtsBatchGroupSize(size, 8 * 165);
+    size = nextFtsBatchGroupSize(size, 4 * 165);
+    size = nextFtsBatchGroupSize(size, 2 * 165);
+    expect(size).toBe(1);
+  });
+});

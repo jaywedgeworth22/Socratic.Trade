@@ -1,3 +1,11 @@
+## Current (2026-08-13 ~2:20pm CT CLAUDE — HOTFIX: adaptive FTS-mirror batching)
+
+The ingestion re-enable reproduced the 08-10 event-loop stall (ftsMirrorBatch 119s pinned
+stretch on a 702-chunk 10-K; site flapped 503 for hours).  Relief: worker off + restart (site
+healthy 19:13Z).  Cure in this PR: adaptive group sizing against a 250ms synchronous-stretch
+budget (pure policy fn + tests).  Worker re-enables after deploy.  Blockers: ct-deploy-guard
+has been eating ST webhook deploys — verify the deploy lands, retrigger via API if not.
+
 ## Current (2026-08-13 GROK — Fleet Pushover/Sentry/Uptime triage)
 
 Owner screenshot 8:06–8:44am CT plus 7d Uptime/Sentry.  Four distinct app bugs, not one outage.
