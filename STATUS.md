@@ -1,3 +1,22 @@
+## Current (2026-08-13 ~3:50pm CT MONET — durable litestream remote-inventory cache)
+
+PR #2665's per-tier backup monitor (`docs/rollouts/2026-08-12-backup-tier-monitor-real-coverage.md`)
+never actually reported in production: `checks.storage.litestreamTierCoverage` stayed
+`remoteInventoryState: "missing"` forever, forcing all 4 remote-only tiers permanently
+`not-observable`. Root cause (re-confirmed via read-only `task_journal` evidence before
+touching code): the collector scheduler lane genuinely worked (932 runs/24h, 0 errors), but
+`getLitestreamRemoteInventory()`'s snapshot lived in a bare module-level variable, and Next's
+build gives the scheduler and the API routes SEPARATE instantiations of
+`src/lib/litestream-remote-inventory.ts` — the writer's assignment and the reader's lookup were
+never the same variable. Fix: persist the snapshot through the existing
+`src/lib/db-durable-state.ts` `durable_state` primitive (no migration needed). `lastAttemptAtMs`
+(the 30-min collection gate) deliberately stays in-memory — reasoning + evidence in the rollout
+note and in a code comment at the call site. Two new tests use `vi.resetModules()` + fresh
+`await import(...)` to force genuinely separate module instances and prove the fix; both
+confirmed to fail against the pre-fix source. Full local gate green: tsc clean, 566/567 test
+files (6569/6620 tests, pre-existing skips), build succeeds, lint 0 errors. Worktree
+`/Users/jay/apps/trading-monet-inventory`, branch `monet/durable-inventory-cache`. Rollout:
+`docs/rollouts/2026-08-13-durable-inventory-cache.md`.
 ## Current (2026-08-13 GROK — pickup Monet+Claude quota-cap)
 
 Owner-directed: Monet and Claude hit the session limit (resets 7pm CT).  Inventory +

@@ -1,7 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   collectLitestreamRemoteInventory,
   getLitestreamRemoteInventory,
@@ -10,10 +11,26 @@ import {
   summarizeLitestreamLtxPayload,
   LITESTREAM_REMOTE_LEVELS
 } from "../src/lib/litestream-remote-inventory";
+import { assessLitestreamTierFreshness } from "../src/lib/runtime-health";
 
 // Covers the collector that closes defect cause #1: Litestream 0.5.12 keeps only level 0 on
 // local disk, so levels 1/2/3/9 can be observed ONLY by listing the remote replica. See
 // docs/rollouts/2026-08-12-backup-tier-monitor-real-coverage.md.
+//
+// The "remote inventory cache" and "cross-module-instance durability" describe blocks below also
+// cover defect cause #2, found 2026-08-13: the cache used to live in a bare module-level
+// variable, so a scheduler-side write and an API-route-side read landed in two different
+// instantiations of this module and the route never saw a single collected snapshot in
+// production (932 successful collector runs/24h, 0 errors, `/api/health` reporting
+// `remoteInventoryState: "missing"` the entire time). See
+// docs/rollouts/2026-08-13-durable-inventory-cache.md.
+
+beforeAll(() => {
+  // getLitestreamRemoteInventory/setLitestreamRemoteInventoryCache now persist through
+  // src/lib/db-durable-state.ts, so this file needs its own temp DB like every other test file
+  // that touches durable state (see AGENTS.md's "Tests use a temp SQLite file per run").
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-litestream-inventory-${randomUUID()}.db`)}`;
+});
 
 const tempRoots: string[] = [];
 
@@ -274,5 +291,85 @@ describe("remote inventory cache", () => {
     };
     setLitestreamRemoteInventoryCache(snapshot);
     expect(getLitestreamRemoteInventory()).toEqual(snapshot);
+  });
+});
+
+// Reproduces the actual 2026-08-12/13 production defect: the scheduler (writer) and the API
+// route handlers (reader) get SEPARATE instantiations of this module even inside one OS process,
+// so a bare module-level `cachedInventory` variable written by one instance is invisible to the
+// other. `vi.resetModules()` + a fresh `await import(...)` is the standard way to force a
+// genuinely independent module instance in Vitest — see test/trigger-durability.test.ts for the
+// same technique used against a different durable-state consumer. Every assertion in this block
+// FAILS against the pre-fix module-level-variable implementation, because a freshly imported
+// instance's `cachedInventory` starts `null` and nothing here would ever repopulate it.
+describe("cross-module-instance durability (the production bug)", () => {
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("a snapshot written by one module instance is visible to a completely separate module instance", async () => {
+    const writer = await import("../src/lib/litestream-remote-inventory");
+    const snapshot = {
+      collectedAt: "2026-08-13T12:00:00.000Z",
+      status: "ok" as const,
+      levels: { "1": { level: 1, newestAt: "2026-08-13T11:58:00.000Z", newestTxid: "000000000002324c", fileCount: 5635 } },
+      levelErrors: {},
+      skippedReason: null
+    };
+    writer.setLitestreamRemoteInventoryCache(snapshot);
+
+    // Force a brand-new instantiation of the module (and everything it imports, including
+    // src/lib/db-durable-state.ts and src/lib/db.ts) — its own `cachedInventory` binding starts
+    // at `null`, exactly like the scheduler and an API route bundle really do in production.
+    vi.resetModules();
+    const reader = await import("../src/lib/litestream-remote-inventory");
+    expect(reader).not.toBe(writer);
+    expect(reader.getLitestreamRemoteInventory()).toEqual(snapshot);
+
+    // Clean up through whichever instance — both point at the same durable_state row.
+    reader.setLitestreamRemoteInventoryCache(null);
+  });
+
+  it("a real scheduler collection persisted by the writer makes remoteInventoryState 'ok' (not 'missing') for a fresh reader instance", async () => {
+    const root = makeRoot("ls-inv-cross-instance-");
+    writeFakeLitestream(
+      root,
+      [
+        'level=""',
+        'while [ $# -gt 0 ]; do if [ "$1" = "-level" ]; then level="$2"; fi; shift; done',
+        'printf \'[{"level":%s,"min_txid":"0000000000000001","max_txid":"000000000000000%s","size":1,"timestamp":"2026-08-1%sT00:00:00Z"}]\' "$level" "$level" "$level"'
+      ].join("\n")
+    );
+    const configPath = join(root, "litestream.yml");
+    writeFileSync(configPath, "dbs: []\n");
+
+    const writer = await import("../src/lib/litestream-remote-inventory");
+    const result = await writer.refreshLitestreamRemoteInventoryIfDue({
+      dbPath: join(root, "app.db"),
+      env: { ...CREDENTIAL_ENV, LITESTREAM_CONFIG_PATH: configPath },
+      nowMs: Date.parse("2026-08-13T12:00:00.000Z")
+    });
+    expect(result).toEqual({ ran: true, status: "ok" });
+
+    vi.resetModules();
+    const reader = await import("../src/lib/litestream-remote-inventory");
+    const inventory = reader.getLitestreamRemoteInventory();
+    expect(inventory?.status).toBe("ok");
+
+    const report = assessLitestreamTierFreshness(undefined, {
+      remoteInventory: inventory,
+      nowMs: Date.parse("2026-08-13T12:05:00.000Z")
+    });
+    expect(report.remoteInventoryState).toBe("ok");
+    expect(report.remoteInventoryState).not.toBe("missing");
+    // Levels 1/2/3/9 exist only in the remote replica; with a real 'ok' inventory in hand they
+    // must grade as known, not "not-observable" — the exact symptom PR #2665 shipped to fix and
+    // the durable-state bug silently defeated.
+    for (const tier of report.tiers) {
+      if (tier.tier === "0") continue;
+      expect(tier.state).toBe("known");
+    }
+
+    reader.setLitestreamRemoteInventoryCache(null);
   });
 });
