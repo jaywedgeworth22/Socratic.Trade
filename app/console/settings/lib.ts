@@ -237,7 +237,7 @@ export function deleteApiKey(service: string): Promise<{ success: boolean; delet
 // ── Delivery channels (out-of-app alert delivery) ────────────────────────────
 
 export interface DeliveryChannelDescriptor {
-  id: "push" | "pushover" | "webhook" | "email" | "sms";
+  id: "push" | "pushover" | "webhook" | "email" | "sms" | "apns";
   label: string;
   /** False when the server operator hasn't configured the channel's provider. */
   available: boolean;
@@ -246,6 +246,9 @@ export interface DeliveryChannelDescriptor {
   targetLabel: string;
   placeholder: string;
   hint: string;
+  /** True when the delivery target is app-managed rather than user-typed (apns: the iOS app
+   *  registers its own device tokens), so the UI shows an explanation instead of an input. */
+  managedTarget?: boolean;
 }
 
 export interface DeliveryPrefs {

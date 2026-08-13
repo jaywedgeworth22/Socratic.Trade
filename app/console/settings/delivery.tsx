@@ -31,6 +31,7 @@ import {
 } from "./lib";
 
 const CHANNEL_TITLE: Record<DeliveryChannelDescriptor["id"], string> = {
+  apns: "Native notifications on your iPhone.  Your devices register themselves when you allow notifications in the Socratic.Trade app.",
   push: "Alerts via ntfy.sh — subscribe to a topic in the ntfy app or any ntfy-compatible client.",
   pushover: "Pushover push notifications to your phone. Paste your own application API token + user key below — no server setup needed.",
   webhook: "An HTTPS POST with a JSON payload to any URL you control (chat webhooks get rich embeds).",
@@ -353,7 +354,12 @@ export function DeliveryChannelsCard() {
                     label={`${ch.label} channel`}
                   />
                 </div>
-                {on && ch.available && (
+                {/* App-managed target (iPhone push): there is nothing for the user to type — the
+                    devices register themselves — so show the explanation, not an empty input. */}
+                {on && ch.available && ch.managedTarget && (
+                  <p className="mt-2 max-w-md text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{ch.hint}</p>
+                )}
+                {on && ch.available && !ch.managedTarget && (
                   <div className="mt-2 max-w-md">
                     <Field label={ch.targetLabel} hint={ch.hint} htmlFor={`ch-${ch.id}`}>
                       <TextInput

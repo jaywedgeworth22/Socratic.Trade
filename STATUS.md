@@ -1,3 +1,29 @@
+## Current (2026-08-12 MONET - APNs native push, server side)
+
+Branch `monet/apns-server` (worktree `~/apps/trading-monet-apns-server`).  Server half of native
+iOS push.  Push is a NEW DELIVERY CHANNEL inside the existing notification system, not a parallel
+pipeline: it is one more `NotifyChannelId` in `src/lib/notify.ts`'s `CHANNELS` record, reached
+through the same `sendNotification` -> `notify` path and gated by the same
+`policy.notificationSettings.enabledEvents`.
+
+- **Registry** - migration 75 `device_push_tokens`, CRUD in `src/lib/db-device-tokens.ts`.  Token is
+  the PRIMARY KEY and registration REASSIGNS on conflict, so a shared phone that switches accounts
+  never keeps delivering the previous user's alerts.  `environment` is stored, never inferred.
+- **Endpoint** - `https://api.push.apple.com` for production (TestFlight IS production),
+  `https://api.sandbox.push.apple.com` for Xcode builds, chosen from the token row.
+- **Client** - `src/lib/apns.ts`: `node:http2` (fetch cannot speak HTTP/2 to APNs), ES256 provider
+  JWT cached at 50 min (Apple: reuse >= 20, expire at 60), 410/400 BadDeviceToken -> retire the
+  token, 403 -> loud auth/config error, 429/5xx -> retryable.
+- **Endpoint contract** - `POST /api/mobile/push/register` `{ token, environment, bundleId? }`,
+  idempotent; `DELETE` to unregister on sign-out, scoped to the owner.
+- **Fail soft** - a push failure never breaks the trading path that triggered it; a missing APNs
+  credential degrades to "push unavailable" (`skipped: "not_configured"`), never a crash.
+
+Next: the iOS agent registers the token, DELETEs on sign-out, and adds a universal-link router for
+`/console/approvals?proposal=<id>`, `/console/orders?symbol=<SYM>`, `/console/watchlist?symbol=<SYM>`
+and `/console/activity` (no `DeepLink.swift` exists on `main` yet).  Rollout:
+`docs/rollouts/2026-08-12-apns-push-server.md`.
+
 ## Current (2026-08-12 CLAUDE - connection-health alert noise, root-caused)
 
 Branch `claude/health-alert-noise` (worktree `/private/tmp/fx-st-health`).  Sentry carried ~28
