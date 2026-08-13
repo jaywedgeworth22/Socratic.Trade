@@ -11,6 +11,8 @@
 4. **macOS & Mac Catalyst Target Support**:
    - Updated `ios/project.yml` with `macOS: "14.0"`, `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD`, `SUPPORTS_MACCATALYST`, and `TARGETED_DEVICE_FAMILY: "1,2,6"`.
    - Fixed SwiftUI `onChange` compatibility in `SocraticTradeApp.swift` and `AppComponents.swift`. Xcode build verified clean (`** BUILD SUCCEEDED **`).
+5. **Browser Favicon & Touch Icon Update**:
+   - Generated multi-resolution `favicon.ico`, `icon.png`, `apple-icon.png`, `icon-192.png`, `icon-512.png`, and `apple-touch-icon-180.png` across `public/` and `app/` directly from the newest 3D candlestick ST app icon asset.
 
 ## Current (2026-08-12 ANTIGRAVITY — OSS lessons, Strategy ID fixes, & Dashboard additions)
 
