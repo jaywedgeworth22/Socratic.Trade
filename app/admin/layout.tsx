@@ -29,6 +29,7 @@ import { useConsoleTheme, type ConsoleTheme } from "../console/lib/useConsoleThe
 import { useConsoleFont } from "../console/lib/useConsoleFont";
 import { useConsoleTextBoxFont } from "../console/lib/useConsoleTextBoxFont";
 import { HeaderLogo } from "../console/ui/header-logo";
+import { SymbolDrawerProvider } from "../console/ui/symbol-drawer";
 
 interface NavItem {
   href: string;
@@ -188,7 +189,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div className="con-card-title px-3 pb-1">Admin</div>
           {navLinks()}
         </aside>
-        <main className="min-w-0 flex-1 px-4 pt-4 pb-8 lg:px-6">{children}</main>
+        <main className="min-w-0 flex-1 px-4 pt-4 pb-8 lg:px-6">
+          <SymbolDrawerProvider>{children}</SymbolDrawerProvider>
+        </main>
       </div>
     </div>
   );

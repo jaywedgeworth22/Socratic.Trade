@@ -26,7 +26,7 @@ async function seedDecision(input: {
   outcome?: {
     status: "open" | "won" | "lost" | "flat" | "unknown" | "unresolvable";
     returnPct?: number;
-    outcomes: Array<{ horizon: "15m" | "1h" | "1d" | "1w"; returnPct?: number; resolution: "ok" | "unresolvable"; reason?: string }>;
+    outcomes: Array<{ horizon: "15m" | "1h" | "1d" | "1w"; returnPct?: number; spyExcessPct?: number; resolution: "ok" | "unresolvable"; reason?: string }>;
   };
 }): Promise<string> {
   const { upsertSocraticDecisionCase } = await import("../src/lib/db");
@@ -160,6 +160,38 @@ describe("retrieval-usefulness join", () => {
     expect(runRetrievalUsefulnessJoin(userId).scanned).toBe(0);
   });
 
+  it("writes ':alpha' companion stat rows from spyExcessPct alongside the raw rows", async () => {
+    const userId = `ru-alpha-join-${randomUUID()}`;
+    const { runRetrievalUsefulnessJoin } = await import("../src/lib/retrieval-usefulness");
+    const { getRetrievalUsefulnessStats } = await import("../src/lib/db");
+
+    // Raw winner at both horizons, but SPY-relative loser at 1w — beta, not alpha.
+    await seedDecision({
+      userId,
+      attributions: [{ chunkId: "vec-a", docType: "socratic-decision" }],
+      outcome: {
+        status: "won",
+        returnPct: 8,
+        outcomes: [
+          { horizon: "1d", returnPct: 5, spyExcessPct: 1, resolution: "ok" },
+          { horizon: "1w", returnPct: 8, spyExcessPct: -2, resolution: "ok" },
+          { horizon: "15m", resolution: "unresolvable", reason: "no_intraday_source" }
+        ]
+      }
+    });
+    expect(runRetrievalUsefulnessJoin(userId).credited).toBe(1);
+
+    const rows = getRetrievalUsefulnessStats(userId);
+    // Raw rows unchanged.
+    expect(rows.find((r) => r.horizon === "1d")).toMatchObject({ samples: 1, wins: 1, returnPctSum: 5 });
+    expect(rows.find((r) => r.horizon === "1w")).toMatchObject({ samples: 1, wins: 1, returnPctSum: 8 });
+    // Alpha companion rows judged on the SPY-excess figure: the 1w raw 'win' is an alpha loss.
+    expect(rows.find((r) => r.horizon === "1d:alpha")).toMatchObject({ samples: 1, wins: 1, losses: 0, returnPctSum: 1 });
+    expect(rows.find((r) => r.horizon === "1w:alpha")).toMatchObject({ samples: 1, wins: 0, losses: 1, returnPctSum: -2 });
+    // Per-doc granularity carries the alpha rows too.
+    expect(getRetrievalUsefulnessStats(userId, { docId: "vec-a", horizon: "1w:alpha" })).toHaveLength(1);
+  });
+
   it("runs at most once per UTC day via the IfDue guard", async () => {
     const userId = `ru-due-${randomUUID()}`;
     const { runRetrievalUsefulnessJoinIfDue } = await import("../src/lib/retrieval-usefulness");
@@ -247,6 +279,65 @@ describe("advisory usefulness weighting", () => {
     expect(result).toHaveLength(chunks.length);
     for (let i = 0; i < chunks.length; i += 1) {
       expect(result[i]).toBe(chunks[i]); // same references, same positions — byte-identical order
+    }
+  });
+
+  it("grading mode selects the stat flavor: raw ignores ':alpha' rows; alpha mode reads only them", async () => {
+    const userId = `ru-alpha-weight-${randomUUID()}`;
+    const { applyRetrievalUsefulnessWeighting, clearRetrievalUsefulnessWeightCache } = await import(
+      "../src/lib/retrieval-usefulness"
+    );
+    const { creditRetrievalUsefulness, setPolicy } = await import("../src/lib/db");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+
+    // Raw stats say ANALOG wins / coach loses; alpha stats say the OPPOSITE (the analog wins were
+    // pure beta). 6 signed samples each — above the sample floor.
+    for (let i = 0; i < 6; i += 1) {
+      creditRetrievalUsefulness(userId, `d-alpha-${i}`, [
+        { docType: "socratic-decision", memoryKind: "analog", horizon: "headline", returnPct: 2 },
+        { docType: "socratic-decision", memoryKind: "analog", horizon: "1d:alpha", returnPct: -2 },
+        { docType: "coach-note", memoryKind: "coaching", horizon: "headline", returnPct: -2 },
+        { docType: "coach-note", memoryKind: "coaching", horizon: "1d:alpha", returnPct: 2 }
+      ]);
+    }
+
+    const coach = { doc_type: "coach-note", score: 0.8 };
+    const analog = { doc_type: "socratic-decision", score: 0.75 };
+
+    // Default (raw): only the plain rows count -> analog x1.1 overtakes coach x0.9.
+    clearRetrievalUsefulnessWeightCache();
+    expect(applyRetrievalUsefulnessWeighting([coach, analog], userId)).toEqual([analog, coach]);
+
+    // Alpha mode: only the ':alpha' rows count -> the alpha-favored coach kind wins instead.
+    setPolicy({ ...DEFAULT_POLICY, outcomeGradingMode: "alpha" }, userId);
+    clearRetrievalUsefulnessWeightCache();
+    expect(applyRetrievalUsefulnessWeighting([coach, analog], userId)).toEqual([coach, analog]);
+    expect(applyRetrievalUsefulnessWeighting([analog, coach], userId)).toEqual([coach, analog]);
+  });
+
+  it("raw mode (default) with ONLY ':alpha' stats present leaves the order unchanged", async () => {
+    const userId = `ru-alpha-only-${randomUUID()}`;
+    const { applyRetrievalUsefulnessWeighting, clearRetrievalUsefulnessWeightCache } = await import(
+      "../src/lib/retrieval-usefulness"
+    );
+    const { creditRetrievalUsefulness } = await import("../src/lib/db");
+
+    for (let i = 0; i < 6; i += 1) {
+      creditRetrievalUsefulness(userId, `d-ao-${i}`, [
+        { docType: "coach-note", memoryKind: "coaching", horizon: "1d:alpha", returnPct: 2 },
+        { docType: "socratic-decision", memoryKind: "analog", horizon: "1d:alpha", returnPct: -2 }
+      ]);
+    }
+    clearRetrievalUsefulnessWeightCache();
+
+    const chunks = [
+      { doc_type: "socratic-decision", score: 0.8 },
+      { doc_type: "coach-note", score: 0.75 }
+    ];
+    // Alpha rows never enter raw-mode selection — order is byte-identical to the input.
+    const result = applyRetrievalUsefulnessWeighting(chunks, userId);
+    for (let i = 0; i < chunks.length; i += 1) {
+      expect(result[i]).toBe(chunks[i]);
     }
   });
 

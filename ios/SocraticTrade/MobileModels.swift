@@ -115,6 +115,63 @@ struct PolicySummary: Decodable {
     let maxDailyPctOfNav: Double?
     let maxDailyOrders: Int?
     let requireTypedConfirmation: Bool?
+    /// Mirrors the server snapshot's policy.runDuringExtendedHours (app/api/mobile/snapshot).
+    /// nil ≠ false: older payloads without the field cannot answer the market-window question.
+    let runDuringExtendedHours: Bool?
+}
+
+/// The console's shared run-state vocabulary (app/console/lib/derive.ts `deriveStateInfo`).
+/// The words are load-bearing: this app must never say "Running" while the console says
+/// "Paused · market closed" for the same account.
+enum RunStateWord: String {
+    case running = "Running"
+    case pausedMarketClosed = "Paused · market closed"
+    case exitOnly = "Exit-only"
+    case windingDown = "Winding down"
+    case stopped = "Stopped"
+}
+
+/// Pure mirror of the console's `deriveStateInfo` word selection, using the server-computed
+/// `marketSession` instead of a client clock.  Rules, in console order:
+/// - Only `active` is market-gated.  A closed/pre/post session with extended hours OFF means
+///   scheduled runs are paused, so the word is "Paused · market closed".
+/// - `runDuringExtendedHours == nil` (older payload) makes the market split unanswerable —
+///   keep the plain "Running" claim rather than fabricate a pause.
+/// - An unknown/absent session likewise cannot answer the question — keep "Running".
+func deriveRunStateWord(
+    systemState: String,
+    runDuringExtendedHours: Bool?,
+    marketSession: String?
+) -> RunStateWord {
+    switch systemState.lowercased() {
+    case "active":
+        guard let extendedHours = runDuringExtendedHours else { return .running }
+        switch (marketSession ?? "").lowercased() {
+        case "regular", "open":
+            return .running
+        case "pre", "post":
+            return extendedHours ? .running : .pausedMarketClosed
+        case "closed":
+            return .pausedMarketClosed
+        default:
+            return .running
+        }
+    case "close_only":
+        return .exitOnly
+    case "liquidating":
+        return .windingDown
+    default:
+        return .stopped
+    }
+}
+
+/// Convenience over the snapshot's own policy + market session.
+func deriveRunStateWord(snapshot: MobileSnapshot) -> RunStateWord {
+    deriveRunStateWord(
+        systemState: snapshot.readiness.systemState,
+        runDuringExtendedHours: snapshot.policy.runDuringExtendedHours,
+        marketSession: snapshot.marketSession
+    )
 }
 
 struct PortfolioSummary: Decodable {
@@ -135,6 +192,39 @@ struct Position: Decodable, Identifiable {
     let averageCost: Double?
     let sector: String?
     let industry: String?
+}
+
+enum AccountMetrics {
+    static func usesLiveMetrics(environment: String?) -> Bool {
+        environment?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "live"
+    }
+
+    /// Open P&L from the broker position list (mark − cost).  The fill-ledger
+    /// unrealized fields report $0 when marks were never applied, which is why
+    /// a Tradier Sandbox book with many positions looked like it had no P&L.
+    static func unrealizedFromPositions(_ positions: [Position]) -> Double? {
+        var total = 0.0
+        var counted = 0
+        for position in positions {
+            guard let averageCost = position.averageCost else { continue }
+            total += position.marketValue - position.quantity * averageCost
+            counted += 1
+        }
+        return counted > 0 ? total : nil
+    }
+
+    static func displayedUnrealized(positions: [Position], ledger: Double?) -> Double? {
+        if let fromPositions = unrealizedFromPositions(positions) {
+            return fromPositions
+        }
+        return ledger
+    }
+
+    /// `$0.00` from an empty fill ledger is not a measured result — show "—".
+    static func displayedRealized(ledger: Double?, hasFillHistory: Bool) -> Double? {
+        if !hasFillHistory { return nil }
+        return ledger
+    }
 }
 
 struct EquityOrder: Decodable, Identifiable {
@@ -367,6 +457,33 @@ struct MobileCommand: Decodable, Identifiable {
     var didFail: Bool {
         status == "failed" || status == "cancelled"
     }
+}
+
+/// On-demand single-symbol quote + fundamentals — the mobile counterpart of the web console's
+/// `/api/quote` fetch used by the symbol drilldown drawer (app/console/ui/symbol-drilldown.tsx),
+/// decoded from that same flattened response. Every field is optional and rendered as an honest
+/// "—"/"n/a" (see `AppFormat`) when the provider cascade didn't return it — never fabricated.
+struct SymbolQuoteInfo: Decodable {
+    let symbol: String
+    let companyName: String?
+    let price: Double?
+    let intradayChangePct: Double?
+    let asOf: String?
+    let sector: String?
+    let industry: String?
+    let volume: Double?
+    let peRatio: Double?
+    let eps: Double?
+    let dividendYield: Double?
+    let beta: Double?
+    let fiftyTwoWeekHigh: Double?
+    let fiftyTwoWeekLow: Double?
+    let analystRating: String?
+    let analystScore: Double?
+    let targetMean: Double?
+    let targetHigh: Double?
+    let targetLow: Double?
+    let daysToEarnings: Double?
 }
 
 struct CommandEnvelope: Decodable {

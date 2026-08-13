@@ -6,12 +6,66 @@
 // auth → {T:"success",msg:"authenticated"} → we subscribe news:["*"] → {T:"n",...} articles.
 // On each article we write headlines into the push store; the enrichment provider reads it.
 // Reconnects with exponential backoff; dedups by article id. Opt-in (STREAMS_ALPACA_NEWS_ENABLED).
+//
+// Relevance gating (NEWS_RELEVANCE_FILTER): Alpaca/Benzinga tags each article with EVERY symbol
+// it mentions, with no native per-symbol relevance score — a broad market-roundup article can
+// carry a long `symbols` list where the headline text only actually names one or two of them.
+// filterRelevantStreamSymbols applies news-relevance.ts's text rubric PER symbol before the
+// article reaches the store, dropping only zero-evidence associations on multi-symbol articles
+// (single-symbol attribution is always trusted — see the function comment for why the stream
+// path cannot use the threshold knob the keyed providers use). Never drops the whole article.
+// Disabled -> every tagged symbol passes through unchanged.
 
 import { resolveAlpacaStreamAccount } from "../db";
+import { scoreHeadlineRelevance } from "../news-relevance";
+import { resolveSourceBool, resolveSourceNumber } from "../source-settings";
 import { recordStreamedArticle } from "./news-store";
 
 const ALPACA_NEWS_WS = process.env.ALPACA_NEWS_WS_URL || "wss://stream.data.alpaca.markets/v1beta1/news";
 const MAX_BACKOFF_MS = 60_000;
+
+// In-memory counter for observability — a persistent WS stream has no natural "run" boundary to
+// attach a bounded audit_events row to (an article can arrive every few seconds during market
+// hours; a DB row per drop would spam the hash-chained audit log — see audit-bounded-run.ts for
+// the real production incident an unbounded per-event audit payload caused). Exposed for tests
+// and a future ops-panel hook rather than written to the DB.
+let droppedAssociationCount = 0;
+
+/** Cumulative (symbol, article) associations the relevance filter has dropped since process
+ *  start (or the last resetStreamRelevanceDroppedAssociationCount() call). */
+export function streamRelevanceDroppedAssociationCount(): number {
+  return droppedAssociationCount;
+}
+
+/** Test helper. */
+export function resetStreamRelevanceDroppedAssociationCount(): void {
+  droppedAssociationCount = 0;
+}
+
+/**
+ * Filters a streamed article's raw (Alpaca-format) symbol tags down to the ones the headline
+ * text gives at least SOME relevance evidence for (news-relevance.ts, scored against the symbol
+ * AS ALPACA SENT IT). Deliberately more conservative than the keyed-provider gates: the stream
+ * payload carries no company name, so the rubric only sees the ticker token — a headline saying
+ * "Apple beats estimates" scores 0 for AAPL here even though Benzinga's attribution is correct.
+ * Two guards keep provider attribution from being the sole casualty of that blindness:
+ *   - single-symbol articles always pass (Benzinga's tag is the only signal we have — trust it);
+ *   - multi-symbol articles drop only ZERO-evidence symbols (score === 0), not sub-threshold
+ *     ones, so the filter prunes roundup-list noise without second-guessing scored matches.
+ * Disabled (NEWS_RELEVANCE_FILTER=false) returns `symbols` unchanged.
+ */
+export function filterRelevantStreamSymbols(headline: string, symbols: string[]): string[] {
+  if (!resolveSourceBool("NEWS_RELEVANCE_FILTER")) return symbols;
+  if (symbols.length <= 1) return symbols;
+  const kept: string[] = [];
+  let dropped = 0;
+  for (const symbol of symbols) {
+    if (scoreHeadlineRelevance(headline, symbol).score > 0) kept.push(symbol);
+    else dropped++;
+  }
+  if (dropped > 0) droppedAssociationCount += dropped;
+  return kept;
+}
 
 interface StreamState {
   ws?: WebSocket;
@@ -82,7 +136,10 @@ function connect(key: string, secret?: string): void {
       } else if (t === "n") {
         const headline = typeof m.headline === "string" ? m.headline : "";
         const symbols = Array.isArray(m.symbols) ? (m.symbols as unknown[]).map(String) : [];
-        if (headline && symbols.length > 0) recordStreamedArticle(symbols, headline, String(m.id ?? ""));
+        if (headline && symbols.length > 0) {
+          const relevantSymbols = filterRelevantStreamSymbols(headline, symbols);
+          if (relevantSymbols.length > 0) recordStreamedArticle(relevantSymbols, headline, String(m.id ?? ""));
+        }
       } else if (t === "error") {
         console.warn("[stream:alpaca-news] error frame:", m.msg ?? JSON.stringify(m));
       }

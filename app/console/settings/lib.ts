@@ -144,6 +144,25 @@ export function connectTradierAccount(body: TradierConnectBody): Promise<{ ok: b
   });
 }
 
+export type ExtraBrokerId = "etoro" | "public" | "webull";
+
+export function connectKeyPairBroker(
+  broker: ExtraBrokerId,
+  body: {
+    label?: string;
+    apiKey?: string;
+    apiSecret?: string;
+    environment?: "paper" | "live";
+    accountNumber?: string;
+    taxationType?: "taxable" | "roth_ira" | "traditional_ira";
+  }
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>("/api/connected-accounts", {
+    method: "POST",
+    body: JSON.stringify({ broker, ...body })
+  });
+}
+
 /** DELETE /api/connected-accounts/[id] — removes the connection (and its
  *  stored credentials) from this app. Nothing at the broker is touched. */
 export function disconnectAccount(id: string): Promise<{ ok: boolean }> {
@@ -269,6 +288,8 @@ export interface DeliveryPrefs {
   twilioAccountSid?: string;
   twilioAuthToken?: string;
   twilioFrom?: string;
+  /** Opt-in daily watchlist digest (default false) — see settings/delivery.tsx. */
+  watchlistDigestEnabled?: boolean;
 }
 
 export const EMPTY_DELIVERY_PREFS: DeliveryPrefs = {
@@ -277,7 +298,8 @@ export const EMPTY_DELIVERY_PREFS: DeliveryPrefs = {
   pushoverTarget: "",
   webhookUrl: "",
   email: "",
-  phone: ""
+  phone: "",
+  watchlistDigestEnabled: false
 };
 
 export function fetchDeliverySettings(): Promise<{ channels: DeliveryChannelDescriptor[]; prefs: DeliveryPrefs }> {

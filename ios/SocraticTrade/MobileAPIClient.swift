@@ -54,8 +54,9 @@ struct MobileAPIClient {
         return snap
     }
 
-    func snapshotData() async throws -> (MobileSnapshot, Data) {
-        let req = request(path: "/api/mobile/snapshot")
+    func snapshotData(timeout: TimeInterval = 30) async throws -> (MobileSnapshot, Data) {
+        var req = request(path: "/api/mobile/snapshot")
+        req.timeoutInterval = timeout
         let data = try await successfulResponseData(for: req)
         do {
             let snap = try JSONDecoder().decode(MobileSnapshot.self, from: data)
@@ -84,6 +85,22 @@ struct MobileAPIClient {
         ])
         let envelope: CommandEnvelope = try await send(request)
         return envelope.command
+    }
+
+    /// On-demand single-symbol quote + fundamentals for `SymbolInfoSheet` — GET
+    /// `/api/quote?symbol=...`, the same on-demand provider cascade the web console drilldown
+    /// falls back to for a symbol outside the last market scan.
+    func symbolQuote(_ symbol: String) async throws -> SymbolQuoteInfo {
+        var components = URLComponents(url: baseURL.appending(path: "/api/quote"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "symbol", value: symbol)]
+        guard let url = components?.url else {
+            throw MobileAPIError.network(URLError(.badURL))
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "accept")
+        return try await send(request)
     }
 
     func accountDeletionPreview() async throws -> AccountDeletionRequest {

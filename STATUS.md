@@ -28,6 +28,185 @@
 **Verification**: `npx tsc --noEmit` clean, `npm run lint` clean (fixed 1 let->const error), `npm test` clean, `npm run build` clean.
 
 ## Previous (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
+## Current (2026-08-12 GROK — broker cascade + Webull/eToro/Public + CopyTrader intel)
+
+**Branch `grok/broker-webull-etoro-public`:** connected brokers (Tradier / Alpaca / Robinhood)
+now sit in front of paid history providers; Public + eToro gateways + Webull connect stub;
+CopyTrader observe/allowlist framework (official eToro API only).  Owner must mint keys.
+Rollout: `docs/rollouts/2026-08-12-broker-cascade-and-copy-intel.md`.
+
+## Current (2026-08-12 CLAUDE - connection-health alert noise, root-caused)
+
+Branch `claude/health-alert-noise` (worktree `/private/tmp/fx-st-health`).  Sentry carried ~28
+distinct `"<name> connection failed"` issues, almost none of which were real outages.  Seven
+verified causes fixed together, kept individually reviewable in the diff:
+
+1. **Streak gate** - the alert gated on `lane.stoppedWorking`, which is ALSO set by two soft
+   heuristics that a low-frequency lane's FIRST failure satisfies.  Now requires the hard
+   `HEALTH_REASON_CONSECUTIVE_FAILURES` streak.
+2. **Fingerprints** - pinned to stable lane ids so display-name drift stops fragmenting one lane
+   into six issues.
+3. **429 asymmetry** - RAG 429s now skip Sentry the way db-health always did; `alertUsageLimitHit`
+   escalation intact.
+4. **Re-probe loop** - all synthetic probe failures log soft, breaking alert -> 6h cooldown ->
+   re-probe forever.
+5. **Retired vendors** - FMP / Quiver / UW excluded from the alert path.
+6. **Timeouts** - usage-monitor budget + knobs reads 2500ms -> 8000ms and soft-logged (both are
+   fail-open).
+7. **Local-fault mislabel** - `storeContexts` receipt/finalize SQLite faults attributed via a new
+   cause-chain-walking `localDbFaultReason` instead of "RAG vector store failed".
+
+congress.trade 502s (SOCRATIC-TRADE-B/8/1P) and the filingapi 401 (SOCRATIC-TRADE-1G) confirmed
+still alerting, with explicit regression guards.  Rollout:
+`docs/rollouts/2026-08-12-health-alert-noise.md`.
+## Current (2026-08-12 CLAUDE — CI scripts: Sentry `app` tag + branchless fingerprint, effort-sync transport retry)
+
+Two python-only CI-support fixes on branch `claude/ci-report-app-tag`
+(worktree `/private/tmp/fx-st-ci`):
+
+1. `scripts/sentry-ci-report.py` had no app identifier, so ST's events in the
+   SHARED `fleet-infra` Sentry project deduped into Congress.Trade's
+   identically-named workflow issues ("CI", "Security", "Effort Issues Sync").
+   Adds `APP = "socratic-trade"` to the message, tags, and fingerprint.
+   Fingerprint is now `[ci-failure, app, workflow]` — branch is a tag only,
+   because merge-queue refs are unique per attempt and were minting a throwaway
+   Sentry issue per queued run.
+2. `scripts/sync-effort-issues.py` `http_request` caught only `HTTPError`, so
+   today's `SSL: CERTIFICATE_VERIFY_FAILED` reaching api.github.com killed the
+   whole run.  Adds bounded exponential-backoff transport retry for idempotent
+   methods only — a `POST` is never replayed, since a truncated create response
+   means the issue already exists and a retry would duplicate it.
+
+Crons `monitor_slug` deliberately left un-namespaced: renaming orphans live
+Sentry monitors, and there is no collision to fix.  Gates and a 15-check
+behavioral harness recorded in the rollout note.
+
+Rollout: `docs/rollouts/2026-08-12-ci-report-app-tag.md`.
+
+## Current (2026-08-12 GROK — iOS watchlist wrap + account switch + admin + P&L)
+
+Owner Assets screenshot + follow-up.  Four bugs on one branch
+`grok/ios-watchlist-chip-wrap` (worktree `~/apps/trading-grok-watchlist-chips`):
+
+1. Watchlist chips wrap mid-ticker — content-sized `WrappingHStack` (#2657).
+2. Use-account looks dead, then snaps — keep Switching pill until snapshot.
+3. Tradier Sandbox `$0` P&L — unrealized from positions; realized "—" without fills.
+4. Admin Portal stuck — loading UI, cookie timeout, same-host subframe allow.
+5. Alpaca Paper "won't switch" — activate now invalidates the dashboard snapshot cache.
+
+Rollout: `docs/rollouts/2026-08-12-ios-watchlist-chip-wrap.md`.
+
+## Current (2026-08-12 ~7:30am CT CLAUDE — external-repo lessons round 2: alpha grading, signal health, cancel-dust)
+
+Round 2 of the owner's external-repo lessons request (broad sweep: TradingAgents, ai-hedge-fund,
+freqtrade, qlib, RD-Agent, FinMem).  Three definitive wins land in this PR, each built by a
+dedicated agent, adversarially verified, and integration-fixed:
+
+1. **Opt-in benchmark-alpha outcome grading** (`policy.outcomeGradingMode`, default raw,
+   byte-identical): alpha mode grades decisions against SPY over the same window, cites alpha in
+   the post-mortem prompt, writes divergence receipts (raw won / alpha lost = beta-not-skill),
+   and keeps an :alpha stat ledger in retrieval-usefulness weighting.
+2. **Live signal-health monitor**: daily lane computing rank IC of the LLM's own confidence vs
+   matured outcomes (90-day window), quantile buckets, top-K churn, gross-vs-net; edge-triggered
+   drift alarms via notify(); optional auto-throttle knob (default OFF); Signal Health card on
+   Results (migration 74 — first migration shipping under the new BEGIN IMMEDIATE boot path).
+3. **Cancel-dust advisory** (advisory ONLY, never blocks): partial-fill cancels that would
+   strand a below-broker-minimum fragment warn in the cancel sheet + audit; pre-fetch is
+   time-bounded so the emergency cancel lever can never wait on a hung broker read.
+
+Gates: tsc clean, targeted suites 82/82; full lint/test/build via land.sh at push.  Rollout:
+docs/rollouts/2026-08-12-external-lessons-round2.md.  Blockers: none.
+## Current (2026-08-12 ~6:40am CT CLAUDE — HOTFIX: boot migrations vs rolling deploys)
+
+PR #2652's auto-deploy failed (deployment pyqxv16i): the incoming container crash-looped on
+SQLITE_BUSY loading the instrumentation hook and Coolify rolled back (prod stayed up on the old
+build).  Root cause: runMigrations used better-sqlite3's default DEFERRED transaction — under a
+rolling deploy the outgoing container commits continuously, and the WAL snapshot upgrade throws
+an instant SQLITE_BUSY that busy_timeout does not cover.  Fix: apply migrations via BEGIN
+IMMEDIATE (apply.immediate()) so the 60s busy_timeout works; new child-process contention
+regression test.  This PR's own deploy applying migration 72 is the live proof.  Blockers: none.
+
+## Current (2026-08-12 ~6:20am CT CLAUDE — symbol drawer everywhere + iOS fills redesign)
+
+Owner requests: ticker/logo clicks open the Market Scan company drawer on every surface
+("all aspects of the site anywhere really"), and the iOS Activity fill cards get bolder/larger
+text + a denser layout (screenshot critique).  Branch `claude/ui-symbol-drawer-fills`.
+
+Web: closed every remaining un-wired symbol render (order cancel/replace sheets, live-approve
+sheets, decisions rows via a stretched-link restructure, admin data-catalog + rag-coverage with
+SymbolDrawerProvider newly mounted in the admin layout).  Fixed a real crash the sweep exposed:
+SymbolDrilldownSheet's unconditional useConsoleData() throw outside the console shell — new
+useConsoleDataOptional(), with an honest "not available here" exposure state.  Mobile PWA
+deferred honestly (drawer depends on con-* tokens the PWA does not load).
+
+iOS: FillActivityRow/CommandActivityRow typography bumped (ticker title3 bold, notional title3
+semibold, date footnote) with tighter AppCard padding; new SymbolInfoSheet (same /api/quote
+cascade as the web drawer) tappable from fills, positions, orders, watchlist, flow chips,
+alerts, and proposals; 44pt remove target restored; derived marketCap removed (no fabrication).
+
+Verified: tsc/lint/targeted vitest green; xcodebuild green (incl. post-merge with #2647 tabs +
+parity wave); browser check — AAPL click opens the "AAPL details" con-drawer with live data;
+admin routes 200.  Rollout: docs/rollouts/2026-08-12-ui-symbol-drawer-fills.md.  Blockers: none.
+
+## Current (2026-08-12 ~5:40am CT CLAUDE — dsa-lessons round 1: digest, relevance, receipts)
+
+Owner asked for lessons from ZhuLinsen/daily_stock_analysis (62k-star LLM stock-analysis repo),
+then broadened to a moderately broad GitHub sweep.  Research ran as two 15-agent workflows
+(readers -> synthesis -> per-lesson gap analysts); full verdicts + sketches in
+`docs/reviews/2026-08-12-dsa-lessons-gap-analysis.md`.  This lane (branch `agent/claude`) lands
+round 1 — three implemented lessons, each built + adversarially verified + integration-fixed:
+
+1. **Opt-in daily watchlist digest** (default OFF; Settings -> Delivery): typed report context
+   (latest persisted scan quote + proposal trajectory per symbol) -> full/medium/brief renderers ->
+   notify() `bodyTiers` picking the largest tier per channel via new `CHANNEL_CAPABILITIES`
+   (also retires the latent pushover/ntfy truncation gap).  New `trade_proposals.symbol` column
+   + index (migration + backfill).  Fires once per CT day at/after 15:15 CT via a watermark lane.
+2. **News entity-relevance gating** (default ON, real off-switch via `NEWS_RELEVANCE_*` knobs):
+   AV `relevance_score` and Marketaux `match_score` were documented-but-discarded — now parsed and
+   gated (match_score normalized /100 — it was ~12-82, making the 0-1 knob inert until the
+   integration fix); leaf rubric `news-relevance.ts` with ambiguous-company-name corroboration;
+   stream path drops only zero-evidence associations on multi-symbol articles.
+3. **Proposal repair-ladder receipts** (money-path, surgical): `TradeProposal.dataAdjustments`
+   kind-prefixed receipts; deterministic session-vs-phrasing guard (never blocks/rewrites);
+   `confidenceCapDataDegraded` tuning knob; existing bracket-fallback disclosures now also write
+   receipts; approval card renders them.
+
+Gates: lint 0 errors; tsc clean; targeted suites 76/76; full test+build via land.sh at push.
+Next: round-2 implementation (benchmark-alpha grading, signal-health monitor, cancel-dust
+advisory) on this lane after merge; UI lane (`claude/ui-symbol-drawer-fills`) lands separately.
+Blockers: none.
+
+## Current (2026-08-12 MONET — iOS parity wave 1: decision-critical fields, protective controls, swipe actions, admin portal)
+
+**Branch `monet/ios-parity-wave1`** (stacked on `monet/ios-customizable-tabs`, PR #2647): First
+wave of the iOS parity roadmap — all zero-backend, rendering already-decoded snapshot data and
+dispatching existing command types.  (1) Proposal cards now show price drift (reference → current
+price with signed %), last revalidation time, and the Red Team failure kind when the verdict is
+unavailable (console `describeRedTeamFailureKind` wording).  (2) Home gains Close Only + Wind Down
+protective controls beside Stop (`strategy.close_only` / `strategy.liquidating`, same
+CommandButton/store.submit pattern, no added ceremony).  (3) `policy.runDuringExtendedHours` is now
+decoded and a pure `deriveRunStateWord` mirrors the console's `deriveStateInfo` vocabulary — the
+app can no longer say "Running" while the console says "Paused · market closed" (7 new XCTests).
+(4) Swipe-to-reject on proposal cards (reject ONLY, never approve) and swipe-to-delete on alert
+rows via a new ScrollView-compatible `swipeRevealAction`; watchlist swipe skipped (chip grid, not
+rows — one-tap remove already exists).  (5) Triggered alerts show `triggeredAt`/`triggeredPrice`.
+(6) Account sheet rows show capabilities + draining state.  (7) New `AdminPortalView` (admin-only
+row) hosts /admin in a navigation-fenced WKWebView with native-session cookie handoff.  28/28
+tests pass.  Rollout: `docs/rollouts/2026-08-12-ios-parity-wave1.md`.
+
+## Current (2026-08-12 MONET — iOS customizable tab bar + xcodegen version-regression root cause)
+
+**Branch `monet/ios-customizable-tabs`:** The iOS app's tab bar is now owner-customizable with
+the exact web mobile-tabs semantics (`app/console/lib/mobile-tabs.ts` parity: pin/unpin, min 2 /
+max 4, canonical-order bar, always-present More surface keeping every screen reachable), using
+the native system `TabView` so the Liquid Glass appearance is preserved.  Programmatic tab jumps
+to unpinned screens reroute into the More stack.  8 new XCTests pin the contract.  Along the
+way, found and killed the ROOT CAUSE of the 2026-08-11 version regression: `xcodegen generate`
+was rewriting Info.plist's version keys to literal `1.0`/`1` because `project.yml` never
+declared them — now declared as `$(MARKETING_VERSION)`/`$(CURRENT_PROJECT_VERSION)` so any
+future regen preserves substitution.  A parallel expert-panel workflow is reviewing web↔iOS
+parity and reports separately.  Rollout: `docs/rollouts/2026-08-12-ios-customizable-tabs.md`.
+
 ## Current (2026-08-11 MONET — litestream per-tier backup status: health check + admin panel)
 
 **Branch `monet/backup-status-panel` (committed locally, not pushed — see rollout note for why).**

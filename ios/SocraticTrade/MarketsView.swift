@@ -4,13 +4,14 @@ struct MarketsView: View {
     @EnvironmentObject private var store: MobileStore
     @State private var ticker = ""
     @State private var presentedSheet: MarketsSheet?
+    @State private var presentedSymbol: PresentedSymbol?
 
     var body: some View {
         SnapshotScaffold { snapshot in
-            PositionsSection(positions: snapshot.positions)
-            OrdersSection(orders: snapshot.orders)
-            WatchlistSection(ticker: $ticker, items: snapshot.watchlist)
-            AlertsSection(alerts: snapshot.alerts)
+            PositionsSection(positions: snapshot.positions, presentedSymbol: $presentedSymbol)
+            OrdersSection(orders: snapshot.orders, presentedSymbol: $presentedSymbol)
+            WatchlistSection(ticker: $ticker, items: snapshot.watchlist, presentedSymbol: $presentedSymbol)
+            AlertsSection(alerts: snapshot.alerts, presentedSymbol: $presentedSymbol)
         }
         .navigationTitle("Assets")
         .navigationBarTitleDisplayMode(.inline)
@@ -33,6 +34,9 @@ struct MarketsView: View {
                 AlertComposerView()
             }
         }
+        .sheet(item: $presentedSymbol) { presented in
+            SymbolInfoSheet(symbol: presented.symbol)
+        }
     }
 }
 
@@ -44,6 +48,7 @@ private enum MarketsSheet: String, Identifiable {
 
 private struct PositionsSection: View {
     let positions: [Position]
+    @Binding var presentedSymbol: PresentedSymbol?
 
     var body: some View {
         VStack(spacing: 10) {
@@ -56,7 +61,7 @@ private struct PositionsSection: View {
                 )
             } else {
                 ForEach(positions) { position in
-                    PositionRow(position: position)
+                    PositionRow(position: position, presentedSymbol: $presentedSymbol)
                 }
             }
         }
@@ -65,15 +70,16 @@ private struct PositionsSection: View {
 
 private struct PositionRow: View {
     let position: Position
+    @Binding var presentedSymbol: PresentedSymbol?
 
     var body: some View {
         AppCard {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
-                        TickerLogo(symbol: position.symbol, size: 26)
-                        Text(position.symbol)
-                            .font(.headline)
+                        SymbolTapButton(symbol: position.symbol, logoSize: 26) {
+                            presentedSymbol = PresentedSymbol(symbol: position.symbol)
+                        }
                         if position.quantity < 0 {
                             StatusPill("Short", color: AppPalette.negative)
                         }
@@ -102,6 +108,7 @@ private struct PositionRow: View {
 
 private struct OrdersSection: View {
     let orders: [EquityOrder]
+    @Binding var presentedSymbol: PresentedSymbol?
 
     var body: some View {
         VStack(spacing: 10) {
@@ -114,7 +121,7 @@ private struct OrdersSection: View {
                 )
             } else {
                 ForEach(orders) { order in
-                    OrderRow(order: order)
+                    OrderRow(order: order, presentedSymbol: $presentedSymbol)
                 }
             }
         }
@@ -123,6 +130,7 @@ private struct OrdersSection: View {
 
 private struct OrderRow: View {
     let order: EquityOrder
+    @Binding var presentedSymbol: PresentedSymbol?
 
     private var statusColor: Color {
         switch order.state.lowercased() {
@@ -136,9 +144,9 @@ private struct OrderRow: View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    TickerLogo(symbol: order.symbol, size: 24)
-                    Text(order.symbol)
-                        .font(.headline)
+                    SymbolTapButton(symbol: order.symbol, logoSize: 24) {
+                        presentedSymbol = PresentedSymbol(symbol: order.symbol)
+                    }
                     StatusPill(order.side.uppercased(), color: sideColor)
                     Spacer()
                     StatusPill(order.state.capitalized, color: statusColor)
@@ -174,6 +182,7 @@ private struct WatchlistSection: View {
 
     @Binding var ticker: String
     let items: [WatchlistItem]
+    @Binding var presentedSymbol: PresentedSymbol?
 
     var body: some View {
         VStack(spacing: 10) {
@@ -201,7 +210,7 @@ private struct WatchlistSection: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        FlowSymbols(items: items)
+                        FlowSymbols(items: items, presentedSymbol: $presentedSymbol)
                     }
                 }
             }
@@ -229,44 +238,79 @@ private struct WatchlistSection: View {
 }
 
 private struct FlowSymbols: View {
-    @EnvironmentObject private var store: MobileStore
-
     let items: [WatchlistItem]
+    @Binding var presentedSymbol: PresentedSymbol?
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+        // Content-sized wrap — do not use LazyVGrid(.adaptive(minimum: 92)).
+        // That cell was narrower than logo + ticker + 44pt remove, so `SPCX`
+        // and `XOM` wrapped mid-symbol.  Issue #2657.
+        WrappingHStack(spacing: 8, lineSpacing: 8) {
             ForEach(items) { item in
-                let operationID = "watchlist.remove:\(item.symbol)"
-                Button {
-                    Task {
-                        await store.submit(
-                            "watchlist.remove",
-                            payload: ["symbol": item.symbol],
-                            operationID: operationID
-                        )
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        TickerLogo(symbol: item.symbol, size: 18)
-                        Text(item.symbol)
-                            .font(.subheadline.weight(.semibold))
-                        if store.isBusy(operationID) {
-                            ProgressView().controlSize(.mini)
-                        } else {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 8)
-                    .background(AppPalette.accent.opacity(0.1), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(store.isBusy(operationID) || !store.canSubmit("watchlist.remove"))
-                .accessibilityLabel("Remove \(item.symbol) from watchlist")
+                WatchlistChip(item: item, presentedSymbol: $presentedSymbol)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct WatchlistChip: View {
+    @EnvironmentObject private var store: MobileStore
+
+    let item: WatchlistItem
+    @Binding var presentedSymbol: PresentedSymbol?
+
+    private var operationID: String { "watchlist.remove:\(item.symbol)" }
+
+    var body: some View {
+        // Two sibling buttons, not nested: tapping the logo/symbol opens
+        // company info; tapping the trailing x removes the watch.  Both stay
+        // real, separately labeled buttons for VoiceOver.
+        HStack(spacing: 6) {
+            Button {
+                presentedSymbol = PresentedSymbol(symbol: item.symbol)
+            } label: {
+                HStack(spacing: 6) {
+                    TickerLogo(symbol: item.symbol, size: 18)
+                    Text(item.symbol)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(item.symbol) company info")
+
+            Button {
+                Task {
+                    await store.submit(
+                        "watchlist.remove",
+                        payload: ["symbol": item.symbol],
+                        operationID: operationID
+                    )
+                }
+            } label: {
+                Group {
+                    if store.isBusy(operationID) {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                // Icon is ~17pt — below the 44pt HIG minimum.  A fixed 44×44
+                // frame keeps the hit area without the old `.padding(14)`
+                // fighting the chip's intrinsic width.
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isBusy(operationID) || !store.canSubmit("watchlist.remove"))
+            .accessibilityLabel("Remove \(item.symbol) from watchlist")
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 2)
+        .background(AppPalette.accent.opacity(0.1), in: Capsule())
     }
 }
 
@@ -274,6 +318,7 @@ private struct AlertsSection: View {
     @EnvironmentObject private var store: MobileStore
 
     let alerts: [PriceAlert]
+    @Binding var presentedSymbol: PresentedSymbol?
 
     var body: some View {
         VStack(spacing: 10) {
@@ -286,7 +331,7 @@ private struct AlertsSection: View {
                 )
             } else {
                 ForEach(alerts) { alert in
-                    AlertRow(alert: alert)
+                    AlertRow(alert: alert, presentedSymbol: $presentedSymbol)
                 }
             }
         }
@@ -298,17 +343,28 @@ private struct AlertRow: View {
     @State private var confirmingDeletion = false
 
     let alert: PriceAlert
+    @Binding var presentedSymbol: PresentedSymbol?
 
     private var operationID: String { "alert.delete:\(alert.id)" }
+
+    /// Trigger receipt, e.g. "Triggered at $205.00 · Jul 21, 2026, 10:00 AM".
+    private var triggeredDetail: String? {
+        guard alert.status == "triggered" else { return nil }
+        var parts: [String] = []
+        if let price = alert.triggeredPrice { parts.append("at \(AppFormat.money(price))") }
+        if let at = alert.triggeredAt { parts.append(AppFormat.dateTime(at)) }
+        guard !parts.isEmpty else { return nil }
+        return "Triggered \(parts.joined(separator: " · "))"
+    }
 
     var body: some View {
         AppCard {
             HStack(spacing: 12) {
-                TickerLogo(symbol: alert.symbol, size: 26)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text(alert.symbol)
-                            .font(.headline)
+                        SymbolTapButton(symbol: alert.symbol, logoSize: 26) {
+                            presentedSymbol = PresentedSymbol(symbol: alert.symbol)
+                        }
                         Image(systemName: alert.status == "armed" ? "bell.fill" : "bell.badge.fill")
                             .font(.caption)
                             .foregroundStyle(alert.status == "armed" ? AppPalette.accent : AppPalette.positive)
@@ -316,6 +372,11 @@ private struct AlertRow: View {
                     Text("\(alert.op) \(AppFormat.money(alert.price))")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    if let triggeredDetail {
+                        Text(triggeredDetail)
+                            .font(.caption)
+                            .foregroundStyle(AppPalette.positive)
+                    }
                     Text(alert.note?.isEmpty == false ? alert.note! : alert.status.capitalized)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -333,6 +394,15 @@ private struct AlertRow: View {
                 .disabled(store.isBusy(operationID) || !store.canSubmit("alert.delete"))
                 .accessibilityLabel("Delete \(alert.symbol) alert")
             }
+        }
+        // Same ceremony as the trash button: the swipe opens the existing confirmation dialog.
+        .swipeRevealAction(
+            title: "Delete",
+            systemImage: "trash",
+            tint: AppPalette.negative,
+            isEnabled: !store.isBusy(operationID) && store.canSubmit("alert.delete")
+        ) {
+            confirmingDeletion = true
         }
         .confirmationDialog(
             "Delete \(alert.symbol) price alert?",

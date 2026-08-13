@@ -94,6 +94,8 @@ import type { ThesisStat, ThesisRegimeStat, SkippedCandidateReturn } from "./per
 import { buildSpyReturnToNowMap } from "./backtest";
 import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
+import { currentMarketSession } from "./market-hours";
+import { sessionPhrasingReceipt } from "./proposal-phase-guard";
 import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap, resolveDailyOpeningCap } from "./policy-caps";
 import { assessProtectiveExitRepriceDrift, extendedHoursExitBufferBps, marketableLimitExitPrice, repriceStoredProtectiveExit } from "./protective-exit-routing";
 import type { ProtectiveExitQuote } from "./protective-exit-routing";
@@ -5982,6 +5984,10 @@ async function proposeTrades(input: {
       input.policy.connectedAccountId
     );
   }
+  // Session-phrasing consistency receipt (proposal-phase-guard.ts): one session read for the whole
+  // batch, then a deterministic check per proposal. A mismatch is RECORDED as a kind-prefixed
+  // dataAdjustments receipt — the rationale is never rewritten and nothing is blocked.
+  const sessionAtProposal = currentMarketSession();
   const rawBullProposals = candidateBoundBullProposals.map(p => ({
     ...p,
     // Preserve the proposing model's own thesis before deterministic sizing/risk receipts and the
@@ -5992,7 +5998,13 @@ async function proposeTrades(input: {
     // FAILOVER-AWARE attribution: the policy-namespaced model that actually served this run
     // (not necessarily policy.llmModel). Preserve that namespace so approval-time primary and
     // fallback comparisons remain exact; telemetry above is canonicalized independently.
-    proposedByModel: bullServedProposalModel
+    proposedByModel: bullServedProposalModel,
+    // APP-AUTHORED receipts only: overwrite unconditionally at this parse boundary so a
+    // model-emitted `dataAdjustments` field can never masquerade as a deterministic receipt.
+    dataAdjustments: ((): string[] | undefined => {
+      const receipt = sessionPhrasingReceipt(p.rationale, sessionAtProposal);
+      return receipt ? [receipt] : undefined;
+    })()
   }));
   // TRUNCATION-AWARE: if the Bull answer hit the output-token cap, a zero/partial parse is NOT a
   // genuine "do nothing" — record a DISTINCT reason + audit so it's diagnosable and never a silent
@@ -6668,6 +6680,14 @@ export function enrichOpeningProposal(
   const entryPrice = proposal.limitPrice ?? proposal.stopPrice ?? refPrice;
   const round2 = (n: number) => Math.round(n * 100) / 100;
   let next: TradeProposal = { ...proposal, referencePrice: refPrice };
+  // Repair-ladder receipt appender: every deterministic correction/fallback below that already
+  // discloses itself in free rationale text ALSO records a kind-prefixed, machine-queryable
+  // dataAdjustments entry — and the silent edits (wrong-side leg discards, the ATR>beta>flat stop
+  // fallback) get one too. Receipts never change the rationale text or the order itself.
+  const withReceipt = (p: TradeProposal, receipt: string): TradeProposal => ({
+    ...p,
+    dataAdjustments: [...(p.dataAdjustments ?? []), receipt]
+  });
   const plan: StopPlanStyle = proposal.stopPlan?.style ?? stopPlanBySymbol[sym] ?? "default";
   // A scale-in proposal that omits its OWN stopPlan but inherits a persisted one (stopPlanBySymbol)
   // still has that plan applied below (stripping/repricing brackets) — stamp it onto the returned
@@ -6748,12 +6768,15 @@ export function enrichOpeningProposal(
   // price, unchanged from before (so the non-converting path keeps identical behavior).
   const bracketAnchorPrice = marketableLimitPrice ?? entryPrice;
   if (bracketsEnabled && isTradierMarket && (next.bracketStopLoss != null || next.bracketTakeProfit != null)) {
-    next = {
-      ...next,
-      bracketStopLoss: undefined,
-      bracketTakeProfit: undefined,
-      rationale: next.rationale + `\n\n[Risk] Tradier native entry brackets are not supported for market entry orders. The bracket legs have been stripped; this position will have no native broker-held protection (and fixed/atr plans have no synthetic-stop monitor fallback).`
-    };
+    next = withReceipt(
+      {
+        ...next,
+        bracketStopLoss: undefined,
+        bracketTakeProfit: undefined,
+        rationale: next.rationale + `\n\n[Risk] Tradier native entry brackets are not supported for market entry orders. The bracket legs have been stripped; this position will have no native broker-held protection (and fixed/atr plans have no synthetic-stop monitor fallback).`
+      },
+      "bracket_strip_tradier_market: Bracket legs stripped — Tradier cannot carry native brackets on a market entry order."
+    );
   }
   if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket && !isTradierMarket) {
     const flatStopPct = proposal.side === "short"
@@ -6804,42 +6827,76 @@ export function enrichOpeningProposal(
       const llmStop = next.bracketStopLoss;
       const llmStopValid = typeof llmStop === "number" && Number.isFinite(llmStop) && llmStop > 0 &&
         (proposal.side === "buy" ? llmStop < bracketAnchorPrice : llmStop > bracketAnchorPrice);
-      if (next.bracketStopLoss != null && !llmStopValid) next = { ...next, bracketStopLoss: undefined };
+      if (next.bracketStopLoss != null && !llmStopValid) {
+        next = withReceipt(
+          { ...next, bracketStopLoss: undefined },
+          `bracket_stop_invalid_discarded: Proposed stop ${llmStop} sits on the wrong side of the ${round2(bracketAnchorPrice)} entry anchor for a ${proposal.side}; discarded — policy fallback pricing applies when configured.`
+        );
+      }
     }
     if (plan !== "trailing" && plan !== "none") {
       const llmTake = next.bracketTakeProfit;
       const llmTakeValid = typeof llmTake === "number" && Number.isFinite(llmTake) && llmTake > 0 &&
         (proposal.side === "buy" ? llmTake > bracketAnchorPrice : llmTake < bracketAnchorPrice);
-      if (next.bracketTakeProfit != null && !llmTakeValid) next = { ...next, bracketTakeProfit: undefined };
+      if (next.bracketTakeProfit != null && !llmTakeValid) {
+        next = withReceipt(
+          { ...next, bracketTakeProfit: undefined },
+          `bracket_take_profit_invalid_discarded: Proposed take-profit ${llmTake} sits on the wrong side of the ${round2(bracketAnchorPrice)} entry anchor for a ${proposal.side}; discarded so the per-symbol fallback can price it.`
+        );
+      }
     }
+    // Which deterministic rule sources the fallback stop distance on the NO-EXPLICIT-PLAN path —
+    // named in a bracket_stop_fallback_* receipt only when the app actually attaches a stop leg the
+    // proposal didn't carry. Mirrors the stopPct precedence above exactly (ATR > beta > flat); an
+    // explicit fixed/atr plan is the owner/LLM's disclosed choice, not a fallback, so no receipt.
+    const defaultPlanAtrApplied =
+      policy.atrStops === true && flatStopPct > 0 && typeof atrStopPctBySymbol[sym] === "number" && (atrStopPctBySymbol[sym] ?? 0) > 0;
+    const defaultPlanBetaApplied =
+      !defaultPlanAtrApplied && policy.betaScaledStops === true && flatStopPct > 0 && typeof beta === "number" && Number.isFinite(beta) && beta > 0;
+    const stopFallbackReceipt =
+      plan === "default" && stopPct > 0 && next.bracketStopLoss == null
+        ? `bracket_stop_fallback_${defaultPlanAtrApplied ? "atr" : defaultPlanBetaApplied ? "beta" : "flat"}: Stop leg priced from the ${defaultPlanAtrApplied ? "ATR-scaled" : defaultPlanBetaApplied ? "beta-scaled" : "flat policy"} distance (${round2(stopPct)}%) — the proposal carried no valid stop of its own.`
+        : null;
     // Long: stop below / take above entry. Short: stop above / take below (price up = loss).
     if (proposal.side === "buy") {
-      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(bracketAnchorPrice * (1 - stopPct / 100)) };
+      if (stopPct > 0 && next.bracketStopLoss == null) {
+        next = { ...next, bracketStopLoss: round2(bracketAnchorPrice * (1 - stopPct / 100)) };
+        if (stopFallbackReceipt) next = withReceipt(next, stopFallbackReceipt);
+      }
       if (plan !== "trailing" && plan !== "none" && takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(bracketAnchorPrice * (1 + takePct / 100)) };
     } else {
-      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(bracketAnchorPrice * (1 + stopPct / 100)) };
+      if (stopPct > 0 && next.bracketStopLoss == null) {
+        next = { ...next, bracketStopLoss: round2(bracketAnchorPrice * (1 + stopPct / 100)) };
+        if (stopFallbackReceipt) next = withReceipt(next, stopFallbackReceipt);
+      }
       if (plan !== "trailing" && plan !== "none" && takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(bracketAnchorPrice * (1 - takePct / 100)) };
     }
   } else if (bracketsEnabled && brokerSupportsBrackets && !canUseWholeShareBracket) {
-    next = {
-      ...next,
-      // The execution contract must match the receipt. Leaving any LLM-supplied bracket field on
-      // the proposal makes Alpaca route it as a whole-share bracket and reject the fractional
-      // dollar order, even though the rationale says the native bracket was skipped.
-      bracketStopLoss: undefined,
-      bracketTakeProfit: undefined,
-      bracketStopLimit: undefined,
-      rationale: next.rationale + `\n\n[Risk] Native Alpaca bracket skipped because ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(entryPrice)} intended entry price; this avoids a broker rejection for sub-share brackets.`
-    };
+    next = withReceipt(
+      {
+        ...next,
+        // The execution contract must match the receipt. Leaving any LLM-supplied bracket field on
+        // the proposal makes Alpaca route it as a whole-share bracket and reject the fractional
+        // dollar order, even though the rationale says the native bracket was skipped.
+        bracketStopLoss: undefined,
+        bracketTakeProfit: undefined,
+        bracketStopLimit: undefined,
+        rationale: next.rationale + `\n\n[Risk] Native Alpaca bracket skipped because ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(entryPrice)} intended entry price; this avoids a broker rejection for sub-share brackets.`
+      },
+      `bracket_skip_subshare: Native broker bracket skipped — ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(entryPrice)} intended entry.`
+    );
   } else if (bracketsEnabled && !brokerSupportsBrackets && (policy.riskRules?.stopLossPct ?? 0) > 0) {
     // Transparency for non-bracket brokers (e.g. Robinhood): the broker can't hold an OCO bracket at
     // its matching engine, so this position's protective exit is the synthetic scheduler-tick monitor
     // ONLY — a single point of failure if the app is down. Surface it so the operator knows. (The
     // synthetic monitor still runs every tick; this is honesty, not a behavior change.)
-    next = {
-      ...next,
-      rationale: next.rationale + `\n\n[Risk] ${policy.activeBroker ?? "this broker"} does not support broker-held brackets — the stop is enforced by the app's synthetic monitor only (no protection while the app is offline).`
-    };
+    next = withReceipt(
+      {
+        ...next,
+        rationale: next.rationale + `\n\n[Risk] ${policy.activeBroker ?? "this broker"} does not support broker-held brackets — the stop is enforced by the app's synthetic monitor only (no protection while the app is offline).`
+      },
+      `bracket_unsupported_broker: ${policy.activeBroker ?? "this broker"} holds no native brackets — the stop is enforced by the app's synthetic monitor only.`
+    );
   }
 
   // Marketable-limit entries: apply the conversion computed up front (marketableLimitPrice/Qty) — the
@@ -6851,14 +6908,17 @@ export function enrichOpeningProposal(
   // undefined and this no-ops, leaving the raw market order — identical to before this refactor.
   if (marketableLimitPrice !== undefined && marketableLimitQty >= 1) {
     const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
-    next = {
-      ...next,
-      type: "limit",
-      limitPrice: marketableLimitPrice,
-      quantity: marketableLimitQty,
-      dollarAmount: undefined,
-      rationale: next.rationale + `\n\n[Execution] Marketable-limit entry: ${marketableLimitQty} sh @ limit $${marketableLimitPrice} (${bufferBps} bps through the ${proposal.side === "buy" ? "ask" : "bid"}) instead of a raw market order, to cap fast-tape slippage.`
-    };
+    next = withReceipt(
+      {
+        ...next,
+        type: "limit",
+        limitPrice: marketableLimitPrice,
+        quantity: marketableLimitQty,
+        dollarAmount: undefined,
+        rationale: next.rationale + `\n\n[Execution] Marketable-limit entry: ${marketableLimitQty} sh @ limit $${marketableLimitPrice} (${bufferBps} bps through the ${proposal.side === "buy" ? "ask" : "bid"}) instead of a raw market order, to cap fast-tape slippage.`
+      },
+      `marketable_limit_entry: Market order converted to ${marketableLimitQty} sh @ limit $${marketableLimitPrice} (${bufferBps} bps through the ${proposal.side === "buy" ? "ask" : "bid"}).`
+    );
   }
   return next;
 }

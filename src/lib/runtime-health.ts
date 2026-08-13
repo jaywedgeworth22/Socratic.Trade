@@ -200,17 +200,24 @@ function newestFileMtimeMs(target: string): number | null {
 }
 
 /**
- * Litestream 0.5.x compaction levels this app's config actually exercises
- * (litestream.coolify.yml): level 0 is the continuously-synced raw LTX stream, level 1 is
- * the first periodic compaction pass, and level 9 is the daily full snapshot
- * (`snapshot.interval: 24h`). Levels 2-8 are unused here.
+ * Litestream 0.5.x compaction levels this app's config actually exercises.  The original
+ * 2026-08-11 version of this monitor watched only 0/1/9 on the assumption that "levels 2-8
+ * are unused here" — disproven within a day: litestream's own boot log starts compaction
+ * monitors for levels 1 (30s), 2 (5m), 3 (1h), and 9 (24h), and the 2026-08-12 production
+ * wedge was at LEVEL 2 ("non-contiguous transaction ids", byte-identical retry every 5
+ * minutes) — a failure the 0/1/9 monitor was structurally blind to.  All active levels are
+ * watched now.
  */
-export type LitestreamCompactionTier = "0" | "1" | "9";
+export type LitestreamCompactionTier = "0" | "1" | "2" | "3" | "9";
+
+export const LITESTREAM_COMPACTION_TIERS: readonly LitestreamCompactionTier[] = ["0", "1", "2", "3", "9"];
 
 /** Plain-English names for the admin UI and alert text. */
 export const LITESTREAM_TIER_LABELS: Record<LitestreamCompactionTier, string> = {
   "0": "Continuous Sync",
   "1": "Compaction",
+  "2": "Deep Compaction",
+  "3": "Hourly Rollup",
   "9": "Daily Snapshot"
 };
 
@@ -230,12 +237,18 @@ export const LITESTREAM_TIER_LABELS: Record<LitestreamCompactionTier, string> = 
  *     quiet between runs — there is no fixed interval to anchor a tight threshold to. 4
  *     hours tolerates ordinary gaps while catching a stuck compactor (this incident's
  *     failure mode) in a few hours instead of the 27+ hours it actually took.
+ *   - level 2: 5-minute monitor interval, but output only appears when enough level-1
+ *     input has accumulated — quiet stretches are normal.  2 hours (24x the interval)
+ *     still catches a wedged retry loop (the 2026-08-12 incident shape) same-day.
+ *   - level 3: 1-hour monitor interval, same accumulation caveat. 6 hours.
  *   - level 9: `snapshot.interval: 24h`. 30 hours (24h + 6h buffer) rides out one
  *     delayed/retried run without false-alarming on ordinary scheduling jitter.
  */
 export const LITESTREAM_TIER_STALE_AFTER_SECONDS: Record<LitestreamCompactionTier, number> = {
   "0": 10 * 60,
   "1": 4 * 60 * 60,
+  "2": 2 * 60 * 60,
+  "3": 6 * 60 * 60,
   "9": 30 * 60 * 60
 };
 
@@ -284,7 +297,7 @@ export function assessLitestreamTierFreshness(
   } = {}
 ): LitestreamTierFreshnessReport {
   const nowMs = options.nowMs ?? Date.now();
-  const tiers = (["0", "1", "9"] as const).map((tier): LitestreamTierFreshness => {
+  const tiers = LITESTREAM_COMPACTION_TIERS.map((tier): LitestreamTierFreshness => {
     const thresholdSeconds = options.thresholdsSeconds?.[tier] ?? LITESTREAM_TIER_STALE_AFTER_SECONDS[tier];
     const label = LITESTREAM_TIER_LABELS[tier];
     if (!statePath) return { tier, label, state: "unknown", thresholdSeconds };

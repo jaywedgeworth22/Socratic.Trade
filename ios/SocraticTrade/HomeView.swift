@@ -146,23 +146,21 @@ private struct ReadyHomeHero: View {
     let onReviewProposals: () -> Void
 
     private var usesLiveMetrics: Bool {
-        snapshot.readiness.activeConnectedAccount?.environment == "live"
+        AccountMetrics.usesLiveMetrics(environment: store.displayedActiveAccount(in: snapshot)?.environment)
     }
 
     private var openPnl: Double? {
-        guard let performance = snapshot.performance else { return nil }
-        return usesLiveMetrics ? performance.liveUnrealizedPnl : performance.paperUnrealizedPnl
+        let ledger = snapshot.performance.flatMap {
+            usesLiveMetrics ? $0.liveUnrealizedPnl : $0.paperUnrealizedPnl
+        }
+        return AccountMetrics.displayedUnrealized(positions: snapshot.positions, ledger: ledger)
     }
 
     private var pendingCount: Int { snapshot.pendingProposals.count }
 
-    private var stateColor: Color {
-        switch snapshot.readiness.systemState.lowercased() {
-        case "active": return AppPalette.positive
-        case "close_only", "liquidating": return AppPalette.warning
-        default: return AppPalette.negative
-        }
-    }
+    /// Console-shared run-state word — market-aware, so this pill can never claim
+    /// "Running" while the console says "Paused · market closed".
+    private var runState: RunStateWord { deriveRunStateWord(snapshot: snapshot) }
 
     var body: some View {
         AppCard {
@@ -171,14 +169,14 @@ private struct ReadyHomeHero: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             // Paper-only badge — owner does not want "Live" called out (paper is still real capital).
-                            if snapshot.readiness.activeConnectedAccount?.environment.lowercased() == "paper" {
+                            if store.displayedActiveAccount(in: snapshot)?.environment.lowercased() == "paper" {
                                 StatusPill(
                                     "PAPER",
                                     color: AppPalette.accent.opacity(0.85),
                                     systemImage: "doc.text"
                                 )
                             }
-                            Text(snapshot.readiness.activeConnectedAccount?.label ?? "Ready")
+                            Text(store.displayedActiveAccount(in: snapshot)?.label ?? "Ready")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -195,9 +193,9 @@ private struct ReadyHomeHero: View {
                     Spacer()
                     VStack(alignment: .trailing, spacing: 6) {
                         StatusPill(
-                            snapshot.readiness.systemState.replacingOccurrences(of: "_", with: " ").capitalized,
-                            color: stateColor,
-                            systemImage: snapshot.readiness.systemState == "active" ? "bolt.fill" : "pause.fill"
+                            runState.rawValue,
+                            color: runState.pillColor,
+                            systemImage: runState.pillSystemImage
                         )
                         Text(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority))
                             .font(.caption.weight(.medium))
@@ -268,13 +266,7 @@ private struct AgentOverviewCard: View {
     let snapshot: MobileSnapshot
     var showInlineReadiness: Bool = true
 
-    private var stateColor: Color {
-        switch snapshot.readiness.systemState.lowercased() {
-        case "active": return AppPalette.positive
-        case "close_only", "liquidating": return AppPalette.warning
-        default: return AppPalette.negative
-        }
-    }
+    private var runState: RunStateWord { deriveRunStateWord(snapshot: snapshot) }
 
     var body: some View {
         AppCard {
@@ -289,9 +281,9 @@ private struct AgentOverviewCard: View {
                     }
                     Spacer()
                     StatusPill(
-                        snapshot.readiness.systemState.replacingOccurrences(of: "_", with: " ").capitalized,
-                        color: stateColor,
-                        systemImage: snapshot.readiness.systemState == "active" ? "bolt.fill" : "pause.fill"
+                        runState.rawValue,
+                        color: runState.pillColor,
+                        systemImage: runState.pillSystemImage
                     )
                 }
 
@@ -373,6 +365,17 @@ private struct StrategyControlsCard: View {
                     }
                 }
 
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        closeOnlyButton
+                        windDownButton
+                    }
+                    VStack(spacing: 10) {
+                        closeOnlyButton
+                        windDownButton
+                    }
+                }
+
                 CommandButton(
                     "Stop Agent",
                     systemImage: "stop.fill",
@@ -383,7 +386,7 @@ private struct StrategyControlsCard: View {
                 }
                 .tint(AppPalette.negative)
 
-                Text("Stop immediately halts future broker submissions.  A broker request already submitted before the halt may still complete; review existing orders under Assets.")
+                Text("Close Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop immediately halts future broker submissions.  A broker request already submitted before the halt may still complete; review existing orders under Assets.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -423,6 +426,30 @@ private struct StrategyControlsCard: View {
             submit("strategy.start")
         }
     }
+
+    // Protective de-risk states (labels match AppFormat.commandLabels; the store always
+    // allows protective commands, same as Stop — no extra ceremony beyond existing controls).
+    private var closeOnlyButton: some View {
+        CommandButton(
+            "Close Only",
+            systemImage: "arrow.down.right.circle",
+            isBusy: store.isBusy("strategy.close_only")
+        ) {
+            submit("strategy.close_only")
+        }
+        .tint(AppPalette.warning)
+    }
+
+    private var windDownButton: some View {
+        CommandButton(
+            "Wind Down",
+            systemImage: "tray.and.arrow.down",
+            isBusy: store.isBusy("strategy.liquidating")
+        ) {
+            submit("strategy.liquidating")
+        }
+        .tint(AppPalette.warning)
+    }
 }
 
 private struct PortfolioOverviewCard: View {
@@ -459,14 +486,33 @@ private struct PortfolioOverviewCard: View {
 }
 
 private struct PerformanceOverviewCard: View {
+    @EnvironmentObject private var store: MobileStore
     let snapshot: MobileSnapshot
 
     private var usesLiveMetrics: Bool {
-        snapshot.readiness.activeConnectedAccount?.environment == "live"
+        AccountMetrics.usesLiveMetrics(environment: store.displayedActiveAccount(in: snapshot)?.environment)
+    }
+
+    private var realized: Double? {
+        let ledger = snapshot.performance.flatMap {
+            usesLiveMetrics ? $0.liveRealizedPnl : $0.paperRealizedPnl
+        }
+        let hasFills = (snapshot.performance?.fills?.isEmpty == false)
+        return AccountMetrics.displayedRealized(ledger: ledger, hasFillHistory: hasFills)
+    }
+
+    private var unrealized: Double? {
+        let ledger = snapshot.performance.flatMap {
+            usesLiveMetrics ? $0.liveUnrealizedPnl : $0.paperUnrealizedPnl
+        }
+        return AccountMetrics.displayedUnrealized(positions: snapshot.positions, ledger: ledger)
     }
 
     private var accountSubtitle: String? {
-        guard let account = snapshot.readiness.activeConnectedAccount else {
+        if store.pendingAccountId != nil {
+            return "refreshing the selected account"
+        }
+        guard let account = store.displayedActiveAccount(in: snapshot) else {
             return "no active account"
         }
         // Paper only — never "live account" (owner: all accounts are real; paper is the exception).
@@ -483,13 +529,13 @@ private struct PerformanceOverviewCard: View {
                 LazyVGrid(columns: columns, spacing: 10) {
                     MetricTile(
                         title: "Realized P&L",
-                        value: AppFormat.money(usesLiveMetrics ? performance.liveRealizedPnl : performance.paperRealizedPnl),
-                        tint: pnlColor(usesLiveMetrics ? performance.liveRealizedPnl : performance.paperRealizedPnl)
+                        value: AppFormat.money(realized),
+                        tint: pnlColor(realized)
                     )
                     MetricTile(
                         title: "Unrealized P&L",
-                        value: AppFormat.money(usesLiveMetrics ? performance.liveUnrealizedPnl : performance.paperUnrealizedPnl),
-                        tint: pnlColor(usesLiveMetrics ? performance.liveUnrealizedPnl : performance.paperUnrealizedPnl)
+                        value: AppFormat.money(unrealized),
+                        tint: pnlColor(unrealized)
                     )
                     MetricTile(
                         title: "Win Rate",
@@ -654,6 +700,7 @@ private struct AccountSettingsView: View {
 
     @State private var deleteIdentity = ""
     @State private var deletePhrase = ""
+    @State private var showingAdminPortal = false
 
     var body: some View {
         NavigationStack {
@@ -661,6 +708,7 @@ private struct AccountSettingsView: View {
                 identitySection
                 accountsSection
                 policySection
+                adminSection
                 sessionSection
                 deletionSection
             }
@@ -669,6 +717,23 @@ private struct AccountSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $showingAdminPortal) {
+                AdminPortalView()
+            }
+        }
+    }
+
+    /// Owner-only row — rendered solely when the server marks the session admin.
+    @ViewBuilder
+    private var adminSection: some View {
+        if store.snapshot?.currentUser?.isAdmin == true {
+            Section("Admin") {
+                Button {
+                    showingAdminPortal = true
+                } label: {
+                    Label("Admin Portal", systemImage: "wrench.and.screwdriver")
                 }
             }
         }
@@ -689,6 +754,24 @@ private struct AccountSettingsView: View {
     @ViewBuilder
     private var accountsSection: some View {
         Section("Connected Accounts") {
+            if store.pendingAccountId != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        if store.isRefreshing || store.hasActiveCommandWork {
+                            ProgressView()
+                        }
+                        Text("Switching accounts — portfolio reload can take a few seconds.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !store.isRefreshing && !store.hasActiveCommandWork {
+                        Button("Retry Portfolio Refresh") {
+                            Task { await store.load() }
+                        }
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
             if let accounts = store.snapshot?.connectedAccounts, !accounts.isEmpty {
                 ForEach(accounts) { account in
                     ConnectedAccountSettingsRow(account: account)
@@ -790,6 +873,25 @@ private struct ConnectedAccountSettingsRow: View {
     private var operationID: String { "account.activate:\(account.id)" }
     private var canActivate: Bool { store.canSubmit("account.activate") }
 
+    /// Quiet sentence-case capability summary, e.g. "cash · margin · shorting · options L2".
+    private var capabilitiesLine: String? {
+        guard let capabilities = account.capabilities else { return nil }
+        var parts: [String] = []
+        if let accountType = capabilities.accountType, !accountType.isEmpty {
+            parts.append(AppFormat.accountTypeWord(accountType))
+        }
+        if capabilities.marginEnabled == true { parts.append("margin") }
+        if capabilities.shortSelling == true { parts.append("shorting") }
+        if capabilities.optionsTrading == true {
+            if let level = capabilities.optionsLevel {
+                parts.append("options L\(level)")
+            } else {
+                parts.append("options")
+            }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
@@ -798,11 +900,29 @@ private struct ConnectedAccountSettingsRow: View {
                 Text(AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let capabilitiesLine {
+                    Text(capabilitiesLine)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if account.isDraining == true {
+                    Text("draining — existing orders wind down before removal")
+                        .font(.caption2)
+                        .foregroundStyle(AppPalette.warning)
+                }
             }
             Spacer()
-            if account.isActive == true {
-                StatusPill("Active", color: AppPalette.positive, systemImage: "checkmark")
-            } else if store.isBusy(operationID) {
+            if store.isAccountActive(account) {
+                if store.pendingAccountId == account.id {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        StatusPill("Switching", color: AppPalette.accent, systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .accessibilityLabel("Switching to \(account.label)")
+                } else {
+                    StatusPill("Active", color: AppPalette.positive, systemImage: "checkmark")
+                }
+            } else if store.isBusy(operationID) || store.pendingAccountId == account.id {
                 ProgressView()
                     .accessibilityLabel("Switching to \(account.label)")
             } else {

@@ -492,9 +492,10 @@ function selectExitClose(bars: OHLCBar[], targetDate: string): number | undefine
 /**
  * Tie-corrected Spearman rank IC: Pearson correlation of the average ranks of `xs` and
  * `ys`. Returns undefined when either side has zero variance after ranking (correlation
- * undefined). Assumes xs.length === ys.length >= 2.
+ * undefined). Assumes xs.length === ys.length >= 2. Exported for the signal-health
+ * monitor (src/lib/signal-health.ts) — one rank-IC implementation, not two.
  */
-function spearmanRankIC(xs: number[], ys: number[]): number | undefined {
+export function spearmanRankIC(xs: number[], ys: number[]): number | undefined {
   const rx = averageRanks(xs);
   const ry = averageRanks(ys);
   return pearson(rx, ry);

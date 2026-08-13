@@ -794,6 +794,24 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
           )}
         </div>
 
+        {/* Repair-ladder receipts: deterministic post-generation corrections/fallbacks, named and
+            visible by design — never silent edits (TradeProposal.dataAdjustments). */}
+        {Array.isArray(p.dataAdjustments) && p.dataAdjustments.length > 0 && (
+          <div>
+            <div
+              className="con-card-title mb-1"
+              title="Deterministic consistency checks run after the model produced this proposal.  Each entry names a correction or fallback the app applied — recorded as a receipt, never a silent edit, and never a block."
+            >
+              Data adjustments
+            </div>
+            <ul className="list-disc pl-4 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+              {p.dataAdjustments.map((receipt, i) => (
+                <li key={i}>{receipt}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Three outcomes */}
         <div className="rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed">
           <p>
@@ -957,7 +975,8 @@ function LiveApproveSheet({
       <div className="mb-3 rounded-control border border-[color:var(--con-live-border)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
         <div className="font-bold">Brokerage account</div>
         <p className="con-num mt-1">
-          {SIDE_LABEL[pending.proposal.side] ?? pending.proposal.side.toUpperCase()} {pending.proposal.symbol} — estimated{" "}
+          {SIDE_LABEL[pending.proposal.side] ?? pending.proposal.side.toUpperCase()}{" "}
+          <SymbolButton symbol={pending.proposal.symbol} className="text-inherit" /> — estimated{" "}
           <strong>{fmtMoney(notional)}</strong>
           {pending.accountNumber ? ` from account ·· ${pending.accountNumber.slice(-4)}` : ""}
         </p>

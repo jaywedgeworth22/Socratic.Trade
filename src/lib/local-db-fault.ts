@@ -51,19 +51,45 @@ export function isLocalDbFaultMessage(message: string | null | undefined): boole
 }
 
 /**
- * True when an ERROR is a local-SQLite fault — by message, or by the `code` better-sqlite3 stamps
- * on `SqliteError` (SQLITE_BUSY's message is the bare "database is locked", but SQLITE_BUSY_SNAPSHOT
- * arrives with `code: "SQLITE_BUSY_SNAPSHOT"`, so both are checked).
+ * How many `cause` links to follow. Bounded so a self-referential or absurdly deep chain can never
+ * spin here — three is already more nesting than any call site in this repo produces.
  */
-export function isLocalDbFaultError(error: unknown): boolean {
-  if (typeof error === "string") return isLocalDbFaultMessage(error);
-  if (!error || typeof error !== "object") return false;
+const LOCAL_DB_FAULT_MAX_CAUSE_DEPTH = 3;
+
+/**
+ * The RAW local-SQLite message behind an error, or null when it is not one of our faults.
+ *
+ * Walks the `cause` chain, which is what makes this usable at a seam that RE-WRAPS the failure.
+ * vector-db.ts's managed-commit path rethrows its local receipt/finalize writes as
+ * `new Error("document-local-commit-finalize-failed", { cause: sqliteError })` — the wrapper's own
+ * message matches no SQLite pattern and carries no `code`, so classifying it alone silently does
+ * nothing. Returning the underlying text (rather than a bare boolean) also means the audit row and
+ * the "local database contention" advisory quote the real SQLite error instead of the opaque
+ * wrapper label.
+ */
+export function localDbFaultReason(error: unknown, depth = 0): string | null {
+  if (depth > LOCAL_DB_FAULT_MAX_CAUSE_DEPTH) return null;
+  if (typeof error === "string") return isLocalDbFaultMessage(error) ? error : null;
+  if (!error || typeof error !== "object") return null;
+  const message = (error as { message?: unknown }).message;
+  const messageText = typeof message === "string" ? message : undefined;
   const code = (error as { code?: unknown }).code;
   if (typeof code === "string" && LOCAL_DB_FAULT_CODE_PREFIXES.some((prefix) => code.startsWith(prefix))) {
-    return true;
+    // Prefer the message; `code` alone is still a truthful, non-empty reason.
+    return messageText && messageText.length > 0 ? messageText : code;
   }
-  const message = (error as { message?: unknown }).message;
-  return typeof message === "string" && isLocalDbFaultMessage(message);
+  if (messageText && isLocalDbFaultMessage(messageText)) return messageText;
+  return localDbFaultReason((error as { cause?: unknown }).cause, depth + 1);
+}
+
+/**
+ * True when an ERROR is a local-SQLite fault — by message, by the `code` better-sqlite3 stamps on
+ * `SqliteError` (SQLITE_BUSY's message is the bare "database is locked", but SQLITE_BUSY_SNAPSHOT
+ * arrives with `code: "SQLITE_BUSY_SNAPSHOT"`, so both are checked), or by either of those on a
+ * wrapped `cause`.
+ */
+export function isLocalDbFaultError(error: unknown): boolean {
+  return localDbFaultReason(error) !== null;
 }
 
 /** Rolling window the recurrence counter is measured over. */

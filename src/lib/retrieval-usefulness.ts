@@ -18,7 +18,7 @@
 //      order), kinds with enough credited samples and better outcomes rank somewhat higher; unseen
 //      kinds get a neutral prior; nothing is ever excluded, and any failure falls open to the
 //      incoming order. Off-switch: RETRIEVAL_USEFULNESS_WEIGHTING=off.
-import { audit } from "./db";
+import { audit, getPolicy } from "./db";
 import {
   creditRetrievalUsefulness,
   getRetrievalUsefulnessStats,
@@ -27,6 +27,7 @@ import {
   type RetrievalUsefulnessCredit
 } from "./db-retrieval-usefulness";
 import { getInternalSetting, setInternalSetting } from "./db-settings";
+import type { OutcomeGradingMode } from "./types";
 
 /** Env off-switch for the advisory ranking nudge (the join itself always runs — it is pure
  * bookkeeping). Default ON: the weight is bounded and fail-open. Set to "off" to disable. */
@@ -46,6 +47,10 @@ export function memoryKindForDocType(docType?: string): RetrievalMemoryKind {
 
 const LAST_RUN_KEY_PREFIX = "retrieval_usefulness:lastRunDate";
 const DEFAULT_BATCH_LIMIT = 50;
+/** Horizon suffix for the SPY-excess companion stat rows (e.g. '1d:alpha'). The join writes them
+ * whenever a credited horizon carries spyExcessPct; the weighting reads them ONLY under
+ * outcomeGradingMode 'alpha' (raw mode ignores them, keeping default selection byte-identical). */
+export const ALPHA_HORIZON_SUFFIX = ":alpha";
 /** Minimum signed samples before a kind's stats move its rank at all (below = neutral prior). */
 export const USEFULNESS_MIN_SAMPLES = 5;
 /** Multiplier bounds: at most ±10% of the positional base score — a nudge, never a takeover. */
@@ -96,6 +101,17 @@ export function runRetrievalUsefulnessJoin(
       const memoryKind = memoryKindForDocType(unit.docType);
       for (const row of horizonRows) {
         credits.push({ docType, memoryKind, docId: unit.chunkId, horizon: row.horizon, returnPct: row.returnPct as number });
+        // Alpha companion row: win/loss re-judged on the SPY-excess figure so alpha-mode weighting
+        // has its own ledger. Only written when spyExcessPct was actually measured — never fabricated.
+        if (typeof row.spyExcessPct === "number" && Number.isFinite(row.spyExcessPct)) {
+          credits.push({
+            docType,
+            memoryKind,
+            docId: unit.chunkId,
+            horizon: `${row.horizon}${ALPHA_HORIZON_SUFFIX}`,
+            returnPct: row.spyExcessPct
+          });
+        }
       }
       if (typeof decision.outcome.returnPct === "number" && Number.isFinite(decision.outcome.returnPct)) {
         credits.push({ docType, memoryKind, docId: unit.chunkId, horizon: "headline", returnPct: decision.outcome.returnPct });
@@ -163,21 +179,40 @@ export const USEFULNESS_RRF_K = 60;
 
 type KindStats = Map<string, { samples: number; wins: number; losses: number }>;
 
-/** Short-TTL per-user cache of the kind-level stats so the retrieval hot path costs ~zero. */
-const kindStatsCache = new Map<string, { at: number; stats: KindStats }>();
+/** Short-TTL per-user cache of the grading mode + kind-level stats so the retrieval hot path costs
+ * ~zero (one policy read + one stats read per user per TTL window). */
+const kindStatsCache = new Map<string, { at: number; mode: OutcomeGradingMode; stats: KindStats }>();
 const KIND_STATS_TTL_MS = 60_000;
 
 export function clearRetrievalUsefulnessWeightCache(): void {
   kindStatsCache.clear();
 }
 
+/** The owner's grading-mode knob, failing OPEN to "raw" — a settings-store failure on this hot
+ * path must degrade to the original raw-stat selection, never abort retrieval (same contract as
+ * getUserSourceSettingsMap, source-settings.ts). */
+function outcomeGradingModeFor(userId: string): OutcomeGradingMode {
+  try {
+    return getPolicy(userId).outcomeGradingMode ?? "raw";
+  } catch {
+    return "raw";
+  }
+}
+
 function kindStatsFor(userId: string, now: number): KindStats {
+  const mode = outcomeGradingModeFor(userId);
+  // The mode is part of the cache key's validity: a cached entry built under the other grading
+  // mode must not be served for up to a TTL after the owner flips the knob (the mode read itself
+  // is cheap — the stats DB read is what the cache exists to avoid).
   const cached = kindStatsCache.get(userId);
-  if (cached && now - cached.at < KIND_STATS_TTL_MS) return cached.stats;
-  // Kind-level ('' doc_id) rows; prefer the headline horizon, fall back to the best-sampled row so
-  // early data (e.g. only 1d resolved so far) still informs the nudge.
+  if (cached && cached.mode === mode && now - cached.at < KIND_STATS_TTL_MS) return cached.stats;
+  // Kind-level ('' doc_id) rows, split by grading mode: raw uses only the plain-horizon rows
+  // (byte-identical selection to before the alpha ledger existed); alpha uses only the ':alpha'
+  // rows. Prefer the headline horizon (raw only — no 'headline:alpha' row exists), fall back to
+  // the best-sampled row so early data (e.g. only 1d resolved so far) still informs the nudge.
   const best = new Map<string, { horizon: string; samples: number; wins: number; losses: number }>();
   for (const row of getRetrievalUsefulnessStats(userId)) {
+    if (row.horizon.endsWith(ALPHA_HORIZON_SUFFIX) !== (mode === "alpha")) continue;
     const key = `${row.docType}|${row.memoryKind}`;
     const existing = best.get(key);
     const replaces =
@@ -188,7 +223,7 @@ function kindStatsFor(userId: string, now: number): KindStats {
   const stats: KindStats = new Map(
     [...best.entries()].map(([key, row]) => [key, { samples: row.samples, wins: row.wins, losses: row.losses }])
   );
-  kindStatsCache.set(userId, { at: now, stats });
+  kindStatsCache.set(userId, { at: now, mode, stats });
   return stats;
 }
 
@@ -203,6 +238,8 @@ function kindStatsFor(userId: string, now: number): KindStats {
  *    perturb ranks proportionally;
  *  - bounded: the multiplier moves each chunk's positional base by at most ±10%;
  *  - neutral prior for unseen/under-sampled kinds (multiplier 1.0);
+ *  - grading-mode aware: outcomeGradingMode 'alpha' selects the ':alpha' (SPY-excess) stat rows;
+ *    'raw' (default) uses only the plain rows — the mode read itself fails open to raw;
  *  - fail-open: stats missing, DB unavailable, or toggle off => input order returned unchanged;
  *  - observable: logs when the reweighting actually changed the order.
  */

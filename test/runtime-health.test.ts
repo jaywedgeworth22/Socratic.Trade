@@ -459,7 +459,7 @@ describe("Litestream per-tier compaction freshness", () => {
 
     const report = assessLitestreamTierFreshness(statePath, { nowMs: Date.now() });
     expect(report.degraded).toBe(false);
-    expect(report.tiers).toHaveLength(3);
+    expect(report.tiers).toHaveLength(5);
     for (const tier of report.tiers) {
       expect(tier.state).toBe("unknown");
       expect(tier).not.toHaveProperty("ageSeconds");
@@ -469,6 +469,8 @@ describe("Litestream per-tier compaction freshness", () => {
     expect(report.tiers.map((t) => t.label)).toEqual([
       LITESTREAM_TIER_LABELS["0"],
       LITESTREAM_TIER_LABELS["1"],
+      LITESTREAM_TIER_LABELS["2"],
+      LITESTREAM_TIER_LABELS["3"],
       LITESTREAM_TIER_LABELS["9"]
     ]);
   });
@@ -534,6 +536,8 @@ describe("Litestream per-tier compaction freshness", () => {
     expect(LITESTREAM_TIER_STALE_AFTER_SECONDS).toEqual({
       "0": 10 * 60,
       "1": 4 * 60 * 60,
+      "2": 2 * 60 * 60,
+      "3": 6 * 60 * 60,
       "9": 30 * 60 * 60
     });
 

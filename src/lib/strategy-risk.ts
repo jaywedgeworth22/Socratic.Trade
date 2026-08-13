@@ -6,7 +6,9 @@ import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
 import { normalizeSymbol } from "./money";
 import { ThesisRegimeStat, ThesisStat, PrefetchedFills, getThesisScorecard, getThesisRegimeScorecard, ConfidenceCalibrationStat, getConfidenceCalibration, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, calibratedConviction } from "./performance";
 import { estimateNotional, applyOpeningOrderHeadroom } from "./policy";
+import { degradedCoreInputs } from "./proposal-phase-guard";
 import { accountEquity } from "./risk-breaker";
+import { signalHealthDriftActive } from "./signal-health";
 import { bracketWholeShareMinimum, brokerLabel, brokerMinimumDollarNotional, estimateOpeningProposalNotional, formatWholeDollars, openingPolicyNotionalCap, openingRiskCapacity } from "./strategy";
 import { StressPositionInput, stressScenario } from "./stress-scenario";
 import { PolicyDecision, TradingPolicy, ApprovedEscalation, TradeProposal, EquityPosition, OrderSide, MarketQuote, MarketFactorBreakdown, FillSource, MarketScan, Portfolio, StopPlanStyle } from "./types";
@@ -503,15 +505,61 @@ export function applyDeterministicSizing(
   const corrobWinRate = policy.tuning?.corroborationWinRatePct ?? 58;
   const corrobEdge = policy.tuning?.corroborationEdgePct ?? 0;
   const corroborated = winRate >= corrobWinRate && avgReturn > corrobEdge;
-  const conviction = corroborated ? rawConviction : Math.min(rawConviction, convictionCap);
+  const uncorroboratedConviction = corroborated ? rawConviction : Math.min(rawConviction, convictionCap);
   const convictionCapBinds = !corroborated && rawConviction > convictionCap;
+
+  // Degraded-data confidence cap (receipts ladder): when the proposal's CORE scan inputs were
+  // observably degraded (degradedCoreInputs reads only the symbol's own quote off the marketScan
+  // already in scope — an honest signal at this seam, never an invented proxy), cap confidence's
+  // UPSIDE contribution exactly like the uncorroborated cap above and compose AFTER it. Same knob
+  // semantics too (`?? default`; 1 never binds; explicit 0 removes the contribution). No marketScan
+  // → no claim, no cap. When it BINDS, a kind-prefixed dataAdjustments receipt (below) names which
+  // inputs were degraded — a visible haircut, never a silent one.
+  const degradedCap = policy.tuning?.confidenceCapDataDegraded ?? 0.7;
+  const degradedInputs = degradedCoreInputs(proposal.symbol, marketScan);
+  const conviction = degradedInputs.length > 0 ? Math.min(uncorroboratedConviction, degradedCap) : uncorroboratedConviction;
+  const degradedCapBinds = degradedInputs.length > 0 && uncorroboratedConviction > degradedCap;
+  const degradedCapReceipt = degradedCapBinds
+    ? `confidence_capped_degraded_data: AI conviction capped to ${degradedCap} for sizing (was ${uncorroboratedConviction.toFixed(2)}).  Degraded core inputs: ${degradedInputs.join("; ")}.`
+    : null;
+  if (degradedCapBinds) {
+    audit(
+      "sizing_degraded_data_cap_applied",
+      { symbol: normalizeSymbol(proposal.symbol), side: proposal.side, cap: degradedCap, preCapConviction: Number(uncorroboratedConviction.toFixed(4)), degradedInputs },
+      userId,
+      policy.connectedAccountId
+    );
+  }
+
+  // Signal-health auto-throttle (opt-in — policy.tuning.signalHealthAutoThrottle, default OFF):
+  // while a CONFIRMED confidence-drift alarm is active (signal-health.ts: declining rolling rank
+  // IC of confidenceScore vs matured outcomes), cap confidence's UPSIDE contribution at the SAME
+  // convictionCapUncorroborated value even when the thesis is corroborated — a decaying confidence
+  // signal shouldn't ride realized-edge corroboration past the cap. Composes AFTER the caps above;
+  // off (default) the alarm only notifies/logs and sizing is byte-identical to today. The drift
+  // read fails OPEN to inactive (settings-store failure must never shrink or abort sizing).
+  const driftAlarm: ReturnType<typeof signalHealthDriftActive> =
+    policy.tuning?.signalHealthAutoThrottle === true ? signalHealthDriftActive(userId) : { active: false, horizons: [] };
+  const throttledConviction = driftAlarm.active ? Math.min(conviction, convictionCap) : conviction;
+  const throttleBinds = driftAlarm.active && conviction > convictionCap;
+  const throttleReceipt = throttleBinds
+    ? `confidence_capped_signal_drift: AI conviction capped to ${convictionCap} for sizing (was ${conviction.toFixed(2)}).  Signal-health drift alarm active for ${driftAlarm.horizons.join("+")}${driftAlarm.detectedAt ? ` since ${driftAlarm.detectedAt.slice(0, 10)}` : ""} with the auto-throttle enabled.`
+    : null;
+  if (throttleBinds) {
+    audit(
+      "sizing_signal_health_throttle_applied",
+      { symbol: normalizeSymbol(proposal.symbol), side: proposal.side, cap: convictionCap, preCapConviction: Number(conviction.toFixed(4)), horizons: driftAlarm.horizons },
+      userId,
+      policy.connectedAccountId
+    );
+  }
 
   // Edge-aware Kelly-lite: scale by win rate AND conviction AND the realized EDGE.
   // A thesis that wins often but with no/negative expectancy shouldn't get full size;
   // one with a proven positive edge earns more. This uses the learned shrunk avg return
   // so a handful of lucky trades can't inflate sizing.
   const edgeFactor = avgReturn > 1 ? 1 : avgReturn >= 0 ? 0.7 : avgReturn > -1 ? 0.5 : 0.3;
-  const rawMultiplier = (winRate / 100) * conviction * edgeFactor;
+  const rawMultiplier = (winRate / 100) * throttledConviction * edgeFactor;
 
   // Volatility-targeting sizing (opt-in, default off): taper the Kelly-lite multiplier by
   // targetVol/realizedVol (never up, floored at 0.25) BEFORE the floor/ceiling clamp below, so it
@@ -784,10 +832,19 @@ export function applyDeterministicSizing(
 
   return {
     ...proposal,
+    ...(degradedCapReceipt || throttleReceipt
+      ? {
+          dataAdjustments: [
+            ...(proposal.dataAdjustments ?? []),
+            ...(degradedCapReceipt ? [degradedCapReceipt] : []),
+            ...(throttleReceipt ? [throttleReceipt] : [])
+          ]
+        }
+      : {}),
     dollarAmount: targetNotional,
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
     rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + brokerMinNote + (unproven
       ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
-      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote + volTargetNote + heatNote + kellyNote
+      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(throttledConviction * 100)}% AI conviction.`) + capNote + advCapNote + volTargetNote + heatNote + kellyNote
   };
 }

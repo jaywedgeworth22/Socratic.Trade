@@ -1,15 +1,20 @@
 import SwiftUI
 
 struct ActivityView: View {
+    @State private var presentedSymbol: PresentedSymbol?
+
     var body: some View {
         SnapshotScaffold { snapshot in
             DailyActivityCard(snapshot: snapshot)
             SchedulerActivityCard(snapshot: snapshot)
-            FillActivitySection(fills: snapshot.performance?.fills ?? [])
+            FillActivitySection(fills: snapshot.performance?.fills ?? [], presentedSymbol: $presentedSymbol)
             CommandActivitySection(commands: snapshot.recentCommands)
         }
         .navigationTitle("Activity")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $presentedSymbol) { presented in
+            SymbolInfoSheet(symbol: presented.symbol)
+        }
     }
 }
 
@@ -55,9 +60,10 @@ private struct SchedulerActivityCard: View {
                 HStack {
                     SectionHeading("Scheduler")
                     Spacer()
+                    // Shared market-aware run-state vocabulary (console deriveStateInfo parity).
                     StatusPill(
-                        snapshot.readiness.systemState == "active" ? "Running" : "Paused",
-                        color: snapshot.readiness.systemState == "active" ? AppPalette.positive : .secondary,
+                        deriveRunStateWord(snapshot: snapshot).rawValue,
+                        color: deriveRunStateWord(snapshot: snapshot).pillColor,
                         systemImage: "timer"
                     )
                 }
@@ -71,6 +77,7 @@ private struct SchedulerActivityCard: View {
 
 private struct FillActivitySection: View {
     let fills: [FillEvent]
+    @Binding var presentedSymbol: PresentedSymbol?
 
     private var recentFills: [FillEvent] {
         Array(fills.sorted { $0.filledAt > $1.filledAt }.prefix(20))
@@ -87,7 +94,7 @@ private struct FillActivitySection: View {
                 )
             } else {
                 ForEach(recentFills) { fill in
-                    FillActivityRow(fill: fill)
+                    FillActivityRow(fill: fill, presentedSymbol: $presentedSymbol)
                 }
             }
         }
@@ -96,29 +103,30 @@ private struct FillActivitySection: View {
 
 private struct FillActivityRow: View {
     let fill: FillEvent
+    @Binding var presentedSymbol: PresentedSymbol?
 
     var body: some View {
-        AppCard {
-            HStack(spacing: 12) {
-                TickerLogo(symbol: fill.symbol, size: 34)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 7) {
-                        Text(fill.symbol)
-                            .font(.headline)
+        AppCard(padding: 13) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        SymbolTapButton(symbol: fill.symbol, logoSize: 30, font: .title3.weight(.bold)) {
+                            presentedSymbol = PresentedSymbol(symbol: fill.symbol)
+                        }
                         Text(fill.side.uppercased())
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(sideColor)
                     }
                     Text("\(AppFormat.number(fill.quantity)) @ \(AppFormat.money(fill.price))")
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {
                     Text(AppFormat.money(fill.notional))
-                        .font(.subheadline.weight(.semibold))
+                        .font(.title3.weight(.semibold))
                     Text(AppFormat.dateTime(fill.filledAt))
-                        .font(.caption2)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -168,13 +176,13 @@ private struct CommandActivityRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(displayName)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.headline)
                     Spacer()
                     StatusPill(command.status.capitalized, color: statusColor, systemImage: statusIcon)
                 }
                 HStack {
                     Text(AppFormat.dateTime(command.updatedAt))
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                     Spacer()
                     Text(String(command.id.prefix(8)))

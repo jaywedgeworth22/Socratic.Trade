@@ -16,6 +16,7 @@ import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
+import { runWatchlistDigestIfDue } from "./watchlist-digest";
 import { runAuditPruneIfDue } from "./audit-prune";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth } from "./broker-health";
 import { sendNotification } from "./notifications";
@@ -557,6 +558,13 @@ async function tick(): Promise<void> {
   void journalLane("r2-usage-daily-digest", {}, () => runR2UsageDailyDigestIfDue())
     .catch((err) => console.error("[scheduler] r2 usage digest error:", err));
 
+  // Opt-in daily watchlist digest (owner default OFF, per-user Settings -> Delivery toggle):
+  // once per Central-Time day, at/after 15:15 CT (shortly after US market close), summarizes the
+  // watchlist from data the app already persisted (last market scan + recent proposals per
+  // symbol) — no provider or LLM calls. Resolves its own due users internally; self-guarded.
+  void journalLane("watchlist-digest", {}, () => runWatchlistDigestIfDue())
+    .catch((err) => console.error("[scheduler] watchlist digest error:", err));
+
   // 10-K/10-Q bodies and default-OFF FMP transcripts have separate producer cadences, request
   // budgets, and cursors. They share the durable RAG_REINDEX operation lease and this demand-first
   // symbol collection so both corpora prioritize held/watchlisted/recent-candidate names.
@@ -680,6 +688,20 @@ async function tick(): Promise<void> {
         journalLane("retrieval-usefulness-join", { userId }, () => runRetrievalUsefulnessJoinIfDue(userId))
       )
       .catch((err) => console.error(`[scheduler] retrieval-usefulness join error for ${userId}:`, err));
+  }
+
+  // Once-per-day signal-health refresh (r2 lesson: health): pure-arithmetic rolling diagnostics of
+  // the LLM's OWN confidenceScore against matured decision outcomes (rank IC + t-stat, quantile
+  // buckets, top-K churn, gross vs net) persisted as signal_health_snapshot rows; a confirmed
+  // rank-IC drift raises an advisory signal_health alarm — sizing only changes under the opt-in
+  // policy.tuning.signalHealthAutoThrottle. SQLite-only, no provider or LLM calls; self-guarded
+  // (UTC-day marker) like the retrieval-usefulness join above.
+  for (const userId of listUsers()) {
+    void import("./signal-health")
+      .then(({ runSignalHealthRefreshIfDue }) =>
+        journalLane("signal-health-refresh", { userId }, () => runSignalHealthRefreshIfDue(userId))
+      )
+      .catch((err) => console.error(`[scheduler] signal-health refresh error for ${userId}:`, err));
   }
 
   // Atlas public-repo port: evaluate armed price alerts against live quotes every tick.

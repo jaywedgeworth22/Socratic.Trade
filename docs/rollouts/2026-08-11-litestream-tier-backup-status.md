@@ -128,3 +128,16 @@ uncovered something that changed the design above).
 ## Zero-Code Findings
 
 None beyond what's captured above — this was a code change, not a research-only session.
+
+## Follow-up (2026-08-12 ~2:15am CT) — coverage extended to levels 2 and 3
+
+Disproven within a day: the original monitor's assumption that "levels 2-8 are unused here."
+Litestream's boot log starts compaction monitors for levels 1 (30s), 2 (5m), 3 (1h), and 9
+(24h), and the 2026-08-12 production wedge sat at LEVEL 2 (byte-identical "non-contiguous
+transaction ids" retry every 5 minutes) — structurally invisible to the 0/1/9 monitor shipped
+the day before.  `LitestreamCompactionTier` now covers `0|1|2|3|9` (thresholds: L2 2h, L3 6h —
+generous versus their monitor intervals because output only appears when enough lower-level
+input has accumulated), the admin panel renders all five tiers, and the tier-count/threshold
+assertions in `test/runtime-health.test.ts` + `test/backup-status-route.test.ts` are updated
+(51 tests green).  Never-produced tier directories still report "unknown", not degraded, so a
+fresh post-reset volume does not false-alarm.

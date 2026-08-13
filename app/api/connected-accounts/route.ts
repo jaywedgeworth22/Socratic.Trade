@@ -40,9 +40,17 @@ export async function POST(req: Request) {
       return new NextResponse("Test broker accounts are test infrastructure and cannot be added.", { status: 400 });
     }
     const broker =
-      body.broker === "alpaca" || body.broker === "alpaca-mcp" || body.broker === "robinhood" || body.broker === "tradier" ? body.broker : undefined;
+      body.broker === "alpaca" ||
+      body.broker === "alpaca-mcp" ||
+      body.broker === "robinhood" ||
+      body.broker === "tradier" ||
+      body.broker === "etoro" ||
+      body.broker === "public" ||
+      body.broker === "webull"
+        ? body.broker
+        : undefined;
     if (!broker) {
-      return new NextResponse("broker is required (alpaca | alpaca-mcp | robinhood | tradier)", { status: 400 });
+      return new NextResponse("broker is required (alpaca | alpaca-mcp | robinhood | tradier | etoro | public | webull)", { status: 400 });
     }
     const taxationType =
       body.taxationType === "roth_ira" || body.taxationType === "traditional_ira" || body.taxationType === "taxable"
@@ -128,6 +136,24 @@ export async function POST(req: Request) {
           );
         }
       }
+    } else if (broker === "etoro") {
+      const userKey = typeof body.apiSecret === "string" ? body.apiSecret.trim() : "";
+      if (!apiKey || !userKey) {
+        return new NextResponse("eToro requires x-api-key and x-user-key (Settings → Trading → API Key Management).", { status: 400 });
+      }
+      environment = body.environment === "paper" ? "paper" : "live";
+    } else if (broker === "public") {
+      const secret = typeof body.apiSecret === "string" ? body.apiSecret.trim() : apiKey;
+      if (!secret) {
+        return new NextResponse("Public.com requires the Individual API secret from Account Settings → Security → API.", { status: 400 });
+      }
+      environment = "live";
+    } else if (broker === "webull") {
+      const secret = typeof body.apiSecret === "string" ? body.apiSecret.trim() : "";
+      if (!apiKey || !secret) {
+        return new NextResponse("Webull requires OpenAPI App Key and App Secret from Developer Tool → My Application.", { status: 400 });
+      }
+      environment = body.environment === "paper" ? "paper" : "live";
     } else if (broker === "alpaca" || broker === "alpaca-mcp") {
       environment = isAlpacaPaperCredential({ accountNumber: body.accountNumber, apiKey }) ? "paper" : "live";
       // A user-supplied baseUrl is trusted with the account's API credentials on every broker
@@ -147,9 +173,15 @@ export async function POST(req: Request) {
     const defaultLabel =
       broker === "tradier"
         ? `Tradier ${environment === "paper" ? "Sandbox" : "Brokerage"}`
-        : broker === "alpaca-mcp"
-          ? `Alpaca MCP ${environment === "paper" ? "Paper" : "Brokerage"}`
-          : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
+        : broker === "etoro"
+          ? `eToro ${environment === "paper" ? "Demo" : "Real"}`
+          : broker === "public"
+            ? "Public Brokerage"
+            : broker === "webull"
+              ? `Webull ${environment === "paper" ? "Sandbox" : "Brokerage"}`
+              : broker === "alpaca-mcp"
+                ? `Alpaca MCP ${environment === "paper" ? "Paper" : "Brokerage"}`
+                : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
     let accountNumber = typeof body.accountNumber === "string" ? body.accountNumber.trim() || undefined : undefined;
 
     const connectedAccountId = body.id ?? crypto.randomUUID();

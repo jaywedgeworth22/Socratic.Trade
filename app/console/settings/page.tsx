@@ -94,7 +94,14 @@ const EVENT_HINT: Record<NotificationEventType, string> = {
   option_alert: "an option contract changed status or expired",
   earningscalls_entitlement_blocked: "the EarningsCalls transcript program paused on a plan-entitlement problem",
   risk_advisory: "a risk guardrail was breached but the agent is still in control (advisory)",
-  protective_exit_failing: "a synthetic protective exit keeps failing and is still retrying"
+  protective_exit_failing: "a synthetic protective exit keeps failing and is still retrying",
+  signal_health: "the AI's confidence signal is losing predictive power against matured outcomes (advisory)",
+  // Not shown in the list below — the daily watchlist digest has its own dedicated toggle in
+  // Delivery (settings/delivery.tsx, notification_prefs.watchlistDigestEnabled) and is delivered
+  // via notify() directly rather than through this enabledEvents gate, so an entry here would be
+  // a second, non-functional on/off switch. Kept in the map only so NOTIFICATION_EVENT_TYPES stays
+  // exhaustively labeled.
+  watchlist_digest: "your daily watchlist digest sends (configured in Delivery, below)"
 };
 
 /** Sticky horizontal jump chips for the long Settings page (UX PR-B4).
@@ -527,7 +534,8 @@ function EventNotificationsCard() {
         one you&apos;re viewing. Where they go (webhook URL, push/email/SMS) is configured in Delivery channels, below.
       </p>
       <div className="grid gap-1.5 sm:grid-cols-2">
-        {NOTIFICATION_EVENT_TYPES.map((type) => {
+        {/* watchlist_digest is deliberately excluded — see the EVENT_HINT comment above. */}
+        {NOTIFICATION_EVENT_TYPES.filter((type) => type !== "watchlist_digest").map((type) => {
           const on = events.includes(type);
           const hint = EVENT_HINT[type];
           return (

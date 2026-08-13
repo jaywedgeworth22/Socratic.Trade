@@ -129,7 +129,7 @@ export function resetDbForTesting(): void {
 // PRAGMA user_version — replacing the old habit of adding another unversioned ALTER to
 // migrate() (no ordering/stamp; diverged across worktrees).
 const SCHEMA_BASELINE = 1;
-type Migration = { version: number; name: string; up: (db: Database.Database) => void };
+export type Migration = { version: number; name: string; up: (db: Database.Database) => void };
 
 function quoteSqlIdentifier(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
@@ -2710,6 +2710,81 @@ const MIGRATIONS: Migration[] = [
         );
       }
     }
+  },
+  {
+    // Watchlist digest (dsa lesson: digest) needs a queryable per-symbol proposal lookback.
+    // Previously `symbol` only lived inside the `proposal` JSON blob, requiring a full-table
+    // json_extract scan per symbol lookup. Additive + guarded; one-time backfill mirrors the
+    // trade_thesis_tag/entry_market_regime backfill above. insertProposal (db-proposals.ts)
+    // populates the column going forward.
+    version: 72,
+    name: "trade_proposals_symbol_column",
+    up: (database) => {
+      const table = database
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'trade_proposals'`)
+        .get() as { name: string } | undefined;
+      if (!table) return;
+      const cols = database.prepare("PRAGMA table_info(trade_proposals)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "symbol")) {
+        database.exec("ALTER TABLE trade_proposals ADD COLUMN symbol TEXT");
+        database.exec(
+          "UPDATE trade_proposals SET symbol = UPPER(TRIM(json_extract(proposal, '$.symbol'))) WHERE json_extract(proposal, '$.symbol') IS NOT NULL"
+        );
+      }
+      database.exec(
+        "CREATE INDEX IF NOT EXISTS idx_trade_proposals_symbol_account_created ON trade_proposals (symbol, account_number, created_at)"
+      );
+    }
+  },
+  {
+    // Watchlist digest opt-in (owner default OFF, Settings -> Delivery): same shape as the
+    // pushover_target_column / notify_per_user_channel_credentials migrations above.
+    version: 73,
+    name: "notify_watchlist_digest_enabled",
+    up: (database) => {
+      try {
+        const cols = database.pragma("table_info(notification_prefs)") as { name: string }[];
+        if (cols.length > 0 && !cols.some((c) => c.name === "watchlist_digest_enabled")) {
+          database.exec(
+            "ALTER TABLE notification_prefs ADD COLUMN watchlist_digest_enabled INTEGER NOT NULL DEFAULT 0;"
+          );
+        }
+      } catch {
+        // Table might not exist in isolated tests
+      }
+    }
+  },
+  {
+    // Signal-health monitor (r2 lesson: health): rolling pure-arithmetic diagnostics of the LLM's
+    // OWN confidenceScore against matured decision outcomes — rank IC + t-stat, quantile buckets,
+    // top-K churn, gross-vs-net — one snapshot row per (user, UTC day, horizon), written by the
+    // daily signal-health-refresh lane (src/lib/signal-health.ts). CRUD in db-signal-health.ts.
+    // Rows exist only when the observation floor is met — an under-sampled day writes nothing
+    // rather than a fabricated diagnostic.
+    version: 74,
+    name: "signal_health_snapshot",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS signal_health_snapshot (
+          user_id TEXT NOT NULL,
+          period_end TEXT NOT NULL,
+          horizon TEXT NOT NULL,
+          rank_ic REAL NOT NULL,
+          t_stat REAL NOT NULL,
+          n_observations INTEGER NOT NULL,
+          n_dates INTEGER NOT NULL,
+          quantile_buckets TEXT NOT NULL,
+          top_k_churn_pct REAL,
+          gross_return_pct REAL NOT NULL,
+          net_of_cost_return_pct REAL NOT NULL,
+          rolling_rank_ic_slope REAL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, period_end, horizon)
+        );
+        CREATE INDEX IF NOT EXISTS idx_signal_health_user_horizon
+          ON signal_health_snapshot (user_id, horizon, period_end DESC);
+      `);
+    }
   }
 ];
 
@@ -2819,7 +2894,13 @@ export function runMigrations(database: Database.Database, migrations: Migration
       m.up(database);
       database.pragma(`user_version = ${m.version}`);
     });
-    apply();
+    // BEGIN IMMEDIATE, not the default DEFERRED: during a rolling deploy the outgoing container
+    // commits continuously, and a deferred migration transaction that reads before writing dies
+    // with an INSTANT SQLITE_BUSY on the WAL snapshot upgrade — busy_timeout never applies to
+    // that path (proven in prod: deployment pyqxv16i, 2026-08-12, migration 72 crash-looped the
+    // incoming container and Coolify rolled back).  Taking the write lock up front makes the
+    // 60s busy_timeout do its job while the old container's short writes drain.
+    apply.immediate();
     current = m.version;
     console.log(`[db] applied migration ${m.version} (${m.name})`);
   }
@@ -4325,3 +4406,4 @@ export * from "./db-earningscalls";
 export * from "./db-document-abstracts";
 export * from "./db-task-journal";
 export * from "./db-embed-stage";
+export * from "./db-signal-health";

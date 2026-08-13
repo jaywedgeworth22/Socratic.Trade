@@ -1,8 +1,10 @@
 // db-proposals.ts — trade proposal CRUD
 import { getDb } from "./db";
 import { scopeAccount } from "./db-execution";
+import { normalizeSymbol } from "./money";
 import type {
   ExecutionMode,
+  OrderSide,
   PendingProposal,
   PolicyDecision,
   RecentProposal,
@@ -32,6 +34,14 @@ function proposalTagFallbacks(parsedProposal: unknown): { tradeThesisTag?: strin
     tradeThesisTag: nonEmptyString(record?.tradeThesisTag),
     entryMarketRegime: nonEmptyString(record?.entryMarketRegime)
   };
+}
+
+/** Extract+normalize the symbol off the (already-parsed) proposal object for the dedicated
+ *  `symbol` column (see db.ts migration 72) — mirrors proposalTagFallbacks' derivation shape. */
+function deriveProposalSymbol(parsedProposal: unknown): string | undefined {
+  const record = parsedProposal as { symbol?: unknown } | null | undefined;
+  const raw = nonEmptyString(record?.symbol);
+  return raw ? normalizeSymbol(raw) : undefined;
 }
 
 function parseJson<T>(value: string | null | undefined, fallback: T): T {
@@ -777,10 +787,11 @@ export function insertProposal(input: {
   // proposal object itself so the dedicated columns (which the learning loop's SQL reads) don't stay
   // NULL forever while the same data sits unread inside the `proposal` blob.
   const { tradeThesisTag: derivedThesisTag, entryMarketRegime: derivedRegime } = proposalTagFallbacks(input.proposal);
+  const symbol = deriveProposalSymbol(input.proposal);
 
   getDb()
     .prepare(
-      "INSERT INTO trade_proposals (id, user_id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, ref_id, order_id, status, trade_thesis_tag, entry_market_regime, execution_mode, prompt_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO trade_proposals (id, user_id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, ref_id, order_id, status, trade_thesis_tag, entry_market_regime, execution_mode, prompt_version, symbol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .run(
       input.id,
@@ -798,6 +809,84 @@ export function insertProposal(input: {
       input.tradeThesisTag ?? derivedThesisTag ?? null,
       input.entryMarketRegime ?? derivedRegime ?? null,
       input.executionMode ?? null,
-      input.promptVersion ?? null
+      input.promptVersion ?? null,
+      symbol ?? null
     );
+}
+
+/** One row of a symbol's proposal trajectory (watchlist digest lesson: digest — src/lib/report-context.ts).
+ *  Deliberately narrower than TradeProposal: only what a trajectory table/summary needs to render. */
+export interface SymbolProposalTrajectoryRow {
+  id: string;
+  createdAt: string;
+  /** The proposal's terminal/current lifecycle status (trade_proposals.status — e.g. "placed",
+   *  "blocked", "proposed"), NOT the PolicyDecision JSON blob. Format with feedStatusLabel
+   *  (dashboard-ui.ts) for display. */
+  decision: string;
+  side: OrderSide;
+  tradeThesisTag?: string;
+  entryMarketRegime?: string;
+  confidenceScore?: number;
+  referencePrice?: number;
+}
+
+/**
+ * Recent proposals for one symbol, newest first — the per-symbol lookback the watchlist digest
+ * (and any future per-symbol history view) needs without scanning every proposal's JSON blob.
+ * `accountNumber` narrows to one account when given; omitted, it spans every account the user has
+ * (a symbol digest is inherently cross-account). `excludeRunId` drops one run's own rows — for a
+ * caller building "history before this run" mid-strategy-tick without its own just-inserted
+ * proposal leaking into its own trajectory.
+ */
+export function listProposalsBySymbol(input: {
+  symbol: string;
+  accountNumber?: string;
+  userId?: string;
+  limit?: number;
+  excludeRunId?: string;
+}): SymbolProposalTrajectoryRow[] {
+  const symbol = normalizeSymbol(input.symbol);
+  const userId = input.userId ?? "local";
+  const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 5)));
+
+  const conditions = ["symbol = ?", "user_id = ?"];
+  const params: Array<string | number> = [symbol, userId];
+  if (input.accountNumber !== undefined) {
+    conditions.push("account_number = ?");
+    params.push(scopeAccount(input.accountNumber));
+  }
+  if (input.excludeRunId) {
+    conditions.push("run_id != ?");
+    params.push(input.excludeRunId);
+  }
+  params.push(limit);
+
+  type RawRow = {
+    id: string;
+    created_at: string;
+    status: string;
+    proposal: string;
+    trade_thesis_tag: string | null;
+    entry_market_regime: string | null;
+  };
+  const rows = getDb()
+    .prepare(
+      `SELECT id, created_at, status, proposal, trade_thesis_tag, entry_market_regime FROM trade_proposals WHERE ${conditions.join(" AND ")} ORDER BY created_at DESC LIMIT ?`
+    )
+    .all(...params) as RawRow[];
+
+  return rows.map((r) => {
+    const parsedProposal = parseJson<Partial<TradeProposal>>(r.proposal, {});
+    const fallback = proposalTagFallbacks(parsedProposal);
+    return {
+      id: r.id,
+      createdAt: r.created_at,
+      decision: r.status,
+      side: (parsedProposal.side ?? "buy") as OrderSide,
+      tradeThesisTag: r.trade_thesis_tag ?? fallback.tradeThesisTag ?? undefined,
+      entryMarketRegime: r.entry_market_regime ?? fallback.entryMarketRegime ?? undefined,
+      confidenceScore: typeof parsedProposal.confidenceScore === "number" ? parsedProposal.confidenceScore : undefined,
+      referencePrice: typeof parsedProposal.referencePrice === "number" ? parsedProposal.referencePrice : undefined
+    };
+  });
 }

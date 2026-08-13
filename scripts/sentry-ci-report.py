@@ -12,14 +12,28 @@ the workflow file.
 
 Two independent signals are sent per completed run:
   1. If conclusion == "failure": a Sentry error event tagged with
-     {workflow, branch, actor}, carrying the run URL, fingerprinted on
-     [workflow, branch] so repeated failures on the same branch/workflow
+     {app, workflow, branch, actor}, carrying the run URL, fingerprinted on
+     [app, workflow] so repeated failures of the same workflow in this repo
      group into one Sentry issue instead of paging separately every time.
   2. If the run was schedule-triggered (event == "schedule"): a Sentry Crons
      check-in (status "ok" on success, "error" otherwise) with an upsert
      monitor_config whose schedule mirrors that workflow's own cron
      expression (see CRON_SCHEDULES below) so a nightly/weekly job that
      silently STOPS running raises a missed-check-in alert.
+
+The `app` tag + fingerprint component matter because fleet-infra is a SHARED
+Sentry project: this repo and Congress.Trade both run workflows named "CI",
+"Security", and "Effort Issues Sync", so without `app` a failure here would
+dedup into the same Sentry issue as one there — and the titles ("CI workflow
+failed: Security") gave no way to tell the two repos apart. Per AGENT-SYNC.md
+"Observability", every event carries `app:<repo>`.
+
+Branch is a TAG, never a fingerprint component. Merge-queue refs are unique per
+attempt (`gh-readonly-queue/main/pr-1234-<sha>`), so fingerprinting on branch
+minted a fresh throwaway Sentry issue for every queued run instead of grouping
+them — the same failure mode that produced FLEET-INFRA-2N/-2H off agent
+branches. Grouping is per (app, workflow); which branch broke is one tag click
+away.
 
 Secrets: SENTRY_FLEET_DSN is read only from the environment (set by the
 workflow from the repo secret) and is NEVER printed or logged in any form,
@@ -36,6 +50,11 @@ import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timezone
+
+# This repo's identity in the shared fleet-infra project. Tags every event and
+# participates in the fingerprint so cross-repo CI failures never collapse into
+# one Sentry issue.
+APP = "socratic-trade"
 
 # Cron expressions mirrored from each source workflow's own `schedule:` block.
 # Keep in sync if those workflows' schedules ever change. Workflows not
@@ -119,8 +138,8 @@ def main() -> int:
 
     # ── 1. Failure event ────────────────────────────────────────────────────
     # Only page Sentry for main + merge-queue failures. Feature-branch failures are already
-    # surfaced (and enforced) by the PR's required status checks; fingerprinting on branch
-    # minted one throwaway Sentry error-issue per agent branch (FLEET-INFRA-2N/-2H).
+    # surfaced (and enforced) by the PR's required status checks; paging on them minted one
+    # throwaway Sentry error-issue per agent branch (FLEET-INFRA-2N/-2H).
     pageworthy_branch = branch == "main" or branch.startswith("gh-readonly-queue/")
     if conclusion == "failure" and not pageworthy_branch:
         print(f"skip: branch {branch} failure not paged to Sentry (PR checks cover it)")
@@ -131,10 +150,12 @@ def main() -> int:
             "platform": "other",
             "level": "error",
             "environment": "fleet-ci",
-            "message": f"CI workflow failed: {workflow_name} (branch {branch})",
-            "tags": {"workflow": workflow_name, "branch": branch, "actor": actor},
+            "message": f"CI workflow failed: {workflow_name} (branch {branch}) [{APP}]",
+            "tags": {"app": APP, "workflow": workflow_name, "branch": branch, "actor": actor},
             "extra": {"run_url": run_url, "run_id": run_id},
-            "fingerprint": ["ci-failure", workflow_name, branch],
+            # Branch stays a tag: merge-queue refs are unique per attempt, so
+            # including it here would mint a new issue for every queued run.
+            "fingerprint": ["ci-failure", APP, workflow_name],
         }
         send_envelope(envelope_url, auth_header, "event", event_payload)
         print(f"Sent Sentry failure event for workflow '{workflow_name}' on branch '{branch}'.")
@@ -151,6 +172,13 @@ def main() -> int:
             )
         else:
             checkin_status = "ok" if conclusion == "success" else "error"
+            # Deliberately NOT namespaced with APP, unlike the error-event
+            # fingerprint above. These slugs are live Sentry Crons monitors;
+            # renaming them would orphan the existing ones, which would then
+            # alert "missed check-in" forever while brand-new monitors relearn
+            # their cadence. There is no collision to fix — Congress.Trade
+            # already emits `ci-congress-trade-*`, and no other fleet repo
+            # sends check-ins.
             monitor_slug = f"ci-{slugify(workflow_name)}"
             checkin_payload = {
                 "check_in_id": uuid.uuid4().hex,

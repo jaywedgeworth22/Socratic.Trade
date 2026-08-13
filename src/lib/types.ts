@@ -30,6 +30,11 @@ export type StrategyAuthority = "propose" | "decide";
 export type SellToFundBuyMode = "off" | "suggest" | "propose" | "automated";
 
 export type LlmReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+/** How the learning loop GRADES decision outcomes: "raw" = side-adjusted return alone (the
+ * original behavior); "alpha" = additionally judge against the same-window SPY-excess return
+ * (spyExcessPct), so a rising market's beta can't teach the loop that every long was a good
+ * decision. See TradingPolicy.outcomeGradingMode. */
+export type OutcomeGradingMode = "raw" | "alpha";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
@@ -93,7 +98,17 @@ export const NOTIFICATION_EVENT_TYPES = [
   "risk_advisory",
   // P2.8: synthetic protective exit is retrying after a persistent broker decline / placement
   // failure. Coalesced to one owner-visible alert per (stop, fingerprint) failure streak.
-  "protective_exit_failing"
+  "protective_exit_failing",
+  // Signal-health drift alarm (src/lib/signal-health.ts): the rolling rank IC of the LLM's own
+  // confidenceScore against matured outcomes is decaying. Advisory — nothing halts; sizing only
+  // changes under the opt-in policy.tuning.signalHealthAutoThrottle.
+  "signal_health",
+  // Opt-in daily watchlist summary (default OFF — notification_prefs.watchlistDigestEnabled, see
+  // Settings -> Delivery). Delivered via notify() directly (src/lib/watchlist-digest.ts), like the
+  // R2 usage digest, so it does NOT go through sendNotification's enabledEvents gate — the member
+  // exists here for vocabulary/label consistency across the notification-event surfaces that key
+  // off NotificationEventType, not to duplicate its own on/off switch in Event notifications.
+  "watchlist_digest"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
@@ -284,6 +299,28 @@ export interface TuningSettings {
   corroborationWinRatePct?: number;
   /** Shrunk realized avg return (%) strictly above which conviction is treated as corroborated. Default 0. */
   corroborationEdgePct?: number;
+  /**
+   * Max value AI confidence may contribute to the conviction sizing multiplier (0–1) when the
+   * proposal's CORE scan inputs were degraded at proposal time (no scan quote for the symbol,
+   * missing/non-positive price, or an all-providers-failed enrichment receipt on the quote — see
+   * degradedCoreInputs in proposal-phase-guard.ts). Applies AFTER (composes with) the
+   * convictionCapUncorroborated cap and mirrors its semantics exactly: absent → code default 0.7;
+   * it is a cap VALUE, not a switch (1 never binds = disabled; an explicit 0 removes confidence's
+   * contribution entirely). Caps only the UPSIDE — low confidence still shrinks size fully. When
+   * it binds, a `confidence_capped_degraded_data: …` receipt is appended to the proposal's
+   * dataAdjustments — visible, never a silent haircut.
+   */
+  confidenceCapDataDegraded?: number;
+  /**
+   * Signal-health auto-throttle (default OFF — the drift alarm only notifies/logs). When true and
+   * a CONFIRMED confidence-drift alarm is active (signal-health.ts: declining rolling rank IC of
+   * the LLM's own confidenceScore vs matured outcomes), conviction's UPSIDE contribution to sizing
+   * is capped at the convictionCapUncorroborated value even for corroborated theses — a decaying
+   * confidence signal shouldn't ride realized-edge corroboration to full size. When it binds, a
+   * `confidence_capped_signal_drift: …` receipt is appended to dataAdjustments (visible, never a
+   * silent haircut). Owner-adjustable; turning it off restores today's sizing exactly.
+   */
+  signalHealthAutoThrottle?: boolean;
   /**
    * Deterministic fundamentals hard-veto on BUYS, applied model-free in deterministicBearFilter
    * (independent of the Bull/Bear LLMs). Veto a buy when the candidate's free-cash-flow yield is
@@ -740,7 +777,7 @@ export interface ConnectedAccount {
    * Broker identifier. Add new values here when connecting a new venue
    * (e.g. "coinbase" for a crypto exchange) and wire a matching BrokerGateway.
    */
-  broker: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier";
+  broker: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier" | "etoro" | "public" | "webull";
   environment: "paper" | "live";
   /**
    * @deprecated Use capabilities.accountType instead for new accounts.
@@ -971,6 +1008,16 @@ export interface TradingPolicy {
    *  corrupted lingers when new learning is slow. Default 7. */
   learningReviewMaxWaitDays?: number;
   /**
+   * How the learning loop GRADES decision outcomes (default "raw" — byte-identical to before this
+   * knob existed). "alpha" adds a COMPANION grade from the headline horizon's SPY-excess return
+   * (spyExcessPct): lesson gating and the post-mortem prompt then cite alpha instead of letting a
+   * rising market's beta mark every long a winner, and retrieval-usefulness weighting reads the
+   * ':alpha' stat rows. The raw status is ALWAYS still written; a case with no measurable
+   * spyExcessPct falls back to raw grading WITH a receipt (outcome_alpha_grading) — lesson
+   * generation is never blocked. Owner-adjustable preference, not a cage.
+   */
+  outcomeGradingMode?: OutcomeGradingMode;
+  /**
    * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).
    * When non-empty, a TRANSIENT primary failure (HTTP 429/5xx or timeout) transparently re-issues the
    * SAME request against each model in order; the first success serves the run. The failover is
@@ -1073,7 +1120,7 @@ export interface TradingPolicy {
   tuning?: TuningSettings;
   triggerSettings?: TriggerSettings;
   activeProfileId?: string;
-  activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier";
+  activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier" | "etoro" | "public" | "webull";
   // SHORT_SELLING: Feature gate for short/cover order sides.
   // When true, policy.ts will allow short/cover proposals through (with stricter
   // guardrails). When false or absent, short/cover proposals are unconditionally
@@ -1445,6 +1492,17 @@ export interface TradeProposal {
    */
   preVetoReasons?: string[];
   /**
+   * Auditable repair-ladder receipts: deterministic post-generation consistency checks whose
+   * corrections/fallbacks are recorded as VISIBLE, named entries — never silent edits, never blocks
+   * (proposal-phase-guard.ts owns the doc of record). Each entry is prefixed with its receipt kind
+   * (mirroring `preVetoReasons`' kind-prefix convention), e.g. `session_phrase_mismatch: …`,
+   * `confidence_capped_degraded_data: …`, `bracket_stop_fallback_atr: …`. APP-AUTHORED only: the
+   * Bull parse boundary discards any model-emitted field of this name, so every entry is a
+   * deterministic receipt, not model prose. Optional — proposals with no adjustments (and all
+   * persisted/legacy proposals) simply don't carry it.
+   */
+  dataAdjustments?: string[];
+  /**
    * Explicit agent-authored request to override owner preference gates for this decision.
    * This is not a client-side bypass token and does not override broker/account/integrity gates.
    * It exists so Socratic Trade can say, in structured form, "I know this conflicts with the
@@ -1604,6 +1662,13 @@ export interface SocraticDecisionCase {
     status: "open" | "won" | "lost" | "flat" | "unknown" | "unresolvable";
     returnPct?: number;
     pnlUsd?: number;
+    /** Benchmark-alpha COMPANION verdict (written only under outcomeGradingMode "alpha"): the sign
+     * of the headline spyExcessPct (pickHeadlineAlpha, outcome-horizons.ts). Never replaces
+     * `status` — raw grading remains the primary record. Undefined in "raw" mode or when no
+     * resolved horizon carried spyExcessPct (never fabricated). */
+    alphaStatus?: "won" | "lost" | "flat";
+    /** The headline spyExcessPct behind alphaStatus. */
+    alphaPct?: number;
     note?: string;
     measuredAt?: string;
     outcomes: SocraticOutcomeHorizonRow[];
@@ -2624,6 +2689,10 @@ export interface NotifyPrefs {
   twilioAccountSidSet: boolean;
   twilioAuthTokenSet: boolean;
   twilioFromSet: boolean;
+  /** Opt-in daily watchlist digest (default false — see watchlist-digest.ts). Delivery-scoped
+   *  (notification_prefs), not policy-scoped, because it's "where/whether alerts leave the app"
+   *  like the rest of this interface, not a per-account trading behavior. */
+  watchlistDigestEnabled: boolean;
   updatedAt: string | null;
 }
 
@@ -2641,6 +2710,19 @@ export interface NotifyMessage {
   body: string;
   kind?: string;
   data?: unknown;
+  /**
+   * Pre-rendered alternate bodies for channels with different length constraints (report-renderer.ts
+   * produces these for the watchlist digest). When present, notify() (src/lib/notify.ts) delivers
+   * to each channel the LARGEST tier that fits that channel's CHANNEL_CAPABILITIES.maxBodyChars,
+   * falling back to the smallest tier (then that channel's own existing truncation) when nothing
+   * fits. `body` above remains the default/fallback body and is what every channel gets when
+   * bodyTiers is absent — existing single-body callers are unaffected.
+   */
+  bodyTiers?: {
+    full: string;
+    medium?: string;
+    brief?: string;
+  };
 }
 
 export interface NotifyChannelResult {

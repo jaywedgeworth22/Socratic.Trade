@@ -483,6 +483,180 @@ describe("counterfactual materializer — multi-horizon rows on skipped candidat
   });
 });
 
+describe("benchmark-alpha outcome grading (outcomeGradingMode)", () => {
+  // Rising market: the long gains 2% over 1w while SPY gains 5% — raw grading calls it a win,
+  // alpha grading calls it a loss (the decision underperformed just holding the index).
+  const ALPH_BARS: OHLCBar[] = [
+    { time: "2026-06-10", close: 100 },
+    { time: "2026-06-11", close: 101 },
+    { time: "2026-06-17", close: 102 }
+  ];
+  const SPY_RALLY_BARS: OHLCBar[] = [
+    { time: "2026-06-10", close: 500 },
+    { time: "2026-06-11", close: 505 },
+    { time: "2026-06-17", close: 525 }
+  ];
+  // Outperformance: the long gains 20% over 1w while SPY (module-level SPY_BARS) gains only 2% —
+  // raw AND alpha both grade this a win, with no divergence between them.
+  const ALPH_OUTPERFORM_BARS: OHLCBar[] = [
+    { time: "2026-06-10", close: 100 },
+    { time: "2026-06-11", close: 108 },
+    { time: "2026-06-17", close: 120 }
+  ];
+
+  async function seedBlockedCase(userId: string, runId: string): Promise<void> {
+    const { insertSkippedCounterfactualCandidate, upsertSocraticDecisionCase } = await import("../src/lib/db");
+    upsertSocraticDecisionCase({
+      userId,
+      runId,
+      proposalId: `prop-${runId}`,
+      symbol: "ALPH",
+      side: "buy",
+      status: "blocked",
+      authority: "decide",
+      thesis: "Momentum",
+      rationale: "Rising-market long.",
+      action: "BUY ALPH $500"
+    });
+    insertSkippedCounterfactualCandidate({
+      userId,
+      runId,
+      symbol: "ALPH",
+      snapshotAt: "2026-06-10T14:30:00.000Z",
+      refPrice: 100,
+      horizonDays: 5,
+      targetDate: "2026-06-17"
+    });
+  }
+
+  it("alpha mode: long up 2% vs SPY up 5% grades alphaStatus 'lost' while raw stays 'won', with a divergence receipt and alpha-cited post-mortem", async () => {
+    const userId = `oe-alpha-div-${randomUUID()}`;
+    const { getSocraticDecisionCase, listAudit, setPolicy } = await import("../src/lib/db");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    setPolicy({ ...DEFAULT_POLICY, outcomeGradingMode: "alpha" }, userId);
+    await seedBlockedCase(userId, "run-alpha-1");
+
+    const prompts: string[] = [];
+    const result = await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      fetchOHLC: makeFetchOHLC({ ALPH: ALPH_BARS, SPY: SPY_RALLY_BARS }),
+      fetchQuote: async () => undefined,
+      llm: async ({ userContent }) => {
+        prompts.push(userContent);
+        return JSON.stringify({
+          lessons: [{ lesson: "Beta-driven longs need an edge over the index; avoid.", direction: "avoid" }],
+          verdictOnBelief: "Right on direction, wrong on edge.",
+          whichDissentMattered: "none"
+        });
+      }
+    });
+    expect(result.closed).toBe(1);
+    expect(result.lessonsWritten).toBe(1); // alpha mode never blocks lesson generation
+
+    const updated = getSocraticDecisionCase("prop-run-alpha-1", userId);
+    // Raw grading is untouched: headline 1w +2% -> 'won'.
+    expect(updated?.outcome?.status).toBe("won");
+    expect(updated?.outcome?.returnPct).toBe(2);
+    // Companion alpha grade from the headline (1w) spyExcessPct: 2 - 5 = -3 -> 'lost'.
+    expect(updated?.outcome?.alphaStatus).toBe("lost");
+    expect(updated?.outcome?.alphaPct).toBe(-3);
+
+    // The key observability signal: raw and alpha verdicts disagreed.
+    const receipt = listAudit(50, userId).find((event) => event.kind === "outcome_alpha_grading");
+    expect(receipt).toBeTruthy();
+    expect(receipt?.payload).toMatchObject({ event: "divergence", rawStatus: "won", alphaStatus: "lost", alphaPct: -3 });
+
+    // The post-mortem prompt cites the alpha figures, not just the raw return.
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('"alphaStatus":"lost"');
+    expect(prompts[0]).toContain('"alphaPct":-3');
+  });
+
+  it("alpha mode: long OUTPERFORMS SPY (raw 'won', alpha also 'won') — no divergence, zero outcome_alpha_grading audit events", async () => {
+    const userId = `oe-alpha-nodiv-${randomUUID()}`;
+    const { getSocraticDecisionCase, listAudit, setPolicy } = await import("../src/lib/db");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    setPolicy({ ...DEFAULT_POLICY, outcomeGradingMode: "alpha" }, userId);
+    await seedBlockedCase(userId, "run-alpha-nodiv");
+
+    const result = await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      fetchOHLC: makeFetchOHLC({ ALPH: ALPH_OUTPERFORM_BARS, SPY: SPY_BARS }),
+      fetchQuote: async () => undefined,
+      llm: async () =>
+        JSON.stringify({
+          lessons: [{ lesson: "Momentum long that also cleared the index; repeat when volume confirms.", direction: "repeat" }],
+          verdictOnBelief: "Right on direction and edge.",
+          whichDissentMattered: "none"
+        })
+    });
+    expect(result.closed).toBe(1);
+    expect(result.lessonsWritten).toBe(1);
+
+    const updated = getSocraticDecisionCase("prop-run-alpha-nodiv", userId);
+    // Raw grading: headline 1w +20% -> 'won'.
+    expect(updated?.outcome?.status).toBe("won");
+    expect(updated?.outcome?.returnPct).toBe(20);
+    // Alpha grading agrees: 1w excess = 20 - 2 = +18 -> 'won'. Same verdict as raw -> no divergence.
+    expect(updated?.outcome?.alphaStatus).toBe("won");
+    expect(updated?.outcome?.alphaPct).toBe(18);
+
+    // Agreement writes NOTHING to the audit log: no divergence receipt AND no raw_fallback receipt.
+    const alphaEvents = listAudit(50, userId).filter((event) => event.kind === "outcome_alpha_grading");
+    expect(alphaEvents).toHaveLength(0);
+  });
+
+  it("raw mode (default): behavior unchanged — no alpha fields on the outcome and no alpha receipts", async () => {
+    const userId = `oe-alpha-raw-${randomUUID()}`;
+    const { getSocraticDecisionCase, listAudit } = await import("../src/lib/db");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    await seedBlockedCase(userId, "run-alpha-raw");
+
+    const result = await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      fetchOHLC: makeFetchOHLC({ ALPH: ALPH_BARS, SPY: SPY_RALLY_BARS }),
+      fetchQuote: async () => undefined,
+      llm: async () => undefined
+    });
+    expect(result.closed).toBe(1);
+
+    const updated = getSocraticDecisionCase("prop-run-alpha-raw", userId);
+    expect(updated?.outcome?.status).toBe("won");
+    // Companion fields are NOT written in raw mode — not even as undefined-valued keys.
+    expect("alphaStatus" in (updated?.outcome ?? {})).toBe(false);
+    expect("alphaPct" in (updated?.outcome ?? {})).toBe(false);
+    expect(listAudit(50, userId).some((event) => event.kind === "outcome_alpha_grading")).toBe(false);
+  });
+
+  it("alpha mode with no measurable spyExcessPct: alphaStatus stays undefined and lesson gating falls back to raw WITH a receipt", async () => {
+    const userId = `oe-alpha-fb-${randomUUID()}`;
+    const { getSocraticDecisionCase, listAudit, setPolicy } = await import("../src/lib/db");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    setPolicy({ ...DEFAULT_POLICY, outcomeGradingMode: "alpha" }, userId);
+    await seedBlockedCase(userId, "run-alpha-fb");
+
+    const result = await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      fetchOHLC: makeFetchOHLC({ ALPH: ALPH_BARS }), // SPY -> null: no benchmark series (never fabricated)
+      fetchQuote: async () => undefined,
+      llm: async () => undefined
+    });
+    expect(result.closed).toBe(1);
+
+    const updated = getSocraticDecisionCase("prop-run-alpha-fb", userId);
+    expect(updated?.outcome?.status).toBe("won"); // raw grading still resolves
+    expect(updated?.outcome?.alphaStatus).toBeUndefined();
+
+    // Lesson generation was NOT blocked; the fallback to raw gating is receipted instead.
+    const fallback = listAudit(50, userId).find((event) => event.kind === "outcome_alpha_grading");
+    expect(fallback).toBeTruthy();
+    expect(fallback?.payload).toMatchObject({ event: "raw_fallback", reason: "no_spy_excess", rawStatus: "won" });
+  });
+});
+
 describe("callLessonLlm — empty-model guard (rotation sentinel / no-defaults)", () => {
   it("returns undefined and makes NO fetch when the model resolves empty but a key is present", async () => {
     const userId = `oe-lesson-nomodel-${randomUUID()}`;

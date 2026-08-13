@@ -156,6 +156,31 @@ enum AppFormat {
         return String(display)
     }
 
+    /// Red Team failure-kind slug → console wording (src/lib/red-team-routing.ts
+    /// `describeRedTeamFailureKind`): "not configured", "provider error", …, else "unavailable".
+    static func redTeamFailureKindLabel(_ failureKind: String?) -> String {
+        switch failureKind {
+        case "not_configured": return "not configured"
+        case "timeout": return "timeout"
+        case "provider_error": return "provider error"
+        case "rate_limited": return "rate limited"
+        case "malformed_response": return "malformed response"
+        default: return "unavailable"
+        }
+    }
+
+    /// AccountCapabilities.accountType slug → console wording (app/console/settings/brokers.tsx
+    /// TAXATION_WORD style): never render raw snake_case slugs like "roth_ira" to the user.
+    static func accountTypeWord(_ accountType: String) -> String {
+        switch accountType {
+        case "brokerage": return "brokerage"
+        case "roth_ira": return "Roth IRA"
+        case "traditional_ira": return "traditional IRA"
+        case "crypto_exchange": return "crypto exchange"
+        default: return accountType.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
     /// Humanized command type for Activity / busy strips.
     static func commandLabel(_ commandType: String) -> String {
         if let known = commandLabels[commandType] { return known }
@@ -165,6 +190,26 @@ enum AppFormat {
             .split(separator: " ")
             .map { $0.capitalized }
             .joined(separator: " ")
+    }
+
+    /// Central time, explicitly labeled — fleet convention for any user-facing timestamp that
+    /// shows a timezone. Used by SymbolInfoSheet's quote-as-of line; other mobile timestamps
+    /// intentionally stay device-local (unchanged, out of scope here).
+    static func dateTimeCentral(_ value: String?) -> String {
+        guard let date = date(value) else { return "—" }
+        let central = TimeZone(identifier: "America/Chicago") ?? .current
+        return date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, timeZone: central)) + " CT"
+    }
+
+    /// P/E display per the repo's P/E honesty convention (mirrors
+    /// app/console/ui/drilldown-data.ts `peDisplay`): eps decides the no-ratio state first —
+    /// negative/zero trailing earnings render "n/a" (a real, computed "no ratio" state, not
+    /// missing data); a strictly positive ratio renders as a number; anything else means the
+    /// data simply wasn't available.
+    static func peRatioDisplay(peRatio: Double?, eps: Double?) -> String {
+        if let eps, eps <= 0 { return "n/a" }
+        if let peRatio, peRatio > 0 { return peRatio.formatted(.number.precision(.fractionLength(1))) }
+        return "—"
     }
 
     private static func date(_ value: String?) -> Date? {
@@ -188,15 +233,17 @@ private extension ISO8601DateFormatter {
 
 struct AppCard<Content: View>: View {
     private let content: Content
+    private let padding: CGFloat
 
-    init(@ViewBuilder content: () -> Content) {
+    init(padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
+        self.padding = padding
         self.content = content()
     }
 
     var body: some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            .padding(padding)
             .background(AppPalette.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -355,6 +402,38 @@ struct TickerLogo: View {
             .font(.system(size: max(9, size * 0.38), weight: .semibold, design: .rounded))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Identifiable wrapper for `.sheet(item:)` presentation of `SymbolInfoSheet` from any list row.
+/// Each screen that shows symbols (Activity, Markets) owns one `@State private var
+/// presentedSymbol: PresentedSymbol?` and threads it down as a `Binding` to `SymbolTapButton`.
+struct PresentedSymbol: Identifiable, Equatable {
+    let symbol: String
+    var id: String { symbol }
+}
+
+/// Tappable ticker logo + symbol text that opens `SymbolInfoSheet` for `symbol` — the mobile
+/// counterpart to the web console's `SymbolButton` (app/console/ui/symbol-drilldown.tsx). Wrap
+/// wherever a row shows a symbol; pass `action` to set the screen's `presentedSymbol` state.
+/// A real button (not a bare tap gesture), so it carries button accessibility traits for free —
+/// only the accessible label needs to be supplied here.
+struct SymbolTapButton: View {
+    let symbol: String
+    var logoSize: CGFloat = 26
+    var font: Font = .headline
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                TickerLogo(symbol: symbol, size: logoSize)
+                Text(symbol)
+                    .font(font)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(symbol) company info")
     }
 }
 
@@ -547,6 +626,212 @@ private struct SnapshotStatusBanner: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 4)
+    }
+}
+
+/// Presentation for the shared run-state vocabulary (tones mirror console deriveStateInfo:
+/// running=pos, paused=muted, exit-only/winding-down=warn, stopped=neg).
+extension RunStateWord {
+    var pillColor: Color {
+        switch self {
+        case .running: return AppPalette.positive
+        case .pausedMarketClosed: return .secondary
+        case .exitOnly, .windingDown: return AppPalette.warning
+        case .stopped: return AppPalette.negative
+        }
+    }
+
+    var pillSystemImage: String {
+        switch self {
+        case .running: return "bolt.fill"
+        case .pausedMarketClosed: return "moon.zzz.fill"
+        case .exitOnly, .windingDown: return "arrow.down.right.circle"
+        case .stopped: return "pause.fill"
+        }
+    }
+}
+
+/// Trailing swipe-reveal action for card rows inside ScrollView stacks (SwiftUI's
+/// `.swipeActions` is List-only).  Swiping left reveals one action button; tapping it fires
+/// `perform` and closes.  The gesture needs a mostly-horizontal drag, so vertical scrolling
+/// keeps working.  This adds a faster path to EXISTING actions only — same handlers, same
+/// ceremony — never a new kind of confirmation.
+struct SwipeRevealAction: ViewModifier {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    let isEnabled: Bool
+    let perform: () -> Void
+
+    @State private var offset: CGFloat = 0
+    @State private var isOpen = false
+
+    private let actionWidth: CGFloat = 88
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: offset)
+            .background(alignment: .trailing) {
+                if offset < 0 {
+                    Button(action: fire) {
+                        VStack(spacing: 5) {
+                            Image(systemName: systemImage)
+                                .font(.body.weight(.semibold))
+                            Text(title)
+                                .font(.caption.weight(.semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .frame(width: actionWidth)
+                        .frame(maxHeight: .infinity)
+                        .background(tint, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(title)
+                }
+            }
+            // Plain .gesture (not highPriority): the ScrollView keeps winning vertical pans.
+            .gesture(dragGesture, including: isEnabled ? .all : .subviews)
+            .onTapGesture {
+                if isOpen { close() }
+            }
+            .animation(.snappy(duration: 0.22), value: offset)
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 24, coordinateSpace: .local)
+            .onChanged { value in
+                guard isEnabled else { return }
+                // Mostly-horizontal drags only, so the scroll view keeps vertical swipes.
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                let base = isOpen ? -actionWidth : 0
+                offset = min(0, max(-actionWidth - 26, base + value.translation.width))
+            }
+            .onEnded { value in
+                guard isEnabled else { return }
+                if offset < -actionWidth * 0.55 {
+                    offset = -actionWidth
+                    isOpen = true
+                } else {
+                    close()
+                }
+            }
+    }
+
+    private func fire() {
+        close()
+        perform()
+    }
+
+    private func close() {
+        offset = 0
+        isOpen = false
+    }
+}
+
+extension View {
+    /// See `SwipeRevealAction`.
+    func swipeRevealAction(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        isEnabled: Bool = true,
+        perform: @escaping () -> Void
+    ) -> some View {
+        modifier(SwipeRevealAction(
+            title: title,
+            systemImage: systemImage,
+            tint: tint,
+            isEnabled: isEnabled,
+            perform: perform
+        ))
+    }
+}
+
+/// Horizontal wrap that sizes each child to its intrinsic width.
+/// Used by watchlist chips so a logo + ticker + remove control is never
+/// forced into a too-narrow equal-width grid cell (which wrapped `SPCX`
+/// onto two lines).  Layout math is in `WrappingHStackLayout` so XCTest
+/// can cover wrap vs. single-line without hosting SwiftUI.
+struct WrappingHStack: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        return WrappingHStackLayout.place(
+            widths: sizes.map(\.width),
+            heights: sizes.map(\.height),
+            containerWidth: proposal.width ?? .infinity,
+            spacing: spacing,
+            lineSpacing: lineSpacing
+        ).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let result = WrappingHStackLayout.place(
+            widths: sizes.map(\.width),
+            heights: sizes.map(\.height),
+            containerWidth: bounds.width,
+            spacing: spacing,
+            lineSpacing: lineSpacing
+        )
+        for index in subviews.indices {
+            subviews[index].place(
+                at: CGPoint(
+                    x: bounds.minX + result.origins[index].x,
+                    y: bounds.minY + result.origins[index].y
+                ),
+                proposal: ProposedViewSize(sizes[index])
+            )
+        }
+    }
+}
+
+enum WrappingHStackLayout {
+    struct Result: Equatable {
+        var size: CGSize
+        var origins: [CGPoint]
+    }
+
+    static func place(
+        widths: [CGFloat],
+        heights: [CGFloat],
+        containerWidth: CGFloat,
+        spacing: CGFloat,
+        lineSpacing: CGFloat
+    ) -> Result {
+        precondition(widths.count == heights.count)
+        guard !widths.isEmpty else {
+            return Result(size: .zero, origins: [])
+        }
+
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var maxX: CGFloat = 0
+        var origins: [CGPoint] = []
+        origins.reserveCapacity(widths.count)
+
+        for index in widths.indices {
+            let width = widths[index]
+            let height = heights[index]
+            if x > 0 && x + width > containerWidth {
+                y += lineHeight + lineSpacing
+                x = 0
+                lineHeight = 0
+            }
+            origins.append(CGPoint(x: x, y: y))
+            x += width
+            maxX = max(maxX, x)
+            x += spacing
+            lineHeight = max(lineHeight, height)
+        }
+
+        return Result(
+            size: CGSize(width: maxX, height: y + lineHeight),
+            origins: origins
+        )
     }
 }
 

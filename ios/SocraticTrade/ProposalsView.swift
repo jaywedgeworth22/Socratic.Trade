@@ -5,6 +5,7 @@ struct ProposalsView: View {
 
     @State private var confirmingProposal: PendingProposal?
     @State private var confirmationText = ""
+    @State private var presentedSymbol: PresentedSymbol?
 
     var body: some View {
         SnapshotScaffold { snapshot in
@@ -17,22 +18,41 @@ struct ProposalsView: View {
                 )
             } else {
                 ForEach(snapshot.pendingProposals) { proposal in
+                    let feedback = store.proposalActionFeedback(proposalId: proposal.id)
                     ProposalCard(
                         proposal: proposal,
-                        feedback: store.proposalActionFeedback(proposalId: proposal.id),
+                        feedback: feedback,
                         approveBusy: store.isBusy(approveOperationID(proposal)),
                         rejectBusy: store.isBusy(rejectOperationID(proposal)),
                         approveDisabled: !store.canSubmit("proposal.approve"),
                         rejectDisabled: !store.canSubmit("proposal.reject"),
                         requiresTypedConfirmation: requiresLiveConfirmation(proposal, snapshot: snapshot),
                         approve: { approve(proposal, snapshot: snapshot) },
-                        reject: { reject(proposal) }
+                        reject: { reject(proposal) },
+                        presentedSymbol: $presentedSymbol
                     )
+                    // Swipe is REJECT-only — approval always goes through the buttons
+                    // (and, for live orders, the typed confirmation).  Same handler and
+                    // ceremony as the on-card Reject button.
+                    .swipeRevealAction(
+                        title: "Reject",
+                        systemImage: "xmark",
+                        tint: AppPalette.negative,
+                        isEnabled: store.canSubmit("proposal.reject")
+                            && !store.isBusy(rejectOperationID(proposal))
+                            && feedback?.isInFlight != true
+                            && feedback?.isSettledSuccess != true
+                    ) {
+                        reject(proposal)
+                    }
                 }
             }
         }
         .navigationTitle("Proposals")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $presentedSymbol) { presented in
+            SymbolInfoSheet(symbol: presented.symbol)
+        }
         .alert(
             "Confirm Live Order",
             isPresented: Binding(
@@ -165,6 +185,7 @@ private struct ProposalCard: View {
     let requiresTypedConfirmation: Bool
     let approve: () -> Void
     let reject: () -> Void
+    @Binding var presentedSymbol: PresentedSymbol?
 
     private var sideColor: Color {
         switch proposal.proposal.side.lowercased() {
@@ -185,9 +206,13 @@ private struct ProposalCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .center, spacing: 10) {
-                    TickerLogo(symbol: proposal.proposal.symbol, size: 32)
-                    Text(proposal.proposal.symbol.uppercased())
-                        .font(.title2.weight(.bold))
+                    SymbolTapButton(
+                        symbol: proposal.proposal.symbol.uppercased(),
+                        logoSize: 32,
+                        font: .title2.weight(.bold)
+                    ) {
+                        presentedSymbol = PresentedSymbol(symbol: proposal.proposal.symbol)
+                    }
                     StatusPill(proposal.proposal.side.uppercased(), color: sideColor)
                     Spacer()
                     Text(AppFormat.money(proposal.estimatedNotional))
@@ -213,6 +238,9 @@ private struct ProposalCard: View {
 
                 VStack(alignment: .leading, spacing: 7) {
                     DetailLine(label: "Order", value: orderDescription)
+                    if let priceDrift = priceDriftDescription {
+                        DetailLine(label: "Price", value: priceDrift)
+                    }
                     if let thesis = proposal.proposal.tradeThesisTag, !thesis.isEmpty {
                         DetailLine(label: "Thesis", value: thesis)
                     }
@@ -223,6 +251,9 @@ private struct ProposalCard: View {
                         DetailLine(label: "Proposed by", value: model)
                     }
                     DetailLine(label: "Created", value: AppFormat.dateTime(proposal.createdAt))
+                    if let revalidated = proposal.lastRevalidatedAt {
+                        DetailLine(label: "Checked", value: AppFormat.dateTime(revalidated))
+                    }
                 }
 
                 if let rationale = proposal.proposal.greenTeamRationale ?? proposal.proposal.rationale,
@@ -283,6 +314,18 @@ private struct ProposalCard: View {
 
     private var executionModeSystemImage: String {
         proposal.executionMode == "broker/live" ? "dollarsign.circle.fill" : "questionmark.circle"
+    }
+
+    /// Decision-critical drift: reference price at proposal time vs the latest revalidated
+    /// price, e.g. "$200.00 → $202.20 (+1.1%)".  Rendered only when both prices decoded.
+    private var priceDriftDescription: String? {
+        guard
+            let reference = proposal.proposalReferencePrice,
+            let current = proposal.proposalCurrentPrice,
+            reference > 0
+        else { return nil }
+        let driftPct = (current - reference) / reference * 100
+        return "\(AppFormat.money(reference)) → \(AppFormat.money(current)) (\(AppFormat.percent(driftPct, signed: true)))"
     }
 
     private var orderDescription: String {
@@ -402,7 +445,14 @@ private struct RedTeamReview: View {
     let verdict: RedTeamVerdict
 
     private var title: String {
-        guard verdict.available else { return "Adversarial review unavailable" }
+        guard verdict.available else {
+            // Console parity: "Red Team failed (provider error)" — the failure kind is
+            // decision-critical when no verdict exists (src/lib/red-team-routing.ts wording).
+            if let failureKind = verdict.failureKind, !failureKind.isEmpty {
+                return "Red Team failed (\(AppFormat.redTeamFailureKindLabel(failureKind)))"
+            }
+            return "Adversarial review unavailable"
+        }
         switch verdict.verdict {
         case "approve-at-half": return "Red Team: approved at half size"
         case "reject": return "Red Team: rejected"

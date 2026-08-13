@@ -15,6 +15,7 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Btn, LiveTag, TextInput } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
+import { SymbolButton } from "../ui/symbol-drilldown";
 import {
   OrdersApiError,
   ReplaceLiveConfirmationRequiredError,
@@ -129,7 +130,11 @@ export function ReplaceMarketSheet({
       <div className="grid grid-cols-2 gap-3 rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
         <Fact
           label="Order"
-          value={`${sideWord} ${order.symbol} ${kind}`}
+          value={
+            <>
+              {sideWord} <SymbolButton symbol={order.symbol} className="text-inherit" /> {kind}
+            </>
+          }
           title="The working order that would be cancelled."
         />
         <Fact
