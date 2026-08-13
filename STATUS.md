@@ -1,3 +1,16 @@
+## Current (2026-08-13 GROK pickup — land leftover `monet/ship-pipeline-fix`)
+
+Monet hit quota with this branch finished and **no PR**.  GROK is landing it from
+`~/apps/trading-monet-shipfix` without redesign.  Merged `origin/main` (`#2684`
+honest server stats) cleanly; docs/board pickup addendum in this commit; `scripts/land.sh`
+opens a READY PR and arms squash auto-merge.
+
+Unchanged Monet scope: refuse bot merges without an elevated token + hourly
+fail-closed CI backstop; cron path-gate so backend-only commits do not ship
+TestFlight; strip `[AG]` anywhere in release notes; ios-fleet sha256 pin;
+version snapshot.  Rollout:
+`docs/rollouts/2026-08-13-ios-ship-pipeline-repair.md`.
+
 ## Current (2026-08-13 ~3:45pm CT MONET — iOS ship pipeline repair)
 
 Bot-merged PRs land on `main` and dispatch NOTHING — not CI, not ios-ship.  ST is

@@ -405,3 +405,22 @@ Exact gate numbers are recorded in STATUS.md.
 - `_merge-shepherd-impl.yml` needed no change: it already passes
   `SHEPHERD_HAS_PAT`.  The gap was in `scripts/merge-shepherd.sh`, which consulted
   that flag only on the re-sync path and would still have merged as the bot.
+
+## 7. GROK pickup addendum (2026-08-13)
+
+Monet hit session quota with this branch finished locally and **no PR opened**.
+Owner directed GROK to land it from `~/apps/trading-monet-shipfix` without
+redesign.
+
+Pickup steps:
+
+- `git fetch origin && git merge origin/main --no-edit` — clean merge of `#2684`
+  honest server stats (`77bbb77f`).  STATUS / EFFORT-LOG auto-merged via union.
+- Confirmed `git config user.email` is the GitHub noreply address.
+- Marked the effort In Progress under GROK pickup on the live board +
+  `docs/EFFORT-LOG.md`; added this addendum; updated the STATUS.md current
+  block.
+- Landing via `bash scripts/land.sh` (READY PR) then
+  `gh pr merge <n> --squash --auto`.
+
+No product redesign.  Dual credit on the pickup commit.
