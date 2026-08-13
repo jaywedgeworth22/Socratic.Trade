@@ -1,3 +1,13 @@
+## Current (2026-08-13 GROK — pickup Monet+Claude quota-cap)
+
+Owner-directed: Monet and Claude hit the session limit (resets 7pm CT).  Inventory +
+team of agents on leftover work.  Already merged today (not re-done): #2684 honest
+stats, #2682 real toggles, #2681 APNs, #2680 FTS yield, #2667 load/Lato, #2662 order
+cancel, #2666 r3.  In flight: unstick #2685+#2683 (phantom), land
+`monet/ship-pipeline-fix`, land Claude r4 leftover, quote Key-Stats dashes + tappable
+fill/position cards, CT/UM CF-account leftover.  Rollout:
+`docs/rollouts/2026-08-13-pickup-monet-claude-cap.md`.
+
 ## Current (2026-08-13 MONET — litestream compaction visibility: make a silent backup failure loud)
 
 Step 3 of a diagnosed fix (Steps 1/2 — disabling Coolify rolling replacement, a one-time B2
