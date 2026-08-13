@@ -11,7 +11,17 @@
 //   fill             -> https://socratictrade.com/console/orders?symbol=<SYMBOL>
 //   price_alert      -> https://socratictrade.com/console/watchlist?symbol=<SYMBOL>
 //   run_failed       -> https://socratictrade.com/console/activity
-//   (anything else)  -> https://socratictrade.com/console
+//   (anything else)  -> https://socratictrade.com/console/activity
+//
+// CONTRACT WITH THE iOS ROUTER (ios/SocraticTrade/DeepLink.swift). Every URL emitted here must be
+// one `DeepLink.destination(for:)` accepts, or the tap opens the app and lands nowhere. That parser
+// requires https + host exactly `socratictrade.com` + a path of `/console/<screen>` with EXACTLY
+// two segments — which is why the catch-all is `/console/activity` and NOT bare `/console`: the
+// parser rejects a one-segment path, and Activity is also where the notification itself is listed
+// (app/console/activity/page.tsx renders notification events), so it is the honest landing for an
+// event with no more specific screen. The pairing is pinned by test/apns-deep-link-contract.test.ts
+// against the table in ios/SocraticTradeTests/PushNotificationTests.swift — a new event type or a
+// new URL shape fails that test rather than silently shipping a dead tap.
 // The id/symbol query params are additive: a client that only routes on the PATH still lands on
 // the right screen, and the same ids are repeated as top-level payload fields for a client that
 // prefers structured routing over URL parsing.
@@ -22,9 +32,18 @@
 
 import type { NotificationEventType } from "./types";
 
-/** Canonical app origin for universal links. Overridable for a non-production origin. */
+/**
+ * Canonical app origin for universal links.
+ *
+ * `PUSH_DEEP_LINK_ORIGIN` is the ONLY override, and setting it is a deliberate act: the iOS router
+ * pins the host to exactly `socratictrade.com` (DeepLink.universalLinkHost), so pointing this at
+ * any other origin — `www.`, a preview host, http — silently turns every push tap into a no-op on
+ * the phone while the web links still look fine. It used to also inherit `NEXT_PUBLIC_APP_ORIGIN`,
+ * which nothing else in the app reads; that made an unrelated env var able to break push routing
+ * by accident, so it was dropped rather than left as a trap.
+ */
 export function pushLinkOrigin(env: Record<string, string | undefined> = process.env): string {
-  const raw = (env.PUSH_DEEP_LINK_ORIGIN ?? env.NEXT_PUBLIC_APP_ORIGIN ?? "https://socratictrade.com").trim();
+  const raw = (env.PUSH_DEEP_LINK_ORIGIN ?? "https://socratictrade.com").trim();
   return raw.replace(/\/+$/, "") || "https://socratictrade.com";
 }
 
@@ -85,7 +104,9 @@ export function pushDeepLink(kind: string, payload: unknown, origin: string = pu
       case "kill_switch":
         return "/console/activity";
       default:
-        return "/console";
+        // Activity, not `/console`: the iOS router only accepts a two-segment console path, and
+        // this is the screen that actually lists the notification that was just delivered.
+        return "/console/activity";
     }
   })();
   return `${origin}${path}`;

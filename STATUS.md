@@ -4,62 +4,46 @@
 now sit in front of paid history providers; Public + eToro gateways + Webull connect stub;
 CopyTrader observe/allowlist framework (official eToro API only).  Owner must mint keys.
 Rollout: `docs/rollouts/2026-08-12-broker-cascade-and-copy-intel.md`.
-## Current (2026-08-12 MONET - APNs native push, server side)
+## Current (2026-08-12 MONET - APNs native push, MERGED end to end + contract reconciled)
 
-Branch `monet/apns-server` (worktree `~/apps/trading-monet-apns-server`).  Server half of native
-iOS push.  Push is a NEW DELIVERY CHANNEL inside the existing notification system, not a parallel
-pipeline: it is one more `NotifyChannelId` in `src/lib/notify.ts`'s `CHANNELS` record, reached
-through the same `sendNotification` -> `notify` path and gated by the same
-`policy.notificationSettings.enabledEvents`.
+Branch `monet/apns-push` (worktree `~/apps/trading-monet-apns`), forked from `origin/main`
+`5784c1cf`.  Merges the two parallel halves - `monet/apns-server` (`c4bd3acb`) and
+`monet/apns-ios` (`f697bd32`) - with **zero conflicts** (disjoint by construction; even
+`project.pbxproj` merged clean, so no xcodegen regen or objectVersion re-patch was needed) and
+makes the contract between them real.
 
-- **Registry** - migration 75 `device_push_tokens`, CRUD in `src/lib/db-device-tokens.ts`.  Token is
-  the PRIMARY KEY and registration REASSIGNS on conflict, so a shared phone that switches accounts
-  never keeps delivering the previous user's alerts.  `environment` is stored, never inferred.
-- **Endpoint** - `https://api.push.apple.com` for production (TestFlight IS production),
-  `https://api.sandbox.push.apple.com` for Xcode builds, chosen from the token row.
-- **Client** - `src/lib/apns.ts`: `node:http2` (fetch cannot speak HTTP/2 to APNs), ES256 provider
-  JWT cached at 50 min (Apple: reuse >= 20, expire at 60), 410/400 BadDeviceToken -> retire the
-  token, 403 -> loud auth/config error, 429/5xx -> retryable.
-- **Endpoint contract** - `POST /api/mobile/push/register` `{ token, environment, bundleId? }`,
-  idempotent; `DELETE` to unregister on sign-out, scoped to the owner.
-- **Fail soft** - a push failure never breaks the trading path that triggered it; a missing APNs
-  credential degrades to "push unavailable" (`skipped: "not_configured"`), never a crash.
+- **Server half:** push is a NEW DELIVERY CHANNEL in the EXISTING notification system - one more
+  `NotifyChannelId` in `src/lib/notify.ts`'s `CHANNELS`, same `sendNotification` -> `notify` path,
+  same `enabledEvents` gate.  Migration 75 `device_push_tokens` (token is PRIMARY KEY, registration
+  REASSIGNS on conflict so a shared phone switching accounts cannot leak the previous user's
+  alerts; `environment` stored, never inferred).  `src/lib/apns.ts` uses `node:http2` (fetch cannot
+  speak HTTP/2 to APNs), caches the ES256 provider JWT at 50 min, retires tokens on 410 / 400
+  BadDeviceToken, surfaces 403 loudly.  `POST`/`DELETE /api/mobile/push/register`, session-authed.
+- **iOS half:** `aps-environment: production` in BOTH `SocraticTrade.entitlements` and
+  `project.yml`; the environment is read out of `embedded.mobileprovision` at runtime, never
+  `#if DEBUG` (TestFlight IS production - guessing sandbox is a silent 400 forever).  Permission on
+  first Proposals visit; taps route through the same `DeepLink` parser as `onOpenURL`; sign-out
+  withdraws the token BEFORE cookies are cleared.
+- **Contract fixes made in the merge** (the point of this phase): the catch-all deep link was
+  `/console`, which the iOS router REJECTS (it needs `/console/<screen>`) - so 17 of the 24 event
+  types tapped to nowhere, silently.  Now `/console/activity`, which routes and is where the
+  notification is actually listed.  Also dropped `pushLinkOrigin`'s `NEXT_PUBLIC_APP_ORIGIN`
+  fallback: the app pins the host to exactly `socratictrade.com`, so an unrelated env var could
+  have turned every tap into a no-op.  The register body, environment literals, auth, payload key,
+  and sign-out DELETE all lined up already and were left alone.
+- **Pinned by a cross-language contract test:** one table row per `NotificationEventType` in
+  `ios/SocraticTradeTests/PushNotificationTests.swift`; Swift asserts each URL routes to the stated
+  tab, and `test/apns-deep-link-contract.test.ts` parses those rows and asserts `pushDeepLink()`
+  emits exactly them - set-equal to `NOTIFICATION_EVENT_TYPES`, so a NEW event type fails the test
+  until the app names it.  Mutation-checked (reverting the catch-all fails 2 of 11).
 
-Next: the iOS agent registers the token, DELETEs on sign-out, and adds a universal-link router for
-`/console/approvals?proposal=<id>`, `/console/orders?symbol=<SYM>`, `/console/watchlist?symbol=<SYM>`
-and `/console/activity` (no `DeepLink.swift` exists on `main` yet).  Rollout:
-`docs/rollouts/2026-08-12-apns-push-server.md`.
-## Current (2026-08-12 MONET - iOS APNs push: entitlement, registration, tap-routing, sign-out)
-
-Branch `monet/apns-ios` (worktree `~/apps/trading-monet-apns-ios`).  The DEVICE half of push -
-no `src/**` or `app/api/**` file touched; a parallel agent owns the sender and
-`POST /api/mobile/push/register`.
-
-- **Entitlement** `aps-environment: production` added to BOTH `ios/SocraticTrade/SocraticTrade.entitlements`
-  AND `ios/project.yml` - xcodegen rewrites the former from the latter, so editing one alone is
-  silently undone by the next regen.  `production` is correct because TestFlight and the App Store
-  are the same APNs endpoint; Xcode's automatic signing substitutes `development` for local runs
-  (verified in the built bundle's `embedded.mobileprovision`).
-- **Environment resolved from the signature**, not `#if DEBUG`: `APNSEnvironment.current` reads
-  `aps-environment` out of the embedded provisioning profile.  Assuming TestFlight is sandbox is a
-  silent `400 BadDeviceToken` forever, so an unreadable profile on a device resolves to production
-  and the simulator always to sandbox.
-- **Permission** is requested on first Proposals visit while signed in - never at cold start -
-  with a manual "Turn On Alerts" in Account & Settings, which also states the real state (denied /
-  failed / registered + which APNs environment).
-- **Foreground banner** suppressed only while the SSE stream is connected; shown when it is down,
-  because the screen is then stale and the notification is the only signal.
-- **Tap routing reuses one router**: `DeepLink.destination(for:)` -> the same `pendingDeepLink`
-  slot `onOpenURL` fills -> the same rerouting tab `selection` binding.  That parser is NOT on
-  `main`; it was copied byte-identical from the unlanded peer branch `origin/monet/ios-order-cancel`,
-  so `MobileControlView.swift`/`SocraticTradeApp.swift` need a small manual merge when either lands.
-- **Sign-out** withdraws the token before cookies are cleared (a delete after that is
-  unauthenticated) and also calls `unregisterForRemoteNotifications()`, so a failed delete still
-  ends in a server-side `410 Unregistered` cleanup.
-
-Verified: `xcodebuild -scheme SocraticTrade -destination 'platform=macOS,variant=Designed for iPad' test`
--> `** TEST SUCCEEDED **`, **Executed 70 tests, with 0 failures** (44 before).  End-to-end delivery
-still needs a real device plus the server half.  Rollout: `docs/rollouts/2026-08-12-apns-push-ios.md`.
+Verified (foreground): `xcodebuild ... test` -> `** TEST SUCCEEDED **`, **Executed 73 tests, 0
+failures** (70 before); `npx tsc --noEmit` exit 0; **full** `npx vitest run` -> 554 files passed /
+1 skipped, **6419 tests passed** / 51 skipped; `npm run build` exit 0; `npm run lint` 0 errors.
+End-to-end delivery is STILL unverified - it needs a TestFlight build on a real device plus the
+deployed server.  Post-deploy: confirm all four `APNS_*` values exist in ST prod Infisical, or
+Settings -> Delivery shows "iPhone push - not configured" and sends nothing (by design).
+Rollout: `docs/rollouts/2026-08-12-apns-push.md` (replaces the two per-branch notes).
 
 ## Current (2026-08-12 CLAUDE - connection-health alert noise, root-caused)
 

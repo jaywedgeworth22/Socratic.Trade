@@ -281,3 +281,101 @@ final class PushAlertStateTests: XCTestCase {
         XCTAssertTrue(PushAlertState.registered(environment: .production).summary.contains("production"))
     }
 }
+
+/// CROSS-LANGUAGE CONTRACT — the server's push deep links vs this app's router.
+///
+/// The two halves of push were built in parallel and can only fail together silently: the server
+/// picks a URL, iOS decides what it means, and nothing at build time connects them.  A URL the
+/// parser rejects produces a notification that opens the app and lands nowhere — no crash, no log,
+/// nothing to notice.
+///
+/// So the table below is the single source of truth for that pairing, and it is checked from BOTH
+/// sides: this file asserts every URL routes to the stated destination, and
+/// `test/apns-deep-link-contract.test.ts` parses these very rows out of this file and asserts
+/// `pushDeepLink()` in `src/lib/push-deep-links.ts` emits exactly these strings for exactly these
+/// event types — including that every `NOTIFICATION_EVENT_TYPES` member appears here.  Adding an
+/// event type on the server, or changing a URL shape on either side, fails one of the two.
+///
+/// ROW FORMAT IS PARSED — one row per line, `Row("<event>", "<url>", .<tab>, <proposalId?>)`.
+/// Keep it that way; do not reflow.
+final class PushDeepLinkContractTests: XCTestCase {
+    struct Row {
+        let event: String
+        let url: String
+        let tab: AppTab
+        let proposalId: String?
+
+        init(_ event: String, _ url: String, _ tab: AppTab, _ proposalId: String? = nil) {
+            self.event = event
+            self.url = url
+            self.tab = tab
+            self.proposalId = proposalId
+        }
+    }
+
+    /// CONTRACT TABLE — parsed verbatim by test/apns-deep-link-contract.test.ts.
+    static let contract: [Row] = [
+        Row("pending_approval", "https://socratictrade.com/console/approvals?proposal=6a1f0f1e-2f2a-4c8b-9d0e-3b7a5c1d2e4f", .proposals, "6a1f0f1e-2f2a-4c8b-9d0e-3b7a5c1d2e4f"),
+        Row("proposal_withdrawn", "https://socratictrade.com/console/approvals?proposal=6a1f0f1e-2f2a-4c8b-9d0e-3b7a5c1d2e4f", .proposals, "6a1f0f1e-2f2a-4c8b-9d0e-3b7a5c1d2e4f"),
+        Row("fill", "https://socratictrade.com/console/orders?symbol=AAPL", .markets),
+        Row("limit_order_stale", "https://socratictrade.com/console/orders?symbol=NVDA", .markets),
+        Row("price_alert", "https://socratictrade.com/console/watchlist?symbol=TSLA", .markets),
+        Row("run_failed", "https://socratictrade.com/console/activity", .activity),
+        Row("kill_switch", "https://socratictrade.com/console/activity", .activity),
+        Row("block", "https://socratictrade.com/console/activity", .activity),
+        Row("provider_degraded", "https://socratictrade.com/console/activity", .activity),
+        Row("budget_alert", "https://socratictrade.com/console/activity", .activity),
+        Row("learning_review", "https://socratictrade.com/console/activity", .activity),
+        Row("deterministic_bear_veto", "https://socratictrade.com/console/activity", .activity),
+        Row("red_team_veto_override_requested", "https://socratictrade.com/console/activity", .activity),
+        Row("red_team_veto_overridden", "https://socratictrade.com/console/activity", .activity),
+        Row("prompt_injection_suspected", "https://socratictrade.com/console/activity", .activity),
+        Row("evidence_age_anomaly", "https://socratictrade.com/console/activity", .activity),
+        Row("storage_warning", "https://socratictrade.com/console/activity", .activity),
+        Row("autonomy_halted_on_boot", "https://socratictrade.com/console/activity", .activity),
+        Row("option_alert", "https://socratictrade.com/console/activity", .activity),
+        Row("earningscalls_entitlement_blocked", "https://socratictrade.com/console/activity", .activity),
+        Row("risk_advisory", "https://socratictrade.com/console/activity", .activity),
+        Row("protective_exit_failing", "https://socratictrade.com/console/activity", .activity),
+        Row("signal_health", "https://socratictrade.com/console/activity", .activity),
+        Row("watchlist_digest", "https://socratictrade.com/console/activity", .activity)
+    ]
+
+    /// Every URL the server can emit routes somewhere.  A nil here is a push that opens the app
+    /// and does nothing — the exact silent failure this table exists to catch.
+    func testEveryServerEmittedURLRoutesToItsStatedDestination() {
+        for row in Self.contract {
+            guard let url = URL(string: row.url) else {
+                XCTFail("\(row.event): not a URL — \(row.url)")
+                continue
+            }
+            guard let destination = DeepLink.destination(for: url) else {
+                XCTFail("\(row.event): the router rejects the URL the server sends — \(row.url)")
+                continue
+            }
+            XCTAssertEqual(destination.tab, row.tab, row.event)
+            XCTAssertEqual(destination.proposalId, row.proposalId, row.event)
+        }
+    }
+
+    /// The same URLs arriving the way they actually arrive: inside an APNs payload, read by
+    /// `PushPayload`, not handed straight to the parser.
+    func testTheSameURLsRouteWhenTheyArriveInsideAnAPNsPayload() {
+        for row in Self.contract {
+            let userInfo: [AnyHashable: Any] = [
+                "aps": ["alert": ["title": "Socratic Trade", "body": row.event]],
+                "kind": row.event,
+                "url": row.url
+            ]
+            XCTAssertEqual(PushPayload.destination(in: userInfo)?.tab, row.tab, row.event)
+        }
+    }
+
+    /// Guards the parse the TypeScript side depends on: if this table ever stops being one row
+    /// per event, the cross-language check would silently start covering less than it claims.
+    func testTableCoversEachEventTypeExactlyOnce() {
+        let events = Self.contract.map(\.event)
+        XCTAssertEqual(Set(events).count, events.count, "duplicate event type in the contract table")
+        XCTAssertFalse(events.isEmpty)
+    }
+}

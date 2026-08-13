@@ -366,7 +366,8 @@ describe("push deep links", () => {
       "https://socratictrade.com/console/watchlist?symbol=TSLA"
     );
     expect(pushDeepLink("run_failed", { runId: "r1" }, origin)).toBe("https://socratictrade.com/console/activity");
-    expect(pushDeepLink("learning_review", {}, origin)).toBe("https://socratictrade.com/console");
+    // The catch-all is a TWO-segment console path, because the iOS router rejects bare `/console`.
+    expect(pushDeepLink("learning_review", {}, origin)).toBe("https://socratictrade.com/console/activity");
   });
 
   it("collapses the noisy repeats and leaves fills alone", () => {
