@@ -19,6 +19,28 @@ socket:
   path: /app/data/litestream.sock
   permissions: 0600
 
+# Periodic LTX-sequence self-check (litestream 0.5.12: cmd/litestream/main.go's top-level
+# `Config.Validation` field, wired through Store.ValidationInterval -> Store.Validate ->
+# Replica.ValidateLevel in store.go). This is a GLOBAL key, not a per-database one -- litestream's
+# own DBConfig struct has no `validation` field, only Config does, so it must live here at the
+# top level of the file rather than nested under `dbs:`. Confirmed against the pinned v0.5.12
+# source (github.com/benbjohnson/litestream, tag v0.5.12) before adding this.
+#
+# On each tick this walks every configured compaction level (except the snapshot level) and logs
+# `validation error detected` (gap/overlap/unsorted) at WARN, or `validation check failed` at
+# ERROR if the check itself errors -- both land in the same log stream `compaction failed` lines
+# already use, which scripts/coolify-prod-start.sh tees to $DATA_DIR/litestream-runtime.log and
+# src/lib/runtime-health.ts's scanLitestreamRuntimeLogFile() scans (see app/api/health/route.ts).
+#
+# Deliberately NOT `verify-compaction: true` (also a top-level key): that option LISTs the ENTIRE
+# destination level after every single compaction -- at L1's ~90k-object backlog that is the same
+# S3 request/socket-churn class that exhausted kernel tcp_mem and wedged every Coolify deploy on
+# 2026-07-10 (docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md). `validation.interval`
+# runs on its own independent schedule (hourly here) instead of after every compaction, so it
+# cannot reproduce that failure mode.
+validation:
+  interval: 1h
+
 dbs:
   - path: /app/data/app.db
     # PITR snapshot policy (Litestream 0.5.x): snapshot interval + retention are

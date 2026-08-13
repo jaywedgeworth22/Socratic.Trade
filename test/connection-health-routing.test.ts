@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -47,6 +47,7 @@ describe("Connection Health & Failure Routing", () => {
     delete process.env.DB_BOOTSTRAP;
     delete process.env.LITESTREAM_SOCKET_PATH;
     delete process.env.LITESTREAM_STATE_PATH;
+    delete process.env.LITESTREAM_RUNTIME_LOG_PATH;
     delete process.env.RAG_EMBED_PROVIDER;
     // Remove provider keys seeded by the provider-aware rag-embed criticality tests so
     // activeEmbeddingProvider() does not leak across cases.
@@ -421,6 +422,121 @@ describe("Connection Health & Failure Routing", () => {
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }
+  });
+
+  // A THIRD, independent signal (2026-08-13): litestream's own log lines, teed to a local file
+  // by scripts/coolify-prod-start.sh and scanned by src/lib/runtime-health.ts's
+  // scanLitestreamRuntimeLogFile. This is deliberately independent of BOTH mechanisms above — it
+  // needs no S3/B2 credentials and does not read the remote LTX inventory
+  // (src/lib/litestream-remote-inventory.ts), so it still catches a wedge even while every tier
+  // above reports "not-observable" (the shape production is actually in right now: the
+  // remote-inventory scheduler has a separate known bug that leaves it permanently "missing").
+  it("/api/health flags a wedged compactor from litestream's own teed log even when the tier system is fully blind", async () => {
+    const { healthRoute, db } = await load();
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    process.env.PRIMARY_USER_EMAIL = "admin@socratic.trade";
+
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        calls.push(String(url));
+        return new Response("ok", { status: 200 });
+      })
+    );
+
+    const logPath = join(tmpdir(), `litestream-runtime-${randomUUID()}.log`);
+    writeFileSync(
+      logPath,
+      [
+        'time=2026-08-08T14:35:12Z level=INFO msg="starting compaction monitor" level=2 interval=5m0s',
+        'time=2026-08-08T14:40:12Z level=ERROR msg="compaction failed" level=2 error="write ltx file: extract timestamp from LTX header: non-contiguous transaction ids"'
+      ].join("\n")
+    );
+    process.env.LITESTREAM_RUNTIME_LOG_PATH = logPath;
+    // No socket, no state dir, no remote inventory in this test process: the pre-existing
+    // litestream* fields AND the per-tier breakdown are both blind here, on purpose — proving
+    // the log-based signal alone is what catches this.
+    process.env.LITESTREAM_SOCKET_PATH = join(tmpdir(), `missing-litestream-${randomUUID()}.sock`);
+    process.env.LITESTREAM_STATE_PATH = join(tmpdir(), `missing-litestream-${randomUUID()}`);
+
+    try {
+      const response = await healthRoute.GET(anonymousHealthRequest());
+      expect(response.status).toBe(200);
+      const body = await response.json();
+
+      // Both pre-existing mechanisms are blind in this test process (no socket, no state dir, no
+      // remote inventory) — the whole point of this test is that the log-based signal below is
+      // what catches it, not either of these.
+      expect(body.checks.storage.litestreamDegradedReasons).toEqual([]);
+      expect(
+        body.checks.storage.litestreamTiers.every((t: { state: string }) => t.state === "not-observable")
+      ).toBe(true);
+      expect(body.checks.storage.litestreamCompactionLogFailureCount).toBe(1);
+      expect(body.checks.storageDegraded).toBe(true);
+
+      // The route fires alertStorageWarning fire-and-forget (`void alertStorageWarning(...)`,
+      // matching every other storage alert in this route) alongside whatever other dependency
+      // alerts this health pass also triggers, so the response can resolve before delivery
+      // finishes and other notification rows can interleave — poll for THIS one specifically
+      // rather than asserting the most-recent row or a synchronous fetch-call count.
+      const findOurEvent = () => {
+        const rows = db
+          .getDb()
+          .prepare("SELECT payload FROM audit_events WHERE kind = 'notification' ORDER BY created_at DESC LIMIT 20")
+          .all() as { payload: string }[];
+        return rows
+          .map((r) => JSON.parse(r.payload))
+          .find((p) => p.title === "Storage Warning: litestream compaction log failure");
+      };
+      const payload = await vi.waitFor(() => {
+        const found = findOurEvent();
+        expect(found).toBeDefined();
+        return found;
+      });
+      expect(payload.status).toBe("sent");
+      expect(calls).toContain("https://api.resend.com/emails");
+    } finally {
+      try {
+        unlinkSync(logPath);
+      } catch {
+        // best-effort
+      }
+    }
+  });
+
+  it("/api/health reports zero compaction-log findings when litestream's runtime log has no failure lines", async () => {
+    const { healthRoute, db } = await load();
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+
+    const logPath = join(tmpdir(), `litestream-runtime-healthy-${randomUUID()}.log`);
+    writeFileSync(
+      logPath,
+      'time=2026-08-13T01:00:00Z level=INFO msg="compaction complete" level=1 txid=00000000000123ab size=4096\n'
+    );
+    process.env.LITESTREAM_RUNTIME_LOG_PATH = logPath;
+
+    try {
+      const response = await healthRoute.GET(anonymousHealthRequest());
+      const body = await response.json();
+      expect(body.checks.storage.litestreamCompactionLogFailureCount).toBe(0);
+    } finally {
+      try {
+        unlinkSync(logPath);
+      } catch {
+        // best-effort
+      }
+    }
+  });
+
+  it("/api/health reports zero compaction-log findings when the log file does not exist at all (litestream not booted this way)", async () => {
+    const { healthRoute, db } = await load();
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    process.env.LITESTREAM_RUNTIME_LOG_PATH = join(tmpdir(), `does-not-exist-${randomUUID()}.log`);
+
+    const response = await healthRoute.GET(anonymousHealthRequest());
+    const body = await response.json();
+    expect(body.checks.storage.litestreamCompactionLogFailureCount).toBe(0);
   });
 
   // Alpha Vantage daily-cap exhaustion is a quota failure, not a transient connection blip: it
