@@ -46,10 +46,17 @@ Litestream runs IN the Coolify container and IS the DB backup path. The `/api/he
 
 ```bash
 curl -s https://socratictrade.com/api/health \
-  | jq '.checks.storage | {litestreamAgeSeconds, litestreamStatus, litestreamState, litestreamDegradedReasons}'
+  | jq '.checks.storage | {litestreamAgeSeconds, litestreamStatus, litestreamState, litestreamDegradedReasons, litestreamTierCoverage, litestreamCompactionLogFailureCount}'
 ```
 
-Expect `litestreamAgeSeconds` small and steady, no `litestreamDegradedReasons`. Version pin:
+Expect `litestreamAgeSeconds` small and steady, no `litestreamDegradedReasons`, and
+`litestreamCompactionLogFailureCount: 0` -- a nonzero count means litestream's own log reported
+"compaction failed" or "validation error detected" recently (see
+src/lib/runtime-health.ts's scanLitestreamRuntimeLogFile), which is direct evidence of a wedged
+compaction level even when litestreamDegradedReasons stays empty (that field only ever reflects
+level 0). `litestreamTierCoverage.remoteInventoryState` should read `ok` or `partial`, not
+`missing`/`stale`/`failed` -- those mean the per-level breakdown (`litestreamTiers`) is currently
+blind. Version pin:
 
 ```bash
 grep LITESTREAM_VERSION scripts/coolify-prod-start.sh
