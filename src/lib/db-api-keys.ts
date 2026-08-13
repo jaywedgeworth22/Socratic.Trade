@@ -1742,7 +1742,7 @@ export function markPriceAlertTriggered(id: string, userId: string, triggeredPri
 
 // ── Notification preferences ──────────────────────────────────────────────────
 
-const NOTIFY_CHANNEL_IDS: readonly NotifyChannelId[] = ["push", "webhook", "email", "sms", "pushover"];
+const NOTIFY_CHANNEL_IDS: readonly NotifyChannelId[] = ["push", "webhook", "email", "sms", "pushover", "apns"];
 
 function isNotifyChannelId(value: unknown): value is NotifyChannelId {
   return typeof value === "string" && (NOTIFY_CHANNEL_IDS as readonly string[]).includes(value);
