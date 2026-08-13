@@ -420,7 +420,10 @@ Pickup steps:
 - Marked the effort In Progress under GROK pickup on the live board +
   `docs/EFFORT-LOG.md`; added this addendum; updated the STATUS.md current
   block.
-- Landing via `bash scripts/land.sh` (READY PR) then
-  `gh pr merge <n> --squash --auto`.
+- Landing via `bash scripts/land.sh` (READY PR **#2687**) then
+  `gh pr merge 2687 --squash --auto` (armed; waiting required `verify`).
+
+Local land.sh gates: `tsc --noEmit` clean; vitest **6600 passed / 51 skipped**
+(567 files + 1 skipped); `npm run build` clean.
 
 No product redesign.  Dual credit on the pickup commit.

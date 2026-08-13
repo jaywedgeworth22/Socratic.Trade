@@ -1,9 +1,10 @@
 ## Current (2026-08-13 GROK pickup — land leftover `monet/ship-pipeline-fix`)
 
-Monet hit quota with this branch finished and **no PR**.  GROK is landing it from
+Monet hit quota with this branch finished and **no PR**.  GROK landed it from
 `~/apps/trading-monet-shipfix` without redesign.  Merged `origin/main` (`#2684`
-honest server stats) cleanly; docs/board pickup addendum in this commit; `scripts/land.sh`
-opens a READY PR and arms squash auto-merge.
+honest server stats) cleanly.  READY PR **#2687**, squash auto-merge armed,
+waiting required `verify`.  Local land.sh gates: tsc clean, 6600 passed /
+51 skipped (567 files + 1 skipped), build clean.
 
 Unchanged Monet scope: refuse bot merges without an elevated token + hourly
 fail-closed CI backstop; cron path-gate so backend-only commits do not ship
