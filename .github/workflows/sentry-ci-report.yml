@@ -23,7 +23,6 @@ name: Sentry CI Report
 #
 # workflows observed (from `ls .github/workflows/`; see each file's `name:`):
 #   Auto-merge PRs, Auto-merge congress-trading-shared PRs, CI, Cleanup Actions Caches,
-<<<<<<< HEAD
 #   Codex Autofix, Effort Issues Sync, iOS build (Mac runner),
 #   iOS TestFlight ship (Mac runner), merge-shepherd,
 #   Shared package pin check, Playwright Smoke, Security
