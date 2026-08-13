@@ -145,7 +145,10 @@ private struct LaunchStateView: View {
     /// neither disappears on a small phone nor bloats on an iPad. Keeping the two in sync is
     /// what makes the native splash and the web load screen read as the same product.
     private func wordmarkHeight(forWidth width: CGFloat) -> CGFloat {
-        let aspect: CGFloat = 13.081 // WORDMARK_AR in app/console/ui/candle-ticker.ts
-        return max(16, min(34, (width * 0.88) / aspect))
+        let aspect: CGFloat = CandleWordmarkModel.shared.wm.ar
+        // Stacked wordmark has a smaller aspect ratio (e.g., ~4.0 instead of ~13.1).
+        // A height of 16-34 is too small for a stacked logo.
+        // We allow it to be larger (e.g. 40 to 80).
+        return max(40, min(80, (width * 0.88) / aspect))
     }
 }
