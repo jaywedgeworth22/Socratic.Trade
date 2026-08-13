@@ -9,7 +9,13 @@ struct MarketsView: View {
     var body: some View {
         SnapshotScaffold { snapshot in
             PositionsSection(positions: snapshot.positions, presentedSymbol: $presentedSymbol)
-            OrdersSection(orders: snapshot.orders, presentedSymbol: $presentedSymbol)
+            OrdersSection(
+                orders: snapshot.orders,
+                // The account this snapshot was taken from, sent with every cancel as the
+                // server's stale-view guard (see OrderCancellation).
+                accountNumber: snapshot.readiness.selectedAccountNumber,
+                presentedSymbol: $presentedSymbol
+            )
             WatchlistSection(ticker: $ticker, items: snapshot.watchlist, presentedSymbol: $presentedSymbol)
             AlertsSection(alerts: snapshot.alerts, presentedSymbol: $presentedSymbol)
         }
@@ -108,6 +114,7 @@ private struct PositionRow: View {
 
 private struct OrdersSection: View {
     let orders: [EquityOrder]
+    let accountNumber: String?
     @Binding var presentedSymbol: PresentedSymbol?
 
     var body: some View {
@@ -121,7 +128,11 @@ private struct OrdersSection: View {
                 )
             } else {
                 ForEach(orders) { order in
-                    OrderRow(order: order, presentedSymbol: $presentedSymbol)
+                    OrderRow(
+                        order: order,
+                        accountNumber: accountNumber,
+                        presentedSymbol: $presentedSymbol
+                    )
                 }
             }
         }
@@ -129,8 +140,25 @@ private struct OrdersSection: View {
 }
 
 private struct OrderRow: View {
+    @EnvironmentObject private var store: MobileStore
+    @State private var confirmingCancel = false
+
     let order: EquityOrder
+    let accountNumber: String?
     @Binding var presentedSymbol: PresentedSymbol?
+
+    private var operationID: String { OrderCancellation.operationID(orderId: order.id) }
+
+    /// Cancel is offered exactly where the server would accept it (working states only) and on
+    /// a deployment that advertises the command.  It is otherwise ungated: cancelling is
+    /// risk-reducing, so it stays available while the strategy is stopped, matching the console.
+    private var showsCancel: Bool {
+        OrderCancellation.isCancellable(order) && store.serverAdvertises(OrderCancellation.commandType)
+    }
+
+    private var canCancel: Bool {
+        !store.isBusy(operationID) && store.canSubmit(OrderCancellation.commandType)
+    }
 
     private var statusColor: Color {
         switch order.state.lowercased() {
@@ -159,7 +187,60 @@ private struct OrderRow: View {
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
+                if showsCancel {
+                    HStack {
+                        Spacer()
+                        Button(role: .destructive) {
+                            confirmingCancel = true
+                        } label: {
+                            HStack(spacing: 7) {
+                                if store.isBusy(operationID) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Image(systemName: "xmark.circle")
+                                }
+                                Text("Cancel Order")
+                                    .fontWeight(.semibold)
+                            }
+                            .frame(minHeight: 44)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!canCancel)
+                        .accessibilityLabel("Cancel \(order.symbol) \(order.side.lowercased()) order")
+                    }
+                }
             }
+        }
+        // Same ceremony as the button: the swipe opens the existing confirmation dialog, never
+        // firing the cancel directly.  Mirrors swipe-to-reject on proposals.
+        .swipeRevealAction(
+            title: "Cancel",
+            systemImage: "xmark.circle",
+            tint: AppPalette.negative,
+            isEnabled: showsCancel && canCancel
+        ) {
+            confirmingCancel = true
+        }
+        .confirmationDialog(
+            OrderCancellation.confirmationTitle(order),
+            isPresented: $confirmingCancel,
+            titleVisibility: .visible
+        ) {
+            Button("Cancel Order", role: .destructive, action: cancelOrder)
+            Button("Keep It Working", role: .cancel) {}
+        } message: {
+            Text(OrderCancellation.confirmationMessage(order))
+        }
+    }
+
+    private func cancelOrder() {
+        Task {
+            await store.submit(
+                OrderCancellation.commandType,
+                payload: OrderCancellation.payload(orderId: order.id, accountNumber: accountNumber),
+                operationID: operationID
+            )
         }
     }
 

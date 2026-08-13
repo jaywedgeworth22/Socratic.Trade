@@ -16,6 +16,7 @@ import { isIndexUniverse, isValidAppSymbol } from "./index-universes";
 import { normalizeSymbol } from "./money";
 import { notify } from "./notify";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
+import { cancelWorkingOrder } from "./order-cancel";
 import { normalizeExclusivePolicyCaps } from "./policy-normalization";
 import {
   rejectProposal,
@@ -43,6 +44,7 @@ export const MOBILE_COMMAND_TYPES = [
   "proposal.approve",
   "proposal.reject",
   "account.activate",
+  "order.cancel",
   "watchlist.add",
   "watchlist.remove",
   "alert.create",
@@ -68,10 +70,20 @@ const IMMEDIATE_PROTECTIVE_COMMAND_TYPES = new Set<MobileCommandType>([
  * pure active-pointer flip with no broker I/O, but was queued behind run_once — so the iOS/PWA
  * "Use" / account selector spinner hung for the entire in-flight strategy run (owner report:
  * Roth IRA spinner while Sandbox stayed Active, backlog 2 queued · 1 running).
+ *
+ * order.cancel is here for the timing reason and NOT in IMMEDIATE_PROTECTIVE_COMMAND_TYPES. The
+ * whole point of cancelling a rotting limit order from a phone is that it happens now, not after
+ * a 30-minute strategy.run_once drains — so it bypasses the worker. But protective membership
+ * additionally means "on success, cancel this user's queued run_once / start / approve"
+ * (cancelQueuedRiskIncreasingCommands), which is the right blast radius for a system-wide
+ * containment state and the wrong one for killing ONE order: an operator cancelling a stale AAPL
+ * limit did not ask to also drop a queued approval on an unrelated symbol. Same seat as
+ * account.activate — immediate, not preemptive.
  */
 const IMMEDIATE_MOBILE_COMMAND_TYPES = new Set<MobileCommandType>([
   ...IMMEDIATE_PROTECTIVE_COMMAND_TYPES,
-  "account.activate"
+  "account.activate",
+  "order.cancel"
 ]);
 
 const RISK_INCREASING_QUEUED_COMMAND_TYPES = [
@@ -148,6 +160,26 @@ const mobileListeners =
 
 export class MobileCommandValidationError extends Error {
   status = 400;
+}
+
+/**
+ * A `policy.patch` refused at execution time because an `expectedCurrent` precondition no longer
+ * matched what is stored. Same shape and same 409 as `OrderCancelPreconditionError`
+ * (src/lib/order-cancel.ts), which refuses a cancel whose `expectedAccountNumber` has moved.
+ */
+export class PolicyPatchPreconditionError extends Error {
+  status = 409;
+  field: string;
+  expected: PolicyPreconditionValue;
+  actual: PolicyPreconditionValue;
+
+  constructor(message: string, detail: { field: string; expected: PolicyPreconditionValue; actual: PolicyPreconditionValue }) {
+    super(message);
+    this.name = "PolicyPatchPreconditionError";
+    this.field = detail.field;
+    this.expected = detail.expected;
+    this.actual = detail.actual;
+  }
 }
 
 export function isMobileCommandType(value: unknown): value is MobileCommandType {
@@ -263,8 +295,8 @@ export function toPublicMobileCommand(command: MobileCommandRecord): PublicMobil
   };
 }
 
-function requireString(payload: Record<string, unknown>, key: string): string {
-  const value = asOptionalString(payload[key]);
+function requireString(payload: Record<string, unknown>, key: string, max = 256): string {
+  const value = asOptionalString(payload[key], max);
   if (!value) throw new MobileCommandValidationError(`${key} is required.`);
   return value;
 }
@@ -291,6 +323,122 @@ function normalizeNotificationEvents(value: unknown): NotificationEventType[] | 
   if (!Array.isArray(value)) return undefined;
   const allowed: NotificationEventType[] = ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn"];
   return value.map(String).filter((item): item is NotificationEventType => allowed.includes(item as NotificationEventType));
+}
+
+/** Numeric guardrails `policy.patch` may set, with the server-side bounds each one accepts. */
+const POLICY_PATCH_NUMERIC_FIELDS: Array<[keyof TradingPolicy, number | undefined, number | undefined]> = [
+  ["maxOrderNotional", 1, 100_000],
+  ["maxOrderPctOfNav", 0.01, 100],
+  ["maxDailyNotional", 1, undefined],
+  ["maxHourlyNotional", 1, undefined],
+  ["maxDailyPctOfNav", 0.01, 100],
+  ["maxSymbolExposurePct", 0.01, 100],
+  ["maxSymbolExposureNotional", 1, undefined],
+  ["maxGrossExposurePct", 0, 100],
+  ["maxNetExposurePct", 0, 100],
+  ["maxDailyOrders", 1, 500],
+  ["maxProposalsPerRun", 1, 25],
+  ["proposalExpiryMinutes", 0, undefined],
+  ["proposalRevalidateCadenceHours", 0, undefined],
+  ["runCadenceMinutes", 1, 24 * 60],
+  ["maxShortOrderNotional", 1, 100_000],
+  ["maxShortExposurePct", 0, 100],
+  ["maxPortfolioBeta", 0.01, 10],
+  ["maxEntryDriftPct", 0, 100],
+  ["maxOrderPctOfAdv", 0, 100],
+  ["volPanicVixThreshold", 0, undefined],
+  ["volPanicVvixThreshold", 0, undefined],
+  ["volPanicSkewThreshold", 0, undefined]
+];
+
+/** Boolean switches `policy.patch` may set. */
+const POLICY_PATCH_BOOLEAN_FIELDS = [
+  "permitExtendedHours",
+  "runDuringExtendedHours",
+  "allowExtendedHoursSyntheticStops",
+  "shortSellingEnabled",
+  "brokerBracketsEnabled",
+  "betaScaledStops",
+  "marketableLimitEntries",
+  "volPanicBrakeEnabled"
+] as const;
+
+type PolicyPreconditionKind = "number" | "boolean" | "text";
+type PolicyPreconditionValue = string | number | boolean | null;
+
+/**
+ * The fields an `expectedCurrent` precondition may name, and how each one compares.
+ *
+ * Deliberately SCALAR-ONLY. A precondition is a promise the server keeps exactly, and "equal"
+ * is only unambiguous for a value a client can read off a snapshot and send back verbatim.
+ * Collections (`includedIndices`, `additionalSymbols`, `blocklist`) and nested objects
+ * (`riskRules`, `taxSettings`, `notificationSettings`) are excluded rather than compared with a
+ * hand-rolled deep-equal whose disagreements would be silent.
+ */
+const POLICY_PRECONDITION_FIELDS: Record<string, PolicyPreconditionKind> = {
+  strategyAuthority: "text",
+  holdingHorizon: "text",
+  ...Object.fromEntries(POLICY_PATCH_NUMERIC_FIELDS.map(([field]) => [field, "number" as const])),
+  ...Object.fromEntries(POLICY_PATCH_BOOLEAN_FIELDS.map((field) => [field, "boolean" as const]))
+};
+
+/**
+ * Optional stale-view guard for `policy.patch`, the exact counterpart of `order.cancel`'s
+ * `expectedAccountNumber` (src/lib/order-cancel.ts): the values the CALLER believed were current
+ * for the fields it is patching. When supplied they must equal what is stored at EXECUTION time,
+ * otherwise the patch is refused outright rather than silently applied against a policy that
+ * moved underneath it.
+ *
+ * This is what makes the phone's "these controls only tighten" footer true END TO END.
+ * `policy.patch` is a QUEUED command (it is not in IMMEDIATE_MOBILE_COMMAND_TYPES), so minutes
+ * can pass behind a draining `strategy.run_once` between the tap and the write — and
+ * `applyPolicyPatch` merges verbatim in either direction. A tightening tapped against a $10,000
+ * cap that the console has since lowered to $2,000 would land as a LOOSENING. The phone's
+ * tap-time re-check closes every window the phone can see; this closes the one it cannot.
+ *
+ * OPTIONAL by construction: a patch that carries no `expectedCurrent` behaves exactly as it
+ * always has. The web console and every existing caller are unaffected.
+ */
+function normalizePolicyPreconditions(raw: unknown): Record<string, PolicyPreconditionValue> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  // A malformed precondition is refused, never coerced away: `asRecord` would quietly turn a
+  // string or array into `{}`, and dropping an assertion the caller believes is being enforced
+  // is the one failure mode this guard exists to prevent.
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new MobileCommandValidationError("expectedCurrent must be an object of policy fields.");
+  }
+  const expected: Record<string, PolicyPreconditionValue> = {};
+  for (const [field, value] of Object.entries(raw as Record<string, unknown>)) {
+    const kind = POLICY_PRECONDITION_FIELDS[field];
+    if (!kind) {
+      throw new MobileCommandValidationError(`expectedCurrent.${field} is not a field policy.patch can guard.`);
+    }
+    // Explicit null means "I believed this was unset" — a real, checkable expectation.
+    if (value === null || value === undefined) {
+      expected[field] = null;
+      continue;
+    }
+    switch (kind) {
+      case "number":
+        expected[field] = finiteNumber(value, `expectedCurrent.${field}`);
+        break;
+      case "boolean":
+        if (typeof value !== "boolean") {
+          throw new MobileCommandValidationError(`expectedCurrent.${field} must be boolean.`);
+        }
+        expected[field] = value;
+        break;
+      case "text": {
+        const text = asOptionalString(value, 64);
+        if (!text) throw new MobileCommandValidationError(`expectedCurrent.${field} must be a string.`);
+        expected[field] = text;
+        break;
+      }
+    }
+  }
+  // An empty object asserts nothing; keep the payload in its legacy shape rather than storing a
+  // guard that would always pass.
+  return Object.keys(expected).length > 0 ? expected : undefined;
 }
 
 function normalizePolicyPatch(raw: unknown): Partial<TradingPolicy> {
@@ -321,46 +469,13 @@ function normalizePolicyPatch(raw: unknown): Partial<TradingPolicy> {
   if (input.additionalSymbols !== undefined) patch.additionalSymbols = normalizeSymbols(input.additionalSymbols, "additionalSymbols");
   if (input.blocklist !== undefined) patch.blocklist = normalizeSymbols(input.blocklist, "blocklist");
 
-  const numericFields: Array<[keyof TradingPolicy, number | undefined, number | undefined]> = [
-    ["maxOrderNotional", 1, 100_000],
-    ["maxOrderPctOfNav", 0.01, 100],
-    ["maxDailyNotional", 1, undefined],
-    ["maxHourlyNotional", 1, undefined],
-    ["maxDailyPctOfNav", 0.01, 100],
-    ["maxSymbolExposurePct", 0.01, 100],
-    ["maxSymbolExposureNotional", 1, undefined],
-    ["maxGrossExposurePct", 0, 100],
-    ["maxNetExposurePct", 0, 100],
-    ["maxDailyOrders", 1, 500],
-    ["maxProposalsPerRun", 1, 25],
-    ["proposalExpiryMinutes", 0, undefined],
-    ["proposalRevalidateCadenceHours", 0, undefined],
-    ["runCadenceMinutes", 1, 24 * 60],
-    ["maxShortOrderNotional", 1, 100_000],
-    ["maxShortExposurePct", 0, 100],
-    ["maxPortfolioBeta", 0.01, 10],
-    ["maxEntryDriftPct", 0, 100],
-    ["maxOrderPctOfAdv", 0, 100],
-    ["volPanicVixThreshold", 0, undefined],
-    ["volPanicVvixThreshold", 0, undefined],
-    ["volPanicSkewThreshold", 0, undefined]
-  ];
-  for (const [field, min, max] of numericFields) {
+  for (const [field, min, max] of POLICY_PATCH_NUMERIC_FIELDS) {
     if (input[field] !== undefined) {
       (patch as Record<string, unknown>)[field] = finiteNumber(input[field], String(field), { min, max });
     }
   }
 
-  for (const field of [
-    "permitExtendedHours",
-    "runDuringExtendedHours",
-    "allowExtendedHoursSyntheticStops",
-    "shortSellingEnabled",
-    "brokerBracketsEnabled",
-    "betaScaledStops",
-    "marketableLimitEntries",
-    "volPanicBrakeEnabled"
-  ] as const) {
+  for (const field of POLICY_PATCH_BOOLEAN_FIELDS) {
     if (input[field] !== undefined) {
       if (typeof input[field] !== "boolean") throw new MobileCommandValidationError(`${field} must be boolean.`);
       patch[field] = input[field] as never;
@@ -437,6 +552,14 @@ function normalizeCommandPayload(commandType: MobileCommandType, rawPayload: unk
       return { proposalId: requireString(payload, "proposalId") };
     case "account.activate":
       return { accountId: requireString(payload, "accountId") };
+    case "order.cancel": {
+      const orderId = requireString(payload, "orderId", 128);
+      // Optional, and verified server-side when present: the account the phone BELIEVED it was
+      // looking at. A client that sends it gets a refusal instead of a cancel landing on whatever
+      // account happens to be selected by the time the command runs.
+      const accountNumber = asOptionalString(payload.accountNumber, 64);
+      return accountNumber ? { orderId, accountNumber } : { orderId };
+    }
     case "watchlist.add":
     case "watchlist.remove": {
       const symbol = normalizeSymbol(requireString(payload, "symbol"));
@@ -452,8 +575,14 @@ function normalizeCommandPayload(commandType: MobileCommandType, rawPayload: unk
     }
     case "alert.delete":
       return { alertId: requireString(payload, "alertId") };
-    case "policy.patch":
-      return { patch: normalizePolicyPatch(payload.patch ?? payload) };
+    case "policy.patch": {
+      const patch = normalizePolicyPatch(payload.patch ?? payload);
+      // Optional, and verified server-side when present: the values the phone BELIEVED were
+      // current for the fields it is changing. A client that sends them gets a refusal instead
+      // of a patch landing on a policy that moved while the command sat in the queue.
+      const expectedCurrent = normalizePolicyPreconditions(payload.expectedCurrent);
+      return expectedCurrent ? { patch, expectedCurrent } : { patch };
+    }
     case "consent.set":
       if (typeof payload.accepted !== "boolean") throw new MobileCommandValidationError("accepted must be boolean.");
       return { accepted: payload.accepted };
@@ -738,8 +867,40 @@ async function setStrategyState(userId: string, state: SystemState): Promise<{ o
   return { ok: true, systemState: state };
 }
 
-function applyPolicyPatch(userId: string, patch: Partial<TradingPolicy>): { ok: true; policy: TradingPolicy } {
+/** Stored value as a precondition compares it: absent and null are the same "not set". */
+function policyPreconditionActual(value: unknown): PolicyPreconditionValue {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return value;
+  // Not a scalar, so it cannot equal any accepted expectation. Reported as-is in the receipt.
+  return String(value);
+}
+
+function describePreconditionValue(value: PolicyPreconditionValue): string {
+  return value === null ? "not set" : String(value);
+}
+
+function applyPolicyPatch(
+  userId: string,
+  patch: Partial<TradingPolicy>,
+  expectedCurrent?: Record<string, PolicyPreconditionValue>
+): { ok: true; policy: TradingPolicy } {
   const current = getPolicy(userId);
+  // Fail closed BEFORE anything is merged: a mismatch means the policy moved between the tap and
+  // this write, so the whole patch is refused. Never partially applied, never silently applied.
+  for (const [field, expected] of Object.entries(expectedCurrent ?? {})) {
+    const actual = policyPreconditionActual((current as unknown as Record<string, unknown>)[field]);
+    if (actual === expected) continue;
+    audit(
+      "mobile_policy_patch_precondition_mismatch",
+      { field, expected, actual, fields: Object.keys(patch) },
+      userId,
+      current.connectedAccountId
+    );
+    throw new PolicyPatchPreconditionError(
+      `${field} changed since this was sent — it is ${describePreconditionValue(actual)} now, not the ${describePreconditionValue(expected)} this change was based on.  Nothing was changed.`,
+      { field, expected, actual }
+    );
+  }
   const next: TradingPolicy = {
     ...current,
     ...patch,
@@ -760,7 +921,11 @@ function applyPolicyPatch(userId: string, patch: Partial<TradingPolicy>): { ok: 
   }
   normalizeExclusivePolicyCaps(next, patch);
   setPolicy(next, userId);
-  audit("mobile_policy_patch", { fields: Object.keys(patch) }, userId);
+  audit(
+    "mobile_policy_patch",
+    { fields: Object.keys(patch), ...(expectedCurrent ? { guardedFields: Object.keys(expectedCurrent) } : {}) },
+    userId
+  );
   return { ok: true, policy: getPolicy(userId) };
 }
 
@@ -796,6 +961,30 @@ async function runCommand(command: MobileCommandRecord): Promise<unknown> {
       audit("mobile_account_activate", { accountId }, command.userId);
       return { ok: true, activeAccount: listConnectedAccounts(command.userId).find((account) => account.id === accountId) };
     }
+    case "order.cancel": {
+      // Same implementation the console's POST /api/orders/cancel runs — lease-interleave receipt,
+      // time-bounded dust advisory, audit trail, dashboard event and all. `requireWorkingOrder`
+      // asks it to resolve the order inside THIS user's selected account first, because a mobile
+      // failure is read as text on a phone minutes later and has to say something true; account
+      // isolation itself does not rest on that read (the cancel is always scoped to the requesting
+      // user's own selected account and their own broker credentials).
+      const orderId = String(payload.orderId);
+      const expectedAccountNumber = typeof payload.accountNumber === "string" ? payload.accountNumber : undefined;
+      const result = await cancelWorkingOrder({
+        userId: command.userId,
+        orderId,
+        expectedAccountNumber,
+        requireWorkingOrder: true,
+        source: "mobile"
+      });
+      return {
+        ok: true,
+        status: result.state,
+        orderId: result.orderId ?? orderId,
+        ...(result.symbol ? { symbol: result.symbol } : {}),
+        ...(result.dustWarning ? { dustWarning: result.dustWarning } : {})
+      };
+    }
     case "watchlist.add": {
       const item = addToWatchlist(command.userId, String(payload.symbol));
       return { ok: true, ...item };
@@ -819,7 +1008,11 @@ async function runCommand(command: MobileCommandRecord): Promise<unknown> {
       return { ok: true, alertId, removed: removeAlert(command.userId, alertId) };
     }
     case "policy.patch":
-      return applyPolicyPatch(command.userId, payload.patch as Partial<TradingPolicy>);
+      return applyPolicyPatch(
+        command.userId,
+        payload.patch as Partial<TradingPolicy>,
+        payload.expectedCurrent as Record<string, PolicyPreconditionValue> | undefined
+      );
     case "consent.set":
       return { ok: true, consent: setDataPoolConsent(command.userId, payload.accepted === true) };
     case "notification.test":
@@ -835,6 +1028,17 @@ async function runCommand(command: MobileCommandRecord): Promise<unknown> {
 }
 
 function errorPayload(error: unknown): { message: string; result?: unknown } {
+  if (error instanceof PolicyPatchPreconditionError) {
+    return {
+      message: error.message,
+      result: {
+        error: "policy_precondition_mismatch",
+        field: error.field,
+        expected: error.expected,
+        actual: error.actual
+      }
+    };
+  }
   if (error instanceof LiveApprovalConfirmationError) {
     return {
       message: error.message,
@@ -862,6 +1066,9 @@ export async function executeMobileCommand(command: MobileCommandRecord): Promis
  *   submission boundary; placement re-reads durable state at its final pre-submit boundary.
  * - account.activate: pure active-pointer flip; must complete in the same request so mobile
  *   clients do not leave the Use / selector control spinning for the entire run_once duration.
+ * - order.cancel: killing a rotting limit order is worth nothing if it lands after the run that
+ *   was already ahead of it in the queue. Immediate, but NOT protective — it does not cancel the
+ *   user's other queued work (see IMMEDIATE_MOBILE_COMMAND_TYPES).
  */
 export async function executeMobileCommandImmediately(
   commandId: string,

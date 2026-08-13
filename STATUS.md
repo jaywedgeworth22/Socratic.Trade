@@ -188,6 +188,109 @@ Sentry monitors, and there is no collision to fix.  Gates and a 15-check
 behavioral harness recorded in the rollout note.
 
 Rollout: `docs/rollouts/2026-08-12-ci-report-app-tag.md`.
+## Current (2026-08-12 MONET — iOS parity wave 3: cancel a working order from the phone)
+
+Branch `monet/ios-order-cancel` (worktree `~/apps/trading-monet-wave3`).  Integration branch:
+merges `monet/ios-parity-wave2` and `monet/order-cancel-server` (both clean, no conflicts) and
+adds the iOS half of roadmap item #3 on top.
+
+- Open orders were the phone's last see-but-cannot-act money surface.  `OrderRow` on the Assets
+  screen now carries a **Cancel Order** button plus swipe-to-cancel, both opening the same
+  confirmation dialog — the same ceremony the alert-delete row already uses.  No typed
+  confirmation: the server requires none for cancel even on a live brokerage account, because
+  cancelling prevents an execution rather than causing one.
+- The control appears only on WORKING orders.  `OrderCancellation.isWorkingState` mirrors the
+  server's `isWorkingOrderState` exactly (`ACTIVE_BROKER_ORDER_STATES` +
+  `EXTRA_WORKING_ORDER_STATES`), so it matches the precondition `cancelWorkingOrder` enforces.
+  `done_for_day` is excluded (terminal, but returned forever in Alpaca history); `pending_cancel`
+  stays cancellable, matching the console — a stuck broker cancel is a reason to ask again.
+- Payload `{ orderId, accountNumber }` where the account number is
+  `readiness.selectedAccountNumber` — the server's stale-view guard, so a cancel queued while
+  looking at one account cannot land on another.  Submitted through the normal `store.submit`
+  path (busy guard + per-order idempotency key + snapshot reload); gated on the wave-2 control
+  catalog so an older server hides the control instead of collecting a 400.
+
+Round-2 review close-out (all three reviewer items closed; rollout §7):
+
+- **The queued-loosening gap is CLOSED server-side.**  `policy.patch` now accepts an OPTIONAL
+  `expectedCurrent` precondition — the same shape as `order.cancel`'s `expectedAccountNumber` —
+  carrying the values the client believed were current for the fields it is patching.  Validated
+  at queue time (scalar patchable fields only; unknown/wrong-typed/non-object is a 400) and
+  compared at EXECUTION time before anything merges: a mismatch audits
+  `mobile_policy_patch_precondition_mismatch` and throws `PolicyPatchPreconditionError` (409), so
+  the whole patch is refused rather than partially or silently applied.  Without it, a tightening
+  tapped against a $10,000 cap could execute as a LOOSENING minutes later, behind a draining
+  `strategy.run_once`, if the console lowered that cap meanwhile.  A patch with NO
+  `expectedCurrent` behaves exactly as before (proven by a test that performs the same mid-flight
+  edit and asserts the legacy write still lands) — the web console is unaffected.  The iOS
+  tightening UI now sends the precondition, so the "These controls only tighten" footer is true
+  end to end.
+- **Cancel is exempt from the >180 s snapshot-staleness gate**, like `account.activate`: a flaky
+  connection is exactly when someone reaches for cancel, and the server re-validates
+  (`requireWorkingOrder: true` -> 404/409), so a stale tap gets an honest error, never a wrong
+  cancel.  Still requires a loaded snapshot and still respects the control catalog.
+- **The deep-link focus ring is transient again** — it clears on any tab change and expires four
+  seconds after the link lands, instead of marking one proposal card out for the whole session.
+
+Verified: iOS 68/68 XCTests (56 merged base, +8 cancel, +2 round-1, +2 here), `npx tsc --noEmit`
+clean, `npm run lint` 0 errors, full `npx vitest run` 6369 passed / 51 skipped (552 files).
+
+Next: owner action only — TestFlight shipping.  Follow-ups: render the server's `dustWarning`
+on the card after a cancel; replace-at-market from the phone.
+
+Rollout: `docs/rollouts/2026-08-12-ios-parity-wave3.md`.
+
+## Current (2026-08-12 MONET — iOS parity wave 2: guardrail tightening, control catalog, universal links)
+
+Branch `monet/ios-parity-wave2` (worktree `~/apps/trading-monet-wave2`).  Three items, all on
+server capabilities that already exist:
+
+1. **Tighten Guardrails** in the account/settings sheet — submits the existing `policy.patch`
+   mobile command.  Autopilot -> Ask-First, and 75/50/25% reductions of `maxOrderNotional` /
+   `maxDailyNotional`.  Tighten-only is a pure predicate (`PolicyTightening`), and it refuses
+   entirely when a competing percent-of-NAV cap is stored, because the server's
+   `normalizeExclusivePolicyCaps` would delete that cap and change which rule binds.  No new
+   confirmation ceremony: same weight as Close Only / Wind Down.
+2. **`snapshot.catalog` decoded** (`mobileControlCatalog()`), gating non-protective commands
+   through `MobileStore.serverAdvertises`.  Missing catalog or empty `commands` falls back to
+   the app's built-in controls; protective halts are never catalog-gated.
+3. **Universal links + deep-link routing** — the app's first `onOpenURL`.
+   `https://socratictrade.com/console/{approvals,approvals/<id>,orders,watchlist,activity}`
+   routes to the matching tab (reusing the existing More-stack rerouting for unpinned tabs);
+   `socratictrade://` stays auth-callback-only.  Entitlement + `project.yml` claim
+   `applinks:socratictrade.com`; the domain half is `app/.well-known/apple-app-site-association/
+   route.ts`, added to middleware `PUBLIC_PREFIXES` so Apple's anonymous fetch is not redirected
+   to /login.
+
+Verified: iOS 56/56 XCTests (was 37), `npx tsc --noEmit` clean, new vitest file green,
+`npm run build` clean (AASA prerendered static).
+
+Next: owner action — no App Store Connect / Apple credential work was performed; the associated
+domain only takes effect once a build carrying the entitlement ships.
+
+Rollout: `docs/rollouts/2026-08-12-ios-parity-wave2.md`.
+## Current (2026-08-12 MONET — mobile `order.cancel` command, server side)
+
+Roadmap item #3, server half.  The phone could see working orders (`/api/mobile/snapshot` already
+filters by `isWorkingOrderState`) but could not kill one.  Now it can.
+
+- The console's cancel logic was extracted out of `app/api/orders/cancel/route.ts` into
+  `src/lib/order-cancel.ts` (`cancelWorkingOrder`), so mobile runs the SAME path — lease-interleave
+  receipt, time-bounded cancel-dust advisory, `order_cancel` audit, dashboard event, dust
+  notification — instead of a second implementation drifting against the gateway.  The route is now
+  the HTTP shell; console behaviour is unchanged and its three existing route tests pass untouched.
+- New mobile command `order.cancel`, payload `{ orderId, accountNumber? }`.  Immediate (bypasses the
+  sequential worker, so it cannot land behind a 30-minute `strategy.run_once`) but deliberately NOT
+  protective — it must not cancel the operator's other queued work the way stop/close_only do.
+- No typed confirmation: cancelling closes risk, it does not open it.
+- Account isolation: every cancel is scoped to the requesting user's own selected account through
+  their own credentials; a caller-named account that is not the selected one is refused before any
+  broker I/O (`order_cancel_account_mismatch`), and the mobile lane additionally resolves the order
+  in that account first (fail-open on an unavailable read, receipted).
+- Replace-at-market is NOT included; requirements for it are listed in the rollout note.
+
+Branch `monet/order-cancel-server`, worktree `~/apps/trading-monet-cancel`.  No iOS files touched.
+Rollout: `docs/rollouts/2026-08-12-order-cancel-command.md`.
 
 ## Current (2026-08-12 GROK — iOS watchlist wrap + account switch + admin + P&L)
 

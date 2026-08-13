@@ -114,6 +114,16 @@ struct MobileControlView: View {
     @StateObject private var tabPreferences = TabPreferences()
     @State private var selectedTab: AppTab = .home
     @State private var morePath: [AppTab] = []
+    /// Proposal id a deep link asked for, handed to whichever ProposalsView is on screen.
+    @State private var focusedProposalId: String?
+    /// Clears the ring above once the cue has been seen (see `apply`).
+    @State private var focusExpiry: Task<Void, Never>?
+
+    @Binding private var pendingDeepLink: DeepLinkDestination?
+
+    init(pendingDeepLink: Binding<DeepLinkDestination?> = .constant(nil)) {
+        self._pendingDeepLink = pendingDeepLink
+    }
 
     private var pendingProposalCount: Int {
         store.snapshot?.pendingProposals.count ?? 0
@@ -126,6 +136,10 @@ struct MobileControlView: View {
         Binding(
             get: { selectedTab },
             set: { target in
+                // Any tab change ends the deep-link ring: it has either been seen or been left
+                // behind.  `apply` sets the focus AFTER moving the selection, so a link's own
+                // jump is not the change that clears it.
+                clearFocusedProposal()
                 if target == .more || tabPreferences.barTabs.contains(target) {
                     selectedTab = target
                 } else {
@@ -162,13 +176,50 @@ struct MobileControlView: View {
             }
         }
         .tint(AppPalette.accent)
+        .onChange(of: pendingDeepLink) { _, destination in
+            apply(destination)
+        }
+        .onAppear {
+            // A link that launched the app can arrive before this view exists.
+            apply(pendingDeepLink)
+        }
+    }
+
+    /// Deep links reuse the SAME rerouting `selection` binding as in-app jumps, so a link to an
+    /// UNPINNED screen lands in the More stack instead of selecting a tab that is not on the
+    /// bar.  Clearing `pendingDeepLink` afterwards keeps a repeat of the same link routable.
+    ///
+    /// The focus id is set AFTER the tab move (the selection setter clears it) and expires on its
+    /// own a few seconds later: the accent ring is a transient "here it is" cue for the card the
+    /// link named, so once the scroll has landed and been seen it should stop marking that card
+    /// out.  Leaving it set was making one proposal look permanently singled out for the rest of
+    /// the session.  Clearing it does not scroll anything back — `SnapshotScaffold` only acts on a
+    /// non-nil target.
+    private func apply(_ destination: DeepLinkDestination?) {
+        guard let destination else { return }
+        selection.wrappedValue = destination.tab
+        focusedProposalId = destination.proposalId
+        pendingDeepLink = nil
+        focusExpiry?.cancel()
+        guard focusedProposalId != nil else { return }
+        focusExpiry = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            focusedProposalId = nil
+        }
+    }
+
+    private func clearFocusedProposal() {
+        focusExpiry?.cancel()
+        focusExpiry = nil
+        focusedProposalId = nil
     }
 
     @ViewBuilder
     private func destination(for tab: AppTab) -> some View {
         switch tab {
         case .home: HomeView(selectedTab: selection)
-        case .proposals: ProposalsView()
+        case .proposals: ProposalsView(focusedProposalId: $focusedProposalId)
         case .markets: MarketsView()
         case .activity: ActivityView()
         case .insights: InsightsView()
