@@ -350,19 +350,14 @@ export function reconcileAutonomyOnBoot(): void {
 
 /** One summary notification per user per boot when reconcileAutonomyOnBoot halted at least one of
  *  their accounts — so a deploy/restart silently disarming live autonomy doesn't go unnoticed until
- *  the owner happens to check Settings. Forces the event into that send's enabledEvents so it
- *  delivers even for accounts whose persisted notification preferences predate this event type. */
+ *  the owner happens to check Settings. Delivery honors the user's real enabledEvents toggle
+ *  (owner ruling 2026-08-12, "ALL toggles must be real" — no force-include). A legacy stored
+ *  enabledEvents array predating this event type was backfilled once by migration 77 (db.ts);
+ *  after that the toggle is genuinely the user's. */
 async function notifyAutonomyHaltedOnBoot(userId: string, accountLabels: string[]): Promise<void> {
   const accountsList = accountLabels.join(", ");
   const activeAccountId = getActiveConnectedAccount(userId)?.id;
   const policy = getPolicy(userId, activeAccountId);
-  const forcedPolicy: TradingPolicy = {
-    ...policy,
-    notificationSettings: {
-      ...policy.notificationSettings,
-      enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "autonomy_halted_on_boot" as const]))
-    }
-  };
   const title =
     accountLabels.length === 1
       ? `Autonomy halted on boot: ${accountsList}`
@@ -374,7 +369,7 @@ async function notifyAutonomyHaltedOnBoot(userId: string, accountLabels: string[
     `"auto-resume on boot" for this user in Settings, or set AUTONOMY_RESUME_ON_BOOT=1.`;
   await sendNotification(
     { type: "autonomy_halted_on_boot", title, payload: { accountLabels } },
-    { userId, policy: forcedPolicy, directBody: body }
+    { userId, policy, directBody: body }
   );
 }
 

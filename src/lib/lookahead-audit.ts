@@ -877,20 +877,14 @@ export async function runLookaheadAuditPass(
 }
 
 /** One batched advisory notification per pass with mismatches — NEVER fired on 'unverifiable'.
- *  Force-includes the lookahead_leak event type (signal-health's provider_degraded precedent:
- *  stored enabledEvents arrays predating the type would silently skip a new alarm class). ntfy
- *  titles are raw HTTP header values — ASCII only. */
+ *  Delivery honors the user's real enabledEvents toggle (owner ruling 2026-08-12, "ALL toggles
+ *  must be real" — no force-include). A legacy stored enabledEvents array predating this event
+ *  type was backfilled once by migration 77 (db.ts); after that the toggle is genuinely the
+ *  user's. ntfy titles are raw HTTP header values — ASCII only. */
 async function notifyLookaheadMismatch(userId: string, mismatches: LookaheadFinding[]): Promise<void> {
   const { sendNotification } = await import("./notifications");
   const { getPolicy } = await import("./db");
   const policy = getPolicy(userId);
-  const forcedPolicy = {
-    ...policy,
-    notificationSettings: {
-      ...policy.notificationSettings,
-      enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "lookahead_leak" as const]))
-    }
-  };
   const count = mismatches.length;
   const fields = Array.from(new Set(mismatches.map((finding) => finding.factorOrField))).join(", ");
   const symbols = Array.from(new Set(mismatches.map((finding) => finding.symbol))).slice(0, 5).join(", ");
@@ -915,7 +909,7 @@ async function notifyLookaheadMismatch(userId: string, mismatches: LookaheadFind
         }))
       }
     },
-    { userId, policy: forcedPolicy, directBody: body }
+    { userId, policy, directBody: body }
   );
 }
 

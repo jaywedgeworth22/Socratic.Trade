@@ -1,3 +1,30 @@
+## Current (2026-08-13 MONET — real toggles: banned force-include notification pattern removed)
+
+Owner ruling 2026-08-12: "ALL toggles must be real" — no force-included notification events,
+ever. Ten call sites across eight files (`lookahead-audit.ts`, `signal-health.ts`,
+`db-health.ts` x3, `scheduler.ts`, `earningscalls-transcripts.ts`, `usage-limit-alerts.ts`,
+`broker-health.ts`, `strategy.ts` x3) injected a specific event type into that send's effective
+`enabledEvents` regardless of the user's stored setting, silently overriding an OFF toggle
+forever. All removed; every site now passes the real `policy` through unmodified.
+
+Replaced with a one-time versioned migration (`src/lib/db.ts`, version 77,
+`notification_enabled_events_backfill`): backfills the eight previously-force-included event
+types into any LEGACY stored `enabledEvents` array that predates them (only touches rows with an
+explicit array already present; a row with no `notificationSettings` key at all already defaults
+to every current type via `mergePolicy`). After the backfill the Settings toggle is genuinely the
+user's — on by default, off if/when they turn it off, and it STAYS off.
+
+Rewrote one existing test (`test/guard-enablement.test.ts`) that explicitly pinned the OLD
+force-include behavior as a "regression" test; added new regression coverage proving
+`signal_health` and `lookahead_leak` are NOT delivered when switched off
+(`test/signal-health.test.ts`, `test/lookahead-audit.test.ts`), plus a dedicated migration test
+(`test/db-migration-notification-backfill.test.ts`). Bumped 12 hardcoded schema-version
+assertions in `test/persistence-hardening.test.ts` from 76 to 77.
+
+Branch `monet/real-toggles`, worktree `~/apps/trading-monet-toggles`. Gates: tsc clean, lint 0
+errors, full test/build results in the rollout note. Rollout:
+`docs/rollouts/2026-08-13-remove-force-include-notifications.md`.
+
 ## Current (2026-08-13 GROK — Fleet Pushover/Sentry/Uptime triage)
 
 Owner screenshot 8:06–8:44am CT plus 7d Uptime/Sentry.  Four distinct app bugs, not one outage.
