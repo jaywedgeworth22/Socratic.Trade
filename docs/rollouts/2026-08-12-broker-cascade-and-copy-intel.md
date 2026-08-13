@@ -33,6 +33,11 @@ APIs allow it.
   - **Webull** — connect-ready, fail-closed until official OpenAPI App Key
     signing is enabled after owner approval.
 
+Owner correction 2026-08-12: **eToro has no API access** (Connect button disabled).
+**Webull comes later** (Connect disabled).  **Public is connected but unfunded** —
+quotes/history may run; `PUBLIC_EXECUTION_ENABLED` default off parks review/place
+and empties the venue-contract sides so the LLM does not propose Public orders.
+
 Touched:
 
 - `src/lib/history.ts`, `test/history.test.ts`
