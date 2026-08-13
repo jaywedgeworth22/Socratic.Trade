@@ -41,6 +41,12 @@ BIN_DIR="$DATA_DIR/.bin"
 DB_PATH="$DATA_DIR/app.db"
 MARKER="$DATA_DIR/.restored-from-replica"
 CONFIG="/app/litestream.coolify.yml"
+# Combined stdout+stderr of the `litestream replicate` process, teed to the persistent volume so
+# the app (src/lib/runtime-health.ts's scanLitestreamRuntimeLogFile) can read litestream's own
+# "compaction failed" / "validation error detected" lines. litestream owns the container's real
+# stdout here (it wraps the app via `-exec`, not the other way around), so this file is the only
+# channel the app has into that stream at all -- see the run_app call at the bottom of this script.
+LITESTREAM_LOG_FILE="$DATA_DIR/litestream-runtime.log"
 
 log() { echo "[coolify-prod-start] $*"; }
 
@@ -206,4 +212,12 @@ if [ -f "$R2_DISABLE_MARKER" ]; then
   esac
 fi
 
-run_app litestream replicate -config "$CONFIG" -exec "node_modules/.bin/next start"
+# The `> >(tee -a ...) 2>&1` form (process substitution, NOT a `| tee` pipe) is deliberate: a
+# pipe backgrounds the whole pipeline and makes `$!` inside run_app resolve to `tee`'s PID instead
+# of litestream's, which would silently break the SIGTERM-forwarding contract above (the exact
+# class of bug the 2026-08-02 exit-code audit exists to prevent). Process substitution redirects
+# fds for this one call without wrapping it in a subshell, so `$!` still resolves to the real
+# litestream PID -- verified locally (PID capture, SIGTERM forwarding, and exit-code propagation
+# all unchanged) before landing this. tee also still mirrors everything to the script's own
+# stdout/stderr, so nothing is removed from what Coolify's log collector already sees.
+run_app litestream replicate -config "$CONFIG" -exec "node_modules/.bin/next start" > >(tee -a "$LITESTREAM_LOG_FILE") 2>&1
