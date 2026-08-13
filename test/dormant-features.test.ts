@@ -34,7 +34,8 @@ describe("listDormantFeatureStatus", () => {
     expect(byId["usage-budget-enforce"]?.readyToEnable).toBe(true);
     expect(byId["vector-embed-clean-text"]?.readyToEnable).toBe(true);
     expect(byId["vector-asof-strict"]?.readyToEnable).toBe(false);
-    expect(byId["rag-hyde"]?.readyToEnable).toBe(false);
+    expect(byId["rag-multiquery"]?.readyToEnable).toBe(true);
+    expect(byId["rag-hyde"]?.readyToEnable).toBe(true);
     expect(byId["fmp-transcripts"]?.readyToEnable).toBe(false);
   });
 });

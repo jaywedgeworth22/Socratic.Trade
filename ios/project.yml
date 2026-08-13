@@ -8,7 +8,7 @@ name: Socratic Trade
 options:
   bundleIdPrefix: trade.socratic
   deploymentTarget:
-    iOS: "26.0"
+    iOS: "18.0"
   groupSortPosition: top
   xcodeVersion: "26.3"
 
@@ -57,6 +57,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Socratic Trade
         LSApplicationCategoryType: public.app-category.finance
+        ITSAppUsesNonExemptEncryption: false
         # Lato (SIL OFL 1.1) — the shared web/native typeface, sources in SocraticTrade/Fonts/.
         # BARE FILENAMES, no "Fonts/" prefix: XcodeGen emits Fonts/ as a PBXGroup (not a folder
         # reference), so the Resources build phase copies each .ttf to the TOP level of the
@@ -93,6 +94,12 @@ targets:
       properties:
         com.apple.developer.applesignin:
           - Default
+        # Universal links.  The domain side is app/.well-known/apple-app-site-association/
+        # route.ts (served without a .json extension, appID CC8UTF7ATG.trade.socratic.app).
+        # Keep this list and SocraticTrade.entitlements in sync — xcodegen REWRITES that file
+        # from these properties, so an entry only added there is lost on the next regen.
+        com.apple.developer.associated-domains:
+          - applinks:socratictrade.com
 
   SocraticTradeTests:
     type: bundle.unit-test

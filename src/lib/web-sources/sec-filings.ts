@@ -91,11 +91,11 @@ async function getCikForTicker(ticker: string): Promise<string> {
 const SEC_BASE = "https://www.sec.gov";
 const EDGAR_DATA_BASE = "https://data.sec.gov";
 
-// The TTL for the per-symbol "last attempted filing ingest" stamp.
-// Weekly by default: 10-K/10-Q cadence is quarterly, so a free-tier corpus doesn't need
-// re-checking sooner. Operators draining the ingest backlog (paid Voyage key) lower it via
-// SEC_FILING_INGEST_TTL_HOURS (e.g. 24) so the capped per-run ingest runs daily instead.
-const DEFAULT_FILING_INGEST_TTL_HOURS = 7 * 24;
+// Cadence stamp for the last filing-ingest attempt (one global lastAttempt key).
+// Default 24h: paid OpenRouter/bge-m3 can drain the backlog daily. The old 168h weekly pin
+// was a Voyage-free-tier artifact. An Infisical value of 87600 is an emergency pause, not
+// a product default — do not copy it forward.
+const DEFAULT_FILING_INGEST_TTL_HOURS = 24;
 function filingIngestTtlMs(): number {
   const hours = resolveSourceNumber("SEC_FILING_INGEST_TTL_HOURS");
   return (Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_FILING_INGEST_TTL_HOURS) * 60 * 60_000;
@@ -756,7 +756,7 @@ function maxFilingsPerRunFromEnv(): number {
   return isFreeTier() ? DEFAULT_MAX_FILINGS_PER_RUN : DEFAULT_PAID_MAX_FILINGS_PER_RUN;
 }
 
-/** Whether we're due for a filing ingest check (TTL per SEC_FILING_INGEST_TTL_HOURS, default weekly). */
+/** Whether we're due for a filing ingest check (TTL per SEC_FILING_INGEST_TTL_HOURS, default 24h). */
 export function isFilingIngestDue(now: number = Date.now()): boolean {
   const last = getInternalSetting<unknown>(ATTEMPT_KEY);
   if (!isValidPersistedTimestamp(last)) return true;

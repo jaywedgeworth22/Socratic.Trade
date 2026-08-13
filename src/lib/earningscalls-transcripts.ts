@@ -81,6 +81,7 @@
 import { CircuitOpenError } from "./api-circuit-breaker";
 import { fetchWithRetry } from "./data-providers";
 import { audit, getDb } from "./db";
+import { resolveSourceNumber } from "./source-settings";
 import {
   getEarningsCallsSymbolCheck,
   getEarningsCallsTranscript,
@@ -135,7 +136,7 @@ const DEFAULT_ROLLING_WINDOW_BUDGET = 195; // 5 under the hard 200, for accounti
 const DEFAULT_RECENT_DAYS = 7;
 const DEFAULT_TOP_CANDIDATES = 3;
 const DEFAULT_NEGATIVE_TTL_DAYS = 3;
-const DEFAULT_DAILY_TARGET_TRANSCRIPTS = 5;
+const DEFAULT_DAILY_TARGET_TRANSCRIPTS = 12;
 const DEFAULT_BURST_MAX_TRANSCRIPTS = 25;
 // Anti-runaway breaker only — see the header comment: the ACTUAL safety bound is the rolling
 // ledger dual-bound in tryReserveEarningsCallsRequests, not this number. Sized generously enough
@@ -165,17 +166,20 @@ function intEnv(raw: string | undefined, fallback: number, min = 0, max = 100_00
   return parsed;
 }
 
-/** Env-overridable monthly soft request budget. 0 is a valid override (block all calls without
+/** Settings/env monthly soft request budget. 0 is a valid override (block all calls without
  *  removing the key). Default 180 — deliberate headroom under the provider's hard 200/month. */
 export function earningsCallsMonthlyBudget(): number {
-  return intEnv(process.env.EARNINGSCALLS_MONTHLY_BUDGET, DEFAULT_MONTHLY_BUDGET);
+  const n = resolveSourceNumber("EARNINGSCALLS_MONTHLY_BUDGET");
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : DEFAULT_MONTHLY_BUDGET;
 }
 
-/** Env-overridable rolling-31-day request budget (the bound that actually maps to the provider's
+/** Settings/env rolling-31-day request budget (the bound that actually maps to the provider's
  *  hard 200, since its window resets on the subscription anniversary, not the UTC calendar
  *  month). Default 195 — 5 under 200 for accounting drift. */
 export function earningsCallsRollingWindowBudget(): number {
-  return intEnv(process.env.EARNINGSCALLS_ROLLING_WINDOW_BUDGET, DEFAULT_ROLLING_WINDOW_BUDGET, 0, 200);
+  const n = resolveSourceNumber("EARNINGSCALLS_ROLLING_WINDOW_BUDGET");
+  if (!Number.isFinite(n)) return DEFAULT_ROLLING_WINDOW_BUDGET;
+  return Math.max(0, Math.min(10_000, Math.floor(n)));
 }
 
 export function earningsCallsRecentDays(): number {
@@ -190,15 +194,16 @@ export function earningsCallsNegativeTtlDays(): number {
   return intEnv(process.env.EARNINGSCALLS_NEGATIVE_TTL_DAYS, DEFAULT_NEGATIVE_TTL_DAYS, 1, 90);
 }
 
-/** How many NEW transcripts an ordinary (non-burst) daily pass targets. ~6 requests including the
- *  amortized listing call, on a day something reported. */
+/** How many NEW transcripts an ordinary (non-burst) daily pass targets. Settings override, then env. */
 export function earningsCallsDailyTargetTranscripts(): number {
-  return intEnv(process.env.EARNINGSCALLS_DAILY_TARGET_TRANSCRIPTS, DEFAULT_DAILY_TARGET_TRANSCRIPTS, 0, 100);
+  const n = resolveSourceNumber("EARNINGSCALLS_DAILY_TARGET_TRANSCRIPTS");
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.floor(n))) : DEFAULT_DAILY_TARGET_TRANSCRIPTS;
 }
 
 /** Ceiling on a single one-shot burst arm — the coordinator's "burst 25" cap. */
 export function earningsCallsBurstMaxTranscripts(): number {
-  return intEnv(process.env.EARNINGSCALLS_BURST_MAX_TRANSCRIPTS, DEFAULT_BURST_MAX_TRANSCRIPTS, 1, 100);
+  const n = resolveSourceNumber("EARNINGSCALLS_BURST_MAX_TRANSCRIPTS");
+  return Number.isFinite(n) ? Math.max(1, Math.min(100, Math.floor(n))) : DEFAULT_BURST_MAX_TRANSCRIPTS;
 }
 
 /** Anti-preview cache/ingest floor (recon memo finding #1): a fetched body shorter than this is

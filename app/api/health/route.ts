@@ -3,6 +3,7 @@ import { HEALTH_REASON_CONSECUTIVE_FAILURES } from "@/lib/db-health";
 import { activeEmbeddingProvider } from "@/lib/vector-db";
 import type { RagEmbedRerankProvider } from "@/lib/rag-metering";
 import { getProviderTierStatus } from "@/lib/provider-tier";
+import { getLitestreamRemoteInventory } from "@/lib/litestream-remote-inventory";
 import {
   assessLitestreamRuntimeHealth,
   assessLitestreamTierFreshness,
@@ -357,14 +358,18 @@ export async function GET(request: Request) {
       latestLocalActivityAtMs: latestLocalActivityAtMs || null
     });
 
-    // Per-compaction-level freshness (level 0 continuous / level 1 compaction / level 9 daily
-    // snapshot). This is the gap the IPC `/list` signal above cannot see: it reports the
-    // database's overall last-sync time, which tracks level 0 and stays fresh even while a
-    // higher compaction level is silently wedged — exactly what happened in production on
-    // 2026-08-11 (a stuck level-1 B2 compaction anchor ran undetected for 27+ hours). Always a
-    // local file-mtime read (no S3/B2 calls), so unlike the IPC source above it is not gated on
-    // liveMode — there is no other signal for this data in any mode.
-    const litestreamTiers = assessLitestreamTierFreshness(litestreamStatePath);
+    // Per-compaction-level freshness. This is the gap the IPC `/list` signal above cannot see:
+    // it reports the database's overall last-sync time, which tracks level 0 and stays fresh
+    // even while a higher compaction level is silently wedged — exactly what happened in
+    // production on 2026-08-11 (level 1) and again on 2026-08-12 (level 2).
+    //
+    // Level 0 is read from local `ltx/0/` mtimes here and now. Levels 1/2/3/9 exist only in the
+    // remote replica, so they are graded from the snapshot the scheduler collects every 30
+    // minutes (src/lib/litestream-remote-inventory.ts) — this request performs NO S3/B2 calls
+    // and spawns nothing. Levels with no snapshot report an explicit "not-observable" reason.
+    const litestreamTiers = assessLitestreamTierFreshness(litestreamStatePath, {
+      remoteInventory: getLitestreamRemoteInventory()
+    });
 
     // Byte counts are operator-only (see the header comment); every litestream/backup-continuity
     // field below stays public because the credential-less deploy-verify runbook reads exactly
@@ -379,7 +384,16 @@ export async function GET(request: Request) {
       litestreamTimestampState: freshness.state === "known" ? freshness.timestampState : null,
       litestreamSource: freshness.source,
       litestreamDegradedReasons: litestreamAssessment.reasons,
-      litestreamTiers: litestreamTiers.tiers
+      litestreamTiers: litestreamTiers.tiers,
+      // How much of the five-level breakdown is actually covered right now. Published so an
+      // external monitor can distinguish "all five levels healthy" from "we can see one level
+      // and are blind to four" — the state that silently held for a day before 2026-08-12.
+      litestreamTierCoverage: {
+        observed: litestreamTiers.observedTiers,
+        notObservable: litestreamTiers.notObservableTiers,
+        remoteInventoryState: litestreamTiers.remoteInventoryState,
+        remoteInventoryCollectedAt: litestreamTiers.remoteInventoryCollectedAt
+      }
     };
 
     // Thresholds:
@@ -410,12 +424,28 @@ export async function GET(request: Request) {
       }
       for (const tier of litestreamTiers.tiers) {
         if (tier.state === "known" && tier.degraded) {
+          const where = tier.source === "local-ltx" ? "local LTX cache" : "remote replica";
           void alertStorageWarning(
             `litestream_tier_${tier.tier}_stale`,
-            `Litestream "${tier.label}" (level ${tier.tier}) has not written a new local LTX file in ${Math.round(tier.ageSeconds / 60)} minutes (threshold ${Math.round(tier.thresholdSeconds / 60)} min).`
+            `Litestream "${tier.label}" (level ${tier.tier}) has not produced a new LTX file in the ${where} for ${Math.round(tier.ageSeconds / 60)} minutes (threshold ${Math.round(tier.thresholdSeconds / 60)} min), while level 0 kept advancing.`
           );
         }
       }
+    }
+
+    // Losing sight of a backup tier is not itself a backup failure, so it does NOT flip
+    // storageDegraded — but in production it does mean the wedge detector is blind, which is
+    // what went unnoticed for a day before 2026-08-12. Alert once, separately, and honestly.
+    if (
+      liveMode
+      && litestreamTiers.notObservableTiers > 0
+      && litestreamTiers.remoteInventoryState !== "ok"
+      && litestreamTiers.remoteInventoryState !== "partial"
+    ) {
+      void alertStorageWarning(
+        "litestream_tier_coverage_blind",
+        `Litestream per-level backup monitoring is blind to ${litestreamTiers.notObservableTiers} of ${litestreamTiers.tiers.length} compaction levels (replica inventory: ${litestreamTiers.remoteInventoryState}). A wedged compaction at those levels would not be detected.`
+      );
     }
   } catch {
     // never let storage monitoring break the health probe

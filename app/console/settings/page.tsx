@@ -786,13 +786,8 @@ function DataSourcesCard() {
         <Toggle
           checked={showAdvanced}
           onChange={setShowAdvanced}
-          label="Show advanced knobs"
+          label="Show Advanced Features"
         />
-        {/* Keep this list in sync with the `advanced: true` knob labels in
-            src/lib/source-settings-catalog.ts — it names what the toggle reveals. */}
-        <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Multi-query retrieval, HyDE passages, SEC backfill worker, transcript storage rights, etc.
-        </span>
       </div>
 
       <div className="flex flex-col gap-4">
