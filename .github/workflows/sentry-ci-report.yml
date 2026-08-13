@@ -23,7 +23,8 @@ name: Sentry CI Report
 #
 # workflows observed (from `ls .github/workflows/`; see each file's `name:`):
 #   Auto-merge PRs, Auto-merge congress-trading-shared PRs, CI, Cleanup Actions Caches,
-#   Codex Autofix, Effort Issues Sync, iOS build (Mac runner), merge-shepherd,
+#   Codex Autofix, Effort Issues Sync, iOS build (Mac runner),
+#   iOS TestFlight ship (Mac runner), merge-shepherd,
 #   Shared package pin check, Playwright Smoke, Security
 # Reusable-only `_merge-shepherd-impl` executes inside `merge-shepherd` and has no independent
 # workflow_run event; the caller's completion is the observable run.
@@ -47,6 +48,7 @@ on:
       - Codex Autofix
       - Effort Issues Sync
       - iOS build (Mac runner)
+      - iOS TestFlight ship (Mac runner)
       - merge-shepherd
       - Shared package pin check
       - Playwright Smoke
