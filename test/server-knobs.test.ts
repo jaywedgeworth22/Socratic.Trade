@@ -5,6 +5,8 @@
  *   - short-TTL read cache with explicit invalidation on write
  *   - fail-open to env/default on any store READ error
  *   - SEC ingest worker park/resume driven by the SEC_INGEST_WORKER_ENABLED knob
+ *   - congress stream park/resume: level-based (parked loop self-polls), so an off->on bounce
+ *     inside one supervisor poll window still resumes — no rising edge required
  *   - admin route auth (requireAdmin) + `server_knob.changed` audit on every write
  *   - per-user source-settings precedence: user > server override > env (SEC_FILING_RAG_MAX_PER_RUN)
  */
@@ -40,6 +42,12 @@ import { getDb, setInternalSetting } from "../src/lib/db";
 import { SERVER_KNOBS_SETTING_KEY } from "../src/lib/server-knobs";
 import { patchUserSourceSettings, resolveSourceNumber } from "../src/lib/source-settings";
 import { SecIngestWorker, secIngestWorkerEnabled, startSecIngestWorker } from "../src/lib/rag/sec-ingest-worker";
+import {
+  setCongressParkPollMsForTests,
+  setCongressStreamEnabledResolver,
+  startCongressStream,
+  stopCongressStream
+} from "../src/lib/congress-stream";
 import { GET as knobsGet, POST as knobsPost } from "../app/api/admin/server-knobs/route";
 
 const KNOB_ENV_IDS = SERVER_KNOBS_CATALOG.map((s) => s.id);
@@ -194,6 +202,81 @@ describe("SEC ingest worker park/resume", () => {
     expect(host.__secIngestWorkerInstance).toBeInstanceOf(SecIngestWorker);
     const { stopSecIngestWorker } = await import("../src/lib/rag/sec-ingest-worker");
     await stopSecIngestWorker();
+  });
+});
+
+describe("congress stream park/resume (level-based)", () => {
+  it("an off->on bounce inside one supervisor poll window still resumes (no rising edge needed)", async () => {
+    // Production resolver wiring, but the supervisor's 30s edge poll is deliberately NOT running:
+    // a bounce inside one poll window shows the supervisor on->on (no edge), so the parked loop's
+    // own self-poll is the only resume path — exactly what this test exercises.
+    setCongressStreamEnabledResolver(() => serverKnobBool("CONGRESS_STREAM_ENABLED"));
+    setCongressParkPollMsForTests(25);
+    process.env.CONGRESS_STREAM_SUBSCRIPTION_ID = "sub_park";
+    process.env.CONGRESS_STREAM_SUBSCRIPTION_TOKEN = "park-tok";
+    setServerKnobOverride("CONGRESS_STREAM_ENABLED", true);
+
+    let connects = 0;
+    let pushFrame: ((frame: string) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        connects++;
+        const body = new ReadableStream<Uint8Array>({
+          start(c) {
+            pushFrame = (frame: string) => c.enqueue(new TextEncoder().encode(frame));
+            // Wire the abort signal so stopCongressStream() actually releases the read loop.
+            init?.signal?.addEventListener(
+              "abort",
+              () => {
+                pushFrame = undefined;
+                try {
+                  c.close();
+                } catch {
+                  /* already closed */
+                }
+              },
+              { once: true }
+            );
+          },
+          cancel() {
+            pushFrame = undefined;
+          }
+        });
+        return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+      })
+    );
+
+    try {
+      startCongressStream();
+      await vi.waitFor(() => expect(connects).toBe(1));
+      await vi.waitFor(() => expect(pushFrame).toBeDefined());
+
+      // Flip off, then deliver a frame so the read loop sees the park request and cancels.
+      setServerKnobOverride("CONGRESS_STREAM_ENABLED", false);
+      pushFrame!("event: ping\ndata: 1\n\n");
+      await vi.waitFor(() => expect(pushFrame).toBeUndefined()); // reader canceled -> parked
+
+      // Flip back on immediately — far inside a supervisor window.  The parked loop must
+      // reconnect on its own self-poll (post-connect backoff ~1s + park poll).
+      setServerKnobOverride("CONGRESS_STREAM_ENABLED", true);
+      await vi.waitFor(() => expect(connects).toBe(2), { timeout: 4000 });
+    } finally {
+      stopCongressStream();
+      await sleep(20); // let the loop observe closing and exit
+      setCongressStreamEnabledResolver(undefined);
+      setCongressParkPollMsForTests();
+      // The module holds the globalThis-pinned state object; reset its fields (not the global
+      // slot) so a later start in this process would begin fresh.
+      const st = (globalThis as { __congressStream?: { started: boolean; closing: boolean } }).__congressStream;
+      if (st) {
+        st.started = false;
+        st.closing = false;
+      }
+      vi.unstubAllGlobals();
+      delete process.env.CONGRESS_STREAM_SUBSCRIPTION_ID;
+      delete process.env.CONGRESS_STREAM_SUBSCRIPTION_TOKEN;
+    }
   });
 });
 

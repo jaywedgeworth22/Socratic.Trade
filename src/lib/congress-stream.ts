@@ -26,6 +26,16 @@ const DEFAULT_PATH = "/api/stream";
 const MAX_BACKOFF_MS = 60_000;
 const INITIAL_BACKOFF_MS = 1_000;
 
+// Parked-loop self-poll cadence (see runLoop). 15s + the ~15s server-knob cache TTL keeps a
+// flip back on effective well inside the advertised "about a minute".
+const DEFAULT_PARK_POLL_MS = 15_000;
+let parkPollMs = DEFAULT_PARK_POLL_MS;
+
+/** Test hook: shrink the park self-poll so park/resume tests run in milliseconds. */
+export function setCongressParkPollMsForTests(ms?: number): void {
+  parkPollMs = typeof ms === "number" && ms > 0 ? ms : DEFAULT_PARK_POLL_MS;
+}
+
 interface StreamState {
   started: boolean;
   closing: boolean;
@@ -261,11 +271,13 @@ export async function connectOnce(): Promise<void> {
 async function runLoop(): Promise<void> {
   while (!state.closing) {
     if (!congressStreamEnabled()) {
-      // Server-knob park: release the loop and let startCongressStream (re-invoked by the knob
-      // supervisor on the next flip on) start a fresh one. `closing` stays false — this is a
-      // pause, not a shutdown.
-      state.started = false;
-      return;
+      // Server-knob park: mirror the alpaca streams — keep this single loop alive as a slow
+      // self-poll so a flip back on resumes level-based, with no external re-invoke.  Exiting
+      // the loop here raced the supervisor's 30s rising-edge poll: an off->on bounce inside one
+      // window read as on->on (no edge) and left the stream parked while Admin > Operations
+      // showed it on.  `closing` stays false — this is a pause, not a shutdown.
+      await sleep(parkPollMs);
+      continue;
     }
     try {
       await connectOnce();

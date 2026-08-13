@@ -108,7 +108,7 @@ export function listDormantFeatureStatus(env: EnvSource = process.env): DormantF
       readyToEnable: false,
       defaultWhenUnset: "off",
       blocker: "Ops: seed jobs via /api/admin/sec-ingest and confirm queue/DLQ health first.",
-      note: "Background SEC backfill worker. Default off; admin seed is the canary. Env view only — an Admin > Operations override supersedes this; check there for the effective value."
+      note: "Background SEC backfill worker.  Default off; admin seed is the canary.  Env view only — an Admin > Operations override supersedes this; check there for the effective value."
     },
     {
       id: "fmp-transcripts",

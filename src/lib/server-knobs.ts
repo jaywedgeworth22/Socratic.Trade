@@ -34,9 +34,24 @@
  *     EARNINGSCALLS_*, ROIC_*, RAG_MULTIQUERY/HYDE, SEC_XBRL_ENRICHMENT_ENABLED, NEWS_RELEVANCE_*,
  *     POLYMARKET_*): those live in user Settings > Sources, not here.
  *   - Safety-interlock disables (PROVIDER_RATE_LIMIT_DISABLED, API_CIRCUIT_BREAKER_DISABLED,
- *     LLM_PROVIDER_COOLDOWN_DISABLED): incident/test escape hatches for provider-protective
- *     pacing, not operational pauses; deliberately left env-only so a UI mis-click cannot
- *     remove provider protection.  Still adjustable via Infisical.
+ *     LLM_PROVIDER_COOLDOWN_DISABLED, HEALTH_LANE_REPROBE_ENABLED): incident/test escape hatches
+ *     for provider-protective pacing and health self-probes, not operational pauses; deliberately
+ *     left env-only so a UI mis-click cannot remove provider protection.  Still adjustable via
+ *     Infisical.
+ *   - Data-plane provider/enrichment tier gates (WEBULL_UNOFFICIAL_ENABLED, MASSIVE_*,
+ *     ROBINHOOD_*, ENRICHMENT_*, FMP_PRICE_TARGETS_ENABLED, NASDAQ_CALENDAR_ENRICHMENT_ENABLED):
+ *     select WHICH quote/fundamentals providers serve the enrichment cascade — data-source
+ *     selection knobs that pair with keys/plan tiers provisioned alongside them in env, not
+ *     pause switches.
+ *   - Cross-app Congress.Trade integration flags (CONGRESS_TRADE_READS_ENABLED,
+ *     CONGRESS_SHARE_ENABLED, CONGRESS_ANALYTICS_ENABLED): App A link wiring that pairs with
+ *     env-provisioned tokens/base URLs; only the SSE consumer (CONGRESS_STREAM_ENABLED) is an
+ *     operational pause and IS catalogued.
+ *   - USAGE_MONITOR_KNOBS_ENABLED: gates syncing subscription knobs FROM the external usage
+ *     monitor — cross-app config plumbing, not an in-app pause.
+ *   - R2_COLD_SNAPSHOT_ENABLED: the weekly disaster-recovery snapshot kill switch
+ *     (r2-cold-snapshot.ts); left env-only for now so a UI mis-click cannot silently stop DR
+ *     backups — a candidate for a future catalog entry with copy that makes that risk explicit.
  *   - Observability vendor wiring (SENTRY_CRONS_ENABLED, LANGFUSE_ENABLED): boot-time SDK init;
  *     a runtime flip would not take effect honestly.
  *   - OTLP_METRICS_INGEST_ENABLED: no such knob exists in this codebase (verified by grep).
@@ -100,7 +115,7 @@ export const SERVER_KNOBS_CATALOG: readonly ServerKnobSpec[] = [
     description: "Persistent Benzinga news WebSocket feeding streamed headlines into enrichment.",
     type: "boolean",
     defaultValue: false,
-    effect: "Turning on starts the stream within about 30 seconds.  Turning off closes the socket at the next received article or reconnect attempt (up to about a minute)."
+    effect: "Turning on starts the stream within about a minute.  Turning off stops article processing within about 15 seconds; the idle socket closes at the next message or reconnect."
   },
   {
     id: "STREAMS_ALPACA_TRADE_UPDATES_ENABLED",
@@ -109,7 +124,7 @@ export const SERVER_KNOBS_CATALOG: readonly ServerKnobSpec[] = [
     description: "Persistent fill/partial-fill WebSocket that drives real-time fill reconciliation.",
     type: "boolean",
     defaultValue: false,
-    effect: "Turning on starts the stream within about 30 seconds.  Turning off closes the socket at the next received message or reconnect attempt.  While off, fills reconcile on the polling path instead."
+    effect: "Turning on starts the stream within about a minute.  Turning off stops fill processing within about 15 seconds; the idle socket closes at the next message or reconnect.  While off, fills reconcile on the polling path instead."
   },
   {
     id: "STREAMS_ALPACA_PRICE_EVENTS_ENABLED",
@@ -118,7 +133,7 @@ export const SERVER_KNOBS_CATALOG: readonly ServerKnobSpec[] = [
     description: "Minute-bar WebSocket that feeds the intraday trigger engine for watched symbols.",
     type: "boolean",
     defaultValue: false,
-    effect: "Turning on starts the stream within about 30 seconds.  Turning off closes the socket at the next received bar or reconnect attempt."
+    effect: "Turning on starts the stream within about a minute.  Turning off stops bar processing within about 15 seconds; the idle socket closes at the next bar or reconnect."
   },
   {
     id: "CONGRESS_STREAM_ENABLED",
@@ -127,7 +142,7 @@ export const SERVER_KNOBS_CATALOG: readonly ServerKnobSpec[] = [
     description: "SSE consumer of congress.trade disclosures (App A push link).",
     type: "boolean",
     defaultValue: false,
-    effect: "Turning on starts the consumer within about 30 seconds.  Turning off parks it at the next event frame or reconnect."
+    effect: "Turning on starts the consumer within about a minute.  Turning off parks it at the next event frame or reconnect."
   },
   {
     id: "R2_USAGE_DAILY_DIGEST",

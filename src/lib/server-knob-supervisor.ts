@@ -10,11 +10,14 @@
  *      override.
  *
  *   2. Poll the stream knobs and re-invoke the (idempotent, self-gated) starters on a rising
- *      edge, so a stream switched ON from Admin > Operations starts within one poll interval
- *      without a redeploy.  Rising-edge only — a starter that declines for its own reasons
- *      (missing creds, no watched symbols) warns once per flip, not once per poll.  Parking a
- *      RUNNING stream is each stream module's own job (they check their knob at message/reconnect
- *      time), so the supervisor never has to stop anything.
+ *      edge, so a stream that NEVER STARTED (knob off at boot, or the starter declined) starts
+ *      within one poll interval of a flip on, without a redeploy.  Rising-edge only — a starter
+ *      that declines for its own reasons (missing creds, no watched symbols) warns once per
+ *      flip, not once per poll.  The edge is ONLY for first starts: parking and resuming a
+ *      stream that already started is each stream module's own level-based job (alpaca streams
+ *      keep a capped reconnect chain alive while parked; congress-stream keeps its run loop
+ *      alive as a slow self-poll), so an off->on bounce inside one poll window — which shows
+ *      the supervisor on->on, no edge — still resumes on its own.
  *
  * The SEC ingest worker needs neither job: startSecIngestWorker now always starts the loop and
  * the loop parks itself per tick (see rag/sec-ingest-worker.ts).
