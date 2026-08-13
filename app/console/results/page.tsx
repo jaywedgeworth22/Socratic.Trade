@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
 import type { ConnectedAccount, EquityCurvePoint, PerformanceSummary } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
-import { ConsoleApiError, fetchAccountPerformance, fetchSignalHealth, type SignalHealthResponse } from "../lib/api";
+import { ConsoleApiError, fetchAccountPerformance, fetchLookaheadAudit, fetchSignalHealth, type LookaheadAuditResponse, type SignalHealthResponse } from "../lib/api";
 import {
   buildRedTeamModelRows,
   RED_TEAM_EFFICACY_MIN_RESOLVED,
@@ -375,6 +375,7 @@ export default function ResultsPage() {
       </div>
       <RedTeamEfficacyCard efficacy={snapshot.redTeamEfficacy} />
       <SignalHealthCard />
+      <LookaheadAuditCard />
 
       {/* Tax */}
       <Card
@@ -548,6 +549,167 @@ function SignalHealthCard() {
           </p>
         </>
       )}
+    </Card>
+  );
+}
+
+const LOOKAHEAD_FIELD_LABELS: Record<string, string> = {
+  momentum: "Momentum",
+  liquidity: "Liquidity",
+  value: "Value",
+  quality: "Quality",
+  volatility: "Volatility",
+  sentiment: "Sentiment",
+  positioning: "Positioning",
+  diversification: "Diversification",
+  rag_evidence: "RAG evidence"
+};
+
+/** Lookahead audit (freqtrade lookahead-analysis port): weekly truncated-replay findings —
+ *  persisted decision-time values vs values recomputed from data truncated to the decision date.
+ *  Honest three-way classification; 'unverifiable' rows are deliberate coverage-gap receipts and
+ *  are rendered plainly, never hidden or implied clean. Compact by design — no dedicated page. */
+function LookaheadAuditCard() {
+  const [state, setState] = useState<
+    { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: LookaheadAuditResponse }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchLookaheadAudit();
+        if (cancelled) return;
+        setState({ status: "ready", data });
+      } catch (error) {
+        if (cancelled) return;
+        setState({
+          status: "error",
+          message: error instanceof ConsoleApiError ? error.message : "Could not load the lookahead audit."
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const replayChip = (
+    <Chip tone="muted" title="Weekly truncated-replay audit: momentum/liquidity factors are recomputed from OHLC truncated to each decision date, and RAG evidence is re-retrieved with the as-of pin under a strict point-in-time filter.  Factors with no point-in-time source stay honestly unverifiable.  Advisory only — findings gate nothing.">
+      truncated replay
+    </Chip>
+  );
+
+  if (state.status === "loading") {
+    return (
+      <Card title="Lookahead audit" action={replayChip}>
+        <Empty>Loading lookahead audit…</Empty>
+      </Card>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <Card title="Lookahead audit" action={replayChip}>
+        <Empty>{state.message}</Empty>
+      </Card>
+    );
+  }
+
+  const { data } = state;
+  const { verdict } = data;
+  if (data.findings.length === 0) {
+    return (
+      <Card title="Lookahead audit" action={replayChip}>
+        <Empty>
+          No findings yet.{SENTENCE_GAP}The weekly audit samples matured decisions once they clear the outcome
+          horizon; nothing is estimated in the meantime.
+        </Empty>
+      </Card>
+    );
+  }
+
+  const verdictLine =
+    verdict.verdict === "lookahead_mismatch_detected"
+      ? `${verdict.mismatches} mismatch${verdict.mismatches === 1 ? "" : "es"} across ${verdict.qualifying} verifiable observations.`
+      : verdict.verdict === "no_lookahead_bias_detected"
+        ? `No lookahead bias detected across ${verdict.qualifying} verifiable observations.`
+        : `Insufficient sample — ${verdict.qualifying} of the ${verdict.floor} verifiable observations needed before an all-clear.`;
+  const verdictTone =
+    verdict.verdict === "lookahead_mismatch_detected" ? "neg" : verdict.verdict === "no_lookahead_bias_detected" ? "pos" : "muted";
+  const shown = data.findings.slice(0, 30);
+
+  return (
+    <Card
+      title="Lookahead audit"
+      action={
+        <div className="flex items-center gap-2">
+          {replayChip}
+          <Chip tone={verdictTone}>
+            {verdict.verdict === "lookahead_mismatch_detected"
+              ? "mismatch detected"
+              : verdict.verdict === "no_lookahead_bias_detected"
+                ? "no bias detected"
+                : "insufficient sample"}
+          </Chip>
+        </div>
+      }
+    >
+      <p className="text-[length:var(--con-fs-sm)]">
+        {verdictLine}
+        {SENTENCE_GAP}
+        {verdict.unverifiable} observation{verdict.unverifiable === 1 ? " is" : "s are"} unverifiable (no point-in-time
+        source) and never count toward an all-clear.
+      </p>
+      <div className="mt-3 overflow-x-auto">
+        <table className="con-table">
+          <thead>
+            <tr>
+              <th>Decision</th>
+              <th>Field</th>
+              <th className="num" title="Value persisted at decision time (factor sub-score, or used-chunk count for RAG evidence).">Persisted</th>
+              <th className="num" title="Value recomputed from data truncated to the decision date (or the strict as-of replay).">Replayed</th>
+              <th className="num" title="Absolute sub-score difference; 1 − Jaccard for RAG evidence.">Δ</th>
+              <th>Classification</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((finding) => {
+              const reasonRaw = typeof finding.detail?.reason === "string" ? finding.detail.reason : undefined;
+              // Snake-case gate tokens render inline; sentence-length coverage-gap reasons stay
+              // in the tooltip so the table row remains compact.
+              const shortReason = reasonRaw && !reasonRaw.includes(" ") ? reasonRaw.replaceAll("_", " ") : undefined;
+              return (
+                <tr key={`${finding.decisionId}:${finding.factorOrField}`}>
+                  <td className="font-semibold">
+                    {finding.symbol}
+                    <span className="text-[color:var(--con-faint)]"> · {finding.asOf ? `${fmtExact(finding.asOf)} CT` : EM_DASH}</span>
+                  </td>
+                  <td>{LOOKAHEAD_FIELD_LABELS[finding.factorOrField] ?? finding.factorOrField}</td>
+                  <td className="num con-num">{finding.persistedValue !== undefined ? finding.persistedValue.toFixed(1) : <Dash />}</td>
+                  <td className="num con-num">{finding.recomputedValue !== undefined ? finding.recomputedValue.toFixed(1) : <Dash />}</td>
+                  <td className="num con-num">{finding.delta !== undefined ? finding.delta.toFixed(2) : <Dash />}</td>
+                  <td>
+                    {finding.classification === "clean" ? (
+                      <Chip tone="pos">clean</Chip>
+                    ) : finding.classification === "mismatch" ? (
+                      <Chip tone="neg" title={reasonRaw}>mismatch{shortReason ? ` — ${shortReason}` : ""}</Chip>
+                    ) : (
+                      <Chip tone="muted" title={reasonRaw ?? (typeof finding.detail?.backtestSafety === "string" ? finding.detail.backtestSafety : undefined)}>
+                        unverifiable{shortReason ? ` — ${shortReason}` : ""}
+                      </Chip>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        Showing {shown.length} of {data.findings.length} recent findings.{SENTENCE_GAP}Mismatch tolerance{" "}
+        {data.tolerancePoints} sub-score points; RAG drift tolerance Jaccard {data.jaccardMin}.{SENTENCE_GAP}Runs every{" "}
+        {data.cadenceDays} day{data.cadenceDays === 1 ? "" : "s"}{data.enabled ? "" : " (currently disabled by LOOKAHEAD_AUDIT_ENABLED)"}.
+      </p>
     </Card>
   );
 }

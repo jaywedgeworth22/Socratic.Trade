@@ -14,7 +14,7 @@ import type {
   EquityOrderInput,
   OptionPosition
 } from "./types";
-import { normalizeSymbol } from "./money";
+import { normalizeSymbol, roundCents } from "./money";
 import { isRejectedOrCanceledState } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { logApiHealth } from "./db-health";
@@ -22,6 +22,7 @@ import { fetchDailyOHLC } from "./history";
 // Reuse Alpaca's keyless-Yahoo quote floor and the shared pre-trade notional semantics verbatim —
 // they are broker-agnostic helpers exported from ./alpaca (no Alpaca SDK behavior involved).
 import { fillMissingQuotesWithClose, estimateReviewNotional } from "./alpaca";
+import { mergeAccountCapabilities } from "./venue-contract";
 
 /**
  * Tradier broker gateway. Hand-rolled REST (single Bearer token, no SDK), mirroring the Alpaca
@@ -236,16 +237,17 @@ function capsFromProfile(account: Record<string, unknown>): AccountCapabilities 
   // Tradier IRAs report type "margin" even though they cannot short.
   // Short selling is only valid for non-IRA margin accounts.
   const isIra = accountType === "traditional_ira" || accountType === "roth_ira";
-  return {
+  return mergeAccountCapabilities("tradier", {
     equityTrading: true,
     shortSelling: isMargin && !isIra,
     optionsTrading: optionsLevel !== undefined ? optionsLevel > 0 : false,
     optionsLevel,
+    optionsOrders: false,
     futuresTrading: false,
     cryptoTrading: false,
     marginEnabled: isMargin,
     accountType
-  };
+  });
 }
 
 class TradierBrokerGateway implements BrokerGateway {
@@ -728,8 +730,8 @@ class TradierBrokerGateway implements BrokerGateway {
         "quantity[0]": String(wholeQty),
         "type[0]": mapTradierTypeWrite(input.type)
       };
-      if (input.limitPrice != null) bracketForm["price[0]"] = input.limitPrice;
-      if (input.stopPrice != null) bracketForm["stop[0]"] = input.stopPrice;
+      if (input.limitPrice != null) bracketForm["price[0]"] = roundCents(input.limitPrice);
+      if (input.stopPrice != null) bracketForm["stop[0]"] = roundCents(input.stopPrice);
 
       let legIndex = 1;
       if (hasTakeProfit) {
@@ -737,7 +739,7 @@ class TradierBrokerGateway implements BrokerGateway {
         bracketForm[`side[${legIndex}]`] = exitSide;
         bracketForm[`quantity[${legIndex}]`] = String(wholeQty);
         bracketForm[`type[${legIndex}]`] = "limit";
-        bracketForm[`price[${legIndex}]`] = input.bracketTakeProfit;
+        bracketForm[`price[${legIndex}]`] = roundCents(input.bracketTakeProfit!);
         legIndex += 1;
       }
       if (hasStopLoss) {
@@ -745,8 +747,8 @@ class TradierBrokerGateway implements BrokerGateway {
         bracketForm[`side[${legIndex}]`] = exitSide;
         bracketForm[`quantity[${legIndex}]`] = String(wholeQty);
         bracketForm[`type[${legIndex}]`] = input.bracketStopLimit != null ? "stop_limit" : "stop";
-        bracketForm[`stop[${legIndex}]`] = input.bracketStopLoss;
-        if (input.bracketStopLimit != null) bracketForm[`price[${legIndex}]`] = input.bracketStopLimit;
+        bracketForm[`stop[${legIndex}]`] = roundCents(input.bracketStopLoss!);
+        if (input.bracketStopLimit != null) bracketForm[`price[${legIndex}]`] = roundCents(input.bracketStopLimit);
       }
 
       let bracketBody: { order?: Record<string, unknown> };

@@ -1,6 +1,7 @@
 import { avgReturnCorrelation, correlationProfile } from "./correlation";
 import { audit } from "./db";
 import { ExecutionAccount } from "./execution-mode";
+import { deriveVenueContract } from "./venue-contract";
 import { fractionalKellySuggestion } from "./kelly";
 import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
 import { normalizeSymbol } from "./money";
@@ -91,8 +92,7 @@ export async function mapWithConcurrency<T>(items: readonly T[], limit: number, 
   await Promise.all(runners);
 }
 export function allowedProposalSides(policy: TradingPolicy, account?: ExecutionAccount): OrderSide[] {
-  const shortAllowed = policy.shortSellingEnabled === true && account?.capabilities?.shortSelling === true;
-  return shortAllowed ? ["buy", "sell", "short", "cover"] : ["buy", "sell"];
+  return deriveVenueContract(policy, account).sides;
 }
 export function deterministicBearFilter(
   proposals: TradeProposal[],

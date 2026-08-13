@@ -177,6 +177,14 @@ fi
 
 log "DB_BOOTSTRAP=live - starting under litestream replicate"
 
+# Generic kill-switch (owner directive 2026-08-13): allows manual override to
+# pause replication during outages or memory leak investigations.
+LITESTREAM_DISABLE_MARKER="${DATA_DIR}/.litestream-disabled"
+if [ -f "$LITESTREAM_DISABLE_MARKER" ]; then
+  log "Generic kill-switch marker present ($LITESTREAM_DISABLE_MARKER) - starting WITHOUT litestream replication"
+  run_app node_modules/.bin/next start
+fi
+
 # R2 free-tier kill-switch (owner directive 2026-08-01): when the app's R2 usage
 # monitor projects >70% of the free tier it writes this marker and restarts the
 # container. ONLY applies when the active litestream replica is still Cloudflare

@@ -108,6 +108,17 @@ export function routeInformationNeeds(needs: readonly unknown[]): InformationRou
   };
 }
 
+/**
+ * The strategy's deterministic per-symbol filings-retrieval query. Shared between the live
+ * retrieval pass (strategy.ts) and the lookahead audit's truncated replay
+ * (src/lib/lookahead-audit.ts), which reconstructs this exact string from a persisted decision
+ * and verifies it against the candidate pool's stored queryHash — so a future wording change here
+ * degrades old decisions to an honest 'unverifiable', never a silent false mismatch.
+ */
+export function deterministicFilingsRetrievalQuery(symbol: string): string {
+  return `Significant financial events, SEC filings, and macro catalysts for ${symbol}`;
+}
+
 /** Strategy currently has explicit structured inputs plus filing/transcript narrative needs. */
 export function strategyInformationRouting(includeEarningsTranscripts: boolean): InformationRoutingPlan {
   return routeInformationNeeds([

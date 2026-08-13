@@ -198,6 +198,23 @@ describe("plan_tier persistence on user_api_keys", () => {
     const windows = resolveProviderQuota("tiingo"); // no explicit tier — reads DB
     expect(windows?.find((w) => w.windowMs === HOUR)?.maxRequests).toBe(10_000);
   });
+
+  it("ROIC Individual on a logged-in user id (not local) still lifts the 5/min free cap", async () => {
+    delete process.env.PROVIDER_QUOTA_ROIC_PER_DAY;
+    const { getDb, upsertUserApiKey, setUserApiKeyPlanTier } = await import("../src/lib/db");
+    const { quartersPerSymbol } = await import("../src/lib/web-sources/roic-transcripts");
+    const db = getDb();
+    const owner = "user-owner-roic";
+    upsertUserApiKey(owner, "roic", "roic-individual-key-eeeeeeee", undefined, "free");
+    setUserApiKeyPlanTier(owner, "roic", "individual");
+    try {
+      expect(resolveProviderQuota("roic")).toEqual([{ maxRequests: 300, windowMs: 60_000 }]);
+      expect(quartersPerSymbol()).toBe(20);
+      expect(quartersPerSymbol(owner)).toBe(20);
+    } finally {
+      db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(owner, "roic");
+    }
+  });
 });
 
 describe("GET/POST /api/keys planTier surface", () => {

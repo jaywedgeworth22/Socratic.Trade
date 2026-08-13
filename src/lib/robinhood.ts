@@ -19,6 +19,7 @@ import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { logApiHealth } from "./db-health";
 import { normalizeSymbol } from "./money";
+import { mergeAccountCapabilities } from "./venue-contract";
 import { isShortIntent } from "./broker-side";
 import { getOpenLots, getPerformanceSummary } from "./performance";
 import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch } from "./yahoo-finance";
@@ -211,18 +212,18 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
         : rawBrokerageType.includes("ira") || rawBrokerageType.includes("traditional") ? "traditional_ira"
         : "brokerage";
 
-      const capabilities: AccountCapabilities = {
+      const capabilities: AccountCapabilities = mergeAccountCapabilities("robinhood", {
         equityTrading: true,
-        // Robinhood MCP does not support short selling. The MCP's review_equity_order
-        // docs explicitly state "no short sells". Hardcoded false regardless of account type.
+        // Live MCP place/review side enum is buy|sell only — no short/cover.
         shortSelling: false,
         optionsTrading,
         optionsLevel: optionsTrading ? optionsLevel : undefined,
+        optionsOrders: false,
         futuresTrading: false,
         cryptoTrading: false,
         marginEnabled,
         accountType
-      };
+      });
 
       return {
         accountNumber: String(item.account_number ?? item.accountNumber),
@@ -1018,9 +1019,8 @@ export async function fetchRobinhoodHistoricals(
   try {
     const raw = await callRobinhoodMcpTool(userId, "get_equity_historicals", {
       symbols: [sym],
-      symbol: sym,
+      start_time: robinhoodHistoricalsStartTime(opts.span ?? "5year"),
       interval: opts.interval ?? "day",
-      span: opts.span ?? "5year",
       bounds: "regular"
     });
     const bars = parseRobinhoodHistoricals(raw, sym);
@@ -1028,6 +1028,21 @@ export async function fetchRobinhoodHistoricals(
   } catch {
     return null;
   }
+}
+
+/** Convert the legacy `span` knob (e.g. `5year`) into the RFC3339 `start_time` the live MCP requires. */
+export function robinhoodHistoricalsStartTime(span: string, nowMs = Date.now()): string {
+  const raw = String(span || "5year").trim().toLowerCase();
+  const match = raw.match(/^(\d+)?(year|month|week|day)s?$/);
+  const count = match?.[1] ? Number(match[1]) : 1;
+  const unit = match?.[2] ?? "year";
+  const dayMs = 24 * 60 * 60 * 1000;
+  const ms =
+    unit === "year" ? count * 365.25 * dayMs
+    : unit === "month" ? count * 30 * dayMs
+    : unit === "week" ? count * 7 * dayMs
+    : count * dayMs;
+  return new Date(nowMs - ms).toISOString();
 }
 
 /** Defensive parser for Robinhood historicals — tolerates several envelope shapes. */
@@ -1115,21 +1130,18 @@ export async function fetchRobinhoodOptionChain(
   const sym = normalizeSymbol(symbol);
   if (!sym || !userId) return null;
   try {
-    // `underlying_symbol` is the argument the Robinhood MCP option tools expect (the chat orchestrator's
-    // caller uses it too). `symbol`/`symbols` are sent alongside for tolerance across MCP server variants;
-    // a server that requires `underlying_symbol` would otherwise throw and yield no metrics.
+    // Live MCP schemas are additionalProperties:false. get_option_chains accepts only
+    // ids / underlying_symbol; get_option_instruments wants chain_symbol (not symbol/symbols).
+    // Sending both shapes used to 400 the whole lane: unexpected additional properties
+    // ["symbol" "symbols"] — Pushover/Sentry SOCRATIC-TRADE-K / GH #2576.
     const chains = await callRobinhoodMcpTool(userId, "get_option_chains", {
-      underlying_symbol: sym,
-      symbol: sym,
-      symbols: [sym]
+      underlying_symbol: sym
     });
     let instruments: unknown = undefined;
     try {
       instruments = await callRobinhoodMcpTool(userId, "get_option_instruments", {
-        underlying_symbol: sym,
-        symbol: sym,
-        symbols: [sym],
-        ...(opts.expiration ? { expiration_date: opts.expiration } : {}),
+        chain_symbol: sym,
+        ...(opts.expiration ? { expiration_dates: opts.expiration } : {}),
         ...(opts.type ? { type: opts.type } : {})
       });
     } catch {

@@ -34,7 +34,7 @@ const ROIC_V3_BASE = "https://api.roic.ai/v3.0.0";
 const ROIC_V2_BASE = "https://api.roic.ai/v2";
 const LAST_ATTEMPT_KEY = "webSource:roicTranscripts:lastAttemptAt";
 const DEFAULT_TTL_HOURS = 24;
-const DEFAULT_MAX_TRANSCRIPTS_PER_RUN = 12;
+const DEFAULT_MAX_TRANSCRIPTS_PER_RUN = 20;
 
 function flagOn(value: string | undefined): boolean {
   return /^(1|true|on|yes)$/i.test((value ?? "").trim());

@@ -18,6 +18,7 @@ import type {
 } from "./types";
 import { OrderValidationError } from "./types";
 import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
+import { mergeAccountCapabilities } from "./venue-contract";
 import { toBrokerSide, isRejectedOrCanceledState } from "./broker-side";
 import { audit, getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
 import { logApiHealth } from "./db-health";
@@ -346,15 +347,16 @@ class AlpacaBrokerGateway implements BrokerGateway {
       const rawAccountType = String(acc.account_type ?? "").toUpperCase();
       const accountType = classifyAlpacaAccountType(acc);
       const marginEnabled = accountType === "brokerage" && (shortSelling || rawAccountType === "MARGIN");
-      return {
+      return mergeAccountCapabilities(this.isMcp ? "alpaca-mcp" : "alpaca", {
         equityTrading: true,
         shortSelling,
         optionsTrading: false,
+        optionsOrders: false,
         futuresTrading: false,
         cryptoTrading: false,
         marginEnabled,
         accountType
-      };
+      });
     };
 
     return this.callMcp<any>("get_account_info", {}, async () => {

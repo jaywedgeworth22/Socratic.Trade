@@ -8,7 +8,8 @@ name: Socratic Trade
 options:
   bundleIdPrefix: trade.socratic
   deploymentTarget:
-    iOS: "26.0"
+    iOS: "18.0"
+    macOS: "15.0"
   groupSortPosition: top
   xcodeVersion: "26.3"
 
@@ -36,7 +37,8 @@ targets:
         DEVELOPMENT_TEAM: CC8UTF7ATG
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: SocraticTrade/SocraticTrade.entitlements
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "1,2,6"
+        SUPPORTS_MACCATALYST: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_NAME: "Socratic Trade"
         # PRODUCT_NAME has a space, which sanitizes to module "Socratic_Trade" —
@@ -57,7 +59,25 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Socratic Trade
         LSApplicationCategoryType: public.app-category.finance
-        UILaunchScreen: {}
+        ITSAppUsesNonExemptEncryption: false
+        # Lato (SIL OFL 1.1) — the shared web/native typeface, sources in SocraticTrade/Fonts/.
+        # BARE FILENAMES, no "Fonts/" prefix: XcodeGen emits Fonts/ as a PBXGroup (not a folder
+        # reference), so the Resources build phase copies each .ttf to the TOP level of the
+        # bundle. A path that doesn't resolve here fails SILENTLY — the faces never register
+        # and every .app* style falls back to SF Pro with no error anywhere. `testAppFontsAreRegistered`
+        # in SocraticTradeTests is the guard; keep it passing rather than eyeballing a screenshot.
+        UIAppFonts:
+          - Lato-Regular.ttf
+          - Lato-Italic.ttf
+          - Lato-Bold.ttf
+          - Lato-Black.ttf
+        # An empty UILaunchScreen paints WHITE, and the app's own background is
+        # systemGroupedBackground (#F2F2F7) — so every cold launch flashed white before the
+        # candlestick splash appeared. LaunchBackground pins that same grey (deliberately the
+        # SAME value in both appearances: the launch screen renders before SwiftUI can apply
+        # the app's forced .light scheme, so a dark variant here would flash dark instead).
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
@@ -89,6 +109,12 @@ targets:
         aps-environment: production
         com.apple.developer.applesignin:
           - Default
+        # Universal links.  The domain side is app/.well-known/apple-app-site-association/
+        # route.ts (served without a .json extension, appID CC8UTF7ATG.trade.socratic.app).
+        # Keep this list and SocraticTrade.entitlements in sync — xcodegen REWRITES that file
+        # from these properties, so an entry only added there is lost on the next regen.
+        com.apple.developer.associated-domains:
+          - applinks:socratictrade.com
 
   SocraticTradeTests:
     type: bundle.unit-test

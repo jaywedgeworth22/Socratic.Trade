@@ -185,9 +185,10 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     id: "SEC_FILING_INGEST_TTL_HOURS",
     group: "sec",
     label: "Filing ingest recheck TTL (hours)",
-    description: "How often to re-scan symbols for new 10-K/10-Q filings.",
+    description:
+      "How often the scheduler re-scans for new 10-K/10-Q filings. 24h is the paid OpenRouter/bge-m3 cadence; 168 was the old Voyage-free weekly pin. Values like 87600 are an emergency pause, not a product default.",
     type: "number",
-    defaultValue: 168,
+    defaultValue: 24,
     min: 1,
     max: 720
   },
@@ -313,11 +314,21 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     id: "ROIC_TRANSCRIPTS_MAX_PER_RUN",
     group: "transcripts",
     label: "ROIC transcripts per run",
-    description: "Max transcript fetches per scheduler pass.",
+    description:
+      "Max transcript fetches per scheduler pass.  Free ROIC is 5 req/min; Individual is 300/min.  20 is a safe paid-or-free bump from the old 12.",
     type: "number",
-    defaultValue: 12,
+    defaultValue: 20,
     min: 1,
     max: 50
+  },
+  {
+    id: "PUBLIC_EXECUTION_ENABLED",
+    group: "enrichment",
+    label: "Public.com order execution",
+    description:
+      "Allow placing orders on the connected Public.com account.  Leave off until that account is funded.  Quotes and history still use the connection.",
+    type: "boolean",
+    defaultValue: false
   },
   {
     id: "ROIC_HISTORY_ENABLED",
@@ -339,9 +350,10 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     id: "EARNINGSCALLS_DAILY_TARGET_TRANSCRIPTS",
     group: "transcripts",
     label: "EarningsCalls daily target",
-    description: "New full transcripts to fetch on an ordinary day.",
+    description:
+      "New full transcripts to fetch on an ordinary day.  The RapidAPI free-shaped plan is ~200 requests/month (~100 transcripts).  The monthly budget knob is the real cap; this is only the daily sip.",
     type: "number",
-    defaultValue: 5,
+    defaultValue: 12,
     min: 0,
     max: 100
   },
@@ -354,6 +366,30 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     defaultValue: 25,
     min: 1,
     max: 100
+  },
+  {
+    id: "EARNINGSCALLS_MONTHLY_BUDGET",
+    group: "transcripts",
+    label: "EarningsCalls monthly request budget",
+    description:
+      "Soft UTC-month request cap (default 180, headroom under a 200/month plan).  Raise this only if the RapidAPI/EarningsCalls plan is actually larger.",
+    type: "number",
+    defaultValue: 180,
+    min: 0,
+    max: 10_000,
+    advanced: true
+  },
+  {
+    id: "EARNINGSCALLS_ROLLING_WINDOW_BUDGET",
+    group: "transcripts",
+    label: "EarningsCalls rolling 31-day budget",
+    description:
+      "Harder rolling-window cap (default 195 of 200).  Maps to the provider anniversary window, not the calendar month.",
+    type: "number",
+    defaultValue: 195,
+    min: 0,
+    max: 10_000,
+    advanced: true
   },
 
   // ── News relevance gating (DSA lesson: providers' own relevance scores were parsed then
@@ -377,6 +413,31 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
       "Minimum 0-1 relevance score a headline must clear to count toward a symbol's news/sentiment.  Applies to provider-native scores (Alpha Vantage relevance_score, Marketaux match_score) and to this app's own headline-text rubric alike.",
     type: "number",
     defaultValue: 0.35,
+    min: 0,
+    max: 1
+  },
+
+  // ── Polymarket prediction-market context (keyless — Gamma API needs no API key; see
+  // src/lib/polymarket-provider.ts). Prompt-time only: fetched for the candidates entering the
+  // strategist prompt, gated through the same news-relevance.ts rubric as every other keyless
+  // provider. ──────────────────────────────────────────────────────────────────────────────────
+  {
+    id: "POLYMARKET_CONTEXT",
+    group: "enrichment",
+    label: "Polymarket prediction-market context",
+    description:
+      "Inject up to 3 currently-active, company-relevant Polymarket markets (question, implied probability, volume) into the strategist prompt per candidate.  Keyless — no credential required.  Off restores the pre-Polymarket prompt byte-for-byte.",
+    type: "boolean",
+    defaultValue: true
+  },
+  {
+    id: "POLYMARKET_MIN_RELEVANCE",
+    group: "enrichment",
+    label: "Polymarket relevance minimum score",
+    description:
+      "Minimum 0-1 relevance score (this app's headline-text rubric, applied to the market question) a Polymarket market must clear to be shown for a symbol.",
+    type: "number",
+    defaultValue: 0.5,
     min: 0,
     max: 1
   }

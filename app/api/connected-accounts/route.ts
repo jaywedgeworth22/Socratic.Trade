@@ -4,6 +4,7 @@ import { resolveRequestUserId } from "@/lib/request-user";
 import { ALPACA_ALLOWED_HOSTS, validateBrokerBaseUrl } from "@/lib/egress-guard";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
+import { mergeAccountCapabilities } from "@/lib/venue-contract";
 
 export const dynamic = "force-dynamic";
 
@@ -95,7 +96,7 @@ export async function POST(req: Request) {
         taxationType: taxationType ?? existing?.taxationType,
         // Persist live capabilities from the broker so the UI can display them
         // and policy can enforce them without a round-trip on each strategy run.
-        capabilities: agentic.capabilities ?? existing?.capabilities,
+        capabilities: mergeAccountCapabilities("robinhood", agentic.capabilities ?? existing?.capabilities),
         isActive: body.isActive ?? existing?.isActive ?? !getActiveConnectedAccount(userId)
       });
       return NextResponse.json({ ok: true, accountNumber: agentic.accountNumber, label: agentic.label });
@@ -207,6 +208,7 @@ export async function POST(req: Request) {
               : "https://api.alpaca.markets"
             : undefined,
       taxationType,
+      capabilities: mergeAccountCapabilities(broker),
       isActive: body.isActive ?? false
     });
 
@@ -231,7 +233,7 @@ export async function POST(req: Request) {
             accountNumber,
             label: connectedAccountLabel,
             apiKey: apiKey || undefined,
-            capabilities: brokerAccounts[0].capabilities,
+            capabilities: mergeAccountCapabilities("tradier", brokerAccounts[0].capabilities),
             baseUrl: broker === "tradier"
               ? environment === "paper"
                 ? "https://sandbox.tradier.com/v1"

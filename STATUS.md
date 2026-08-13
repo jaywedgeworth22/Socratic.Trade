@@ -1,3 +1,175 @@
+## Current (2026-08-13 GROK — Fleet Pushover/Sentry/Uptime triage)
+
+Owner screenshot 8:06–8:44am CT plus 7d Uptime/Sentry.  Four distinct app bugs, not one outage.
+
+1. Robinhood MCP option/historicals calls sent extra `symbol`/`symbols` (and legacy `span`) against `additionalProperties:false` schemas — GH #2576 / SOCRATIC-TRADE-K.
+2. Pinecone upserts 2 bytes over the 40960 metadata cap (SOCRATIC-TRADE-1T).
+3. OpenRouter embed 429 "engine overloaded" paged as both connection-failed and usage-limit (SOCRATIC-TRADE-1X).
+4. CT senate scout 503 is a Mac-scout handshake false positive; server `pollSenate` via senate-relay is live.
+
+ST 503s pair with the keyword "OpenRouter credits low" monitor because that monitor hit the same `/api/health` URL and treated 5xx as down.  Allowed 4xx/5xx on that keyword monitor so only the credits substring pages.
+
+Branch `grok/fleet-alerts-aug13`.  Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
+
+## Current (2026-08-13 GROK — Settings Saving… + ROIC Individual actually binds)
+
+Owner: ROIC paid first tier (Individual) was set in Settings; dropdown snapped
+back to Free for 20–30s with no busy state.  The save did land.  They want the
+desk to show when a write is in flight, not look idle.
+
+Optimistic plan-tier + Data Sources values; card Saving…/Saved; global Saving…
+chip in the top bar for any console mutation.  Plan-tier lookup now reads the
+logged-in user, not only `local`, so Individual is 300/min and 20 transcript
+quarters.  Branch `grok/settings-busy-feedback`.
+
+Rollout: `docs/rollouts/2026-08-13-settings-busy-feedback.md`.
+## Current (2026-08-13 ANTIGRAVITY — Framework & Dashboard Loading Performance Optimizations)
+
+**Branch `ag/framework-dashboard-perf` (Framework & Dashboard Loading Optimizations):**
+1. **Framework Loading**: Removed artificial `150ms` delay in `FrameworkViewer` (`app/framework/framework-viewer.tsx`) and added in-memory session caching so return visits within the same session render instantly.
+2. **Dashboard Assembly**: Raced independent macro data dependencies (`fetchMacroData`, `getMarketSignals`, `fetchMacroHistory`, `fetchMassiveNews`) in parallel via `Promise.all` alongside the broker chain in `src/lib/dashboard.ts`.
+3. **Verification**: `npm run lint` clean (0 errors), `npx tsc --noEmit` clean, `npm test` 87/87 test files (673 passed), `npm run build` clean.
+Rollout: `docs/rollouts/2026-08-13-framework-and-dashboard-perf.md`.
+
+## Current (2026-08-13 ANTIGRAVITY — Dashboard Parallelization and Litestream Generic Disable)
+
+## Current (2026-08-12 ~11:30pm CT GROK — SEC TTL was a 10-year pause; paid RAG knobs on)
+
+Owner: is `SEC_FILING_INGEST_TTL_HOURS` too long, and run the clean-text reindex so every
+advanced feature current tiers can run is on.
+
+**Yes, it was too long — live Infisical was still `87600` (the 2026-08-10 emergency pause).**
+Catalog default 168h was the old Voyage-free weekly pin.  Paid OpenRouter/bge-m3 wants 24h.
+Claude had flipped the worker + max-per-run back on 2026-08-12 but left the 10-year TTL, so
+`isFilingIngestDue` (one global last-attempt stamp) kept ingest dark.
+
+Infisical prod now: TTL `24`, `VECTOR_EMBED_CLEAN_TEXT=on`, `RAG_MULTIQUERY=on`, `RAG_HYDE=on`,
+`RAG_EMBED_DISCLOSURES=on`.  Worker already on; max-per-run stays 25.  Left off: FMP transcript
+rights, full 8-K body, `VECTOR_ASOF_STRICT`.
+
+Code (branch `grok/rag-advanced-enable`, worktree `~/apps/trading-grok-rag-enable`): catalog
+default 24h; Settings user overrides now actually drive clean-text / multi-query / HyDE.
+Reindex `POST /api/admin/reembed` after the queued main deploy picks up Infisical.  Do not
+purge rev-1 until that run completes with zero failures.
+
+Rollout: `docs/rollouts/2026-08-12-rag-advanced-enable.md`.
+## Current (2026-08-13 ANTIGRAVITY — Dashboard Parallelization and Litestream Generic Disable)
+
+**Branch `ag/rebase-2646` (Dashboard Refactor & Litestream Kill Switch):**
+1. **Litestream Crash Loop Fix**: Added a generic `LITESTREAM_DISABLE_MARKER` to `scripts/coolify-prod-start.sh` to allow manual disabling of Litestream during memory leak incidents. 
+2. **Dashboard Performance**: Refactored `getDashboardSnapshot` in `src/lib/dashboard.ts` to parallelize `getAccounts` and `getPortfolio` fetches when the account number is known, significantly reducing dashboard load times.
+3. **Verification**: `npx tsc --noEmit` clean, `npm run lint` clean, `npm test` clean, `npm run build` clean.
+4. **Ops**: The `.litestream-disabled` marker was dropped on the prod server's data volume to disable the crash-loop immediately on the next start. B2 generation wiping is pending owner coordination.
+Rollout: `docs/rollouts/2026-08-13-dashboard-parallelization-and-litestream-disable.md`.
+
+## Current (2026-08-12 ~9:20pm CT MONET - console false load-failure, phone-correct load graphic, iOS candlestick splash, Lato everywhere)
+
+Owner-reported four-parter, all landed on `monet/loading-fonts`.  The headline is a real bug: the
+console showed "Couldn't load the autonomy desk" on essentially every load while the iOS app on the
+same account loaded fine.  Both clients call the SAME `getDashboardSnapshot`, so this was never a
+server split - the console's 15s first-load watchdog SET `error`, and the shell rendered its
+full-screen failure card on `error` alone, so any first load in the routine 15-24s band (the
+server's own sequential broker-chain worst case) showed a failure screen while the request was
+still in flight and about to succeed.  iOS has no such timer and simply waited.  Fixed via a new
+pure `console-load-state.ts` ("an error while a fetch is still in flight is not a failure") with the
+15s timer demoted to a reassurance line under the load screen; 7 regression tests - the rule was
+untestable inside the React hook (node-only vitest, no jsdom), which is why it shipped.  Server-side
+slowness itself is UNTOUCHED and remains the real follow-up: parallelising the sequential
+accounts -> portfolio/positions/orders -> quotes chain.
+
+Also: the intro canvas now measures the fixed overlay instead of `window.innerHeight` (they
+disagree by 60-90px on iOS Safari, which pushed the chart down and clipped its low wicks on every
+iPhone), DPR 3 on phones, iOS URL-bar resize absorption, safe-area-aware landing box.  iOS
+`LaunchStateView` (icon + spinner + "Socratic.Trade") is now the candlestick SOCRATIC TRADE wordmark
+at the top that slides away, sized by the web `MobileBrandRow` formula, plus a `LaunchBackground`
+colorset that kills the white cold-launch flash.  Found and fixed a shipped bug along the way:
+`CandleWordmarkView` rendered the wordmark VERTICALLY MIRRORED (S as 2, R as K, A as Y) from a
+double row-flip in `alphaAt` - visible on the login screen in the current build.  Lato is now
+self-hosted (deliberately NOT `next/font/google`: a build-time fetch would freeze auto-deploy) as
+the site-wide default plus a named picker option, and bundled on iOS with Dynamic-Type-preserving
+`.app*` twins across all 120 call sites.  Worth knowing: `--font-sans` named "Inter" but never
+loaded it anywhere - no @font-face, no next/font, nothing in public/ - so the site had been
+rendering in the device system font all along; Lato is the first real webfont it has ever resolved.
+
+Gates: tsc clean, lint 0 errors, 6449 tests green, build clean, xcodebuild 40 iOS tests green.
+Verified live, not just green: iOS simulator screenshots of the real launch sequence (that is how
+the mirrored wordmark was caught), the built .app bundle inspected for font placement, and the
+console load screen at 375x812 with Lato confirmed resolving at runtime.
+Rollout: `docs/rollouts/2026-08-12-load-screens-and-lato.md`.  Blockers: none.
+
+## Current (2026-08-12 ~7:45pm CT CLAUDE — round 3 landed: scorecard, lookahead audit, PIT chain, Polymarket)
+
+Four backlog features land in this PR (details in the four r3 rollout notes): the unified
+ProposalScorecard (deterministic receipts: MA alignment, sniper points, gate checklist, signal
+attribution summing to 100, decision chain with a persistence-time validator), the
+truncated-replay lookahead audit (weekly lane; momentum/liquidity + RAG evidence replayed with
+history cut at decision time; honest unverifiable labels; 90-day windowed verdict), the PIT
+fundamentals revision chain (restatements never rewrite history; as-of reads with a strict
+knob), and keyless Polymarket prediction-market context in the strategist prompt.  All slices
+adversarially verified; 13 integration fixes applied; full suite 6423 green + build clean before
+push.  This deploy also activates the owner-directed ingestion re-enable (SEC worker on, filing
+cap 25) — first sync stretch is being watched for the 2026-08-10 event-loop-pinning recurrence.
+Blockers: none.
+
+## Current (2026-08-12 ~3:05pm CT CLAUDE — r3: keyless Polymarket prediction-market context)
+
+Round 3 slice (implementable subset of the social-sentiment lesson: real-money crowd odds as LLM
+context; Reddit/X stay OUT of scope, blocked on owner API keys).  New `src/lib/polymarket-provider.ts`
+— keyless (no credential ever created/held), hits `gamma-api.polymarket.com/public-search`
+(live-verified shape in the file header), matches markets to a symbol via the existing
+`scoreHeadlineRelevance` rubric (`news-relevance.ts`, incl. the ambiguous-company-name
+corroboration gate), keeps up to 3 currently-active company-relevant markets per symbol
+(question/implied probability/volume), 10-minute in-process cache, bounded per-run symbol count,
+fails open to no-data on any error.  Wired into `strategy.ts`'s `proposeTrades` at the same seam
+`prompt-headlines.ts` and `getUpcomingEconomicEventsForPrompt` use — prompt-time only (candidates
+entering the LLM call), never the scan-wide enrichment cascade, so it never fires on a
+budget/threshold-skipped run.  New `MarketQuote.polymarketLines`; new catalog knobs
+`POLYMARKET_CONTEXT` (default true) / `POLYMARKET_MIN_RELEVANCE` (default 0.5).  Dependency-health
+and evidence-pack-family both investigated and found to need ZERO new registration (health map is
+derived dynamically from logged calls; the new prompt field nests inside the existing "market"
+family evidence ref) — see the rollout note.  Gates: tsc clean; 18 new tests
+(`test/polymarket-provider.test.ts`) + 29 adjacent-seam tests green; lint 0 errors on touched
+files.  Rollout: docs/rollouts/2026-08-12-r3-polymarket-context.md.  Local slice commit on
+`agent/claude`; lands via the round-3 integration lane.  Blockers: none.
+
+## Current (2026-08-12 ~2:10pm CT CLAUDE — r3: truncated-replay lookahead audit)
+
+Round 3 slice (freqtrade lookahead-analysis port, scoped per the gap analysis to the two
+genuinely reconstructable subsystems).  New `src/lib/lookahead-audit.ts` (pure/IO split mirroring
+backtest.ts) + `db-lookahead-audit.ts` (migration 75, `lookahead_audit_findings`, deletion-covered):
+a weekly durable per-user due-job samples matured `signal_snapshot` decisions past a watermark,
+recomputes the momentum/liquidity factor sub-scores from daily OHLC truncated to each decision
+date (through the existing pure `scoreFactors`, mirroring decision-time field availability via
+per-field `sources` provenance), and replays RAG evidence by rebuilding the deterministic filings
+query (now shared via `deterministicFilingsRetrievalQuery`; queryHash-guarded so builder drift
+degrades to honest 'unverifiable') with asOf pinned + strictAsOf, diffing chunk ids against the
+persisted candidate-pool `used:true` rows — Jaccard threshold for benign reranker drift, ANY
+post-asOf chunk a hard mismatch.  value/quality/volatility/sentiment/positioning/diversification
+are ALWAYS 'unverifiable' with stored backtestSafety receipts (the coverage gap is visible, never
+silently implied clean); below 20 qualifying observations the aggregate verdict is an honest
+'insufficient_sample'.  Advisory `lookahead_leak` notification fires on mismatch classifications
+only; compact con-* receipts panel on Results.  `LOOKAHEAD_AUDIT_*` knobs (default ON, documented
+kill switch in .env.example).  Gates: tsc clean; test/lookahead-audit.test.ts 17/17;
+persistence-hardening + account-deletion-coverage updated for v75 (25/25); adjacent suites 99/99.
+Rollout: docs/rollouts/2026-08-12-r3-lookahead-audit.md.  Local slice commit on `agent/claude`;
+lands via the round-3 integration lane.  Blockers: none.
+
+## Current (2026-08-12 ~1:15pm CT CLAUDE — r3: unified ProposalScorecard)
+
+Round 3 slice (dsa Dashboard-contract lesson): one typed, deterministic `ProposalScorecard`
+unifying the decision receipts already on `TradeProposal` — core conclusion (derived from the
+existing rationale, no new LLM call), MA/volume data perspective (recycled from the ATR
+precompute's bars, honestly omitted when absent), sniper price levels (referencePrice + bracket
+legs; secondary entry ONLY via the new `secondaryBuyPullbackPct` owner knob), an action checklist
+that RENDERS already-computed gate state (entry-drift, wash-sale, daily-cap, red-team,
+dataAdjustments — never a new authority), four-bucket signal attribution summing to exactly 100,
+and an append-only decision chain stamped at the existing override/human-approval sites with a
+persistence-time validator that receipts (never drops) malformed chains.  Outcome engine now
+grades sniper stop/take levels against the daily closes it already fetches
+(`outcome.sniperAccuracy`, close-basis disclosed).  Rendered collapsible on the approval card and
+read-only in the decision trace.  Gates: tsc clean; targeted suites 182/182 (23 new).  Rollout:
+docs/rollouts/2026-08-12-r3-proposal-scorecard.md.  Local slice commit on `agent/claude`; lands
+via the round-3 integration lane.  Blockers: none.
 ## Current (2026-08-12 GROK — broker cascade + Webull/eToro/Public + CopyTrader intel)
 
 **Branch `grok/broker-webull-etoro-public`:** connected brokers (Tradier / Alpaca / Robinhood)
@@ -44,6 +216,34 @@ End-to-end delivery is STILL unverified - it needs a TestFlight build on a real 
 deployed server.  Post-deploy: confirm all four `APNS_*` values exist in ST prod Infisical, or
 Settings -> Delivery shows "iPhone push - not configured" and sends nothing (by design).
 Rollout: `docs/rollouts/2026-08-12-apns-push.md` (replaces the two per-branch notes).
+## Current (2026-08-12 MONET - backup tier monitor: real coverage, previous version had none)
+
+Branch `monet/backup-tier-monitor-real` (worktree `~/apps/trading-monet-tierfix`).
+
+`assessLitestreamTierFreshness()` shipped 2026-08-11/12 claiming per-compaction-level backup
+freshness for levels 0/1/2/3/9.  Verified on the live container today: it reported
+`state: "unknown"` for ALL FIVE tiers on every health check - zero coverage, while presenting
+itself as a five-tier breakdown.  Two independent causes:
+
+1. It read local `<statePath>/ltx/<level>/`, but litestream 0.5.12 keeps ONLY level 0 on disk
+   (`/app/data/.app.db-litestream/ltx/` has exactly one entry, `0`).  Levels 1/2/3/9 exist only
+   in the B2 replica and could never be observed that way.
+2. `ltx/0` holds 1,078 files; the shared scan returned `null` past a 256-entry bound, so even
+   level 0 - the one readable level - degraded to "unknown".
+
+The level-2 wedge it was built for was running the whole time (`compaction failed ...
+non-contiguous transaction ids`; levels 1/2/3 frozen since 2026-08-08/10 while level 0 advanced).
+
+Fixed by grading each level from a source that is actually valid: level 0 from local LTX in real
+time, levels 1/2/3/9 from a new scheduled 30-minute remote replica inventory
+(`src/lib/litestream-remote-inventory.ts`; `litestream ltx -level N -json`, never inline - the
+`-level all` form measures 143s/14.1MB).  Anything else now reports an explicit
+`state: "not-observable"` with a reason instead of a bare "unknown".  Degradation requires a
+level to be past threshold AND behind level 0's txid, so an idle database cannot false-alarm.
+
+Gates: tsc clean, lint 0 errors, `npm test` 6383 passed / 51 skipped (551 files), build passes.
+Does NOT clear the underlying wedged level-2 compaction - still open ops work.
+Rollout: `docs/rollouts/2026-08-12-backup-tier-monitor-real-coverage.md`.
 
 ## Current (2026-08-12 CLAUDE - connection-health alert noise, root-caused)
 
@@ -92,6 +292,109 @@ Sentry monitors, and there is no collision to fix.  Gates and a 15-check
 behavioral harness recorded in the rollout note.
 
 Rollout: `docs/rollouts/2026-08-12-ci-report-app-tag.md`.
+## Current (2026-08-12 MONET — iOS parity wave 3: cancel a working order from the phone)
+
+Branch `monet/ios-order-cancel` (worktree `~/apps/trading-monet-wave3`).  Integration branch:
+merges `monet/ios-parity-wave2` and `monet/order-cancel-server` (both clean, no conflicts) and
+adds the iOS half of roadmap item #3 on top.
+
+- Open orders were the phone's last see-but-cannot-act money surface.  `OrderRow` on the Assets
+  screen now carries a **Cancel Order** button plus swipe-to-cancel, both opening the same
+  confirmation dialog — the same ceremony the alert-delete row already uses.  No typed
+  confirmation: the server requires none for cancel even on a live brokerage account, because
+  cancelling prevents an execution rather than causing one.
+- The control appears only on WORKING orders.  `OrderCancellation.isWorkingState` mirrors the
+  server's `isWorkingOrderState` exactly (`ACTIVE_BROKER_ORDER_STATES` +
+  `EXTRA_WORKING_ORDER_STATES`), so it matches the precondition `cancelWorkingOrder` enforces.
+  `done_for_day` is excluded (terminal, but returned forever in Alpaca history); `pending_cancel`
+  stays cancellable, matching the console — a stuck broker cancel is a reason to ask again.
+- Payload `{ orderId, accountNumber }` where the account number is
+  `readiness.selectedAccountNumber` — the server's stale-view guard, so a cancel queued while
+  looking at one account cannot land on another.  Submitted through the normal `store.submit`
+  path (busy guard + per-order idempotency key + snapshot reload); gated on the wave-2 control
+  catalog so an older server hides the control instead of collecting a 400.
+
+Round-2 review close-out (all three reviewer items closed; rollout §7):
+
+- **The queued-loosening gap is CLOSED server-side.**  `policy.patch` now accepts an OPTIONAL
+  `expectedCurrent` precondition — the same shape as `order.cancel`'s `expectedAccountNumber` —
+  carrying the values the client believed were current for the fields it is patching.  Validated
+  at queue time (scalar patchable fields only; unknown/wrong-typed/non-object is a 400) and
+  compared at EXECUTION time before anything merges: a mismatch audits
+  `mobile_policy_patch_precondition_mismatch` and throws `PolicyPatchPreconditionError` (409), so
+  the whole patch is refused rather than partially or silently applied.  Without it, a tightening
+  tapped against a $10,000 cap could execute as a LOOSENING minutes later, behind a draining
+  `strategy.run_once`, if the console lowered that cap meanwhile.  A patch with NO
+  `expectedCurrent` behaves exactly as before (proven by a test that performs the same mid-flight
+  edit and asserts the legacy write still lands) — the web console is unaffected.  The iOS
+  tightening UI now sends the precondition, so the "These controls only tighten" footer is true
+  end to end.
+- **Cancel is exempt from the >180 s snapshot-staleness gate**, like `account.activate`: a flaky
+  connection is exactly when someone reaches for cancel, and the server re-validates
+  (`requireWorkingOrder: true` -> 404/409), so a stale tap gets an honest error, never a wrong
+  cancel.  Still requires a loaded snapshot and still respects the control catalog.
+- **The deep-link focus ring is transient again** — it clears on any tab change and expires four
+  seconds after the link lands, instead of marking one proposal card out for the whole session.
+
+Verified: iOS 68/68 XCTests (56 merged base, +8 cancel, +2 round-1, +2 here), `npx tsc --noEmit`
+clean, `npm run lint` 0 errors, full `npx vitest run` 6369 passed / 51 skipped (552 files).
+
+Next: owner action only — TestFlight shipping.  Follow-ups: render the server's `dustWarning`
+on the card after a cancel; replace-at-market from the phone.
+
+Rollout: `docs/rollouts/2026-08-12-ios-parity-wave3.md`.
+
+## Current (2026-08-12 MONET — iOS parity wave 2: guardrail tightening, control catalog, universal links)
+
+Branch `monet/ios-parity-wave2` (worktree `~/apps/trading-monet-wave2`).  Three items, all on
+server capabilities that already exist:
+
+1. **Tighten Guardrails** in the account/settings sheet — submits the existing `policy.patch`
+   mobile command.  Autopilot -> Ask-First, and 75/50/25% reductions of `maxOrderNotional` /
+   `maxDailyNotional`.  Tighten-only is a pure predicate (`PolicyTightening`), and it refuses
+   entirely when a competing percent-of-NAV cap is stored, because the server's
+   `normalizeExclusivePolicyCaps` would delete that cap and change which rule binds.  No new
+   confirmation ceremony: same weight as Close Only / Wind Down.
+2. **`snapshot.catalog` decoded** (`mobileControlCatalog()`), gating non-protective commands
+   through `MobileStore.serverAdvertises`.  Missing catalog or empty `commands` falls back to
+   the app's built-in controls; protective halts are never catalog-gated.
+3. **Universal links + deep-link routing** — the app's first `onOpenURL`.
+   `https://socratictrade.com/console/{approvals,approvals/<id>,orders,watchlist,activity}`
+   routes to the matching tab (reusing the existing More-stack rerouting for unpinned tabs);
+   `socratictrade://` stays auth-callback-only.  Entitlement + `project.yml` claim
+   `applinks:socratictrade.com`; the domain half is `app/.well-known/apple-app-site-association/
+   route.ts`, added to middleware `PUBLIC_PREFIXES` so Apple's anonymous fetch is not redirected
+   to /login.
+
+Verified: iOS 56/56 XCTests (was 37), `npx tsc --noEmit` clean, new vitest file green,
+`npm run build` clean (AASA prerendered static).
+
+Next: owner action — no App Store Connect / Apple credential work was performed; the associated
+domain only takes effect once a build carrying the entitlement ships.
+
+Rollout: `docs/rollouts/2026-08-12-ios-parity-wave2.md`.
+## Current (2026-08-12 MONET — mobile `order.cancel` command, server side)
+
+Roadmap item #3, server half.  The phone could see working orders (`/api/mobile/snapshot` already
+filters by `isWorkingOrderState`) but could not kill one.  Now it can.
+
+- The console's cancel logic was extracted out of `app/api/orders/cancel/route.ts` into
+  `src/lib/order-cancel.ts` (`cancelWorkingOrder`), so mobile runs the SAME path — lease-interleave
+  receipt, time-bounded cancel-dust advisory, `order_cancel` audit, dashboard event, dust
+  notification — instead of a second implementation drifting against the gateway.  The route is now
+  the HTTP shell; console behaviour is unchanged and its three existing route tests pass untouched.
+- New mobile command `order.cancel`, payload `{ orderId, accountNumber? }`.  Immediate (bypasses the
+  sequential worker, so it cannot land behind a 30-minute `strategy.run_once`) but deliberately NOT
+  protective — it must not cancel the operator's other queued work the way stop/close_only do.
+- No typed confirmation: cancelling closes risk, it does not open it.
+- Account isolation: every cancel is scoped to the requesting user's own selected account through
+  their own credentials; a caller-named account that is not the selected one is refused before any
+  broker I/O (`order_cancel_account_mismatch`), and the mobile lane additionally resolves the order
+  in that account first (fail-open on an unavailable read, receipted).
+- Replace-at-market is NOT included; requirements for it are listed in the rollout note.
+
+Branch `monet/order-cancel-server`, worktree `~/apps/trading-monet-cancel`.  No iOS files touched.
+Rollout: `docs/rollouts/2026-08-12-order-cancel-command.md`.
 
 ## Current (2026-08-12 GROK — iOS watchlist wrap + account switch + admin + P&L)
 
@@ -239,6 +542,20 @@ commit — see the rollout note for final counts. Does NOT fix the underlying st
 itself (that's separate ops work, still open). Rollout:
 `docs/rollouts/2026-08-11-litestream-tier-backup-status.md`.
 ## Current (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
+## Current (2026-08-12 ANTIGRAVITY — OSS lessons, Strategy ID fixes, & Dashboard additions)
+
+1. **Bug fixes**:
+   - Fixed `proposalId` loop re-assignment in `src/lib/strategy.ts` (Issue #2593) which caused orphaned receipts.
+   - Applied `roundCents` to `bracketForm` in `src/lib/tradier.ts` (Issue #2578) to fix sub-penny bracket routing.
+   - Verified that `onClick` was already correctly implemented for account deletion in `MobileHomeTab.tsx` (Issue #2592).
+2. **Dashboard Features**:
+   - Added `MarketAnalysisCard` in `app/console/page.tsx` to display macro regime and market breadth.
+3. **Documentation**:
+   - Updated `docs/oss-lessons.md` with integration learnings from `daily_stock_analysis`.
+
+**Verification**: `npx tsc --noEmit` clean, `npm run lint` clean (fixed 1 let->const error), `npm test` clean, `npm run build` clean.
+
+## Previous (2026-08-11 ANTIGRAVITY — Desktop Web & Mobile PWA UX Enhancements)
 
 **Branch `ag/desktop-mobile-ux-enhancements`:**
 1. **Desktop Web UX**:
@@ -910,7 +1227,7 @@ tests, build clean. Rollout: `docs/rollouts/2026-08-02-data-provider-round2.md`.
 | | |
 |---|---|
 | `main` | `44069368` — Codex remediation (#2341), npm `allowScripts` fixes (#2345, #2349), mobile PWA feedback round (#2351) |
-| In flight (MONET) | `monet/exit0-outage-audit` — exit-0 outage RCA + exit-code hardening (PR pending). `monet/broker-mutation-mutex-pr2` LANDED as #2361 (§7 slice 3 COMPLETE; corrected in place — was listed in flight); its deploy is also the freshness-lane re-enable live test. Landed today: #2350, #2352, #2354, #2360, #2361. Rollout: `docs/rollouts/2026-08-02-account-mutation-lease-pr2.md` |
+| In flight (AG) | `agent/ag-ios-throttle` — Automated trailing TestFlight builds (cron + reduced throttle).
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded. ~~litestream replicating~~ **CORRECTED 2026-08-06 (MONET): litestream→R2 is PAUSED (kill-switch since Aug 4) — no continuous DB backup; owner decision to resume** |

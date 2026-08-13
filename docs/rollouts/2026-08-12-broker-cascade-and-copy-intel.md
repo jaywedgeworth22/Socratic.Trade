@@ -33,6 +33,11 @@ APIs allow it.
   - **Webull** — connect-ready, fail-closed until official OpenAPI App Key
     signing is enabled after owner approval.
 
+Owner correction 2026-08-12: **eToro has no API access** (Connect button disabled).
+**Webull comes later** (Connect disabled).  **Public is connected but unfunded** —
+quotes/history may run; `PUBLIC_EXECUTION_ENABLED` default off parks review/place
+and empties the venue-contract sides so the LLM does not propose Public orders.
+
 Touched:
 
 - `src/lib/history.ts`, `test/history.test.ts`
@@ -69,6 +74,30 @@ Touched:
 Full `tsc` in this worktree still reports pre-existing missing
 `@jaywedgeworth22/congress-trading-shared` unless that private package is
 linked.  Not introduced by this change.
+
+## Follow-up (same branch) — venue contract fences LLM tokens
+
+Account capabilities now carry limits (fractional, sessions, trail, brackets,
+option *orders* vs option *positions*, min share/notional, position-id closes).
+`deriveVenueContract` merges live broker facts with a verified per-venue profile
+and drives:
+
+- Green schema enums (`side`, `type`, `marketHours`)
+- Green system prompt (no more hardcoded "Robinhood account")
+- Red Team skip: a short on a venue that cannot short is rejected **without**
+  an LLM call
+- Red Team prompt: do not recommend option hedges when `optionsOrders` is false
+
+Verified venue facts used in the profile:
+
+- Robinhood MCP: buy/sell only (live tool schema).  No shorts.  Options exercise
+  only — this app does not place option orders.
+- Alpaca: shorts iff `shorting_enabled`.  No options API.
+- Tradier: shorts iff margin and not IRA.  Whole shares.  No native trail.
+- eToro US: long real stocks/ETFs.  Shorts are CFD; not offered.  Regular hours.
+- Public: shorts via SELL+OPEN.  Options exist at venue; not on this schema.
+- Webull OpenAPI: shorts, trail, brackets.  Options exist at venue; not on this
+  schema until we add option orders.
 
 ## Next Steps & Blockers
 

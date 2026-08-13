@@ -72,19 +72,17 @@ export function listDormantFeatureStatus(env: EnvSource = process.env): DormantF
       id: "rag-multiquery",
       flag: "RAG_MULTIQUERY",
       enabled: flagOn("RAG_MULTIQUERY", false, env),
-      readyToEnable: false,
+      readyToEnable: true,
       defaultWhenUnset: "off",
-      blocker: "Paid embed/query amplification — need cost canary + run-budget headroom first.",
-      note: "Facet sub-queries per filings pass. Pair with RAG_RUN_BUDGET_ENABLED (already on)."
+      note: "Facet sub-queries per filings pass. Paid OpenRouter/bge-m3 + RAG_RUN_BUDGET_ENABLED is the guardrail. Settings and Infisical both drive the runtime flag."
     },
     {
       id: "rag-hyde",
       flag: "RAG_HYDE",
       enabled: flagOn("RAG_HYDE", false, env),
-      readyToEnable: false,
+      readyToEnable: true,
       defaultWhenUnset: "off",
-      blocker: "Requires RAG_MULTIQUERY on; adds an LLM draft call per pass.",
-      note: "Highest cost retrieval tier. Enable only after MULTIQUERY value proof."
+      note: "Requires RAG_MULTIQUERY on; adds one cheap LLM draft (gpt-5.4-mini) per pass. Enable with MULTIQUERY on paid embed."
     },
     {
       id: "rag-embed-disclosures",

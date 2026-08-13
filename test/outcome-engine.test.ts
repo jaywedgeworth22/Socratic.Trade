@@ -263,6 +263,100 @@ describe("outcome engine — the outcome writer", () => {
     expect(oneDay?.priceBasis).toContain("ref_price->daily_close");
   });
 
+  it("preserves a stored sniperAccuracy receipt when a later pass cannot recompute it (terminal realized-lot write)", async () => {
+    const userId = `oe-sniper-preserve-${randomUUID()}`;
+    const { insertFillEvent, insertProposal, upsertSocraticDecisionCase, getSocraticDecisionCase } = await import("../src/lib/db");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+
+    const proposalId = `sniper-${randomUUID()}`;
+    insertProposal({
+      userId,
+      id: proposalId,
+      runId: "run-sniper",
+      accountNumber: "acct",
+      proposal: {
+        symbol: "AAPL",
+        side: "buy",
+        type: "market",
+        dollarAmount: 1000,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: "Sniper preservation fixture.",
+        tradeThesisTag: "Momentum",
+        entryMarketRegime: "Risk-On",
+        scorecard: { sniperPoints: { stopLoss: 95, takeProfit: 110 } }
+      },
+      decision: { approved: true, reasons: [] },
+      status: "placed"
+    });
+    upsertSocraticDecisionCase({
+      userId,
+      runId: "run-sniper",
+      proposalId,
+      accountNumber: "acct",
+      symbol: "AAPL",
+      side: "buy",
+      status: "placed",
+      authority: "decide",
+      thesis: "Momentum",
+      rationale: "Sniper preservation fixture.",
+      action: "BUY AAPL $1000"
+    });
+    insertFillEvent({
+      userId,
+      proposalId,
+      runId: "run-sniper",
+      accountNumber: "acct",
+      source: "paper",
+      symbol: "AAPL",
+      side: "buy",
+      quantity: 10,
+      price: 100,
+      notional: 1000,
+      status: "filled",
+      filledAt: "2026-06-10T14:30:00.000Z"
+    });
+
+    // Pass 1: bars available -> the receipt is computed and persisted on the still-open case.
+    await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      fetchOHLC: makeFetchOHLC({ AAPL: AAPL_BARS, SPY: SPY_BARS }),
+      fetchQuote: async () => undefined,
+      llm: async () => undefined
+    });
+    const afterFirst = getSocraticDecisionCase(proposalId, userId);
+    expect(afterFirst?.outcome?.status).toBe("open");
+    // Post-basis closes 104/115: stop 95 never breached, take 110 reached on 06-17.
+    expect(afterFirst?.outcome?.sniperAccuracy).toEqual({ stopHit: false, takeProfitHit: true, priceBasis: "daily_close" });
+
+    // Close the lot, then re-measure with a failing bars fetch: the terminal realized-lot write
+    // (which needs no bars for its verdict) must fall back to the stored receipt, not drop it.
+    insertFillEvent({
+      userId,
+      proposalId: `${proposalId}-exit`,
+      runId: "run-sniper-exit",
+      accountNumber: "acct",
+      source: "paper",
+      symbol: "AAPL",
+      side: "sell",
+      quantity: 10,
+      price: 110,
+      notional: 1100,
+      status: "filled",
+      filledAt: "2026-06-16T14:30:00.000Z"
+    });
+    await matureSocraticDecisionOutcomes(userId, {
+      now: NOW + 120_000,
+      recheckMs: 60_000,
+      fetchOHLC: makeFetchOHLC({}), // AAPL and SPY both null — transient series outage
+      fetchQuote: async () => undefined,
+      llm: async () => undefined
+    });
+    const afterSecond = getSocraticDecisionCase(proposalId, userId);
+    expect(afterSecond?.outcome?.status).toBe("won");
+    expect(afterSecond?.outcome?.sniperAccuracy).toEqual({ stopHit: false, takeProfitHit: true, priceBasis: "daily_close" });
+  });
+
   it("terminates an unmeasurable decision as 'unresolvable' and counts it in coverage (kill survivorship)", async () => {
     const userId = `oe-unres-${randomUUID()}`;
     const { audit, getSocraticOutcomeCoverage, insertSkippedCounterfactualCandidate, upsertSocraticDecisionCase, getSocraticDecisionCase } =

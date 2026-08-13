@@ -5,6 +5,7 @@
  *  Every function talks to REAL existing endpoints — nothing here simulates. */
 
 import { ConsoleApiError } from "../lib/api";
+import { beginConsoleMutation, endConsoleMutation, isConsoleMutationMethod } from "../lib/mutation-busy";
 
 async function parseBody(res: Response): Promise<unknown> {
   const contentType = res.headers.get("content-type") ?? "";
@@ -25,6 +26,8 @@ function messageFrom(payload: unknown, fallback: string): string {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const track = isConsoleMutationMethod(init?.method);
+  if (track) beginConsoleMutation();
   let res: Response;
   try {
     res = await fetch(url, {
@@ -34,6 +37,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     });
   } catch {
     throw new ConsoleApiError("Network error — the server could not be reached.", 0);
+  } finally {
+    if (track) endConsoleMutation();
   }
   const payload = await parseBody(res);
   if (!res.ok) {

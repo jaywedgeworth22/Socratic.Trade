@@ -15,6 +15,7 @@ import { isRoicTranscriptRefreshDue, refreshRoicTranscriptsIfDue } from "./web-s
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
+import { refreshLitestreamRemoteInventoryIfDue } from "./litestream-remote-inventory";
 import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
 import { runWatchlistDigestIfDue } from "./watchlist-digest";
 import { runAuditPruneIfDue } from "./audit-prune";
@@ -545,6 +546,14 @@ async function tick(): Promise<void> {
   void journalLane("health-lane-reprobe", {}, () => runHealthLaneReprobeIfDue())
     .catch((err) => console.error("[scheduler] health-lane-reprobe error:", err));
 
+  // Per-compaction-level backup coverage. Litestream keeps only level 0 on local disk, so
+  // levels 1/2/3/9 can ONLY be graded from the remote replica — a listing that costs real B2
+  // requests and ~11s, hence a 30-minute scheduled refresh here instead of inline work in
+  // /api/health. Without it every higher level is honestly reported "not-observable"; with it
+  // a wedged compactor (the 2026-08-12 level-2 incident) becomes visible.
+  void journalLane("litestream-remote-inventory", {}, () => refreshLitestreamRemoteInventoryIfDue())
+    .catch((err) => console.error("[scheduler] litestream remote inventory error:", err));
+
   // Cloudflare R2 free-tier watchdog (owner directive 2026-07-30: never pace >70%
   // of the 10 GiB / 1M Class A / 10M Class B monthly free tier). Cadence-gated
   // (default 6h), leader-only, self-guarded; alerts via notify() on threshold
@@ -746,6 +755,28 @@ async function tick(): Promise<void> {
       })
     )
     .catch((err) => console.error("[scheduler] r2 cold snapshot error:", err));
+
+  // Weekly truncated-replay lookahead audit (freqtrade lookahead-analysis port): recompute
+  // momentum/liquidity factor sub-scores and RAG evidence from data truncated to each sampled
+  // decision's date and diff against what was persisted at decision time; everything else is an
+  // honest 'unverifiable' receipt. Durable per-user due-job (default weekly; LOOKAHEAD_AUDIT_*
+  // knobs; LOOKAHEAD_AUDIT_ENABLED=off is the kill switch). Read-only + advisory — findings and
+  // the lookahead_leak notification gate nothing.
+  void import("./lookahead-audit")
+    .then(({ ensureLookaheadAuditJobsScheduled, drainLookaheadAuditJobs }) =>
+      journalLane("lookahead-audit", {}, async () => {
+        ensureLookaheadAuditJobsScheduled();
+        const result = await drainLookaheadAuditJobs();
+        return {
+          status: result.drained > 0 ? ("ok" as const) : ("skipped" as const),
+          summary:
+            result.drained > 0
+              ? `drained=${result.drained} verdict=${result.lastResult?.verdict.verdict ?? "?"}`
+              : undefined,
+        };
+      })
+    )
+    .catch((err) => console.error("[scheduler] lookahead audit error:", err));
 
   try {
 

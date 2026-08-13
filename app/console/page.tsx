@@ -356,6 +356,7 @@ export default function ConsoleHomePage() {
 
         <aside className="flex min-w-0 flex-col gap-4">
           <RiskUtilizationCard risk={risk} />
+          <MarketAnalysisCard snapshot={snapshot} />
 
           
 
@@ -549,6 +550,36 @@ function RiskUtilizationCard({ risk }: { risk: ReturnType<typeof deriveRiskUtili
             <Meter value={row.pct !== undefined ? row.pct : 0} max={100} />
           </div>
         ))}
+      </div>
+    </Card>
+  );
+}
+
+function MarketAnalysisCard({ snapshot }: { snapshot: DashboardSnapshot }) {
+  const { macroBoard, latestScan } = snapshot;
+  if (!macroBoard) return null;
+
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-1.5">
+          <TrendingUp size={13} /> Market Analysis
+        </span>
+      }
+      action={
+        <Link href="/console/macro" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
+          Details <ArrowRight size={12} />
+        </Link>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <Stat label="Regime" value={macroBoard.regime || "Unknown"} />
+        {latestScan?.breadthPct != null && (
+          <Stat label="Market Breadth" value={fmtPct(latestScan.breadthPct, 1)} />
+        )}
+        {macroBoard.macro?.vix && (
+          <Stat label="VIX" value={macroBoard.macro.vix} />
+        )}
       </div>
     </Card>
   );

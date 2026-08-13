@@ -15,6 +15,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleApiError } from "../lib/api";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Field, Select, TextInput } from "../ui/primitives";
+import { SaveStatus } from "../ui/save-status";
+import type { AutoSaveStatus } from "../lib/useAutoSave";
 import {
   deleteApiKey,
   listApiKeys,
@@ -53,6 +55,7 @@ export function ApiKeysCard() {
   const [editing, setEditing] = useState<string | null>(null); // service being edited
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<AutoSaveStatus>("idle");
 
   const load = useCallback(async () => {
     try {
@@ -94,12 +97,21 @@ export function ApiKeysCard() {
   };
 
   const onPlanTierChange = async (entry: ApiKeyEntry, planTier: string) => {
+    const previous = entry.planTier;
     setBusy(entry.service);
+    setSaveStatus("saving");
+    setEntries((cur) =>
+      (cur ?? []).map((row) => (row.service === entry.service ? { ...row, planTier } : row))
+    );
     try {
       await saveApiKeyPlanTier(entry.service, planTier);
       await load();
-      toast.push("pos", `${entry.label} plan updated`, `Quotas will treat this key as ${planTier} when env knobs are unset.`);
+      setSaveStatus("saved");
     } catch (error) {
+      setEntries((cur) =>
+        (cur ?? []).map((row) => (row.service === entry.service ? { ...row, planTier: previous } : row))
+      );
+      setSaveStatus("error");
       toast.push("neg", "Could not save plan tier", error instanceof ConsoleApiError ? error.message : String(error));
     } finally {
       setBusy(null);
@@ -107,7 +119,7 @@ export function ApiKeysCard() {
   };
 
   return (
-    <Card title="API keys">
+    <Card title="API keys" action={<SaveStatus status={saveStatus} />}>
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         Provider keys, stored per user on the server. Keys are write-only: once saved the full value is never displayed
         again — only whether one is set, where it came from, and the first and last few characters of the key that
@@ -200,6 +212,7 @@ export function ApiKeysCard() {
                               className="min-w-[8.5rem] py-0.5 text-[length:var(--con-fs-xs)]"
                               value={entry.planTier ?? "unknown"}
                               disabled={busy !== null || retired || entry.source === "none"}
+                              aria-busy={busy === entry.service}
                               onChange={(e) => {
                                 const next = e.target.value;
                                 if (entry.source === "none") {

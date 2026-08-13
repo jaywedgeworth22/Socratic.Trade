@@ -11,7 +11,8 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { useMutationBusy } from "../lib/useMutationBusy";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleFont } from "../lib/useConsoleFont";
@@ -74,12 +75,12 @@ const SNAPSHOT_INDEPENDENT_ROUTES = new Set(["/console/usage"]);
  *  broker chain (~24s worst case).
  *
  *  Before adding a route here: its page must render something meaningful for BOTH
- *  `snapshot === null` states — still loading AND first-load watchdog error — because this
- *  branch also bypasses the shell's error card below. */
+ *  `snapshot === null` states — still loading AND load failed — because this branch also
+ *  bypasses the shell's error card below. */
 const SELF_SKELETON_ROUTES = new Set(["/console/connections"]);
 
 function ShellFrame({ children }: { children: ReactNode }) {
-  const { snapshot, fetchedAt, loading, error, stream, refresh } = useConsoleData();
+  const { snapshot, fetchedAt, loading, slowFirstLoad, error, stream, refresh } = useConsoleData();
   const { theme, dataTheme, set: setTheme } = useConsoleTheme();
   const { dataTextBoxFont } = useConsoleTextBoxFont();
   const { dataConsoleFont } = useConsoleFont();
@@ -121,6 +122,20 @@ function ShellFrame({ children }: { children: ReactNode }) {
         <p role="status" aria-live="polite" className="sr-only">
           Loading your Socratic Trade console…
         </p>
+        {/* A long first load is normal, not a failure: the snapshot's broker chain is sequential
+            and can legitimately take ~24s. This used to render as a full-screen "Couldn't load the
+            autonomy desk" card at 15s while the request was still in flight and about to succeed.
+            Now the load screen simply stays up and says so, so the wordless backdrop is unchanged
+            for every load that lands normally. */}
+        {slowFirstLoad ? (
+          <p
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none fixed inset-x-0 bottom-10 px-6 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]"
+          >
+            Still loading — gathering dashboard state.  Hang tight.
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -205,6 +220,24 @@ function ShellFrame({ children }: { children: ReactNode }) {
         </ToastProvider>
       </SymbolDrawerProvider>
     </div>
+  );
+}
+
+/** Visible while any console write is in flight — toggles, dropdowns, buttons.
+ *  The control often snaps back to the last server value until the POST returns;
+ *  this chip is the honest "we heard you" signal for the whole desk. */
+function MutationBusyChip() {
+  const { busy } = useMutationBusy();
+  if (!busy) return null;
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      className="inline-flex shrink-0 items-center gap-1 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-2 py-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)]"
+    >
+      <Loader2 size={12} className="animate-spin" />
+      Saving…
+    </span>
   );
 }
 
@@ -351,6 +384,7 @@ function ChromeBar({
         <BrandReveal />
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
+        <MutationBusyChip />
         <div className="hidden flex-1 sm:block" />
         {/* Operator-only: small top-of-site entry to the admin portal (owner-directed —
             it must not be buried in Settings). Desktop chrome only; phones reach the

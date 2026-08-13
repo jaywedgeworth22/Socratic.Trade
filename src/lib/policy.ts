@@ -949,7 +949,9 @@ export function estimateNotional(proposal: TradeProposal): number {
   return (proposal.quantity ?? 0) * price;
 }
 
-function hasFractionalQuantity(proposal: TradeProposal): boolean {
+/** Exported so the scorecard checklist (strategy.ts) can mirror the entry-drift gate's
+ * Robinhood-fractional-limit inclusion with the SAME predicate, not a drifting copy. */
+export function hasFractionalQuantity(proposal: TradeProposal): boolean {
   return proposal.quantity !== undefined && !Number.isInteger(proposal.quantity);
 }
 

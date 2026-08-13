@@ -26,21 +26,21 @@ import { resolveLlmEndpoint } from "../llm-provider";
 import { LLM_TIMEOUT_MS } from "../llm-request";
 import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "../llm-usage";
 import { getPolicy } from "../db";
-import { envFlagOn } from "./env-flag";
+import { resolveSourceBool } from "../source-settings";
 
-/** Returns true when RAG_MULTIQUERY is truthy. Default OFF — single-query retrieval is unaffected. */
+/** Returns true when RAG_MULTIQUERY is truthy via Settings override or env. Catalog default OFF. */
 export function multiQueryEnabled(): boolean {
-  return envFlagOn("RAG_MULTIQUERY", false);
+  return resolveSourceBool("RAG_MULTIQUERY");
 }
 
 /**
- * Returns true when RAG_HYDE is truthy. Default OFF. NOT independent of RAG_MULTIQUERY: the
- * `strategy.ts` call site only drafts HyDE passages from the variants `deriveQueryVariants`
- * produced inside its `wantMultiQuery` branch, so RAG_HYDE=on with RAG_MULTIQUERY off is a no-op
- * (nothing to draft HyDE passages from) — turning on RAG_HYDE alone requires RAG_MULTIQUERY too.
+ * Returns true when RAG_HYDE is truthy via Settings override or env. Catalog default OFF.
+ * NOT independent of RAG_MULTIQUERY: the `strategy.ts` call site only drafts HyDE passages
+ * from the variants `deriveQueryVariants` produced inside its `wantMultiQuery` branch, so
+ * RAG_HYDE=on with RAG_MULTIQUERY off is a no-op.
  */
 export function hydeEnabled(): boolean {
-  return envFlagOn("RAG_HYDE", false);
+  return resolveSourceBool("RAG_HYDE");
 }
 
 /** Cheap default model for HyDE passage drafting; overridable via RAG_HYDE_MODEL. Deliberately

@@ -21,22 +21,14 @@ import { getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { logApiHealth } from "./db-health";
 import { estimateReviewNotional } from "./alpaca";
 import { ETORO_API_BASE, etoroHeaders } from "./etoro-copy";
+import { mergeAccountCapabilities } from "./venue-contract";
 
 export function getEToroGateway(userId: string = "local", connectedAccountId?: string): BrokerGateway {
   return new EToroBrokerGateway(userId, connectedAccountId);
 }
 
 function emptyCaps(over: Partial<AccountCapabilities> = {}): AccountCapabilities {
-  return {
-    equityTrading: true,
-    shortSelling: false,
-    optionsTrading: false,
-    futuresTrading: false,
-    cryptoTrading: false,
-    marginEnabled: false,
-    accountType: "brokerage",
-    ...over
-  };
+  return mergeAccountCapabilities("etoro", over);
 }
 
 class EToroBrokerGateway implements BrokerGateway {

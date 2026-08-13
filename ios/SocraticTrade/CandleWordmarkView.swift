@@ -6,19 +6,19 @@ import UIKit
 
 // MARK: - Model
 
-private struct TickerCell {
+struct TickerCell {
     let nx: CGFloat
     let ntop: CGFloat
     let nh: CGFloat
 }
 
-private struct TickerUnit {
+struct TickerUnit {
     let color: Color
     let frac: CGFloat
     let off: CGFloat
 }
 
-private struct Wordmark {
+struct Wordmark {
     let cells: [TickerCell]
     let ar: CGFloat
     let ncol: Int
@@ -41,9 +41,9 @@ private let tickerReds: [Color] = [
     Color(red: 0xe1 / 255, green: 0x1d / 255, blue: 0x48 / 255)  // #e11d48
 ]
 
-private enum CandleWordmarkModel {
+enum CandleWordmarkModel {
     static let shared: (wm: Wordmark, units: [TickerUnit]) = {
-        (sampleWordmark("SOCRATIC TRADE"), buildTickerUnits(count: 12))
+        (sampleWordmark("SOCRATIC\nTRADE"), buildTickerUnits(count: 12))
     }()
 
     private static func mulberry32(_ seed: UInt32) -> () -> Double {
@@ -67,15 +67,26 @@ private enum CandleWordmarkModel {
     ) -> (cells: [(cx: CGFloat, top: CGFloat, h: CGFloat)], w: CGFloat, h: CGFloat) {
         let font = UIFont(name: "Arial-BoldMT", size: fontPx)
             ?? UIFont.systemFont(ofSize: fontPx, weight: .bold)
-        let chars = Array(text)
-        let widths: [CGFloat] = chars.map { ch in
-            if ch == " " { return fontPx * 0.45 }
-            return (String(ch) as NSString).size(withAttributes: [.font: font]).width
+        
+        let lines = text.components(separatedBy: "\n")
+        var maxTotal: CGFloat = 0
+        var allWidths: [[CGFloat]] = []
+        
+        for line in lines {
+            let chars = Array(line)
+            let widths: [CGFloat] = chars.map { ch in
+                if ch == " " { return fontPx * 0.45 }
+                return (String(ch) as NSString).size(withAttributes: [.font: font]).width
+            }
+            allWidths.append(widths)
+            let total = widths.reduce(0, +) + tracking * CGFloat(max(0, chars.count - 1))
+            if total > maxTotal { maxTotal = total }
         }
-        let total = widths.reduce(0, +) + tracking * CGFloat(max(0, chars.count - 1))
+        
         let padX = ceil(fontPx * 0.35)
-        let H = Int(ceil(fontPx * 1.5))
-        let W = Int(ceil(total) + padX * 2)
+        let lineHeight = fontPx * 1.05
+        let H = Int(ceil(fontPx * 1.5 + CGFloat(lines.count - 1) * lineHeight))
+        let W = Int(ceil(maxTotal) + padX * 2)
 
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         var pixelData = [UInt8](repeating: 0, count: W * H * 4)
@@ -98,31 +109,44 @@ private enum CandleWordmarkModel {
         ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
         ctx.setFillColor(UIColor.white.cgColor)
 
-        var x = padX
         let baseline = fontPx * 1.1
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: UIColor.white
         ]
         UIGraphicsPushContext(ctx)
-        for i in 0..<chars.count {
-            if chars[i] != " " {
-                let s = String(chars[i]) as NSString
-                // draw(at:) y is the top of the text box in flipped UIKit coords when using
-                // attributed draw with baseline ≈ font ascender from top of glyph box.
-                let drawY = baseline - font.ascender
-                s.draw(at: CGPoint(x: x, y: drawY), withAttributes: attrs)
+        
+        for (lineIdx, line) in lines.enumerated() {
+            let chars = Array(line)
+            let widths = allWidths[lineIdx]
+            let lineTotal = widths.reduce(0, +) + tracking * CGFloat(max(0, chars.count - 1))
+            var x = padX + (maxTotal - lineTotal) / 2
+            let drawY = baseline - font.ascender + CGFloat(lineIdx) * lineHeight
+            
+            for i in 0..<chars.count {
+                if chars[i] != " " {
+                    let s = String(chars[i]) as NSString
+                    s.draw(at: CGPoint(x: x, y: drawY), withAttributes: attrs)
+                }
+                x += widths[i] + tracking
             }
-            x += widths[i] + tracking
         }
         UIGraphicsPopContext()
 
         func alphaAt(xx: Int, yy: Int) -> UInt8 {
-            // After flip, pixel buffer is still physical bottom-up. Convert top-origin yy
-            // to buffer row: physical row = H - 1 - yy.
-            let row = H - 1 - yy
-            guard xx >= 0, xx < W, row >= 0, row < H else { return 0 }
-            return pixelData[(row * W + xx) * 4 + 3]
+            // Row 0 of a CGBitmapContext's buffer is the TOP of the image, and the
+            // translate/scale above already put user space in top-origin coordinates — so a
+            // top-origin yy maps straight to buffer row yy, with no conversion.
+            //
+            // This used to apply a second flip (`H - 1 - yy`) on the theory that the buffer was
+            // "still physical bottom-up". It isn't, and the extra flip sampled the wordmark
+            // upside down: every candle column got its letter's rows in reverse, so the mark
+            // rendered vertically mirrored — S read as 2, R as K, A as Y, T as ⊥. It was subtle
+            // enough to survive review because the mirrored form is still roughly wordmark-shaped
+            // at a glance, and the web original (app/console/ui/candle-ticker.ts, which samples a
+            // top-origin canvas with no flip at all) was correct the whole time.
+            guard xx >= 0, xx < W, yy >= 0, yy < H else { return 0 }
+            return pixelData[(yy * W + xx) * 4 + 3]
         }
 
         var x0 = W, x1 = 0, y0 = H, y1 = 0
@@ -235,7 +259,7 @@ struct CandleWordmarkView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var displayWidth: CGFloat {
-        max(1, height * wordmarkAR)
+        max(1, height * CandleWordmarkModel.shared.wm.ar)
     }
 
     var body: some View {

@@ -103,6 +103,11 @@ export const NOTIFICATION_EVENT_TYPES = [
   // confidenceScore against matured outcomes is decaying. Advisory — nothing halts; sizing only
   // changes under the opt-in policy.tuning.signalHealthAutoThrottle.
   "signal_health",
+  // Lookahead-audit mismatch (src/lib/lookahead-audit.ts): the weekly truncated-replay audit
+  // recomputed a decision-time factor or RAG evidence set from point-in-time data and it differed
+  // beyond tolerance — future data may be leaking into decision inputs. Fired ONLY on 'mismatch'
+  // classifications, never on 'unverifiable'. Advisory — nothing halts or changes sizing.
+  "lookahead_leak",
   // Opt-in daily watchlist summary (default OFF — notification_prefs.watchlistDigestEnabled, see
   // Settings -> Delivery). Delivered via notify() directly (src/lib/watchlist-digest.ts), like the
   // R2 usage digest, so it does NOT go through sendNotification's enabledEvents gate — the member
@@ -197,6 +202,31 @@ export interface AccountCapabilities {
   marginEnabled: boolean;
   /** Broker's required maintenance margin percentage (e.g. 25 = 25%). */
   marginRequirementPct?: number;
+  /** Fractional equity shares. Undefined = unknown (treat as false at the venue contract). */
+  fractional?: boolean;
+  /** Pre/post regular session. */
+  extendedHours?: boolean;
+  /** Overnight / 24-hour equity session. */
+  overnightHours?: boolean;
+  /** Native broker-held trailing stop (not a synthetic ratchet). */
+  trailingStops?: boolean;
+  /** Native multi-leg bracket / OTOCO at the venue. */
+  nativeBrackets?: boolean;
+  /**
+   * This app can PLACE option orders on this account. Distinct from optionsTrading,
+   * which only means the broker reports an options approval level / open contracts.
+   */
+  optionsOrders?: boolean;
+  /** Equity order types the venue will accept on this account. */
+  orderTypes?: Array<"market" | "limit" | "stop_market" | "stop_limit">;
+  /** Sessions the venue will accept on this account. */
+  marketHours?: Array<"regular_hours" | "extended_hours" | "all_day_hours">;
+  /** Minimum whole-share quantity (1 = whole shares only). */
+  minShareQuantity?: number;
+  /** Minimum order notional in account currency when the venue publishes one. */
+  minOrderNotional?: number;
+  /** Sells close a specific position id (eToro), not a symbol-level sell-to-open. */
+  positionIdCloses?: boolean;
   /**
    * Account structure, which determines the applicable tax regime:
    *   "brokerage"       → standard taxable account
@@ -1159,6 +1189,13 @@ export interface TradingPolicy {
    */
   maxEntryDriftPct?: number;
   /**
+   * Owner knob for the scorecard's `sniperPoints.secondaryBuy` level: a secondary entry this far
+   * (%) beyond the entry anchor in the pullback direction (below it for a long, above it for a
+   * short). PURELY informational — rendered on the scorecard, never traded automatically.
+   * Undefined (the default) omits the level entirely; no hardcoded fallback ever fills it in.
+   */
+  secondaryBuyPullbackPct?: number;
+  /**
    * Auto-attach broker-held bracket (OCO) legs — a stop-loss and take-profit resting at the broker's
    * matching engine — to opening orders on brokers that support native brackets (Alpaca), derived
    * from riskRules.stopLossPct/takeProfitPct. Makes protective exits survive local downtime instead
@@ -1306,6 +1343,74 @@ export interface HumanReviewReasonReceipt {
   summary: string;
 }
 
+/** Lifecycle vocabulary for `ProposalScorecard.decisionChain`. Steps are APPENDED at the exact
+ * points the pipeline already records the corresponding state (stampRedTeamResult's reject paths,
+ * `redTeamVerdict.overridden`, `PolicyDecision.socraticOverride.applied`,
+ * `redTeamVerdict.humanOverrideApplied`, and the placement claim) — the chain is a receipt of what
+ * happened, never a state machine that gates anything. */
+export type DecisionStep =
+  | "proposed"
+  | "red_team_reject"
+  | "override_requested"
+  | "override_applied"
+  | "human_approved"
+  | "final";
+
+/** One rendered row of the scorecard's action checklist — a RENDERING of gate state the pipeline
+ * already computed (policy reasons, red-team verdict, sizing snapshot, dataAdjustments), never a
+ * new authority. `id` is a stable machine key (e.g. "entry_drift"); `label` is owner-facing copy. */
+export interface ProposalScorecardChecklistItem {
+  id: string;
+  label: string;
+  status: "pass" | "warn" | "fail";
+}
+
+/**
+ * Unified, typed decision receipt assembled DETERMINISTICALLY at proposal-persistence time
+ * (buildProposalScorecard, src/lib/strategy.ts) from data the pipeline already computed — no LLM
+ * call authors any field (lesson from daily_stock_analysis's validated Dashboard contract; the gap
+ * analysis explicitly warns against a monolithic LLM-authored schema). Every section is optional
+ * and simply absent when its source data is (never fabricated); legacy persisted proposals carry
+ * no scorecard at all and render unchanged.
+ */
+export interface ProposalScorecard {
+  /** Thesis + deterministic position advice derived from the existing rationale/bracket fields. */
+  coreConclusion?: {
+    thesis: string;
+    noPositionAdvice: string;
+    hasPositionAdvice: string;
+  };
+  /** Price-vs-moving-average and volume context from indicators already computed this run
+   * (the ATR precompute's daily bars) and the scan quote. Fields are omitted when the source
+   * series was unavailable — `maAlignment: "unknown"` is the honest no-data state. */
+  dataPerspective?: {
+    maAlignment: "above_both" | "below_both" | "mixed" | "unknown";
+    priceVsMa: { price: number; sma50?: number; sma200?: number };
+    volume: { current?: number; avg20d?: number };
+  };
+  /** Key price levels reusing referencePrice + the bracket legs. `secondaryBuy` exists ONLY when
+   * the owner knob policy.secondaryBuyPullbackPct is set — never a silent hardcoded number. */
+  sniperPoints?: {
+    idealBuy?: number;
+    secondaryBuy?: number;
+    stopLoss?: number;
+    takeProfit?: number;
+  };
+  actionChecklist?: ProposalScorecardChecklistItem[];
+  /** Four-bucket signal attribution (integers summing to exactly 100) from the quote's
+   * deterministic factor scores — computeSignalAttribution (src/lib/market.ts). Absent when the
+   * quote carried no factor breakdown. */
+  signalAttribution?: {
+    technical: number;
+    news: number;
+    fundamentals: number;
+    market: number;
+  };
+  /** Append-only lifecycle receipt; validated (never dropped) at persistence time by
+   * validateDecisionChain (src/lib/db-proposals.ts) — a malformed chain logs an audit receipt. */
+  decisionChain?: DecisionStep[];
+}
+
 export interface TradeProposal {
   symbol: string;
   side: OrderSide;
@@ -1325,6 +1430,9 @@ export interface TradeProposal {
   greenTeamRationale?: string;
   /** App-computed sizing arithmetic captured before Red Team review; never model-authored. */
   sizingSnapshot?: ProposalSizingSnapshot;
+  /** Unified deterministic decision receipt (see ProposalScorecard). Additive/optional — attached
+   * at persistence time by the strategy loop; legacy proposals and test fixtures don't carry it. */
+  scorecard?: ProposalScorecard;
   tradeThesisTag: string;
   entryMarketRegime: string;
   /**
@@ -1669,6 +1777,12 @@ export interface SocraticDecisionCase {
     alphaStatus?: "won" | "lost" | "flat";
     /** The headline spyExcessPct behind alphaStatus. */
     alphaPct?: number;
+    /** Sniper-point grading receipt (gradeSniperAccuracy, src/lib/outcome-engine.ts): did the
+     * matured DAILY CLOSES breach the proposal scorecard's stop / reach its take-profit?  Close
+     * basis only — intraday touches between closes are invisible here, which `priceBasis`
+     * discloses.  Purely additive; absent when the proposal carried no sniper points or no bars
+     * covered the window (never fabricated). */
+    sniperAccuracy?: { stopHit?: boolean; takeProfitHit?: boolean; priceBasis?: string };
     note?: string;
     measuredAt?: string;
     outcomes: SocraticOutcomeHorizonRow[];
@@ -1719,6 +1833,9 @@ export interface SocraticFrameworkProposal {
 export interface SocraticDecisionTrace {
   decision: SocraticDecisionCase;
   run?: StrategyRunRow;
+  /** The linked proposal's persisted scorecard (read-only render in the decision trace). Joined by
+   * the trace API from the trade_proposals row — the case itself stores no duplicate copy. */
+  scorecard?: ProposalScorecard;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
@@ -1848,6 +1965,11 @@ export interface MarketQuote {
   congressMemberTradeWinRate?: number;
   congressMemberTradeScoredCount?: number;
   evidenceBulletins?: string[]; // 1-line backend web-source bulletins (congress, insider, etc.)
+  /** Bounded (max 3) Polymarket prediction-market lines — question, implied probability, volume,
+   *  explicitly Polymarket-attributed. Fetched keylessly at STRATEGIST PROMPT TIME for the
+   *  candidates entering the LLM call only (never through the scan-wide enrichment cascade, never
+   *  persisted on the stored MarketScan) — see polymarket-provider.ts. */
+  polymarketLines?: string[];
   sources?: EnrichmentSources;
   fieldObservations?: EnrichmentFieldObservations;
   providerFailures?: Record<string, ProviderFailureReceipt>;

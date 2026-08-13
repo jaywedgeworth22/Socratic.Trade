@@ -72,6 +72,7 @@ export const EXPOSURE: FieldDef[] = [
 
 export const ENTRY_QUALITY: FieldDef[] = [
   { path: "maxEntryDriftPct", label: "Max entry drift (%)", kind: "pct", optional: true, looserWhen: "up", hint: "Rejects a stale opening order whose price moved this far from where the idea was priced." },
+  { path: "secondaryBuyPullbackPct", label: "Secondary entry pullback (%)", kind: "pct", optional: true, hint: "Scorecard display only: adds a secondary entry level this far beyond the entry anchor (below it for a long).  Blank omits the level — nothing is ever traded from it." },
   { path: "maxQuoteAgeSec", label: "Max quote age", kind: "seconds", optional: true, looserWhen: "up", hint: "Opening orders blocked on stale quotes. Blank = gate off. Missing timestamps count as stale when on." },
   { path: "maxFundamentalsAgeSec", label: "Max fundamentals age", kind: "seconds", optional: true, looserWhen: "up" },
   { path: "marketableLimitEntries", label: "Marketable-limit entries", kind: "bool", hint: "Converts opening market orders to tightly-priced limits so a fast tape can't fill arbitrarily far past the quote." }

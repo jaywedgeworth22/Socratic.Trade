@@ -1,5 +1,8 @@
 # Active Implementation Plan
 
+> **2026-08-13 GROK — fleet alert triage (`grok/fleet-alerts-aug13`).** Fix RH MCP extra args (#2576), cap Pinecone metadata under 40960, classify engine-overloaded 429s as transient (no usage-limit page), and stop the ST-health keyword monitor from pairing 503 deploys as "credits low." CT senate scout handshake reuse is the follow-up in the CT lane. Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
+
+
 > **2026-08-10 GROK — always-auto-merge workflow (PR #2597).** Non-draft same-repo PRs arm squash auto-merge; `do-not-automerge` disables armed merges; sentry coverage updated. Lands via this unstick pass.
 
 > [!WARNING]
@@ -35,8 +38,10 @@
 > **2026-07-27 — Dormant features readiness (CURSOR).** Substrate so remaining default-off
 > capabilities can be enabled safely: `dormantFeatures` checklist on `/api/admin/rag-coverage`,
 > `LANDING_PAGE_ENABLED` unset=ON with explicit off-switch, CSP report-uri collector, and
-> `VECTOR_EMBED_CLEAN_TEXT` bumping `embed_rev` 1→2. Do **not** flip MULTIQUERY/HyDE, ASOF_STRICT,
-> FMP dual-gate, SEC8K full body, or legacy purge without owner preconditions. Branch
+> `VECTOR_EMBED_CLEAN_TEXT` bumping `embed_rev` 1→2. **2026-08-12 owner:** MULTIQUERY/HyDE/clean-text
+> /disclosure embed are ON in Infisical on paid OpenRouter+bge-m3 (run-budget still on). Still do
+> **not** flip ASOF_STRICT, FMP dual-gate, SEC8K full body, or legacy purge without preconditions.
+> Branch
 > `cursor/dormant-features-impl-1c6c`. Checklist: `docs/FEATURE-ENABLEMENT-BACKLOG.md`.
 > **2026-07-25 — Fix vs-SPY benchmark (CURSOR).** Correct cash-flow-aware TWR vs SPY so all-cash
 > deposits/resets are not alpha and Home shows You / SPY decomposition. Branch

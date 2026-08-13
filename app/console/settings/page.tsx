@@ -96,6 +96,7 @@ const EVENT_HINT: Record<NotificationEventType, string> = {
   risk_advisory: "a risk guardrail was breached but the agent is still in control (advisory)",
   protective_exit_failing: "a synthetic protective exit keeps failing and is still retrying",
   signal_health: "the AI's confidence signal is losing predictive power against matured outcomes (advisory)",
+  lookahead_leak: "the weekly lookahead audit found decision inputs that differ when replayed from point-in-time data (advisory)",
   // Not shown in the list below — the daily watchlist digest has its own dedicated toggle in
   // Delivery (settings/delivery.tsx, notification_prefs.watchlistDigestEnabled) and is delivered
   // via notify() directly rather than through this enabledEvents gate, so an entry here would be
@@ -704,6 +705,7 @@ function DataSourcesCard() {
   const [groups, setGroups] = useState<Record<string, { title: string; blurb: string }>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<import("../lib/useAutoSave").AutoSaveStatus>("idle");
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -734,12 +736,24 @@ function DataSourcesCard() {
 
   const saveOne = async (id: string, value: boolean | number | string | null) => {
     setBusy(id);
+    setSaveStatus("saving");
+    setRows((cur) =>
+      (cur ?? []).map((row) => {
+        if (row.id !== id) return row;
+        if (value === null) {
+          return { ...row, value: row.defaultValue, source: "default" as const };
+        }
+        return { ...row, value, source: "user" as const };
+      })
+    );
     try {
       await patchSourceFeatures({ [id]: value });
       await load();
-      toast.push("pos", "Source setting saved", id);
+      setSaveStatus("saved");
     } catch (err) {
+      setSaveStatus("error");
       toast.push("neg", "Could not save", err instanceof ConsoleApiError ? err.message : String(err));
+      await load();
     } finally {
       setBusy(null);
     }
@@ -749,13 +763,16 @@ function DataSourcesCard() {
     <Card
       title="Data sources"
       action={
-        <a
-          href="/console/connections#api-keys"
-          className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] underline-offset-2 hover:underline"
-          title="Open Connections to add provider keys and plan tiers."
-        >
-          Manage keys →
-        </a>
+        <span className="flex items-center gap-2">
+          <SaveStatus status={saveStatus} />
+          <a
+            href="/console/connections#api-keys"
+            className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] underline-offset-2 hover:underline"
+            title="Open Connections to add provider keys and plan tiers."
+          >
+            Manage keys →
+          </a>
+        </span>
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
@@ -785,13 +802,8 @@ function DataSourcesCard() {
         <Toggle
           checked={showAdvanced}
           onChange={setShowAdvanced}
-          label="Show advanced knobs"
+          label="Show Advanced Features"
         />
-        {/* Keep this list in sync with the `advanced: true` knob labels in
-            src/lib/source-settings-catalog.ts — it names what the toggle reveals. */}
-        <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Multi-query retrieval, HyDE passages, SEC backfill worker, transcript storage rights, etc.
-        </span>
       </div>
 
       <div className="flex flex-col gap-4">
@@ -840,6 +852,7 @@ function DataSourcesCard() {
                         <Toggle
                           checked={Boolean(row.value)}
                           disabled={busy !== null}
+                          busy={busy === row.id}
                           onChange={(on) => void saveOne(row.id, on)}
                           label={row.label}
                         />

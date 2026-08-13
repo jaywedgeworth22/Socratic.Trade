@@ -18,9 +18,11 @@ describe("source-settings", () => {
   beforeEach(() => {
     delete process.env.WEB_SOURCE_SEC8K_FULL_BODY;
     delete process.env.SEC_FILING_RAG_MAX_PER_RUN;
+    delete process.env.SEC_FILING_INGEST_TTL_HOURS;
     patchUserSourceSettings("local", {
       WEB_SOURCE_SEC8K_FULL_BODY: null,
-      SEC_FILING_RAG_MAX_PER_RUN: null
+      SEC_FILING_RAG_MAX_PER_RUN: null,
+      SEC_FILING_INGEST_TTL_HOURS: null
     });
   });
 
@@ -57,5 +59,40 @@ describe("source-settings", () => {
     expect(resolveSourceBool("WEB_SOURCE_SEC8K_FULL_BODY")).toBe(true);
     patchUserSourceSettings("local", { WEB_SOURCE_SEC8K_FULL_BODY: null });
     expect(resolveSourceBool("WEB_SOURCE_SEC8K_FULL_BODY")).toBe(false);
+  });
+
+  it("catalog default for SEC_FILING_INGEST_TTL_HOURS is the paid daily cadence", () => {
+    const spec = SOURCE_SETTINGS_CATALOG.find((s) => s.id === "SEC_FILING_INGEST_TTL_HOURS");
+    expect(spec?.defaultValue).toBe(24);
+    delete process.env.SEC_FILING_INGEST_TTL_HOURS;
+    patchUserSourceSettings("local", { SEC_FILING_INGEST_TTL_HOURS: null });
+    expect(resolveSourceNumber("SEC_FILING_INGEST_TTL_HOURS")).toBe(24);
+  });
+
+  it("user override enables VECTOR_EMBED_CLEAN_TEXT / RAG_MULTIQUERY / RAG_HYDE without env", () => {
+    delete process.env.VECTOR_EMBED_CLEAN_TEXT;
+    delete process.env.RAG_MULTIQUERY;
+    delete process.env.RAG_HYDE;
+    patchUserSourceSettings("local", {
+      VECTOR_EMBED_CLEAN_TEXT: null,
+      RAG_MULTIQUERY: null,
+      RAG_HYDE: null
+    });
+    expect(resolveSourceBool("VECTOR_EMBED_CLEAN_TEXT")).toBe(false);
+    expect(resolveSourceBool("RAG_MULTIQUERY")).toBe(false);
+    expect(resolveSourceBool("RAG_HYDE")).toBe(false);
+    patchUserSourceSettings("local", {
+      VECTOR_EMBED_CLEAN_TEXT: true,
+      RAG_MULTIQUERY: true,
+      RAG_HYDE: true
+    });
+    expect(resolveSourceBool("VECTOR_EMBED_CLEAN_TEXT")).toBe(true);
+    expect(resolveSourceBool("RAG_MULTIQUERY")).toBe(true);
+    expect(resolveSourceBool("RAG_HYDE")).toBe(true);
+    patchUserSourceSettings("local", {
+      VECTOR_EMBED_CLEAN_TEXT: null,
+      RAG_MULTIQUERY: null,
+      RAG_HYDE: null
+    });
   });
 });

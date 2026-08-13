@@ -26,6 +26,7 @@ import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, fmtSignedMoney, timeUntil, EM_DAS
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
 import { modelDisplayName } from "../lib/models";
 import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel } from "../lib/red-team";
+import { ProposalScorecardBlock } from "./proposal-scorecard";
 import { proposalGreenRationale, proposalHumanReviewReasons } from "../lib/thesis";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
@@ -793,6 +794,10 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
             </p>
           )}
         </div>
+
+        {/* Unified decision scorecard (r3): the typed deterministic receipt persisted with the
+            proposal — collapsible so the card's default expanded read stays compact. */}
+        {p.scorecard && <ProposalScorecardBlock scorecard={p.scorecard} />}
 
         {/* Repair-ladder receipts: deterministic post-generation corrections/fallbacks, named and
             visible by design — never silent edits (TradeProposal.dataAdjustments). */}

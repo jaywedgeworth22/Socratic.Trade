@@ -6,9 +6,15 @@ struct ProposalsView: View {
     @State private var confirmingProposal: PendingProposal?
     @State private var confirmationText = ""
     @State private var presentedSymbol: PresentedSymbol?
+    /// Set when a deep link named one proposal: that card is scrolled to and ringed.
+    @Binding private var focusedProposalId: String?
+
+    init(focusedProposalId: Binding<String?> = .constant(nil)) {
+        self._focusedProposalId = focusedProposalId
+    }
 
     var body: some View {
-        SnapshotScaffold { snapshot in
+        SnapshotScaffold(scrollTarget: focusedProposalId) { snapshot in
             ProposalQueueSummary(snapshot: snapshot)
             if snapshot.pendingProposals.isEmpty {
                 EmptyStateCard(
@@ -44,6 +50,14 @@ struct ProposalsView: View {
                             && feedback?.isSettledSuccess != true
                     ) {
                         reject(proposal)
+                    }
+                    .id(proposal.id)
+                    .overlay {
+                        if focusedProposalId == proposal.id {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(AppPalette.accent, lineWidth: 2)
+                                .allowsHitTesting(false)
+                        }
                     }
                 }
             }
@@ -174,9 +188,9 @@ private struct ProposalQueueSummary: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(snapshot.pendingProposals.count) awaiting review")
-                        .font(.headline)
+                        .font(.appHeadline)
                     Text("\(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority)) · backend validation remains final")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -225,7 +239,7 @@ private struct ProposalCard: View {
                     StatusPill(proposal.proposal.side.uppercased(), color: sideColor)
                     Spacer()
                     Text(AppFormat.money(proposal.estimatedNotional))
-                        .font(.headline)
+                        .font(.appHeadline)
                 }
 
                 HStack(spacing: 8) {
@@ -268,14 +282,14 @@ private struct ProposalCard: View {
                 if let rationale = proposal.proposal.greenTeamRationale ?? proposal.proposal.rationale,
                    !rationale.isEmpty {
                     Text(rationale)
-                        .font(.subheadline)
+                        .font(.appSubheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let note = proposal.revalidationNote, !note.isEmpty {
                     Label(note, systemImage: "arrow.triangle.2.circlepath")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
 
@@ -287,7 +301,7 @@ private struct ProposalCard: View {
 
                 if requiresTypedConfirmation {
                     Label("Typed confirmation required for this live order", systemImage: "keyboard.badge.ellipsis")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(AppPalette.warning)
                 }
 
@@ -395,7 +409,7 @@ private struct ProposalActionFeedbackBanner: View {
     var body: some View {
         Label {
             Text(message)
-                .font(.caption.weight(.medium))
+                .font(.appCaption.weight(.medium))
                 .fixedSize(horizontal: false, vertical: true)
         } icon: {
             if showsSpinner {
@@ -477,15 +491,15 @@ private struct RedTeamReview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Label(title, systemImage: verdict.available ? "shield.checkered" : "exclamationmark.shield.fill")
-                .font(.subheadline.weight(.semibold))
+                .font(.appSubheadline.weight(.semibold))
                 .foregroundStyle(color)
             Text(verdict.reason)
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let model = verdict.model, !model.isEmpty {
                 Text("Reviewed by \(model)")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundStyle(.secondary)
             }
             if verdict.humanOverrideApplied == true {
@@ -504,11 +518,11 @@ private struct DetailLine: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .frame(width: 58, alignment: .leading)
             Text(value)
-                .font(.subheadline)
+                .font(.appSubheadline)
             Spacer(minLength: 0)
         }
     }

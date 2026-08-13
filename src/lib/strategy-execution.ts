@@ -53,7 +53,7 @@ import {
   startStrategyLockGuard,
   StrategyLockOwnershipLostError
 } from "./strategy-lock-guard";
-import { assertLiveApprovalConfirmation, uniqueSymbols, currentPricesFromScan, protectiveExitQuoteFromScan, openingPolicyNotionalCap, autoRevertOnCapBreach, auditWashSaleProceed } from "./strategy";
+import { appendDecisionStep, assertLiveApprovalConfirmation, uniqueSymbols, currentPricesFromScan, protectiveExitQuoteFromScan, openingPolicyNotionalCap, autoRevertOnCapBreach, auditWashSaleProceed } from "./strategy";
 
 export interface LiveApprovalConfirmation {
   proposalId?: string;
@@ -841,6 +841,8 @@ export async function executeProposal(
       };
       if (proposal.redTeamVerdict) {
         proposal.redTeamVerdict = { ...proposal.redTeamVerdict, humanOverrideApplied: true };
+        // Scorecard lifecycle receipt — appended exactly where humanOverrideApplied is set.
+        appendDecisionStep(proposal, "human_approved");
       }
       if (!updatePendingProposalReprice(proposalId, { proposal, review, estimatedNotional: review.estimatedNotional }, userId)) {
         const current = getProposal(proposalId, userId)?.status ?? "removed";
@@ -1144,6 +1146,9 @@ export async function executeProposal(
     // idempotency-keyed intent (status "placing" + refId) BEFORE the broker call so a crash or
     // lost broker response can't leave an untracked real order.
     const refId = crypto.randomUUID();
+    // Terminal scorecard lifecycle step: the human-approved decision is final — the placing claim
+    // below persists the proposal JSON (chain included) before the broker call.
+    appendDecisionStep(proposal, "final");
     // Atomic compare-and-swap BEFORE the broker call: only the caller that flips this proposal
     // proposed -> placing proceeds to placeEquityOrder, so concurrent approvals (double-click, two
     // tabs, from-draft) can't both place a real order (defense in depth with the run-lock above).
