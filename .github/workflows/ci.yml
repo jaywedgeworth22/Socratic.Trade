@@ -144,9 +144,10 @@ jobs:
       contents: read
       packages: read
     env:
-      # The Coolify CI container is capped at 3 GiB; Node 24 otherwise defaults to a
-      # ~1 GiB heap and TypeScript aborts before reporting diagnostics.
-      NODE_OPTIONS: --max-old-space-size=2560
+      # GitHub-hosted ubuntu-latest has ~7 GiB. 2560 was leftover from the
+      # retired 3 GiB Coolify runner and OOMs Next 16 production builds
+      # (exit 134, V8 Ineffective mark-compacts).
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'

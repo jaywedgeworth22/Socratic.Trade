@@ -190,6 +190,7 @@ import { isTradingDay } from "./market-calendar";
 import { reconcilePendingFills, flagStalePlacingIntents, reconcilePlacementError, LiveApprovalConfirmation, LiveApprovalConfirmationError, coerceProtectiveExitToMarket } from "./strategy-execution";
 import { runSafetyMaintenance } from "./safety-maintenance";
 import { shouldSkipNegativeExpectancy, applyDeterministicSizing, isRiskAddingOpening, applyRedTeamHalfSize, applyEarningsBlackoutTag, applyCorrelationClusterGate, applyRiskReceipts, shouldEscalateDecision, allowedProposalSides, deterministicBearFilter, mapWithConcurrency } from "./strategy-risk";
+import { deriveVenueContract } from "./venue-contract";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
@@ -4860,12 +4861,14 @@ async function proposeTrades(input: {
   // the connected account actually supports it (capability-gated). Otherwise the schema is long-only
   // and the model cannot emit a short/cover. The policy.ts gate enforces the same two-layer check at
   // execution time as a backstop. Declared here (before the prompt) so both the prompt and schema use it.
-  const allowedSides = allowedProposalSides(input.policy, input.activeAccount);
+  const venue = deriveVenueContract(input.policy, input.activeAccount);
+  const allowedSides = venue.sides;
   const shortAllowed = allowedSides.includes("short");
   // The owner strategy is the sole trusted prompt-text source and is preserved byte-for-byte.
   const trustedStrategyPrompt = containPromptText({ source: "owner_strategy", text: input.prompt }).sanitizedText;
   const systemPrompt = buildBullSystem({
     shortAllowed,
+    venueLines: venue.promptLines,
     executionMode,
     executionModeClarification,
     strategyPrompt: trustedStrategyPrompt,
@@ -5702,13 +5705,13 @@ async function proposeTrades(input: {
             // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
             // i.e. policy.shortSellingEnabled AND the connected account reports shortSelling. Default long-only.
             side: { enum: allowedSides },
-            type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
+            type: { enum: venue.orderTypes },
             quantity: { type: ["number", "null"] },
             dollarAmount: { type: ["number", "null"] },
             limitPrice: { type: ["number", "null"] },
             stopPrice: { type: ["number", "null"] },
             timeInForce: { enum: ["gfd", "gtc"] },
-            marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
+            marketHours: { enum: venue.marketHours },
             rationale: { type: "string" },
             tradeThesisTag: { enum: THESIS_PLAYBOOK },
             confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" },
@@ -5992,7 +5995,8 @@ async function proposeTrades(input: {
                 const { kept, dropped } = filterRepairedProposals(
                   parsed.proposals ?? [],
                   allowedSides,
-                  proposalSymbols.length > 0 ? proposalSymbols : undefined
+                  proposalSymbols.length > 0 ? proposalSymbols : undefined,
+                  venue.orderTypes
                 );
                 if (dropped > 0) {
                   console.warn(`[Bull] jsonrepair recovered the payload but ${dropped} proposal(s) were incomplete (truncation artifacts) and were dropped; keeping ${kept.length}.`);
@@ -6534,7 +6538,8 @@ export function filterRepairedProposals(
   // openings candidate gate (buy/short only) and the policy holdings check, and Alpaca infers
   // open-vs-close from `side: sell` — an unintended short. undefined mirrors the schema's
   // bare-string fallback when the run has no candidates/holdings to enumerate.
-  allowedSymbols?: readonly string[]
+  allowedSymbols?: readonly string[],
+  allowedOrderTypes: readonly string[] = ["market", "limit", "stop_market", "stop_limit"]
 ): { kept: TradeProposal[]; dropped: number } {
   const kept: TradeProposal[] = [];
   let dropped = 0;
@@ -6555,7 +6560,7 @@ export function filterRepairedProposals(
       typeof record.side === "string" &&
       allowedSides.includes(record.side) &&
       typeof record.type === "string" &&
-      ["market", "limit", "stop_market", "stop_limit"].includes(record.type) &&
+      allowedOrderTypes.includes(record.type) &&
       typeof record.rationale === "string" && record.rationale.trim() !== "" &&
       // Playbook membership, not just non-emptiness (Codex P1, round 6): a fabricated tag has
       // no scorecard history, so shouldSkipNegativeExpectancy treats it as unproven and a

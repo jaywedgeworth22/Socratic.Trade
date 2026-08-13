@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { ConnectedAccount, TaxationType } from "@/lib/types";
+import { mergeAccountCapabilities } from "@/lib/venue-contract";
 import { activateAccount, ConsoleApiError } from "../lib/api";
 import { deriveStateInfo, realityForAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -399,27 +400,25 @@ export function BrokerAccountsCard() {
             variant="outline"
             disabled={busy !== null}
             onClick={() => setExtraOpen("public")}
-            title="Link Public.com with the Individual API secret from Account Settings → Security → API. Live only."
+            title="Link Public.com for quotes and history.  Order execution stays off until Settings → Public.com order execution is turned on (account not funded yet)."
           >
             Connect Public
           </Btn>
           <Btn
             size="sm"
             variant="outline"
-            disabled={busy !== null}
-            onClick={() => setExtraOpen("etoro")}
-            title="Link eToro with x-api-key + x-user-key from Settings → Trading → API Key Management."
+            disabled
+            title="eToro has no API access on this account yet.  Connect will stay off until that exists."
           >
-            Connect eToro
+            eToro — No API Yet
           </Btn>
           <Btn
             size="sm"
             variant="outline"
-            disabled={busy !== null}
-            onClick={() => setExtraOpen("webull")}
-            title="Link Webull OpenAPI App Key + App Secret after Developer Tool approval. Unofficial APIs are not used."
+            disabled
+            title="Webull official OpenAPI comes later.  Unofficial libraries are not used."
           >
-            Connect Webull
+            Webull — Later
           </Btn>
         </div>
       }
@@ -876,7 +875,7 @@ function ExtraBrokerConnectSheet({
     broker === "public"
       ? {
           title: "Connect Public",
-          hint: "Paste the Individual API secret from public.com Account Settings → Security → API.  This is live-only.  Do not share the secret."
+          hint: "Paste the Individual API secret from public.com Account Settings → Security → API.  This is live-only.  Quotes and history can run now; order execution stays parked until the account is funded and Public.com Order Execution is turned on in Data Sources."
         }
       : broker === "etoro"
         ? {
@@ -959,7 +958,7 @@ function CapabilitiesSheet({
   onClose: () => void;
 }) {
   if (!account) return null;
-  const caps = account.capabilities;
+  const caps = mergeAccountCapabilities(account.broker, account.capabilities);
   return (
     <Sheet
       open={account !== null}
@@ -990,8 +989,22 @@ function CapabilitiesSheet({
           </div>
           <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
             <span className="font-medium flex items-center gap-1.5"><Zap className="size-4 text-[color:var(--con-accent)]" /> Options Trading</span>
-            <Chip tone={caps?.optionsTrading ? "pos" : "muted"}>
-              {caps?.optionsTrading ? `Level ${caps.optionsLevel ?? "?"}` : "Disabled"}
+            <Chip tone={caps?.optionsOrders ? "pos" : "muted"}>
+              {caps?.optionsOrders
+                ? `Orders · level ${caps.optionsLevel ?? "?"}`
+                : caps?.optionsTrading
+                  ? `Positions only · level ${caps.optionsLevel ?? "?"}`
+                  : "Disabled"}
+            </Chip>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+            <span className="font-medium">Fractional shares</span>
+            <Chip tone={caps?.fractional ? "pos" : "muted"}>{caps?.fractional ? "Yes" : "Whole shares"}</Chip>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+            <span className="font-medium">Sessions</span>
+            <Chip tone="muted">
+              {caps?.overnightHours ? "regular + extended + overnight" : caps?.extendedHours ? "regular + extended" : "regular only"}
             </Chip>
           </div>
           <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">

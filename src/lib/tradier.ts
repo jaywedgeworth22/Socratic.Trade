@@ -22,6 +22,7 @@ import { fetchDailyOHLC } from "./history";
 // Reuse Alpaca's keyless-Yahoo quote floor and the shared pre-trade notional semantics verbatim —
 // they are broker-agnostic helpers exported from ./alpaca (no Alpaca SDK behavior involved).
 import { fillMissingQuotesWithClose, estimateReviewNotional } from "./alpaca";
+import { mergeAccountCapabilities } from "./venue-contract";
 
 /**
  * Tradier broker gateway. Hand-rolled REST (single Bearer token, no SDK), mirroring the Alpaca
@@ -236,16 +237,17 @@ function capsFromProfile(account: Record<string, unknown>): AccountCapabilities 
   // Tradier IRAs report type "margin" even though they cannot short.
   // Short selling is only valid for non-IRA margin accounts.
   const isIra = accountType === "traditional_ira" || accountType === "roth_ira";
-  return {
+  return mergeAccountCapabilities("tradier", {
     equityTrading: true,
     shortSelling: isMargin && !isIra,
     optionsTrading: optionsLevel !== undefined ? optionsLevel > 0 : false,
     optionsLevel,
+    optionsOrders: false,
     futuresTrading: false,
     cryptoTrading: false,
     marginEnabled: isMargin,
     accountType
-  };
+  });
 }
 
 class TradierBrokerGateway implements BrokerGateway {

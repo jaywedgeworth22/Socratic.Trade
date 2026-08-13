@@ -19,6 +19,7 @@ import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { logApiHealth } from "./db-health";
 import { normalizeSymbol } from "./money";
+import { mergeAccountCapabilities } from "./venue-contract";
 import { isShortIntent } from "./broker-side";
 import { getOpenLots, getPerformanceSummary } from "./performance";
 import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch } from "./yahoo-finance";
@@ -211,18 +212,18 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
         : rawBrokerageType.includes("ira") || rawBrokerageType.includes("traditional") ? "traditional_ira"
         : "brokerage";
 
-      const capabilities: AccountCapabilities = {
+      const capabilities: AccountCapabilities = mergeAccountCapabilities("robinhood", {
         equityTrading: true,
-        // Robinhood MCP does not support short selling. The MCP's review_equity_order
-        // docs explicitly state "no short sells". Hardcoded false regardless of account type.
+        // Live MCP place/review side enum is buy|sell only — no short/cover.
         shortSelling: false,
         optionsTrading,
         optionsLevel: optionsTrading ? optionsLevel : undefined,
+        optionsOrders: false,
         futuresTrading: false,
         cryptoTrading: false,
         marginEnabled,
         accountType
-      };
+      });
 
       return {
         accountNumber: String(item.account_number ?? item.accountNumber),

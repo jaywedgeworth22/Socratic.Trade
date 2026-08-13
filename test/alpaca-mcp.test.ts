@@ -85,7 +85,18 @@ describe("Alpaca MCP gateway adapter", () => {
           futuresTrading: false,
           cryptoTrading: false,
           marginEnabled: false,
-          accountType: "brokerage"
+          accountType: "brokerage",
+          extendedHours: true,
+          fractional: true,
+          marketHours: ["regular_hours", "extended_hours"],
+          minOrderNotional: undefined,
+          minShareQuantity: undefined,
+          nativeBrackets: true,
+          optionsOrders: false,
+          orderTypes: ["market", "limit", "stop_market", "stop_limit"],
+          overnightHours: false,
+          positionIdCloses: undefined,
+          trailingStops: true
         }
       }
     ]);
@@ -221,7 +232,18 @@ describe("Alpaca MCP gateway adapter", () => {
           futuresTrading: false,
           cryptoTrading: false,
           marginEnabled: false,
-          accountType: "brokerage"
+          accountType: "brokerage",
+          extendedHours: true,
+          fractional: true,
+          marketHours: ["regular_hours", "extended_hours"],
+          minOrderNotional: undefined,
+          minShareQuantity: undefined,
+          nativeBrackets: true,
+          optionsOrders: false,
+          orderTypes: ["market", "limit", "stop_market", "stop_limit"],
+          overnightHours: false,
+          positionIdCloses: undefined,
+          trailingStops: true
         }
       }
     ]);

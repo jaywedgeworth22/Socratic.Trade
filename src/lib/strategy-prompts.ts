@@ -16,7 +16,7 @@ import type { WashSaleHandling } from "./types";
  * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
  * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.3.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.4.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
@@ -55,6 +55,8 @@ const HOLDING_HORIZON_GUIDE: Record<string, string> = {
 export interface BullSystemParams {
   /** allowedSides.includes("short") — exposes short/cover prose + gates the enabled/disabled line. */
   shortAllowed: boolean;
+  /** Venue facts (broker name, sessions, fractional, options).  Omitted lines stay off the prompt. */
+  venueLines?: string[];
   /** llmExecutionMode(executionState). */
   executionMode: string;
   /** llmModeClarification(executionState). */
@@ -102,10 +104,17 @@ export interface BullSystemParams {
  */
 export function buildBullSystem(p: BullSystemParams): string {
   return [
-    "You are an autonomous equity trading agent for a Robinhood brokerage account.",
-    p.shortAllowed
-      ? `SHORT SELLING IS ENABLED on this account. In addition to buy/sell you MAY open SHORT positions (side='short') on names with a clearly bearish thesis, and close them with side='cover'. Every short MUST carry a mandatory stop-loss (via bracketStopLoss or stopPlan, defaulting to shortStopLossPct of ${p.shortStopLossPct ?? 8}%) and respect the short-exposure caps; only short with genuine conviction, not to fill a quota.`
-      : "SHORT SELLING IS DISABLED on this account. Propose long-only: side is buy or sell. Do not propose short or cover.",
+    ...(p.venueLines && p.venueLines.length > 0
+      ? p.venueLines
+      : [
+          "You are an autonomous equity trading agent for a connected brokerage account.",
+          p.shortAllowed
+            ? `SHORT SELLING IS ENABLED on this account. In addition to buy/sell you MAY open SHORT positions (side='short') on names with a clearly bearish thesis, and close them with side='cover'. Every short MUST carry a mandatory stop-loss (via bracketStopLoss or stopPlan, defaulting to shortStopLossPct of ${p.shortStopLossPct ?? 8}%) and respect the short-exposure caps; only short with genuine conviction, not to fill a quota.`
+            : "SHORT SELLING IS DISABLED on this account. Propose long-only: side is buy or sell. Do not propose short or cover."
+        ]),
+    p.shortAllowed && p.venueLines?.length
+      ? `Every short MUST carry a mandatory stop-loss (via bracketStopLoss or stopPlan, defaulting to shortStopLossPct of ${p.shortStopLossPct ?? 8}%) and respect the short-exposure caps; only short with genuine conviction, not to fill a quota.`
+      : "",
     "",
     "Execution Mode:",
     `Current executionMode is "${p.executionMode}".`,
@@ -178,6 +187,8 @@ export interface RedTeamReviewSystemParams {
   side: "buy" | "short";
   /** The proposal's symbol, for a concrete opening line. */
   symbol: string;
+  /** When false, the reviewer must not invent option hedges as the alternative. */
+  optionsOrders?: boolean;
 }
 
 /**
@@ -205,6 +216,9 @@ export function buildRedTeamReviewSystem(p: RedTeamReviewSystemParams): string {
     '- "approve": the trade proceeds at the stated finalized size.',
     '- "approve-at-half": the trade proceeds at HALF the finalized size — the single allowed haircut. Use it when the thesis is sound but the size is too aggressive for the evidence or regime.',
     '- "reject": you found a critical flaw (failed fact-check, broken thesis, or unjustifiable risk); the trade must not proceed.',
+    p.optionsOrders
+      ? "Option structures are in scope for this account if you mention them as context only — you still cannot resize into an option order."
+      : "This account cannot place option orders.  Do not recommend calls, puts, spreads, or option overlays as the alternative or the hedge.",
     "If the rationale is sound, the data checks out, and the finalized size is defensible, you MUST approve — do not manufacture objections.",
     'Respond with ONLY a JSON object of the shape {"verdict": "approve" | "approve-at-half" | "reject", "reason": string}. No prose, no markdown fences, nothing outside the JSON object.'
   ].join("\n");

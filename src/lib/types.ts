@@ -202,6 +202,31 @@ export interface AccountCapabilities {
   marginEnabled: boolean;
   /** Broker's required maintenance margin percentage (e.g. 25 = 25%). */
   marginRequirementPct?: number;
+  /** Fractional equity shares. Undefined = unknown (treat as false at the venue contract). */
+  fractional?: boolean;
+  /** Pre/post regular session. */
+  extendedHours?: boolean;
+  /** Overnight / 24-hour equity session. */
+  overnightHours?: boolean;
+  /** Native broker-held trailing stop (not a synthetic ratchet). */
+  trailingStops?: boolean;
+  /** Native multi-leg bracket / OTOCO at the venue. */
+  nativeBrackets?: boolean;
+  /**
+   * This app can PLACE option orders on this account. Distinct from optionsTrading,
+   * which only means the broker reports an options approval level / open contracts.
+   */
+  optionsOrders?: boolean;
+  /** Equity order types the venue will accept on this account. */
+  orderTypes?: Array<"market" | "limit" | "stop_market" | "stop_limit">;
+  /** Sessions the venue will accept on this account. */
+  marketHours?: Array<"regular_hours" | "extended_hours" | "all_day_hours">;
+  /** Minimum whole-share quantity (1 = whole shares only). */
+  minShareQuantity?: number;
+  /** Minimum order notional in account currency when the venue publishes one. */
+  minOrderNotional?: number;
+  /** Sells close a specific position id (eToro), not a symbol-level sell-to-open. */
+  positionIdCloses?: boolean;
   /**
    * Account structure, which determines the applicable tax regime:
    *   "brokerage"       → standard taxable account
