@@ -43,6 +43,35 @@ stash` the 4 non-test files, re-run, 14 failed/50 passed, `git stash pop`).  Gat
 tsc clean; lint 764 problems/0 errors (grandfathered backlog, no new warnings on touched lines);
 full `npm test` 566 files/6581 tests passed, 51 skipped; `npm run build` exit 0, 40/40 static
 pages.  Rollout: `docs/rollouts/2026-08-13-litestream-compaction-visibility.md`.
+## Current (2026-08-13 ~3:20pm CT MONET - HONEST SERVER STATS: fabricated CI runners deleted)
+
+`/admin/server` was showing six GitHub Actions runners that do not exist -- `socratic-ci`,
+`socratic-ci-2`, `congress-ci`, `shared-ci`, `usage-ci` (all tagged `ci-cpx32`, a box deleted
+2026-07-31) and `github-runner` -- every one pinned to `running:healthy`.  They were hardcoded
+string literals at two sites in `app/api/admin/server-metrics/route.ts`, returned on five
+paths including a successful-but-empty live list.  No GitHub token exists in ST prod, so
+production served them on 100% of requests.  Real truth: ST has ONE runner,
+`mac-xcode26-socratic`.
+
+Replaced with a discriminated result (`state: known | unavailable` + machine `reason` + human
+`detail`), modelled on `assessLitestreamTierFreshness`.  Also fixed: `"unhealthy".includes("healthy")`
+painting every unhealthy container green, the status label truncating the health half off, the
+hardcoded "litestream is replicating to R2" claim in the Security card, and four host cards
+that were blank with no stated reason.  `AGENTS.md` note blaming "stale Coolify-side
+registration" corrected -- it was our own code.
+
+Adversarial review then caught the same class of bug reintroduced one card over: the Services
+card rendered an empty `resources` array as "coolify reported no services for this server" even
+when Coolify was never configured or the read failed -- and the failed-read case renders on an
+otherwise fresh-looking page, because the Hetzner reads succeeding keeps the stale-cache
+branches from firing.  Fixed with a matching `resourcesObservation: known | unavailable+reason`
+and a three-state Services panel.  Two smaller honesty fixes rode along: the Security card no
+longer claims live provider reads on the local path, and the CPU meter now states that its
+per-core scaling is unverified.
+
+Owner action: supply `GH_TOKEN` to ST prod Infisical if the runners card should show live data
+(agents must not mint one).  Branch `monet/honest-server-stats`.  Rollout:
+`docs/rollouts/2026-08-13-honest-server-stats.md`.  UM/CT follow-ups recorded in that note.
 
 ## Current (2026-08-13 MONET — real toggles: banned force-include notification pattern removed)
 
