@@ -24,8 +24,10 @@ force-include behavior as a "regression" test; added new regression coverage pro
 assertions in `test/persistence-hardening.test.ts` from 76 to 78 (77 is now `device_push_tokens`
 from #2681).
 
-Branch `monet/real-toggles`, worktree `~/apps/trading-monet-toggles`. Gates: tsc clean, lint 0
-errors, full test/build results in the rollout note. Rollout:
+Branch `monet/real-toggles`, worktree `~/apps/trading-monet-toggles`. Gates (foreground, waited
+on): tsc clean; `npm test` 6573 passed / 51 skipped (568 files); lint 0 errors; build clean. PR
+https://github.com/jaywedgeworth22/Socratic.Trade/pull/2682, opened ready, auto-merge armed
+(squash) — merges on green `verify`. Rollout:
 `docs/rollouts/2026-08-13-remove-force-include-notifications.md`.
 ## Current (2026-08-13 ~2:20pm CT CLAUDE — HOTFIX: adaptive FTS-mirror batching)
 
