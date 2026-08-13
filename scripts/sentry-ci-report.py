@@ -64,6 +64,7 @@ CRON_SCHEDULES = {
     "CI": "47 7 * * *",
     "Cleanup Actions Caches": "5 3 * * *",
     "Effort Issues Sync": "12 6 * * *",
+    "iOS TestFlight ship (Mac runner)": "*/30 * * * *",
     "Security": "41 10 * * 1",
     "Playwright Smoke": "17 9 * * *",
     "Shared package pin check": "0 13 * * 1",
