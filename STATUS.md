@@ -1,3 +1,24 @@
+## Current (2026-08-12 ~11:30pm CT GROK — SEC TTL was a 10-year pause; paid RAG knobs on)
+
+Owner: is `SEC_FILING_INGEST_TTL_HOURS` too long, and run the clean-text reindex so every
+advanced feature current tiers can run is on.
+
+**Yes, it was too long — live Infisical was still `87600` (the 2026-08-10 emergency pause).**
+Catalog default 168h was the old Voyage-free weekly pin.  Paid OpenRouter/bge-m3 wants 24h.
+Claude had flipped the worker + max-per-run back on 2026-08-12 but left the 10-year TTL, so
+`isFilingIngestDue` (one global last-attempt stamp) kept ingest dark.
+
+Infisical prod now: TTL `24`, `VECTOR_EMBED_CLEAN_TEXT=on`, `RAG_MULTIQUERY=on`, `RAG_HYDE=on`,
+`RAG_EMBED_DISCLOSURES=on`.  Worker already on; max-per-run stays 25.  Left off: FMP transcript
+rights, full 8-K body, `VECTOR_ASOF_STRICT`.
+
+Code (branch `grok/rag-advanced-enable`, worktree `~/apps/trading-grok-rag-enable`): catalog
+default 24h; Settings user overrides now actually drive clean-text / multi-query / HyDE.
+Reindex `POST /api/admin/reembed` after the queued main deploy picks up Infisical.  Do not
+purge rev-1 until that run completes with zero failures.
+
+Rollout: `docs/rollouts/2026-08-12-rag-advanced-enable.md`.
+
 ## Current (2026-08-12 ~9:20pm CT MONET - console false load-failure, phone-correct load graphic, iOS candlestick splash, Lato everywhere)
 
 Owner-reported four-parter, all landed on `monet/loading-fonts`.  The headline is a real bug: the

@@ -18,6 +18,7 @@ import { timeSync as timeSyncGuard } from "./slow-sync-guard";
 import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { EARNINGSCALLS_TRANSCRIPT_SOURCE, earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
 import { envFlagOn } from "./rag/env-flag";
+import { resolveSourceBool } from "./source-settings";
 import { expandPostRerankParentContext } from "./rag/parent-context";
 import { fuseHybrid, rrfFuse } from "./rag/hybrid";
 import { searchCorpusWideLexicalCandidates, type CorpusWideLexicalCandidate } from "./rag/corpus-wide-lexical";
@@ -869,7 +870,9 @@ export function withCommittedVectorFilter(base: Record<string, unknown>): Record
  * see the rollout note for the decision on transitional mixed-representation vs scheduled reindex).
  */
 export function embedCleanTextEnabled(): boolean {
-  return envFlagOn("VECTOR_EMBED_CLEAN_TEXT", false);
+  // Settings override → Infisical/env → catalog default. Fail-open to env if the
+  // settings store is unavailable so embed writes never throw from a knob read.
+  return resolveSourceBool("VECTOR_EMBED_CLEAN_TEXT");
 }
 
 /**
