@@ -2,8 +2,10 @@ import SwiftUI
 
 @main
 struct SocraticTradeApp: App {
+    /// UIKit hands back the APNs device token nowhere else — see `PushAppDelegate`.
+    @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var pushDelegate
     @StateObject private var store = MobileStore(
-        client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!)
+        client: MobileAPIClient(baseURL: MobileAPIClient.productionBaseURL)
     )
 
     init() {
@@ -16,6 +18,7 @@ struct SocraticTradeApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(store)
+                .environmentObject(PushNotificationCoordinator.shared)
                 // Owner 2026-08-10: light is the product default (no theme
                 // picker on this app yet — do not follow OS dark by default).
                 .preferredColorScheme(.light)
@@ -39,10 +42,11 @@ struct ContentView: View {
 
     private var showSplash: Bool { !store.hasInitialized || !minimumSplashElapsed }
 
-    /// Set by `onOpenURL`, consumed (and cleared) by the tab shell.  Held here rather than
-    /// inside the shell so a link that arrives before sign-in still routes: the shell exists in
-    /// this ZStack the whole time and applies the destination as soon as it is set, so the
-    /// right screen is already showing when authentication completes.
+    /// Set by `onOpenURL` AND by a tapped push notification, consumed (and cleared) by the tab
+    /// shell.  Held here rather than inside the shell so a link that arrives before sign-in
+    /// still routes: the shell exists in this ZStack the whole time and applies the
+    /// destination as soon as it is set, so the right screen is already showing when
+    /// authentication completes.
     @State private var pendingDeepLink: DeepLinkDestination?
 
     var body: some View {
@@ -85,6 +89,9 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             handleScenePhase(phase)
         }
+        // The ONE router: `DeepLink.destination(for:)` decides what a URL means, and the
+        // answer lands in `pendingDeepLink`.  A tapped notification is routed through the
+        // same two lines below (`configure(route:)`), never through a parser of its own.
         // Universal links only reach here for paths the AASA file claims; anything else
         // (including the auth-callback scheme) maps to nil and is ignored.
         .onOpenURL { url in
@@ -94,10 +101,18 @@ struct ContentView: View {
     }
 
     private func bootstrap() async {
+        PushNotificationCoordinator.shared.configure(
+            route: { destination in pendingDeepLink = destination },
+            isLiveStreamConnected: { store.isStreamConnected }
+        )
         guard !store.hasInitialized else { return }
         await store.load()
         if store.isAuthenticated {
             store.startEvents()
+            // Re-asserts an existing grant only — this never prompts.  APNs can hand out a
+            // new device token after a restore or reinstall, and asking each launch is the
+            // only way to notice.
+            await PushNotificationCoordinator.shared.registerIfAlreadyAuthorized()
         }
     }
 

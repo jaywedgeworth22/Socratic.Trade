@@ -200,7 +200,8 @@ struct MobileControlView: View {
             apply(destination)
         }
         .onAppear {
-            // A link that launched the app can arrive before this view exists.
+            // A link or notification tap that launched the app can arrive before this view
+            // exists, and one that arrives while signed out waits here until it does.
             apply(pendingDeepLink)
         }
     }

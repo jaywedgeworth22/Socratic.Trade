@@ -2848,6 +2848,36 @@ const MIGRATIONS: Migration[] = [
           ON fundamental_revisions (symbol, field, filed_at);
       `);
     }
+  },
+  {
+    // Native iOS push (APNs) device-token registry. One row per device token; the token is the
+    // PRIMARY KEY because a token identifies exactly one install on one device and must belong to
+    // exactly ONE user — re-registering it under a different account reassigns it (see
+    // registerDeviceToken in db-device-tokens.ts) so a shared phone that switches accounts never
+    // keeps receiving the previous user's alerts.
+    //
+    // `environment` is stored, not inferred: APNs device tokens are environment-specific (a
+    // sandbox token is answered 400 BadDeviceToken by the production endpoint and vice versa), and
+    // the endpoint is chosen from this column at send time.
+    version: 77,
+    name: "device_push_tokens",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS device_push_tokens (
+          token TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          environment TEXT NOT NULL CHECK(environment IN ('sandbox','production')),
+          bundle_id TEXT NOT NULL,
+          platform TEXT NOT NULL DEFAULT 'ios',
+          created_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          disabled_at TEXT,
+          disabled_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_push_tokens_user
+          ON device_push_tokens (user_id, disabled_at);
+      `);
+    }
   }
 ];
 
@@ -4471,3 +4501,4 @@ export * from "./db-task-journal";
 export * from "./db-embed-stage";
 export * from "./db-signal-health";
 export * from "./db-lookahead-audit";
+export * from "./db-device-tokens";

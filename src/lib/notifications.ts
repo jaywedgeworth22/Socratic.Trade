@@ -79,6 +79,7 @@ function notificationDeliveryControl(options: SendNotificationOptions): Notifica
 }
 
 const CHANNEL_LABELS: Record<NotifyChannelId, string> = {
+  apns: "iPhone push",
   push: "ntfy.sh",
   pushover: "Pushover",
   webhook: "Webhook",

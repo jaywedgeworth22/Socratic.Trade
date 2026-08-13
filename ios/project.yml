@@ -94,6 +94,19 @@ targets:
     entitlements:
       path: SocraticTrade/SocraticTrade.entitlements
       properties:
+        # xcodegen REWRITES SocraticTrade.entitlements from this block on every
+        # `xcodegen generate` — anything added only to the .entitlements file is silently
+        # dropped by the next regen.  Both must be edited together.
+        #
+        # `production` is the shipped value: TestFlight and the App Store are the SAME APNs
+        # environment (api.push.apple.com), and TestFlight builds are Release builds re-signed
+        # by Apple with a distribution profile.  Xcode's automatic signing (CODE_SIGN_STYLE:
+        # Automatic above) substitutes `development` when it builds against a development
+        # profile, so local Xcode runs still get sandbox tokens — and the app reports the
+        # environment it was actually signed with by reading this entitlement back out of the
+        # embedded provisioning profile at runtime (APNSEnvironment.current), never from
+        # #if DEBUG.
+        aps-environment: production
         com.apple.developer.applesignin:
           - Default
         # Universal links.  The domain side is app/.well-known/apple-app-site-association/
