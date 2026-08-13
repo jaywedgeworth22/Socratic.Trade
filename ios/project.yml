@@ -30,8 +30,8 @@ settings:
     # AFTER it and rewrites the pbxproj from THIS file, restoring the stale
     # value. Until the fleet script also writes project.yml, keep these in sync
     # by hand whenever you notice drift.
-    MARKETING_VERSION: "1.0.6"
-    CURRENT_PROJECT_VERSION: "202608131700"
+    MARKETING_VERSION: "1.0.8"
+    CURRENT_PROJECT_VERSION: "202608132022"
     INFOPLIST_KEY_CFBundleDisplayName: "Socratic Trade"
     INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.finance"
 

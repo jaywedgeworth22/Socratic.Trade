@@ -269,6 +269,21 @@ jobs:
       # resolves over public HTTPS now (no deploy key), matching main's verify + deploy.yml.
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      # The scheduled ios-ship cron has no `paths:` filter of its own, so
+      # scripts/ios-scheduled-ship-gate.sh is the only thing keeping a
+      # backend-only commit from becoming a TestFlight build (run 31723515355
+      # shipped sha 39c6acee, a pure-backend alerts fix, before the gate
+      # existed). It executes ONLY on the Mac ship runner, so a defect in it
+      # would otherwise be invisible until testers were already being spammed.
+      # These tests are fully offline: throwaway git repos in a scratch dir, no
+      # network, no credentials, no xcodebuild, no App Store Connect.
+      - name: iOS ship-gate scripts (bash)
+        run: |
+          bash -n scripts/ios-scheduled-ship-gate.sh
+          bash -n scripts/test-ios-scheduled-ship-gate.sh
+          bash -n scripts/ios-fleet-pin.sh
+          bash -n scripts/ios-ship-testflight.sh
+          bash scripts/test-ios-scheduled-ship-gate.sh
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test

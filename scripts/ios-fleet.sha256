@@ -2,6 +2,6 @@
 # That directory is not a git repo; this file is the repo's record of
 # exactly which tooling revision is allowed to ship this app.
 # Refresh with: bash scripts/ios-fleet-pin.sh --update  (then land it in a PR)
-ed9a2904f7dc32342db79d01fe3da6edea8242483b388ee726dae71d4907f7ef  ship-testflight.sh
-a12673317591b0c5ea543e3a7090eab1a5d582190b19af3251e0103a4a4b1036  asc-api.mjs
+705e1c4d7a8b595dea3f005bf7969caca27e279bca42f6d7ea47b945ce245c2c  ship-testflight.sh
+de32d0345713a27031a33fd3d2a4a5d002ce34a6bd0f0ed8aa85a5bf539c6ff9  asc-api.mjs
 1a3ff2d360f4e0b5af71783125463d2aad77d34b8a9387c7f56b3283290afbf2  apps.json

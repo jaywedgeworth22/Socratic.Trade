@@ -55,9 +55,43 @@ Fix, in three layers:
   fire on `pull_request` / `merge_group` / `push`, so it can never short-circuit
   the required check on a PR.  The nightly `47 7 * * *` canary is deliberately
   exempt so the Next build-cache lineage keeps getting refreshed.
-- **Layer 3 (iOS).**  Not needed on ST — `ios-ship.yml` already has the cron.
-  Adding it to CT/UM is the peer agent's lane, and per the approved design it
-  must not land there until the shared ship script gains an iOS-paths guard.
+- **Layer 3 (iOS).**  ST already had the cron.  What it did **not** have was the
+  guard that makes a cron safe — see the next section.
+
+### Defect 1b — the ST cron was shipping backend-only commits (review blocker)
+
+**Caught in review, and it was already live.**  ST's `*/30` cron carried no
+`paths:` filter, and the ship script's own gate only tests "is HEAD the sha I
+last shipped" plus a time interval — neither of which knows whether `ios/`
+changed.  Receipt: run **31723515355** (`event: schedule`, 2026-08-13T17:00Z)
+logged `ship-gate: ok — 22967s since last ship … HEAD 39c6acee9b`, then
+`archiving...`, then `recorded success sha=39c6acee9b`.  Commit `39c6acee` is
+`fix(alerts): stop RH MCP schema 400s, Pinecone 40960 overflow, and
+overloaded-429 pages` — eight files, **zero** under `ios/`.  That build went to
+testers as a byte-identical app with a new build number.  ST has the fleet's
+highest commit volume, so the unguarded cron was the single biggest TestFlight
+spam source, not an edge case.
+
+Fixed with the same guard the peer agent built for CT/UM, ported here as
+`scripts/ios-scheduled-ship-gate.sh` (`--path-prefix 'ios/'`, app key
+`socratic`).  It runs **first** in `ios-ship.yml`, so a tick with nothing to
+ship costs seconds and cannot go red on an unrelated environment problem; the
+Xcode assert and the ship step are both `if: steps.gate.outputs.should_ship == '1'`.
+`push` and `workflow_dispatch` bypass it entirely — a push already passed the
+workflow's `paths:` filter and a dispatch is an explicit instruction.
+
+The logic is a **script, not inline YAML**, precisely because it otherwise
+executes only on the one Mac that can ship.  `scripts/test-ios-scheduled-ship-gate.sh`
+(13 assertions, fully offline — throwaway git repos in a scratch dir, no
+network, no credentials, no `xcodebuild`, no ASC) now runs in `ci.yml` on every
+PR.  It covers push/dispatch bypass, no ship history, already-shipped HEAD,
+**backend-only commits → skip**, iOS change → ship, per-app independence, the
+three unreachable-sha fallbacks, and that "skip" is never a non-zero exit.
+
+Removing the `IOS_TF_MIN_INTERVAL_SEC: 3600` override (defect 6) and adding this
+gate are complementary, not redundant: the interval limits *how often* a ship
+may happen, the gate decides *whether there is anything worth shipping*.  Only
+the second one can tell an iOS change from an alerts refactor.
 
 ### Defect 2 — export compliance declared on the WRONG build
 
@@ -110,12 +144,37 @@ Rendering rules implemented: conventional-commit prefix stripped; trailing
 `(#NNNN)` harvested into the header and stripped from the bullet; noise dropped
 (`merge|bump|wip|revert`, <12 chars); case-insensitive dedupe; 10-bullet cap with
 iOS-path commits as the tie-break; 4000-char truncation at a bullet boundary.
-Agent names are removed structurally first (`^[TAG]`, `Agent:`, `Co-Authored-By:`),
-then any bullet still matching the deny-list is **dropped whole** — never
-word-deleted in place, which yields mangled copy.  A final assertion re-scans the
-fully rendered body and skips the upload entirely if a name survived.  `AG` is
-deliberately not in the deny-list (false-positive magnet as a bare token); the
-structured-marker strip covers `[AG] ...`.
+Agent names are removed structurally first (bracketed agent markers, `Agent:`,
+`Co-Authored-By:`), then any bullet still matching the deny-list is **dropped
+whole** — never word-deleted in place, which yields mangled copy.  A final
+assertion re-scans the fully rendered body and skips the upload entirely if a
+name survived.
+
+**Corrected before landing (review finding).**  The first version of this file
+claimed "`AG` is deliberately not in the deny-list; the structured-marker strip
+covers `[AG] ...`".  That was **false for the corpus it runs against.**  The
+strip was start-anchored (`/^\[[A-Za-z]+\]\s*/`) but the fleet writes the tag at
+the **end**: measured 2026-08-13, Congress.Trade has **48** commit subjects with
+a non-leading `[AG]` and **zero** leading ones (ST: 2 and 2).  So the marker was
+stripped from none of them, and because `AG` was also absent from the deny-list,
+the final assertion did not fire either — `[AG]` would have published to
+TestFlight, which AGENT-SYNC's STRICT rule names explicitly.  Reproduced on
+`fix(ios): set App Category to Finance and Display Name to Congress.Trade (#1030) [AG] (#1264)`,
+which rendered the bullet with `[AG]` intact.
+
+Fixed two ways: the marker strip is now **global and unanchored** over the known
+agent tags (`[AG]`, `[Grok]`, `[Monet]`, … case-insensitive, tolerant of inner
+spaces), and the deny-list gained a **bracketed-only** `\[\s*ag\s*\]` alternative
+so the rendered-body assertion is a real backstop.  Bare `AG` still stays out of
+the word-boundary deny-list — as a naked token it fires on ordinary English and
+on tickers.  Stripping beats dropping here: the offending bullet keeps its
+content (`- Set App Category to Finance and Display Name to Congress.Trade (#1030)`)
+instead of vanishing.
+
+Verified against the real corpora, 1500 subjects per repo: **CT 48 / ST 4**
+subjects carry `[AG]`, and after the fix **zero** leak through the per-bullet
+render, **zero** trip the whole-body assertion across every 40-subject chunk of
+either history.
 
 Timestamp renders via two `Intl.DateTimeFormat` calls joined with `" at "` —
 one combined call produces `"Mon, Aug 12, 2026, 1:15 AM"` (comma), not the
@@ -128,14 +187,20 @@ non-ASCII in operator shell scripts).
 ### Defect 4 — MARKETING_VERSION drift
 
 `ios/project.yml` and `ios/Socratic Trade.xcodeproj/project.pbxproj` both said
-`1.0.1` / `2` while ASC has shipped through **1.0.6 (202608131700, uploaded
-2026-08-13 10:02 PT)** — read live via `GET /v1/builds?filter[app]=6799238379`.
-Both files now record 1.0.6 / 202608131700.
+`1.0.1` / `2` while ASC has shipped through **1.0.8 (202608132022, uploaded
+2026-08-13 13:25 PT)** — read live via `GET /v1/builds?filter[app]=6799238379`.
+Both files now record 1.0.8 / 202608132022.
+
+Re-read at review time: the first pass wrote 1.0.6 / 202608131700, and the train
+had already moved on (1.0.6 10:02 PT → 1.0.8 13:25 PT) before that commit was
+even authored.  A hand-written snapshot is stale the moment the next ship lands
+— which is the argument for the `--sync-project-version` follow-up below, not
+against recording it.
 
 The repo stays a **record**, not the source of truth: the ship script passes both
 values to `xcodebuild` on the command line, and the sequence is
-`max(local counter, ASC, pbxproj) + 1`, so writing 1.0.6 changes no future
-outcome (ASC already reports 6).
+`max(local counter, ASC, pbxproj) + 1`, so writing 1.0.8 changes no future
+outcome (ASC already reports 8).
 
 `--sync-project-version` was **not** added to the workflow, because it is a
 silent no-op for this app: it seds `project.pbxproj`, and `xcodegen generate`
@@ -187,6 +252,8 @@ Socratic.Trade (`monet/ship-pipeline-fix`):
 - `.github/workflows/ios-ship.yml`
 - `scripts/merge-shepherd.sh`
 - `scripts/ios-ship-testflight.sh`
+- `scripts/ios-scheduled-ship-gate.sh` (new — defect 1b)
+- `scripts/test-ios-scheduled-ship-gate.sh` (new — defect 1b)
 - `scripts/ios-fleet-pin.sh` (new)
 - `scripts/ios-fleet.sha256` (new)
 - `ios/project.yml`
@@ -275,9 +342,23 @@ All four workflow YAML files parse (`yaml.safe_load`); `ci.yml` exposes crons
 Release-notes rendering was exercised directly against a throwaway importable
 copy of `asc-api.mjs` (scratchpad; the real file was not modified for the test) —
 covering a real commit range, an unreachable prev sha, no prev sha, and an
-unusable repo path.  All four degrade correctly, and the deny-list drops an
-agent-named bullet while keeping a `[MONET]`-prefixed one after the marker strip.
-Neither ship script was executed and no TestFlight build was uploaded.
+unusable repo path.  All four degrade correctly.
+
+Agent-marker handling was then re-verified after the review fix, against the
+**real** histories (1500 subjects each):
+
+```
+review's leaking subject (CT #1264)   -> marker gone, content kept
+[AG] leading / trailing / inner       -> stripped in every position
+[ag] lowercase, [ AG ] inner spaces   -> stripped
+named agent ("Monet lane")            -> whole bullet dropped (unchanged)
+CT corpus: 48 subjects carry [AG]     -> 0 leaks, 0 body-assertion failures
+ST corpus:  4 subjects carry [AG]     -> 0 leaks, 0 body-assertion failures
+passed=12 failed=0
+```
+
+Neither ship script was executed, no TestFlight build was uploaded, and every
+App Store Connect call made in this session was a **GET**.
 
 Exact gate numbers are recorded in STATUS.md.
 
@@ -294,13 +375,24 @@ Exact gate numbers are recorded in STATUS.md.
    `settings.base` keys only — never `info.properties`, whose `$(MARKETING_VERSION)`
    substitutions must survive) and re-apply the pbxproj sed *after* the xcodegen
    step.  Until then version drift must be corrected by hand.
-4. **Coordination — pin refresh.**  When the peer agent edits
-   `/Users/jay/apps/ios-fleet/ship-testflight.sh` for the CT/UM iOS-paths guard,
-   ST's pin goes stale and the ship job fails red.  Fix:
-   `bash scripts/ios-fleet-pin.sh --update` and land it.
-5. **Not done here, by scope:** Congress.Trade and Usage-Monitor workflow changes,
-   and the iOS-paths guard in `evaluate_ship_gate` that must precede enabling
-   their ios-ship crons.
+4. **Coordination — pin refresh.**  Any edit to
+   `/Users/jay/apps/ios-fleet/{ship-testflight.sh,asc-api.mjs,apps.json}` makes
+   ST's pin stale and the ship job fails red.  Fix:
+   `bash scripts/ios-fleet-pin.sh --update` and land it.  Note the new scheduled
+   gate runs *before* the pin check, so ticks with nothing to ship no longer go
+   red on a stale pin — the exposure is now only ticks that would really ship.
+   Emergency single-ship bypass: `IOS_FLEET_PIN_SKIP=1`.
+5. **Follow-up — release-notes signal quality.**  Only `merge|bump|wip|revert` is
+   filtered, so ops/CI/docs commits publish as bullets ("Parse Coolify deploy
+   lists that use numeric object keys" is not something a TestFlight tester can
+   act on).  Separately, dropping a whole bullet on a deny-list hit removes
+   roughly 15% of CT's real subjects (196 of 1274 end in a bracketed agent tag)
+   — the bracketed-marker strip now rescues the `[AG]`-style ones, but a bullet
+   whose prose genuinely names an agent still vanishes.  Both argue for reviewing
+   the dry-rendered output before flipping `IOS_TF_RELEASE_NOTES=1`.
+6. **Not done here, by scope:** the iOS-paths guard inside `evaluate_ship_gate`
+   itself.  ST/CT/UM now each gate the *scheduled* path in the workflow, which
+   covers the cron; a manual `ship-now-gui.sh` still has no path awareness.
 
 ## 6. Zero-Code Findings
 

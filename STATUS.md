@@ -24,9 +24,21 @@ ship for the first minutes after upload), and renders the mandatory TestFlight
 "What to Test" note.  Notes publishing is OPT-IN and defaults to a dry render —
 owner sign-off needed before any tester sees auto-generated copy.
 
+**Review round 2 (blockers fixed before landing).**  (1) The `*/30` cron had no
+path gate and was already shipping backend-only commits — run `31723515355`
+archived and shipped `39c6acee` (an alerts fix, zero files under `ios/`) to
+testers.  `scripts/ios-scheduled-ship-gate.sh` + a 13-assertion offline test now
+gate the scheduled path, and the test runs in CI on every PR.  (2) The
+release-notes agent-name filter was start-anchored while the fleet writes tags at
+the END — CT has 48 subjects with a non-leading `[AG]` and zero leading ones, so
+`[AG]` would have published to TestFlight.  Markers are now stripped anywhere and
+the deny-list gained a bracketed-`AG` backstop; verified zero leaks across 1500
+subjects per repo.  (3) Version snapshot re-read at review time: 1.0.8 /
+202608132022 (the train moved past 1.0.6 before the first commit was authored).
+
 Gates (node 24): lint 0 errors / 764 warnings (grandfathered), `tsc --noEmit`
-clean, vitest 563 files passed + 1 skipped and 6520 tests passed + 51 skipped in
-691.67s, `npm run build` clean.  No PR opened yet.  Rollout:
+clean, vitest 563 files passed + 1 skipped and 6520 tests passed + 51 skipped,
+`npm run build` clean, ios ship-gate bash suite 13/13.  Rollout:
 `docs/rollouts/2026-08-13-ios-ship-pipeline-repair.md`.
 
 ## Current (2026-08-13 ~2:20pm CT CLAUDE — HOTFIX: adaptive FTS-mirror batching)

@@ -21,6 +21,22 @@ on:
   schedule:
     - cron: '*/30 * * * *'
 
+# WHY THE CRON EXISTS, AND WHY IT NEEDS A GATE
+# --------------------------------------------
+# `push:` alone is not a reliable trigger. A PR merged by github-actions[bot]
+# lands on main under GitHub's recursion guard and dispatches NOTHING: PR #2675
+# (bot-merged, sha ca38bb2979) has 27 runs on that sha and zero are
+# `event: push`; PR #2680 (human-merged) got the full set. So iOS code can
+# reach main and never reach a phone, and the cron is what notices.
+#
+# But a cron carries no `paths:` filter, and the ship script's own gate only
+# knows "is HEAD the sha I last shipped" plus a time interval -- neither of
+# which knows whether ios/ changed. That gap already fired here: run
+# 31723515355 (event=schedule, 2026-08-13T17:00Z) archived and shipped sha
+# 39c6acee, a pure-backend alerts fix touching zero files under ios/. The
+# "Scheduled ship gate" step below is what stops that, and it is why this
+# workflow can keep a 30-minute tick without spamming TestFlight.
+
 permissions:
   contents: read
 
@@ -47,7 +63,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Runs FIRST so a tick with nothing to ship costs seconds and cannot go
+      # red on an unrelated environment problem. The logic lives in a script,
+      # not inline YAML, so CI can unit-test it on every PR -- otherwise it
+      # would only ever execute on the one Mac that can ship.
+      - name: Scheduled ship gate (skip unless iOS code changed)
+        id: gate
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ios-scheduled-ship-gate.sh" \
+            --event "${{ github.event_name }}" \
+            --path-prefix 'ios/' \
+            --repo-root "$GITHUB_WORKSPACE" \
+            socratic
+
       - name: Assert stable Xcode 26 (never beta)
+        if: steps.gate.outputs.should_ship == '1'
         run: |
           echo "DEVELOPER_DIR=${DEVELOPER_DIR}"
           xcodebuild -version
@@ -78,4 +108,5 @@ jobs:
       # If the owner wants 1h, change DEFAULT_MIN_INTERVAL_SEC + the fleet README
       # together so it applies fleet-wide and stays documented.
       - name: Ship SocraticTrade to TestFlight
+        if: steps.gate.outputs.should_ship == '1'
         run: bash scripts/ios-ship-testflight.sh
