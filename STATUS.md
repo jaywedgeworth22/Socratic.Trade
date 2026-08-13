@@ -21,6 +21,51 @@ Advisory-tail reword / settings-surface sweep is NOT in these five commits (it r
 
 Rollout: `docs/rollouts/2026-08-13-claude-r4-pickup.md`.
 
+## Current (2026-08-13 MONET — litestream compaction visibility: make a silent backup failure loud)
+
+Step 3 of a diagnosed fix (Steps 1/2 — disabling Coolify rolling replacement, a one-time B2
+delete of poison L1 objects — are the owner's, not implemented here). Background: level-2 deep
+compaction has been frozen in production since 2026-08-08T14:35Z (two concurrent `litestream
+replicate` processes per Coolify rolling deploy emit L1 objects with identical MaxTXID,
+permanently failing `ltx.IsContiguous`) and ran silently for five days — `/api/health` stayed
+`ok: true`, `litestreamDegradedReasons: []`, the whole time.  Branch
+`monet/compaction-visibility`, worktree `~/apps/trading-monet-compaction`.
+
+Three additive signals, one correction: (1) `litestream.coolify.yml` gains `validation: interval:
+1h` — **at the TOP LEVEL, not nested under `dbs:`** as the originating task brief said; verified
+against the pinned v0.5.12 Go source that `Validation` is a field on the top-level `Config`
+struct, not `DBConfig` — nesting it would have silently done nothing.  Deliberately did NOT add
+`verify-compaction: true` (would re-list the ~90k-object L1 backlog after every compaction — the
+same request/socket-churn class that wedged deploys via tcp_mem exhaustion on 2026-07-10).  (2) A
+third, independent detection signal that needs no S3/B2 credentials and does not depend on the
+remote-inventory pipeline (which has a separate known bug in flight on `monet/durable-inventory-cache`
+— not touched here): litestream owns the container's real stdout via `-exec`, so
+`scripts/coolify-prod-start.sh`'s single `run_app litestream replicate ...` line now tees its
+combined output to `$DATA_DIR/litestream-runtime.log` (`> >(tee -a ...) 2>&1` — process
+substitution, not a `| tee` pipe, so `$!`/SIGTERM-forwarding/exit-code propagation are unchanged;
+verified via a full local dry-run with fake litestream/next binaries before landing).
+`src/lib/runtime-health.ts` gains `scanLitestreamRuntimeLogFile` (bounded 256 KiB tail read,
+never throws) scanning for litestream's own `compaction failed`/`validation error detected`
+lines; wired into `/api/health` as `checks.storage.litestreamCompactionLogFailureCount` (count
+only — raw lines never hit the public body) and `alertStorageWarning`.  (3) No new
+`NotificationEventType`/migration: reuses `alertStorageWarning`'s existing free-text
+`warningType` exactly like the 7 other storage alerts already do, so this is unaffected by
+whichever order it lands relative to `monet/real-toggles` (#2682, open at time of writing,
+removing that function's force-include pattern).  Currently INERT in production — the
+`.litestream-disabled` kill-switch marker (dropped today for an unrelated OOM incident) short-
+circuits before the new tee line.
+
+Zero-code finding: searched `docs/rollouts/*.md` + `STATUS.md` for claims the L2 wedge was
+"cleared"/"fixed" by the two earlier `rm -rf .app.db-litestream/ltx` resets — found none; every
+existing entry already correctly says the resets never touched B2 (confirmed against litestream's
+`DB.ResetLocalState` source: local-only, no B2 call).  No doc corrections were needed.
+
+14 new tests (11 unit in `test/runtime-health.test.ts`, 3 integration in
+`test/connection-health-routing.test.ts`), verified to fail without the implementation (`git
+stash` the 4 non-test files, re-run, 14 failed/50 passed, `git stash pop`).  Gates (all green):
+tsc clean; lint 764 problems/0 errors (grandfathered backlog, no new warnings on touched lines);
+full `npm test` 566 files/6581 tests passed, 51 skipped; `npm run build` exit 0, 40/40 static
+pages.  Rollout: `docs/rollouts/2026-08-13-litestream-compaction-visibility.md`.
 ## Current (2026-08-13 ~3:20pm CT MONET - HONEST SERVER STATS: fabricated CI runners deleted)
 
 `/admin/server` was showing six GitHub Actions runners that do not exist -- `socratic-ci`,
