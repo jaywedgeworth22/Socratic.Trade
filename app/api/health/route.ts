@@ -7,9 +7,11 @@ import { getLitestreamRemoteInventory } from "@/lib/litestream-remote-inventory"
 import {
   assessLitestreamRuntimeHealth,
   assessLitestreamTierFreshness,
+  defaultLitestreamRuntimeLogPath,
   defaultLitestreamStatePath,
   getLitestreamRuntimeHealth,
-  runtimeReleaseIdentity
+  runtimeReleaseIdentity,
+  scanLitestreamRuntimeLogFile
 } from "@/lib/runtime-health";
 import { getLease } from "@/lib/scheduler-lease";
 import { getTradingLivenessSummary } from "@/lib/trading-liveness";
@@ -371,6 +373,19 @@ export async function GET(request: Request) {
       remoteInventory: getLitestreamRemoteInventory()
     });
 
+    // A THIRD, independent signal: litestream's own log lines, captured to a local file by
+    // scripts/coolify-prod-start.sh (it tees the `litestream replicate` process's combined
+    // stdout/stderr so the app can read what litestream itself reports). Unlike the tier-freshness
+    // check above, this needs no S3/B2 credentials and does not depend on the remote LTX inventory
+    // — it still works even while every tier above reports "not-observable" (e.g. while the
+    // separate remote-inventory scheduler-wiring bug leaves litestreamTiers blind). A non-empty
+    // result here is direct evidence — litestream said "compaction failed" or "validation error
+    // detected" recently — so, unlike a not-observable tier, it is a real alarm, not a coverage
+    // gap: see the storageDegraded fold-in below.
+    const litestreamRuntimeLogPath = process.env.LITESTREAM_RUNTIME_LOG_PATH?.trim()
+      || defaultLitestreamRuntimeLogPath(dbPath);
+    const litestreamCompactionLogFindings = scanLitestreamRuntimeLogFile(litestreamRuntimeLogPath);
+
     // Byte counts are operator-only (see the header comment); every litestream/backup-continuity
     // field below stays public because the credential-less deploy-verify runbook reads exactly
     // those, and `storageDegraded` (computed from the raw numbers, not from this object) keeps the
@@ -393,7 +408,10 @@ export async function GET(request: Request) {
         notObservable: litestreamTiers.notObservableTiers,
         remoteInventoryState: litestreamTiers.remoteInventoryState,
         remoteInventoryCollectedAt: litestreamTiers.remoteInventoryCollectedAt
-      }
+      },
+      // Count only — the matched log lines themselves go to the (operator-only) alert, not this
+      // world-readable body, since litestream's own error text could echo bucket/path detail.
+      litestreamCompactionLogFailureCount: litestreamCompactionLogFindings.length
     };
 
     // Thresholds:
@@ -401,7 +419,7 @@ export async function GET(request: Request) {
     const diskLow = freeBytes > 0 && freeBytes < 1024 * 1024 * 1024;
     const walLarge = walSizeBytes > 500 * 1024 * 1024;
 
-    if (diskLow || walLarge || litestreamAssessment.degraded || litestreamTiers.degraded) {
+    if (diskLow || walLarge || litestreamAssessment.degraded || litestreamTiers.degraded || litestreamCompactionLogFindings.length > 0) {
       checks.storageDegraded = true;
 
       // Send a one-shot needs-attention notification/alert via the notifier if not sent recently
@@ -430,6 +448,13 @@ export async function GET(request: Request) {
             `Litestream "${tier.label}" (level ${tier.tier}) has not produced a new LTX file in the ${where} for ${Math.round(tier.ageSeconds / 60)} minutes (threshold ${Math.round(tier.thresholdSeconds / 60)} min), while level 0 kept advancing.`
           );
         }
+      }
+      if (litestreamCompactionLogFindings.length > 0) {
+        const sample = litestreamCompactionLogFindings[0];
+        void alertStorageWarning(
+          "litestream_compaction_log_failure",
+          `Litestream's own runtime log reports ${litestreamCompactionLogFindings.length} recent "${sample.marker}" line(s) — direct evidence a compaction or validation pass is failing, independent of the per-tier freshness check. Sample: ${sample.line}`
+        );
       }
     }
 

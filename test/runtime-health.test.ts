@@ -8,6 +8,7 @@ import {
   assessLitestreamRuntimeHealth,
   assessLitestreamTierFreshness,
   compareLitestreamTxid,
+  defaultLitestreamRuntimeLogPath,
   defaultLitestreamSocketPath,
   defaultLitestreamStatePath,
   getLitestreamRuntimeHealth,
@@ -16,7 +17,9 @@ import {
   LITESTREAM_TIER_STALE_AFTER_SECONDS,
   maxTxidFromLtxFilename,
   parseLitestreamListPayload,
-  runtimeReleaseIdentity
+  runtimeReleaseIdentity,
+  scanLitestreamRuntimeLogFile,
+  scanLitestreamRuntimeLogText
 } from "../src/lib/runtime-health";
 
 import { randomUUID } from "node:crypto";
@@ -765,5 +768,131 @@ describe("Litestream per-tier compaction freshness", () => {
     const report = assessLitestreamTierFreshness(root, { nowMs: Date.now() });
     expect(byTier(report)["0"]).toMatchObject({ state: "not-observable" });
     expect(report.degraded).toBe(false);
+  });
+});
+
+// Third, independent signal (2026-08-13): litestream's own log lines, teed by
+// scripts/coolify-prod-start.sh into a local file (litestream wraps the app via `-exec` and owns
+// the container's real stdout, so a shared file is the only way the app can ever read what
+// litestream itself reported). This needs no S3/B2 credentials and does not depend on the remote
+// LTX inventory that assessLitestreamTierFreshness above relies on for levels 1/2/3/9 — a
+// deliberately independent check so a wedge is still visible even while that other pipeline is
+// broken (see the known litestream-remote-inventory scheduler bug referenced in
+// app/api/health/route.ts).
+describe("defaultLitestreamRuntimeLogPath", () => {
+  it("places the log file next to the database, matching the other litestream default paths", () => {
+    expect(defaultLitestreamRuntimeLogPath("/app/data/app.db")).toBe("/app/data/litestream-runtime.log");
+  });
+});
+
+describe("scanLitestreamRuntimeLogText (pure)", () => {
+  it("finds a real litestream compaction-failure line and reports it, trimmed", () => {
+    const text = [
+      'time=2026-08-08T14:35:12.123Z level=INFO msg="starting compaction monitor" level=2 interval=5m0s',
+      'time=2026-08-08T14:40:12.456Z level=ERROR msg="compaction failed" level=2 error="write ltx file: extract timestamp from LTX header: non-contiguous transaction ids"'
+    ].join("\n");
+
+    const findings = scanLitestreamRuntimeLogText(text);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].marker).toBe("compaction failed");
+    expect(findings[0].line).toContain("compaction failed");
+    expect(findings[0].line).toContain("non-contiguous transaction ids");
+  });
+
+  it("finds a validation-monitor failure line independently of a compaction-failure line", () => {
+    const text = 'time=2026-08-13T01:00:00.000Z level=WARN msg="validation error detected" level=1 type=gap message="ltx sequence gap"';
+    const findings = scanLitestreamRuntimeLogText(text);
+    expect(findings).toEqual([
+      { marker: "validation error detected", line: expect.stringContaining("validation error detected") }
+    ]);
+  });
+
+  it("reports nothing for routine, healthy litestream log lines", () => {
+    const text = [
+      'time=2026-08-13T01:00:00.000Z level=INFO msg="starting compaction monitor" level=1 interval=30s',
+      'time=2026-08-13T01:00:30.000Z level=INFO msg="compaction complete" level=1 txid=00000000000123ab size=4096',
+      'time=2026-08-13T02:00:00.000Z level=INFO msg="snapshot complete" txid=00000000000123ab size=1048576'
+    ].join("\n");
+    expect(scanLitestreamRuntimeLogText(text)).toEqual([]);
+  });
+
+  it("caps the number of findings and the length of each reported line", () => {
+    const longSuffix = "x".repeat(1000);
+    const lines = Array.from(
+      { length: 20 },
+      (_, i) => `time=2026-08-13T00:00:${String(i).padStart(2, "0")}Z level=ERROR msg="compaction failed" level=2 detail="${longSuffix}"`
+    );
+    const findings = scanLitestreamRuntimeLogText(lines.join("\n"));
+    expect(findings.length).toBeLessThanOrEqual(5);
+    for (const f of findings) {
+      expect(f.line.length).toBeLessThanOrEqual(501); // 500 chars + the truncation ellipsis
+    }
+  });
+
+  it("ignores blank lines and does not blow up on empty input", () => {
+    expect(scanLitestreamRuntimeLogText("")).toEqual([]);
+    expect(scanLitestreamRuntimeLogText("\n\n   \n")).toEqual([]);
+  });
+});
+
+describe("scanLitestreamRuntimeLogFile (I/O)", () => {
+  const logPaths: string[] = [];
+
+  afterEach(() => {
+    for (const p of logPaths.splice(0)) {
+      try {
+        unlinkSync(p);
+      } catch {
+        // already gone
+      }
+    }
+  });
+
+  function tempLogPath(): string {
+    const p = join(tmpdir(), `litestream-runtime-${randomUUID()}.log`);
+    logPaths.push(p);
+    return p;
+  }
+
+  it("returns no findings when the file does not exist at all (litestream not running yet)", () => {
+    expect(scanLitestreamRuntimeLogFile(join(tmpdir(), `does-not-exist-${randomUUID()}.log`))).toEqual([]);
+  });
+
+  it("reads a real 'compaction failed' line off disk end-to-end", () => {
+    const p = tempLogPath();
+    writeFileSync(
+      p,
+      'time=2026-08-08T14:40:12Z level=ERROR msg="compaction failed" level=2 error="non-contiguous transaction ids"\n'
+    );
+    const findings = scanLitestreamRuntimeLogFile(p);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].marker).toBe("compaction failed");
+  });
+
+  it("returns no findings for an empty file", () => {
+    const p = tempLogPath();
+    writeFileSync(p, "");
+    expect(scanLitestreamRuntimeLogFile(p)).toEqual([]);
+  });
+
+  it("only scans the tail: an old failure line pushed past the byte cap by fresh healthy lines is not reported", () => {
+    const p = tempLogPath();
+    const failureLine = 'time=2026-08-01T00:00:00Z level=ERROR msg="compaction failed" level=2 error="stale"\n';
+    const paddingLine = `time=2026-08-13T00:00:00Z level=INFO msg="padding" data="${"p".repeat(200)}"\n`;
+    // Write the failure first, then enough padding to push it out of a small tail window.
+    writeFileSync(p, failureLine + paddingLine.repeat(50));
+    // A generous tail (bigger than the whole file) still finds it...
+    expect(scanLitestreamRuntimeLogFile(p, 1024 * 1024)).toHaveLength(1);
+    // ...but a tail window smaller than the padding alone reads only recent bytes and correctly
+    // reports nothing, proving the read is bounded rather than always scanning the whole file.
+    expect(scanLitestreamRuntimeLogFile(p, 500)).toEqual([]);
+  });
+
+  it("finds a recent failure within a small tail window when it actually is recent", () => {
+    const p = tempLogPath();
+    const paddingLine = `time=2026-08-13T00:00:00Z level=INFO msg="padding" data="${"p".repeat(200)}"\n`;
+    const failureLine = 'time=2026-08-13T05:00:00Z level=ERROR msg="compaction failed" level=2 error="non-contiguous"\n';
+    writeFileSync(p, paddingLine.repeat(50) + failureLine);
+    expect(scanLitestreamRuntimeLogFile(p, 500)).toHaveLength(1);
   });
 });
