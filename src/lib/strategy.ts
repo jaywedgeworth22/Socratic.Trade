@@ -165,7 +165,7 @@ import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-t
 import { isEscalationRegime } from "./regime-watch";
 import { getUpcomingEconomicEventsForPrompt } from "./economic-calendar";
 import { compactHeadlinesForPrompt } from "./prompt-headlines";
-import { fetchPolymarketContextForSymbols, formatPolymarketLinesForPrompt, type PolymarketMarketMatch } from "./polymarket-provider";
+import { fetchPolymarketContextForSymbols, formatPolymarketLinesForPrompt, polymarketTtlMs, type PolymarketMarketMatch } from "./polymarket-provider";
 import { getOrRecordHeadlineFirstSeen, headlineFingerprint } from "./headline-first-seen";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
 import { computeMultiSignalSeverity } from "./regime-severity";
@@ -6215,9 +6215,34 @@ function hasRealAsk(quote: MarketQuote): boolean {
   return Boolean(quote.ask && quote.ask > 0 && !quote.syntheticAsk);
 }
 
-function compactMarketScanForPrompt(marketScan?: MarketScan, candidateAtrStopPctBySymbol?: Record<string, number>) {
+// Block-level data-age note for `news` (data-age audit, 2026-08-13): the upstream headline
+// providers supply bare titles with no per-item publish timestamp (see the "Headline first-seen"
+// comment in proposeTrades), so a per-headline stamp would be FABRICATED. Stated once for the
+// whole scan rather than per candidate/headline — honest-by-omission plus an explicit note beats
+// either inventing a date or saying nothing.
+const NEWS_AGE_NOTE =
+  "`news` headlines carry no provider-supplied per-item publish timestamp — treat their age as UNKNOWN, not same-day. For time-sensitive claims, corroborate against dated evidence (retrievedFinancialContext filing dates, congress/insider bulletins' \"in last Nd\" windows, or upcomingEconomicEvents).";
+
+/** Block-level data-age note for `predictionMarkets` (data-age audit, 2026-08-13): Polymarket odds
+ *  are served from a shared in-process cache (see polymarketTtlMs) on top of the upstream CDN's own
+ *  ~5-minute edge cache, so no single market's exact fetch time is tracked — stating the real,
+ *  code-enforced cache ceiling is honest; inventing a specific "fetched Nm ago" per market would not
+ *  be, since some entries in the same batch may be fresher than others. */
+function predictionMarketsAgeNote(): string {
+  const minutes = Math.round(polymarketTtlMs() / 60_000);
+  return `\`predictionMarkets\` (Polymarket) odds may be cached up to ${minutes} minute(s) old (shared cache; the upstream CDN itself caches ~5 min) — treat as approximately current, not tick-precise.`;
+}
+
+// Exported for prompt-assembly tests (data-age audit, 2026-08-13) — only compactMarketScanForPrompt
+// calls it in production.
+export function compactMarketScanForPrompt(marketScan?: MarketScan, candidateAtrStopPctBySymbol?: Record<string, number>) {
   if (!marketScan) return undefined;
   const hasAskData = marketScan.topCandidates.some(hasRealAsk);
+  const topCandidates = marketScan.topCandidates.map((c, i) => compactCandidateForPrompt(c, i, candidateAtrStopPctBySymbol));
+  const hasNews = topCandidates.some((c) => Array.isArray(c.news) && c.news.length > 0);
+  const hasPredictionMarkets = topCandidates.some(
+    (c) => Array.isArray(c.predictionMarkets) && c.predictionMarkets.length > 0
+  );
   return {
     source: marketScan.source,
     generatedAt: marketScan.generatedAt,
@@ -6229,10 +6254,12 @@ function compactMarketScanForPrompt(marketScan?: MarketScan, candidateAtrStopPct
     cacheTtlMs: marketScan.cacheTtlMs,
     cached: marketScan.cached,
     hasAskData,
-    topCandidates: marketScan.topCandidates.map((c, i) => compactCandidateForPrompt(c, i, candidateAtrStopPctBySymbol)),
+    topCandidates,
     instructions: hasAskData
       ? "Ask-relative buy limits are allowed only for candidates that include ask."
-      : "No ask prices are available in this scan. Do not invent ask-relative limit prices."
+      : "No ask prices are available in this scan. Do not invent ask-relative limit prices.",
+    ...(hasNews ? { newsAgeNote: NEWS_AGE_NOTE } : {}),
+    ...(hasPredictionMarkets ? { predictionMarketsAgeNote: predictionMarketsAgeNote() } : {})
   };
 }
 
