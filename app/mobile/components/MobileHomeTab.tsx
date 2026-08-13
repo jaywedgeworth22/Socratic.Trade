@@ -1,6 +1,7 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
+import { MobileSymbolSheet } from "./MobileSymbolSheet";
 import {
   Activity,
   Bell,
@@ -122,6 +123,13 @@ export function MobileHomeTab({
   onStartDeletion: () => void;
   onConfirmDeletion: () => void;
 }) {
+  const [selectedPosition, setSelectedPosition] = useState<{
+    symbol: string;
+    quantity: number;
+    marketValue: number;
+    averageCost?: number;
+  } | null>(null);
+
   return (
     <div className="space-y-4">
       <section className="space-y-3">
@@ -316,11 +324,17 @@ export function MobileHomeTab({
           <Empty label="No positions" />
         ) : (
           positions.slice(0, 10).map((position) => (
-            <div key={position.symbol} className="flex min-h-11 items-center rounded-md border border-line bg-surface px-3 text-sm">
+            <button
+              key={position.symbol}
+              type="button"
+              onClick={() => setSelectedPosition(position)}
+              className="flex min-h-11 w-full items-center rounded-md border border-line bg-surface px-3 text-left text-sm"
+              aria-label={`${position.symbol} position`}
+            >
               <span className="font-semibold">{position.symbol}</span>
               <span className="ml-3 text-muted">{position.quantity} sh</span>
               <span className="ml-auto font-medium">{money(position.marketValue)}</span>
-            </div>
+            </button>
           ))
         )}
       </section>
@@ -449,6 +463,13 @@ export function MobileHomeTab({
           Snapshot {snapshotFreshness === "fresh" ? `updated ${shortTime(lastSnapshotAt)}` : snapshotFreshness}
         </p>
       </footer>
+      {selectedPosition ? (
+        <MobileSymbolSheet
+          symbol={selectedPosition.symbol}
+          position={selectedPosition}
+          onClose={() => setSelectedPosition(null)}
+        />
+      ) : null}
     </div>
   );
 }

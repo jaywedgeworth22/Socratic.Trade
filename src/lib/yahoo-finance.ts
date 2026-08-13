@@ -19,6 +19,75 @@ export interface YahooFinanceQuote {
   syntheticBid?: boolean;
   /** true when the ASK was derived from price (Yahoo reported no real ask). */
   syntheticAsk?: boolean;
+  /**
+   * Optional keyless fundamentals. Chart meta already carries the 52-week range
+   * on the same payload as price/volume. PE/EPS/div/beta live on crumb-authed
+   * quoteSummary (YahooFinanceEnrichmentProvider) — never fabricated here.
+   */
+  peRatio?: number;
+  eps?: number;
+  dividendYield?: number;
+  beta?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+}
+
+function optionalFinite(value: unknown): number | undefined {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function optionalPositive(value: unknown): number | undefined {
+  const n = optionalFinite(value);
+  return n !== undefined && n > 0 ? n : undefined;
+}
+
+/** Fields the keyless chart endpoint actually returns (today: 52-week range). */
+export function yahooFundamentalsFromRecord(row: Record<string, unknown>): Pick<
+  YahooFinanceQuote,
+  "peRatio" | "eps" | "dividendYield" | "beta" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow"
+> {
+  const peRatio = optionalPositive(row.trailingPE ?? row.peRatio);
+  const eps = optionalFinite(row.epsTrailingTwelveMonths ?? row.eps);
+  const beta = optionalFinite(row.beta);
+  const fiftyTwoWeekHigh = optionalPositive(row.fiftyTwoWeekHigh);
+  const fiftyTwoWeekLow = optionalPositive(row.fiftyTwoWeekLow);
+  return {
+    ...(peRatio !== undefined ? { peRatio } : {}),
+    ...(eps !== undefined ? { eps } : {}),
+    ...(beta !== undefined ? { beta } : {}),
+    ...(fiftyTwoWeekHigh !== undefined ? { fiftyTwoWeekHigh } : {}),
+    ...(fiftyTwoWeekLow !== undefined ? { fiftyTwoWeekLow } : {})
+  };
+}
+
+/** Map a chart `meta` object (plus optional indicator volume) into a quote. */
+export function yahooQuoteFromChartMeta(
+  meta: Record<string, unknown>,
+  volumeHint?: number
+): YahooFinanceQuote | undefined {
+  const price = Number(meta.regularMarketPrice);
+  if (!Number.isFinite(price) || price <= 0) return undefined;
+  const companyName = [meta.longName, meta.shortName]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+    ?.trim();
+  const prevClose = meta.chartPreviousClose ? Number(meta.chartPreviousClose) : price;
+  const volume = Number(meta.regularMarketVolume ?? volumeHint ?? 0);
+  const t = Number(meta.regularMarketTime);
+  const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
+  return {
+    ...(companyName ? { companyName } : {}),
+    price,
+    bid: price * 0.999,
+    ask: price * 1.001,
+    prevClose,
+    volume,
+    asOf,
+    syntheticBid: true,
+    syntheticAsk: true,
+    syntheticSpread: true,
+    ...yahooFundamentalsFromRecord(meta)
+  };
 }
 
 export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinanceQuote | undefined> {
@@ -33,33 +102,12 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinan
     const payload = await response.json() as { chart?: { result?: Array<{ meta?: Record<string, unknown>, indicators?: { quote?: Array<{ volume?: unknown[] }> } }> } };
     const meta = payload?.chart?.result?.[0]?.meta;
     if (!meta) return undefined;
-    const price = Number(meta.regularMarketPrice);
-    if (!Number.isFinite(price) || price <= 0) return undefined;
-    const companyName = [meta.longName, meta.shortName]
-      .find((value): value is string => typeof value === "string" && value.trim().length > 0)
-      ?.trim();
-    const prevClose = meta.chartPreviousClose ? Number(meta.chartPreviousClose) : price;
     const quote = payload?.chart?.result?.[0]?.indicators?.quote?.[0];
-    const volume = Number(meta.regularMarketVolume ?? quote?.volume?.[0] ?? 0);
-    // regularMarketTime is Unix seconds; convert to ISO for a real "as of" timestamp.
-    const t = Number(meta.regularMarketTime);
-    const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
-    // The chart endpoint returns NO real bid/ask. We derive a rough spread from price ONLY so
-    // downstream code has a placeholder, and mark it synthetic so it is never mistaken for a real
-    // quoted ask (which would wrongly anchor ask-relative limit-price math).
-    return {
-      ...(companyName ? { companyName } : {}),
-      price,
-      bid: price * 0.999,
-      ask: price * 1.001,
-      prevClose,
-      volume,
-      asOf,
-      // Fully synthetic single-quote fallback: both sides derived from price.
-      syntheticBid: true,
-      syntheticAsk: true,
-      syntheticSpread: true
-    };
+    const volumeHint = Number(quote?.volume?.[0] ?? 0);
+    // Chart meta already includes fiftyTwoWeekHigh/Low on the same payload as
+    // price/volume/name. The previous mapper dropped them, so the iOS/web
+    // company sheet showed dashes for 52W even after a successful live fetch.
+    return yahooQuoteFromChartMeta(meta, Number.isFinite(volumeHint) ? volumeHint : undefined);
   } catch {
     clearTimeout(timeout);
     return undefined;
