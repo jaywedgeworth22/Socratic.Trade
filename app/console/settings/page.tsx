@@ -825,13 +825,15 @@ function DataSourcesCard() {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-[length:var(--con-fs-sm)] font-semibold">{row.label}</span>
                         <Chip
-                          tone={row.source === "user" ? "pos" : row.source === "env" ? "accent" : "muted"}
+                          tone={row.source === "user" ? "pos" : row.source === "server" ? "info" : row.source === "env" ? "accent" : "muted"}
                           title={
                             row.source === "user"
                               ? "You overrode this for your account"
-                              : row.source === "env"
-                                ? "Following server Infisical/env"
-                                : "Catalog default"
+                              : row.source === "server"
+                                ? "Server-level override set by the operator in Admin > Operations"
+                                : row.source === "env"
+                                  ? "Following server Infisical/env"
+                                  : "Catalog default"
                           }
                         >
                           {row.source}

@@ -19,6 +19,7 @@ import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocu
 import { EARNINGSCALLS_TRANSCRIPT_SOURCE, earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
 import { envFlagOn } from "./rag/env-flag";
 import { resolveSourceBool } from "./source-settings";
+import { serverKnobBool } from "./server-knobs";
 import { expandPostRerankParentContext } from "./rag/parent-context";
 import { fuseHybrid, rrfFuse } from "./rag/hybrid";
 import { searchCorpusWideLexicalCandidates, type CorpusWideLexicalCandidate } from "./rag/corpus-wide-lexical";
@@ -530,7 +531,8 @@ function parentContextMaxTotalChars(): number {
 }
 
 function ingestBudgetEnabled(): boolean {
-  return envFlagOn("RAG_INGEST_BUDGET_ENABLED", true);
+  // Server knob: Admin > Operations DB override > RAG_INGEST_BUDGET_ENABLED env > on.
+  return serverKnobBool("RAG_INGEST_BUDGET_ENABLED");
 }
 
 function ingestMaxTextsPerDay(): number {
@@ -569,7 +571,8 @@ export function hasIngestTextBudget(userId: string = "local"): boolean {
 }
 
 function pineconeWriteBudgetEnabled(): boolean {
-  return envFlagOn("RAG_PINECONE_WRITE_BUDGET_ENABLED", true);
+  // Server knob: Admin > Operations DB override > RAG_PINECONE_WRITE_BUDGET_ENABLED env > on.
+  return serverKnobBool("RAG_PINECONE_WRITE_BUDGET_ENABLED");
 }
 
 function pineconeMaxWriteUnitsPerDay(): number {

@@ -172,13 +172,16 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     max: 90
   },
   {
+    // min 0, not 1: an explicit 0 is the documented site-protective pause (see
+    // maxFilingsPerRunFromEnv in web-sources/sec-filings.ts) — clamping it to 1 would silently
+    // un-pause.  Also a SERVER knob (Admin > Operations); precedence user > server > env > default.
     id: "SEC_FILING_RAG_MAX_PER_RUN",
     group: "sec",
     label: "10-K/10-Q filings per run",
     description: "Max full 10-K/10-Q bodies to ingest per scheduler tick (paid Voyage).",
     type: "number",
     defaultValue: 25,
-    min: 1,
+    min: 0,
     max: 5000
   },
   {
@@ -192,15 +195,9 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     min: 1,
     max: 720
   },
-  {
-    id: "SEC_INGEST_WORKER_ENABLED",
-    group: "sec",
-    label: "SEC backfill worker",
-    description: "Background job queue for large 10-K/10-Q backfills.",
-    type: "boolean",
-    defaultValue: false,
-    advanced: true
-  },
+  // SEC_INGEST_WORKER_ENABLED was removed from this catalog 2026-08-13: the worker never
+  // consulted the per-user tier (boot gate read env only), so the entry here was a fake toggle.
+  // It is now a real SERVER knob — Admin > Operations (src/lib/server-knobs.ts).
   {
     id: "SEC_RATE_LIMIT",
     group: "sec",

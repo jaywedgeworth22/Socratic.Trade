@@ -43,8 +43,35 @@ function flagOn(value: string | undefined): boolean {
   return ["1", "true", "on", "yes"].includes(String(value ?? "").trim().toLowerCase());
 }
 
+// Server-knob resolver injection: this module must stay edge-bundle-safe (no static Node-only
+// imports — see the module header), so it cannot read the DB-backed server-knobs store itself.
+// The Node-only startup path registers a resolver (server-knob-supervisor.ts) that consults the
+// CONGRESS_STREAM_ENABLED server knob; without one (unit tests, edge bundle) the env flag governs.
+type CongressStreamEnabledResolver = () => boolean | undefined;
+let serverEnabledResolver: CongressStreamEnabledResolver | undefined;
+
+export function setCongressStreamEnabledResolver(fn: CongressStreamEnabledResolver | undefined): void {
+  serverEnabledResolver = fn;
+}
+
 export function congressStreamEnabled(): boolean {
+  try {
+    const v = serverEnabledResolver?.();
+    if (typeof v === "boolean") return v;
+  } catch {
+    // fail open to env
+  }
   return flagOn(process.env.CONGRESS_STREAM_ENABLED);
+}
+
+/** True only when an injected resolver explicitly says OFF — the mid-stream park signal. Kept
+ *  separate from congressStreamEnabled() so env-only unit tests of connectOnce are unaffected. */
+function serverParkRequested(): boolean {
+  try {
+    return serverEnabledResolver?.() === false;
+  } catch {
+    return false;
+  }
 }
 
 function baseUrl(): string {
@@ -220,7 +247,7 @@ export async function connectOnce(): Promise<void> {
         console.warn("[congress-stream] dropped unparseable SSE message", { event: msg.event, id: msg.id });
       }
     }
-    if (state.closing) {
+    if (state.closing || serverParkRequested()) {
       try {
         await reader.cancel();
       } catch {
@@ -233,6 +260,13 @@ export async function connectOnce(): Promise<void> {
 
 async function runLoop(): Promise<void> {
   while (!state.closing) {
+    if (!congressStreamEnabled()) {
+      // Server-knob park: release the loop and let startCongressStream (re-invoked by the knob
+      // supervisor on the next flip on) start a fresh one. `closing` stays false — this is a
+      // pause, not a shutdown.
+      state.started = false;
+      return;
+    }
     try {
       await connectOnce();
     } catch (err) {

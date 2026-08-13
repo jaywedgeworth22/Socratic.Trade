@@ -1,0 +1,311 @@
+/**
+ * Server-level operational knobs — the Infisical/env pause & kill switches, made real runtime
+ * toggles (owner directive 2026-08-13: "add toggles to the settings for any variable that can
+ * pause anything in Infisical").  Resolution order per knob:
+ *
+ *   1. server-scoped DB override (settings KV `server_knobs`, written from Admin > Operations)
+ *   2. process.env[id] (Infisical-injected)
+ *   3. catalog defaultValue
+ *
+ * Reads are hot-path cheap: one in-process cache with a short TTL (SERVER_KNOB_CACHE_TTL_MS) plus
+ * explicit invalidation on write, and they FAIL OPEN to env/default on any store error — a broken
+ * settings table must never take a data lane down harder than the knob itself would.
+ *
+ * Scope decisions (inventory of `process.env` pause/enable knobs across src/lib, 2026-08-13):
+ *
+ * INCLUDED (server-scoped pause/kill switches; consumption sites converted to resolveServerKnob):
+ *   - SEC_INGEST_WORKER_ENABLED       backfill worker; loop parks/resumes per tick (sec-ingest-worker.ts)
+ *   - STREAMS_ALPACA_NEWS_ENABLED     news WS worker (streams/alpaca-news-stream.ts)
+ *   - STREAMS_ALPACA_TRADE_UPDATES_ENABLED  fill WS worker (streams/alpaca-trade-updates-stream.ts)
+ *   - STREAMS_ALPACA_PRICE_EVENTS_ENABLED   price-event WS worker (streams/alpaca-price-events-stream.ts)
+ *   - CONGRESS_STREAM_ENABLED         App A SSE consumer (congress-stream.ts; edge-safe module, so it
+ *                                     consumes this knob via an injected resolver — see server-knob-supervisor.ts)
+ *   - R2_USAGE_DAILY_DIGEST           daily R2 usage push (r2-usage.ts)
+ *   - RAG_INGEST_BUDGET_ENABLED       daily embed-volume budget (vector-db.ts)
+ *   - RAG_PINECONE_WRITE_BUDGET_ENABLED  daily Pinecone WU budget (vector-db.ts)
+ *   - SEC_FILING_RAG_MAX_PER_RUN      filings-per-tick cap, 0 = pause (web-sources/sec-filings.ts).
+ *                                     Also a per-user source setting; precedence there is now
+ *                                     user > server override > env > default (source-settings.ts).
+ *
+ * EXCLUDED, with reasons:
+ *   - Credential-like / infra-boot-critical: DB_BOOTSTRAP, LITESTREAM_*, REQUIRE_SECRETS_MANAGER,
+ *     INFISICAL_*, ENCRYPTION_KEY, ADMIN_* tokens — consumed before/outside the DB, or secrets.
+ *   - Per-user data-plane knobs already REAL via SOURCE_SETTINGS_CATALOG (WEB_SOURCE_*,
+ *     EARNINGSCALLS_*, ROIC_*, RAG_MULTIQUERY/HYDE, SEC_XBRL_ENRICHMENT_ENABLED, NEWS_RELEVANCE_*,
+ *     POLYMARKET_*): those live in user Settings > Sources, not here.
+ *   - Safety-interlock disables (PROVIDER_RATE_LIMIT_DISABLED, API_CIRCUIT_BREAKER_DISABLED,
+ *     LLM_PROVIDER_COOLDOWN_DISABLED): incident/test escape hatches for provider-protective
+ *     pacing, not operational pauses; deliberately left env-only so a UI mis-click cannot
+ *     remove provider protection.  Still adjustable via Infisical.
+ *   - Observability vendor wiring (SENTRY_CRONS_ENABLED, LANGFUSE_ENABLED): boot-time SDK init;
+ *     a runtime flip would not take effect honestly.
+ *   - OTLP_METRICS_INGEST_ENABLED: no such knob exists in this codebase (verified by grep).
+ *
+ * Env parsing: truthy = 1/true/on/yes, falsy = 0/false/off/no (case/space-insensitive); any other
+ * set value falls back to the catalog default.  This is deliberately NOT envFlagOn's garbage->false:
+ * for default-ON budget knobs, a typo'd env value must keep the budget ENFORCED, not silently
+ * remove it.
+ */
+
+import { getInternalSetting, setInternalSetting } from "./db-settings";
+
+export type ServerKnobType = "boolean" | "number";
+
+export type ServerKnobGroup = "workers" | "streams" | "budgets";
+
+export interface ServerKnobSpec {
+  /** Stable id — exactly the env var name it overrides. */
+  id: string;
+  group: ServerKnobGroup;
+  label: string;
+  description: string;
+  type: ServerKnobType;
+  /** Default when neither DB override nor env is set.  Mirrors the consumption site's old default. */
+  defaultValue: boolean | number;
+  min?: number;
+  max?: number;
+  /** Honest note on WHEN a flip takes effect.  Shown verbatim in Admin > Operations. */
+  effect: string;
+}
+
+export const SERVER_KNOB_GROUPS: Record<ServerKnobGroup, { title: string; blurb: string }> = {
+  workers: {
+    title: "Background workers",
+    blurb: "Process-level job loops.  Flips park or resume the loop at runtime — no redeploy."
+  },
+  streams: {
+    title: "Streaming connections",
+    blurb: "Long-lived outbound WebSocket/SSE consumers.  Flips start or park each stream at runtime."
+  },
+  budgets: {
+    title: "Budgets & digests",
+    blurb: "Daily spend caps and scheduled pushes.  Read fresh on every pass — flips apply on the next call."
+  }
+};
+
+export const SERVER_KNOBS_CATALOG: readonly ServerKnobSpec[] = [
+  {
+    id: "SEC_INGEST_WORKER_ENABLED",
+    group: "workers",
+    label: "SEC backfill worker",
+    description: "Background job queue for large 10-K/10-Q backfills.  Jobs are seeded separately via the sec-ingest admin route.",
+    type: "boolean",
+    defaultValue: false,
+    effect: "Takes effect within about 20 seconds.  The worker loop parks itself while off and resumes when turned back on."
+  },
+  {
+    id: "STREAMS_ALPACA_NEWS_ENABLED",
+    group: "streams",
+    label: "Alpaca news stream",
+    description: "Persistent Benzinga news WebSocket feeding streamed headlines into enrichment.",
+    type: "boolean",
+    defaultValue: false,
+    effect: "Turning on starts the stream within about 30 seconds.  Turning off closes the socket at the next received article or reconnect attempt (up to about a minute)."
+  },
+  {
+    id: "STREAMS_ALPACA_TRADE_UPDATES_ENABLED",
+    group: "streams",
+    label: "Alpaca trade-updates stream",
+    description: "Persistent fill/partial-fill WebSocket that drives real-time fill reconciliation.",
+    type: "boolean",
+    defaultValue: false,
+    effect: "Turning on starts the stream within about 30 seconds.  Turning off closes the socket at the next received message or reconnect attempt.  While off, fills reconcile on the polling path instead."
+  },
+  {
+    id: "STREAMS_ALPACA_PRICE_EVENTS_ENABLED",
+    group: "streams",
+    label: "Alpaca price-events stream",
+    description: "Minute-bar WebSocket that feeds the intraday trigger engine for watched symbols.",
+    type: "boolean",
+    defaultValue: false,
+    effect: "Turning on starts the stream within about 30 seconds.  Turning off closes the socket at the next received bar or reconnect attempt."
+  },
+  {
+    id: "CONGRESS_STREAM_ENABLED",
+    group: "streams",
+    label: "Congress.Trade live stream",
+    description: "SSE consumer of congress.trade disclosures (App A push link).",
+    type: "boolean",
+    defaultValue: false,
+    effect: "Turning on starts the consumer within about 30 seconds.  Turning off parks it at the next event frame or reconnect."
+  },
+  {
+    id: "R2_USAGE_DAILY_DIGEST",
+    group: "budgets",
+    label: "R2 usage daily digest",
+    description: "Daily push summary of Cloudflare R2 free-tier consumption and pace.",
+    type: "boolean",
+    defaultValue: true,
+    effect: "Applies at the next scheduler pass."
+  },
+  {
+    id: "RAG_INGEST_BUDGET_ENABLED",
+    group: "budgets",
+    label: "RAG ingest budget",
+    description: "Rolling 24h cap on embedded texts (RAG_INGEST_MAX_TEXTS_PER_DAY).",
+    type: "boolean",
+    defaultValue: true,
+    effect: "Applies to the next ingest call.  Turning off removes the daily cap — embedding volume is then unlimited."
+  },
+  {
+    id: "RAG_PINECONE_WRITE_BUDGET_ENABLED",
+    group: "budgets",
+    label: "Pinecone write budget",
+    description: "Rolling 24h cap on Pinecone write units (RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY).",
+    type: "boolean",
+    defaultValue: true,
+    effect: "Applies to the next upsert call.  Turning off removes the daily cap — Pinecone writes are then unlimited."
+  },
+  {
+    id: "SEC_FILING_RAG_MAX_PER_RUN",
+    group: "budgets",
+    label: "10-K/10-Q filings per run",
+    description: "Max full filing bodies ingested per scheduler tick (paid embedding).  0 pauses filing ingest.",
+    type: "number",
+    defaultValue: 25,
+    min: 0,
+    max: 5000,
+    effect: "Applies at the next scheduler tick.  A signed-in user's own Settings > Sources override still wins over this server value."
+  }
+] as const;
+
+export function serverKnobById(id: string): ServerKnobSpec | undefined {
+  return SERVER_KNOBS_CATALOG.find((s) => s.id === id);
+}
+
+export const SERVER_KNOBS_SETTING_KEY = "server_knobs";
+export const SERVER_KNOB_CACHE_TTL_MS = 15_000;
+
+const TRUTHY = new Set(["1", "true", "on", "yes"]);
+const FALSY = new Set(["0", "false", "off", "no"]);
+
+type OverrideMap = Record<string, boolean | number>;
+
+let cache: { at: number; map: OverrideMap } | null = null;
+
+/** Cached DB override map.  Fail-open: any store error resolves to "no overrides" (env wins). */
+function overridesMap(): OverrideMap {
+  const now = Date.now();
+  if (cache && now - cache.at < SERVER_KNOB_CACHE_TTL_MS) return cache.map;
+  let map: OverrideMap = {};
+  try {
+    const stored = getInternalSetting<Record<string, unknown>>(SERVER_KNOBS_SETTING_KEY);
+    if (stored && typeof stored === "object") {
+      for (const [k, v] of Object.entries(stored)) {
+        const spec = serverKnobById(k);
+        if (!spec) continue; // stale id from a removed knob — ignore, never throw
+        if (spec.type === "boolean" && typeof v === "boolean") map[k] = v;
+        else if (spec.type === "number" && typeof v === "number" && Number.isFinite(v)) map[k] = v;
+      }
+    }
+  } catch {
+    map = {};
+  }
+  cache = { at: now, map };
+  return map;
+}
+
+/** Drop the read cache so the next resolve re-reads the store.  Called on every write; exported for tests. */
+export function invalidateServerKnobCache(): void {
+  cache = null;
+}
+
+/** Raw DB override for a knob id, or undefined when none is set.  Never throws (fail-open read). */
+export function serverKnobOverride(id: string): boolean | number | undefined {
+  const map = overridesMap();
+  return Object.prototype.hasOwnProperty.call(map, id) ? map[id] : undefined;
+}
+
+function envValueFor(spec: ServerKnobSpec): boolean | number | undefined {
+  const raw = process.env[spec.id];
+  if (raw == null) return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === "") return undefined;
+  if (spec.type === "boolean") {
+    if (TRUTHY.has(v)) return true;
+    if (FALSY.has(v)) return false;
+    return undefined; // unrecognized value -> catalog default (see module header)
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function clamp(spec: ServerKnobSpec, n: number): number {
+  let v = n;
+  if (typeof spec.min === "number") v = Math.max(spec.min, v);
+  if (typeof spec.max === "number") v = Math.min(spec.max, v);
+  return v;
+}
+
+/** Effective value for a catalogued knob: DB override > env > default.  Throws on unknown ids
+ *  (a typo'd call site is a programmer error, not a runtime state). */
+export function resolveServerKnob(id: string): boolean | number {
+  const spec = serverKnobById(id);
+  if (!spec) throw new Error(`Unknown server knob: ${id}`);
+  const override = serverKnobOverride(id);
+  if (spec.type === "boolean" && typeof override === "boolean") return override;
+  if (spec.type === "number" && typeof override === "number") return clamp(spec, override);
+  const env = envValueFor(spec);
+  if (env !== undefined) return env;
+  return spec.defaultValue;
+}
+
+/** Typed convenience for boolean knobs. */
+export function serverKnobBool(id: string): boolean {
+  return resolveServerKnob(id) === true;
+}
+
+/** Typed convenience for number knobs. */
+export function serverKnobNumber(id: string): number {
+  const v = resolveServerKnob(id);
+  return typeof v === "number" ? v : Number(v);
+}
+
+/**
+ * Write (value) or clear (null) a knob's DB override.  Reads the stored map directly — never the
+ * cache — and invalidates the cache afterward so this process resolves the new value immediately.
+ * Unlike reads, a store FAILURE here throws: a knob write the operator believes landed must never
+ * silently no-op.
+ */
+export function setServerKnobOverride(id: string, value: boolean | number | null): void {
+  const spec = serverKnobById(id);
+  if (!spec) throw new Error(`Unknown server knob: ${id}`);
+  if (value !== null) {
+    if (spec.type === "boolean" && typeof value !== "boolean") throw new Error(`${id} expects a boolean`);
+    if (spec.type === "number" && (typeof value !== "number" || !Number.isFinite(value))) throw new Error(`${id} expects a finite number`);
+  }
+  const stored = getInternalSetting<Record<string, unknown>>(SERVER_KNOBS_SETTING_KEY) ?? {};
+  const next: Record<string, unknown> = { ...stored };
+  if (value === null) delete next[id];
+  else next[id] = spec.type === "number" ? clamp(spec, value as number) : value;
+  setInternalSetting(SERVER_KNOBS_SETTING_KEY, next);
+  invalidateServerKnobCache();
+}
+
+export interface EffectiveServerKnob {
+  spec: ServerKnobSpec;
+  value: boolean | number;
+  source: "override" | "env" | "default";
+  /** What env alone would resolve to (env value, else default) — shown as the reset target. */
+  envValue: boolean | number;
+  override: boolean | number | null;
+}
+
+/** Effective values + provenance for the Admin > Operations panel. */
+export function listEffectiveServerKnobs(): EffectiveServerKnob[] {
+  return SERVER_KNOBS_CATALOG.map((spec) => {
+    const override = serverKnobOverride(spec.id) ?? null;
+    const env = envValueFor(spec);
+    const envValue = env !== undefined ? env : spec.defaultValue;
+    let source: EffectiveServerKnob["source"] = "default";
+    let value: boolean | number = spec.defaultValue;
+    if (override !== null) {
+      source = "override";
+      value = spec.type === "number" ? clamp(spec, override as number) : override;
+    } else if (env !== undefined) {
+      source = "env";
+      value = env;
+    }
+    return { spec, value, source, envValue, override };
+  });
+}
