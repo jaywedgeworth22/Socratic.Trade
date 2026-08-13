@@ -35,6 +35,11 @@ export type LlmReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" 
  * (spyExcessPct), so a rising market's beta can't teach the loop that every long was a good
  * decision. See TradingPolicy.outcomeGradingMode. */
 export type OutcomeGradingMode = "raw" | "alpha";
+/** What spyExcessPct is measured against: "market" (default, byte-identical to before this knob
+ * existed) = the S&P 500 index (^GSPC, SPY ETF fallback); "sector" = the symbol's own GICS sector
+ * index/ETF when its sector is known and mappable, market otherwise. See
+ * TradingPolicy.benchmarkMode and outcome-horizons.ts's sectorBenchmarkEntry. */
+export type BenchmarkMode = "market" | "sector";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
@@ -1048,6 +1053,17 @@ export interface TradingPolicy {
    */
   outcomeGradingMode?: OutcomeGradingMode;
   /**
+   * What spyExcessPct (every horizon row, regardless of outcomeGradingMode) is measured against.
+   * Default "market" (unset = "market" too — nothing changes for an owner who never touches this
+   * knob): the S&P 500 INDEX, SPY as the automatic ETF fallback. "sector" grades each symbol
+   * against its OWN GICS sector index/ETF (via the symbol's sector already stored on the
+   * decision's candidate evidence / counterfactual row) when the sector is known and mappable;
+   * an unknown/unmapped sector honestly falls back to the market benchmark. See
+   * outcome-horizons.ts (sectorBenchmarkEntry, resolveBenchmarkSeries) and outcome-engine.ts.
+   * Owner-adjustable preference, not a cage.
+   */
+  benchmarkMode?: BenchmarkMode;
+  /**
    * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).
    * When non-empty, a TRANSIENT primary failure (HTTP 429/5xx or timeout) transparently re-issues the
    * SAME request against each model in order; the first success serves the run. The failover is
@@ -1660,10 +1676,17 @@ export interface SocraticOutcomeHorizonRow {
   /** Side-adjusted % return over this horizon (positive = the decided/considered direction worked;
    * mirrors returnSinceProposalPct's sign convention). Present only when resolution === 'ok'. */
   returnPct?: number;
-  /** returnPct minus the same-window SPY return under the same side convention (long: vs holding
-   * SPY; short: vs shorting SPY). Undefined when no SPY series covered the window (15m/1h have no
-   * intraday SPY basis). */
+  /** returnPct minus the same-window benchmark return under the same side convention (long: vs
+   * holding the benchmark; short: vs shorting it). The field name is legacy (kept so history
+   * doesn't orphan) but the basis is no longer always SPY: as of the ^GSPC/sector-index rollout
+   * (outcome-horizons.ts) it's the S&P 500 INDEX by default, or a GICS sector index/ETF under
+   * policy.benchmarkMode 'sector' — see `benchmarkBasis` for exactly which series this row used.
+   * Undefined when no benchmark series covered the window (15m/1h have no intraday basis). */
   spyExcessPct?: number;
+  /** Honest disclosure of exactly which series backed `spyExcessPct` on this row, e.g. "^GSPC",
+   * "SPY(fallback)", "^SP500-60", "XLK(fallback)" — see resolveBenchmarkSeries/sectorBenchmarkEntry
+   * (outcome-horizons.ts). Present only alongside a defined `spyExcessPct`. */
+  benchmarkBasis?: string;
   /** Optional % return of the alternative actually taken instead (reserved; populated when an
    * alternative join exists — never fabricated). */
   altReturnPct?: number;

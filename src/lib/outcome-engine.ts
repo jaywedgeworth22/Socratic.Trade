@@ -21,6 +21,13 @@
 // Honesty contract: nothing here fabricates a price. Horizons that cannot be measured become
 // terminal 'unresolvable' with a reason and stay in every denominator (coverage disclosure
 // "N/M resolved (X%)" on the job receipt). Advisory throughout — this writes memory, never gates.
+//
+// Benchmark basis (owner decision, r4): the market series behind every horizon's spyExcessPct is
+// now the S&P 500 INDEX (^GSPC), SPY the automatic ETF fallback (resolveMarketBenchmark, below).
+// Under policy.benchmarkMode === 'sector', a case grades against its own symbol's GICS sector
+// index/ETF instead (resolveGradingBenchmark) — market otherwise. Every row discloses which series
+// it actually used via `benchmarkBasis`; see outcome-horizons.ts's header for the live-verified
+// ticker table this is built on.
 import {
   audit,
   claimDueJobs,
@@ -62,11 +69,16 @@ import {
   computeDailyHorizonRows,
   computeIntradayHorizonRows,
   INTRADAY_HORIZONS,
+  MARKET_BENCHMARK_FALLBACK,
+  MARKET_BENCHMARK_PRIMARY,
   mergeHorizonRows,
   normalizeDailyBars,
   pickHeadlineAlpha,
+  resolveBenchmarkSeries,
+  sectorBenchmarkEntry,
   UNRESOLVABLE_AFTER_TRADING_DAYS,
-  type NormalizedDailyBar
+  type NormalizedDailyBar,
+  type ResolvedBenchmark
 } from "./outcome-horizons";
 import { calculatePnl, type ClosedLot } from "./performance";
 import {
@@ -75,7 +87,15 @@ import {
   type UntrustedPromptField
 } from "./prompt-safety";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
-import type { FillEvent, OrderSide, OutcomeGradingMode, SocraticDecisionCase, SocraticOutcomeHorizonRow } from "./types";
+import type {
+  BenchmarkMode,
+  FillEvent,
+  OrderSide,
+  OutcomeGradingMode,
+  SocraticDecisionCase,
+  SocraticEvidenceItem,
+  SocraticOutcomeHorizonRow
+} from "./types";
 
 /** Collect string leaves under a path for advisory injection scanning (bounded). */
 function flattenPromptScanFields(value: unknown, path: string, out: UntrustedPromptField[] = [], depth = 0): UntrustedPromptField[] {
@@ -160,6 +180,7 @@ export async function matureSocraticDecisionOutcomes(
   const fetchOHLC = options.fetchOHLC ?? fetchDailyOHLC;
   const fetchQuote = options.fetchQuote ?? defaultQuoteFetcher;
   const gradingMode = resolveOutcomeGradingMode(userId, options.connectedAccountId);
+  const benchmarkMode = resolveBenchmarkMode(userId, options.connectedAccountId);
 
   const cases = listSocraticDecisionCasesNeedingOutcome(userId, {
     limit,
@@ -176,7 +197,7 @@ export async function matureSocraticDecisionOutcomes(
     barsCache.set(key, bars);
     return bars;
   };
-  const spyBars = cases.length > 0 ? (await getBars("SPY")) ?? [] : [];
+  const marketBenchmark = await resolveMarketBenchmark(cases.length > 0, getBars);
 
   let measured = 0;
   let closed = 0;
@@ -185,7 +206,17 @@ export async function matureSocraticDecisionOutcomes(
 
   for (const decisionCase of cases) {
     try {
-      const outcome = await measureCase(decisionCase, { userId, now, nowIso, nowDate, getBars, spyBars, fetchQuote, gradingMode });
+      const outcome = await measureCase(decisionCase, {
+        userId,
+        now,
+        nowIso,
+        nowDate,
+        getBars,
+        marketBenchmark,
+        fetchQuote,
+        gradingMode,
+        benchmarkMode
+      });
       if (!outcome) continue; // nothing decidable yet (e.g. awaiting fill reconciliation)
       const updated = await writeSocraticDecisionOutcome(decisionCase.id, outcome, userId);
       measured += 1;
@@ -329,9 +360,12 @@ interface MeasureContext {
   nowIso: string;
   nowDate: string;
   getBars: (symbol: string) => Promise<NormalizedDailyBar[] | null>;
-  spyBars: NormalizedDailyBar[];
+  /** The market benchmark for this run (^GSPC primary, SPY fallback) — undefined only when there
+   * were no cases to grade. */
+  marketBenchmark: ResolvedBenchmark | undefined;
   fetchQuote: OutcomeQuoteFetcher;
   gradingMode: OutcomeGradingMode;
+  benchmarkMode: BenchmarkMode;
 }
 
 /** Read the owner's grading-mode knob, failing OPEN to "raw" — a settings-store failure must never
@@ -342,6 +376,72 @@ function resolveOutcomeGradingMode(userId: string, connectedAccountId?: string):
   } catch {
     return "raw";
   }
+}
+
+/** Read the owner's benchmark-mode knob, failing OPEN to "market" (byte-identical to before this
+ * knob existed) — same fail-open contract as resolveOutcomeGradingMode above. */
+function resolveBenchmarkMode(userId: string, connectedAccountId?: string): BenchmarkMode {
+  try {
+    return getPolicy(userId, connectedAccountId).benchmarkMode ?? "market";
+  } catch {
+    return "market";
+  }
+}
+
+/** Resolve the run's market benchmark ONCE (shared by every case this pass): ^GSPC primary, SPY
+ * the automatic ETF fallback when the index series is unavailable — the SAME fetchDailyOHLC
+ * cascade every daily-bar consumer uses (see outcome-horizons.ts's header for the live-verified
+ * bar counts). Skips the fetch entirely when there are no cases to grade. */
+async function resolveMarketBenchmark(
+  needed: boolean,
+  getBars: (symbol: string) => Promise<NormalizedDailyBar[] | null>
+): Promise<ResolvedBenchmark | undefined> {
+  if (!needed) return undefined;
+  const primaryBars = await getBars(MARKET_BENCHMARK_PRIMARY);
+  const fallbackBars = primaryBars && primaryBars.length >= 2 ? null : await getBars(MARKET_BENCHMARK_FALLBACK);
+  return resolveBenchmarkSeries(
+    { symbol: MARKET_BENCHMARK_PRIMARY, bars: primaryBars },
+    { symbol: MARKET_BENCHMARK_FALLBACK, bars: fallbackBars }
+  );
+}
+
+/** Choose the benchmark series for THIS case's daily horizons: policy.benchmarkMode === 'sector'
+ * with a known, live-mappable sector tries the sector index (falling back to the sector ETF, then
+ * the market benchmark) — 'market' mode (default) or an unmapped/unknown sector uses the market
+ * benchmark directly. Always the SAME fetchDailyOHLC cascade (ctx.getBars, memoized per run). */
+async function resolveGradingBenchmark(
+  ctx: MeasureContext,
+  sector: string | undefined
+): Promise<ResolvedBenchmark | undefined> {
+  if (ctx.benchmarkMode !== "sector") return ctx.marketBenchmark;
+  const entry = sectorBenchmarkEntry(sector);
+  if (!entry) return ctx.marketBenchmark; // unmapped/unknown sector: honest market fallback
+  const primarySymbol = entry.indexSymbol ?? entry.etfSymbol;
+  const primaryBars = await ctx.getBars(primarySymbol);
+  const fallbackBars = primaryBars && primaryBars.length >= 2 ? null : await ctx.getBars(entry.etfSymbol);
+  const resolved = resolveBenchmarkSeries(
+    { symbol: primarySymbol, bars: primaryBars },
+    { symbol: entry.etfSymbol, bars: fallbackBars }
+  );
+  return resolved ?? ctx.marketBenchmark; // sector series entirely unavailable: honest market fallback
+}
+
+/** The symbol's sector at grading time, from whatever was already stored on the decision — the
+ * candidate evidence item's quote data (placed AND blocked/rejected cases both carry it via
+ * evidenceForDecision, socratic-runtime.ts) or, as a defense-in-depth fallback for blocked/rejected
+ * cases, the skipped-candidate counterfactual row's own `sector` column. Never fetched fresh (this
+ * is a grading-time lookup, not a new enrichment call) — undefined when neither source has it. */
+function sectorForDecisionCase(evidence: SocraticEvidenceItem[], symbol: string, counterfactualSector?: string): string | undefined {
+  for (const item of evidence) {
+    if (item.kind !== "candidate") continue;
+    if (item.symbol && normalizeSymbol(item.symbol) !== symbol) continue;
+    const data = item.data;
+    if (data && typeof data === "object" && "sector" in data) {
+      const sector = (data as { sector?: unknown }).sector;
+      if (typeof sector === "string" && sector.trim()) return sector;
+    }
+  }
+  return counterfactualSector;
 }
 
 /** Input for gradeSniperAccuracy — the scorecard's stop/take levels vs the matured daily closes. */
@@ -406,6 +506,9 @@ async function measureCase(
   let priceBasisPrefix = "ref_price";
   let realizedLot: ClosedLot | undefined;
   let note: string | undefined;
+  // Defense-in-depth sector source for blocked/rejected cases (sectorForDecisionCase prefers the
+  // candidate evidence item, which both branches below carry — see evidenceForDecision).
+  let counterfactualSector: string | undefined;
 
   if (decisionCase.status === "placed" || decisionCase.status === "filled") {
     const fills = listFillEventsByProposalId(decisionCase.proposalId ?? decisionCase.id, ctx.userId).filter(
@@ -443,6 +546,7 @@ async function measureCase(
       basisPrice = counterfactual.refPrice;
       basisAtMs = Date.parse(counterfactual.snapshotAt);
       priceBasisPrefix = "ref_price";
+      counterfactualSector = counterfactual.sector;
     } else {
       // No counterfactual row (older decisions predate the veto/block insert): fall back to the
       // decision day's daily close as the basis — a real price with its provenance disclosed.
@@ -502,14 +606,17 @@ async function measureCase(
     measuredAt: ctx.nowIso
   });
 
-  // 3) Daily horizons from the cascade's daily closes, SPY-relative.
+  // 3) Daily horizons from the cascade's daily closes, benchmark-relative (market, or the symbol's
+  // own GICS sector under policy.benchmarkMode === 'sector' — resolveGradingBenchmark).
   const bars = await ctx.getBars(symbol);
+  const sector = sectorForDecisionCase(decisionCase.evidence, symbol, counterfactualSector);
+  const benchmark = await resolveGradingBenchmark(ctx, sector);
   const dailyRows = computeDailyHorizonRows({
     basisPrice,
     basisDate: new Date(basisAt).toISOString().slice(0, 10),
     side: decisionCase.side,
     bars,
-    spyBars: ctx.spyBars,
+    benchmark,
     nowDate: ctx.nowDate,
     priceBasisPrefix,
     measuredAt: ctx.nowIso
