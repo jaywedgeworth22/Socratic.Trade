@@ -1,3 +1,16 @@
+## Current (2026-08-13 GROK — Settings Saving… + ROIC Individual actually binds)
+
+Owner: ROIC paid first tier (Individual) was set in Settings; dropdown snapped
+back to Free for 20–30s with no busy state.  The save did land.  They want the
+desk to show when a write is in flight, not look idle.
+
+Optimistic plan-tier + Data Sources values; card Saving…/Saved; global Saving…
+chip in the top bar for any console mutation.  Plan-tier lookup now reads the
+logged-in user, not only `local`, so Individual is 300/min and 20 transcript
+quarters.  Branch `grok/settings-busy-feedback`.
+
+Rollout: `docs/rollouts/2026-08-13-settings-busy-feedback.md`.
+
 ## Current (2026-08-12 ~11:30pm CT GROK — SEC TTL was a 10-year pause; paid RAG knobs on)
 
 Owner: is `SEC_FILING_INGEST_TTL_HOURS` too long, and run the clean-text reindex so every

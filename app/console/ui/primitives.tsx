@@ -329,11 +329,14 @@ export function Toggle({
   checked,
   onChange,
   disabled,
+  busy,
   label
 }: {
   checked: boolean;
   onChange: (next: boolean) => void;
   disabled?: boolean;
+  /** In-flight write — keeps the optimistic checked value visible and marks the switch busy. */
+  busy?: boolean;
   label?: string;
 }) {
   return (
@@ -341,9 +344,10 @@ export function Toggle({
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-busy={busy === true}
       aria-label={label}
       disabled={disabled}
-      className="con-toggle"
+      className={cx("con-toggle", busy && "opacity-70")}
       onClick={() => onChange(!checked)}
     />
   );
