@@ -133,7 +133,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
             aria-live="polite"
             className="pointer-events-none fixed inset-x-0 bottom-10 px-6 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]"
           >
-            Still loading — your broker is answering slowly.  Hang tight.
+            Still loading — gathering dashboard state.  Hang tight.
           </p>
         ) : null}
       </div>
