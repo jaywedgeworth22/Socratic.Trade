@@ -165,7 +165,7 @@ export async function alertUsageLimitHit(
     assertUsageAlertActive(options);
     // Delivery honors the user's real enabledEvents toggle (owner ruling 2026-08-12, "ALL toggles
     // must be real" — no force-include). A legacy stored enabledEvents array predating this event
-    // type was backfilled once by migration 77 (db.ts); after that the toggle is genuinely the
+    // type was backfilled once by migration 78 (db.ts); after that the toggle is genuinely the
     // user's.
     await sendNotification(
       { type: "budget_alert", title, payload },

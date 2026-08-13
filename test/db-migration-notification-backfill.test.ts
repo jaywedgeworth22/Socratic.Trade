@@ -1,4 +1,4 @@
-// Migration 77 ("notification_enabled_events_backfill") removes the banned force-include-at-
+// Migration 78 ("notification_enabled_events_backfill") removes the banned force-include-at-
 // send-time notification pattern (owner ruling 2026-08-12, "ALL toggles must be real") in favor
 // of a ONE-TIME backfill of the affected event types into every stored
 // notificationSettings.enabledEvents array that predates them. This test simulates a
@@ -19,7 +19,7 @@ const dbPath = join(tmpdir(), `agentic-notif-backfill-migration-${randomUUID()}.
 const LEGACY_USER_ID = "legacy-notif-user";
 
 beforeAll(() => {
-  // Recreate the exact user_settings/settings shape a pre-migration-77 deployment had on disk —
+  // Recreate the exact user_settings/settings shape a pre-migration-78 deployment had on disk —
   // both tables already exist in the baseline DDL, so only rows need to be pre-seeded.
   const raw = new Database(dbPath);
   raw.exec(`
@@ -73,7 +73,7 @@ beforeAll(() => {
   process.env.DATABASE_URL = `file:${dbPath}`;
 });
 
-describe("migration 77: notification enabledEvents backfill", () => {
+describe("migration 78: notification enabledEvents backfill", () => {
   it("unions the previously force-included event types into a legacy per-user array, preserving existing members and other fields", async () => {
     const { getDb, FORCE_INCLUDE_BACKFILL_EVENT_TYPES } = await import("../src/lib/db");
     const db = getDb();

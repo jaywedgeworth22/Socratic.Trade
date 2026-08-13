@@ -36,9 +36,9 @@ predates them, after which the Settings toggle is genuinely the user's.
     relevant to test fixtures that build a deliberately minimal schema — a
     real boot always runs `migrate()`'s baseline DDL first, so all four
     tables exist by the time versioned migrations run).
-  - New migration **version 77** (`notification_enabled_events_backfill`)
+  - New migration **version 78** (`notification_enabled_events_backfill`)
     calling that helper once. This is the new schema HEAD
-    (`SCHEMA_BASELINE` unchanged; `getSchemaVersion` now returns 77 on a
+    (`SCHEMA_BASELINE` unchanged; `getSchemaVersion` now returns 78 on a
     fresh boot).
   - A future `NotificationEventType` that needs the same one-time treatment
     should get its own versioned migration calling
@@ -68,7 +68,7 @@ predates them, after which the Settings toggle is genuinely the user's.
 Every site now does `getPolicy(...)` (or uses the `policy` already in scope)
 and passes it straight to `sendNotification({ ... }, { policy, ... })` with
 no `notificationSettings` override. Comments at each site explain the new
-contract and point back to migration 77.
+contract and point back to migration 78.
 
 ### Test pinning the OLD (banned) behavior, rewritten
 
@@ -81,7 +81,7 @@ contract and point back to migration 77.
   toggle, no force-include (owner ruling 2026-08-12)"` and the assertion
   flipped to expect `status: "skipped"` / `error: "Notification type is
   disabled."` — this is now a genuine post-migration opt-out (the fixture
-  DB has already run migration 77 by the time the test's `setPolicy` call
+  DB has already run migration 78 by the time the test's `setPolicy` call
   writes the exclusion), so it must stick.
 
 ### New/extended regression tests
@@ -130,7 +130,7 @@ contract and point back to migration 77.
   for production (baseline DDL always runs before versioned migrations), but
   several existing `persistence-hardening.test.ts` fixtures build deliberately
   minimal raw schemas and invoke `applyVersionedMigrations` directly,
-  skipping `migrate()`'s baseline. Without the check, migration 77 would
+  skipping `migrate()`'s baseline. Without the check, migration 78 would
   throw `no such table: account_strategy_state` against those fixtures.
 - **No changes to `NotifyPrefs`-level channel fallback logic**
   (`usage-limit-alerts.ts`'s `forcedPrefs` in `notifyOperatorEmailFallback`,
@@ -142,30 +142,53 @@ contract and point back to migration 77.
 - Removed the `as any` casts that existed only because `forcedPolicy` objects
   built with `Array.from(new Set([...]))` widened past `NotificationEventType[]`.
   The real `TradingPolicy` returned by `getPolicy()` needs no cast.
+- **Migration version collision with `monet/apns-push` (#2681), resolved by
+  renumbering.** This branch forked when `main`'s highest migration was 76
+  (`fundamental_revisions`), so the new backfill migration was authored as
+  version 77. `#2681` had forked earlier still (its own branch had
+  `device_push_tokens` at version 75) and merged to `main` first — landing
+  `device_push_tokens` at version 77 after its own rebase. By the time this
+  branch's first `land.sh` run pushed and opened PR #2682, GitHub reported
+  `mergeStateStatus: DIRTY` against the now-updated `main`. Resolution: merged
+  `origin/main` into this branch, resolved the resulting `src/lib/db.ts`
+  conflict by keeping `device_push_tokens` at version 77 (already live on
+  `main`, unchangeable) and renumbering `notification_enabled_events_backfill`
+  to version **78**, then swept every reference to "migration 77" across the 8
+  source files, 3 test files, `STATUS.md`, `docs/EFFORT-LOG.md`, and this note
+  to say 78 (`grep -rn "migration 77"` before/after to confirm the sweep was
+  complete). No behavioral change — only the version number and its
+  in-code/doc mentions moved.
 
 ## Verification State
 
 Node 24 pinned (`export PATH="/opt/homebrew/opt/node@24/bin:$PATH"` — the
 Homebrew default is v26 and mass-fails the suite on a better-sqlite3 ABI
-mismatch).
+mismatch). All four gates run to completion and their summary lines read:
 
 ```
-npx tsc --noEmit    # clean
-npm run lint        # 0 errors (see exact count below once background run lands)
-npm test            # full suite (see exact count below once background run lands)
-npm run build       # clean (see exact count below once background run lands)
+npx tsc --noEmit    # clean, no output
+npm run lint        # ✖ 757 problems (0 errors, 757 warnings) — grandfathered warnings only
+npm test            # Test Files  564 passed | 1 skipped (565)
+                     # Tests  6522 passed | 51 skipped (6573)
+npm run build       # ✓ Compiled successfully; ✓ TypeScript finished; ✓ static pages generated
 ```
 
-Targeted runs before the full suite (all green):
-`test/signal-health.test.ts`, `test/lookahead-audit.test.ts`,
-`test/db-migration-notification-backfill.test.ts`,
+(Numbers above are from the pre-rebase run against the exact code that
+ultimately landed — no source changes occurred between that full run and the
+commit, only the post-#2681 migration renumbering described above, which
+`land.sh`'s own re-run of tsc → test → build re-verified clean a second time
+after the rebase, including the retargeted `test/persistence-hardening.test.ts`
+assertions now expecting schema version 78.)
+
+Targeted runs before the full suite (all green): `test/signal-health.test.ts`,
+`test/lookahead-audit.test.ts`, `test/db-migration-notification-backfill.test.ts`,
 `test/usage-limit-alerts.test.ts`, `test/broker-health-auto-pause.test.ts`,
 `test/scheduler-boot-halt-notify.test.ts`,
 `test/earningscalls-transcripts.test.ts`, `test/persistence-hardening.test.ts`
-(bumped 12 hardcoded `toBe(76)` schema-version assertions to `toBe(77)`),
-`test/db-migration-old-schema.test.ts`, `test/db-migration-busy.test.ts`,
-`test/guard-enablement.test.ts` (rewritten test, see above),
-`test/strategy-moneypath-drawdown-flip.test.ts`,
+(bumped 12 hardcoded schema-version assertions, 76 -> 77 -> 78 across the two
+rounds above), `test/db-migration-old-schema.test.ts`,
+`test/db-migration-busy.test.ts`, `test/guard-enablement.test.ts` (rewritten
+test, see above), `test/strategy-moneypath-drawdown-flip.test.ts`,
 `test/strategy-active-protection-wiring.test.ts`,
 `test/account-mutation-pr2-strategy-loop.test.ts`,
 `test/notification-status-truth.test.ts`, `test/dashboard-feed.test.ts`,
@@ -177,5 +200,7 @@ Targeted runs before the full suite (all green):
 
 ## Next Steps & Blockers
 
-None known. Land via `scripts/land.sh` (re-runs the gates), open the PR ready
-(not draft), `gh pr merge <n> --squash --auto`.
+Landed: PR https://github.com/jaywedgeworth22/Socratic.Trade/pull/2682,
+opened ready (not draft), auto-merge armed (squash) — merges automatically
+once the `verify` CI check goes green on the post-rebase commit. Nothing
+else known outstanding.

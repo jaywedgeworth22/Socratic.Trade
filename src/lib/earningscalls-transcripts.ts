@@ -490,7 +490,7 @@ function meResponseLooksLimited(payload: unknown): boolean {
  * notify only ONCE, per the coordinator's no-retry-storm requirement). Best-effort operator
  * notification via the existing notify machinery. Delivery honors the user's real enabledEvents
  * toggle (owner ruling 2026-08-12, "ALL toggles must be real" — no force-include). A legacy
- * stored enabledEvents array predating this event type was backfilled once by migration 77
+ * stored enabledEvents array predating this event type was backfilled once by migration 78
  * (db.ts); after that the toggle is genuinely the user's.
  */
 async function tripEntitlementBlock(nowMs: number, previewLength: number | undefined, context: Record<string, unknown>): Promise<void> {

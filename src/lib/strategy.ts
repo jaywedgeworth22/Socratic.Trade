@@ -811,7 +811,7 @@ export async function runStrategyOnce(
           if (!getInternalSetting<string>(advisoryNotifiedKey)) {
             // Delivery honors the user's real enabledEvents toggle (owner ruling 2026-08-12, "ALL
             // toggles must be real" — no force-include). A legacy stored enabledEvents array
-            // predating this event type was backfilled once by migration 77 (db.ts); after that
+            // predating this event type was backfilled once by migration 78 (db.ts); after that
             // the toggle is genuinely the user's.
             await sendNotification(
               {
@@ -894,7 +894,7 @@ export async function runStrategyOnce(
         // Recovery NEVER flips systemState back on its own — after a hard flip the owner re-arms
         // (handled above). Delivery honors the user's real enabledEvents toggle (owner ruling
         // 2026-08-12, "ALL toggles must be real" — no force-include); a legacy stored
-        // enabledEvents array predating this event type was backfilled once by migration 77.
+        // enabledEvents array predating this event type was backfilled once by migration 78.
         await sendNotification(
           {
             type: "risk_advisory",
@@ -942,7 +942,7 @@ export async function runStrategyOnce(
           // de-risk. No daily dedupe key needed — the persisted marker suppresses repeats until
           // recovery. Delivery honors the user's real enabledEvents toggle (owner ruling
           // 2026-08-12, "ALL toggles must be real" — no force-include); a legacy stored
-          // enabledEvents array predating this event type was backfilled once by migration 77.
+          // enabledEvents array predating this event type was backfilled once by migration 78.
           audit(
             "policy_violation_accuracy",
             { runId, reason: accuracyEval.reason, trigger: accuracyEval.trigger, consecutiveLossStreak: accuracyEval.consecutiveLossStreak, hitRatePct: accuracyEval.hitRatePct, from: "active", action: "advisory" },

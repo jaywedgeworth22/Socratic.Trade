@@ -879,7 +879,7 @@ export async function runLookaheadAuditPass(
 /** One batched advisory notification per pass with mismatches — NEVER fired on 'unverifiable'.
  *  Delivery honors the user's real enabledEvents toggle (owner ruling 2026-08-12, "ALL toggles
  *  must be real" — no force-include). A legacy stored enabledEvents array predating this event
- *  type was backfilled once by migration 77 (db.ts); after that the toggle is genuinely the
+ *  type was backfilled once by migration 78 (db.ts); after that the toggle is genuinely the
  *  user's. ntfy titles are raw HTTP header values — ASCII only. */
 async function notifyLookaheadMismatch(userId: string, mismatches: LookaheadFinding[]): Promise<void> {
   const { sendNotification } = await import("./notifications");

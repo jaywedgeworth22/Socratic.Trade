@@ -299,7 +299,7 @@ function migrateLegacyDailyOpeningCapRows(database: Database.Database): number {
  * notificationSettings.enabledEvents array predating the type's addition to NOTIFICATION_EVENT_TYPES
  * would otherwise silently never receive it, so every one of these sites unconditionally injected
  * it into that send's policy, permanently overriding a user who had (or later set) the toggle off.
- * Migration 77 below backfills these into every stored array ONCE instead — see
+ * Migration 78 below backfills these into every stored array ONCE instead — see
  * backfillNotificationEnabledEventsRows. A future NotificationEventType that needs the same one-time
  * treatment should get its own versioned migration calling that helper with the new type(s); it must
  * NEVER be handled by resurrecting a force-include-at-send-time site.
@@ -2923,6 +2923,36 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {
+    // Native iOS push (APNs) device-token registry. One row per device token; the token is the
+    // PRIMARY KEY because a token identifies exactly one install on one device and must belong to
+    // exactly ONE user — re-registering it under a different account reassigns it (see
+    // registerDeviceToken in db-device-tokens.ts) so a shared phone that switches accounts never
+    // keeps receiving the previous user's alerts.
+    //
+    // `environment` is stored, not inferred: APNs device tokens are environment-specific (a
+    // sandbox token is answered 400 BadDeviceToken by the production endpoint and vice versa), and
+    // the endpoint is chosen from this column at send time.
+    version: 77,
+    name: "device_push_tokens",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS device_push_tokens (
+          token TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          environment TEXT NOT NULL CHECK(environment IN ('sandbox','production')),
+          bundle_id TEXT NOT NULL,
+          platform TEXT NOT NULL DEFAULT 'ios',
+          created_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          disabled_at TEXT,
+          disabled_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_push_tokens_user
+          ON device_push_tokens (user_id, disabled_at);
+      `);
+    }
+  },
+  {
     // Owner ruling 2026-08-12 ("ALL toggles must be real"): removes the force-include-at-send-time
     // pattern for lookahead_leak, signal_health, provider_degraded, storage_warning,
     // autonomy_halted_on_boot, earningscalls_entitlement_blocked, budget_alert, and risk_advisory —
@@ -2933,12 +2963,12 @@ const MIGRATIONS: Migration[] = [
     // enabledEvents array, once, so the Settings toggle becomes genuinely authoritative afterward — on
     // by default (matching the prior always-delivered behavior), off if/when the user turns it off,
     // and it STAYS off. See docs/rollouts/2026-08-13-remove-force-include-notifications.md.
-    version: 77,
+    version: 78,
     name: "notification_enabled_events_backfill",
     up: (database) => {
       const changed = backfillNotificationEnabledEventsRows(database, FORCE_INCLUDE_BACKFILL_EVENT_TYPES);
       if (changed > 0) {
-        console.log(`[db] migration 77: backfilled ${changed} legacy enabledEvents row(s) with previously force-included event types`);
+        console.log(`[db] migration 78: backfilled ${changed} legacy enabledEvents row(s) with previously force-included event types`);
       }
     }
   }
@@ -4564,3 +4594,4 @@ export * from "./db-task-journal";
 export * from "./db-embed-stage";
 export * from "./db-signal-health";
 export * from "./db-lookahead-audit";
+export * from "./db-device-tokens";

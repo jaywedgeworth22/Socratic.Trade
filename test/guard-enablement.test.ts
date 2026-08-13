@@ -188,7 +188,7 @@ describe("advisory drawdown-breaker notification (dedup per user/account/source/
       // The user explicitly turned risk_advisory off in Settings. Before the owner's 2026-08-12
       // "ALL toggles must be real" ruling, the drawdown-advisory send site force-injected
       // risk_advisory into the effective enabledEvents regardless, silently overriding this
-      // forever. That pattern is removed (a one-time migration — db.ts migration 77 — backfills
+      // forever. That pattern is removed (a one-time migration — db.ts migration 78 — backfills
       // any LEGACY stored array that predates the event type instead), so an explicit, deliberate
       // opt-out like this one must now be honored and stay honored.
       notificationSettings: { webhookUrl: "", enabledEvents: ["fill", "block"] }
