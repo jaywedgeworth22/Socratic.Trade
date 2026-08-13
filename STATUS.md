@@ -1,3 +1,16 @@
+## Current (2026-08-13 GROK — Fleet Pushover/Sentry/Uptime triage)
+
+Owner screenshot 8:06–8:44am CT plus 7d Uptime/Sentry.  Four distinct app bugs, not one outage.
+
+1. Robinhood MCP option/historicals calls sent extra `symbol`/`symbols` (and legacy `span`) against `additionalProperties:false` schemas — GH #2576 / SOCRATIC-TRADE-K.
+2. Pinecone upserts 2 bytes over the 40960 metadata cap (SOCRATIC-TRADE-1T).
+3. OpenRouter embed 429 "engine overloaded" paged as both connection-failed and usage-limit (SOCRATIC-TRADE-1X).
+4. CT senate scout 503 is a Mac-scout handshake false positive; server `pollSenate` via senate-relay is live.
+
+ST 503s pair with the keyword "OpenRouter credits low" monitor because that monitor hit the same `/api/health` URL and treated 5xx as down.  Allowed 4xx/5xx on that keyword monitor so only the credits substring pages.
+
+Branch `grok/fleet-alerts-aug13`.  Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
+
 ## Current (2026-08-13 GROK — Settings Saving… + ROIC Individual actually binds)
 
 Owner: ROIC paid first tier (Individual) was set in Settings; dropdown snapped

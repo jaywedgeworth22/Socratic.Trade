@@ -1,5 +1,8 @@
 # Active Implementation Plan
 
+> **2026-08-13 GROK — fleet alert triage (`grok/fleet-alerts-aug13`).** Fix RH MCP extra args (#2576), cap Pinecone metadata under 40960, classify engine-overloaded 429s as transient (no usage-limit page), and stop the ST-health keyword monitor from pairing 503 deploys as "credits low." CT senate scout handshake reuse is the follow-up in the CT lane. Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
+
+
 > **2026-08-10 GROK — always-auto-merge workflow (PR #2597).** Non-draft same-repo PRs arm squash auto-merge; `do-not-automerge` disables armed merges; sentry coverage updated. Lands via this unstick pass.
 
 > [!WARNING]

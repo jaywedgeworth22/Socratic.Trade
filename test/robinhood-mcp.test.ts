@@ -345,6 +345,90 @@ describe("robinhood mcp transport", () => {
     expect(portfolio.totalMarketValue).toBe(100);
     expect(portfolio.cash).toBe(100);
   });
+
+  it("maps a legacy historicals span onto start_time without sending symbol/span", async () => {
+    const { robinhoodHistoricalsStartTime } = await import("../src/lib/robinhood");
+    const now = Date.parse("2026-08-13T16:00:00.000Z");
+    expect(robinhoodHistoricalsStartTime("5year", now)).toBe(new Date(now - 5 * 365.25 * 24 * 60 * 60 * 1000).toISOString());
+  });
+
+  it("calls option-chain tools with only schema-legal arguments (no symbol/symbols extras)", async () => {
+    vi.stubEnv("ROBINHOOD_ADAPTER", "mcp");
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      if (request.method === "tools/call") {
+        calls.push({ name: request.params.name, args: request.params.arguments });
+      }
+      const payload =
+        request.params?.name === "get_equity_quotes"
+          ? { quotes: [{ symbol: "AAPL", last_trade_price: "200" }] }
+          : { results: [] };
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { structuredContent: { data: payload, guide: "ok" } }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { fetchRobinhoodOptionChain } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    await fetchRobinhoodOptionChain("aapl", "user-a", { expiration: "2026-09-18", type: "call" });
+
+    const chain = calls.find((c) => c.name === "get_option_chains");
+    const instruments = calls.find((c) => c.name === "get_option_instruments");
+    expect(chain?.args).toEqual({ underlying_symbol: "AAPL" });
+    expect(chain?.args).not.toHaveProperty("symbol");
+    expect(chain?.args).not.toHaveProperty("symbols");
+    expect(instruments?.args).toEqual({
+      chain_symbol: "AAPL",
+      expiration_dates: "2026-09-18",
+      type: "call"
+    });
+    expect(instruments?.args).not.toHaveProperty("symbol");
+    expect(instruments?.args).not.toHaveProperty("symbols");
+    expect(instruments?.args).not.toHaveProperty("underlying_symbol");
+  });
+
+  it("calls get_equity_historicals with symbols+start_time, not symbol or span", async () => {
+    vi.stubEnv("ROBINHOOD_ADAPTER", "mcp");
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    const calls: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      if (request.method === "tools/call") calls.push(request.params.arguments);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { structuredContent: { data: { historicals: [] }, guide: "ok" } }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { fetchRobinhoodHistoricals } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    await fetchRobinhoodHistoricals("aapl", { interval: "day", span: "5year", userId: "user-a" });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      symbols: ["AAPL"],
+      interval: "day",
+      bounds: "regular"
+    });
+    expect(calls[0]).toHaveProperty("start_time");
+    expect(calls[0]).not.toHaveProperty("symbol");
+    expect(calls[0]).not.toHaveProperty("span");
+  });
 });
 
 describe("toMcpOrder — fractional/notional routing", () => {
