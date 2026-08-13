@@ -7,12 +7,14 @@ import { once } from "node:events";
 import {
   assessLitestreamRuntimeHealth,
   assessLitestreamTierFreshness,
+  compareLitestreamTxid,
   defaultLitestreamSocketPath,
   defaultLitestreamStatePath,
   getLitestreamRuntimeHealth,
   isLitestreamReplicatingStatus,
   LITESTREAM_TIER_LABELS,
   LITESTREAM_TIER_STALE_AFTER_SECONDS,
+  maxTxidFromLtxFilename,
   parseLitestreamListPayload,
   runtimeReleaseIdentity
 } from "../src/lib/runtime-health";
@@ -319,19 +321,39 @@ describe("Litestream runtime health", () => {
     })).resolves.toEqual({ state: "unknown", source: "none" });
   });
 
-  it("bounds non-live metadata scans instead of traversing arbitrarily large trees", async () => {
+  // This test used to assert the OPPOSITE: that a directory over 256 entries made the scan
+  // return `{ state: "unknown" }`. Bounding the work was right; answering "I saw nothing"
+  // because the directory was big was not — that is defect cause #2 from the 2026-08-12
+  // rollout, and it blinded the per-tier check on every production health probe, since
+  // `ltx/0` normally holds 1,000+ files. The scan is still bounded (a fixed stat budget per
+  // directory, plus depth and directory-count caps); it just no longer refuses to answer.
+  it("stays bounded on a large metadata tree while still reporting the newest activity", async () => {
     const root = mkdtempSync(join(tmpdir(), "socratic-litestream-bounded-scan-"));
     tempRoots.push(root);
-    for (let index = 0; index < 300; index += 1) {
-      writeFileSync(join(root, `entry-${index}`), "x");
+    const now = Date.now();
+    const ltxDir = join(root, "ltx", "0");
+    mkdirSync(ltxDir, { recursive: true });
+    for (let index = 0; index < 1200; index += 1) {
+      const hex = (0x37000 + index).toString(16).padStart(16, "0");
+      const file = join(ltxDir, `${hex}-${hex}.ltx`);
+      writeFileSync(file, "x");
+      const mtime = new Date(now - (1200 - index) * 60_000);
+      utimesSync(file, mtime, mtime);
     }
 
-    await expect(getLitestreamRuntimeHealth({
+    const started = Date.now();
+    const result = await getLitestreamRuntimeHealth({
       dbPath: "/app/data/app.db",
       socketPath: join(root, "missing.sock"),
       statePath: root,
       timeoutMs: 25
-    })).resolves.toEqual({ state: "unknown", source: "none" });
+    });
+
+    expect(result).toMatchObject({ state: "known", source: "file", status: "activity-observed" });
+    // The newest of the 1,200 files, found without stat-ing all of them.
+    expect(result.state === "known" && result.ageSeconds).toBeLessThanOrEqual(120);
+    // Bounded work, not a full 1,200-entry stat sweep.
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it("reports unknown without treating an absent daemon as healthy", async () => {
@@ -443,29 +465,112 @@ describe("Litestream production health decisions", () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------------------
+// Per-compaction-level backup freshness.
+//
+// The 2026-08-11/12 implementation of this feature had ZERO production coverage: it graded
+// every level from local `ltx/<level>/` mtimes, but (1) Litestream 0.5.12 keeps only level 0
+// on local disk, so levels 1/2/3/9 had no directory to read, and (2) the shared scan bailed
+// out to `null` past 256 entries while `ltx/0` legitimately holds 1,000+ files. Every tier
+// reported "unknown" on every health check while appearing to cover all five.
+//
+// These tests pin down the replacement: a real signal per level where one exists, an explicit
+// and explained "not-observable" where one does not, and detection of the actual wedge.
+// ---------------------------------------------------------------------------------------
 describe("Litestream per-tier compaction freshness", () => {
-  function writeTierFile(statePath: string, tier: "0" | "1" | "9", mtime: Date) {
+  function writeLtxFile(statePath: string, tier: string, name: string, mtime: Date) {
     const dir = join(statePath, "ltx", tier);
     mkdirSync(dir, { recursive: true });
-    const file = join(dir, `${tier}-000000000000001-000000000000002.ltx`);
+    const file = join(dir, name);
     writeFileSync(file, "ltx");
     utimesSync(file, mtime, mtime);
   }
 
-  it("reports every tier unknown (never crashing) when the state directory does not exist at all", () => {
-    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-missing-"));
-    tempRoots.push(root);
-    const statePath = join(root, "does-not-exist");
+  /** Litestream's real filename shape: `<minTXID>-<maxTXID>.ltx`, zero-padded hex. */
+  function ltxName(txid: number): string {
+    const hex = txid.toString(16).padStart(16, "0");
+    return `${hex}-${hex}.ltx`;
+  }
 
-    const report = assessLitestreamTierFreshness(statePath, { nowMs: Date.now() });
-    expect(report.degraded).toBe(false);
-    expect(report.tiers).toHaveLength(5);
-    for (const tier of report.tiers) {
-      expect(tier.state).toBe("unknown");
-      expect(tier).not.toHaveProperty("ageSeconds");
-      expect(tier).not.toHaveProperty("newestActivityAt");
+  function remoteLevel(level: number, newestAt: string, newestTxid: string | null, fileCount = 1) {
+    return { level, newestAt, newestTxid, fileCount };
+  }
+
+  function byTier(report: { tiers: Array<{ tier: string }> }) {
+    return Object.fromEntries(report.tiers.map((t) => [t.tier, t])) as Record<string, any>;
+  }
+
+  it("parses Litestream's LTX filename txid range and orders ids of differing widths numerically", () => {
+    expect(maxTxidFromLtxFilename("0000000000005249-00000000000052a8.ltx")).toBe("00000000000052a8");
+    expect(maxTxidFromLtxFilename("not-an-ltx-file.txt")).toBeNull();
+    // 0x37ce0 (level 0, live) is far ahead of 0xe5ad (level 2, wedged) despite equal padding.
+    expect(compareLitestreamTxid("0000000000037ce0", "000000000000e5ad")).toBeGreaterThan(0);
+    // Differing widths must still compare numerically, not lexicographically.
+    expect(compareLitestreamTxid("ff", "0000000000000100")).toBeLessThan(0);
+    expect(compareLitestreamTxid("00000000000052a8", "52a8")).toBe(0);
+  });
+
+  // REGRESSION for defect cause #2. `ltx/0` held 1,078 files on the live container on
+  // 2026-08-12; the old flat 256-entry bound made the scan return null, so the ONE level that
+  // is genuinely readable locally still reported "unknown" on every single health check. The
+  // replacement stats only the highest-named few entries, so directory size is irrelevant.
+  it("measures level 0 from a directory holding far more files than the old 256-entry bound", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-large-l0-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-12T23:30:00.000Z");
+
+    // 1,200 files, mirroring production scale. Older txids get older mtimes, so the newest
+    // filename is also the newest write — the property the sampling strategy relies on.
+    for (let index = 0; index < 1200; index += 1) {
+      writeLtxFile(root, "0", ltxName(0x37000 + index), new Date(now - (1200 - index) * 60_000));
     }
-    // Labels are always present, even for an unknown tier, so the UI has something to render.
+
+    const report = assessLitestreamTierFreshness(root, { nowMs: now });
+    const tier0 = byTier(report)["0"];
+    expect(tier0.state).toBe("known");
+    expect(tier0.source).toBe("local-ltx");
+    expect(tier0.ageSeconds).toBe(60); // the newest of the 1,200 files, not a bailout
+    expect(tier0.newestTxid).toBe((0x37000 + 1199).toString(16).padStart(16, "0"));
+    expect(tier0.degraded).toBe(false);
+  });
+
+  // REGRESSION for defect cause #1. Levels 1/2/3/9 have no local directory in production, and
+  // the old code called that "unknown" — indistinguishable from "we looked and all is quiet".
+  it("reports levels that exist only in the remote replica as not-observable, with a reason, when no inventory has been collected", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-remote-only-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-12T23:30:00.000Z");
+    writeLtxFile(root, "0", ltxName(0x37ce0), new Date(now - 60_000));
+
+    const report = assessLitestreamTierFreshness(root, { nowMs: now, remoteInventory: null });
+    const tiers = byTier(report);
+
+    expect(tiers["0"].state).toBe("known");
+    for (const tier of ["1", "2", "3", "9"]) {
+      expect(tiers[tier].state).toBe("not-observable");
+      expect(tiers[tier].reason).toBe("remote-inventory-missing");
+      expect(tiers[tier].detail).toContain("remote replica");
+      // Crucially NOT a verdict: no age, no degraded flag to misread as health.
+      expect(tiers[tier]).not.toHaveProperty("ageSeconds");
+      expect(tiers[tier]).not.toHaveProperty("degraded");
+    }
+    // The report says out loud how much it actually covers.
+    expect(report.observedTiers).toBe(1);
+    expect(report.notObservableTiers).toBe(4);
+    expect(report.remoteInventoryState).toBe("missing");
+    // "Cannot see it" must never be reported as "it is broken".
+    expect(report.degraded).toBe(false);
+  });
+
+  it("reports every tier not-observable, never crashing, when no state path is configured at all", () => {
+    const report = assessLitestreamTierFreshness(undefined);
+    expect(report.tiers).toHaveLength(5);
+    expect(report.tiers.every((t) => t.state === "not-observable")).toBe(true);
+    expect(report.tiers.every((t) => "reason" in t && t.reason === "no-state-path")).toBe(true);
+    expect(report.observedTiers).toBe(0);
+    expect(report.degraded).toBe(false);
+    // Labels stay present so the UI always has all five cards to render.
     expect(report.tiers.map((t) => t.label)).toEqual([
       LITESTREAM_TIER_LABELS["0"],
       LITESTREAM_TIER_LABELS["1"],
@@ -475,61 +580,157 @@ describe("Litestream per-tier compaction freshness", () => {
     ]);
   });
 
-  it("reports unknown (not a crash, not degraded) when no statePath is configured at all", () => {
-    const report = assessLitestreamTierFreshness(undefined);
-    expect(report.degraded).toBe(false);
-    expect(report.tiers.every((t) => t.state === "unknown")).toBe(true);
-  });
-
-  it("reports unknown for a tier directory that exists but has never received a file", () => {
-    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-empty-"));
+  // ===================================================================================
+  // THE INCIDENT. Every number below was read off the live production replica at
+  // 2026-08-12T23:30Z, while `/api/health` reported all five tiers "unknown" and the
+  // container log was emitting `compaction failed ... level=2 ... non-contiguous
+  // transaction ids` roughly every 30 minutes.
+  // ===================================================================================
+  it("flags the wedged level-2 compaction from the real 2026-08-12 production replica state", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-incident-"));
     tempRoots.push(root);
-    mkdirSync(join(root, "ltx", "1"), { recursive: true });
+    const now = Date.parse("2026-08-12T23:30:00.000Z");
 
-    const report = assessLitestreamTierFreshness(root, { nowMs: Date.now() });
-    const tier1 = report.tiers.find((t) => t.tier === "1")!;
-    expect(tier1.state).toBe("unknown");
-    expect(report.degraded).toBe(false);
-  });
+    // Level 0 is healthy and ADVANCING — this is what made the wedge invisible to every
+    // pre-existing signal, all of which track level 0's last sync.
+    writeLtxFile(root, "0", ltxName(0x37cde), new Date(now - 252_000));
+    writeLtxFile(root, "0", ltxName(0x37ce0), new Date(now - 238_000));
 
-  it("marks a tier healthy when its newest file is within threshold, and degraded when it is not", () => {
-    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-fresh-stale-"));
-    tempRoots.push(root);
-    const now = Date.parse("2026-08-11T12:00:00.000Z");
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-12T23:20:00.000Z",
+        status: "ok",
+        levels: {
+          "1": remoteLevel(1, "2026-08-10T14:54:39.000Z", "000000000002324c", 5635),
+          "2": remoteLevel(2, "2026-08-08T14:35:05.000Z", "000000000000e5ad", 171),
+          "3": remoteLevel(3, "2026-08-08T15:00:22.000Z", "000000000000e5ad", 15),
+          "9": remoteLevel(9, "2026-08-12T00:01:18.000Z", "0000000000030586", 8)
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
 
-    writeTierFile(root, "0", new Date(now - 30_000)); // 30s old — within the 10-minute threshold
-    writeTierFile(root, "1", new Date(now - 30_000)); // also fresh — within the 4-hour threshold
+    // Level 0: fresh, and the reason the higher levels are provably behind rather than idle.
+    expect(tiers["0"]).toMatchObject({ state: "known", source: "local-ltx", degraded: false });
 
-    const report = assessLitestreamTierFreshness(root, { nowMs: now });
-    const [t0, t1, t9] = report.tiers;
-    expect(t0).toMatchObject({ tier: "0", state: "known", ageSeconds: 30, degraded: false });
-    expect(t1).toMatchObject({ tier: "1", state: "known", ageSeconds: 30, degraded: false });
-    expect(t9.state).toBe("unknown"); // no level-9 file written yet in this fixture
-    expect(report.degraded).toBe(false);
-  });
+    // Level 2: THE WEDGE. Frozen since 2026-08-08 at txid 0xe5ad while level 0 reached
+    // 0x37ce0. This is the failure the whole monitor exists to catch and previously could not.
+    expect(tiers["2"]).toMatchObject({
+      state: "known",
+      source: "remote-inventory",
+      newestTxid: "000000000000e5ad",
+      degraded: true
+    });
+    expect(tiers["2"].ageSeconds).toBeGreaterThan(4 * 24 * 3600);
 
-  // This is the production incident this function exists to catch: level 0 (continuous sync)
-  // keeps succeeding on schedule while level 1 (periodic compaction) is silently wedged for
-  // hours. The existing IPC-based overall signal only reflects level 0 and would report this
-  // database perfectly healthy the whole time — only the per-tier breakdown catches it.
-  it("flags a stuck level-1 compactor even while level 0 stays fresh (the 2026-08-11 incident shape)", () => {
-    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-incident-"));
-    tempRoots.push(root);
-    const now = Date.parse("2026-08-11T12:00:00.000Z");
+    // Levels 1 and 3 were also stalled behind level 0 at the same moment.
+    expect(tiers["1"]).toMatchObject({ state: "known", degraded: true });
+    expect(tiers["3"]).toMatchObject({ state: "known", degraded: true });
 
-    writeTierFile(root, "0", new Date(now - 45_000)); // level 0: 45s old, healthy
-    writeTierFile(root, "1", new Date(now - 27 * 3_600_000)); // level 1: 27h old, wedged
-    writeTierFile(root, "9", new Date(now - 10 * 3_600_000)); // level 9: 10h old, within 30h
+    // Level 9 (daily snapshot) was genuinely healthy ~23.5h old, inside its 30h threshold —
+    // proving the check discriminates rather than blanket-failing everything remote.
+    expect(tiers["9"]).toMatchObject({ state: "known", degraded: false });
+    expect(tiers["9"].ageSeconds).toBeLessThan(30 * 3600);
 
-    const report = assessLitestreamTierFreshness(root, { nowMs: now });
-    const byTier = Object.fromEntries(report.tiers.map((t) => [t.tier, t]));
-
-    expect(byTier["0"]).toMatchObject({ state: "known", degraded: false });
-    expect(byTier["1"]).toMatchObject({ state: "known", degraded: true, ageSeconds: 27 * 3_600 });
-    expect(byTier["9"]).toMatchObject({ state: "known", degraded: false });
-    // The overall report-level flag is true because at least one KNOWN tier is degraded —
-    // this is what app/api/health/route.ts folds into storageDegraded.
     expect(report.degraded).toBe(true);
+    expect(report.observedTiers).toBe(5);
+    expect(report.notObservableTiers).toBe(0);
+  });
+
+  // The counterpart guard: without it, every quiet period on an idle database would light up
+  // all four higher levels. A level that has caught up with level 0 has nothing left to do.
+  it("does not flag a quiet higher level that has already caught up with level 0", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-idle-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-12T23:30:00.000Z");
+
+    // Database idle for 3 days: level 0's newest file is old, and level 2 compacted right up
+    // to it before everything went quiet.
+    writeLtxFile(root, "0", ltxName(0xe5ad), new Date(now - 3 * 24 * 3_600_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-12T23:20:00.000Z",
+        status: "ok",
+        levels: {
+          "1": remoteLevel(1, "2026-08-09T23:30:00.000Z", "000000000000e5ad"),
+          "2": remoteLevel(2, "2026-08-09T23:30:00.000Z", "000000000000e5ad"),
+          "3": remoteLevel(3, "2026-08-09T23:30:00.000Z", "000000000000e5ad"),
+          "9": remoteLevel(9, "2026-08-09T23:30:00.000Z", "000000000000e5ad")
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    for (const tier of ["1", "2", "3", "9"]) {
+      expect(tiers[tier].state).toBe("known");
+      expect(tiers[tier].ageSeconds).toBeGreaterThan(tiers[tier].thresholdSeconds);
+      expect(tiers[tier].degraded).toBe(false); // caught up with level 0 — nothing to compact
+    }
+    // Level 0 itself IS graded on age alone, and 3 days idle is past its 10-minute threshold.
+    expect(tiers["0"].degraded).toBe(true);
+  });
+
+  it("refuses to grade remote levels from an inventory older than the max age, and says why", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-stale-inv-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-12T23:30:00.000Z");
+    writeLtxFile(root, "0", ltxName(0x37ce0), new Date(now - 60_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      // Collected 4 hours ago — well past LITESTREAM_REMOTE_INVENTORY_MAX_AGE_SECONDS (90 min).
+      remoteInventory: {
+        collectedAt: new Date(now - 4 * 3_600_000).toISOString(),
+        status: "ok",
+        levels: { "2": remoteLevel(2, "2026-08-08T14:35:05.000Z", "000000000000e5ad", 171) },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    // A dead collector must not be reported as a wedged backup: frozen numbers would age out
+    // on their own and manufacture an incident that is not happening.
+    expect(tiers["2"]).toMatchObject({ state: "not-observable", reason: "remote-inventory-stale" });
+    expect(report.remoteInventoryState).toBe("stale");
+    expect(report.degraded).toBe(false);
+  });
+
+  it("distinguishes a failed level listing, an un-collected level, and a level with no files at all", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-mixed-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-12T23:30:00.000Z");
+    writeLtxFile(root, "0", ltxName(0x37ce0), new Date(now - 60_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-12T23:20:00.000Z",
+        status: "partial",
+        levels: {
+          "2": remoteLevel(2, "2026-08-12T23:00:00.000Z", "000000000002324c", 171),
+          "3": remoteLevel(3, "", null, 0) // listed fine; the level has simply never produced
+        },
+        levelErrors: { "1": "dial tcp: connection refused" },
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    expect(tiers["1"]).toMatchObject({ state: "not-observable", reason: "remote-inventory-failed" });
+    expect(tiers["1"].detail).toContain("connection refused");
+    expect(tiers["2"].state).toBe("known");
+    expect(tiers["3"]).toMatchObject({ state: "not-observable", reason: "no-activity-recorded" });
+    expect(tiers["9"]).toMatchObject({ state: "not-observable", reason: "remote-inventory-missing" });
+    expect(report.observedTiers).toBe(2);
+    expect(report.notObservableTiers).toBe(3);
   });
 
   it("uses the documented default thresholds and accepts a caller-supplied override per tier", () => {
@@ -541,10 +742,10 @@ describe("Litestream per-tier compaction freshness", () => {
       "9": 30 * 60 * 60
     });
 
-    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-override-"));
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-override-"));
     tempRoots.push(root);
     const now = Date.parse("2026-08-11T12:00:00.000Z");
-    writeTierFile(root, "0", new Date(now - 5 * 60_000)); // 5 minutes old
+    writeLtxFile(root, "0", ltxName(0x1000), new Date(now - 5 * 60_000)); // 5 minutes old
 
     // Below the default 10-minute threshold: healthy.
     expect(assessLitestreamTierFreshness(root, { nowMs: now }).tiers[0]).toMatchObject({ degraded: false });
@@ -555,17 +756,14 @@ describe("Litestream per-tier compaction freshness", () => {
     ).toMatchObject({ degraded: true, thresholdSeconds: 60 });
   });
 
-  it("does not throw when the scan hits the same bounded-entries limit newestFileMtimeMs enforces elsewhere", () => {
-    const root = mkdtempSync(join(tmpdir(), "socratic-litestream-tiers-bounded-"));
+  it("ignores non-LTX files and an empty local level directory without inventing activity", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-noise-"));
     tempRoots.push(root);
-    const dir = join(root, "ltx", "0");
-    mkdirSync(dir, { recursive: true });
-    for (let index = 0; index < 300; index += 1) {
-      writeFileSync(join(dir, `entry-${index}.ltx`), "x");
-    }
+    mkdirSync(join(root, "ltx", "0"), { recursive: true });
+    writeFileSync(join(root, "ltx", "0", "README.txt"), "not an ltx file");
 
     const report = assessLitestreamTierFreshness(root, { nowMs: Date.now() });
-    expect(report.tiers.find((t) => t.tier === "0")!.state).toBe("unknown");
+    expect(byTier(report)["0"]).toMatchObject({ state: "not-observable" });
     expect(report.degraded).toBe(false);
   });
 });

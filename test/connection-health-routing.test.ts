@@ -412,7 +412,9 @@ describe("Connection Health & Failure Routing", () => {
         expect.arrayContaining([
           expect.objectContaining({ tier: "0", state: "known", degraded: false }),
           expect.objectContaining({ tier: "1", state: "known", degraded: true }),
-          expect.objectContaining({ tier: "9", state: "unknown" })
+          // No local level-9 directory and no replica inventory in this test process: the
+          // route must say it CANNOT see the level, not imply it looked and found nothing.
+          expect.objectContaining({ tier: "9", state: "not-observable", reason: "remote-inventory-missing" })
         ])
       );
       expect(body.checks.storageDegraded).toBe(true);
