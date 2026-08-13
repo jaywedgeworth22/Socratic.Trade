@@ -1615,7 +1615,29 @@ export function insertDocumentChunkFts(
  * replaces. Small sub-batches with a yield between them bound any single synchronous stretch
  * while still cutting per-chunk transaction overhead by ~BATCH_SIZE.
  */
-const INSERT_DOCUMENT_CHUNK_FTS_BATCH_SIZE = 40;
+/** Fixed group sizes were still not enough (2026-08-13 recurrence): FTS5 tokenization cost is
+ *  text-size-dependent, and a 702-chunk 10-K averaged ~165ms PER ROW — 40-row groups meant ~6.6s
+ *  synchronous stretches back-to-back, 119s total with only ~18 yields ("ftsMirrorBatch took
+ *  119287ms (yielded)"), which starved the HTTP server into edge 503s for hours. The group size
+ *  is now ADAPTIVE against a wall-time budget per synchronous stretch: halve after a slow group,
+ *  grow after fast ones, floor 1 / ceiling 40. Worst case one oversized row still pins for its
+ *  own tokenization cost — unavoidable inside a synchronous FTS insert — but never a whole
+ *  group of them. */
+const FTS_BATCH_MAX_ROWS = 40;
+const FTS_BATCH_MIN_ROWS = 1;
+const FTS_BATCH_STRETCH_BUDGET_MS = 250;
+
+/** Pure sizing policy for the adaptive FTS mirror batches — exported for deterministic tests.
+ *  Over budget halves (floor 1); under half the budget doubles (ceiling 40); in between holds. */
+export function nextFtsBatchGroupSize(current: number, elapsedMs: number): number {
+  if (elapsedMs > FTS_BATCH_STRETCH_BUDGET_MS) {
+    return Math.max(FTS_BATCH_MIN_ROWS, Math.floor(current / 2));
+  }
+  if (elapsedMs < FTS_BATCH_STRETCH_BUDGET_MS / 2) {
+    return Math.min(FTS_BATCH_MAX_ROWS, current * 2);
+  }
+  return current;
+}
 
 export async function insertDocumentChunkFtsBatch(
   rows: Array<{ contentHash: string; symbol: string; source: string; accession: string; text: string }>
@@ -1636,9 +1658,16 @@ export async function insertDocumentChunkFtsBatch(
       ins.run(row.contentHash, row.symbol, row.source, row.accession, row.text);
     }
   });
-  for (let i = 0; i < rows.length; i += INSERT_DOCUMENT_CHUNK_FTS_BATCH_SIZE) {
-    runGroup(rows.slice(i, i + INSERT_DOCUMENT_CHUNK_FTS_BATCH_SIZE));
-    if (i + INSERT_DOCUMENT_CHUNK_FTS_BATCH_SIZE < rows.length) {
+  let groupSize = 8;
+  let i = 0;
+  while (i < rows.length) {
+    const group = rows.slice(i, i + groupSize);
+    const startedAt = Date.now();
+    runGroup(group);
+    const elapsed = Date.now() - startedAt;
+    i += group.length;
+    groupSize = nextFtsBatchGroupSize(groupSize, elapsed);
+    if (i < rows.length) {
       await yieldEventLoop();
     }
   }
