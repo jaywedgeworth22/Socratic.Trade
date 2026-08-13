@@ -1,3 +1,76 @@
+## Current (2026-08-12 ~7:45pm CT CLAUDE — round 3 landed: scorecard, lookahead audit, PIT chain, Polymarket)
+
+Four backlog features land in this PR (details in the four r3 rollout notes): the unified
+ProposalScorecard (deterministic receipts: MA alignment, sniper points, gate checklist, signal
+attribution summing to 100, decision chain with a persistence-time validator), the
+truncated-replay lookahead audit (weekly lane; momentum/liquidity + RAG evidence replayed with
+history cut at decision time; honest unverifiable labels; 90-day windowed verdict), the PIT
+fundamentals revision chain (restatements never rewrite history; as-of reads with a strict
+knob), and keyless Polymarket prediction-market context in the strategist prompt.  All slices
+adversarially verified; 13 integration fixes applied; full suite 6423 green + build clean before
+push.  This deploy also activates the owner-directed ingestion re-enable (SEC worker on, filing
+cap 25) — first sync stretch is being watched for the 2026-08-10 event-loop-pinning recurrence.
+Blockers: none.
+
+## Current (2026-08-12 ~3:05pm CT CLAUDE — r3: keyless Polymarket prediction-market context)
+
+Round 3 slice (implementable subset of the social-sentiment lesson: real-money crowd odds as LLM
+context; Reddit/X stay OUT of scope, blocked on owner API keys).  New `src/lib/polymarket-provider.ts`
+— keyless (no credential ever created/held), hits `gamma-api.polymarket.com/public-search`
+(live-verified shape in the file header), matches markets to a symbol via the existing
+`scoreHeadlineRelevance` rubric (`news-relevance.ts`, incl. the ambiguous-company-name
+corroboration gate), keeps up to 3 currently-active company-relevant markets per symbol
+(question/implied probability/volume), 10-minute in-process cache, bounded per-run symbol count,
+fails open to no-data on any error.  Wired into `strategy.ts`'s `proposeTrades` at the same seam
+`prompt-headlines.ts` and `getUpcomingEconomicEventsForPrompt` use — prompt-time only (candidates
+entering the LLM call), never the scan-wide enrichment cascade, so it never fires on a
+budget/threshold-skipped run.  New `MarketQuote.polymarketLines`; new catalog knobs
+`POLYMARKET_CONTEXT` (default true) / `POLYMARKET_MIN_RELEVANCE` (default 0.5).  Dependency-health
+and evidence-pack-family both investigated and found to need ZERO new registration (health map is
+derived dynamically from logged calls; the new prompt field nests inside the existing "market"
+family evidence ref) — see the rollout note.  Gates: tsc clean; 18 new tests
+(`test/polymarket-provider.test.ts`) + 29 adjacent-seam tests green; lint 0 errors on touched
+files.  Rollout: docs/rollouts/2026-08-12-r3-polymarket-context.md.  Local slice commit on
+`agent/claude`; lands via the round-3 integration lane.  Blockers: none.
+
+## Current (2026-08-12 ~2:10pm CT CLAUDE — r3: truncated-replay lookahead audit)
+
+Round 3 slice (freqtrade lookahead-analysis port, scoped per the gap analysis to the two
+genuinely reconstructable subsystems).  New `src/lib/lookahead-audit.ts` (pure/IO split mirroring
+backtest.ts) + `db-lookahead-audit.ts` (migration 75, `lookahead_audit_findings`, deletion-covered):
+a weekly durable per-user due-job samples matured `signal_snapshot` decisions past a watermark,
+recomputes the momentum/liquidity factor sub-scores from daily OHLC truncated to each decision
+date (through the existing pure `scoreFactors`, mirroring decision-time field availability via
+per-field `sources` provenance), and replays RAG evidence by rebuilding the deterministic filings
+query (now shared via `deterministicFilingsRetrievalQuery`; queryHash-guarded so builder drift
+degrades to honest 'unverifiable') with asOf pinned + strictAsOf, diffing chunk ids against the
+persisted candidate-pool `used:true` rows — Jaccard threshold for benign reranker drift, ANY
+post-asOf chunk a hard mismatch.  value/quality/volatility/sentiment/positioning/diversification
+are ALWAYS 'unverifiable' with stored backtestSafety receipts (the coverage gap is visible, never
+silently implied clean); below 20 qualifying observations the aggregate verdict is an honest
+'insufficient_sample'.  Advisory `lookahead_leak` notification fires on mismatch classifications
+only; compact con-* receipts panel on Results.  `LOOKAHEAD_AUDIT_*` knobs (default ON, documented
+kill switch in .env.example).  Gates: tsc clean; test/lookahead-audit.test.ts 17/17;
+persistence-hardening + account-deletion-coverage updated for v75 (25/25); adjacent suites 99/99.
+Rollout: docs/rollouts/2026-08-12-r3-lookahead-audit.md.  Local slice commit on `agent/claude`;
+lands via the round-3 integration lane.  Blockers: none.
+
+## Current (2026-08-12 ~1:15pm CT CLAUDE — r3: unified ProposalScorecard)
+
+Round 3 slice (dsa Dashboard-contract lesson): one typed, deterministic `ProposalScorecard`
+unifying the decision receipts already on `TradeProposal` — core conclusion (derived from the
+existing rationale, no new LLM call), MA/volume data perspective (recycled from the ATR
+precompute's bars, honestly omitted when absent), sniper price levels (referencePrice + bracket
+legs; secondary entry ONLY via the new `secondaryBuyPullbackPct` owner knob), an action checklist
+that RENDERS already-computed gate state (entry-drift, wash-sale, daily-cap, red-team,
+dataAdjustments — never a new authority), four-bucket signal attribution summing to exactly 100,
+and an append-only decision chain stamped at the existing override/human-approval sites with a
+persistence-time validator that receipts (never drops) malformed chains.  Outcome engine now
+grades sniper stop/take levels against the daily closes it already fetches
+(`outcome.sniperAccuracy`, close-basis disclosed).  Rendered collapsible on the approval card and
+read-only in the decision trace.  Gates: tsc clean; targeted suites 182/182 (23 new).  Rollout:
+docs/rollouts/2026-08-12-r3-proposal-scorecard.md.  Local slice commit on `agent/claude`; lands
+via the round-3 integration lane.  Blockers: none.
 ## Current (2026-08-12 GROK — broker cascade + Webull/eToro/Public + CopyTrader intel)
 
 **Branch `grok/broker-webull-etoro-public`:** connected brokers (Tradier / Alpaca / Robinhood)

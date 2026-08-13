@@ -96,6 +96,7 @@ const EVENT_HINT: Record<NotificationEventType, string> = {
   risk_advisory: "a risk guardrail was breached but the agent is still in control (advisory)",
   protective_exit_failing: "a synthetic protective exit keeps failing and is still retrying",
   signal_health: "the AI's confidence signal is losing predictive power against matured outcomes (advisory)",
+  lookahead_leak: "the weekly lookahead audit found decision inputs that differ when replayed from point-in-time data (advisory)",
   // Not shown in the list below — the daily watchlist digest has its own dedicated toggle in
   // Delivery (settings/delivery.tsx, notification_prefs.watchlistDigestEnabled) and is delivered
   // via notify() directly rather than through this enabledEvents gate, so an entry here would be

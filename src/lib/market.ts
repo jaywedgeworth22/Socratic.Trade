@@ -1549,6 +1549,42 @@ function normalizeWeights(weights: ScoringWeights): ScoringWeights {
   };
 }
 
+/**
+ * Four-bucket attribution of a quote's deterministic factor scores for the proposal scorecard
+ * (ProposalScorecard.signalAttribution): liquidity+momentum → technical, sentiment → news,
+ * value+quality → fundamentals, positioning+volatility+diversification → market. Same
+ * safeWeight idiom as normalizeWeights; normalized to INTEGERS summing to exactly 100 via
+ * largest-remainder rounding. Returns undefined when the quote carries no factor breakdown or
+ * every bucket is zero — the attribution block is omitted, never fabricated.
+ */
+export function computeSignalAttribution(
+  quote: Pick<MarketQuote, "factorBreakdown">
+): { technical: number; news: number; fundamentals: number; market: number } | undefined {
+  const factors = quote.factorBreakdown;
+  if (!factors) return undefined;
+  const buckets = [
+    safeWeight(factors.liquidity) + safeWeight(factors.momentum), // technical
+    safeWeight(factors.sentiment), // news
+    safeWeight(factors.value) + safeWeight(factors.quality), // fundamentals
+    safeWeight(factors.positioning) + safeWeight(factors.volatility) + safeWeight(factors.diversification) // market
+  ];
+  const total = buckets.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) return undefined;
+  const raw = buckets.map((value) => (value / total) * 100);
+  const floors = raw.map(Math.floor);
+  let remainder = 100 - floors.reduce((sum, value) => sum + value, 0);
+  // Largest fractional remainders absorb the leftover points (index breaks ties deterministically).
+  const order = raw
+    .map((value, index) => ({ index, frac: value - floors[index] }))
+    .sort((a, b) => b.frac - a.frac || a.index - b.index);
+  for (const { index } of order) {
+    if (remainder <= 0) break;
+    floors[index] += 1;
+    remainder -= 1;
+  }
+  return { technical: floors[0], news: floors[1], fundamentals: floors[2], market: floors[3] };
+}
+
 function liquidityScore(quote: MarketQuote): number {
   if (quote.volume > 0) return clamp(((Math.log10(Math.max(quote.volume, 1)) - 4) / 4) * 100);
   if (quote.marketCap && quote.marketCap > 0) return clamp(((Math.log10(quote.marketCap) - 8) / 4) * 100);

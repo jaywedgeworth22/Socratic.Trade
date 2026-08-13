@@ -221,6 +221,11 @@ export interface SymbolEnrichment {
   providerFailures?: Record<string, ProviderFailureReceipt>;
   // Per-field specific 'asOf' dates (e.g. from FMP fundamentals that carry their own 'date').
   fieldDates?: Partial<Record<keyof EnrichmentSources, string>>;
+  /** Raw SEC-XBRL point-in-time revision facts behind debtToEquity/revenueGrowth (see
+   *  parseCompanyFacts) — meta, never a scalar field. CascadingEnrichmentProvider.enrich's
+   *  SEC-XBRL branch persists these via db-fundamentals.recordFundamentalRevision;
+   *  recordsFromEnrichmentMap excludes this key from symbol_field_latest (see its META set). */
+  revisions?: import("./db-fundamentals").FundamentalRevisionFact[];
 }
 
 export type EnrichmentSourcedField =
@@ -1785,6 +1790,22 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       }
     }
 
+    // SEC-XBRL branch: point-in-time revision facts (debtToEquity/revenueGrowth) carry their own
+    // fiscal_period_end/filed_at/form — richer than the generic fieldObservations loop above,
+    // which has no filed date for this provider (sec-xbrl never sets fieldObservations, so
+    // `takeScalar` stamps its asOf with the cascade clock, not the SEC filing date). Read the raw
+    // per-symbol result straight off `results` (BEFORE the merge above collapsed it into scalars)
+    // so the revision chain survives regardless of whether sec-xbrl won the cascade for this field.
+    const secXbrlRun = results.find((r) => r.name === "sec-xbrl");
+    const revisionsToSave: import("./db-fundamentals").FundamentalRevisionRecord[] = [];
+    if (secXbrlRun) {
+      for (const [symbol, enrichment] of Object.entries(secXbrlRun.data)) {
+        for (const rev of enrichment.revisions ?? []) {
+          revisionsToSave.push({ ...rev, symbol, provider: "sec-xbrl" });
+        }
+      }
+    }
+
     // Dynamic import (not require) so eslint no-require-imports stays clean and unit
     // tests that only partially mock db modules can still no-op when the module is absent.
     // Persist BOTH: append-only numeric history AND shared per-field latest (with its own
@@ -1794,6 +1815,9 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       .then((mod) => {
         if (typeof mod.recordHistoricalFundamentals === "function" && recordsToSave.length > 0) {
           mod.recordHistoricalFundamentals(recordsToSave);
+        }
+        if (typeof mod.recordFundamentalRevision === "function") {
+          for (const rev of revisionsToSave) mod.recordFundamentalRevision(rev);
         }
         if (typeof mod.recordsFromEnrichmentMap === "function" && typeof mod.upsertSymbolFieldLatest === "function") {
           const latest = mod.recordsFromEnrichmentMap(merged, fetchedAtNow);
@@ -5902,9 +5926,16 @@ const SEC_XBRL_PERIODIC_FORMS = new Set(["10-K", "10-K/A", "10-Q", "10-Q/A"]);
 const secXbrlInFlight = new Set<string>();
 
 /** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity (from debt-specific concepts).
- *  EPS is intentionally NOT returned — see the note below (annual SEC EPS ≠ TTM).
- *  Pure function — no I/O. Safe to call with any unknown input; never throws. */
-export function parseCompanyFacts(json: unknown): { debtToEquity?: number; revenueGrowth?: number } {
+ *  EPS is intentionally NOT returned — see the note below (annual SEC EPS ≠ TTM). `revisions`
+ *  carries the raw per-filing point-in-time facts behind each winning scalar (see
+ *  FundamentalRevisionFact) — omitted entirely when empty so callers keeping the historical
+ *  `{ debtToEquity?, revenueGrowth? }`-only shape (e.g. `toEqual({})` in existing tests) are
+ *  unaffected. Pure function — no I/O. Safe to call with any unknown input; never throws. */
+export function parseCompanyFacts(json: unknown): {
+  debtToEquity?: number;
+  revenueGrowth?: number;
+  revisions?: import("./db-fundamentals").FundamentalRevisionFact[];
+} {
   try {
     if (!json || typeof json !== "object") return {};
     const root = json as Record<string, unknown>;
@@ -5960,34 +5991,40 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number; reven
 
     // Helper: the value of a concept AT a specific reporting-period end date — the latest `filed` at that
     // end wins (an amendment supersedes the original) — so debt + equity facts stay aligned on the SAME
-    // period regardless of form (the equity anchor may be a 10-Q quarter).
-    function valueAtEnd(entries: Fact[], end: string): number | undefined {
-      const atEnd = entries.filter((e) => e.end === end);
+    // period regardless of form (the equity anchor may be a 10-Q quarter). Optional `asOfFiledAt` bounds
+    // the candidate set to facts filed AT/BEFORE that date — used by the PIT revisions block below so a
+    // synthesized revision row only ever draws on facts that filing itself could have seen; omitted
+    // (undefined) for the live winning-scalar computation, which is intentionally unbounded (latest known).
+    function valueAtEnd(entries: Fact[], end: string, asOfFiledAt?: string): number | undefined {
+      const atEnd = entries.filter(
+        (e) => e.end === end && (asOfFiledAt === undefined || (e.filed ?? "") <= asOfFiledAt)
+      );
       if (atEnd.length === 0) return undefined;
       return atEnd.reduce((best, e) => ((e.filed ?? "") > (best.filed ?? "") ? e : best), atEnd[0]).val;
     }
 
     // Total DEBT at a period end from debt-specific concepts (never total Liabilities). Returns undefined
-    // when no debt concept is present (so we omit debtToEquity rather than fabricate it).
-    function debtAtEnd(end: string): number | undefined {
+    // when no debt concept is present (so we omit debtToEquity rather than fabricate it). `asOfFiledAt`
+    // (see valueAtEnd) bounds every underlying concept lookup the same way, for the PIT revisions block.
+    function debtAtEnd(end: string, asOfFiledAt?: string): number | undefined {
       // Long-term debt, NONCURRENT portion — prefer the pure concept, fall back to the combined
       // debt+finance-lease concept some filers tag instead.
       const noncurrent =
-        valueAtEnd(getEntries("LongTermDebtNoncurrent", "USD"), end) ??
-        valueAtEnd(getEntries("LongTermDebtAndFinanceLeaseObligationsNoncurrent", "USD"), end);
+        valueAtEnd(getEntries("LongTermDebtNoncurrent", "USD"), end, asOfFiledAt) ??
+        valueAtEnd(getEntries("LongTermDebtAndFinanceLeaseObligationsNoncurrent", "USD"), end, asOfFiledAt);
       // The COMPLETE long-term total (incl. current maturities) — pure concept then combined-lease variant.
       const ltdTotal =
-        valueAtEnd(getEntries("LongTermDebt", "USD"), end) ??
-        valueAtEnd(getEntries("LongTermDebtAndCapitalLeaseObligations", "USD"), end);
-      const debtCurrentAgg = valueAtEnd(getEntries("DebtCurrent", "USD"), end);
+        valueAtEnd(getEntries("LongTermDebt", "USD"), end, asOfFiledAt) ??
+        valueAtEnd(getEntries("LongTermDebtAndCapitalLeaseObligations", "USD"), end, asOfFiledAt);
+      const debtCurrentAgg = valueAtEnd(getEntries("DebtCurrent", "USD"), end, asOfFiledAt);
       // Current maturities of LT debt — pure concept then combined-lease variant.
       const ltdCurrent =
-        valueAtEnd(getEntries("LongTermDebtCurrent", "USD"), end) ??
-        valueAtEnd(getEntries("LongTermDebtAndFinanceLeaseObligationsCurrent", "USD"), end);
+        valueAtEnd(getEntries("LongTermDebtCurrent", "USD"), end, asOfFiledAt) ??
+        valueAtEnd(getEntries("LongTermDebtAndFinanceLeaseObligationsCurrent", "USD"), end, asOfFiledAt);
       // Short-term borrowings OUTSIDE long-term debt (revolver / commercial paper).
       const shortTerm =
-        valueAtEnd(getEntries("ShortTermBorrowings", "USD"), end) ??
-        valueAtEnd(getEntries("CommercialPaper", "USD"), end);
+        valueAtEnd(getEntries("ShortTermBorrowings", "USD"), end, asOfFiledAt) ??
+        valueAtEnd(getEntries("CommercialPaper", "USD"), end, asOfFiledAt);
 
       // Current-debt portion: prefer the aggregate DebtCurrent; otherwise SUM the separate components
       // (current maturities of LT debt + short-term borrowings) so neither is dropped.
@@ -6036,10 +6073,13 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number; reven
     const equityIncl = getEntries("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "USD");
     const equityAnchor = latestEntry([...equityPure, ...equityIncl]);
     const equityVal = equityAnchor && (valueAtEnd(equityPure, equityAnchor.end) ?? valueAtEnd(equityIncl, equityAnchor.end));
+    // Hoisted (not `const` inside the `if` below) so the revisions block after revenueGrowth can
+    // reuse the SAME debt total instead of recomputing debtAtEnd a second time.
+    let totalDebtAtAnchor: number | undefined;
     if (equityAnchor !== undefined && equityVal !== undefined && equityVal > 0) {
-      const totalDebt = debtAtEnd(equityAnchor.end);
-      if (totalDebt !== undefined && Number.isFinite(totalDebt) && totalDebt >= 0) {
-        const ratio = Math.round((totalDebt / equityVal) * 100) / 100;
+      totalDebtAtAnchor = debtAtEnd(equityAnchor.end);
+      if (totalDebtAtAnchor !== undefined && Number.isFinite(totalDebtAtAnchor) && totalDebtAtAnchor >= 0) {
+        const ratio = Math.round((totalDebtAtAnchor / equityVal) * 100) / 100;
         // Publish the RAW true ratio (e.g. 1.5, or 12 for a genuinely 12x-levered name). The bear-veto
         // (strategy.ts) and analytics/exports compare this value directly, so it must NOT be capped or
         // pre-normalized — a cap would let a >ceiling name escape a strict `> ceiling` veto and would
@@ -6068,6 +6108,8 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number; reven
       });
     }
     let revenueGrowth: number | undefined;
+    // Hoisted so the revisions block below can reuse the SAME prior-year denominator.
+    let prior: Fact | undefined;
     const revenueEntries = (() => {
       // Prefer the pure Revenues concept; fall back to the post-ASC-606 concept some filers tag instead.
       const primary = annualEntries("Revenues");
@@ -6082,15 +6124,83 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number; reven
         const gapDays = (Date.parse(latestRevenue.end) - Date.parse(e.end)) / 86_400_000;
         return Number.isFinite(gapDays) && gapDays >= 340 && gapDays <= 390;
       });
-      const prior = latestEntry(priorCandidates);
+      prior = latestEntry(priorCandidates);
       if (prior !== undefined && prior.val > 0) {
         revenueGrowth = Math.round(((latestRevenue.val - prior.val) / prior.val) * 100 * 100) / 100;
       }
     }
 
-    const out: { debtToEquity?: number; revenueGrowth?: number } = {};
+    // ── Point-in-time revision facts (PIT chain — fix-1792 continuation) ────────────────────────
+    // One row per DISTINCT filing that reported the winning fiscal_period_end for each derived
+    // field, threaded through so CascadingEnrichmentProvider.enrich's SEC-XBRL branch can persist
+    // the raw revision chain (fundamental_revisions), not just the winning scalar above. Scoped to
+    // the fact that anchors EACH ratio's own numerator/denominator half: debtToEquity tracks the
+    // EQUITY fact's filed dates; revenueGrowth tracks the CURRENT fiscal year revenue fact's filed
+    // dates. The PAIRED half (debt total for debtToEquity; prior-year revenue for revenueGrowth) is
+    // bounded to facts filed AT/BEFORE that row's own filedAt (`asOfFiledAt` on valueAtEnd/
+    // debtAtEnd) — never the single latest-known figure — so a row synthesized when a symbol is
+    // first observed after an amendment can never embed a value that filing could not actually have
+    // seen (backfill contamination). When no paired fact was filed by then, the row is honestly
+    // omitted rather than guessed. A same-period debt-only or prior-year-only restatement whose
+    // OWN filed date is after every equity/revenue filed date is a deliberate scope limit here (it
+    // has no equity/revenue filed date to anchor a row on) — see the doc comment on
+    // FundamentalRevisionFact.
+    const revisions: import("./db-fundamentals").FundamentalRevisionFact[] = [];
+    if (debtToEquity !== undefined && equityAnchor !== undefined) {
+      // Same concept family the winning scalar resolved at the anchor end (pure StockholdersEquity
+      // if it has an entry there, else the including-noncontrolling-interest variant) — mixing both
+      // families into one chain would let a same-period, differently-filed incl-only tag masquerade
+      // as a restatement of the pure concept (or vice versa).
+      const equityConceptEntries = equityPure.some((e) => e.end === equityAnchor.end) ? equityPure : equityIncl;
+      const seenFiled = new Map<string, Fact>();
+      for (const e of equityConceptEntries) {
+        if (e.end === equityAnchor.end && e.form && e.filed && !seenFiled.has(e.filed)) seenFiled.set(e.filed, e);
+      }
+      for (const [filedAt, e] of seenFiled) {
+        if (e.val <= 0) continue; // matches the >0 equity guard on the winning computation
+        const debtAsOfFiling = debtAtEnd(equityAnchor.end, filedAt);
+        if (debtAsOfFiling === undefined || !Number.isFinite(debtAsOfFiling) || debtAsOfFiling < 0) continue;
+        revisions.push({
+          field: "debtToEquity",
+          fiscalPeriodEnd: equityAnchor.end,
+          value: Math.round((debtAsOfFiling / e.val) * 100) / 100,
+          form: e.form ?? "",
+          filedAt
+        });
+      }
+    }
+    if (revenueGrowth !== undefined && latestRevenue !== undefined && prior !== undefined) {
+      const seenFiled = new Map<string, Fact>();
+      for (const e of revenueEntries) {
+        if (e.end === latestRevenue.end && e.form && e.filed && !seenFiled.has(e.filed)) seenFiled.set(e.filed, e);
+      }
+      for (const [filedAt, e] of seenFiled) {
+        const priorCandidatesAsOf = revenueEntries.filter((c) => {
+          if (c.end >= latestRevenue.end) return false;
+          const gapDays = (Date.parse(latestRevenue.end) - Date.parse(c.end)) / 86_400_000;
+          if (!Number.isFinite(gapDays) || gapDays < 340 || gapDays > 390) return false;
+          return (c.filed ?? "") <= filedAt;
+        });
+        const priorAsOf = latestEntry(priorCandidatesAsOf);
+        if (priorAsOf === undefined || priorAsOf.val <= 0) continue;
+        revisions.push({
+          field: "revenueGrowth",
+          fiscalPeriodEnd: latestRevenue.end,
+          value: Math.round(((e.val - priorAsOf.val) / priorAsOf.val) * 100 * 100) / 100,
+          form: e.form ?? "",
+          filedAt
+        });
+      }
+    }
+
+    const out: {
+      debtToEquity?: number;
+      revenueGrowth?: number;
+      revisions?: import("./db-fundamentals").FundamentalRevisionFact[];
+    } = {};
     if (debtToEquity !== undefined) out.debtToEquity = debtToEquity;
     if (revenueGrowth !== undefined) out.revenueGrowth = revenueGrowth;
+    if (revisions.length > 0) out.revisions = revisions;
     return out;
   } catch {
     return {};

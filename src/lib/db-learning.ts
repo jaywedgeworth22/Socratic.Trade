@@ -228,6 +228,41 @@ export function listSignalSnapshotAuditAfter(
   return rows.map((row) => ({ rowid: row.rowid, id: row.id, createdAt: row.created_at, payload: JSON.parse(row.payload) }));
 }
 
+export interface RagCandidatePoolAuditRow {
+  id: string;
+  createdAt: string;
+  payload: unknown;
+}
+
+/**
+ * `rag_candidate_pool` audit rows for one (runId, symbol) retrieval call — the lookahead audit's
+ * join from a sampled decision back to the candidate pool its retrieval persisted (opt-in via
+ * RAG_PERSIST_CANDIDATE_POOL; see rag/candidate-pool.ts). More than one row can exist per pair
+ * when several retrieval passes ran for the same symbol in a run (filings vs episodic), so the
+ * caller disambiguates by the record's queryHash. Symbol matching is case/whitespace-insensitive —
+ * pool records store the raw retrieval `symbol` argument, not a normalized form.
+ */
+export function listRagCandidatePoolAudit(
+  userId: string,
+  runId: string,
+  symbol: string,
+  limit = 8
+): RagCandidatePoolAuditRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, created_at, payload
+       FROM audit_events
+       WHERE user_id = ?
+         AND kind = 'rag_candidate_pool'
+         AND json_extract(payload, '$.runId') = ?
+         AND UPPER(TRIM(json_extract(payload, '$.symbol'))) = ?
+       ORDER BY created_at ASC
+       LIMIT ?`
+    )
+    .all(userId, runId, symbol.trim().toUpperCase(), limit) as Array<{ id: string; created_at: string; payload: string }>;
+  return rows.map((row) => ({ id: row.id, createdAt: row.created_at, payload: JSON.parse(row.payload) }));
+}
+
 // ── Counterfactual learning watermarks ────────────────────────────────────────
 
 export interface CounterfactualLearningWatermark {

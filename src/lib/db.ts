@@ -2785,6 +2785,69 @@ const MIGRATIONS: Migration[] = [
           ON signal_health_snapshot (user_id, horizon, period_end DESC);
       `);
     }
+  },
+  {
+    // Truncated-replay lookahead audit (freqtrade lookahead-analysis port): one finding row per
+    // (user, decision, factor-or-field) — the decision-time value vs the value recomputed from
+    // data truncated to the decision date, with an honest three-way classification
+    // (clean | mismatch | unverifiable). Written by the weekly lookahead-audit due-job lane
+    // (src/lib/lookahead-audit.ts); CRUD in db-lookahead-audit.ts. Unverifiable rows are
+    // deliberate coverage-gap receipts (factors with no point-in-time source), not noise.
+    version: 75,
+    name: "lookahead_audit_findings",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS lookahead_audit_findings (
+          user_id TEXT NOT NULL,
+          decision_id TEXT NOT NULL,
+          run_id TEXT,
+          symbol TEXT NOT NULL,
+          factor_or_field TEXT NOT NULL,
+          classification TEXT NOT NULL CHECK (classification IN ('clean', 'mismatch', 'unverifiable')),
+          persisted_value REAL,
+          recomputed_value REAL,
+          delta REAL,
+          detail TEXT,
+          as_of TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, decision_id, factor_or_field)
+        );
+        CREATE INDEX IF NOT EXISTS idx_lookahead_findings_user_created
+          ON lookahead_audit_findings (user_id, created_at DESC);
+      `);
+    }
+  },
+  {
+    // Point-in-time fundamentals revision chain (qlib/ai-hedge-fund lookahead lesson), scoped to
+    // SEC-XBRL-derived GAAP facts (debtToEquity, revenueGrowth today; future EPS/revenue fields can
+    // reuse the same shape). Mirrors the sec_filings/learned_context superseded_by idiom: a NEW
+    // filing for the SAME (symbol, field, fiscal_period_end) marks the prior LIVE row's
+    // superseded_by (the successor's own filed_at — there is no synthetic id, and symbol/field/
+    // fiscal_period_end are already fixed within a group) instead of overwriting it, so the old row
+    // stays queryable. GLOBAL market data (no user_id column) — deliberately exempt from
+    // DELETE_TABLES_BY_USER_ID, same class as sec_filings/symbol_field_latest/
+    // historical_fundamentals: SEC filings are public-company facts, not account-private. CRUD in
+    // db-fundamentals.ts (recordFundamentalRevision / getFundamentalAsOf).
+    version: 76,
+    name: "fundamental_revisions",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS fundamental_revisions (
+          symbol TEXT NOT NULL,
+          field TEXT NOT NULL,
+          fiscal_period_end TEXT NOT NULL,
+          value REAL NOT NULL,
+          form TEXT NOT NULL,
+          filed_at TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          superseded_by TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (symbol, field, fiscal_period_end, filed_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fundamental_revisions_symbol_field_filed
+          ON fundamental_revisions (symbol, field, filed_at);
+      `);
+    }
   }
 ];
 
@@ -4407,3 +4470,4 @@ export * from "./db-document-abstracts";
 export * from "./db-task-journal";
 export * from "./db-embed-stage";
 export * from "./db-signal-health";
+export * from "./db-lookahead-audit";

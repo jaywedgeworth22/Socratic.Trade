@@ -360,6 +360,7 @@ export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, strin
   risk_advisory: "Risk advisory",
   protective_exit_failing: "Protective exit failing",
   signal_health: "Signal health drift",
+  lookahead_leak: "Lookahead leak suspected",
   watchlist_digest: "Daily watchlist digest"
 };
 

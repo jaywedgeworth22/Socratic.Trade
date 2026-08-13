@@ -379,6 +379,31 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     defaultValue: 0.35,
     min: 0,
     max: 1
+  },
+
+  // ── Polymarket prediction-market context (keyless — Gamma API needs no API key; see
+  // src/lib/polymarket-provider.ts). Prompt-time only: fetched for the candidates entering the
+  // strategist prompt, gated through the same news-relevance.ts rubric as every other keyless
+  // provider. ──────────────────────────────────────────────────────────────────────────────────
+  {
+    id: "POLYMARKET_CONTEXT",
+    group: "enrichment",
+    label: "Polymarket prediction-market context",
+    description:
+      "Inject up to 3 currently-active, company-relevant Polymarket markets (question, implied probability, volume) into the strategist prompt per candidate.  Keyless — no credential required.  Off restores the pre-Polymarket prompt byte-for-byte.",
+    type: "boolean",
+    defaultValue: true
+  },
+  {
+    id: "POLYMARKET_MIN_RELEVANCE",
+    group: "enrichment",
+    label: "Polymarket relevance minimum score",
+    description:
+      "Minimum 0-1 relevance score (this app's headline-text rubric, applied to the market question) a Polymarket market must clear to be shown for a symbol.",
+    type: "number",
+    defaultValue: 0.5,
+    min: 0,
+    max: 1
   }
 ] as const;
 
