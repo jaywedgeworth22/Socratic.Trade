@@ -6982,12 +6982,14 @@ function positiveScorecardNumber(value: number | undefined): number | undefined 
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-/** MA/volume context recycled from a daily bar series the run already fetched (the ATR stop
- * precompute) — this never triggers a fetch of its own. */
+/** MA/volume/ATR context recycled from a daily bar series the run already fetched (the ATR stop
+ * precompute) — this never triggers a fetch of its own. `atr14` is the raw dollar ATR(14), the
+ * basis scorecardSniperPoints derives its volatility-aware secondary-entry pullback from. */
 export interface ScorecardIndicators {
   sma50?: number;
   sma200?: number;
   avgVolume20d?: number;
+  atr14?: number;
 }
 
 /** Simple moving average over the LAST `windowSize` BARS (so "50-day"/"200-day" is literally
@@ -7009,10 +7011,12 @@ export function scorecardIndicatorsFromBars(bars: OHLCBar[]): ScorecardIndicator
   // and every one of them must carry a real volume; any hole means the field is omitted.
   const tail = bars.slice(-20).map((b) => b.volume).filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);
   const avgVolume20d = bars.length >= 20 && tail.length === 20 ? Math.round(tail.reduce((sum, v) => sum + v, 0) / tail.length) : undefined;
+  const atr14 = atr(bars, 14);
   return {
     ...(typeof sma50 === "number" ? { sma50: round2(sma50) } : {}),
     ...(typeof sma200 === "number" ? { sma200: round2(sma200) } : {}),
-    ...(avgVolume20d !== undefined ? { avgVolume20d } : {})
+    ...(avgVolume20d !== undefined ? { avgVolume20d } : {}),
+    ...(typeof atr14 === "number" ? { atr14: round2(atr14) } : {})
   };
 }
 
@@ -7101,22 +7105,40 @@ function scorecardDataPerspective(
   };
 }
 
-function scorecardSniperPoints(proposal: TradeProposal, policy: TradingPolicy): ProposalScorecard["sniperPoints"] {
+function scorecardSniperPoints(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  indicators: ScorecardIndicators | undefined
+): ProposalScorecard["sniperPoints"] {
   if (proposal.side !== "buy" && proposal.side !== "short") return undefined;
   const round2 = (n: number) => Math.round(n * 100) / 100;
   const idealBuy = positiveScorecardNumber(proposal.referencePrice);
   const stopLoss = positiveScorecardNumber(proposal.bracketStopLoss);
   const takeProfit = positiveScorecardNumber(proposal.bracketTakeProfit);
-  // The secondary entry exists ONLY when the owner set the knob — no silent hardcoded pullback.
-  const pullbackPct = policy.secondaryBuyPullbackPct;
+  // The secondary entry is volatility-aware BY DEFAULT: half of ATR(14), as a % of the entry anchor,
+  // clamped to a 1-4% band (atrStopPct's floor/cap) — never a hair-trigger, never a runaway distance.
+  // Reuses the ATR14 the scorecard's MA/volume fields were already computed from, via the same
+  // cached bars (scorecardIndicatorsFromBars) — this never triggers a fetch of its own. The owner's
+  // explicit knob, when set, OVERRIDES the derivation outright — their number always wins over the
+  // formula. Absent both a usable ATR read and the knob, the field is honestly omitted, never a
+  // hardcoded constant.
+  const ownerPullbackPct = policy.secondaryBuyPullbackPct;
+  const hasOwnerPullback = typeof ownerPullbackPct === "number" && Number.isFinite(ownerPullbackPct) && ownerPullbackPct > 0;
+  const atrPullbackPct = idealBuy !== undefined ? atrStopPct(indicators?.atr14, idealBuy, 0.5, 1.0, 4.0) : undefined;
+  const pullbackPct = hasOwnerPullback ? ownerPullbackPct : atrPullbackPct;
+  const secondaryBuyBasis: NonNullable<ProposalScorecard["sniperPoints"]>["secondaryBuyBasis"] = hasOwnerPullback
+    ? "owner-set"
+    : atrPullbackPct !== undefined
+      ? "atr-derived"
+      : undefined;
   const secondaryBuy =
-    idealBuy !== undefined && typeof pullbackPct === "number" && Number.isFinite(pullbackPct) && pullbackPct > 0
+    idealBuy !== undefined && typeof pullbackPct === "number"
       ? round2(idealBuy * (1 + (proposal.side === "short" ? 1 : -1) * (pullbackPct / 100)))
       : undefined;
   if (idealBuy === undefined && secondaryBuy === undefined && stopLoss === undefined && takeProfit === undefined) return undefined;
   return {
     ...(idealBuy !== undefined ? { idealBuy } : {}),
-    ...(secondaryBuy !== undefined ? { secondaryBuy } : {}),
+    ...(secondaryBuy !== undefined ? { secondaryBuy, ...(secondaryBuyBasis ? { secondaryBuyBasis } : {}) } : {}),
     ...(stopLoss !== undefined ? { stopLoss } : {}),
     ...(takeProfit !== undefined ? { takeProfit } : {})
   };
@@ -7222,7 +7244,7 @@ export function buildProposalScorecard(input: {
   indicators?: ScorecardIndicators;
 }): ProposalScorecard {
   const { proposal, decision, policy, quote, indicators } = input;
-  const sniperPoints = scorecardSniperPoints(proposal, policy);
+  const sniperPoints = scorecardSniperPoints(proposal, policy, indicators);
   const dataPerspective = scorecardDataPerspective(proposal, quote, indicators);
   const signalAttribution = quote ? computeSignalAttribution(quote) : undefined;
   const decisionChain: DecisionStep[] =

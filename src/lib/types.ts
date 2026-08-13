@@ -1205,10 +1205,12 @@ export interface TradingPolicy {
    */
   maxEntryDriftPct?: number;
   /**
-   * Owner knob for the scorecard's `sniperPoints.secondaryBuy` level: a secondary entry this far
-   * (%) beyond the entry anchor in the pullback direction (below it for a long, above it for a
-   * short). PURELY informational — rendered on the scorecard, never traded automatically.
-   * Undefined (the default) omits the level entirely; no hardcoded fallback ever fills it in.
+   * OVERRIDE for the scorecard's `sniperPoints.secondaryBuy` level: a secondary entry this far (%)
+   * beyond the entry anchor in the pullback direction (below it for a long, above it for a short).
+   * When set, this owner-chosen % wins outright over the built-in volatility-aware ATR derivation
+   * (half of ATR(14) as a % of the entry anchor, clamped 1-4%). PURELY informational — rendered on
+   * the scorecard, never traded automatically. Undefined (the default) leaves the ATR derivation in
+   * control; the level is omitted entirely only when neither this knob nor a usable ATR read exists.
    */
   secondaryBuyPullbackPct?: number;
   /**
@@ -1404,11 +1406,15 @@ export interface ProposalScorecard {
     priceVsMa: { price: number; sma50?: number; sma200?: number };
     volume: { current?: number; avg20d?: number };
   };
-  /** Key price levels reusing referencePrice + the bracket legs. `secondaryBuy` exists ONLY when
-   * the owner knob policy.secondaryBuyPullbackPct is set — never a silent hardcoded number. */
+  /** Key price levels reusing referencePrice + the bracket legs. `secondaryBuy` is volatility-aware
+   * BY DEFAULT — half of ATR(14) as a % of the entry anchor, clamped 1-4% — and exists whenever that
+   * ATR read or the owner override policy.secondaryBuyPullbackPct is available; it is never a silent
+   * hardcoded number, and is genuinely omitted only when neither basis exists. `secondaryBuyBasis`
+   * discloses which one produced it. */
   sniperPoints?: {
     idealBuy?: number;
     secondaryBuy?: number;
+    secondaryBuyBasis?: "atr-derived" | "owner-set";
     stopLoss?: number;
     takeProfit?: number;
   };
