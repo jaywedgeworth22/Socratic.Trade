@@ -24,6 +24,13 @@ assertions in `test/persistence-hardening.test.ts` from 76 to 77.
 Branch `monet/real-toggles`, worktree `~/apps/trading-monet-toggles`. Gates: tsc clean, lint 0
 errors, full test/build results in the rollout note. Rollout:
 `docs/rollouts/2026-08-13-remove-force-include-notifications.md`.
+## Current (2026-08-13 ~2:20pm CT CLAUDE — HOTFIX: adaptive FTS-mirror batching)
+
+The ingestion re-enable reproduced the 08-10 event-loop stall (ftsMirrorBatch 119s pinned
+stretch on a 702-chunk 10-K; site flapped 503 for hours).  Relief: worker off + restart (site
+healthy 19:13Z).  Cure in this PR: adaptive group sizing against a 250ms synchronous-stretch
+budget (pure policy fn + tests).  Worker re-enables after deploy.  Blockers: ct-deploy-guard
+has been eating ST webhook deploys — verify the deploy lands, retrigger via API if not.
 
 ## Current (2026-08-13 GROK — Fleet Pushover/Sentry/Uptime triage)
 
