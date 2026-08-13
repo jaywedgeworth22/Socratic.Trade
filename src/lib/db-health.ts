@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "crypto";
 import { getDb } from "./db";
 import { isLocalDbFaultMessage, noteLocalDbFault } from "./local-db-fault";
+import { isIntentionalOffHealthService } from "./retired-direct-vendors";
 
 // `stoppedWorking` is set for a few distinct reasons (see getServiceHealthSummaries). This one is the
 // "5 consecutive failures" condition — the only one strong enough to act on automatically (e.g. the
@@ -282,13 +283,22 @@ export function logApiHealth(opts: {
       }
     })();
 
-    if (!opts.ok && errorText && !RAG_SERVICES_WITH_OWN_ALERTING.has(opts.service)) {
+    // `isIntentionalOffHealthService`: FMP / Quiver / Unusual Whales are PRODUCT-RETIRED direct
+    // lanes (see retired-direct-vendors.ts). Admin Connections already renders them as muted OFF
+    // rather than red STOPPED; a residual call site that still touches one must not additionally
+    // page the operator about a vendor we deliberately stopped using.
+    if (
+      !opts.ok &&
+      errorText &&
+      !RAG_SERVICES_WITH_OWN_ALERTING.has(opts.service) &&
+      !isIntentionalOffHealthService(opts.service)
+    ) {
       const keySource = opts.keySource ?? null;
       // Soft/expected-limit failures (429 bursts, free-tier caps) normally do not page — they are
       // budget/rate behavior, not a broken integration. Exception: a caller that passes
       // `quotaResetAt` (Alpha Vantage daily-cap exhaustion) wants ONE operator heads-up pinned to
       // the known reset instant, so allow that path through even when the row is soft-stamped.
-      // Hard failures still gate on lane health (consecutive hard STOPPED or soft yellow heuristics).
+      // Hard failures still gate on lane health (the HARD consecutive-failure streak only).
       const isSoft = isSoftHealthFailure(errorText);
       if (isSoft && !opts.quotaResetAt) {
         // pure expected-limit with no known reset: no automatic alert
@@ -297,8 +307,19 @@ export function logApiHealth(opts: {
         // tenant A's failures don't fire a provider-degraded alert to tenant B on the shared lane.
         const lane = getLaneHealth(opts.service, keySource, opts.userId ?? null);
         // quotaResetAt path: alert once even before a 5-hard streak (the single "pool exhausted"
-        // row is enough signal). Otherwise require the lane already stoppedWorking.
-        if (opts.quotaResetAt || lane.stoppedWorking) {
+        // row is enough signal). Otherwise require the HARD streak specifically.
+        //
+        // Why the hard kind and not bare `stoppedWorking` (the dominant Sentry-noise source,
+        // 2026-08-12): `stoppedWorking` is also set by two SOFT heuristics — "active in past hour
+        // but no successful call ever" and "…no success in 60 min". On a LOW-FREQUENCY lane (a
+        // probe or a once-an-hour scheduled read) the very first transient failure satisfies one
+        // of those the instant it lands — one call this hour, zero successes — so a single blip
+        // minted a "<service> connection failed" Sentry issue with no streak required at all.
+        // Requiring HEALTH_REASON_CONSECUTIVE_FAILURES means five consecutive HARD (non-soft)
+        // failures must land first, which a genuine outage produces within minutes and a blip
+        // never does. The soft heuristics are untouched — they still paint the lane in Admin
+        // Connections; they just no longer page on their own.
+        if (opts.quotaResetAt || lane.reason === HEALTH_REASON_CONSECUTIVE_FAILURES) {
           void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, errorText, {
             // Soft/rate-limit-shaped text: skip Sentry (noise); hard outages still capture.
             skipSentry: isSoft || /429|rate limit/i.test(errorText),
@@ -561,6 +582,12 @@ async function captureHealthSentryMessage(
       scope.setTag("component", "api-health");
       if (context.service) scope.setTag("health.service", String(context.service));
       if (context.keySource) scope.setTag("health.key_source", String(context.keySource));
+      // Group by the STABLE lane identifier, not by the rendered message. Sentry's default
+      // fingerprint for captureMessage is the message text, and these messages embed a DISPLAY
+      // name that drifts ("Voyage" vs "voyage", "OpenRouter" vs "OpenRouter embed") — one lane
+      // fragmented into six issues that way. `service` is the health-log service id and never
+      // drifts, so grouping survives any future title rewording.
+      if (context.service) scope.setFingerprint(["api-health", String(context.service)]);
       scope.setContext("api-health", context);
       captureMessage(message);
     });

@@ -57,6 +57,73 @@ grades sniper stop/take levels against the daily closes it already fetches
 read-only in the decision trace.  Gates: tsc clean; targeted suites 182/182 (23 new).  Rollout:
 docs/rollouts/2026-08-12-r3-proposal-scorecard.md.  Local slice commit on `agent/claude`; lands
 via the round-3 integration lane.  Blockers: none.
+## Current (2026-08-12 GROK — broker cascade + Webull/eToro/Public + CopyTrader intel)
+
+**Branch `grok/broker-webull-etoro-public`:** connected brokers (Tradier / Alpaca / Robinhood)
+now sit in front of paid history providers; Public + eToro gateways + Webull connect stub;
+CopyTrader observe/allowlist framework (official eToro API only).  Owner must mint keys.
+Rollout: `docs/rollouts/2026-08-12-broker-cascade-and-copy-intel.md`.
+
+## Current (2026-08-12 CLAUDE - connection-health alert noise, root-caused)
+
+Branch `claude/health-alert-noise` (worktree `/private/tmp/fx-st-health`).  Sentry carried ~28
+distinct `"<name> connection failed"` issues, almost none of which were real outages.  Seven
+verified causes fixed together, kept individually reviewable in the diff:
+
+1. **Streak gate** - the alert gated on `lane.stoppedWorking`, which is ALSO set by two soft
+   heuristics that a low-frequency lane's FIRST failure satisfies.  Now requires the hard
+   `HEALTH_REASON_CONSECUTIVE_FAILURES` streak.
+2. **Fingerprints** - pinned to stable lane ids so display-name drift stops fragmenting one lane
+   into six issues.
+3. **429 asymmetry** - RAG 429s now skip Sentry the way db-health always did; `alertUsageLimitHit`
+   escalation intact.
+4. **Re-probe loop** - all synthetic probe failures log soft, breaking alert -> 6h cooldown ->
+   re-probe forever.
+5. **Retired vendors** - FMP / Quiver / UW excluded from the alert path.
+6. **Timeouts** - usage-monitor budget + knobs reads 2500ms -> 8000ms and soft-logged (both are
+   fail-open).
+7. **Local-fault mislabel** - `storeContexts` receipt/finalize SQLite faults attributed via a new
+   cause-chain-walking `localDbFaultReason` instead of "RAG vector store failed".
+
+congress.trade 502s (SOCRATIC-TRADE-B/8/1P) and the filingapi 401 (SOCRATIC-TRADE-1G) confirmed
+still alerting, with explicit regression guards.  Rollout:
+`docs/rollouts/2026-08-12-health-alert-noise.md`.
+## Current (2026-08-12 CLAUDE — CI scripts: Sentry `app` tag + branchless fingerprint, effort-sync transport retry)
+
+Two python-only CI-support fixes on branch `claude/ci-report-app-tag`
+(worktree `/private/tmp/fx-st-ci`):
+
+1. `scripts/sentry-ci-report.py` had no app identifier, so ST's events in the
+   SHARED `fleet-infra` Sentry project deduped into Congress.Trade's
+   identically-named workflow issues ("CI", "Security", "Effort Issues Sync").
+   Adds `APP = "socratic-trade"` to the message, tags, and fingerprint.
+   Fingerprint is now `[ci-failure, app, workflow]` — branch is a tag only,
+   because merge-queue refs are unique per attempt and were minting a throwaway
+   Sentry issue per queued run.
+2. `scripts/sync-effort-issues.py` `http_request` caught only `HTTPError`, so
+   today's `SSL: CERTIFICATE_VERIFY_FAILED` reaching api.github.com killed the
+   whole run.  Adds bounded exponential-backoff transport retry for idempotent
+   methods only — a `POST` is never replayed, since a truncated create response
+   means the issue already exists and a retry would duplicate it.
+
+Crons `monitor_slug` deliberately left un-namespaced: renaming orphans live
+Sentry monitors, and there is no collision to fix.  Gates and a 15-check
+behavioral harness recorded in the rollout note.
+
+Rollout: `docs/rollouts/2026-08-12-ci-report-app-tag.md`.
+
+## Current (2026-08-12 GROK — iOS watchlist wrap + account switch + admin + P&L)
+
+Owner Assets screenshot + follow-up.  Four bugs on one branch
+`grok/ios-watchlist-chip-wrap` (worktree `~/apps/trading-grok-watchlist-chips`):
+
+1. Watchlist chips wrap mid-ticker — content-sized `WrappingHStack` (#2657).
+2. Use-account looks dead, then snaps — keep Switching pill until snapshot.
+3. Tradier Sandbox `$0` P&L — unrealized from positions; realized "—" without fills.
+4. Admin Portal stuck — loading UI, cookie timeout, same-host subframe allow.
+5. Alpaca Paper "won't switch" — activate now invalidates the dashboard snapshot cache.
+
+Rollout: `docs/rollouts/2026-08-12-ios-watchlist-chip-wrap.md`.
 
 ## Current (2026-08-12 ~7:30am CT CLAUDE — external-repo lessons round 2: alpha grading, signal health, cancel-dust)
 

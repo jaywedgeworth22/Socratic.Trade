@@ -1033,11 +1033,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (congressFundamentalsEnabled()) providers.push(new CongressTradeEnrichmentProvider(userId));
   // Tier 2 — DELAYED quotes + fundamentals, in availability order (unchanged relative ordering).
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
-  // First-party Robinhood fundamentals — opt-in: requires ROBINHOOD_ADAPTER=mcp (connected)
-  // AND ROBINHOOD_ENRICHMENT_ENABLED, because the broker field set/units should be verified
-  // against /api/admin/robinhood-probe before trusting them next to other real numbers.
-  // (This is delayed/averaged fundamentals — e.g. average_volume — not a real-time quote,
-  // so it stays in the delayed tier rather than next to the Alpaca snapshot.)
+  // First-party Robinhood fundamentals — on whenever the MCP adapter is live.
+  // Sector/industry are still dropped (RH taxonomy is not GICS).  Set
+  // ROBINHOOD_ENRICHMENT_ENABLED=off to disable.  Delayed/averaged fields only
+  // (PE, 52w, avg volume), so this stays behind the Alpaca snapshot tier.
   if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider(userId));
   // Keyless Nasdaq quote/summary/holdings — free-wave redundancy beside Yahoo (no crumb handshake).
   // Seated just before Yahoo so both participate in wave A; first-wins still prefers earlier paid
@@ -2112,7 +2111,8 @@ function runWebullUnofficialScript(
 
 export function robinhoodEnrichmentEnabled(): boolean {
   if (process.env.ROBINHOOD_ADAPTER !== "mcp") return false;
-  return ["1", "true", "on", "yes"].includes(String(process.env.ROBINHOOD_ENRICHMENT_ENABLED ?? "").trim().toLowerCase());
+  const flag = String(process.env.ROBINHOOD_ENRICHMENT_ENABLED ?? "on").trim().toLowerCase();
+  return !["0", "false", "off", "no"].includes(flag);
 }
 
 export function parseRobinhoodFundamentals(row: Record<string, unknown>): SymbolEnrichment {

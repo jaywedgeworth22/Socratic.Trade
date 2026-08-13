@@ -100,11 +100,27 @@ final class RunStateDerivationTests: XCTestCase {
         XCTAssertTrue(allowed("https://socratictrade.com/admin/llm-usage"))
         XCTAssertTrue(allowed("https://socratictrade.com/login"))
         XCTAssertTrue(allowed("https://socratictrade.com/api/auth/session"))
+        XCTAssertTrue(allowed("https://socratictrade.com/api/admin/llm-usage"))
+        XCTAssertTrue(allowed("https://socratictrade.com/_next/static/chunks/app.js"))
 
         XCTAssertFalse(allowed("http://socratictrade.com/admin"))
         XCTAssertFalse(allowed("https://evil.example.com/admin"))
         XCTAssertFalse(allowed("https://socratictrade.com/console"))
         XCTAssertFalse(allowed("https://socratictrade.com/administrator"))
         XCTAssertFalse(allowed("https://sub.socratictrade.com/admin"))
+
+        XCTAssertTrue(
+            AdminPortalWebView.Coordinator.isAllowed(
+                URL(string: "https://socratictrade.com/console")!,
+                isMainFrame: false
+            ),
+            "Same-host subresources must load or the portal stays blank."
+        )
+        XCTAssertFalse(
+            AdminPortalWebView.Coordinator.isAllowed(
+                URL(string: "https://evil.example.com/_next/x.js")!,
+                isMainFrame: false
+            )
+        )
     }
 }

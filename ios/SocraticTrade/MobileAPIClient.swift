@@ -54,8 +54,9 @@ struct MobileAPIClient {
         return snap
     }
 
-    func snapshotData() async throws -> (MobileSnapshot, Data) {
-        let req = request(path: "/api/mobile/snapshot")
+    func snapshotData(timeout: TimeInterval = 30) async throws -> (MobileSnapshot, Data) {
+        var req = request(path: "/api/mobile/snapshot")
+        req.timeoutInterval = timeout
         let data = try await successfulResponseData(for: req)
         do {
             let snap = try JSONDecoder().decode(MobileSnapshot.self, from: data)

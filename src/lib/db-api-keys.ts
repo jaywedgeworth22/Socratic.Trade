@@ -24,6 +24,7 @@ import type {
   WatchlistItem
 } from "./types";
 import { STOP_PLAN_STYLES } from "./types";
+import { invalidateDashboardSnapshotCache } from "./dashboard-snapshot-cache";
 
 // ── Field-Level Encryption ──────────────────────────────────────────────────
 
@@ -1095,7 +1096,7 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
   return rows.map(r => ({
     id: String(r.id),
     userId: String(r.user_id),
-    broker: String(r.broker) as "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier",
+    broker: String(r.broker) as ConnectedAccount["broker"],
     environment: String(r.environment) as "live" | "paper",
     accountNumber: r.account_number != null ? String(r.account_number) : undefined,
     label: String(r.label),
@@ -1117,7 +1118,7 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
   return {
     id: String(row.id),
     userId: String(row.user_id),
-    broker: String(row.broker) as "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier",
+    broker: String(row.broker) as ConnectedAccount["broker"],
     environment: String(row.environment) as "live" | "paper",
     accountNumber: row.account_number != null ? String(row.account_number) : undefined,
     label: String(row.label),
@@ -1157,7 +1158,7 @@ export function getConnectedAccountByBroker(broker: ConnectedAccount["broker"], 
   return {
     id: String(row.id),
     userId: String(row.user_id),
-    broker: String(row.broker) as "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier",
+    broker: String(row.broker) as ConnectedAccount["broker"],
     environment: String(row.environment) as "live" | "paper",
     accountNumber: row.account_number != null ? String(row.account_number) : undefined,
     label: String(row.label),
@@ -1183,7 +1184,7 @@ export function getConnectedAccount(id: string, userId: string = "local"): Conne
   return {
     id: String(row.id),
     userId: String(row.user_id),
-    broker: String(row.broker) as "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier",
+    broker: String(row.broker) as ConnectedAccount["broker"],
     environment: String(row.environment) as "live" | "paper",
     accountNumber: row.account_number != null ? String(row.account_number) : undefined,
     label: String(row.label),
@@ -1283,6 +1284,11 @@ export function setActiveConnectedAccount(id: string, userId: string = "local"):
     db.prepare("UPDATE connected_accounts SET is_active = 0 WHERE user_id = ?").run(userId);
     db.prepare("UPDATE connected_accounts SET is_active = 1 WHERE id = ? AND user_id = ?").run(id, userId);
   })();
+  // Drop every cached snapshot for this user.  The next dashboard/mobile
+  // read must assemble against the new active pointer — a 10s stale hit
+  // (or an in-flight compute for the previous account) is why iOS looked
+  // like it refused to switch to Alpaca Paper after Tradier Sandbox.
+  invalidateDashboardSnapshotCache(userId);
 }
 
 export function purgeConnectedAccount(id: string, userId: string = "local"): boolean {
