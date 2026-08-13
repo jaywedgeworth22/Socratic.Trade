@@ -1,3 +1,24 @@
+## Current (2026-08-12 ~3:05pm CT CLAUDE — r3: keyless Polymarket prediction-market context)
+
+Round 3 slice (implementable subset of the social-sentiment lesson: real-money crowd odds as LLM
+context; Reddit/X stay OUT of scope, blocked on owner API keys).  New `src/lib/polymarket-provider.ts`
+— keyless (no credential ever created/held), hits `gamma-api.polymarket.com/public-search`
+(live-verified shape in the file header), matches markets to a symbol via the existing
+`scoreHeadlineRelevance` rubric (`news-relevance.ts`, incl. the ambiguous-company-name
+corroboration gate), keeps up to 3 currently-active company-relevant markets per symbol
+(question/implied probability/volume), 10-minute in-process cache, bounded per-run symbol count,
+fails open to no-data on any error.  Wired into `strategy.ts`'s `proposeTrades` at the same seam
+`prompt-headlines.ts` and `getUpcomingEconomicEventsForPrompt` use — prompt-time only (candidates
+entering the LLM call), never the scan-wide enrichment cascade, so it never fires on a
+budget/threshold-skipped run.  New `MarketQuote.polymarketLines`; new catalog knobs
+`POLYMARKET_CONTEXT` (default true) / `POLYMARKET_MIN_RELEVANCE` (default 0.5).  Dependency-health
+and evidence-pack-family both investigated and found to need ZERO new registration (health map is
+derived dynamically from logged calls; the new prompt field nests inside the existing "market"
+family evidence ref) — see the rollout note.  Gates: tsc clean; 18 new tests
+(`test/polymarket-provider.test.ts`) + 29 adjacent-seam tests green; lint 0 errors on touched
+files.  Rollout: docs/rollouts/2026-08-12-r3-polymarket-context.md.  Local slice commit on
+`agent/claude`; lands via the round-3 integration lane.  Blockers: none.
+
 ## Current (2026-08-12 ~2:10pm CT CLAUDE — r3: truncated-replay lookahead audit)
 
 Round 3 slice (freqtrade lookahead-analysis port, scoped per the gap analysis to the two

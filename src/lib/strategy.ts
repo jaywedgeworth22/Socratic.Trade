@@ -165,6 +165,7 @@ import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-t
 import { isEscalationRegime } from "./regime-watch";
 import { getUpcomingEconomicEventsForPrompt } from "./economic-calendar";
 import { compactHeadlinesForPrompt } from "./prompt-headlines";
+import { fetchPolymarketContextForSymbols, formatPolymarketLinesForPrompt, type PolymarketMarketMatch } from "./polymarket-provider";
 import { getOrRecordHeadlineFirstSeen, headlineFingerprint } from "./headline-first-seen";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
 import { computeMultiSignalSeverity } from "./regime-severity";
@@ -4914,6 +4915,18 @@ async function proposeTrades(input: {
   // prompt block below is OMITTED entirely — never fabricated, never an empty scaffold.
   const upcomingEconomicEvents = await getUpcomingEconomicEventsForPrompt(input.userId).catch(() => []);
 
+  // Keyless Polymarket prediction-market context (real-money crowd odds) for the candidates
+  // entering THIS prompt only — never the scan-wide enrichment cascade (see the file header in
+  // polymarket-provider.ts). Knob-gated + fail-open: the fetch itself never throws, but the
+  // outer .catch mirrors every other prompt-context helper on this seam so a future change to
+  // that contract can't silently blank the prompt block.
+  const polymarketBySymbol = input.marketScan
+    ? await fetchPolymarketContextForSymbols(
+        input.marketScan.topCandidates.map((c) => c.symbol),
+        Object.fromEntries(input.marketScan.topCandidates.map((c) => [normalizeSymbol(c.symbol), c.companyName]))
+      ).catch(() => ({}) as Record<string, PolymarketMarketMatch[]>)
+    : {};
+
   // Multi-signal regime severity (Lane 5, composite review E/high/S follow-up): blends VIX term
   // structure, HY credit spread, and market breadth (+ VVIX/SKEW when available) into one
   // continuous [0,1] severity reading, floored by the classified enum's own severity so it can
@@ -4996,6 +5009,15 @@ async function proposeTrades(input: {
               ? {
                   evidenceBulletins: candidate.evidenceBulletins.map((bulletin, index) =>
                     index < 3 ? containData("unknown", `smartMoney:${sym}`, bulletin) : bulletin
+                  )
+                }
+              : {}),
+            // Same seam as headlines above: keyless third-party market text, bounded at
+            // MAX_MARKETS_PER_SYMBOL by fetchPolymarketContextForSymbols, containment-sanitized here.
+            ...(polymarketBySymbol[sym]?.length
+              ? {
+                  polymarketLines: formatPolymarketLinesForPrompt(polymarketBySymbol[sym]).map((line) =>
+                    containData("news", `polymarket:${sym}`, line)
                   )
                 }
               : {})
@@ -5528,7 +5550,8 @@ async function proposeTrades(input: {
   // ── Advisory prompt-injection scan (CR-H prompt-safety lane) ─────────────
   // Deterministic receipts over the UNTRUSTED text blocks entering the Bull/Bear prompts. The
   // per-candidate fields mirror EXACTLY what compactCandidateForPrompt injects (news = the
-  // compacted headline sample, max HEADLINES_PER_CANDIDATE; smartMoney = first 3 bulletins).
+  // compacted headline sample, max HEADLINES_PER_CANDIDATE; smartMoney = first 3 bulletins;
+  // polymarket = the same bounded market lines formatted at the promptMarketScan seam above).
   // Raw source text is scanned for reviewability; instruction-like spans in untrusted fields
   // were already quarantined in the prompt-only copy.
   const untrustedPromptFields: UntrustedPromptField[] = [
@@ -5545,6 +5568,8 @@ async function proposeTrades(input: {
       if (news.length > 0) fields.push({ name: `headlines:${sym}`, text: news.join("\n") });
       const bulletins = candidate.evidenceBulletins?.slice(0, 3) ?? [];
       if (bulletins.length > 0) fields.push({ name: `smartMoney:${sym}`, text: bulletins.join("\n") });
+      const predictionMarkets = formatPolymarketLinesForPrompt(polymarketBySymbol[sym]);
+      if (predictionMarkets.length > 0) fields.push({ name: `polymarket:${sym}`, text: predictionMarkets.join("\n") });
       return fields;
     })
   ];
@@ -6324,6 +6349,10 @@ export function compactCandidateForPrompt(
     // at HEADLINES_PER_CANDIDATE, each headline whole (never truncated mid-claim). The upstream
     // pipeline stores bare titles (no per-headline source/timestamp), so none is fabricated here.
     news: compactHeadlinesForPrompt(quote.headlines),
+    // Keyless Polymarket prediction-market context (real-money crowd odds), already bounded to
+    // MAX_MARKETS_PER_SYMBOL lines and containment-sanitized by promptMarketScan above — see
+    // polymarket-provider.ts.
+    predictionMarkets: quote.polymarketLines,
     sec: quote.sector,
     ind: quote.industry,
     posMV: quote.positionMarketValue,

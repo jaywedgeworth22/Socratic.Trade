@@ -1940,6 +1940,11 @@ export interface MarketQuote {
   congressMemberTradeWinRate?: number;
   congressMemberTradeScoredCount?: number;
   evidenceBulletins?: string[]; // 1-line backend web-source bulletins (congress, insider, etc.)
+  /** Bounded (max 3) Polymarket prediction-market lines — question, implied probability, volume,
+   *  explicitly Polymarket-attributed. Fetched keylessly at STRATEGIST PROMPT TIME for the
+   *  candidates entering the LLM call only (never through the scan-wide enrichment cascade, never
+   *  persisted on the stored MarketScan) — see polymarket-provider.ts. */
+  polymarketLines?: string[];
   sources?: EnrichmentSources;
   fieldObservations?: EnrichmentFieldObservations;
   providerFailures?: Record<string, ProviderFailureReceipt>;
