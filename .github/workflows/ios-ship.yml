@@ -18,6 +18,8 @@ on:
       - 'ios/**'
       - '.github/workflows/ios-ship.yml'
   workflow_dispatch:
+  schedule:
+    - cron: '*/30 * * * *'
 
 permissions:
   contents: read
@@ -51,6 +53,8 @@ jobs:
           esac
 
       - name: Ship SocraticTrade to TestFlight
+        env:
+          IOS_TF_MIN_INTERVAL_SEC: 3600
         run: |
           bash /Users/jay/apps/ios-fleet/ship-testflight.sh socratic \
             --repo-root "$GITHUB_WORKSPACE"
