@@ -809,27 +809,17 @@ export async function runStrategyOnce(
           const advisoryDay = new Date().toISOString().slice(0, 10);
           const advisoryNotifiedKey = `risk:dd-advisory-notified:${userId}:${policy.accountNumber}:${learningSource}:${advisoryDay}`;
           if (!getInternalSetting<string>(advisoryNotifiedKey)) {
-            // Force-include "risk_advisory" in the effective enabledEvents for THIS send only —
-            // never persisted. Accounts whose stored notificationSettings predate this event type
-            // have a frozen enabledEvents list without it (mergePolicy lets the stored list win
-            // wholesale, and there is no unioning migration), so without the force-inject the
-            // advisory would silently record as "skipped" on every existing account. Same
-            // precedent as provider_degraded (db-health.ts), budget_alert (usage-limit-alerts.ts),
-            // and autonomy_halted_on_boot (scheduler.ts).
-            const forcedAdvisoryPolicy: TradingPolicy = {
-              ...policy,
-              notificationSettings: {
-                ...policy.notificationSettings,
-                enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "risk_advisory" as const]))
-              }
-            };
+            // Delivery honors the user's real enabledEvents toggle (owner ruling 2026-08-12, "ALL
+            // toggles must be real" — no force-include). A legacy stored enabledEvents array
+            // predating this event type was backfilled once by migration 78 (db.ts); after that
+            // the toggle is genuinely the user's.
             await sendNotification(
               {
                 type: "risk_advisory",
                 title: `Drawdown advisory: ${breaker.reason ?? "drawdown/daily-loss threshold breached"} (agent still in control)`,
                 payload: { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, drawdownPct, action: "advisory" }
               },
-              { policy: forcedAdvisoryPolicy, userId, connectedAccountId }
+              { policy, userId, connectedAccountId }
             );
             // Marker AFTER the send resolves: a send that throws (or is otherwise not accepted)
             // must not burn the day's one notification. Channel errors are caught inside
@@ -902,15 +892,9 @@ export async function runStrategyOnce(
           connectedAccountId
         );
         // Recovery NEVER flips systemState back on its own — after a hard flip the owner re-arms
-        // (handled above). risk_advisory with the same force-include precedent as the drawdown
-        // advisory (stored enabledEvents lists predate this event type).
-        const forcedRecoveryPolicy: TradingPolicy = {
-          ...policy,
-          notificationSettings: {
-            ...policy.notificationSettings,
-            enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "risk_advisory" as const]))
-          }
-        };
+        // (handled above). Delivery honors the user's real enabledEvents toggle (owner ruling
+        // 2026-08-12, "ALL toggles must be real" — no force-include); a legacy stored
+        // enabledEvents array predating this event type was backfilled once by migration 78.
         await sendNotification(
           {
             type: "risk_advisory",
@@ -923,7 +907,7 @@ export async function runStrategyOnce(
               rearmRequired: policy.systemState !== "active"
             }
           },
-          { policy: forcedRecoveryPolicy, userId, connectedAccountId }
+          { policy, userId, connectedAccountId }
         );
       } else if (!degradedMarker && accuracyEval.firing && policy.systemState === "active") {
         const accuracyAction = policy.riskRules.accuracyBreakerAction ?? "advisory";
@@ -956,27 +940,22 @@ export async function runStrategyOnce(
           // Advisory (default): marker + receipt + one notification per degradation, NO state
           // change. The account boundary is the only absolute; the agent decides whether to
           // de-risk. No daily dedupe key needed — the persisted marker suppresses repeats until
-          // recovery. Same risk_advisory force-include precedent as the drawdown advisory.
+          // recovery. Delivery honors the user's real enabledEvents toggle (owner ruling
+          // 2026-08-12, "ALL toggles must be real" — no force-include); a legacy stored
+          // enabledEvents array predating this event type was backfilled once by migration 78.
           audit(
             "policy_violation_accuracy",
             { runId, reason: accuracyEval.reason, trigger: accuracyEval.trigger, consecutiveLossStreak: accuracyEval.consecutiveLossStreak, hitRatePct: accuracyEval.hitRatePct, from: "active", action: "advisory" },
             userId,
             connectedAccountId
           );
-          const forcedAccuracyPolicy: TradingPolicy = {
-            ...policy,
-            notificationSettings: {
-              ...policy.notificationSettings,
-              enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "risk_advisory" as const]))
-            }
-          };
           await sendNotification(
             {
               type: "risk_advisory",
               title: `Accuracy advisory: ${accuracyEval.reason ?? "recent matured outcomes are decisively adverse"} (agent still in control)`,
               payload: { runId, reason: accuracyEval.reason, trigger: accuracyEval.trigger, consecutiveLossStreak: accuracyEval.consecutiveLossStreak, hitRatePct: accuracyEval.hitRatePct, action: "advisory" }
             },
-            { policy: forcedAccuracyPolicy, userId, connectedAccountId }
+            { policy, userId, connectedAccountId }
           );
         }
       }
