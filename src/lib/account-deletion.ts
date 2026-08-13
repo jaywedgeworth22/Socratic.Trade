@@ -45,6 +45,9 @@ const DELETE_TABLES_BY_USER_ID = [
   "user_watchlist",
   "price_alerts",
   "notification_prefs",
+  // Added 2026-08-12: registered APNs device tokens (native iOS push). A deleted account must not
+  // leave a live token behind that would keep delivering to that person's phone.
+  "device_push_tokens",
   "chat_turns",
   "llm_usage",
   "user_memory",
