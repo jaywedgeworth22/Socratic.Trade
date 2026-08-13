@@ -832,20 +832,37 @@ async function flushUsageMonitorOnce(): Promise<void> {
 
   for (let i = 0; i < pending.length; i += MAX_BATCH) {
     const batch = pending.slice(i, i + MAX_BATCH);
-    const sent = await postBatch(batch.map((q) => q.event));
-    if (!sent) {
-      // Keep the exact event objects — including explicit key + occurredAt —
-      // so an ambiguous accepted-then-disconnected response retries safely. Only deliverable events
-      // are re-queued (poison was already dropped above), so a bad-data event can't re-fail forever.
-      state.queue.unshift(...pending.slice(i));
-      trimBufferedEvents(Date.now());
-      // While the breaker is open, wait out its window instead of retrying on the short flush
-      // cadence — that's the suppression that stops a dead receiver from being hammered.
-      const now = Date.now();
-      const delay = state.breaker.openUntil > now ? state.breaker.openUntil - now : flushDelayMs();
-      scheduleFlush(delay);
+    const result = await postBatch(batch.map((q) => q.event));
+    if (result.ok) continue;
+    if (result.collisionKey) {
+      // The monitor already holds a distinct event under this key.  Re-sending the
+      // colliding row 409s the whole remaining batch forever and paints the
+      // usage-monitor lane STOPPED (prod 2026-08-13: 36 repeats of one key in 2h).
+      // Drop only the named row — same contract as the durable replay lane — and
+      // retry the rest.  A 409 is proof the receiver is up, not an outage.
+      const remaining: QueuedUsageEvent[] = [];
+      for (const q of pending.slice(i)) {
+        const key = await usageMonitorV2IdempotencyKey(q.event.eventId);
+        if (key !== result.collisionKey) remaining.push(q);
+      }
+      if (remaining.length > 0) {
+        state.queue.unshift(...remaining);
+        trimBufferedEvents(Date.now());
+        scheduleFlush(flushDelayMs());
+      }
       return;
     }
+    // Keep the exact event objects — including explicit key + occurredAt —
+    // so an ambiguous accepted-then-disconnected response retries safely. Only deliverable events
+    // are re-queued (poison was already dropped above), so a bad-data event can't re-fail forever.
+    state.queue.unshift(...pending.slice(i));
+    trimBufferedEvents(Date.now());
+    // While the breaker is open, wait out its window instead of retrying on the short flush
+    // cadence — that's the suppression that stops a dead receiver from being hammered.
+    const now = Date.now();
+    const delay = state.breaker.openUntil > now ? state.breaker.openUntil - now : flushDelayMs();
+    scheduleFlush(delay);
+    return;
   }
 }
 
@@ -867,14 +884,15 @@ function recordUsageMonitorHealth(ok: boolean, startedAt: number, err?: unknown)
     const soft =
       !ok &&
       !!errorText &&
-      (/\bHTTP 429\b|\bHTTP 503\b|\brate limit|\btoo many requests|\bECONNRESET\b|\bETIMEDOUT\b|\babort(?:ed|ion)?\b|\btimeout\b/i.test(
+      (/\bHTTP 429\b|\bHTTP 503\b|\brate limit|\btoo many requests|\bECONNRESET\b|\bETIMEDOUT\b|\babort(?:ed|ion)?\b|\btimeout\b|\bIdempotency key collision\b/i.test(
         errorText
       ) ||
         (typeof err === "object" &&
           err != null &&
           "status" in err &&
           (Number((err as { status?: unknown }).status) === 429 ||
-            Number((err as { status?: unknown }).status) === 503)));
+            Number((err as { status?: unknown }).status) === 503 ||
+            Number((err as { status?: unknown }).status) === 409)));
     logApiHealth({
       service: HEALTH_SERVICE,
       ok,
@@ -924,12 +942,14 @@ function requireCompleteAck(
   }
 }
 
-async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
+type PostBatchResult = { ok: true } | { ok: false; collisionKey?: string };
+
+async function postBatch(events: UsageMonitorEvent[]): Promise<PostBatchResult> {
   const baseUrl = usageMonitorBaseUrl();
   const token = usageMonitorToken();
-  if (events.length === 0) return true;
-  if (!baseUrl || !token) return false;
-  if (!breakerAllowsAttempt(Date.now())) return false; // circuit open: no network call
+  if (events.length === 0) return { ok: true };
+  if (!baseUrl || !token) return { ok: false };
+  if (!breakerAllowsAttempt(Date.now())) return { ok: false }; // circuit open: no network call
 
   const fetchImpl = state.fetchImpl ?? fetch;
   const start = Date.now();
@@ -949,8 +969,16 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
     requireCompleteAck(ack, events.length);
     recordUsageMonitorHealth(true, start);
     breakerRecordResult(true, Date.now());
-    return true;
+    return { ok: true };
   } catch (err) {
+    const collisionKey = usageMonitorCollisionKeyFromError(err);
+    if (collisionKey) {
+      // Receiver is up and already stored this identity.  Do not trip the
+      // outage breaker or paint the usage-monitor lane STOPPED.
+      recordUsageMonitorHealth(true, start);
+      breakerRecordResult(true, Date.now());
+      return { ok: false, collisionKey };
+    }
     recordUsageMonitorHealth(false, start, err);
     const retryAfter =
       err && typeof err === "object" && "retryAfterSeconds" in err
@@ -961,7 +989,7 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
       Date.now(),
       Number.isFinite(retryAfter) && retryAfter != null && retryAfter >= 0 ? retryAfter : null
     );
-    return false;
+    return { ok: false };
   } finally {
     clearTimeout(timer);
   }
