@@ -194,7 +194,7 @@ export function knownBrokerLimits(broker: ConnectedAccount["broker"] | undefined
 
 export function mergeAccountCapabilities(
   broker: ConnectedAccount["broker"] | undefined,
-  live?: AccountCapabilities
+  live?: Partial<AccountCapabilities>
 ): AccountCapabilities {
   const known = knownBrokerLimits(broker);
   const base = emptyCapabilities(known);
@@ -315,8 +315,8 @@ function buildPromptLines(input: {
   if (input.caps.fractional !== true) {
     lines.push("Whole shares only.  Do not size an opening below one share.");
   }
-  if (input.minOrderNotional != null && input.minOrderNotional > 0) {
-    lines.push(`Minimum order notional is ${input.minOrderNotional} in account currency.`);
+  if (input.caps.minOrderNotional != null && input.caps.minOrderNotional > 0) {
+    lines.push(`Minimum order notional is ${input.caps.minOrderNotional} in account currency.`);
   }
   if (!input.marketHours.includes("extended_hours") && !input.marketHours.includes("all_day_hours")) {
     lines.push("Regular-hours only.  Do not set marketHours to extended_hours or all_day_hours.");
