@@ -125,12 +125,6 @@ struct MobileControlView: View {
         self._pendingDeepLink = pendingDeepLink
     }
 
-    @Binding private var pendingDeepLink: DeepLinkDestination?
-
-    init(pendingDeepLink: Binding<DeepLinkDestination?> = .constant(nil)) {
-        self._pendingDeepLink = pendingDeepLink
-    }
-
     private var pendingProposalCount: Int {
         store.snapshot?.pendingProposals.count ?? 0
     }
