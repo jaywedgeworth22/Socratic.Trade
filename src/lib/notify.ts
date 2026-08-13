@@ -5,8 +5,24 @@
 // every enabled channel that is both admin-available and has a target. All network calls go through
 // an injectable `fetchImpl` so tests stay offline. Ported from reference/atlas-public-src/bff/notify.
 
-import { audit, getNotifyPrefs, getNotifyPrefsSecrets } from "./db";
+import {
+  apnsConfigured,
+  loadApnsConfig,
+  sendApnsPush,
+  type ApnsConfig,
+  type ApnsTransport
+} from "./apns";
+import {
+  audit,
+  disableDeviceToken,
+  getNotifyPrefs,
+  getNotifyPrefsSecrets,
+  listActiveDeviceTokens,
+  maskDeviceToken,
+  touchDeviceToken
+} from "./db";
 import { validateWebhookUrl, type HostResolver } from "./egress-guard";
+import { pushCollapseId, pushDeepLink, pushRoutingData } from "./push-deep-links";
 import type {
   NotifyChannelDescriptor,
   NotifyChannelId,
@@ -27,6 +43,10 @@ export interface NotifyConfig {
   pushover: { pushoverToken: string };
   email: { provider: "resend"; resendKey: string; from: string };
   sms: { twilioSid: string; twilioToken: string; twilioFrom: string };
+  /** Native iOS push credentials (APNS_* env). `null` when the operator has not configured APNs —
+   *  the channel then reports "not configured" instead of failing sends. Optional on the type so
+   *  existing hand-built NotifyConfig literals (tests, callers) stay valid. */
+  apns?: ApnsConfig | null;
 }
 
 /** Optional cooperative cancellation/fencing for a durable caller. Existing callers omit both. */
@@ -42,6 +62,8 @@ export interface NotifyDispatchDeps {
    *  src/lib/egress-guard.ts). Defaults to real DNS; tests inject a stub so they never
    *  depend on real network/DNS and can simulate rebinding. */
   resolveHost?: HostResolver;
+  /** Injectable APNs HTTP/2 transport so tests never open a socket to Apple. */
+  apnsTransport?: ApnsTransport;
 }
 
 /** Admin-side delivery config from env. End-user secrets never live here — only in notification_prefs. */
@@ -68,7 +90,8 @@ export function loadNotifyConfig(): NotifyConfig {
       twilioSid: process.env.TWILIO_ACCOUNT_SID ?? "",
       twilioToken: process.env.TWILIO_AUTH_TOKEN ?? "",
       twilioFrom: process.env.TWILIO_FROM ?? ""
-    }
+    },
+    apns: loadApnsConfig()
   };
 }
 
@@ -94,15 +117,27 @@ export function loadUserNotifyConfig(userId: string, base: NotifyConfig = loadNo
   };
 }
 
+interface ChannelSendContext {
+  cfg: NotifyConfig;
+  fetchImpl: typeof fetch;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  resolveHost?: HostResolver;
+  /** The user this delivery belongs to — needed by channels whose target is app-managed rather
+   *  than a prefs string (apns reads the device-token registry). */
+  userId: string;
+  apnsTransport?: ApnsTransport;
+}
+
 interface ChannelDef {
   available(cfg: NotifyConfig): boolean;
   target(prefs: NotifyPrefs): string;
+  /** Optional override for channels whose delivery target is app-managed rather than a
+   *  user-typed prefs string. Returning "" means "no target" (the channel is skipped). MUST NOT
+   *  throw — a registry hiccup has to degrade to "no target", never break the dispatch loop. */
+  resolveTarget?(ctx: { userId: string; prefs: NotifyPrefs }): string;
   describe(cfg: NotifyConfig): NotifyChannelDescriptor;
-  send(
-    target: string,
-    msg: NotifyMessage,
-    ctx: { cfg: NotifyConfig; fetchImpl: typeof fetch; timeoutMs: number; signal?: AbortSignal; resolveHost?: HostResolver }
-  ): Promise<void>;
+  send(target: string, msg: NotifyMessage, ctx: ChannelSendContext): Promise<void>;
 }
 
 function abortSignal(ms: number, callerSignal?: AbortSignal): AbortSignal | undefined {
@@ -266,6 +301,103 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
     }
   },
 
+  // Native iOS push. Unlike every other channel, its target is NOT a user-typed string: it is the
+  // set of device tokens the iOS app registered via POST /api/mobile/push/register. The channel is
+  // "available" when the operator configured the APNs credential set (APNS_* env) and has a target
+  // when the user has at least one live device token.
+  //
+  // Per-event gating is NOT re-implemented here. Push sits behind the SAME gate as every other
+  // channel: sendNotification (src/lib/notifications.ts) checks the user's
+  // policy.notificationSettings.enabledEvents before it ever calls notify(), so an event the user
+  // turned off never reaches this code. Adding a second enabledEvents-like concept for push would
+  // be a parallel pipeline, which is exactly what this design avoids.
+  apns: {
+    available: (cfg) => apnsConfigured(cfg.apns),
+    // Never used — resolveTarget below owns this channel's targeting.
+    target: () => "",
+    resolveTarget: ({ userId }) => {
+      try {
+        // The count, not the tokens: this string flows into skip/result bookkeeping, and a device
+        // token must never end up in a log line or an audit row.
+        const count = listActiveDeviceTokens(userId).length;
+        return count > 0 ? String(count) : "";
+      } catch {
+        return "";
+      }
+    },
+    describe: (cfg) => ({
+      id: "apns",
+      label: "iPhone push",
+      available: apnsConfigured(cfg.apns),
+      targetField: "",
+      targetLabel: "Registered devices",
+      placeholder: "",
+      hint: "Alerts arrive as native iPhone notifications. Devices register themselves when you allow notifications in the Socratic.Trade app — there is nothing to paste here.",
+      managedTarget: true
+    }),
+    async send(_target, msg, { cfg, timeoutMs, userId, apnsTransport }) {
+      const config = cfg.apns;
+      if (!apnsConfigured(config)) throw new Error("APNs is not configured.");
+      const devices = listActiveDeviceTokens(userId);
+      if (devices.length === 0) throw new Error("No registered devices.");
+
+      const kind = msg.kind ?? "alert";
+      const routing = pushRoutingData(kind, msg.data);
+      const url = pushDeepLink(kind, msg.data);
+      const collapseId = pushCollapseId(kind, msg.data);
+
+      let delivered = 0;
+      const failures: string[] = [];
+      for (const device of devices) {
+        const result = await sendApnsPush(
+          {
+            deviceToken: device.token,
+            environment: device.environment,
+            title: msg.title,
+            // APNs caps the whole payload at 4KB; a digest-sized body would blow it.
+            body: msg.body.slice(0, CHANNEL_CAPABILITIES.apns.maxBodyChars),
+            url,
+            ...(collapseId ? { collapseId } : {}),
+            data: { kind, ...routing }
+          },
+          { config, transport: apnsTransport, timeoutMs }
+        );
+        if (result.ok) {
+          delivered += 1;
+          touchDeviceToken(device.token);
+          continue;
+        }
+        if (result.disposition === "token_dead") {
+          // Apple says this install is gone (410 Unregistered) or the token is invalid for this
+          // environment (400 BadDeviceToken). Retire it — retrying it forever is pure waste.
+          disableDeviceToken(device.token, `apns ${result.status ?? ""} ${result.reason ?? ""}`.trim());
+          audit("push.apns.token_retired", {
+            userId,
+            token: maskDeviceToken(device.token),
+            environment: device.environment,
+            status: result.status,
+            reason: result.reason
+          }, userId);
+          continue;
+        }
+        if (result.disposition === "auth_error") {
+          // A credential/topic problem affects EVERY device — say so loudly rather than burying it
+          // as one device's failure.
+          audit("push.apns.auth_error", { userId, status: result.status, reason: result.reason }, userId);
+          console.error(`[apns] auth/config failure: HTTP ${result.status ?? "?"} ${result.reason ?? ""}`);
+        }
+        failures.push(`${maskDeviceToken(device.token)}: ${result.error ?? result.disposition}`);
+      }
+
+      if (delivered > 0) return;
+      if (failures.length === 0) {
+        // Every device was retired this pass — nothing left to deliver to, and nothing to retry.
+        throw new Error("No live registered devices (all tokens retired).");
+      }
+      throw new Error(failures.join(" | "));
+    }
+  },
+
   pushover: {
     available: (cfg) => !!cfg.pushover.pushoverToken,
     target: (p) => p.pushoverTarget || "",
@@ -353,7 +485,7 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
   }
 };
 
-const CHANNEL_ORDER: NotifyChannelId[] = ["push", "pushover", "webhook", "email", "sms"];
+const CHANNEL_ORDER: NotifyChannelId[] = ["apns", "push", "pushover", "webhook", "email", "sms"];
 
 /**
  * Per-channel body length budget for tiered delivery (NotifyMessage.bodyTiers). sms matches the
@@ -362,6 +494,9 @@ const CHANNEL_ORDER: NotifyChannelId[] = ["push", "pushover", "webhook", "email"
  * unbounded" for a digest-sized body — generous caps, not the provider's real limit.
  */
 export const CHANNEL_CAPABILITIES: Record<NotifyChannelId, { maxBodyChars: number }> = {
+  // APNs caps the ENTIRE payload (title + body + routing data + JSON overhead) at 4KB; 2000 chars
+  // of body leaves generous headroom for the rest.
+  apns: { maxBodyChars: 2000 },
   sms: { maxBodyChars: 1500 },
   pushover: { maxBodyChars: 1024 },
   push: { maxBodyChars: 4000 },
@@ -414,7 +549,15 @@ export async function notify(
       results.push({ channel: id, ok: false, skipped: "not_configured" });
       continue;
     }
-    const target = channel.target(prefs);
+    // App-managed targets (apns: the device-token registry) resolve per-user; everything else
+    // reads the user's typed prefs value. resolveTarget is contractually non-throwing, but guard
+    // anyway so one channel's registry hiccup can never abort delivery to the others.
+    let target = "";
+    try {
+      target = channel.resolveTarget ? channel.resolveTarget({ userId, prefs }) : channel.target(prefs);
+    } catch {
+      target = "";
+    }
     if (!target) {
       assertNotifyActive(deps);
       results.push({ channel: id, ok: false, skipped: "no_target" });
@@ -438,7 +581,9 @@ export async function notify(
           fetchImpl,
           timeoutMs: cfg.timeoutMs,
           signal: deps.signal,
-          resolveHost: deps.resolveHost
+          resolveHost: deps.resolveHost,
+          userId,
+          apnsTransport: deps.apnsTransport
         });
         assertNotifyActive(deps);
         delivered = true;

@@ -697,6 +697,7 @@ private struct AccountSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @EnvironmentObject private var store: MobileStore
+    @EnvironmentObject private var push: PushNotificationCoordinator
 
     @State private var deleteIdentity = ""
     @State private var deletePhrase = ""
@@ -707,6 +708,7 @@ private struct AccountSettingsView: View {
             Form {
                 identitySection
                 accountsSection
+                alertsSection
                 policySection
                 GuardrailTighteningSection()
                 adminSection
@@ -795,11 +797,48 @@ private struct AccountSettingsView: View {
         }
     }
 
+    /// Push state, stated plainly.  If the prompt was denied or the registration failed, this
+    /// says so — the app never implies alerts are arriving when they are not.
+    @ViewBuilder
+    private var alertsSection: some View {
+        Section {
+            LabeledContent("Push Alerts") {
+                Text(push.state.isWorking ? "On" : "Off")
+                    .foregroundStyle(push.state.isWorking ? AppPalette.positive : .secondary)
+            }
+            switch push.state {
+            case .notRequested, .unknown:
+                Button("Turn On Alerts") {
+                    Task { await push.requestAuthorization() }
+                }
+            case .denied:
+                Button("Open iOS Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        openURL(url)
+                    }
+                }
+            case .failed:
+                Button("Try Again") {
+                    Task { await push.registerIfAlreadyAuthorized() }
+                }
+            case .awaitingToken, .registered:
+                EmptyView()
+            }
+        } header: {
+            Text("Alerts")
+        } footer: {
+            Text(push.state.summary)
+        }
+        .task { await push.refreshState() }
+    }
+
     private var sessionSection: some View {
         Section {
             Button("Sign Out", role: .destructive) {
-                store.clearLocalSession()
-                dismiss()
+                Task {
+                    await store.signOut()
+                    dismiss()
+                }
             }
         } footer: {
             Text("Signing out clears the app’s local Socratic.Trade session.  Broker and provider credentials remain on the backend.")

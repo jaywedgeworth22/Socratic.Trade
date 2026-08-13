@@ -488,9 +488,10 @@ function meResponseLooksLimited(payload: unknown): boolean {
 /**
  * Trip the durable entitlement block (idempotent — repeat trips update the length/timestamp but
  * notify only ONCE, per the coordinator's no-retry-storm requirement). Best-effort operator
- * notification via the existing notify machinery, forced into enabledEvents like the
- * provider_degraded/storage_warning precedents in db-health.ts/scheduler.ts so a user who
- * disabled this event type still gets the one-time critical alert.
+ * notification via the existing notify machinery. Delivery honors the user's real enabledEvents
+ * toggle (owner ruling 2026-08-12, "ALL toggles must be real" — no force-include). A legacy
+ * stored enabledEvents array predating this event type was backfilled once by migration 78
+ * (db.ts); after that the toggle is genuinely the user's.
  */
 async function tripEntitlementBlock(nowMs: number, previewLength: number | undefined, context: Record<string, unknown>): Promise<void> {
   const existing = loadEntitlementState();
@@ -519,18 +520,9 @@ async function tripEntitlementBlock(nowMs: number, previewLength: number | undef
       "The burst/daily transcript program has been paused so no stub content is permanently cached. " +
       'Upgrade the plan for full-text access, then POST /api/admin/earningscalls {"action":"clear-entitlement-block"} ' +
       '(or {"action":"probe-entitlement"} to re-verify immediately).';
-    const forcedPolicy = {
-      ...policy,
-      notificationSettings: {
-        ...policy.notificationSettings,
-        enabledEvents: Array.from(
-          new Set([...policy.notificationSettings.enabledEvents, "earningscalls_entitlement_blocked" as const])
-        )
-      }
-    };
     await sendNotification(
       { type: "earningscalls_entitlement_blocked", title, payload: { previewLength, ...context } },
-      { userId: "local", policy: forcedPolicy as any, directBody: body }
+      { userId: "local", policy, directBody: body }
     );
   } catch {
     // Best-effort — the persisted block + audit row are the durable record either way.

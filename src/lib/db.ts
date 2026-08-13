@@ -8,7 +8,7 @@ import { mkdirSync } from "fs";
 import { dirname, resolve } from "path";
 import crypto from "crypto";
 import { DEFAULT_POLICY, DEFAULT_SCORING_WEIGHTS, DEFAULT_STRATEGY_PROMPT } from "./defaults";
-import type { TradingPolicy } from "./types";
+import type { NotificationEventType, TradingPolicy } from "./types";
 
 let db: Database.Database | undefined;
 const SP500_DEFAULT_UNIVERSE_MIGRATION_KEY = "migration:sp500_default_universe:2026-06-19";
@@ -287,6 +287,79 @@ function migrateLegacyDailyOpeningCapRows(database: Database.Database): number {
       } catch {
         // Corrupt JSON is already handled by the owning policy reader; a cap migration must not
         // make the database unbootable while trying to repair an unrelated row.
+      }
+    }
+  }
+  return changed;
+}
+
+/**
+ * Event types that used to be force-included into a send's effective enabledEvents at send time
+ * (banned pattern — owner ruling 2026-08-12, "ALL toggles must be real"): a stored
+ * notificationSettings.enabledEvents array predating the type's addition to NOTIFICATION_EVENT_TYPES
+ * would otherwise silently never receive it, so every one of these sites unconditionally injected
+ * it into that send's policy, permanently overriding a user who had (or later set) the toggle off.
+ * Migration 78 below backfills these into every stored array ONCE instead — see
+ * backfillNotificationEnabledEventsRows. A future NotificationEventType that needs the same one-time
+ * treatment should get its own versioned migration calling that helper with the new type(s); it must
+ * NEVER be handled by resurrecting a force-include-at-send-time site.
+ */
+export const FORCE_INCLUDE_BACKFILL_EVENT_TYPES: readonly NotificationEventType[] = [
+  "provider_degraded",
+  "storage_warning",
+  "autonomy_halted_on_boot",
+  "budget_alert",
+  "earningscalls_entitlement_blocked",
+  "signal_health",
+  "lookahead_leak",
+  "risk_advisory"
+];
+
+/**
+ * Backfill `eventTypes` into every stored policy's notificationSettings.enabledEvents, ONCE, but
+ * only for rows where an explicit enabledEvents ARRAY is already present. A row with no
+ * notificationSettings (or no enabledEvents key) at all already resolves every event type through
+ * mergePolicy's DEFAULT_POLICY fallback — touching it here would be a no-op at best and would
+ * needlessly freeze that row out of picking up defaults for event types added after this
+ * migration runs. Mirrors migrateLegacyDailyOpeningCapRows's 4-store sweep (account_strategy_state,
+ * strategy_profiles, user_settings, settings) so every place a policy can be persisted is covered.
+ */
+function backfillNotificationEnabledEventsRows(database: Database.Database, eventTypes: readonly NotificationEventType[]): number {
+  const targets = [
+    { table: "account_strategy_state", column: "policy", where: "1=1" },
+    { table: "strategy_profiles", column: "policy", where: "1=1" },
+    { table: "user_settings", column: "value", where: "key = 'policy'" },
+    { table: "settings", column: "value", where: "key = 'policy'" }
+  ] as const;
+  let changed = 0;
+  for (const target of targets) {
+    // Defensive: every one of these exists by the time versioned migrations run against a real
+    // boot (migrate()'s baseline DDL always runs first — see openDatabase). Some test fixtures
+    // build a deliberately minimal schema and invoke applyVersionedMigrations directly without
+    // that baseline, so a table can legitimately be absent there; skip rather than throw.
+    const exists = database
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(target.table);
+    if (!exists) continue;
+    const rows = database
+      .prepare(`SELECT rowid, ${target.column} AS json FROM ${target.table} WHERE ${target.where}`)
+      .all() as Array<{ rowid: number; json: string }>;
+    const update = database.prepare(`UPDATE ${target.table} SET ${target.column} = ? WHERE rowid = ?`);
+    for (const row of rows) {
+      try {
+        const policy = JSON.parse(row.json) as Record<string, unknown>;
+        const notificationSettings = policy.notificationSettings as Record<string, unknown> | undefined;
+        const enabledEvents = notificationSettings?.enabledEvents;
+        if (!notificationSettings || !Array.isArray(enabledEvents)) continue;
+        const existing = new Set(enabledEvents as string[]);
+        const missing = eventTypes.filter((type) => !existing.has(type));
+        if (missing.length === 0) continue;
+        notificationSettings.enabledEvents = [...enabledEvents, ...missing];
+        update.run(JSON.stringify(policy), row.rowid);
+        changed += 1;
+      } catch {
+        // Corrupt JSON is already handled by the owning policy reader; this backfill must not make
+        // the database unbootable while trying to repair an unrelated row.
       }
     }
   }
@@ -2848,6 +2921,56 @@ const MIGRATIONS: Migration[] = [
           ON fundamental_revisions (symbol, field, filed_at);
       `);
     }
+  },
+  {
+    // Native iOS push (APNs) device-token registry. One row per device token; the token is the
+    // PRIMARY KEY because a token identifies exactly one install on one device and must belong to
+    // exactly ONE user — re-registering it under a different account reassigns it (see
+    // registerDeviceToken in db-device-tokens.ts) so a shared phone that switches accounts never
+    // keeps receiving the previous user's alerts.
+    //
+    // `environment` is stored, not inferred: APNs device tokens are environment-specific (a
+    // sandbox token is answered 400 BadDeviceToken by the production endpoint and vice versa), and
+    // the endpoint is chosen from this column at send time.
+    version: 77,
+    name: "device_push_tokens",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS device_push_tokens (
+          token TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          environment TEXT NOT NULL CHECK(environment IN ('sandbox','production')),
+          bundle_id TEXT NOT NULL,
+          platform TEXT NOT NULL DEFAULT 'ios',
+          created_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          disabled_at TEXT,
+          disabled_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_push_tokens_user
+          ON device_push_tokens (user_id, disabled_at);
+      `);
+    }
+  },
+  {
+    // Owner ruling 2026-08-12 ("ALL toggles must be real"): removes the force-include-at-send-time
+    // pattern for lookahead_leak, signal_health, provider_degraded, storage_warning,
+    // autonomy_halted_on_boot, earningscalls_entitlement_blocked, budget_alert, and risk_advisory —
+    // every one of those sites injected its event type into that send's effective enabledEvents so a
+    // legacy stored array (predating the type) still delivered it, silently overriding a user who had
+    // (or later set) the toggle off. This is the one-time backfill the removed sites' own comments
+    // said they wanted: union FORCE_INCLUDE_BACKFILL_EVENT_TYPES into every already-explicit stored
+    // enabledEvents array, once, so the Settings toggle becomes genuinely authoritative afterward — on
+    // by default (matching the prior always-delivered behavior), off if/when the user turns it off,
+    // and it STAYS off. See docs/rollouts/2026-08-13-remove-force-include-notifications.md.
+    version: 78,
+    name: "notification_enabled_events_backfill",
+    up: (database) => {
+      const changed = backfillNotificationEnabledEventsRows(database, FORCE_INCLUDE_BACKFILL_EVENT_TYPES);
+      if (changed > 0) {
+        console.log(`[db] migration 78: backfilled ${changed} legacy enabledEvents row(s) with previously force-included event types`);
+      }
+    }
   }
 ];
 
@@ -4471,3 +4594,4 @@ export * from "./db-task-journal";
 export * from "./db-embed-stage";
 export * from "./db-signal-health";
 export * from "./db-lookahead-audit";
+export * from "./db-device-tokens";

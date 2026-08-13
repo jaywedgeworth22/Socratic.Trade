@@ -41,6 +41,37 @@ clean, vitest 563 files passed + 1 skipped and 6520 tests passed + 51 skipped,
 `npm run build` clean, ios ship-gate bash suite 13/13.  Rollout:
 `docs/rollouts/2026-08-13-ios-ship-pipeline-repair.md`.
 
+## Current (2026-08-13 MONET — real toggles: banned force-include notification pattern removed)
+
+Owner ruling 2026-08-12: "ALL toggles must be real" — no force-included notification events,
+ever. Ten call sites across eight files (`lookahead-audit.ts`, `signal-health.ts`,
+`db-health.ts` x3, `scheduler.ts`, `earningscalls-transcripts.ts`, `usage-limit-alerts.ts`,
+`broker-health.ts`, `strategy.ts` x3) injected a specific event type into that send's effective
+`enabledEvents` regardless of the user's stored setting, silently overriding an OFF toggle
+forever. All removed; every site now passes the real `policy` through unmodified.
+
+Replaced with a one-time versioned migration (`src/lib/db.ts`, version 78,
+`notification_enabled_events_backfill`): backfills the eight previously-force-included event
+types into any LEGACY stored `enabledEvents` array that predates them (only touches rows with an
+explicit array already present; a row with no `notificationSettings` key at all already defaults
+to every current type via `mergePolicy`). After the backfill the Settings toggle is genuinely the
+user's — on by default, off if/when they turn it off, and it STAYS off. (Originally landed as
+version 77; `monet/apns-push` (#2681) merged first and claimed 77 for `device_push_tokens` —
+renumbered to 78 and rebased, see the rollout note's "collision with #2681" section.)
+
+Rewrote one existing test (`test/guard-enablement.test.ts`) that explicitly pinned the OLD
+force-include behavior as a "regression" test; added new regression coverage proving
+`signal_health` and `lookahead_leak` are NOT delivered when switched off
+(`test/signal-health.test.ts`, `test/lookahead-audit.test.ts`), plus a dedicated migration test
+(`test/db-migration-notification-backfill.test.ts`). Bumped 12 hardcoded schema-version
+assertions in `test/persistence-hardening.test.ts` from 76 to 78 (77 is now `device_push_tokens`
+from #2681).
+
+Branch `monet/real-toggles`, worktree `~/apps/trading-monet-toggles`. Gates (foreground, waited
+on): tsc clean; `npm test` 6573 passed / 51 skipped (568 files); lint 0 errors; build clean. PR
+https://github.com/jaywedgeworth22/Socratic.Trade/pull/2682, opened ready, auto-merge armed
+(squash) — merges on green `verify`. Rollout:
+`docs/rollouts/2026-08-13-remove-force-include-notifications.md`.
 ## Current (2026-08-13 ~2:20pm CT CLAUDE — HOTFIX: adaptive FTS-mirror batching)
 
 The ingestion re-enable reproduced the 08-10 event-loop stall (ftsMirrorBatch 119s pinned
@@ -227,6 +258,63 @@ via the round-3 integration lane.  Blockers: none.
 now sit in front of paid history providers; Public + eToro gateways + Webull connect stub;
 CopyTrader observe/allowlist framework (official eToro API only).  Owner must mint keys.
 Rollout: `docs/rollouts/2026-08-12-broker-cascade-and-copy-intel.md`.
+## Current (2026-08-12 MONET - APNs native push, MERGED end to end + contract reconciled)
+
+**2026-08-13 update - merged `origin/main` `39c6acee` into the branch.**  Five conflicts, all
+resolved deliberately: `device_push_tokens` moved from migration **75 to 77** (main landed 75
+`lookahead_audit_findings` + 76 `fundamental_revisions`; two `CREATE TABLE`s under one version
+number would be unreachable for any DB that already ran the other), 12 schema-version assertions
+in `test/persistence-hardening.test.ts` retargeted, `project.pbxproj` **regenerated with xcodegen**
+from the merged `project.yml` (verified it still substitutes `$(MARKETING_VERSION)` /
+`$(CURRENT_PROJECT_VERSION)`), and `MobileControlView.apply(_:)` **taken from main in full**.  That
+last one was a real bug, not formatting: this branch's older `apply()` predates deep-link proposal
+focus and silently discarded `destination.proposalId`, so every `pending_approval` push - which
+`pushDeepLink()` emits as `/console/approvals?proposal=<id>` and the parser correctly turns into
+`.proposal(id:)` - would have opened the Proposals list with nothing highlighted.  It would have
+compiled and passed every test.  Also corrected: the rollout note's claim that no AASA file exists
+is stale - #2662 landed `app/.well-known/apple-app-site-association/route.ts` and its
+`middleware.ts` `PUBLIC_PREFIXES` entry, so universal links and push taps now share one parser.
+`.gitignore` gained `*.p8` (an APNs auth key is team-wide; a loose `.p8` in the repo root was
+untracked but not ignored).
+
+Branch `monet/apns-push` (worktree `~/apps/trading-monet-apns`), forked from `origin/main`
+`5784c1cf`.  Merges the two parallel halves - `monet/apns-server` (`c4bd3acb`) and
+`monet/apns-ios` (`f697bd32`) - with **zero conflicts** (disjoint by construction; even
+`project.pbxproj` merged clean, so no xcodegen regen or objectVersion re-patch was needed) and
+makes the contract between them real.
+
+- **Server half:** push is a NEW DELIVERY CHANNEL in the EXISTING notification system - one more
+  `NotifyChannelId` in `src/lib/notify.ts`'s `CHANNELS`, same `sendNotification` -> `notify` path,
+  same `enabledEvents` gate.  Migration 75 `device_push_tokens` (token is PRIMARY KEY, registration
+  REASSIGNS on conflict so a shared phone switching accounts cannot leak the previous user's
+  alerts; `environment` stored, never inferred).  `src/lib/apns.ts` uses `node:http2` (fetch cannot
+  speak HTTP/2 to APNs), caches the ES256 provider JWT at 50 min, retires tokens on 410 / 400
+  BadDeviceToken, surfaces 403 loudly.  `POST`/`DELETE /api/mobile/push/register`, session-authed.
+- **iOS half:** `aps-environment: production` in BOTH `SocraticTrade.entitlements` and
+  `project.yml`; the environment is read out of `embedded.mobileprovision` at runtime, never
+  `#if DEBUG` (TestFlight IS production - guessing sandbox is a silent 400 forever).  Permission on
+  first Proposals visit; taps route through the same `DeepLink` parser as `onOpenURL`; sign-out
+  withdraws the token BEFORE cookies are cleared.
+- **Contract fixes made in the merge** (the point of this phase): the catch-all deep link was
+  `/console`, which the iOS router REJECTS (it needs `/console/<screen>`) - so 17 of the 24 event
+  types tapped to nowhere, silently.  Now `/console/activity`, which routes and is where the
+  notification is actually listed.  Also dropped `pushLinkOrigin`'s `NEXT_PUBLIC_APP_ORIGIN`
+  fallback: the app pins the host to exactly `socratictrade.com`, so an unrelated env var could
+  have turned every tap into a no-op.  The register body, environment literals, auth, payload key,
+  and sign-out DELETE all lined up already and were left alone.
+- **Pinned by a cross-language contract test:** one table row per `NotificationEventType` in
+  `ios/SocraticTradeTests/PushNotificationTests.swift`; Swift asserts each URL routes to the stated
+  tab, and `test/apns-deep-link-contract.test.ts` parses those rows and asserts `pushDeepLink()`
+  emits exactly them - set-equal to `NOTIFICATION_EVENT_TYPES`, so a NEW event type fails the test
+  until the app names it.  Mutation-checked (reverting the catch-all fails 2 of 11).
+
+Verified (foreground): `xcodebuild ... test` -> `** TEST SUCCEEDED **`, **Executed 73 tests, 0
+failures** (70 before); `npx tsc --noEmit` exit 0; **full** `npx vitest run` -> 554 files passed /
+1 skipped, **6419 tests passed** / 51 skipped; `npm run build` exit 0; `npm run lint` 0 errors.
+End-to-end delivery is STILL unverified - it needs a TestFlight build on a real device plus the
+deployed server.  Post-deploy: confirm all four `APNS_*` values exist in ST prod Infisical, or
+Settings -> Delivery shows "iPhone push - not configured" and sends nothing (by design).
+Rollout: `docs/rollouts/2026-08-12-apns-push.md` (replaces the two per-branch notes).
 ## Current (2026-08-12 MONET - backup tier monitor: real coverage, previous version had none)
 
 Branch `monet/backup-tier-monitor-real` (worktree `~/apps/trading-monet-tierfix`).

@@ -58,7 +58,10 @@ const nextConfig = {
         zlib: false,
         stream: false,
         dns: false,
-        net: false
+        net: false,
+        // node:http2 is the APNs provider transport (src/lib/apns.ts, reachable from the
+        // src/lib/db.ts barrel). Server-only — stubbed out for client/edge bundles.
+        http2: false
       };
     }
     return config;

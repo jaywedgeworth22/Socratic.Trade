@@ -11,6 +11,7 @@
 		0AECCBC50D5461DB100A6502 /* WrappingHStackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D127513EA965CC0E9E36D114 /* WrappingHStackTests.swift */; };
 		0D33482A75E80E8B8393568C /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1414766425B708D8C45691ED /* HomeView.swift */; };
 		16C32102BDAA57BDDC9BC51E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 64D21DA3DA51118F65691FBE /* Assets.xcassets */; };
+		18483B89B5039BD1C62B723D /* PushNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F73B7DC3AC7076311C24456 /* PushNotifications.swift */; };
 		1F37FE2BA14490285C0A0156 /* RunStateDerivationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF789FDEB98C62C5D8A12A7F /* RunStateDerivationTests.swift */; };
 		20459811A20F559A78FC18B3 /* SocraticTradeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F94CABB7BE5CB871622BADD /* SocraticTradeApp.swift */; };
 		27D79C4CCEC77B61D399EE85 /* SymbolInfoSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3125CC92E339D3923013056 /* SymbolInfoSheet.swift */; };
@@ -40,6 +41,7 @@
 		C4C5A007566AD8E6187289D7 /* AdminPortalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C59D290B3E70A1F9606F659 /* AdminPortalView.swift */; };
 		C67CC3242AE041DFAE3A419E /* CandleWordmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D112E8C717D899B0AFF0B6E5 /* CandleWordmarkView.swift */; };
 		CF7E04F6E303A90DA3947D4A /* MobileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B407C6306CC293CF54036A1 /* MobileStore.swift */; };
+		E51F3B135F00DDFD0E7D55A2 /* PushNotificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CD0F6E51E8A29D4714465B2 /* PushNotificationTests.swift */; };
 		E775D82245F3524DC339DCC4 /* AppTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC9F509664B51F30B581932B /* AppTypography.swift */; };
 		EEFE88508B9B9CC94639E02C /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E9A5E5A0273AC7B97E89D3 /* LoginView.swift */; };
 		FCF86D15E740C07E907B1F1D /* PolicyTighteningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 245D98F7C0F747E857CB7226 /* PolicyTighteningTests.swift */; };
@@ -65,6 +67,7 @@
 		31CAA55DF67299F539BE8ECC /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
 		37C2568FFF3FB30F96619E8E /* PreviewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewSupport.swift; sourceTree = "<group>"; };
 		38386F538E5ECC5191294B9A /* AppComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppComponents.swift; sourceTree = "<group>"; };
+		3F73B7DC3AC7076311C24456 /* PushNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotifications.swift; sourceTree = "<group>"; };
 		40B15024373F200D860968ED /* AppTypographyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTypographyTests.swift; sourceTree = "<group>"; };
 		46F9B58AE392D9B952212857 /* MobileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileModels.swift; sourceTree = "<group>"; };
 		50946B1368FEFB6B6B20116D /* SocraticTradeTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SocraticTradeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -79,6 +82,7 @@
 		761C0F1E45ABE2373664A335 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		89D3AB0C26BB7394334E998E /* MobileAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAPIClient.swift; sourceTree = "<group>"; };
 		8B407C6306CC293CF54036A1 /* MobileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileStore.swift; sourceTree = "<group>"; };
+		8CD0F6E51E8A29D4714465B2 /* PushNotificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationTests.swift; sourceTree = "<group>"; };
 		8FD3EFCF82E664100A11FC33 /* MobileControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileControlView.swift; sourceTree = "<group>"; };
 		9E30F86884C90A0B81A3377F /* PolicyTightening.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PolicyTightening.swift; sourceTree = "<group>"; };
 		A3125CC92E339D3923013056 /* SymbolInfoSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolInfoSheet.swift; sourceTree = "<group>"; };
@@ -129,6 +133,7 @@
 				9E30F86884C90A0B81A3377F /* PolicyTightening.swift */,
 				37C2568FFF3FB30F96619E8E /* PreviewSupport.swift */,
 				EC1C49575DCB6DA8E8D65CD7 /* ProposalsView.swift */,
+				3F73B7DC3AC7076311C24456 /* PushNotifications.swift */,
 				5F94CABB7BE5CB871622BADD /* SocraticTradeApp.swift */,
 				A3125CC92E339D3923013056 /* SymbolInfoSheet.swift */,
 			);
@@ -154,6 +159,7 @@
 				23A34A6694A3A24320E058E4 /* MobileModelsTests.swift */,
 				C5557CAA4F581AB7FB8F8234 /* OrderCancelTests.swift */,
 				245D98F7C0F747E857CB7226 /* PolicyTighteningTests.swift */,
+				8CD0F6E51E8A29D4714465B2 /* PushNotificationTests.swift */,
 				EF789FDEB98C62C5D8A12A7F /* RunStateDerivationTests.swift */,
 				728EAC5AE3C4358672EBAEED /* TabPreferencesTests.swift */,
 				D127513EA965CC0E9E36D114 /* WrappingHStackTests.swift */,
@@ -279,6 +285,7 @@
 				8C402A017E39D5CF92861A85 /* MobileModelsTests.swift in Sources */,
 				6B532570C7BE012A3EF3D070 /* OrderCancelTests.swift in Sources */,
 				FCF86D15E740C07E907B1F1D /* PolicyTighteningTests.swift in Sources */,
+				E51F3B135F00DDFD0E7D55A2 /* PushNotificationTests.swift in Sources */,
 				1F37FE2BA14490285C0A0156 /* RunStateDerivationTests.swift in Sources */,
 				C3BB26F6D86DD0C45B1EBEFC /* TabPreferencesTests.swift in Sources */,
 				0AECCBC50D5461DB100A6502 /* WrappingHStackTests.swift in Sources */,
@@ -307,6 +314,7 @@
 				A4213D46A2C04A5211D908CA /* PolicyTightening.swift in Sources */,
 				51FE4A579117BE3605C107D9 /* PreviewSupport.swift in Sources */,
 				A0B35AC0FE7982512B0E4796 /* ProposalsView.swift in Sources */,
+				18483B89B5039BD1C62B723D /* PushNotifications.swift in Sources */,
 				20459811A20F559A78FC18B3 /* SocraticTradeApp.swift in Sources */,
 				27D79C4CCEC77B61D399EE85 /* SymbolInfoSheet.swift in Sources */,
 			);

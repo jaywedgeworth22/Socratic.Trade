@@ -2793,8 +2793,40 @@ export interface NotificationEvent {
 }
 
 // --- Out-of-app multi-channel alert delivery (ported from Atlas) ---
-/** Out-of-app delivery channels for triggered alerts. */
-export type NotifyChannelId = "push" | "webhook" | "email" | "sms" | "pushover";
+/** Out-of-app delivery channels for triggered alerts. `apns` is native iOS push (Apple Push
+ *  Notification service) — unlike every other channel its delivery target is NOT a user-typed
+ *  string in notification_prefs but the device tokens the iOS app registered (device_push_tokens,
+ *  see db-device-tokens.ts). */
+export type NotifyChannelId = "push" | "webhook" | "email" | "sms" | "pushover" | "apns";
+
+// --- Native iOS push (APNs) -------------------------------------------------
+/**
+ * Which APNs environment a device token was minted in. Device tokens are environment-specific: a
+ * sandbox token is rejected by the production endpoint with 400 BadDeviceToken and vice versa, so
+ * the registry stores the environment the client reported rather than guessing it.
+ *
+ * `sandbox`    -> https://api.sandbox.push.apple.com (Xcode/debug builds)
+ * `production` -> https://api.push.apple.com (TestFlight AND App Store — TestFlight is PRODUCTION)
+ */
+export type ApnsEnvironment = "sandbox" | "production";
+
+/** One registered device token. A token belongs to exactly ONE user — re-registering it under a
+ *  different account REASSIGNS it (see registerDeviceToken) so a shared device that switches
+ *  accounts can never keep receiving the previous user's alerts. */
+export interface DeviceToken {
+  /** The raw APNs device token (hex). Never log this in full — use maskDeviceToken. */
+  token: string;
+  userId: string;
+  environment: ApnsEnvironment;
+  bundleId: string;
+  platform: string;
+  createdAt: string;
+  lastSeenAt: string;
+  /** Set when the token was retired (410 Unregistered, 400 BadDeviceToken, or an explicit
+   *  sign-out unregister). A disabled token is never sent to again. */
+  disabledAt: string | null;
+  disabledReason: string | null;
+}
 
 /** Per-user notification preferences: enabled channels + per-channel delivery target. */
 export interface NotifyPrefs {
@@ -2864,6 +2896,10 @@ export interface NotifyChannelDescriptor {
   targetLabel: string;
   placeholder: string;
   hint: string;
+  /** True when the channel's delivery target is managed by the app rather than typed by the user
+   *  (apns: the device tokens the iOS app registers). The Settings -> Delivery UI renders a
+   *  read-only status line for these instead of a target input. */
+  managedTarget?: boolean;
 }
 
 // --- Conversation transcript (chat history, ported from Atlas) ---
