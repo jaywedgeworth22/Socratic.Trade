@@ -338,7 +338,14 @@ final class PushDeepLinkContractTests: XCTestCase {
         Row("risk_advisory", "https://socratictrade.com/console/activity", .activity),
         Row("protective_exit_failing", "https://socratictrade.com/console/activity", .activity),
         Row("signal_health", "https://socratictrade.com/console/activity", .activity),
-        Row("watchlist_digest", "https://socratictrade.com/console/activity", .activity)
+        Row("watchlist_digest", "https://socratictrade.com/console/activity", .activity),
+        // The lookahead audit's findings panel lives on the WEB Results page, which this app has
+        // no screen for and the AASA file does not claim.  Routing the tap at /console/results
+        // would satisfy "points at the right web page" and fail the only thing that matters here:
+        // DeepLink.destination(for:) rejects it, so the tap would open the app and stop.  Activity
+        // is where the notification itself is listed, and the body already names the Results page
+        // for anyone reading it on the web.
+        Row("lookahead_leak", "https://socratictrade.com/console/activity", .activity)
     ]
 
     /// Every URL the server can emit routes somewhere.  A nil here is a push that opens the app

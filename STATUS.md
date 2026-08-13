@@ -178,6 +178,23 @@ CopyTrader observe/allowlist framework (official eToro API only).  Owner must mi
 Rollout: `docs/rollouts/2026-08-12-broker-cascade-and-copy-intel.md`.
 ## Current (2026-08-12 MONET - APNs native push, MERGED end to end + contract reconciled)
 
+**2026-08-13 update - merged `origin/main` `39c6acee` into the branch.**  Five conflicts, all
+resolved deliberately: `device_push_tokens` moved from migration **75 to 77** (main landed 75
+`lookahead_audit_findings` + 76 `fundamental_revisions`; two `CREATE TABLE`s under one version
+number would be unreachable for any DB that already ran the other), 12 schema-version assertions
+in `test/persistence-hardening.test.ts` retargeted, `project.pbxproj` **regenerated with xcodegen**
+from the merged `project.yml` (verified it still substitutes `$(MARKETING_VERSION)` /
+`$(CURRENT_PROJECT_VERSION)`), and `MobileControlView.apply(_:)` **taken from main in full**.  That
+last one was a real bug, not formatting: this branch's older `apply()` predates deep-link proposal
+focus and silently discarded `destination.proposalId`, so every `pending_approval` push - which
+`pushDeepLink()` emits as `/console/approvals?proposal=<id>` and the parser correctly turns into
+`.proposal(id:)` - would have opened the Proposals list with nothing highlighted.  It would have
+compiled and passed every test.  Also corrected: the rollout note's claim that no AASA file exists
+is stale - #2662 landed `app/.well-known/apple-app-site-association/route.ts` and its
+`middleware.ts` `PUBLIC_PREFIXES` entry, so universal links and push taps now share one parser.
+`.gitignore` gained `*.p8` (an APNs auth key is team-wide; a loose `.p8` in the repo root was
+untracked but not ignored).
+
 Branch `monet/apns-push` (worktree `~/apps/trading-monet-apns`), forked from `origin/main`
 `5784c1cf`.  Merges the two parallel halves - `monet/apns-server` (`c4bd3acb`) and
 `monet/apns-ios` (`f697bd32`) - with **zero conflicts** (disjoint by construction; even
