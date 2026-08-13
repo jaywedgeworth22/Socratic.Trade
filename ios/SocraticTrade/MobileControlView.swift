@@ -115,6 +115,12 @@ struct MobileControlView: View {
     @State private var selectedTab: AppTab = .home
     @State private var morePath: [AppTab] = []
 
+    @Binding private var pendingDeepLink: DeepLinkDestination?
+
+    init(pendingDeepLink: Binding<DeepLinkDestination?> = .constant(nil)) {
+        self._pendingDeepLink = pendingDeepLink
+    }
+
     private var pendingProposalCount: Int {
         store.snapshot?.pendingProposals.count ?? 0
     }
@@ -162,6 +168,23 @@ struct MobileControlView: View {
             }
         }
         .tint(AppPalette.accent)
+        .onChange(of: pendingDeepLink) { _, destination in
+            apply(destination)
+        }
+        .onAppear {
+            // A link or notification tap that launched the app can arrive before this view
+            // exists, and one that arrives while signed out waits here until it does.
+            apply(pendingDeepLink)
+        }
+    }
+
+    /// Deep links reuse the SAME rerouting `selection` binding as in-app jumps, so a link to an
+    /// UNPINNED screen lands in the More stack instead of selecting a tab that is not on the
+    /// bar.  Clearing `pendingDeepLink` afterwards keeps a repeat of the same link routable.
+    private func apply(_ destination: DeepLinkDestination?) {
+        guard let destination else { return }
+        selection.wrappedValue = destination.tab
+        pendingDeepLink = nil
     }
 
     @ViewBuilder
