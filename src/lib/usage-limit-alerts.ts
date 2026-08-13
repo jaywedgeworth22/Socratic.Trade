@@ -1,7 +1,7 @@
 import { audit, getInternalSetting, getNotifyPrefs, getPolicy, setInternalSetting } from "./db";
 import { sendNotification } from "./notifications";
 import { loadNotifyConfig, notify } from "./notify";
-import type { NotifyPrefs, TradingPolicy } from "./types";
+import type { NotifyPrefs } from "./types";
 
 export interface UsageLimitAlertInput {
   userId?: string;
@@ -55,16 +55,6 @@ function shouldSend(input: Required<Pick<UsageLimitAlertInput, "userId" | "provi
   if (last && Date.now() - Date.parse(last) < cooldownMs()) return false;
   setInternalSetting(key, new Date().toISOString());
   return true;
-}
-
-function forcedBudgetAlertPolicy(policy: TradingPolicy): TradingPolicy {
-  return {
-    ...policy,
-    notificationSettings: {
-      ...policy.notificationSettings,
-      enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "budget_alert"]))
-    }
-  };
 }
 
 function operatorAlertEmail(): string | undefined {
@@ -173,11 +163,15 @@ export async function alertUsageLimitHit(
     assertUsageAlertActive(options);
     audit("usage_limit_alert", payload, userId);
     assertUsageAlertActive(options);
+    // Delivery honors the user's real enabledEvents toggle (owner ruling 2026-08-12, "ALL toggles
+    // must be real" — no force-include). A legacy stored enabledEvents array predating this event
+    // type was backfilled once by migration 78 (db.ts); after that the toggle is genuinely the
+    // user's.
     await sendNotification(
       { type: "budget_alert", title, payload },
       {
         userId,
-        policy: forcedBudgetAlertPolicy(getPolicy(userId)),
+        policy: getPolicy(userId),
         assertActive: options.assertActive,
         signal: options.signal
       }

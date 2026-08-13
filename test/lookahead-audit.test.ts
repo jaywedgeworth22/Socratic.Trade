@@ -440,4 +440,48 @@ describe("audit pass (db-backed IO)", () => {
     expect(result.mismatches).toBeGreaterThanOrEqual(1);
     expect(result.verdict.verdict).toBe("lookahead_mismatch_detected");
   });
+
+  it("does NOT deliver lookahead_leak when the user has that event switched off — no force-include (owner ruling 2026-08-12)", async () => {
+    const userId = `la-toggle-off-${randomUUID().slice(0, 8)}`;
+    const { audit, getPolicy, setPolicy, listNotificationEvents } = await import("../src/lib/db");
+    const { runLookaheadAuditPass } = await import("../src/lib/lookahead-audit");
+
+    const policy = getPolicy(userId);
+    setPolicy(
+      {
+        ...policy,
+        notificationSettings: {
+          ...policy.notificationSettings,
+          enabledEvents: policy.notificationSettings.enabledEvents.filter((type) => type !== "lookahead_leak")
+        }
+      },
+      userId
+    );
+    expect(getPolicy(userId).notificationSettings.enabledEvents).not.toContain("lookahead_leak");
+
+    const leaked = barsWithFutureCrash();
+    const refPrice = 100 + DECISION_INDEX * 0.1;
+    const { breakdown, tech } = await breakdownFromSeries(leaked, refPrice, 1_000_000);
+    audit(
+      "signal_snapshot",
+      { runId: "run-leak-toggle-off", asOf: DECISION_AS_OF, signals: [evidenceFor(breakdown, tech, refPrice)] },
+      userId
+    );
+
+    const result = await runLookaheadAuditPass(userId, {
+      now: NOW,
+      fetchOHLC: async () => leaked,
+      retrieve: async () => []
+      // notifyOnMismatch defaults true — this test exists to prove delivery is still gated by the
+      // user's real toggle even when the pass attempts to notify.
+    });
+    expect(result.mismatches).toBeGreaterThanOrEqual(1);
+    expect(result.notified).toBe(true); // the attempt is made (sendNotification never throws here)
+
+    const events = listNotificationEvents(userId, 50);
+    const lookaheadEvent = events.find((event) => event.type === "lookahead_leak");
+    expect(lookaheadEvent).toBeDefined();
+    expect(lookaheadEvent?.status).toBe("skipped");
+    expect(lookaheadEvent?.error).toBe("Notification type is disabled.");
+  });
 });

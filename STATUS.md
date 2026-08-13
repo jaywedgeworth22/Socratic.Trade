@@ -1,3 +1,34 @@
+## Current (2026-08-13 MONET — real toggles: banned force-include notification pattern removed)
+
+Owner ruling 2026-08-12: "ALL toggles must be real" — no force-included notification events,
+ever. Ten call sites across eight files (`lookahead-audit.ts`, `signal-health.ts`,
+`db-health.ts` x3, `scheduler.ts`, `earningscalls-transcripts.ts`, `usage-limit-alerts.ts`,
+`broker-health.ts`, `strategy.ts` x3) injected a specific event type into that send's effective
+`enabledEvents` regardless of the user's stored setting, silently overriding an OFF toggle
+forever. All removed; every site now passes the real `policy` through unmodified.
+
+Replaced with a one-time versioned migration (`src/lib/db.ts`, version 78,
+`notification_enabled_events_backfill`): backfills the eight previously-force-included event
+types into any LEGACY stored `enabledEvents` array that predates them (only touches rows with an
+explicit array already present; a row with no `notificationSettings` key at all already defaults
+to every current type via `mergePolicy`). After the backfill the Settings toggle is genuinely the
+user's — on by default, off if/when they turn it off, and it STAYS off. (Originally landed as
+version 77; `monet/apns-push` (#2681) merged first and claimed 77 for `device_push_tokens` —
+renumbered to 78 and rebased, see the rollout note's "collision with #2681" section.)
+
+Rewrote one existing test (`test/guard-enablement.test.ts`) that explicitly pinned the OLD
+force-include behavior as a "regression" test; added new regression coverage proving
+`signal_health` and `lookahead_leak` are NOT delivered when switched off
+(`test/signal-health.test.ts`, `test/lookahead-audit.test.ts`), plus a dedicated migration test
+(`test/db-migration-notification-backfill.test.ts`). Bumped 12 hardcoded schema-version
+assertions in `test/persistence-hardening.test.ts` from 76 to 78 (77 is now `device_push_tokens`
+from #2681).
+
+Branch `monet/real-toggles`, worktree `~/apps/trading-monet-toggles`. Gates (foreground, waited
+on): tsc clean; `npm test` 6573 passed / 51 skipped (568 files); lint 0 errors; build clean. PR
+https://github.com/jaywedgeworth22/Socratic.Trade/pull/2682, opened ready, auto-merge armed
+(squash) — merges on green `verify`. Rollout:
+`docs/rollouts/2026-08-13-remove-force-include-notifications.md`.
 ## Current (2026-08-13 ~2:20pm CT CLAUDE — HOTFIX: adaptive FTS-mirror batching)
 
 The ingestion re-enable reproduced the 08-10 event-loop stall (ftsMirrorBatch 119s pinned
