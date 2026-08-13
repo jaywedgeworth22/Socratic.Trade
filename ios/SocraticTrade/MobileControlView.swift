@@ -158,28 +158,28 @@ struct MobileControlView: View {
         TabView(selection: selection) {
             if tabPreferences.isPinned(.home) {
                 Tab(AppTab.home.title, systemImage: AppTab.home.systemImage, value: AppTab.home) {
-                    NavigationStack { HomeView(selectedTab: selection) }
+                    NavigationStack { destination(for: .home) }
                 }
             }
             if tabPreferences.isPinned(.proposals) {
                 Tab(AppTab.proposals.title, systemImage: AppTab.proposals.systemImage, value: AppTab.proposals) {
-                    NavigationStack { ProposalsView() }
+                    NavigationStack { destination(for: .proposals) }
                 }
                 .badge(pendingProposalCount)
             }
             if tabPreferences.isPinned(.markets) {
                 Tab(AppTab.markets.title, systemImage: AppTab.markets.systemImage, value: AppTab.markets) {
-                    NavigationStack { MarketsView() }
+                    NavigationStack { destination(for: .markets) }
                 }
             }
             if tabPreferences.isPinned(.activity) {
                 Tab(AppTab.activity.title, systemImage: AppTab.activity.systemImage, value: AppTab.activity) {
-                    NavigationStack { ActivityView() }
+                    NavigationStack { destination(for: .activity) }
                 }
             }
             if tabPreferences.isPinned(.insights) {
                 Tab(AppTab.insights.title, systemImage: AppTab.insights.systemImage, value: AppTab.insights) {
-                    NavigationStack { InsightsView() }
+                    NavigationStack { destination(for: .insights) }
                 }
             }
 
