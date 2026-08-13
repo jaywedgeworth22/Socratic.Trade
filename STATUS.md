@@ -1,3 +1,17 @@
+## Current (2026-08-12 ~7:45pm CT CLAUDE — round 3 landed: scorecard, lookahead audit, PIT chain, Polymarket)
+
+Four backlog features land in this PR (details in the four r3 rollout notes): the unified
+ProposalScorecard (deterministic receipts: MA alignment, sniper points, gate checklist, signal
+attribution summing to 100, decision chain with a persistence-time validator), the
+truncated-replay lookahead audit (weekly lane; momentum/liquidity + RAG evidence replayed with
+history cut at decision time; honest unverifiable labels; 90-day windowed verdict), the PIT
+fundamentals revision chain (restatements never rewrite history; as-of reads with a strict
+knob), and keyless Polymarket prediction-market context in the strategist prompt.  All slices
+adversarially verified; 13 integration fixes applied; full suite 6423 green + build clean before
+push.  This deploy also activates the owner-directed ingestion re-enable (SEC worker on, filing
+cap 25) — first sync stretch is being watched for the 2026-08-10 event-loop-pinning recurrence.
+Blockers: none.
+
 ## Current (2026-08-12 ~3:05pm CT CLAUDE — r3: keyless Polymarket prediction-market context)
 
 Round 3 slice (implementable subset of the social-sentiment lesson: real-money crowd odds as LLM
