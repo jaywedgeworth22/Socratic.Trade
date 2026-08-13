@@ -67,6 +67,7 @@ CRON_SCHEDULES = {
     "Security": "41 10 * * 1",
     "Playwright Smoke": "17 9 * * *",
     "Shared package pin check": "0 13 * * 1",
+    "iOS TestFlight ship (Mac runner)": "*/30 * * * *",
 }
 
 
