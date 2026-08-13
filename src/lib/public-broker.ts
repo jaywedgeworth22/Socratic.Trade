@@ -21,6 +21,7 @@ import { normalizeSymbol } from "./money";
 import { getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { logApiHealth } from "./db-health";
 import { estimateReviewNotional } from "./alpaca";
+import { mergeAccountCapabilities } from "./venue-contract";
 
 const PUBLIC_API = "https://api.public.com";
 
@@ -45,16 +46,7 @@ export async function mintPublicAccessToken(
 }
 
 function emptyCaps(over: Partial<AccountCapabilities> = {}): AccountCapabilities {
-  return {
-    equityTrading: true,
-    shortSelling: false,
-    optionsTrading: false,
-    futuresTrading: false,
-    cryptoTrading: false,
-    marginEnabled: false,
-    accountType: "brokerage",
-    ...over
-  };
+  return mergeAccountCapabilities("public", over);
 }
 
 class PublicBrokerGateway implements BrokerGateway {

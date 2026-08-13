@@ -35,6 +35,7 @@ import { buildRedTeamReviewSystem } from "./strategy-prompts";
 import { STRATEGY_PROMPT_VERSION } from "./strategy-prompt-version";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { MarketQuoteSummary, TradeProposal, TradingPolicy } from "./types";
+import { deriveVenueContract } from "./venue-contract";
 
 /** The three-way, down-only verdict set (§3.3). Anything else fails closed (§4.4). */
 export type RedTeamVerdict = "approve" | "approve-at-half" | "reject";
@@ -187,7 +188,17 @@ export async function debateProposal(
   review?: { context?: RedTeamReviewContext; sizing?: RedTeamFinalizedSizing }
 ): Promise<RedTeamDebateResult> {
   const policy = policyOverride ?? getPolicy(userId);
-  const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
+  const activeAccount = getActiveConnectedAccount(userId);
+  const venue = deriveVenueContract(policy, activeAccount);
+  if (proposal.side === "short" && !venue.sides.includes("short")) {
+    return {
+      verdict: "reject",
+      rejected: true,
+      available: true,
+      reason: `This ${venue.brokerLabel} account cannot short.  The opening was refused without a reviewer call.`
+    };
+  }
+  const executionState = deriveExecutionState(policy, activeAccount);
   const basePrompt = getStrategyPrompt(userId);
   const { url, key: llmKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(
     policy,
@@ -220,7 +231,11 @@ export async function debateProposal(
     );
   }
 
-  const systemPrompt = buildRedTeamReviewSystem({ side: proposal.side, symbol: proposal.symbol });
+  const systemPrompt = buildRedTeamReviewSystem({
+    side: proposal.side,
+    symbol: proposal.symbol,
+    optionsOrders: venue.optionsOrders
+  });
   const executionMode = llmExecutionMode(executionState) ?? "no-account";
   const userContent = JSON.stringify({
     // The FINALIZED proposal — deterministic sizing and opening enrichment already ran (§3.2).

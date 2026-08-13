@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { ConnectedAccount, TaxationType } from "@/lib/types";
+import { mergeAccountCapabilities } from "@/lib/venue-contract";
 import { activateAccount, ConsoleApiError } from "../lib/api";
 import { deriveStateInfo, realityForAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -959,7 +960,7 @@ function CapabilitiesSheet({
   onClose: () => void;
 }) {
   if (!account) return null;
-  const caps = account.capabilities;
+  const caps = mergeAccountCapabilities(account.broker, account.capabilities);
   return (
     <Sheet
       open={account !== null}
@@ -990,8 +991,22 @@ function CapabilitiesSheet({
           </div>
           <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
             <span className="font-medium flex items-center gap-1.5"><Zap className="size-4 text-[color:var(--con-accent)]" /> Options Trading</span>
-            <Chip tone={caps?.optionsTrading ? "pos" : "muted"}>
-              {caps?.optionsTrading ? `Level ${caps.optionsLevel ?? "?"}` : "Disabled"}
+            <Chip tone={caps?.optionsOrders ? "pos" : "muted"}>
+              {caps?.optionsOrders
+                ? `Orders · level ${caps.optionsLevel ?? "?"}`
+                : caps?.optionsTrading
+                  ? `Positions only · level ${caps.optionsLevel ?? "?"}`
+                  : "Disabled"}
+            </Chip>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+            <span className="font-medium">Fractional shares</span>
+            <Chip tone={caps?.fractional ? "pos" : "muted"}>{caps?.fractional ? "Yes" : "Whole shares"}</Chip>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+            <span className="font-medium">Sessions</span>
+            <Chip tone="muted">
+              {caps?.overnightHours ? "regular + extended + overnight" : caps?.extendedHours ? "regular + extended" : "regular only"}
             </Chip>
           </div>
           <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
