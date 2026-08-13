@@ -10,6 +10,15 @@ logged-in user, not only `local`, so Individual is 300/min and 20 transcript
 quarters.  Branch `grok/settings-busy-feedback`.
 
 Rollout: `docs/rollouts/2026-08-13-settings-busy-feedback.md`.
+## Current (2026-08-13 ANTIGRAVITY — Framework & Dashboard Loading Performance Optimizations)
+
+**Branch `ag/framework-dashboard-perf` (Framework & Dashboard Loading Optimizations):**
+1. **Framework Loading**: Removed artificial `150ms` delay in `FrameworkViewer` (`app/framework/framework-viewer.tsx`) and added in-memory session caching so return visits within the same session render instantly.
+2. **Dashboard Assembly**: Raced independent macro data dependencies (`fetchMacroData`, `getMarketSignals`, `fetchMacroHistory`, `fetchMassiveNews`) in parallel via `Promise.all` alongside the broker chain in `src/lib/dashboard.ts`.
+3. **Verification**: `npm run lint` clean (0 errors), `npx tsc --noEmit` clean, `npm test` 87/87 test files (673 passed), `npm run build` clean.
+Rollout: `docs/rollouts/2026-08-13-framework-and-dashboard-perf.md`.
+
+## Current (2026-08-13 ANTIGRAVITY — Dashboard Parallelization and Litestream Generic Disable)
 
 ## Current (2026-08-12 ~11:30pm CT GROK — SEC TTL was a 10-year pause; paid RAG knobs on)
 
