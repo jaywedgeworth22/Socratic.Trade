@@ -1,9 +1,16 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { Btn, Card, Chip, Dot, Meter, Toggle } from "../../console/ui/primitives";
-import { Server, Cpu, Database, Activity, RefreshCw, Layers, ArrowDown, ArrowUp, Globe, Shield, HardDrive } from "lucide-react";
+import { Server, Cpu, Database, Activity, RefreshCw, Layers, ArrowDown, ArrowUp, Globe, Shield, HardDrive, GitBranch } from "lucide-react";
 import { asRecord, normalizeCoolifyResources, readText } from "@/lib/server-metrics-shapes";
+import { SENTENCE_GAP } from "../../console/lib/format";
+import type {
+  ServerMetricsActionRunners,
+  ServerMetricsUnobservedHostFact,
+  ServerMetricsUnobservedHostField,
+} from "@/lib/server-metrics-runtime";
 
 interface MetricPoint {
   timestamp: number;
@@ -35,9 +42,13 @@ interface ServerMetricsData {
   usesLocalHost?: boolean;
   degraded?: boolean;
   stale?: boolean;
+  staleScope?: "all" | "metrics";
   cacheAgeSeconds?: number;
+  monitoredTarget?: { hetznerServerId?: string; coolifyServerUuid?: string };
   hostInfo: HostInfo;
+  unobservedHostFacts: ServerMetricsUnobservedHostFact[];
   resources: unknown;
+  actionRunners?: ServerMetricsActionRunners;
   metrics: {
     cpu: MetricPoint[];
     diskRead: MetricPoint[];
@@ -66,6 +77,110 @@ function parseMetricPoints(value: unknown): MetricPoint[] | undefined {
   return points;
 }
 
+const UNOBSERVED_HOST_FIELDS = new Set<string>([
+  "memoryUtilization",
+  "uptime",
+  "os",
+  "diskCapacity",
+]);
+
+const RUNNER_UNAVAILABLE_REASONS = new Set<string>([
+  "no-github-token",
+  "github-api-error",
+  "unexpected-shape",
+  "request-failed",
+]);
+
+/**
+ * Parse the per-field "why is this blank" list. Unrecognized entries are dropped rather than
+ * rendered, so a future provider regression cannot inject arbitrary prose into the panel.
+ */
+export function parseUnobservedHostFacts(value: unknown): ServerMetricsUnobservedHostFact[] {
+  if (!Array.isArray(value)) return [];
+  const facts: ServerMetricsUnobservedHostFact[] = [];
+  for (const item of value) {
+    const record = asRecord(item);
+    const field = readText(record?.field);
+    const reason = readText(record?.reason);
+    const detail = readText(record?.detail);
+    if (!field || !reason || !detail || !UNOBSERVED_HOST_FIELDS.has(field)) continue;
+    facts.push({
+      field: field as ServerMetricsUnobservedHostFact["field"],
+      reason: reason as ServerMetricsUnobservedHostFact["reason"],
+      detail,
+    });
+  }
+  return facts;
+}
+
+/**
+ * Parse the runner result.
+ *
+ * A malformed payload returns `undefined`, which the panel renders as an explicit "not
+ * available" row naming that fact. It never degrades into an empty list, because an empty list
+ * is itself a meaningful measured answer ("this repository has zero registered runners") and
+ * the two must stay distinguishable.
+ */
+export function parseActionRunners(value: unknown): ServerMetricsActionRunners | undefined {
+  const record = asRecord(value);
+  const repo = readText(record?.repo);
+  if (!record || !repo) return undefined;
+
+  if (record.state === "known") {
+    if (!Array.isArray(record.runners)) return undefined;
+    const runners: Array<{ id: string; name: string; status: string; busy: boolean | null; labels: string[] }> = [];
+    for (const item of record.runners) {
+      const runner = asRecord(item);
+      const id = readText(runner?.id);
+      const name = readText(runner?.name);
+      const status = readText(runner?.status);
+      if (!id || !name || !status) return undefined;
+      runners.push({
+        id,
+        name,
+        status,
+        busy: typeof runner?.busy === "boolean" ? runner.busy : null,
+        labels: Array.isArray(runner?.labels)
+          ? runner.labels.filter((label): label is string => typeof label === "string")
+          : [],
+      });
+    }
+    const omitted = readNonNegativeNumber(record.omittedCount);
+    return { state: "known", repo, runners, omittedCount: omitted ?? 0 };
+  }
+
+  if (record.state === "unavailable") {
+    const reason = readText(record.reason);
+    const detail = readText(record.detail);
+    if (!reason || !detail || !RUNNER_UNAVAILABLE_REASONS.has(reason)) return undefined;
+    return {
+      state: "unavailable",
+      repo,
+      reason: reason as Extract<ServerMetricsActionRunners, { state: "unavailable" }>["reason"],
+      detail,
+    };
+  }
+
+  return undefined;
+}
+
+/**
+ * Classify one Coolify `state:health` string.
+ *
+ * `"unhealthy".includes("healthy")` is true, so the previous substring test resolved every
+ * `*:unhealthy` container to a solid green non-pulsing dot — a guaranteed silent miss on the
+ * single condition this card exists to surface.
+ */
+export function resourceStatusTone(status: string): "pos" | "neg" | "warn" {
+  const [runState, ...healthParts] = status.split(":");
+  const health = healthParts.join(":").trim().toLowerCase();
+  const state = runState.trim().toLowerCase();
+  if (health === "unhealthy") return "neg";
+  if (state === "exited" || state === "dead" || state === "failed") return "neg";
+  if (state === "running" && (health === "healthy" || health === "")) return "pos";
+  return "warn";
+}
+
 export function parseServerMetricsEnvelope(value: unknown): ServerMetricsData | undefined {
   const envelope = asRecord(value);
   const hostInfo = asRecord(envelope?.hostInfo);
@@ -84,14 +199,24 @@ export function parseServerMetricsEnvelope(value: unknown): ServerMetricsData | 
   const networkRx = parseMetricPoints(rawMetrics.networkRx);
   const networkTx = parseMetricPoints(rawMetrics.networkTx);
   if (!cpu || !diskRead || !diskWrite || !networkRx || !networkTx) return undefined;
+  const monitoredTarget = asRecord(envelope.monitoredTarget);
   return {
     isProd: envelope.isProd,
     usesLocalHost: envelope.usesLocalHost === true,
     degraded: envelope.degraded === true,
     stale: envelope.stale === true,
+    staleScope: envelope.staleScope === "metrics" ? "metrics" : envelope.staleScope === "all" ? "all" : undefined,
     cacheAgeSeconds: readNonNegativeNumber(envelope.cacheAgeSeconds),
+    monitoredTarget: monitoredTarget
+      ? {
+          hetznerServerId: readText(monitoredTarget.hetznerServerId),
+          coolifyServerUuid: readText(monitoredTarget.coolifyServerUuid),
+        }
+      : undefined,
     hostInfo,
+    unobservedHostFacts: parseUnobservedHostFacts(envelope.unobservedHostFacts),
     resources: envelope.resources,
+    actionRunners: parseActionRunners(envelope.actionRunners),
     metrics: { cpu, diskRead, diskWrite, networkRx, networkTx },
     asOf: envelope.asOf,
     error: readText(envelope.error),
@@ -141,6 +266,126 @@ function readNonNegativeNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : undefined;
+}
+
+/**
+ * Owner copy rule: two spaces between sentences, and HTML must actually preserve the gap.
+ * Server-authored `detail` strings keep plain double spaces so the JSON contract stays clean,
+ * so the substitution happens once here at render time. Same helper as the Backups panel.
+ */
+function sentenceGaps(text: string): string {
+  return text.replace(/ {2}/g, SENTENCE_GAP);
+}
+
+/**
+ * Say WHICH network series is missing. "No historical data available" was printed even when
+ * Rx was fully populated and only Tx was absent — two different faults, one message.
+ */
+export function describeMissingNetworkSeries(rxPoints: number, txPoints: number): string {
+  if (rxPoints === 0 && txPoints === 0) return "no historical data available";
+  if (rxPoints < 2 && txPoints < 2) return "only one sample so far — a line needs at least two";
+  if (rxPoints < 2) return "the inbound (Rx) series is missing, so the pair cannot be charted";
+  return "the outbound (Tx) series is missing, so the pair cannot be charted";
+}
+
+/** Human label for a runner result that could not be measured. */
+export function runnerUnavailableHeadline(
+  reason: Extract<ServerMetricsActionRunners, { state: "unavailable" }>["reason"],
+): string {
+  switch (reason) {
+    case "no-github-token": return "not available: no GitHub token configured";
+    case "github-api-error": return "not available: the GitHub API rejected the request";
+    case "unexpected-shape": return "not available: unexpected GitHub API response";
+    case "request-failed": return "not available: the GitHub API could not be reached";
+  }
+}
+
+/**
+ * Render the runner list, an explicit measured-empty state, or an explicit unavailable state.
+ *
+ * All three are visually distinct on purpose. This card replaced six hardcoded rows that were
+ * shown for every failure mode, so the one thing it must never do again is present a
+ * plausible-looking list in place of an answer it does not have.
+ */
+function ActionRunnersPanel({ runners }: { runners?: ServerMetricsActionRunners }) {
+  if (!runners) {
+    return (
+      <div className="py-6 text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        not available: the metrics endpoint did not report runner state
+      </div>
+    );
+  }
+
+  if (runners.state === "unavailable") {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Dot tone="warn" pulse={false} />
+          <span className="text-[length:var(--con-fs-sm)] font-semibold">
+            {runnerUnavailableHeadline(runners.reason)}
+          </span>
+        </div>
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          {sentenceGaps(runners.detail)}
+        </p>
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          repository {runners.repo} · reason code {runners.reason}
+        </p>
+      </div>
+    );
+  }
+
+  if (runners.runners.length === 0) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Dot tone="warn" pulse={false} />
+          <span className="text-[length:var(--con-fs-sm)] font-semibold">no runners registered</span>
+        </div>
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          {sentenceGaps(`GitHub reports zero self-hosted runners for ${runners.repo}.  `
+            + "This is a measured answer, not a failed read.")}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {runners.runners.map((runner) => {
+        const online = runner.status.toLowerCase() === "online";
+        return (
+          <div
+            key={runner.id}
+            className="flex items-center justify-between border-b border-[color:var(--con-line)] pb-3 last:border-0 last:pb-0"
+          >
+            <div className="min-w-0">
+              <div className="truncate text-[length:var(--con-fs-sm)] font-semibold">{runner.name}</div>
+              <div className="truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                {runner.labels.length > 0 ? runner.labels.join(", ") : "no labels reported"}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Dot tone={online ? "pos" : "neg"} pulse={!online} />
+              {/* GitHub reports reachability only, so this says "online", never "healthy". */}
+              <span className="text-[length:var(--con-fs-xs)] font-medium uppercase">
+                {runner.status}
+                {runner.busy === true ? " · busy" : ""}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+      {runners.omittedCount > 0 && (
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+          {runners.omittedCount} runner entries were omitted because GitHub returned them without a name or status.
+        </p>
+      )}
+      <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        registered to {runners.repo}
+      </p>
+    </div>
+  );
 }
 
 export function ServerMetricsClient() {
@@ -222,11 +467,15 @@ export function ServerMetricsClient() {
       : ["The server metrics warnings payload was malformed."];
   const warnings = [...providerWarnings, ...normalizedResources.warnings];
   const usesLocalHost = data?.usesLocalHost === true;
-  const hostName = displayProviderText(host?.name, usesLocalHost ? "localhost" : "Unavailable", "host name");
+  // No invented local-runtime placeholders. The local path never measures an IP, a location or
+  // a server type, so it must not print "127.0.0.1 / local / local runtime" as if it had.
+  const hostName = displayProviderText(host?.name, "Unavailable", "host name");
   const hostOs = displayProviderText(host?.os, "Unavailable", "operating system");
-  const hostIp = displayProviderText(host?.ip, usesLocalHost ? "127.0.0.1" : "Unavailable", "server IP");
-  const hostLocation = displayProviderText(host?.location, usesLocalHost ? "local" : "Unavailable", "server location");
-  const serverType = displayProviderText(host?.serverType, usesLocalHost ? "local runtime" : "Unavailable", "server type");
+  const hostIp = displayProviderText(host?.ip, "Unavailable", "server IP");
+  const hostLocation = displayProviderText(host?.location, "Unavailable", "server location");
+  const serverType = displayProviderText(host?.serverType, "Unavailable", "server type");
+  const unobserved = (field: ServerMetricsUnobservedHostField): string | undefined =>
+    data?.unobservedHostFacts?.find((fact) => fact.field === field)?.detail;
   const cpuCores = typeof host?.cpus === "number" && Number.isFinite(host.cpus) && host.cpus > 0
     ? `${host.cpus} Cores`
     : "Unavailable";
@@ -247,7 +496,14 @@ export function ServerMetricsClient() {
     : undefined;
   const asOf = data?.asOf ? new Date(data.asOf) : undefined;
   const hasValidAsOf = asOf && Number.isFinite(asOf.getTime());
-  const formattedAsOf = hasValidAsOf ? asOf.toLocaleString(undefined, { timeZone: "America/Chicago" }) : "Unavailable";
+  // The zone is forced to Central Time (fleet convention) but the locale is the viewer's, so
+  // print the zone name — an unlabelled time reads as the reader's own clock.
+  const formattedAsOf = hasValidAsOf
+    ? asOf.toLocaleString(undefined, { timeZone: "America/Chicago", timeZoneName: "short" })
+    : "Unavailable";
+  const snapshotAge = typeof data?.cacheAgeSeconds === "number"
+    ? `${Math.floor(data.cacheAgeSeconds)}s old`
+    : "age unknown";
 
   // CPU average of last 3 points
   const latestCpuValues = metrics?.cpu?.slice(-3).map(p => p.value) || [];
@@ -282,17 +538,23 @@ export function ServerMetricsClient() {
                   : data?.degraded ? "REMOTE - DEGRADED" : "REMOTE"}
               </Chip>
             )}
-            {data?.stale && <Chip tone="warn">STALE SNAPSHOT</Chip>}
+            {data?.stale && (
+              <Chip tone="warn">{data.staleScope === "metrics" ? "STALE METRICS" : "STALE SNAPSHOT"}</Chip>
+            )}
           </div>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             Host node metrics and application resource statuses.
           </p>
           <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-            As of {formattedAsOf}
-            {typeof data?.cacheAgeSeconds === "number" && data.cacheAgeSeconds > 0
-              ? ` (${Math.floor(data.cacheAgeSeconds)}s old)`
-              : ""}
+            As of {formattedAsOf} ({snapshotAge})
           </p>
+          {(data?.monitoredTarget?.hetznerServerId || data?.monitoredTarget?.coolifyServerUuid) && (
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              querying{data.monitoredTarget.hetznerServerId ? ` hetzner server ${data.monitoredTarget.hetznerServerId}` : ""}
+              {data.monitoredTarget.hetznerServerId && data.monitoredTarget.coolifyServerUuid ? " and" : ""}
+              {data.monitoredTarget.coolifyServerUuid ? ` coolify server ${data.monitoredTarget.coolifyServerUuid}` : ""}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3 self-start max-sm:w-full">
           <div className="flex items-center gap-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)] max-sm:mr-auto">
@@ -371,7 +633,7 @@ export function ServerMetricsClient() {
               </div>
               <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
                 {memPct === undefined || memoryFreeBytes === undefined
-                  ? "Utilization unavailable"
+                  ? unobserved("memoryUtilization") ?? "utilization not measured"
                   : `${memPct}% used (${formatBytes(memoryTotalBytes! - memoryFreeBytes)} used, ${formatBytes(memoryFreeBytes)} free)`}
               </div>
             </div>
@@ -390,7 +652,7 @@ export function ServerMetricsClient() {
               </div>
               <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
                 {diskUsedPct === undefined || diskFreeBytes === undefined
-                  ? "Storage unavailable"
+                  ? unobserved("diskCapacity") ?? "capacity not measured"
                   : `${diskUsedPct}% used (${formatBytes(diskUsedBytes!)} used, ${formatBytes(diskFreeBytes)} avail)`}
               </div>
             </div>
@@ -405,10 +667,13 @@ export function ServerMetricsClient() {
             <div>
               <div className="con-card-title">Host Uptime</div>
               <div className="font-bold">
-                {uptimeSeconds === undefined ? "Unavailable" : formatUptime(uptimeSeconds)}
+                {uptimeSeconds === undefined ? "Not measured" : formatUptime(uptimeSeconds)}
               </div>
-              <div className="mt-0.5 max-w-[180px] truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-                {hostOs}
+              <div
+                className="mt-0.5 max-w-[180px] truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"
+                title={uptimeSeconds === undefined ? unobserved("uptime") : undefined}
+              >
+                {hostOs === "Unavailable" ? unobserved("os") ?? "operating system not reported" : hostOs}
               </div>
             </div>
           </div>
@@ -438,19 +703,19 @@ export function ServerMetricsClient() {
               </div>
 
               {/* Memory Bar */}
-              <div>
+              <div title={memPct === undefined ? unobserved("memoryUtilization") : undefined}>
                 <div className="mb-1 flex justify-between text-[length:var(--con-fs-xs)] font-semibold">
                   <span className="text-[color:var(--con-muted)]">RAM Utilization</span>
-                  <span className="con-num">{memPct === undefined ? "Unavailable" : `${memPct}%`}</span>
+                  <span className="con-num">{memPct === undefined ? "not measured" : `${memPct}%`}</span>
                 </div>
                 {memPct !== undefined ? <Meter value={memPct} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
               </div>
 
               {/* Disk Bar */}
-              <div>
+              <div title={diskUsedPct === undefined ? unobserved("diskCapacity") : undefined}>
                 <div className="mb-1 flex justify-between text-[length:var(--con-fs-xs)] font-semibold">
                   <span className="text-[color:var(--con-muted)]">Disk Utilization</span>
-                  <span className="con-num">{diskUsedPct === undefined ? "Unavailable" : `${diskUsedPct}%`}</span>
+                  <span className="con-num">{diskUsedPct === undefined ? "not measured" : `${diskUsedPct}%`}</span>
                 </div>
                 {diskUsedPct !== undefined ? <Meter value={diskUsedPct} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
               </div>
@@ -486,10 +751,16 @@ export function ServerMetricsClient() {
             }
           >
             <div className="h-44 w-full">
-              {metrics && metrics.cpu && metrics.cpu.length > 0 ? (
+              {/* The chart component itself requires 2+ points. Guarding on `> 0` rendered an
+                  unexplained empty frame for a single-sample series. */}
+              {metrics && metrics.cpu.length >= 2 ? (
                 <SparklineChart points={metrics.cpu} yMax={100} stroke="var(--con-accent)" fill="var(--con-accent)" />
               ) : (
-                <div className="flex h-full items-center justify-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">No historical data available</div>
+                <div className="flex h-full items-center justify-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                  {metrics && metrics.cpu.length === 1
+                    ? "only one sample so far — a line needs at least two"
+                    : "no historical data available"}
+                </div>
               )}
             </div>
           </Card>
@@ -503,7 +774,9 @@ export function ServerMetricsClient() {
             }
           >
             <div className="h-44 w-full">
-              {metrics && metrics.networkRx && metrics.networkRx.length > 0 ? (
+              {/* Both series are required: guarding on Rx alone rendered a blank frame whenever
+                  the Tx series specifically was missing, which is a different fault. */}
+              {metrics && metrics.networkRx.length >= 2 && metrics.networkTx.length >= 2 ? (
                 <DualLineChart
                   seriesA={metrics.networkRx}
                   seriesB={metrics.networkTx}
@@ -512,7 +785,9 @@ export function ServerMetricsClient() {
                   formatValue={formatBandwidth}
                 />
               ) : (
-                <div className="flex h-full items-center justify-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">No historical data available</div>
+                <div className="flex h-full items-center justify-center px-4 text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                  {describeMissingNetworkSeries(metrics?.networkRx.length ?? 0, metrics?.networkTx.length ?? 0)}
+                </div>
               )}
             </div>
           </Card>
@@ -523,18 +798,20 @@ export function ServerMetricsClient() {
           <Card
             title={
               <span className="flex items-center gap-1.5">
-                <Layers className="h-4 w-4" /> Services & Action Runners
+                <Layers className="h-4 w-4" /> Services & Containers
               </span>
             }
           >
             {resources.length === 0 ? (
-              <div className="py-6 text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">No containers registered or active</div>
+              <div className="py-6 text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                {usesLocalHost
+                  ? "coolify is not configured for this runtime, so no services were queried"
+                  : "coolify reported no services for this server"}
+              </div>
             ) : (
               <div className="space-y-3">
                 {resources.map((item) => {
-                  const isHealthy = item.status.includes("healthy") || item.status === "running";
-                  const isDegraded = item.status.includes("unhealthy") || item.status.includes("degraded");
-                  const tone = isHealthy ? "pos" : isDegraded ? "neg" : "warn";
+                  const tone = resourceStatusTone(item.status);
 
                   return (
                     <div
@@ -546,8 +823,10 @@ export function ServerMetricsClient() {
                         <div className="text-[length:var(--con-fs-xs)] capitalize text-[color:var(--con-muted)]">{item.type}</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Dot tone={tone} pulse={!isHealthy} />
-                        <span className="text-[length:var(--con-fs-xs)] font-medium uppercase">{item.status.split(":")[0]}</span>
+                        <Dot tone={tone} pulse={tone !== "pos"} />
+                        {/* Render the WHOLE status. Splitting on ":" discarded the health half,
+                            so "running:unhealthy" was displayed to the reader as "RUNNING". */}
+                        <span className="text-[length:var(--con-fs-xs)] font-medium uppercase">{item.status}</span>
                       </div>
                     </div>
                   );
@@ -559,20 +838,41 @@ export function ServerMetricsClient() {
           <Card
             title={
               <span className="flex items-center gap-1.5">
+                <GitBranch className="h-4 w-4" /> GitHub Actions Runners
+              </span>
+            }
+          >
+            <ActionRunnersPanel runners={data?.actionRunners} />
+          </Card>
+
+          <Card
+            title={
+              <span className="flex items-center gap-1.5">
                 <Shield className="h-4 w-4" /> Security & Access
               </span>
             }
           >
             <div className="space-y-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
               <p>
-                All endpoint communication between the dashboard, Hetzner API, and Coolify host is encrypted via SSL/TLS.
+                This panel reads the Hetzner and Coolify APIs over HTTPS using read-only tokens.
+                {SENTENCE_GAP}Everything above is fetched live from those two providers plus the
+                GitHub Actions runners API.
               </p>
               <div className="con-tile text-[color:var(--con-faint)]">
-                <span className="mb-1 block font-bold text-[color:var(--con-muted)]">Server Ingress rules:</span>
-                • Port 80/443 (HTTP/S proxy via Traefik)<br />
-                • Port 22 (SSH root access restricted)<br />
-                • In-container litestream PITR backup replication to Cloudflare R2 Cloud Storage.
+                <span className="mb-1 block font-bold text-[color:var(--con-muted)]">Not measured here:</span>
+                {/* This tile previously asserted the firewall posture and that litestream was
+                    replicating to R2. None of it was read from any source, and the app can run
+                    with litestream disabled (R2 kill-switch, exit 41) while that line still
+                    claimed backups were running. Point at the page that actually measures it. */}
+                • firewall rules and open ports are not queried by this panel<br />
+                • backup replication is measured on the Backups page, not here
               </div>
+              <Link
+                href="/admin/backups"
+                className="inline-block font-semibold text-[color:var(--con-accent)] underline"
+              >
+                View Backup Status
+              </Link>
             </div>
           </Card>
         </div>

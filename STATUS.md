@@ -1,3 +1,24 @@
+## Current (2026-08-13 ~3:20pm CT MONET - HONEST SERVER STATS: fabricated CI runners deleted)
+
+`/admin/server` was showing six GitHub Actions runners that do not exist -- `socratic-ci`,
+`socratic-ci-2`, `congress-ci`, `shared-ci`, `usage-ci` (all tagged `ci-cpx32`, a box deleted
+2026-07-31) and `github-runner` -- every one pinned to `running:healthy`.  They were hardcoded
+string literals at two sites in `app/api/admin/server-metrics/route.ts`, returned on five
+paths including a successful-but-empty live list.  No GitHub token exists in ST prod, so
+production served them on 100% of requests.  Real truth: ST has ONE runner,
+`mac-xcode26-socratic`.
+
+Replaced with a discriminated result (`state: known | unavailable` + machine `reason` + human
+`detail`), modelled on `assessLitestreamTierFreshness`.  Also fixed: `"unhealthy".includes("healthy")`
+painting every unhealthy container green, the status label truncating the health half off, the
+hardcoded "litestream is replicating to R2" claim in the Security card, and four host cards
+that were blank with no stated reason.  `AGENTS.md` note blaming "stale Coolify-side
+registration" corrected -- it was our own code.
+
+Owner action: supply `GH_TOKEN` to ST prod Infisical if the runners card should show live data
+(agents must not mint one).  Branch `monet/honest-server-stats`.  Rollout:
+`docs/rollouts/2026-08-13-honest-server-stats.md`.  UM/CT follow-ups recorded in that note.
+
 ## Current (2026-08-13 ~2:20pm CT CLAUDE — HOTFIX: adaptive FTS-mirror batching)
 
 The ingestion re-enable reproduced the 08-10 event-loop stall (ftsMirrorBatch 119s pinned
