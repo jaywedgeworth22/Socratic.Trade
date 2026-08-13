@@ -601,6 +601,64 @@ function pineconeMetadataBytes(metadata: RecordMetadata): number {
   return Buffer.byteLength(JSON.stringify(metadata), "utf8");
 }
 
+/** Pinecone hard cap per vector. Production upserts 2 bytes over this (40962 > 40960) page as "connection failed". */
+export const PINECONE_METADATA_HARD_LIMIT_BYTES = 40_960;
+/** Stay under the hard cap so JSON escape/key-order drift cannot bounce the write. */
+export const PINECONE_METADATA_SOFT_LIMIT_BYTES = 40_896;
+
+function truncateUtf8Bytes(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (Buffer.byteLength(text.slice(0, mid), "utf8") <= maxBytes) lo = mid;
+    else hi = mid - 1;
+  }
+  return text.slice(0, lo);
+}
+
+const PINECONE_METADATA_IDENTITY_KEYS = new Set([
+  "symbol",
+  "source",
+  "timestamp",
+  "userId",
+  "scope",
+  "tenant_scope",
+  "provider_authority",
+  "ledger_authority",
+  "embed_model",
+  "embed_rev",
+  "accession",
+  "doc_type",
+  "ingest_state",
+  "receipt_required",
+  "as_of_epoch_ms"
+]);
+
+/** Trim metadata.text (then other non-identity strings) so an upsert stays under Pinecone's 40960-byte cap. */
+export function enforcePineconeMetadataLimit(metadata: RecordMetadata): RecordMetadata {
+  if (pineconeMetadataBytes(metadata) <= PINECONE_METADATA_SOFT_LIMIT_BYTES) return metadata;
+  const out: Record<string, unknown> = { ...metadata };
+  const text = typeof out.text === "string" ? out.text : "";
+  if (text) {
+    const overhead = pineconeMetadataBytes(out as RecordMetadata) - Buffer.byteLength(text, "utf8");
+    out.text = truncateUtf8Bytes(text, Math.max(0, PINECONE_METADATA_SOFT_LIMIT_BYTES - overhead));
+  }
+  if (pineconeMetadataBytes(out as RecordMetadata) <= PINECONE_METADATA_SOFT_LIMIT_BYTES) {
+    return out as RecordMetadata;
+  }
+  const droppable = Object.entries(out)
+    .filter(([key, value]) => key !== "text" && !PINECONE_METADATA_IDENTITY_KEYS.has(key) && typeof value === "string")
+    .sort((a, b) => Buffer.byteLength(String(b[1]), "utf8") - Buffer.byteLength(String(a[1]), "utf8"));
+  for (const [key] of droppable) {
+    delete out[key];
+    if (pineconeMetadataBytes(out as RecordMetadata) <= PINECONE_METADATA_SOFT_LIMIT_BYTES) break;
+  }
+  return out as RecordMetadata;
+}
+
 function embedRetryAttempts(): number {
   return Math.floor(numericEnv("VECTOR_EMBED_RETRY_ATTEMPTS", DEFAULT_EMBED_RETRY_ATTEMPTS, 0, 5));
 }
@@ -1251,7 +1309,14 @@ function ragErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function ragLimitStatus(message: string): "rate_limited" | "billing" | "quota" | undefined {
+export type RagLimitStatus = "rate_limited" | "billing" | "quota" | "transient";
+
+/**
+ * Classify a provider error for alerting.
+ * Engine-overloaded 429s are transient capacity, not our usage cap — check that before generic 429.
+ */
+export function ragLimitStatus(message: string): RagLimitStatus | undefined {
+  if (/overloaded|engine is currently/i.test(message)) return "transient";
   if (/\b429\b|rate limit|too many requests|RPM|TPM/i.test(message)) return "rate_limited";
   if (/billing|payment|invoice|past due|upgrade|plan/i.test(message)) return "billing";
   if (/quota|write units?|read units?|usage limit|capacity|exceeded|paused/i.test(message)) return "quota";
@@ -1367,6 +1432,9 @@ async function alertRagConnectionFailure(
     // (which is the RIGHT channel for a rate limit, with its own cooldown and recommendation)
     // both still fire.
     const limitStatus = ragLimitStatus(message);
+    // Transient engine-overload (often wrapped as HTTP 429) is the provider being busy, not a
+    // broken integration and not our quota. Skip Sentry + Pushover + usage-limit — retries own it.
+    if (limitStatus === "transient") return;
     if (limitStatus !== "rate_limited") {
       await captureRagSentryMessage("warning", title, {
         provider: activeProvider ?? service,
@@ -1955,7 +2023,7 @@ function cleanMetadata(
   // via resolveAsOfEpochMs. Changes only NEW upserts; existing vectors are handled by the backfill.
   const asOfEpochMs = resolveAsOfEpochMs(metadata);
   if (asOfEpochMs != null) out[AS_OF_EPOCH_FIELD] = asOfEpochMs;
-  return out as RecordMetadata;
+  return enforcePineconeMetadataLimit(out as RecordMetadata);
 }
 
 function vectorUserIdFor(userId: string | undefined): string {
