@@ -18,6 +18,7 @@ import {
   type ServerMetricsConfigurationState,
   type ServerMetricsMetricValue,
   type ServerMetricsPayload,
+  type ServerMetricsResourcesObservation,
   type ServerMetricsUnobservedHostFact,
 } from "@/lib/server-metrics-runtime";
 import os from "os";
@@ -162,10 +163,17 @@ async function localPayload(
       ...getDiskStats(),
     },
     unobservedHostFacts: [],
-    // Coolify is not configured on this path, so there are no services to list. An empty list
-    // is the honest answer; the six invented "action-runner" rows that used to live here
-    // described machines that never existed.
+    // Coolify is never queried on this path, so the empty list below is the ABSENCE of a
+    // measurement, not a measurement of zero. The six invented "action-runner" rows that used
+    // to live here described machines that never existed.
     resources: [],
+    resourcesObservation: {
+      state: "unavailable",
+      reason: "coolify-not-configured",
+      detail: "Coolify was not queried on this runtime, so the running services on this host "
+        + "are unknown.  This is a local development runtime with no infrastructure "
+        + "provider credentials configured.",
+    },
     actionRunners: await getActionRunners(),
     metrics: emptyMetrics(),
     asOf: new Date().toISOString(),
@@ -380,6 +388,11 @@ async function loadRemoteMetrics(
   });
   if (!hostInfo.status) hostInfo.status = "unknown";
 
+  const resourcesObservation = describeResourcesObservation(
+    configuration.states.coolify,
+    coolifyResourcesFetch.payload !== undefined,
+  );
+
   const unobservedHostFacts = describeUnobservedHostFacts({
     coolifyState: configuration.states.coolify,
     coolifyRead: coolifyServerFetch.payload !== undefined,
@@ -411,6 +424,7 @@ async function loadRemoteMetrics(
       hostInfo,
       unobservedHostFacts,
       resources: normalizedResources.resources,
+      resourcesObservation,
       actionRunners,
       metrics: parsedMetrics.metrics,
       asOf: new Date(refreshedAt).toISOString(),
@@ -434,6 +448,48 @@ function coolifyHostName(coolifyServer: Record<string, unknown> | undefined): st
   const name = readText(coolifyServer?.name);
   if (!name || COOLIFY_SELF_REFERENTIAL_HOST_NAMES.has(name.toLowerCase())) return undefined;
   return name;
+}
+
+/**
+ * Decide whether the service list is a measurement or the absence of one.
+ *
+ * An empty `resources` array is produced identically by "Coolify is not configured", "the
+ * Coolify read failed" and "Coolify answered zero", and the card used to render all three as
+ * the confident sentence "coolify reported no services for this server". Only the third case
+ * is a measurement. The failed-read case is the one that matters: when Hetzner succeeds and
+ * only this read fails, `successfulProviderReads > 0`, so neither stale-cache branch fires and
+ * an otherwise fresh-looking page would assert an empty measurement it never took.
+ */
+function describeResourcesObservation(
+  coolifyState: ServerMetricsConfigurationState,
+  coolifyResourcesRead: boolean,
+): ServerMetricsResourcesObservation {
+  if (coolifyState === "missing") {
+    return {
+      state: "unavailable",
+      reason: "coolify-not-configured",
+      detail: "Coolify is not configured for this deployment, so no service list was "
+        + "requested.  Coolify is the only source wired for running services and containers.",
+    };
+  }
+  if (coolifyState === "partial") {
+    return {
+      state: "unavailable",
+      reason: "coolify-partially-configured",
+      detail: "Coolify configuration is incomplete, so no service list was requested.  Both "
+        + "an API token and a server UUID are required before this panel will query it.",
+    };
+  }
+  if (!coolifyResourcesRead) {
+    return {
+      state: "unavailable",
+      reason: "coolify-request-failed",
+      detail: "The Coolify resources endpoint could not be read on this refresh, so the "
+        + "services running on this host are unknown.  The provider error is listed in the "
+        + "warnings above.",
+    };
+  }
+  return { state: "known" };
 }
 
 /**

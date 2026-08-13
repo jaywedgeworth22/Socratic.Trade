@@ -8,6 +8,7 @@ import { asRecord, normalizeCoolifyResources, readText } from "@/lib/server-metr
 import { SENTENCE_GAP } from "../../console/lib/format";
 import type {
   ServerMetricsActionRunners,
+  ServerMetricsResourcesObservation,
   ServerMetricsUnobservedHostFact,
   ServerMetricsUnobservedHostField,
 } from "@/lib/server-metrics-runtime";
@@ -48,6 +49,7 @@ interface ServerMetricsData {
   hostInfo: HostInfo;
   unobservedHostFacts: ServerMetricsUnobservedHostFact[];
   resources: unknown;
+  resourcesObservation?: ServerMetricsResourcesObservation;
   actionRunners?: ServerMetricsActionRunners;
   metrics: {
     cpu: MetricPoint[];
@@ -165,6 +167,48 @@ export function parseActionRunners(value: unknown): ServerMetricsActionRunners |
 }
 
 /**
+ * Named next to the CPU meter because the transform behind it is unsettled: the server divides
+ * each Hetzner CPU sample by the core count, and Hetzner documents `type=cpu` as a whole-server
+ * percentage, which would make this meter read 8x low on the current 8-core box. Confirming it
+ * needs one live sample, which needs the Hetzner token.
+ */
+const CPU_SCALING_CAVEAT =
+  "Each Hetzner CPU sample is divided by the server core count before display."
+  + `${SENTENCE_GAP}Whether Hetzner already reports a whole-server percentage is unconfirmed, `
+  + "so this value may read low.";
+
+const RESOURCES_UNAVAILABLE_REASONS = new Set<string>([
+  "coolify-not-configured",
+  "coolify-partially-configured",
+  "coolify-request-failed",
+]);
+
+/**
+ * Parse whether the service list is a measurement.
+ *
+ * A missing or malformed value returns `undefined`, which the card renders as an explicit
+ * "not reported" row. It never falls back to `{state:"known"}`, because that would restore
+ * exactly the bug this field exists to remove: asserting "coolify reported no services" for a
+ * read that never happened.
+ */
+export function parseResourcesObservation(value: unknown): ServerMetricsResourcesObservation | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  if (record.state === "known") return { state: "known" };
+  if (record.state === "unavailable") {
+    const reason = readText(record.reason);
+    const detail = readText(record.detail);
+    if (!reason || !detail || !RESOURCES_UNAVAILABLE_REASONS.has(reason)) return undefined;
+    return {
+      state: "unavailable",
+      reason: reason as Extract<ServerMetricsResourcesObservation, { state: "unavailable" }>["reason"],
+      detail,
+    };
+  }
+  return undefined;
+}
+
+/**
  * Classify one Coolify `state:health` string.
  *
  * `"unhealthy".includes("healthy")` is true, so the previous substring test resolved every
@@ -216,6 +260,7 @@ export function parseServerMetricsEnvelope(value: unknown): ServerMetricsData | 
     hostInfo,
     unobservedHostFacts: parseUnobservedHostFacts(envelope.unobservedHostFacts),
     resources: envelope.resources,
+    resourcesObservation: parseResourcesObservation(envelope.resourcesObservation),
     actionRunners: parseActionRunners(envelope.actionRunners),
     metrics: { cpu, diskRead, diskWrite, networkRx, networkTx },
     asOf: envelope.asOf,
@@ -298,6 +343,103 @@ export function runnerUnavailableHeadline(
     case "unexpected-shape": return "not available: unexpected GitHub API response";
     case "request-failed": return "not available: the GitHub API could not be reached";
   }
+}
+
+export function resourcesUnavailableHeadline(
+  reason: Extract<ServerMetricsResourcesObservation, { state: "unavailable" }>["reason"],
+): string {
+  switch (reason) {
+    case "coolify-not-configured":
+      return "services not queried";
+    case "coolify-partially-configured":
+      return "services not queried";
+    case "coolify-request-failed":
+      return "service list unavailable";
+  }
+}
+
+/**
+ * Render the service list, an explicit measured-zero state, or an explicit unavailable state.
+ *
+ * The three are visually distinct for the same reason the runner card's are: `resources: []`
+ * is produced identically by "never queried", "the read failed" and "Coolify answered zero",
+ * and this card used to render all three as the flat assertion "coolify reported no services
+ * for this server".
+ */
+function ServicesPanel({
+  resources,
+  observation,
+}: {
+  resources: Array<{ uuid: string; name: string; type: string; status: string }>;
+  observation?: ServerMetricsResourcesObservation;
+}) {
+  if (!observation) {
+    return (
+      <div className="py-6 text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        not reported: the metrics endpoint did not say whether Coolify was queried
+      </div>
+    );
+  }
+
+  if (observation.state === "unavailable") {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Dot tone="warn" pulse={false} />
+          <span className="text-[length:var(--con-fs-sm)] font-semibold">
+            {resourcesUnavailableHeadline(observation.reason)}
+          </span>
+        </div>
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          {sentenceGaps(observation.detail)}
+        </p>
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          reason code {observation.reason}
+        </p>
+      </div>
+    );
+  }
+
+  if (resources.length === 0) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Dot tone="warn" pulse={false} />
+          <span className="text-[length:var(--con-fs-sm)] font-semibold">no services registered</span>
+        </div>
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          {sentenceGaps("Coolify returned zero applications and services for this server.  "
+            + "This is a measured answer, not a failed read.")}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {resources.map((item) => {
+        const tone = resourceStatusTone(item.status);
+
+        return (
+          <div
+            key={item.uuid}
+            className="flex items-center justify-between border-b border-[color:var(--con-line)] pb-3 last:border-0 last:pb-0"
+          >
+            <div className="min-w-0">
+              <div className="truncate text-[length:var(--con-fs-sm)] font-semibold">{item.name}</div>
+              <div className="text-[length:var(--con-fs-xs)] capitalize text-[color:var(--con-muted)]">{item.type}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Dot tone={tone} pulse={tone !== "pos"} />
+              {/* Render the WHOLE status. Splitting on ":" discarded the health half, so
+                  "running:unhealthy" was displayed to the reader as "RUNNING". */}
+              <span className="text-[length:var(--con-fs-xs)] font-medium uppercase">{item.status}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /**
@@ -694,12 +836,20 @@ export function ServerMetricsClient() {
           >
             <div className="grid gap-6 sm:grid-cols-3">
               {/* CPU Bar */}
-              <div>
+              <div title={currentCpu === undefined ? undefined : CPU_SCALING_CAVEAT}>
                 <div className="mb-1 flex justify-between text-[length:var(--con-fs-xs)] font-semibold">
                   <span className="text-[color:var(--con-muted)]">CPU Utilization</span>
                   <span className="con-num">{currentCpu === undefined ? "Unavailable" : `${currentCpu}%`}</span>
                 </div>
                 {currentCpu !== undefined ? <Meter value={currentCpu} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
+                {/* The server divides every Hetzner CPU sample by the core count. That transform
+                    is unverified (see route.ts), and a silently 8x-low meter would stay green
+                    through a saturation incident, so the scaling is named rather than implied. */}
+                {currentCpu !== undefined && (
+                  <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                    per-core average; scaling unverified
+                  </p>
+                )}
               </div>
 
               {/* Memory Bar */}
@@ -802,37 +952,7 @@ export function ServerMetricsClient() {
               </span>
             }
           >
-            {resources.length === 0 ? (
-              <div className="py-6 text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                {usesLocalHost
-                  ? "coolify is not configured for this runtime, so no services were queried"
-                  : "coolify reported no services for this server"}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {resources.map((item) => {
-                  const tone = resourceStatusTone(item.status);
-
-                  return (
-                    <div
-                      key={item.uuid}
-                      className="flex items-center justify-between border-b border-[color:var(--con-line)] pb-3 last:border-0 last:pb-0"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-[length:var(--con-fs-sm)] font-semibold">{item.name}</div>
-                        <div className="text-[length:var(--con-fs-xs)] capitalize text-[color:var(--con-muted)]">{item.type}</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Dot tone={tone} pulse={tone !== "pos"} />
-                        {/* Render the WHOLE status. Splitting on ":" discarded the health half,
-                            so "running:unhealthy" was displayed to the reader as "RUNNING". */}
-                        <span className="text-[length:var(--con-fs-xs)] font-medium uppercase">{item.status}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <ServicesPanel resources={resources} observation={data?.resourcesObservation} />
           </Card>
 
           <Card
@@ -853,10 +973,24 @@ export function ServerMetricsClient() {
             }
           >
             <div className="space-y-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+              {/* This sentence used to assert unconditionally that everything above came from
+                  Hetzner and Coolify. On the local path none of it does — host facts come from
+                  node's `os` module — and with either provider unconfigured only part of it
+                  does. Describe the path actually taken. */}
               <p>
-                This panel reads the Hetzner and Coolify APIs over HTTPS using read-only tokens.
-                {SENTENCE_GAP}Everything above is fetched live from those two providers plus the
-                GitHub Actions runners API.
+                {usesLocalHost ? (
+                  <>
+                    No infrastructure provider is configured on this runtime, so the host facts
+                    above are read from this process&apos;s own operating system rather than from
+                    Hetzner or Coolify.
+                  </>
+                ) : (
+                  <>
+                    This panel reads the Hetzner and Coolify APIs over HTTPS using read-only
+                    tokens.{SENTENCE_GAP}Values above come from whichever of those providers is
+                    configured and answered; anything they did not report is labelled in place.
+                  </>
+                )}
               </p>
               <div className="con-tile text-[color:var(--con-faint)]">
                 <span className="mb-1 block font-bold text-[color:var(--con-muted)]">Not measured here:</span>

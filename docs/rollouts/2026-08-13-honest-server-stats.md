@@ -56,6 +56,11 @@ default. The model copied is this repo's own `assessLitestreamTierFreshness`
   `request-failed`); `detail` is a human sentence naming the missing credential or the HTTP
   status. A measured **empty** list is a first-class answer and is rendered as
   "no runners registered", never replaced.
+- **The service list carries the same discrimination** (added after adversarial review — see
+  §2.1). `resources: []` is produced identically by "Coolify was never configured", "the Coolify
+  read failed" and "Coolify answered zero", so the payload now carries
+  `resourcesObservation: { state: "known" } | { state: "unavailable", reason, detail }` and the
+  Services card renders three visually distinct states.
 - Host facts the providers do not supply now carry a per-field explanation
   (`unobservedHostFacts: [{ field, reason, detail }]`) rendered **in place of the blank value**
   rather than in the warning banner — a permanent banner trains readers to ignore it, and a bare
@@ -67,10 +72,10 @@ default. The model copied is this repo's own `assessLitestreamTierFreshness`
 | --- | --- |
 | `src/lib/server-metrics-runners.ts` **(new)** | The rewritten runner probe. Returns measured rows or an explicit `unavailable` result with a reason + detail. No fallback list anywhere. Lives in `src/lib` because Next 16 route modules may export only handlers/config, so the route could not export a testable function. |
 | `app/api/admin/server-metrics/route.ts` | Deleted BOTH fabricated arrays (lines 146-153 and 212-219 of the old file). Calls the new probe on the remote **and** local paths. Stops mixing runners into `resources`. Adds `unobservedHostFacts`, `monitoredTarget`, `staleScope`. Stops substituting Coolify's self-referential `localhost` host record. Uses `readNonNegativeNumber` for free memory and uptime. `cacheAgeSeconds` is now omitted (not 0) when `asOf` is unparseable. |
-| `src/lib/server-metrics-runtime.ts` | New payload contract: `ServerMetricsActionRunners`, `ServerMetricsUnobservedHostFact`, `ServerMetricsStaleScope`, `monitoredTarget`; `cacheAgeSeconds` becomes optional. |
+| `src/lib/server-metrics-runtime.ts` | New payload contract: `ServerMetricsActionRunners`, `ServerMetricsResourcesObservation`, `ServerMetricsUnobservedHostFact`, `ServerMetricsStaleScope`, `monitoredTarget`; `cacheAgeSeconds` becomes optional. |
 | `src/lib/server-metrics-shapes.ts` | Added `readNonNegativeNumber`, type-guarded so `null`/`""` cannot coerce to 0. `readPositiveNumber` mapped a measured **0 bytes free** — an active OOM, the exact thing you open this panel to find — onto "Utilization unavailable". |
 | `app/admin/server/server-metrics-client.tsx` | Renders the runner result honestly in its own "GitHub Actions Runners" card (list / measured-empty / not-available-with-reason). Fixes the `"unhealthy".includes("healthy") === true` tone bug and stops truncating the health half off the status label. Replaces the fabricated "Security & Access" claims. Explains blank host cards. Chart guards, timezone label, snapshot age, local-host placeholders. |
-| `test/server-metrics.test.ts` | 20 new assertions across 11 new cases; 5 existing assertions corrected (they had been pinned to the fabricated row counts). |
+| `test/server-metrics.test.ts` | 15 new cases; 5 existing assertions corrected (they had been pinned to the fabricated row counts) and 3 extended to pin `resourcesObservation`. |
 | `AGENTS.md` | Corrects the wrong "stale Coolify-side registration cleanup" note. |
 
 ### Client fixes worth calling out individually
@@ -95,6 +100,53 @@ default. The model copied is this repo's own `assessLitestreamTierFreshness`
   viewer's, and nothing said so) and always prints an age, "age unknown" included.
 - Local-path placeholders `127.0.0.1` / `local` / `local runtime` removed — the local path never
   measures an IP, a location or a server type.
+
+## 2.1 Second pass: the fabricated empty-state this change first introduced
+
+An adversarial review of the first commit found that the fix had **reintroduced the same class
+of bug in the card directly beside the one it rebuilt**, and it is worth recording because the
+mistake is instructive: the honest-empty-state discipline was applied to runners and not to
+services.
+
+The Services & Containers card rendered `resources.length === 0` as the flat sentence
+*"coolify reported no services for this server"*. Three different realities produce that empty
+array and only the third justifies the sentence:
+
+1. **Coolify is not configured at all** — `route.ts` skips the whole Coolify fetch block, so
+   nothing was ever requested.
+2. **Coolify is configured but the `/resources` read failed** (HTTP error or unreachable) — the
+   route short-circuits an undefined payload to `{ resources: [] }`.
+3. **Coolify was queried and genuinely answered zero.**
+
+Case 2 is the dangerous one. When the Hetzner reads succeed and only the Coolify resources read
+fails, `successfulProviderReads > 0`, so *neither* stale-cache branch fires: the page renders a
+fresh-looking snapshot whose Services card asserts a measurement that never happened — which is
+precisely the failure an operator opens this panel to catch.
+
+Fixed the same way as the runners:
+
+- `ServerMetricsResourcesObservation = { state: "known" } | { state: "unavailable", reason,
+  detail }` on the payload, with `reason ∈ { coolify-not-configured,
+  coolify-partially-configured, coolify-request-failed }`.
+- `describeResourcesObservation()` in the route derives it from the configuration state and
+  whether the resources read actually returned a payload; `localPayload()` reports
+  `coolify-not-configured` explicitly rather than relying on a `usesLocalHost` flag at render
+  time.
+- A new `ServicesPanel` renders three visually distinct states — list, measured-zero
+  ("Coolify returned zero applications and services... This is a measured answer, not a failed
+  read"), and unavailable-with-reason-code — mirroring `ActionRunnersPanel`.
+- `parseResourcesObservation()` returns `undefined` on a malformed or absent value and the card
+  says "not reported"; it never defaults to `known`, which would restore the original bug.
+
+Two smaller honesty fixes went in with it, both flagged as non-blocking by the same review:
+
+- **Security & Access card** asserted unconditionally that "everything above is fetched live"
+  from Hetzner and Coolify. False on the local path (host facts come from node's `os` module)
+  and false per-provider whenever one is unconfigured. Now describes the path actually taken.
+- **CPU meter** rendered a confident `X%` for a number the code itself flags as an unverified
+  transform (see the divide-by-cores note in §3). The uncertainty now reaches the reader:
+  "per-core average; scaling unverified", plus a hover explaining that the value may read low.
+  The transform itself is still deliberately unchanged.
 
 ## 3. Decisions & Trade-offs
 
@@ -146,12 +198,13 @@ npm run lint        # see below
 | Gate | Result |
 | --- | --- |
 | `npx tsc --noEmit` | exit 0, no output |
-| `npm test` | **Test Files 563 passed \| 1 skipped (564)** · **Tests 6543 passed \| 51 skipped (6594)** · exit 0. `test/server-metrics.test.ts` alone: **42 passed**. |
+| `npm test` | **Test Files 563 passed \| 1 skipped (564)** · **Tests 6547 passed \| 51 skipped (6598)** · exit 0. `test/server-metrics.test.ts` alone: **46 passed**. |
 | `npm run build` | exit 0. `/admin/server` static, `/api/admin/server-metrics` dynamic, 40/40 static pages generated. |
 | `npm run lint` | exit 0 — **764 problems, 0 errors, 764 warnings**, all pre-existing/grandfathered. Zero warnings in any file touched by this change. |
 
-The suite was run twice: once mid-change and once again on the exact final tree after the last
-two edits, with identical counts both times.
+The suite was run again in full on the post-review tree (the §2.1 changes): same 563/1 file
+split, 6547 tests passing, `tsc` clean, `lint` still exactly 764 warnings / 0 errors with none
+in a touched file.
 
 ## 5. Next Steps & Blockers
 

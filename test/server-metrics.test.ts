@@ -9,9 +9,11 @@ import {
   displayProviderText,
   markServerMetricsSnapshotStale,
   parseActionRunners,
+  parseResourcesObservation,
   parseServerMetricsEnvelope,
   parseUnobservedHostFacts,
   resourceStatusTone,
+  resourcesUnavailableHeadline,
 } from "../app/admin/server/server-metrics-client";
 import { ACTION_RUNNER_REPO, getActionRunners } from "../src/lib/server-metrics-runners";
 import {
@@ -346,6 +348,32 @@ describe("server-metrics client rendering decisions", () => {
     expect(parseActionRunners(undefined)).toBeUndefined();
   });
 
+  it("parses both service-observation states and rejects malformed ones", () => {
+    expect(parseResourcesObservation({ state: "known" })).toEqual({ state: "known" });
+    expect(parseResourcesObservation({
+      state: "unavailable",
+      reason: "coolify-request-failed",
+      detail: "The Coolify resources endpoint could not be read on this refresh.",
+    })).toMatchObject({ state: "unavailable", reason: "coolify-request-failed" });
+
+    // A malformed or absent observation must NOT default to "known": that would restore the
+    // exact bug this field exists to remove, asserting "Coolify reported no services" for a
+    // read that never happened.
+    expect(parseResourcesObservation({ state: "unavailable", reason: "invented", detail: "x" })).toBeUndefined();
+    expect(parseResourcesObservation({ state: "unavailable", reason: "coolify-request-failed" })).toBeUndefined();
+    expect(parseResourcesObservation({ state: "measured" })).toBeUndefined();
+    expect(parseResourcesObservation(undefined)).toBeUndefined();
+    expect(parseResourcesObservation("nope")).toBeUndefined();
+  });
+
+  it("headlines a never-queried service list differently from a failed read", () => {
+    // "not queried" and "unavailable" are different facts for an operator: the first is a
+    // wiring gap, the second is a live provider failure on a page that otherwise looks fresh.
+    expect(resourcesUnavailableHeadline("coolify-not-configured")).toBe("services not queried");
+    expect(resourcesUnavailableHeadline("coolify-partially-configured")).toBe("services not queried");
+    expect(resourcesUnavailableHeadline("coolify-request-failed")).toBe("service list unavailable");
+  });
+
   it("keeps only recognized unobserved-host facts", () => {
     expect(parseUnobservedHostFacts([
       { field: "uptime", reason: "coolify-server-metadata-absent", detail: "Host uptime is not measured." },
@@ -403,6 +431,12 @@ describe("server-metrics API route", () => {
     // Coolify is unconfigured on this path, so there is nothing to list. This used to return
     // six fabricated "action-runner" rows describing machines that never existed.
     expect(body.resources).toEqual([]);
+    // The empty list here is the ABSENCE of a measurement, and must say so.
+    expect(body.resourcesObservation).toEqual({
+      state: "unavailable",
+      reason: "coolify-not-configured",
+      detail: expect.stringContaining("not queried"),
+    });
     expect(body.actionRunners).toEqual({
       state: "unavailable",
       repo: ACTION_RUNNER_REPO,
@@ -503,6 +537,8 @@ describe("server-metrics API route", () => {
     expect(body.resources).toEqual([
       { uuid: "app-1", name: "socratic-trade-prod", type: "application", status: "running:healthy" },
     ]);
+    // Coolify was queried and answered, so this list IS a measurement.
+    expect(body.resourcesObservation).toEqual({ state: "known" });
     expect(body.actionRunners.state).toBe("unavailable");
     expect(body.monitoredTarget).toEqual({
       hetznerServerId: "12345",
@@ -571,11 +607,72 @@ describe("server-metrics API route", () => {
     expect(body.hostInfo.name).toBe("verified-host");
     // The Coolify resources call 503'd, so there is nothing to list. Not six invented rows.
     expect(body.resources).toEqual([]);
+    // ...and the empty list must be marked as a FAILED READ, not as a measured zero. This is
+    // the dangerous path: the Hetzner reads succeeded, so successfulProviderReads > 0 and
+    // neither stale-cache branch fires — the page renders fresh while the service list is
+    // simply unknown. The card used to assert "coolify reported no services for this server".
+    expect(body.stale).toBe(false);
+    expect(body.resourcesObservation).toEqual({
+      state: "unavailable",
+      reason: "coolify-request-failed",
+      detail: expect.stringContaining("could not be read"),
+    });
     expect(body.metrics.cpu).toEqual([]);
     expect(body.warnings).toEqual(expect.arrayContaining([
       "Coolify resources returned HTTP 503.",
       "Hetzner aggregate CPU metrics were omitted because the server core count was unavailable.",
     ]));
+  });
+
+  it("marks a genuinely empty Coolify answer as measured, not as a failed read", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ADMIN_USER_EMAILS", "admin@example.com");
+    vi.stubEnv("HETZNER_API_TOKEN", "");
+    vi.stubEnv("HETZNER_SERVER_ID", "");
+    vi.stubEnv("COOLIFY_API_TOKEN", "mock-coolify-token");
+    vi.stubEnv("COOLIFY_SERVER_UUID", "mock-coolify-uuid");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve(
+      url.includes("/resources")
+        ? providerResponse([])
+        : providerResponse({ name: "coolify-host", server_metadata: null }),
+    )));
+
+    const body = await (await GET(reqWithEmail("admin@example.com"))).json();
+
+    // Zero services IS an answer when Coolify actually answered, and it must stay
+    // distinguishable from the three ways of not knowing.
+    expect(body.resources).toEqual([]);
+    expect(body.resourcesObservation).toEqual({ state: "known" });
+  });
+
+  it("does not claim a service measurement when Coolify is only half-configured", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ADMIN_USER_EMAILS", "admin@example.com");
+    vi.stubEnv("HETZNER_API_TOKEN", "mock-hetzner-token");
+    vi.stubEnv("HETZNER_SERVER_ID", "12345");
+    // A token with no server UUID: the route skips the Coolify block entirely, so nothing is
+    // ever requested and `resources: []` describes no measurement at all.
+    vi.stubEnv("COOLIFY_API_TOKEN", "mock-coolify-token");
+    vi.stubEnv("COOLIFY_SERVER_UUID", "");
+    const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve(providerResponse(
+      url.includes("/metrics")
+        ? { metrics: { time_series: {} } }
+        : { server: { name: "verified-host", status: "running", server_type: { cores: 4 } } },
+    )));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const body = await (await GET(reqWithEmail("admin@example.com"))).json();
+
+    expect(body.resources).toEqual([]);
+    expect(body.resourcesObservation).toEqual({
+      state: "unavailable",
+      reason: "coolify-partially-configured",
+      detail: expect.stringContaining("incomplete"),
+    });
+    // Nothing was requested from Coolify at all.
+    for (const call of fetchMock.mock.calls) {
+      expect(String(call[0])).not.toContain("host.jays.services");
+    }
   });
 
   it("bounds provider response bodies while retaining valid sibling data", async () => {

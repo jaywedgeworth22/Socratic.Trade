@@ -78,6 +78,34 @@ export interface ServerMetricsUnobservedHostFact {
   detail: string;
 }
 
+/** Why the Coolify service/container list could not be read. */
+export type ServerMetricsResourcesUnavailableReason =
+  | "coolify-not-configured"
+  | "coolify-partially-configured"
+  | "coolify-request-failed";
+
+/**
+ * Whether the service list in this payload is a MEASUREMENT or the absence of one.
+ *
+ * `resources: []` is ambiguous on its own and was being rendered as the flat claim "coolify
+ * reported no services for this server" in all three of these cases:
+ *   1. Coolify was never queried because it is not configured for this deployment,
+ *   2. Coolify was queried and the read failed (HTTP error / unreachable), and
+ *   3. Coolify answered, and the answer really was zero.
+ * Only case 3 justifies that sentence. Case 2 is the dangerous one: when the Hetzner reads
+ * succeed and only the Coolify resources read fails, neither stale-cache branch fires, so the
+ * page renders a fresh-looking snapshot whose Services card asserts a measurement that never
+ * happened — exactly the failure an operator opens this panel to catch. Same shape as
+ * `ServerMetricsActionRunners` and `assessLitestreamTierFreshness` in src/lib/runtime-health.ts.
+ */
+export type ServerMetricsResourcesObservation =
+  | { state: "known" }
+  | {
+      state: "unavailable";
+      reason: ServerMetricsResourcesUnavailableReason;
+      detail: string;
+    };
+
 /** Which half of a stale payload is actually stale. */
 export type ServerMetricsStaleScope = "all" | "metrics";
 
@@ -105,6 +133,8 @@ export interface ServerMetricsPayload {
   unobservedHostFacts: ServerMetricsUnobservedHostFact[];
   /** Coolify applications and services only. Action runners are a separate, separately-sourced list. */
   resources: unknown[];
+  /** Whether `resources` is a measurement at all. Never infer "zero services" from `[]` alone. */
+  resourcesObservation: ServerMetricsResourcesObservation;
   actionRunners: ServerMetricsActionRunners;
   metrics: Record<string, ServerMetricsMetricValue[]>;
   asOf: string;

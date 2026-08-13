@@ -15,6 +15,15 @@ hardcoded "litestream is replicating to R2" claim in the Security card, and four
 that were blank with no stated reason.  `AGENTS.md` note blaming "stale Coolify-side
 registration" corrected -- it was our own code.
 
+Adversarial review then caught the same class of bug reintroduced one card over: the Services
+card rendered an empty `resources` array as "coolify reported no services for this server" even
+when Coolify was never configured or the read failed -- and the failed-read case renders on an
+otherwise fresh-looking page, because the Hetzner reads succeeding keeps the stale-cache
+branches from firing.  Fixed with a matching `resourcesObservation: known | unavailable+reason`
+and a three-state Services panel.  Two smaller honesty fixes rode along: the Security card no
+longer claims live provider reads on the local path, and the CPU meter now states that its
+per-core scaling is unverified.
+
 Owner action: supply `GH_TOKEN` to ST prod Infisical if the runners card should show live data
 (agents must not mint one).  Branch `monet/honest-server-stats`.  Rollout:
 `docs/rollouts/2026-08-13-honest-server-stats.md`.  UM/CT follow-ups recorded in that note.
