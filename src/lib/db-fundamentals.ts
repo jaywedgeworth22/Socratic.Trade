@@ -145,11 +145,15 @@ export function recordFundamentalRevision(
       (symbol, field, fiscal_period_end, value, form, filed_at, provider, superseded_by, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)
   `);
-  const supersedePrior = database.prepare(`
+  const groupFiledAts = database.prepare(`
+    SELECT filed_at FROM fundamental_revisions
+    WHERE symbol = ? AND field = ? AND fiscal_period_end = ?
+    ORDER BY filed_at ASC
+  `);
+  const setSupersededBy = database.prepare(`
     UPDATE fundamental_revisions
     SET superseded_by = ?
-    WHERE symbol = ? AND field = ? AND fiscal_period_end = ?
-      AND filed_at < ? AND superseded_by IS NULL
+    WHERE symbol = ? AND field = ? AND fiscal_period_end = ? AND filed_at = ?
   `);
 
   const run = database.transaction(() => {
@@ -163,10 +167,20 @@ export function recordFundamentalRevision(
       provider,
       new Date().toISOString()
     );
-    // Only re-point predecessors when this row is genuinely new — a re-recorded (idempotent)
-    // fact must not re-run the supersede sweep (harmless either way, but pointless work).
+    // Only re-chain when this row is genuinely new — a re-recorded (idempotent) fact must not
+    // re-run the sweep (harmless either way, but pointless work).
     if (result.changes > 0) {
-      supersedePrior.run(filedAt, symbol, field, fiscalPeriodEnd, filedAt);
+      // Recompute the whole (symbol, field, fiscal_period_end) chain by filed_at ascending rather
+      // than only re-pointing predecessors of the new row: SEC companyfacts array order is not
+      // contractual, so an earlier-filed revision can legitimately arrive AFTER a later-filed one
+      // already exists. Re-pointing only "filed_at < new" leaves that out-of-order case with two
+      // live (superseded_by NULL) rows — this full re-sort guarantees exactly the newest filed_at
+      // row is ever live, independent of insertion order.
+      const group = groupFiledAts.all(symbol, field, fiscalPeriodEnd) as Array<{ filed_at: string }>;
+      for (let i = 0; i < group.length; i++) {
+        const nextFiledAt = group[i + 1]?.filed_at ?? null;
+        setSupersededBy.run(nextFiledAt, symbol, field, fiscalPeriodEnd, group[i]!.filed_at);
+      }
     }
   });
   run();

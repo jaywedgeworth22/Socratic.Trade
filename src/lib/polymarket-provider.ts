@@ -12,7 +12,9 @@
 //                                  outcomes: '["Yes","No"]'       (JSON-encoded STRING, not an array),
 //                                  outcomePrices: '["0.905","0.095"]' (also a JSON-encoded string,
 //                                                                      index-aligned with outcomes),
-//                                  volume: number, volume24hr: number|null,
+//                                  volume: number|string (LIVE-VERIFIED as a decimal STRING, e.g.
+//                                                          "268663.894..." — toFiniteNumber below
+//                                                          parses either shape), volume24hr: number|null,
 //                                  active: boolean, closed: boolean, archived: boolean } ] } ],
 //        pagination: { hasMore, totalResults } }
 // Confirmed live: HTTP 200, no API key/auth header required or accepted; response carries
@@ -160,13 +162,19 @@ function isLiveMarket(m: GammaMarket): boolean {
 }
 
 /** The higher-priced outcome and its label (index-aligned with `outcomes`), 1dp percent. Returns
- *  undefined when outcomePrices is missing/unparseable — never a fabricated 50/50 guess. */
+ *  undefined when outcomePrices is missing/unparseable — never a fabricated 50/50 guess.
+ *  IMPORTANT: `prices` is kept index-aligned with `outcomes` (no filtering before the scan) — a
+ *  partially malformed outcomePrices array (e.g. one non-finite entry among several valid ones)
+ *  must never shift indices, or the winning price gets attributed to the WRONG outcome label. */
 function impliedProbabilityFromOutcomes(m: GammaMarket): { pct: number; label?: string } | undefined {
   const outcomes = parseJsonStringArray(m.outcomes);
-  const prices = parseJsonStringArray(m.outcomePrices).map(Number).filter((n) => Number.isFinite(n));
-  if (prices.length === 0) return undefined;
-  let bestIdx = 0;
-  for (let i = 1; i < prices.length; i++) if (prices[i] > prices[bestIdx]) bestIdx = i;
+  const prices = parseJsonStringArray(m.outcomePrices).map(Number);
+  let bestIdx = -1;
+  for (let i = 0; i < prices.length; i++) {
+    if (!Number.isFinite(prices[i])) continue;
+    if (bestIdx === -1 || prices[i] > prices[bestIdx]) bestIdx = i;
+  }
+  if (bestIdx === -1) return undefined;
   return { pct: Math.round(prices[bestIdx] * 1000) / 10, label: outcomes[bestIdx] };
 }
 
@@ -184,6 +192,12 @@ function toMarketMatch(m: GammaMarket): PolymarketMarketMatch | undefined {
   };
 }
 
+// Gamma is a third-party CDN with no documented SLA and no failure-row-writing hang detector (a
+// hung — not failing — request never trips the circuit breaker, since no failure row is ever
+// written). This sits directly on the strategist run path (proposeTrades), so a hang must not
+// stall it; abort and fail open instead of waiting out undici's default header timeout.
+const FETCH_TIMEOUT_MS = 4_000;
+
 async function fetchMarketsForQuery(query: string): Promise<GammaMarket[]> {
   const now = Date.now();
   const cached = searchCache.get(query);
@@ -191,9 +205,20 @@ async function fetchMarketsForQuery(query: string): Promise<GammaMarket[]> {
 
   const params = new URLSearchParams({ q: query, limit_per_type: String(SEARCH_LIMIT_PER_TYPE) });
   const url = `${GAMMA_BASE_URL}/public-search?${params.toString()}`;
-  const response = await fetchWithRetry(url, { cache: "no-store" }, { service: "polymarket" });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const markets = extractGammaMarkets(await response.json());
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let markets: GammaMarket[];
+  try {
+    const response = await fetchWithRetry(
+      url,
+      { cache: "no-store", signal: controller.signal },
+      { service: "polymarket" }
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    markets = extractGammaMarkets(await response.json());
+  } finally {
+    clearTimeout(timeout);
+  }
   searchCache.set(query, { expiresAt: now + polymarketTtlMs(), markets });
   return markets;
 }

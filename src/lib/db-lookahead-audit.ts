@@ -131,16 +131,28 @@ export function listLookaheadAuditFindings(
   }));
 }
 
-/** Classification counts over the FULL findings table for one user — the verdict input. */
+/**
+ * Classification counts for one user — the verdict input. When `sinceIso` is given, only findings
+ * created at/after that stamp count (the aggregate verdict's trailing window; see
+ * LOOKAHEAD_VERDICT_WINDOW_DAYS in lookahead-audit.ts). Omit it for the full-table count (tests,
+ * diagnostics).
+ */
 export function countLookaheadFindingsByClassification(
-  userId: string = "local"
+  userId: string = "local",
+  opts: { sinceIso?: string } = {}
 ): Record<LookaheadClassification, number> {
   const counts: Record<LookaheadClassification, number> = { clean: 0, mismatch: 0, unverifiable: 0 };
-  const rows = getDb()
-    .prepare(
-      "SELECT classification, COUNT(*) AS n FROM lookahead_audit_findings WHERE user_id = ? GROUP BY classification"
-    )
-    .all(userId) as Array<{ classification: string; n: number }>;
+  const rows = opts.sinceIso
+    ? (getDb()
+        .prepare(
+          "SELECT classification, COUNT(*) AS n FROM lookahead_audit_findings WHERE user_id = ? AND created_at >= ? GROUP BY classification"
+        )
+        .all(userId, opts.sinceIso) as Array<{ classification: string; n: number }>)
+    : (getDb()
+        .prepare(
+          "SELECT classification, COUNT(*) AS n FROM lookahead_audit_findings WHERE user_id = ? GROUP BY classification"
+        )
+        .all(userId) as Array<{ classification: string; n: number }>);
   for (const row of rows) {
     if (row.classification in counts) counts[row.classification as LookaheadClassification] = row.n;
   }

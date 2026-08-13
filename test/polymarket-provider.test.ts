@@ -18,7 +18,7 @@ function fixtureMarket(overrides: {
   question: string;
   outcomes?: string[];
   outcomePrices?: string[];
-  volume?: number;
+  volume?: number | string;
   volume24hr?: number | null;
   active?: boolean;
   closed?: boolean;
@@ -117,6 +117,15 @@ describe("polymarket-provider", () => {
     expect(out.AAPL[0].outcomeLabel).toBe("Yes");
   });
 
+  it("parses a decimal-STRING volume (the live-verified shape) into a numeric volumeTotal", async () => {
+    stubSearchEndpoint(() => [
+      fixtureMarket({ question: "Will Apple beat earnings estimates this quarter?", volume: "268663.894" })
+    ]);
+    const { fetchPolymarketContextForSymbols } = await import("../src/lib/polymarket-provider");
+    const out = await fetchPolymarketContextForSymbols(["AAPL"], { AAPL: "Apple Inc." });
+    expect(out.AAPL[0].volumeTotal).toBeCloseTo(268_663.894, 3);
+  });
+
   // Note: this uses TGT/"Target" rather than META/"Meta" — Meta Platforms' own TICKER (META)
   // case-insensitively word-matches the bare word "Meta" in ordinary prose, so a META-ticker
   // headline mentioning "Meta" always clears the relevance bar via the TICKER signal alone
@@ -208,6 +217,19 @@ describe("polymarket-provider", () => {
     expect(callsAfterFirst).toBe(1);
     await fetchPolymarketContextForSymbols(["AAPL"], { AAPL: "Apple Inc." });
     expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFirst); // served from cache
+  });
+
+  it("refetches after the TTL elapses (cache expiry, not just per-query keying)", async () => {
+    process.env.POLYMARKET_CACHE_TTL_MS = "1";
+    stubSearchEndpoint(() => [fixtureMarket({ question: "Will Apple beat earnings estimates?" })]);
+    const { fetchPolymarketContextForSymbols } = await import("../src/lib/polymarket-provider");
+    await fetchPolymarketContextForSymbols(["AAPL"], { AAPL: "Apple Inc." });
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    // Let the 1ms TTL lapse, then repeat the identical query — a live cache entry would still
+    // serve this from memory; an expired one must hit the network again.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await fetchPolymarketContextForSymbols(["AAPL"], { AAPL: "Apple Inc." });
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
   });
 
   it("does not reuse the cache across different query text (different company name)", async () => {

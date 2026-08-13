@@ -7009,11 +7009,21 @@ export interface ScorecardIndicators {
   avgVolume20d?: number;
 }
 
+/** Simple moving average over the LAST `windowSize` BARS (so "50-day"/"200-day" is literally
+ *  true, matching the UI tooltip's claim) — every close in that literal window must be valid, or
+ *  the field is omitted rather than silently stretching the window past a hole (the same
+ *  literal-window treatment already applied to avgVolume20d below). */
+function literalWindowSma(bars: OHLCBar[], windowSize: number): number | undefined {
+  if (bars.length < windowSize) return undefined;
+  const closes = bars.slice(-windowSize).map((b) => b.close);
+  const valid = closes.every((c): c is number => typeof c === "number" && Number.isFinite(c) && c > 0);
+  return valid ? sma(closes as number[], windowSize) : undefined;
+}
+
 export function scorecardIndicatorsFromBars(bars: OHLCBar[]): ScorecardIndicators {
-  const closes = bars.map((b) => b.close).filter((c): c is number => typeof c === "number" && Number.isFinite(c) && c > 0);
   const round2 = (n: number) => Math.round(n * 100) / 100;
-  const sma50 = sma(closes, 50);
-  const sma200 = sma(closes, 200);
+  const sma50 = literalWindowSma(bars, 50);
+  const sma200 = literalWindowSma(bars, 200);
   // Trailing 20-day average volume — the window is the LAST 20 BARS (so "20d" is literally true),
   // and every one of them must carry a real volume; any hole means the field is omitted.
   const tail = bars.slice(-20).map((b) => b.volume).filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);

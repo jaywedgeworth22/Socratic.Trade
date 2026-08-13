@@ -1,4 +1,4 @@
-// Point-in-time fundamentals revision chain (qlib/ai-hedge-fork lookahead lesson), scoped to
+// Point-in-time fundamentals revision chain (qlib/ai-hedge-fund lookahead lesson), scoped to
 // SEC-XBRL-derived GAAP facts. Verifies: an original 10-K fact + a later 10-K/A restatement of the
 // SAME fiscal_period_end form a queryable revision chain (getFundamentalAsOf returns the value that
 // was actually known as of a given date, never a future restatement); strict mode fails closed

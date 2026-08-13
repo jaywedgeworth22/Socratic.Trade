@@ -57,6 +57,23 @@ const SLOT_UTC_MINUTE = 47;
 const MIN_52W_REPLAY_BARS = 20;
 /** Trailing daily bars approximating 52 weeks for the high/low replay. */
 const TRAILING_52W_BARS = 252;
+/**
+ * The aggregate verdict counts only findings from the trailing N days, not the full
+ * lookahead_audit_findings table. Without a window, one ancient mismatch (since fixed) would pin
+ * the verdict at 'lookahead_mismatch_detected' forever — every later clean pass could never
+ * recover an all-clear. 90 days ≈ 12-13 weekly passes at the default 7-day cadence, long enough to
+ * accumulate a real verdictFloor-sized sample while still letting a resolved leak age out. Full
+ * history remains queryable as receipts via listLookaheadAuditFindings — only the rolled-up
+ * verdict is windowed.
+ */
+export const LOOKAHEAD_VERDICT_WINDOW_DAYS = 90;
+
+/** ISO stamp `LOOKAHEAD_VERDICT_WINDOW_DAYS` before `now` — the aggregate verdict's trailing
+ *  window floor. Shared by the due-job pass and the read-only API route so both report the same
+ *  windowed verdict. */
+export function lookaheadVerdictWindowSinceIso(now: number = Date.now()): string {
+  return new Date(now - LOOKAHEAD_VERDICT_WINDOW_DAYS * DAY_MS).toISOString();
+}
 
 export const LOOKAHEAD_AUDIT_JOB_TYPE = "lookahead_audit";
 
@@ -111,7 +128,10 @@ export function loadLookaheadAuditConfig(env: NodeJS.ProcessEnv = process.env): 
     ...(killed ? { disabledReason: "kill_switch" as const } : {}),
     sampleSize: boundedInt(env.LOOKAHEAD_AUDIT_SAMPLE, 1, 200, 25),
     verdictFloor: boundedInt(env.LOOKAHEAD_AUDIT_VERDICT_FLOOR, 1, 1000, 20),
-    tolerancePoints: boundedNum(env.LOOKAHEAD_AUDIT_TOLERANCE_POINTS, 1, 100, 15),
+    // min 0 (not 1): the doc'd range is 0-100 and an explicit "zero tolerance" must be honored,
+    // not silently promoted to 1 — Number("") is 0 too, but boundedNum's blank check above already
+    // routes an unset knob to the `fallback` before this floor is ever applied.
+    tolerancePoints: boundedNum(env.LOOKAHEAD_AUDIT_TOLERANCE_POINTS, 0, 100, 15),
     jaccardMin: boundedNum(env.LOOKAHEAD_AUDIT_JACCARD_MIN, 0, 1, 0.5),
     cadenceDays: boundedInt(env.LOOKAHEAD_AUDIT_CADENCE_DAYS, 1, 90, 7),
     horizonDays: boundedInt(env.LOOKAHEAD_AUDIT_HORIZON_DAYS, 1, 60, 5)
@@ -572,6 +592,19 @@ export function classifyRagEvidenceReplay(input: {
     return unverifiable("retrieval_replay_unavailable", { ...(replay?.status ? { status: replay.status } : {}) });
   }
 
+  // A clean "no_memory" replay (pipeline ran fine, zero chunks matched) is indistinguishable from
+  // corpus turnover since the decision — a re-embed that reassigned chunk ids, or pruned documents
+  // — and neither of those is a lookahead leak. Treat it as an honest coverage gap rather than a
+  // fabricated Jaccard-0 mismatch (or a vacuous clean when the persisted used set is non-empty).
+  if (replay.status === "no_memory") {
+    return unverifiable("replay_corpus_empty", {
+      persistedUsedCount: used.length,
+      note:
+        "Replay returned zero chunks from a clean pipeline run (RetrievalStatus 'no_memory') — " +
+        "likely re-embed/prune corpus turnover after the decision, not proof of a lookahead leak."
+    });
+  }
+
   const replayIds = replay.chunks.map((chunk) => chunk.id);
   const postAsOfReplay = replay.chunks.filter((chunk) => {
     const stamp = asOfEpochMs(chunk.as_of);
@@ -731,7 +764,7 @@ export interface LookaheadAuditPassResult {
   clean: number;
   mismatches: number;
   unverifiable: number;
-  /** Aggregate verdict over the FULL findings table after this pass's writes. */
+  /** Aggregate verdict over the trailing LOOKAHEAD_VERDICT_WINDOW_DAYS window after this pass's writes. */
   verdict: LookaheadVerdict;
   stoppedAtUnmatured: boolean;
   notified: boolean;
@@ -798,7 +831,10 @@ export async function runLookaheadAuditPass(
 
   const passCounts = { clean: 0, mismatch: 0, unverifiable: 0 };
   for (const finding of findings) passCounts[finding.classification] += 1;
-  const verdict = computeLookaheadVerdict(countLookaheadFindingsByClassification(userId), verdictFloor);
+  const verdict = computeLookaheadVerdict(
+    countLookaheadFindingsByClassification(userId, { sinceIso: lookaheadVerdictWindowSinceIso(now) }),
+    verdictFloor
+  );
   audit(
     "lookahead_audit_pass",
     {

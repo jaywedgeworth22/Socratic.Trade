@@ -427,6 +427,7 @@ async function measureCase(
       if (ctx.nowDate > unresolvableAfter) {
         return {
           status: "unresolvable",
+          ...(decisionCase.outcome?.sniperAccuracy ? { sniperAccuracy: decisionCase.outcome.sniperAccuracy } : {}),
           note: "No fill event ever joined this placed decision (no entry basis).",
           measuredAt: ctx.nowIso,
           outcomes: mergeHorizonRows(decisionCase.outcome?.outcomes, [])
@@ -457,6 +458,7 @@ async function measureCase(
         if (ctx.nowDate > unresolvableAfter) {
           return {
             status: "unresolvable",
+            ...(decisionCase.outcome?.sniperAccuracy ? { sniperAccuracy: decisionCase.outcome.sniperAccuracy } : {}),
             note: "No counterfactual row and no price series for the decision window.",
             measuredAt: ctx.nowIso,
             outcomes: mergeHorizonRows(decisionCase.outcome?.outcomes, [])
