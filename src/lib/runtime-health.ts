@@ -1,5 +1,5 @@
 import { request } from "node:http";
-import { readdirSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { getGitSha } from "./git-sha";
 
@@ -102,6 +102,19 @@ export function defaultLitestreamStatePath(dbPath: string): string {
  */
 export function defaultLitestreamSocketPath(dbPath: string): string {
   return join(dirname(dbPath), "litestream.sock");
+}
+
+/**
+ * Where scripts/coolify-prod-start.sh tees the combined stdout/stderr of the `litestream
+ * replicate` process (see the `run_app litestream replicate ... > >(tee -a "$LITESTREAM_LOG"...)`
+ * line there). This is the ONLY channel through which the app can ever see litestream's own
+ * `compaction failed` / `validation error detected` log lines -- litestream owns the container's
+ * real stdout (it wraps the app via `-exec`, not the other way around), so nothing short of a
+ * shared file makes those lines readable from inside the app process. See
+ * scanLitestreamRuntimeLogFile below for the reader.
+ */
+export function defaultLitestreamRuntimeLogPath(dbPath: string): string {
+  return join(dirname(dbPath), "litestream-runtime.log");
 }
 
 /**
@@ -805,4 +818,108 @@ export async function getLitestreamRuntimeHealth(options: {
 
   const fallback = options.allowFileFallback === false ? null : fileFallback(options.statePath, nowMs);
   return fallback ?? { state: "unknown", source: "none" };
+}
+
+/**
+ * Litestream's own log lines that mean a compaction level (store.go `compactDB`) or the periodic
+ * validation monitor (store.go `monitorValidation`) hit a real, unrecovered failure -- as opposed
+ * to the routine "no compaction" / "db not ready" DEBUG-level chatter, which never appears at the
+ * default INFO log level and is therefore never in the file this scans. Exact wording verified
+ * against the pinned v0.5.12 source:
+ *   - `db.Logger.Error("compaction failed", "level", lvl.Level, "error", err)` (store.go)
+ *   - `s.Logger.Warn("validation error detected", "level", ..., "type", ..., "message", ...)`
+ *     (store.go monitorValidation, requires the `validation:` config block above)
+ * A version bump could reword these; if a future litestream release does, this list is the one
+ * place to update it.
+ */
+export const LITESTREAM_RUNTIME_LOG_FAILURE_MARKERS = ["compaction failed", "validation error detected"] as const;
+export type LitestreamRuntimeLogMarker = (typeof LITESTREAM_RUNTIME_LOG_FAILURE_MARKERS)[number];
+
+export interface LitestreamRuntimeLogFinding {
+  marker: LitestreamRuntimeLogMarker;
+  /** Trimmed, length-capped log line for a human-readable alert -- never the raw unbounded text. */
+  line: string;
+}
+
+const LITESTREAM_RUNTIME_LOG_MAX_LINE_CHARS = 500;
+const LITESTREAM_RUNTIME_LOG_MAX_FINDINGS = 5;
+/**
+ * Upper bound on how much of the log file a single health check will ever read, taken from the
+ * END of the file (the tail). A wedge is evidenced by RECENT failures, not by the file's entire
+ * history, and this keeps the read cost fixed no matter how long the container has been up --
+ * the same "bound the work, never refuse to answer" principle as LITESTREAM_DIR_STAT_SAMPLE
+ * above. At litestream's INFO log level, routine operation produces close to nothing here (see
+ * scripts/coolify-prod-start.sh's comment on what actually gets teed in) so this ceiling is only
+ * ever exercised during a genuine, sustained incident.
+ */
+const LITESTREAM_RUNTIME_LOG_TAIL_MAX_BYTES = 256 * 1024;
+
+/** Pure: scan already-read text for litestream's own failure lines. Unit-testable without I/O. */
+export function scanLitestreamRuntimeLogText(text: string): LitestreamRuntimeLogFinding[] {
+  const findings: LitestreamRuntimeLogFinding[] = [];
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const marker = LITESTREAM_RUNTIME_LOG_FAILURE_MARKERS.find((candidate) => line.includes(candidate));
+    if (!marker) continue;
+    findings.push({
+      marker,
+      line: line.length > LITESTREAM_RUNTIME_LOG_MAX_LINE_CHARS
+        ? `${line.slice(0, LITESTREAM_RUNTIME_LOG_MAX_LINE_CHARS)}…`
+        : line
+    });
+    if (findings.length >= LITESTREAM_RUNTIME_LOG_MAX_FINDINGS) break;
+  }
+  return findings;
+}
+
+/**
+ * Read the tail of scripts/coolify-prod-start.sh's teed litestream runtime log and scan it for
+ * litestream's own compaction/validation failure lines.
+ *
+ * This is a genuinely INDEPENDENT signal from assessLitestreamTierFreshness above: it needs no
+ * S3/B2 credentials, does not depend on the remote LTX inventory
+ * (src/lib/litestream-remote-inventory.ts, whose scheduler wiring has a separate known bug in
+ * flight elsewhere), and works even when every compaction tier above is "not-observable". It is
+ * also strictly narrower: it can only ever prove a failure happened recently (a real alarm,
+ * folded into storageDegraded by the caller), never that everything is fine -- an empty result
+ * here means "no evidence of failure in the tail we read", not "confirmed healthy", so callers
+ * must not treat it as a positive health signal on its own.
+ *
+ * Never throws. A missing file (litestream not running this boot, or not yet past its first
+ * `-exec`) reports no findings rather than an error -- the same "not-observable, not fabricated"
+ * posture the rest of this module uses, just expressed as "nothing found" because there is no
+ * separate not-observable state to report for what is fundamentally a best-effort grep.
+ *
+ * Known, accepted imprecision: the tail read can start mid-line, so a marker string that
+ * straddles exactly that byte boundary could be missed on one check. A sustained wedge repeats
+ * the same failure every compaction-monitor interval (30s-1h depending on level), so the next
+ * health check's shifted tail window overwhelmingly does not land on the same boundary twice --
+ * this is a retried, best-effort signal, not a one-shot guarantee.
+ */
+export function scanLitestreamRuntimeLogFile(
+  logPath: string,
+  maxTailBytes: number = LITESTREAM_RUNTIME_LOG_TAIL_MAX_BYTES
+): LitestreamRuntimeLogFinding[] {
+  let fd: number | undefined;
+  try {
+    const stat = statSync(logPath);
+    if (!stat.isFile() || stat.size <= 0) return [];
+    const readBytes = Math.min(stat.size, Math.max(1, maxTailBytes));
+    const start = stat.size - readBytes;
+    fd = openSync(logPath, "r");
+    const buffer = Buffer.alloc(readBytes);
+    readSync(fd, buffer, 0, readBytes, start);
+    return scanLitestreamRuntimeLogText(buffer.toString("utf8"));
+  } catch {
+    return [];
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // best-effort close
+      }
+    }
+  }
 }
