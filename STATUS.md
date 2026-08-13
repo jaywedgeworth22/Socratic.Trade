@@ -31,6 +31,14 @@ Reindex `POST /api/admin/reembed` after the queued main deploy picks up Infisica
 purge rev-1 until that run completes with zero failures.
 
 Rollout: `docs/rollouts/2026-08-12-rag-advanced-enable.md`.
+## Current (2026-08-13 ANTIGRAVITY — Dashboard Parallelization and Litestream Generic Disable)
+
+**Branch `ag/rebase-2646` (Dashboard Refactor & Litestream Kill Switch):**
+1. **Litestream Crash Loop Fix**: Added a generic `LITESTREAM_DISABLE_MARKER` to `scripts/coolify-prod-start.sh` to allow manual disabling of Litestream during memory leak incidents. 
+2. **Dashboard Performance**: Refactored `getDashboardSnapshot` in `src/lib/dashboard.ts` to parallelize `getAccounts` and `getPortfolio` fetches when the account number is known, significantly reducing dashboard load times.
+3. **Verification**: `npx tsc --noEmit` clean, `npm run lint` clean, `npm test` clean, `npm run build` clean.
+4. **Ops**: The `.litestream-disabled` marker was dropped on the prod server's data volume to disable the crash-loop immediately on the next start. B2 generation wiping is pending owner coordination.
+Rollout: `docs/rollouts/2026-08-13-dashboard-parallelization-and-litestream-disable.md`.
 
 ## Current (2026-08-12 ~9:20pm CT MONET - console false load-failure, phone-correct load graphic, iOS candlestick splash, Lato everywhere)
 
