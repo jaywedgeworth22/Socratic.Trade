@@ -52,12 +52,14 @@ Touched files:
 ## Verification State
 
 ```bash
-npm run lint
-npx tsc --noEmit
+npm run lint            # 0 errors, 758 grandfathered warnings
+npx tsc --noEmit        # clean
 npx vitest run test/quote-route.test.ts test/on-demand-quote.test.ts test/yahoo-finance-fundamentals.test.ts
+# 18/18 pass
+bash scripts/land.sh    # full suite 6624 passed / 51 skipped (569 files); npm run build clean
 ```
 
-Land.sh runs the full suite before PR.
+PR https://github.com/jaywedgeworth22/Socratic.Trade/pull/2692 — squash auto-merge armed.
 
 ## Next Steps & Blockers
 
