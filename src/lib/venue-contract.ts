@@ -19,6 +19,7 @@ import type {
   TradingPolicy
 } from "./types";
 import type { ExecutionAccount } from "./execution-mode";
+import { resolveSourceBool } from "./source-settings";
 
 const ALL_ORDER_TYPES: OrderType[] = ["market", "limit", "stop_market", "stop_limit"];
 const REGULAR_ONLY: MarketHours[] = ["regular_hours"];
@@ -246,8 +247,9 @@ export function deriveVenueContract(
 ): VenueContract {
   const broker = account?.broker ?? "none";
   const caps = mergeAccountCapabilities(account?.broker, account?.capabilities);
-  const shortAllowed = policy.shortSellingEnabled === true && caps.shortSelling === true;
-  const sides: OrderSide[] = shortAllowed ? ["buy", "sell", "short", "cover"] : ["buy", "sell"];
+  const publicParked = broker === "public" && !resolveSourceBool("PUBLIC_EXECUTION_ENABLED");
+  const shortAllowed = !publicParked && policy.shortSellingEnabled === true && caps.shortSelling === true;
+  const sides: OrderSide[] = publicParked ? [] : shortAllowed ? ["buy", "sell", "short", "cover"] : ["buy", "sell"];
   const orderTypes = (caps.orderTypes?.length ? caps.orderTypes : ["market", "limit"]) as OrderType[];
   const marketHours = resolveSessions(caps);
   const promptLines = buildPromptLines({
@@ -257,6 +259,11 @@ export function deriveVenueContract(
     orderTypes,
     marketHours
   });
+  if (publicParked) {
+    promptLines.unshift(
+      "Public.com execution is parked until the account is funded.  Do not propose any orders for this venue."
+    );
+  }
   return {
     broker,
     brokerLabel: brokerDisplayLabel(account?.broker),

@@ -22,6 +22,11 @@ import { getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { logApiHealth } from "./db-health";
 import { estimateReviewNotional } from "./alpaca";
 import { mergeAccountCapabilities } from "./venue-contract";
+import { resolveSourceBool } from "./source-settings";
+
+function publicExecutionEnabled(): boolean {
+  return resolveSourceBool("PUBLIC_EXECUTION_ENABLED");
+}
 
 const PUBLIC_API = "https://api.public.com";
 
@@ -235,6 +240,11 @@ class PublicBrokerGateway implements BrokerGateway {
   }
 
   async reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder> {
+    if (!publicExecutionEnabled()) {
+      throw new OrderValidationError(
+        "Public execution is parked until this account is funded.  Turn on Public.com Order Execution in Data Sources after funding."
+      );
+    }
     const quotes = await this.getEquityQuotes(input.accountNumber, [input.symbol]);
     const price = quotes[normalizeSymbol(input.symbol)]?.price;
     const { estimatedNotional, alerts } = estimateReviewNotional(input, price);
@@ -246,6 +256,11 @@ class PublicBrokerGateway implements BrokerGateway {
   }
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {
+    if (!publicExecutionEnabled()) {
+      throw new OrderValidationError(
+        "Public execution is parked until this account is funded.  Turn on Public.com Order Execution in Data Sources after funding."
+      );
+    }
     return this.track(async () => {
       const headers = { ...(await this.authHeader()), "Content-Type": "application/json" };
       const orderId = isUuid(input.refId) ? input.refId : randomUUID();

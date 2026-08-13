@@ -400,27 +400,25 @@ export function BrokerAccountsCard() {
             variant="outline"
             disabled={busy !== null}
             onClick={() => setExtraOpen("public")}
-            title="Link Public.com with the Individual API secret from Account Settings → Security → API. Live only."
+            title="Link Public.com for quotes and history.  Order execution stays off until Settings → Public.com order execution is turned on (account not funded yet)."
           >
             Connect Public
           </Btn>
           <Btn
             size="sm"
             variant="outline"
-            disabled={busy !== null}
-            onClick={() => setExtraOpen("etoro")}
-            title="Link eToro with x-api-key + x-user-key from Settings → Trading → API Key Management."
+            disabled
+            title="eToro has no API access on this account yet.  Connect will stay off until that exists."
           >
-            Connect eToro
+            eToro — No API Yet
           </Btn>
           <Btn
             size="sm"
             variant="outline"
-            disabled={busy !== null}
-            onClick={() => setExtraOpen("webull")}
-            title="Link Webull OpenAPI App Key + App Secret after Developer Tool approval. Unofficial APIs are not used."
+            disabled
+            title="Webull official OpenAPI comes later.  Unofficial libraries are not used."
           >
-            Connect Webull
+            Webull — Later
           </Btn>
         </div>
       }
@@ -877,7 +875,7 @@ function ExtraBrokerConnectSheet({
     broker === "public"
       ? {
           title: "Connect Public",
-          hint: "Paste the Individual API secret from public.com Account Settings → Security → API.  This is live-only.  Do not share the secret."
+          hint: "Paste the Individual API secret from public.com Account Settings → Security → API.  This is live-only.  Quotes and history can run now; order execution stays parked until the account is funded and Public.com Order Execution is turned on in Data Sources."
         }
       : broker === "etoro"
         ? {

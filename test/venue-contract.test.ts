@@ -33,7 +33,18 @@ describe("venue contract", () => {
     expect(contract.promptLines.some((line) => line.includes("OPTIONS ORDERS ARE NOT AVAILABLE"))).toBe(true);
   });
 
-  it("allows Public shorts only when policy also enables them", () => {
+  it("parks Public execution until PUBLIC_EXECUTION_ENABLED is on", () => {
+    delete process.env.PUBLIC_EXECUTION_ENABLED;
+    const parked = deriveVenueContract(policy({ shortSellingEnabled: true }), {
+      broker: "public",
+      capabilities: caps({ shortSelling: true })
+    });
+    expect(parked.sides).toEqual([]);
+    expect(parked.promptLines.some((line) => /parked/i.test(line))).toBe(true);
+  });
+
+  it("allows Public shorts only when execution is on and policy also enables them", () => {
+    process.env.PUBLIC_EXECUTION_ENABLED = "on";
     const off = deriveVenueContract(policy({ shortSellingEnabled: false }), {
       broker: "public",
       capabilities: caps({ shortSelling: true })
@@ -44,6 +55,7 @@ describe("venue contract", () => {
       capabilities: caps({ shortSelling: true })
     });
     expect(on.sides).toEqual(["buy", "sell", "short", "cover"]);
+    delete process.env.PUBLIC_EXECUTION_ENABLED;
   });
 
   it("never promotes eToro shorts from a stale stored true", () => {

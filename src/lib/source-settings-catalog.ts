@@ -320,6 +320,15 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     max: 50
   },
   {
+    id: "PUBLIC_EXECUTION_ENABLED",
+    group: "enrichment",
+    label: "Public.com order execution",
+    description:
+      "Allow placing orders on the connected Public.com account.  Leave off until that account is funded.  Quotes and history still use the connection.",
+    type: "boolean",
+    defaultValue: false
+  },
+  {
     id: "ROIC_HISTORY_ENABLED",
     group: "enrichment",
     label: "ROIC price history",
