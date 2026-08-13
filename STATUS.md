@@ -112,6 +112,34 @@ via the round-3 integration lane.  Blockers: none.
 now sit in front of paid history providers; Public + eToro gateways + Webull connect stub;
 CopyTrader observe/allowlist framework (official eToro API only).  Owner must mint keys.
 Rollout: `docs/rollouts/2026-08-12-broker-cascade-and-copy-intel.md`.
+## Current (2026-08-12 MONET - backup tier monitor: real coverage, previous version had none)
+
+Branch `monet/backup-tier-monitor-real` (worktree `~/apps/trading-monet-tierfix`).
+
+`assessLitestreamTierFreshness()` shipped 2026-08-11/12 claiming per-compaction-level backup
+freshness for levels 0/1/2/3/9.  Verified on the live container today: it reported
+`state: "unknown"` for ALL FIVE tiers on every health check - zero coverage, while presenting
+itself as a five-tier breakdown.  Two independent causes:
+
+1. It read local `<statePath>/ltx/<level>/`, but litestream 0.5.12 keeps ONLY level 0 on disk
+   (`/app/data/.app.db-litestream/ltx/` has exactly one entry, `0`).  Levels 1/2/3/9 exist only
+   in the B2 replica and could never be observed that way.
+2. `ltx/0` holds 1,078 files; the shared scan returned `null` past a 256-entry bound, so even
+   level 0 - the one readable level - degraded to "unknown".
+
+The level-2 wedge it was built for was running the whole time (`compaction failed ...
+non-contiguous transaction ids`; levels 1/2/3 frozen since 2026-08-08/10 while level 0 advanced).
+
+Fixed by grading each level from a source that is actually valid: level 0 from local LTX in real
+time, levels 1/2/3/9 from a new scheduled 30-minute remote replica inventory
+(`src/lib/litestream-remote-inventory.ts`; `litestream ltx -level N -json`, never inline - the
+`-level all` form measures 143s/14.1MB).  Anything else now reports an explicit
+`state: "not-observable"` with a reason instead of a bare "unknown".  Degradation requires a
+level to be past threshold AND behind level 0's txid, so an idle database cannot false-alarm.
+
+Gates: tsc clean, lint 0 errors, `npm test` 6383 passed / 51 skipped (551 files), build passes.
+Does NOT clear the underlying wedged level-2 compaction - still open ops work.
+Rollout: `docs/rollouts/2026-08-12-backup-tier-monitor-real-coverage.md`.
 
 ## Current (2026-08-12 CLAUDE - connection-health alert noise, root-caused)
 

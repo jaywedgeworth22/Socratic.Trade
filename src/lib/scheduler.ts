@@ -15,6 +15,7 @@ import { isRoicTranscriptRefreshDue, refreshRoicTranscriptsIfDue } from "./web-s
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
+import { refreshLitestreamRemoteInventoryIfDue } from "./litestream-remote-inventory";
 import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
 import { runWatchlistDigestIfDue } from "./watchlist-digest";
 import { runAuditPruneIfDue } from "./audit-prune";
@@ -544,6 +545,14 @@ async function tick(): Promise<void> {
   // quota reset). Prevents "red forever until an agent SSHs" — owner 2026-08-06.
   void journalLane("health-lane-reprobe", {}, () => runHealthLaneReprobeIfDue())
     .catch((err) => console.error("[scheduler] health-lane-reprobe error:", err));
+
+  // Per-compaction-level backup coverage. Litestream keeps only level 0 on local disk, so
+  // levels 1/2/3/9 can ONLY be graded from the remote replica — a listing that costs real B2
+  // requests and ~11s, hence a 30-minute scheduled refresh here instead of inline work in
+  // /api/health. Without it every higher level is honestly reported "not-observable"; with it
+  // a wedged compactor (the 2026-08-12 level-2 incident) becomes visible.
+  void journalLane("litestream-remote-inventory", {}, () => refreshLitestreamRemoteInventoryIfDue())
+    .catch((err) => console.error("[scheduler] litestream remote inventory error:", err));
 
   // Cloudflare R2 free-tier watchdog (owner directive 2026-07-30: never pace >70%
   // of the 10 GiB / 1M Class A / 10M Class B monthly free tier). Cadence-gated
