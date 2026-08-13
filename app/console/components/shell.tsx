@@ -11,7 +11,8 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { useMutationBusy } from "../lib/useMutationBusy";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleFont } from "../lib/useConsoleFont";
@@ -222,6 +223,24 @@ function ShellFrame({ children }: { children: ReactNode }) {
   );
 }
 
+/** Visible while any console write is in flight — toggles, dropdowns, buttons.
+ *  The control often snaps back to the last server value until the POST returns;
+ *  this chip is the honest "we heard you" signal for the whole desk. */
+function MutationBusyChip() {
+  const { busy } = useMutationBusy();
+  if (!busy) return null;
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      className="inline-flex shrink-0 items-center gap-1 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-2 py-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)]"
+    >
+      <Loader2 size={12} className="animate-spin" />
+      Saving…
+    </span>
+  );
+}
+
 /** Desktop bar logo: invisible until the intro's candles assemble it (the
  *  splash lands on this exact element), then fades in and stays. Keeps its
  *  layout box while hidden so the splash can measure the landing target and
@@ -365,6 +384,7 @@ function ChromeBar({
         <BrandReveal />
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
+        <MutationBusyChip />
         <div className="hidden flex-1 sm:block" />
         {/* Operator-only: small top-of-site entry to the admin portal (owner-directed —
             it must not be buried in Settings). Desktop chrome only; phones reach the

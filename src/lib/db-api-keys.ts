@@ -625,10 +625,22 @@ export const LOCAL_USER = "local";
 // Side-effect on module load after LOCAL_USER + DELETED_KEY_TOMBSTONE + getUserApiKey exist.
 registerPlanTierLookup((service) => {
   try {
-    const row = getUserApiKey(LOCAL_USER, service);
-    if (!row || row.apiKey === DELETED_KEY_TOMBSTONE) return null;
-    // ENV_PLAN_TIER_MARKER rows are valid plan declarations for env-backed keys.
-    return row.planTier ?? null;
+    const fromRow = (userId: string): string | null => {
+      const row = getUserApiKey(userId, service);
+      if (!row || row.apiKey === DELETED_KEY_TOMBSTONE) return null;
+      return row.planTier ?? null;
+    };
+    const localTier = fromRow(LOCAL_USER);
+    if (localTier) return localTier;
+    // Connections saves under the logged-in user id.  Scheduler/quota lookups used
+    // to only read "local", so an Individual ROIC pick looked saved in Settings
+    // but still ran as Free (2 quarters / 5 rpm).
+    for (const userId of listUsers()) {
+      if (userId === LOCAL_USER) continue;
+      const tier = fromRow(userId);
+      if (tier) return tier;
+    }
+    return localTier;
   } catch {
     return null;
   }

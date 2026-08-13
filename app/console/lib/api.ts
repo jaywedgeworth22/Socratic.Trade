@@ -4,6 +4,7 @@
  *  non-blocking notice. The live-approval typed-confirmation contract mirrors
  *  app/api/proposals/[id]/approve/route.ts exactly. */
 
+import { beginConsoleMutation, endConsoleMutation, isConsoleMutationMethod } from "./mutation-busy";
 import type { LookaheadAuditFindingRow } from "@/lib/db-lookahead-audit";
 import type { SignalHealthSnapshotRow } from "@/lib/db-signal-health";
 import type { LookaheadVerdict } from "@/lib/lookahead-audit";
@@ -94,6 +95,8 @@ function buildResponseError(res: Response, payload: unknown, fallback: string): 
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const track = isConsoleMutationMethod(init?.method);
+  if (track) beginConsoleMutation();
   let res: Response;
   try {
     res = await fetch(url, {
@@ -103,6 +106,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     });
   } catch {
     throw new ConsoleApiError("Network error — the server could not be reached.", 0);
+  } finally {
+    if (track) endConsoleMutation();
   }
   const payload = await parseBody(res);
   if (!res.ok) {

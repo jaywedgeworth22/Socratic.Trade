@@ -705,6 +705,7 @@ function DataSourcesCard() {
   const [groups, setGroups] = useState<Record<string, { title: string; blurb: string }>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<import("../lib/useAutoSave").AutoSaveStatus>("idle");
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -735,12 +736,24 @@ function DataSourcesCard() {
 
   const saveOne = async (id: string, value: boolean | number | string | null) => {
     setBusy(id);
+    setSaveStatus("saving");
+    setRows((cur) =>
+      (cur ?? []).map((row) => {
+        if (row.id !== id) return row;
+        if (value === null) {
+          return { ...row, value: row.defaultValue, source: "default" as const };
+        }
+        return { ...row, value, source: "user" as const };
+      })
+    );
     try {
       await patchSourceFeatures({ [id]: value });
       await load();
-      toast.push("pos", "Source setting saved", id);
+      setSaveStatus("saved");
     } catch (err) {
+      setSaveStatus("error");
       toast.push("neg", "Could not save", err instanceof ConsoleApiError ? err.message : String(err));
+      await load();
     } finally {
       setBusy(null);
     }
@@ -750,13 +763,16 @@ function DataSourcesCard() {
     <Card
       title="Data sources"
       action={
-        <a
-          href="/console/connections#api-keys"
-          className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] underline-offset-2 hover:underline"
-          title="Open Connections to add provider keys and plan tiers."
-        >
-          Manage keys →
-        </a>
+        <span className="flex items-center gap-2">
+          <SaveStatus status={saveStatus} />
+          <a
+            href="/console/connections#api-keys"
+            className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] underline-offset-2 hover:underline"
+            title="Open Connections to add provider keys and plan tiers."
+          >
+            Manage keys →
+          </a>
+        </span>
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
@@ -836,6 +852,7 @@ function DataSourcesCard() {
                         <Toggle
                           checked={Boolean(row.value)}
                           disabled={busy !== null}
+                          busy={busy === row.id}
                           onChange={(on) => void saveOne(row.id, on)}
                           label={row.label}
                         />
