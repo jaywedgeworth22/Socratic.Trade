@@ -46,7 +46,7 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 
 | Flag / gate | Default | Blocker |
 |-------------|---------|---------|
-| `VECTOR_ASOF_STRICT` | off | Needs as_of_epoch_ms coverage proof before fail-closed undated drops |
+| `VECTOR_ASOF_STRICT` | off | **Honesty (2026-08-13):** this is the fail-CLOSED as-of mode.  When ON *and* the caller passed `asOf`, undated / un-epoch'd chunks are dropped (server clause loses the `$exists` escape; post-fetch `isWithinAsOf` also drops).  Chat / live strategy omit `asOf`, so flipping this flag does **not** change today's live desk.  It only tightens dated retrieval (backtest, lookahead audit, replay).  The 2026-07-07 epoch backfill reported 0 undated vectors then, but that is not a standing proof — new ingest can reintroduce undated metadata.  **Do not flip** until a fresh coverage receipt (drop-count audit / `GET /api/admin/rag-coverage`) shows undated inventory is acceptable.  Owner decision, not an agent flip. |
 | `WEB_SOURCE_SEC8K_FULL_BODY` | off | FTS/corpus budget + backlog health |
 | `SEC_INGEST_WORKER_ENABLED` | off | Seed via `/api/admin/sec-ingest`; confirm queue/DLQ first |
 | `WEB_SOURCE_FMP_TRANSCRIPTS` + `FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED` | both off | Dual gate: entitled FMP plan **and** owner commercial storage rights |
