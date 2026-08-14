@@ -97,7 +97,7 @@ export const NOTIFICATION_EVENT_TYPES = [
   "option_alert",
   "earningscalls_entitlement_blocked",
   // Advisory guardrail breach (e.g. the drawdown breaker in advisory mode): a configured risk
-  // threshold was crossed but NOTHING halted or was blocked — the agent is still in control.
+  // threshold was crossed but NOTHING halted or was blocked — nothing was blocked or changed.
   // Deliberately NOT "kill_switch" (nothing flipped state) so owners don't learn to ignore
   // kill-switch alerts.
   "risk_advisory",
@@ -356,6 +356,15 @@ export interface TuningSettings {
    * silent haircut). Owner-adjustable; turning it off restores today's sizing exactly.
    */
   signalHealthAutoThrottle?: boolean;
+  /**
+   * Advisory overlay library (default off). When true, matching owner-authored
+   * strategy_overlays rows are injected as DATA in the strategist prompt.
+   */
+  strategyOverlaysEnabled?: boolean;
+  /** Max overlays injected per run. Default 2. */
+  maxActiveOverlays?: number;
+  /** Skip a Coach tool-loop step after the first when remaining time is below this (ms). Default 15000. 0 = never skip. */
+  chatStageMinBudgetMs?: number;
   /**
    * Deterministic fundamentals hard-veto on BUYS, applied model-free in deterministicBearFilter
    * (independent of the Bull/Bear LLMs). Veto a buy when the candidate's free-cash-flow yield is
@@ -793,6 +802,21 @@ export interface RiskRules {
    * The breaker itself stays opt-in via the thresholds above (unset ⇒ no breaker at all).
    */
   accuracyBreakerAction?: "advisory" | "close_only";
+  /**
+   * Per-symbol post-close cooldown (minutes). Unset/<=0 disables. Advisory by default;
+   * `symbolLockAction` can opt into close_only for the locked name only.
+   */
+  symbolCooldownMinutes?: number;
+  /**
+   * Consecutive losing closes on one symbol that write a symbol lock. Unset/<=0 disables.
+   */
+  symbolLosingStreakLimit?: number;
+  /**
+   * What a per-symbol lock does. advisory (DEFAULT): receipt + overridable policy gate.
+   * close_only: the lock still does not halt the account — it only blocks new entries in
+   * that symbol unless autonomyOverride passes (same overridable-preference bucket).
+   */
+  symbolLockAction?: "advisory" | "close_only";
   /**
    * Allow synthetic trailing-stops to fire exits even when systemState is 'halted'.
    * Never registers or updates to looser stops, but will trigger existing ones.
@@ -1465,6 +1489,8 @@ export interface TradeProposal {
    * to bucket by (do NOT build the scorecard now; see the lane-5 rollout doc).
    */
   entryRegimeSeverity?: number;
+  /** Overlay ids injected into this run's prompt (advisory DATA only). */
+  appliedOverlayIds?: string[];
   confidenceScore?: number;
   /**
    * The FAILOVER-AWARE model that actually generated this proposal (the Green/Bull step's served

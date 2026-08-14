@@ -198,7 +198,7 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
     // 2.3.0: synthetic stops and bracket logic
     // 2.4.0: venue-contract prompt (broker-named, shorts/options/sessions fenced)
     // 2.5.0: predictionMarkets documented + data-age honesty line (news/predictionMarkets caveats)
-    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.5.0");
+    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.6.0");
   });
 
   it("(a) buildBullSystem/buildRedTeamReviewSystem carry the data-not-command clause; reflection only by reference", async () => {

@@ -1,3 +1,11 @@
+## Current (2026-08-14 GROK — Monet backend r5 pickup)
+
+Owner asked to finish Monet's "Backend updates (ST - Monet)" chat after the usage cap.  Ingestion/FTS hotfix (#2680) and toggles (#2682) were already live.  Leftover r4 (#2689) and advisory-tail residue (#2691) are rebased onto current main and armed for squash auto-merge.
+
+Round 5 is implemented on `grok/monet-backend-r5`: scoped trade locks (migration 79), vector-memory decay/archive (80), strategy overlay library (81, default off), Coach SSE `chat-turn` + cancel + stage-budget skip, scorecard `avgAlphaPct` when lots are stamped from a real benchmark series.  Prompt version `agentic-strategy@2.6.0`.  Settings risk_advisory helper now says "nothing was blocked or changed."
+
+Rollout: `docs/rollouts/2026-08-14-monet-backend-r5.md`.
+
 ## Current (2026-08-13 GROK — Claude r4 leftover pickup)
 
 Claude hit quota mid Round 4.  `origin/agent/claude` is gone; five local r4 commits sat on
