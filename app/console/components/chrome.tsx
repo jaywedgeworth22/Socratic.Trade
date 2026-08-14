@@ -14,7 +14,11 @@ import { Check, ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCh
 import type { ConnectedAccount } from "@/lib/types";
 // llm-required is PURE (no node/server imports — see its header), so its message constants are
 // safe to import here: classifyRunFailure matches the server's own 412 summary strings.
-import { LLM_MODEL_REQUIRED_STRATEGY_MESSAGE } from "@/lib/llm-required";
+import {
+  LLM_MODEL_REQUIRED_STRATEGY_MESSAGE,
+  LLM_ROTATION_AVAILABILITY_UNAVAILABLE_STRATEGY_MESSAGE,
+  LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE
+} from "@/lib/llm-required";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
   activeConnectedAccount,
@@ -611,6 +615,22 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
   // is missing (everything else — fix under API keys). Titling a model-choice refusal "No LLM key
   // is configured" sent the owner hunting through API keys that were fine — match the choice
   // message FIRST, on the server's own string.
+  if (m.includes(LLM_ROTATION_AVAILABILITY_UNAVAILABLE_STRATEGY_MESSAGE.toLowerCase())) {
+    return {
+      title: "Rotation could not check available models",
+      detail: message,
+      fixHref: "/console/strategy#models",
+      fixLabel: "Open Strategy → Models"
+    };
+  }
+  if (m.includes(LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE.toLowerCase())) {
+    return {
+      title: "Rotation has no keyed model to serve",
+      detail: message,
+      fixHref: "/console/connections#api-keys",
+      fixLabel: "Open Connections → API keys"
+    };
+  }
   if (m.includes(LLM_MODEL_REQUIRED_STRATEGY_MESSAGE.toLowerCase())) {
     return {
       title: "Choose your team models",

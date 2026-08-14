@@ -185,6 +185,21 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     expect(skipped).toContain("gemini-flash-latest");
     expect(skipped).toContain("deepseek-v4-pro");
   });
+
+  it("keeps the credential-filtered pool when OpenRouter /models/user returns 429", async () => {
+    noEnvKeys();
+    const userId = `rot-or-429-${randomUUID()}`;
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey(userId, "openrouter", "sk-test-openrouter", "test");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 429 })));
+    const { eligibleRotationPool } = await import("../src/lib/model-rotation");
+    const result = await eligibleRotationPool(userId);
+    expect(result.availability).toBe("unavailable");
+    expect(result.availabilityError).toBe("http_429");
+    expect(result.pool.length).toBeGreaterThan(0);
+    expect(result.pool).toContain("gpt-5.6-terra");
+  });
 });
 
 describe("resolveModelRotationForRun", () => {
@@ -352,7 +367,7 @@ describe("resolveModelRotationForRun", () => {
     });
     // No-defaults (owner 2026-07-07): an empty pool resolves the rotating seats to "" — the normal
     // unconfigured/fail-closed state — never the raw "__rotate__" sentinel nor a removed default.
-    expect(override).toEqual({ llmModel: "", redTeamLlmModel: "" });
+    expect(override).toEqual({ llmModel: "", redTeamLlmModel: "", emptyReason: "empty_pool" });
     expect(typeof commit).toBe("function");
     expect(() => commit()).not.toThrow(); // no-op — no pointer to advance on an empty pool
   });
