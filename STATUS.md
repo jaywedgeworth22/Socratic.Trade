@@ -12,6 +12,19 @@ Monet merge table all MERGED: #2680 #2681 #2682 #2684 #2685 #2687 #2709 #2712.
 Branch `grok/audit-owner-decisions`, worktree `~/apps/trading-grok-audit-decisions`.
 Rollout: `docs/rollouts/2026-08-14-monet-audit-owner-decisions.md`.
 
+## Current (2026-08-13 GROK — quote Key Stats dashes + tappable fill/position cards)
+
+Owner screenshot: GOOG iOS sheet showed $343.94 / +0.5% / volume / Alphabet, but P/E, EPS, yield, beta, 52W High/Low were all "—".  Footer proved the live chart fetch worked.
+
+Root cause (not a cosmetic dash):
+1. `fetchYahooFinanceQuote` already received `fiftyTwoWeekHigh=404.47` / `fiftyTwoWeekLow=197.46` on chart meta and **dropped them**.  `fastQuoteEnrichment` never mapped them.
+2. PE/EPS/div/beta are not on the keyless chart.  They come from crumb-authed Yahoo quoteSummary inside the full cascade.  Wave A Yahoo can finish in 1–3s; the cascade then waits for paid/scarce providers; the 6s budget times out and discards the already-fetched fields.
+3. `/api/quote` never read or wrote `symbol_field_latest`, so previously saved fundamentals stayed invisible and a successful open never updated the store.
+4. v7 `/finance/quote` is HTTP 401 without a crumb — not a keyless floor.
+
+Fix: map 52w on the chart floor; dedicated `enrichYahooFinanceSymbol` layer; durable seed + persist; entire iOS fill/position cards (and PWA position cards) open the same sheet.  n/a vs — convention kept.
+
+Branch `grok/quote-stats-and-card-taps`.  Rollout: `docs/rollouts/2026-08-13-quote-stats-and-card-taps.md`.
 ## Current (2026-08-14 MONET — AGENTS.md records the "local gate does not compile Swift" trap)
 
 Docs-only, branch `monet/agents-swift-gate-trap`.  The four-command verify gate
