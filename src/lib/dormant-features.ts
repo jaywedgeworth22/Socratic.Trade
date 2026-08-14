@@ -5,6 +5,7 @@
  * Deliberately DB-/vector-db-free (envFlagOn only) so the route can import it without pulling
  * the Pinecone stack into cold admin paths.
  */
+import { isAppleWebAuthConfigured } from "./auth/apple-web";
 import { envFlagOn, type EnvSource } from "./rag/env-flag";
 import { landingPageEnabled } from "./landing-page";
 
@@ -96,10 +97,28 @@ export function listDormantFeatureStatus(env: EnvSource = process.env): DormantF
       id: "sec8k-full-body",
       flag: "WEB_SOURCE_SEC8K_FULL_BODY",
       enabled: flagOn("WEB_SOURCE_SEC8K_FULL_BODY", false, env),
-      readyToEnable: false,
+      readyToEnable: true,
       defaultWhenUnset: "off",
-      blocker: "Needs FTS/corpus budget headroom + backlog health visibility before always-on.",
-      note: "Full 8-K body ingest into RAG. Limit via WEB_SOURCE_SEC8K_FULL_BODY_LIMIT."
+      note: "Full 8-K body ingest into RAG. Bounded by WEB_SOURCE_SEC8K_FULL_BODY_LIMIT (default 5) and WEB_SOURCE_SEC8K_FULL_BODY_BUDGET_MS (default 12s, cap 60s). Uses adaptive FTS-mirror batching — do not raise the budget without watching [slow-sync] logs."
+    },
+    {
+      id: "congress-share-outbound",
+      flag: "CONGRESS_SHARE_ENABLED",
+      enabled: flagOn("CONGRESS_SHARE_ENABLED", false, env),
+      readyToEnable: true,
+      defaultWhenUnset: "off",
+      note: "Automatic outbound share to congress.trade. Also requires CONGRESS_TRADE_TOKEN (CT INGEST_TOKEN). Nightly batch + after-scan refs. Fundamentals stay on CONGRESS_SHARE_FUNDAMENTALS_ENABLED."
+    },
+    {
+      id: "apple-web-signin",
+      flag: "AUTH_APPLE_ID + AUTH_APPLE_SECRET",
+      enabled: isAppleWebAuthConfigured(env),
+      readyToEnable: isAppleWebAuthConfigured(env),
+      defaultWhenUnset: "off",
+      blocker: isAppleWebAuthConfigured(env)
+        ? undefined
+        : "Needs Apple Services ID + client-secret JWT (or TEAM_ID + KEY_ID + SIWA .p8 PEM) in Infisical. Not ASC/APNs keys.",
+      note: "Web Sign in with Apple on /login. Code path is live; prod stays dark until AUTH_APPLE_* is set."
     },
     {
       id: "sec-ingest-worker",

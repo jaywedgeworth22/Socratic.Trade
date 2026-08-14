@@ -137,7 +137,7 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     id: "WEB_SOURCE_SEC8K_FULL_BODY",
     group: "sec",
     label: "8-K full-body ingest",
-    description: "Embed full 8-K HTML bodies into RAG (costly Voyage/Pinecone).",
+    description: "Embed full 8-K HTML bodies into RAG. Bounded per cycle (limit + wall-time budget + adaptive FTS batching).",
     type: "boolean",
     defaultValue: false
   },
