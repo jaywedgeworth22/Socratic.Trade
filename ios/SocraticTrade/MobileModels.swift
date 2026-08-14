@@ -225,7 +225,7 @@ struct PortfolioSummary: Decodable {
     let cash: Double?
 }
 
-struct Position: Decodable, Identifiable {
+struct Position: Decodable, Identifiable, Equatable {
     var id: String { symbol }
 
     let symbol: String
@@ -444,7 +444,7 @@ struct BenchmarkComparison: Decodable {
     let netExternalFlows: Double?
 }
 
-struct FillEvent: Decodable, Identifiable {
+struct FillEvent: Decodable, Identifiable, Equatable {
     let id: String
     let symbol: String
     let side: String

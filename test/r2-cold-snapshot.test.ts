@@ -14,18 +14,22 @@ import { databasePath } from "../src/lib/db";
 import {
   drainR2ColdSnapshotJobs,
   ensureR2ColdSnapshotJobScheduled,
+  getR2WeeklyHealthStatus,
   loadR2ColdSnapshotConfig,
   nextR2ColdSnapshotDueAt,
   planMultipartParts,
   r2ColdSnapshotClassAPct,
   selectColdSnapshotsToPrune,
+  R2_ARCHIVE_MAX_AGE_SECONDS,
   R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES,
   R2_COLD_SNAPSHOT_DEFAULT_RETAIN,
   R2_COLD_SNAPSHOT_JOB_TYPE,
+  R2_COLD_SNAPSHOT_LAST_FAILURE_KEY,
+  R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY,
 } from "../src/lib/r2-cold-snapshot";
 import { enqueueDueJob } from "../src/lib/db-jobs";
 import { getDb } from "../src/lib/db";
-import { deleteInternalSetting, setInternalSetting } from "../src/lib/db-settings";
+import { deleteInternalSetting, getInternalSetting, setInternalSetting } from "../src/lib/db-settings";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-r2coldsnap-${randomUUID()}.db`)}`;
@@ -52,6 +56,8 @@ function setCreds(): void {
 beforeEach(() => {
   for (const k of CRED_ENVS) delete process.env[k];
   deleteInternalSetting("r2coldsnap:disabledAuditedReason");
+  deleteInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY);
+  deleteInternalSetting(R2_COLD_SNAPSHOT_LAST_FAILURE_KEY);
   deleteInternalSetting("r2usage:lastSnapshots");
   getDb().prepare("DELETE FROM due_jobs WHERE job_type = ?").run(R2_COLD_SNAPSHOT_JOB_TYPE);
   getDb().prepare("DELETE FROM audit_events WHERE kind LIKE 'r2_cold_snapshot%'").run();
@@ -339,6 +345,14 @@ describe("drainR2ColdSnapshotJobs", () => {
     expect(existsSync(captured.path!)).toBe(false);
     expect(jobRows().map((r) => r.status)).toEqual(["done"]);
     expect(auditCount("r2_cold_snapshot.success")).toBe(1);
+
+    // Health reader input: last success persisted for /api/health checks.storage.r2Weekly.
+    const last = getInternalSetting<{ key: string; completedAt: string; bytes: number }>(
+      R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY,
+    );
+    expect(last).toMatchObject({ key: "cold-snapshots/app-2026-08-09.db", bytes: 2500 });
+    expect(typeof last?.completedAt).toBe("string");
+    expect(Number.isFinite(Date.parse(last!.completedAt))).toBe(true);
   });
 
   it("on upload failure: aborts the multipart upload, cleans the temp file, alerts once, retries the job", async () => {
@@ -369,6 +383,12 @@ describe("drainR2ColdSnapshotJobs", () => {
     // Job went back to pending for a backoff retry, not terminally failed.
     expect(jobRows().map((r) => r.status)).toEqual(["pending"]);
     expect(auditCount("r2_cold_snapshot.error")).toBe(1);
+    // Failure is recorded for ops; last success is left alone so health stays green
+    // when a prior week still falls inside the 8-day window.
+    const failure = getInternalSetting<{ key: string; reason: string }>(R2_COLD_SNAPSHOT_LAST_FAILURE_KEY);
+    expect(failure?.key).toBe("cold-snapshots/app-2026-08-09.db");
+    expect(failure?.reason).toMatch(/UploadPart 2/);
+    expect(getInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY)).toBeUndefined();
   });
 
   it("budget guard: refuses to run when ST Class A usage is at/above 50%, without any S3 traffic", async () => {
@@ -424,5 +444,87 @@ describe("drainR2ColdSnapshotJobs", () => {
 describe("r2ColdSnapshotClassAPct", () => {
   it("returns null when the usage monitor has no snapshot", () => {
     expect(r2ColdSnapshotClassAPct()).toBeNull();
+  });
+});
+
+// ── Health reader (public checks.storage.r2Weekly) ───────────────────────────
+
+describe("getR2WeeklyHealthStatus", () => {
+  const now = Date.UTC(2026, 7, 14, 12, 0, 0); // Friday 2026-08-14
+
+  it("reports archive_not_run when no success has been persisted", () => {
+    expect(getR2WeeklyHealthStatus(now)).toEqual({
+      ok: false,
+      ageSeconds: null,
+      key: null,
+      reason: "archive_not_run",
+    });
+  });
+
+  it("reports ok with ageSeconds when the last success is within 8 days", () => {
+    // Sunday 2026-08-09 03:17 UTC → ~5.4 days before `now` (well under 8d).
+    const completedAt = "2026-08-09T03:17:00.000Z";
+    setInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY, {
+      key: "cold-snapshots/app-2026-08-09.db",
+      completedAt,
+      bytes: 1_500_000_000,
+    });
+    const status = getR2WeeklyHealthStatus(now);
+    expect(status).toEqual({
+      ok: true,
+      ageSeconds: Math.floor((now - Date.parse(completedAt)) / 1000),
+      key: "cold-snapshots/app-2026-08-09.db",
+      reason: null,
+    });
+    expect(status.ageSeconds!).toBeLessThanOrEqual(R2_ARCHIVE_MAX_AGE_SECONDS);
+  });
+
+  it("reports archive_stale when the last success is older than 8 days", () => {
+    const completedAt = "2026-08-01T03:17:00.000Z"; // 13+ days before `now`
+    setInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY, {
+      key: "cold-snapshots/app-2026-08-01.db",
+      completedAt,
+      bytes: 100,
+    });
+    const status = getR2WeeklyHealthStatus(now);
+    expect(status.ok).toBe(false);
+    expect(status.reason).toBe("archive_stale");
+    expect(status.key).toBe("cold-snapshots/app-2026-08-01.db");
+    expect(status.ageSeconds).toBe(Math.floor((now - Date.parse(completedAt)) / 1000));
+    expect(status.ageSeconds!).toBeGreaterThan(R2_ARCHIVE_MAX_AGE_SECONDS);
+  });
+
+  it("stays ok when a later failure is recorded but the last success is still fresh", () => {
+    const completedAt = "2026-08-09T03:17:00.000Z";
+    setInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY, {
+      key: "cold-snapshots/app-2026-08-09.db",
+      completedAt,
+      bytes: 1,
+    });
+    setInternalSetting(R2_COLD_SNAPSHOT_LAST_FAILURE_KEY, {
+      key: "cold-snapshots/app-2026-08-16.db",
+      failedAt: "2026-08-16T03:20:00.000Z",
+      reason: "UploadPart 1 HTTP 500",
+    });
+    // Evaluate just after a hypothetical failed retry window still inside 8 days of success.
+    const justAfterFail = Date.UTC(2026, 7, 16, 4, 0, 0);
+    const status = getR2WeeklyHealthStatus(justAfterFail);
+    expect(status.ok).toBe(true);
+    expect(status.reason).toBeNull();
+    expect(status.key).toBe("cold-snapshots/app-2026-08-09.db");
+  });
+
+  it("treats a malformed completedAt as archive_not_run", () => {
+    setInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY, {
+      key: "cold-snapshots/app-2026-08-09.db",
+      completedAt: "not-a-date",
+      bytes: 1,
+    });
+    expect(getR2WeeklyHealthStatus(now)).toEqual({
+      ok: false,
+      ageSeconds: null,
+      key: null,
+      reason: "archive_not_run",
+    });
   });
 });

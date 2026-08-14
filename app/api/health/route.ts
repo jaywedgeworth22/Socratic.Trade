@@ -5,6 +5,7 @@ import type { RagEmbedRerankProvider } from "@/lib/rag-metering";
 import { getProviderTierStatus, isDataProvidersDegraded } from "@/lib/provider-tier";
 import { lookupRegisteredPlanTier } from "@/lib/provider-tier-plan";
 import { getLitestreamRemoteInventory } from "@/lib/litestream-remote-inventory";
+import { getR2WeeklyHealthStatus } from "@/lib/r2-cold-snapshot";
 import {
   assessLitestreamRuntimeHealth,
   assessLitestreamTierFreshness,
@@ -431,7 +432,11 @@ export async function GET(request: Request) {
       },
       // Count only — the matched log lines themselves go to the (operator-only) alert, not this
       // world-readable body, since litestream's own error text could echo bucket/path detail.
-      litestreamCompactionLogFailureCount: litestreamCompactionLogFindings.length
+      litestreamCompactionLogFailureCount: litestreamCompactionLogFindings.length,
+      // Weekly R2 cold snapshot (second-provider DR). Local setting only — no R2 I/O on this
+      // path. Public so Usage Monitor fleet backup (and humans) can see "R2 weekly is fine".
+      // Deliberately NOT folded into storageDegraded / 503 (same contract as UM backup layers).
+      r2Weekly: getR2WeeklyHealthStatus(),
     };
 
     // Thresholds:

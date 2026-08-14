@@ -1,6 +1,11 @@
 # Active Implementation Plan
 
 > **2026-08-14 GROK — stale ~1200s quotes + origin timeouts (`grok/prod-error-triage`, #2714).** Alpaca keep-alive sockets from Hetzner die (`UND_ERR_SOCKET`); cascade falls to Yahoo delayed (~15-20m); one `fetch failed` auto-halts Autopilot; `/api/health` 8s credits fetch stacks into UptimeRobot Connection Timeouts (and the paired credits-low keyword monitor). Retry dead sockets; 3-streak connectivity halt; abort=soft; 1.5s health credits budget; WU Sentry 6h dedup. Residual: filingapi 401 (owner key), Litestream L2 (owner), CT probes. Rollout: `docs/rollouts/2026-08-14-stale-quotes-origin-timeouts.md`.
+> **2026-08-14 GROK — Monet audit owner decisions (`grok/audit-owner-decisions`).**
+> Docs-only closeout of four leftovers.  CT trial already matches the 2-week
+> offer.  TestFlight accept, Coolify rolling+B2, and ASC listing writes stay
+> owner-only.  Merge table #2680–#2682, #2684, #2685, #2687, #2709, #2712 all
+> MERGED.  Rollout: `docs/rollouts/2026-08-14-monet-audit-owner-decisions.md`.
 
 > **2026-08-13 GROK — fleet alert triage (`grok/fleet-alerts-aug13`).** Fix RH MCP extra args (#2576), cap Pinecone metadata under 40960, classify engine-overloaded 429s as transient (no usage-limit page), and stop the ST-health keyword monitor from pairing 503 deploys as "credits low." CT senate scout handshake reuse is the follow-up in the CT lane. Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
 

@@ -2882,6 +2882,25 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
   }
 }
 
+/**
+ * Single-symbol Yahoo quoteSummary (crumb-authed). Used by `/api/quote` so
+ * PE/EPS/div/beta do not wait for the rest of the multi-provider cascade —
+ * wave A Yahoo can finish in 1–3s, then the cascade still waits for paid /
+ * scarce providers and the 6s budget discards the already-fetched fields.
+ */
+export async function enrichYahooFinanceSymbol(symbol: string): Promise<SymbolEnrichment> {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) return {};
+  const provider = new YahooFinanceEnrichmentProvider();
+  const data = (await provider.enrich([normalized]))[normalized] ?? {};
+  const sourced = Object.fromEntries(
+    Object.entries(data)
+      .filter(([key, value]) => key !== "sources" && key !== "fieldObservations" && key !== "fieldDates" && value !== undefined)
+      .map(([key]) => [key, "yahoo-finance"])
+  ) as SymbolEnrichment["sources"];
+  return { ...data, sources: { ...sourced, ...data.sources } };
+}
+
 // ── Yahoo quoteSummary parsers (calendarEvents / institution ownership) ──────
 // Kept as pure functions so tests can exercise the shape-tolerance without a live call.
 
