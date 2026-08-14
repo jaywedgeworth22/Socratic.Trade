@@ -106,6 +106,23 @@ describe("summarizeLitestreamLtxPayload", () => {
     expect(summarizeLitestreamLtxPayload([null, 42, "x"], 1).fileCount).toBe(0);
   });
 
+  // The collector must never MANUFACTURE the empty state.  This used to return
+  // `newestAt ? fileCount : 0`, so a listing of real objects none of which carried a
+  // parseable timestamp collapsed to `fileCount: 0` — and since 2026-08-14 "successfully
+  // listed and empty" is a measurement that assessLitestreamTierFreshness draws a wedge
+  // verdict from.  The count now survives so the grader can see the shape is inconsistent
+  // (count > 0 with no timestamp) and refuse a verdict instead of reading it as emptiness.
+  it("keeps the file count when no entry carried a parseable timestamp", () => {
+    const summary = summarizeLitestreamLtxPayload(
+      [
+        { level: 2, max_txid: "000000000000e5ad", timestamp: "not-a-date" },
+        { level: 2, max_txid: "000000000000e5ae" }
+      ],
+      2
+    );
+    expect(summary).toEqual({ level: 2, newestAt: "", newestTxid: null, fileCount: 2 });
+  });
+
   it("ignores entries belonging to a different compaction level", () => {
     const summary = summarizeLitestreamLtxPayload(
       [

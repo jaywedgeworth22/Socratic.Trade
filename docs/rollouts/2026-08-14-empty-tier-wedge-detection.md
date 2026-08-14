@@ -88,9 +88,12 @@ Ordered classification for a measured-empty level N:
 5. **Feeder idle** — feeder's newest object older than the FEEDER's own
    threshold, measured against the snapshot's `collectedAt` -> `empty` /
    `expected` / `input-idle`.
-6. **Superseded** — some higher level already advanced past the feeder's newest
-   txid -> `empty` / `expected` / `superseded`.  This is the legitimate
-   "drained upward, then retention pruned the sources" case.
+6. **Superseded** — some higher level **that actually consumes this one** has
+   already advanced past the feeder's newest txid -> `empty` / `expected` /
+   `superseded`.  This is the legitimate "drained upward, then retention pruned
+   the sources" case.  Only levels with a non-null `LITESTREAM_FEEDER_TIER` are
+   eligible as evidence; see the level-9 exclusion below, which is the single
+   path capable of silencing this whole rule.
 7. **Backlog span** —
    `floor((feederFileCount - 1) / 2) * feederProductionIntervalSeconds`.
    `> thresholdSeconds(N)` -> `empty` / `wedged`, degraded.  Otherwise
@@ -211,6 +214,33 @@ Today the same input yields zero degraded reasons.
     feeder and is not collected remotely, so there is no evidence to grade it
     against.  Deliberately out of scope.
 
+11. **`supersededBy` may only consult levels that actually consume the level
+    under test** — i.e. levels whose `LITESTREAM_FEEDER_TIER` is non-null.  This
+    was caught in adversarial review of the first draft of this branch and is
+    the one code path capable of SILENCING the alarm the branch exists to add,
+    so the evidence is recorded rather than summarized.  The first draft scanned
+    every higher level, which included level 9.  Level 9 is a whole-DB snapshot —
+    `Store.CompactDB` shortcuts it straight to `db.Snapshot`, a fact this file's
+    own comments already recorded — so its txid tracks the LIVE DATABASE, not
+    level 3, and it carries no information about whether level 2 compacted.
+    Reproduced by running the real function on the exact 2026-08-14 production
+    snapshot with ONE field changed: level 9's txid moved from
+    `0000000000043200` to level 1's `00000000000468d8`, which is its normal value
+    in the window right after each daily snapshot.  Level 2 flipped from
+    `empty/wedged/backlog-past-threshold degraded=true` to
+    `empty/expected/superseded degraded=false`, `report.degraded` went true ->
+    false, `degradedReasons` went 2 -> 0, and the panel printed the factually
+    false sentence "Level 9 has already advanced to transaction
+    00000000000468d8, so this level's objects were promoted rather than lost."
+    Exposure was bounded (a short once-daily window, self-healing on the next
+    30-minute collection), so it delayed rather than permanently suppressed —
+    but a comforting default emitted as a false factual claim is exactly what
+    this branch exists to eliminate.  Two tests now pin it: the level-9 case
+    against the production shape, and a positive case proving `superseded` still
+    fires where it is TRUE (level 3, which really is fed by level 2, advanced
+    past what level 1 holds).  Note the consequence: level 3 can now never be
+    `superseded`, which is correct — nothing consumes level 3.
+
 ### Known residual false-alarm path
 
 If `litestream.coolify.yml` ever configures `levels:` explicitly such that a
@@ -223,8 +253,14 @@ operator can remove it from the list in one edit.  Flagged rather than hidden.
 ### Known missed-alarm paths
 
 - An empty **level 1** (feeder is level 0, whose retention keeps its count small)
-  is weakly covered.  Production's `ltx/0` holds ~1,078 files, which does clear
-  the gate, but a smaller cache would not.
+  is covered with less headroom than the other levels, but is NOT weakly covered
+  at production's current shape — the earlier draft of this note said "weakly"
+  and that understated it, so the measured numbers are recorded here to stop
+  anyone loosening the rule on a false premise.  Level 1's gate needs
+  `floor((N-1)/2) x 60s > 4h`, i.e. **482** level-0 files; production's `ltx/0`
+  holds ~1,078, giving a span of 8h58m against a 4h threshold — roughly **2.2x**
+  margin.  The real caveat is conditional, not current: a machine whose level-0
+  retention were cut to under ~482 files would fall below the gate.
 - A **low-write replica** accumulates feeder files slowly, so the span bound is
   weak and a wedge can stay under threshold for a long time.  Structural: fewer
   measurements means a weaker lower bound, and inventing a tighter one would be
@@ -255,10 +291,12 @@ Run from `/Users/jay/apps/trading-monet-tierwedge` (branch
 `export PATH="/opt/homebrew/opt/node@24/bin:$PATH"`.
 
 ```
-npx tsc --noEmit    # clean, no output
-npm test            # see numbers below
-npm run build       # see below
-npm run lint        # see below
+npx tsc --noEmit    # exit 0, no output
+npm test            # 568 files passed | 1 skipped (569)
+                    # 6650 tests passed | 51 skipped (6701), 440.91s
+npm run build       # exit 0, full route table emitted
+npm run lint        # exit 0 — 758 problems (0 errors, 758 warnings),
+                    # all grandfathered; zero warnings in the touched files
 ```
 
 Each required test was confirmed to FAIL against current `main`, by stashing
@@ -277,6 +315,20 @@ ONLY the four source files (`src/lib/runtime-health.ts`,
 - `keeps a failed level listing honest instead of converting it into a wedge` —
   FAILED
 - `/api/health flags an EMPTY deep-compaction level as wedged ...` — FAILED
+
+The three tests added in review round 2 were fail-first checked the same way:
+
+- `does not let the daily snapshot level explain away an empty compaction level`
+  — FAILED against the branch's own first draft with
+  `expected reason 'backlog-past-threshold' / degraded true, received
+  'superseded' / degraded false`.  This is decision 11 above.
+- `still calls an empty level superseded when the level that consumes it has
+  advanced` — the positive counterpart, proving the fix narrowed the rule rather
+  than deleting it.
+- `keeps the file count when no entry carried a parseable timestamp` — FAILED
+  against `origin/main`'s `summarizeLitestreamLtxPayload`
+  (`fileCount: 0`, expected `2`), giving decision 7 its own direct unit test
+  instead of only indirect coverage through the grader.
 
 ## 5. Next Steps & Blockers
 

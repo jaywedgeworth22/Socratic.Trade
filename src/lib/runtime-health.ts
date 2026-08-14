@@ -862,12 +862,24 @@ export function assessLitestreamTierFreshness(
         * LITESTREAM_LEVEL_PRODUCTION_INTERVAL_SECONDS[feeder]
     );
 
-  /** True when some HIGHER level already promoted past what the feeder holds — this level's
-   *  objects were moved up rather than lost, so an empty level here is expected. */
+  /** True when some higher level that actually CONSUMES this level has already promoted past
+   *  what the feeder holds — this level's objects were moved up rather than lost, so an empty
+   *  level here is expected.
+   *
+   *  The `LITESTREAM_FEEDER_TIER[candidate] !== null` filter is load-bearing and NOT a
+   *  micro-optimisation: it excludes level 9, whose txid is not evidence about anything below
+   *  it. `Store.CompactDB` shortcuts the snapshot level straight to `db.Snapshot`, so level 9
+   *  tracks the LIVE DATABASE, not level 3 — and in the window right after each daily snapshot
+   *  its txid is normally at or past level 1's. Scanning it here made the 2026-08-14 level-2
+   *  wedge read `expected/superseded degraded=false` once a day and printed the false sentence
+   *  "level 9 has already advanced ... so this level's objects were promoted rather than lost".
+   *  This is the one code path that can silence the empty-level alarm, so it may only consult
+   *  levels that genuinely compact FROM a lower level. */
   const supersededBy = (tier: LitestreamCompactionTier, feederTxid: string | null): LitestreamCompactionTier | null => {
     if (!feederTxid) return null;
     for (const candidate of LITESTREAM_COMPACTION_TIERS) {
       if (candidate <= tier) continue;
+      if (LITESTREAM_FEEDER_TIER[candidate] === null) continue;
       const higher = observations.get(candidate);
       if (!higher || higher.fileCount <= 0 || !higher.newestTxid) continue;
       if (compareLitestreamTxid(higher.newestTxid, feederTxid) >= 0) return candidate;

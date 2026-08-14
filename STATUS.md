@@ -28,6 +28,15 @@ stale / failed / inconsistent listing.  New `checks.storage.litestreamTiersDegra
 and `litestreamTierDegradedReasons`; `/api/health` `ok` deliberately does NOT
 flip to 503.
 
+Adversarial review round 2 found and fixed the one path that could silence the
+new alarm: `supersededBy` scanned every higher level, including level 9.  Level 9
+is a whole-DB snapshot (`CompactDB` shortcuts it to `db.Snapshot`), so its txid
+tracks the live database rather than level 3 — and in the window right after each
+daily snapshot that turned the L2 wedge into `expected/superseded degraded=false`
+with a false "promoted rather than lost" sentence.  It now consults only levels
+with a non-null `LITESTREAM_FEEDER_TIER`, pinned by a test on the production shape
+plus a positive test proving `superseded` still fires where it is genuinely true.
+
 **Blocker / next action is the OWNER's, not code:** the root cause is that every
 Coolify rolling deploy briefly runs two litestream writers against the same B2
 prefix; 0.5.12 has no fencing, colliding `MaxTXID` breaks `ltx.IsContiguous`, and

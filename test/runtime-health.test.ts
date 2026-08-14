@@ -916,6 +916,86 @@ describe("Litestream empty-level wedge detection", () => {
     expect(report.notObservableTiers).toBe(0);
   });
 
+  // The one path that can SILENCE the alarm above, pinned so it cannot come back.  Level 9 is
+  // a whole-DB snapshot — `Store.CompactDB` shortcuts it straight to `db.Snapshot` — so its
+  // txid tracks the live database, not level 3, and it carries zero information about whether
+  // level 2 compacted.  In the window right after each daily snapshot, level 9's txid is
+  // NORMALLY at or past level 1's.  Treating that as proof of promotion turned the wedge below
+  // into `expected/superseded degraded=false` and printed a factually false sentence.
+  it("does not let the daily snapshot level explain away an empty compaction level", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-snapshot-superseded-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-14T03:50:00.000Z");
+    writeLtxFile(root, "0", ltxName(0x468d8), new Date(now - 30_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-14T03:46:10.000Z",
+        status: "ok",
+        levels: {
+          "1": remoteLevel(1, "2026-08-14T03:46:05.000Z", "00000000000468d8", 2032),
+          "2": remoteLevel(2, "", null, 0),
+          "3": remoteLevel(3, "", null, 0),
+          // The ONLY change from the production shape above: the snapshot has just run, so
+          // level 9's txid has caught up with level 1's.
+          "9": remoteLevel(9, "2026-08-14T03:40:00.000Z", "00000000000468d8", 2)
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    expect(tiers["2"]).toMatchObject({
+      state: "empty",
+      verdict: "wedged",
+      reason: "backlog-past-threshold",
+      degraded: true
+    });
+    expect(tiers["2"].detail).not.toContain("promoted rather than lost");
+    expect(tiers["3"]).toMatchObject({ state: "empty", verdict: "upstream-wedged", degraded: true });
+    expect(report.degraded).toBe(true);
+    expect(report.degradedReasons.some((r) => r.includes("no objects at level 2"))).toBe(true);
+  });
+
+  // The `superseded` verdict still has to WORK where it is true: a level that really was
+  // drained upward by the level that consumes it.  Level 2 holds nothing, but level 3 — which
+  // is fed by level 2 — has already advanced past what level 1 holds, so level 2's objects
+  // were promoted, not lost.
+  it("still calls an empty level superseded when the level that consumes it has advanced", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-real-superseded-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-14T03:50:00.000Z");
+    writeLtxFile(root, "0", ltxName(0x468d8), new Date(now - 30_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-14T03:46:10.000Z",
+        status: "ok",
+        levels: {
+          "1": remoteLevel(1, "2026-08-14T03:46:05.000Z", "00000000000468d8", 2032),
+          "2": remoteLevel(2, "", null, 0),
+          "3": remoteLevel(3, "2026-08-14T03:30:00.000Z", "00000000000468d8", 4),
+          "9": remoteLevel(9, "2026-08-14T00:00:06.000Z", "0000000000043200", 2)
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    expect(tiers["2"]).toMatchObject({
+      state: "empty",
+      verdict: "expected",
+      reason: "superseded",
+      degraded: false
+    });
+    expect(tiers["2"].detail).toContain("Level 3 has already advanced");
+    expect(report.degraded).toBe(false);
+  });
+
   // THE FALSE-ALARM GUARD, and it matters as much as the test above.  A monitor that cries
   // wolf gets ignored, and "empty" is the NORMAL state of a young replica.
   it("does not alarm on a brand-new replica whose higher levels have not been produced yet", () => {
