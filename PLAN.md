@@ -3,6 +3,11 @@
 > **2026-08-14 GROK — Monet backend r5 pickup (`grok/monet-backend-r5`).** Finish Monet's Backend-updates chat: land leftover r4 #2689 + residue #2691, then r5 locks/memory/overlays/chat-SSE/scorecard-alpha (migrations 79–81). Rollout: `docs/rollouts/2026-08-14-monet-backend-r5.md`.
 
 > **2026-08-13 GROK — Claude r4 leftover pickup (`grok/claude-r4-pickup`).** Cherry-pick five unpushed r4 slices (benchmarks, ATR pullback, ops panel, opspanel fixes, data-age) onto current main.  No new schema version (main already at 78).  Prompt version lands as `agentic-strategy@2.5.0`.  Advisory-tail leftover stays with Monet #2682.  Rollout: `docs/rollouts/2026-08-13-claude-r4-pickup.md`.
+> **2026-08-14 GROK — Monet audit owner decisions (`grok/audit-owner-decisions`).**
+> Docs-only closeout of four leftovers.  CT trial already matches the 2-week
+> offer.  TestFlight accept, Coolify rolling+B2, and ASC listing writes stay
+> owner-only.  Merge table #2680–#2682, #2684, #2685, #2687, #2709, #2712 all
+> MERGED.  Rollout: `docs/rollouts/2026-08-14-monet-audit-owner-decisions.md`.
 
 > **2026-08-13 GROK — fleet alert triage (`grok/fleet-alerts-aug13`).** Fix RH MCP extra args (#2576), cap Pinecone metadata under 40960, classify engine-overloaded 429s as transient (no usage-limit page), and stop the ST-health keyword monitor from pairing 503 deploys as "credits low." CT senate scout handshake reuse is the follow-up in the CT lane. Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
 
