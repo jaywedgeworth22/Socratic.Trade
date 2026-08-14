@@ -1,6 +1,6 @@
 import { audit, getInternalSetting, getNotifyPrefs, getPolicy, setInternalSetting } from "./db";
 import { sendNotification } from "./notifications";
-import { loadNotifyConfig, notify } from "./notify";
+import { isPushoverDeliverable, loadNotifyConfig, notify, operatorPushoverUserKey } from "./notify";
 import type { NotifyPrefs } from "./types";
 
 export interface UsageLimitAlertInput {
@@ -95,12 +95,29 @@ async function notifyOperatorEmailFallback(
 ): Promise<void> {
   assertUsageAlertActive(options);
   const prefs = getNotifyPrefs(userId);
+  const config = loadNotifyConfig();
+  if (isPushoverDeliverable(prefs, config)) {
+    const forcedPrefs: NotifyPrefs = {
+      ...prefs,
+      channels: ["pushover"],
+      pushoverTarget: operatorPushoverUserKey(prefs),
+      updatedAt: prefs.updatedAt
+    };
+    assertUsageAlertActive(options);
+    await notify(userId, { title, body, kind: "budget_alert", data }, {
+      config,
+      prefs: forcedPrefs,
+      assertActive: options.assertActive,
+      signal: options.signal
+    });
+    assertUsageAlertActive(options);
+    return;
+  }
   if (prefs.channels.includes("email") && prefs.email.trim()) return;
 
   assertUsageAlertActive(options);
   const fallbackEmail = operatorAlertEmail();
   if (!fallbackEmail) return;
-  const config = loadNotifyConfig();
   if (!config.email.resendKey || !config.email.from) return;
 
   const forcedPrefs: NotifyPrefs = {

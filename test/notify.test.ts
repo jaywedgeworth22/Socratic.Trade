@@ -93,6 +93,27 @@ describe("notify multi-channel delivery", () => {
     expect(attempts).toBe(1); // 4xx is permanent — retrying just wastes attempts
   });
 
+  it("skips Resend when Pushover can deliver", async () => {
+    setNotifyPrefs("u-prefer-pushover", {
+      channels: ["email", "pushover"],
+      email: "ops@example.test",
+      pushoverTarget: "u1userkey"
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL) => {
+      calls.push(String(url));
+      return new Response("ok", { status: 200 });
+    }) as unknown as typeof fetch;
+    const cfg = { ...baseCfg(), pushover: { pushoverToken: "pv-token" } };
+    const results = await notify(
+      "u-prefer-pushover",
+      { title: "Storage Warning: litestream tier 2 stale", body: "Deep compaction is stale." },
+      { config: cfg, fetchImpl, resolveHost }
+    );
+    expect(results.find((r) => r.channel === "pushover")?.ok).toBe(true);
+    expect(calls).toEqual(["https://api.pushover.net/1/messages.json"]);
+  });
+
   it("email body ends with a Socratic.Trade sign-off", async () => {
     setNotifyPrefs("u-email-signoff", { channels: ["email"], email: "ops@example.test" });
     const calls: Array<{ text?: string; subject?: string }> = [];
