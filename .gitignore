@@ -6,6 +6,9 @@
 # AGENTS.md; skills here are Claude Code-specific procedure shortcuts.
 .claude/*
 !.claude/skills/
+!.claude/hooks/
+!.claude/hooks/**
+!.claude/settings.json
 .agents/
 .tools/
 # Secrets come from Infisical (see docs/secrets.md). .env / .env*.local are NEVER a secret
