@@ -172,7 +172,13 @@ export function summarizeLitestreamLtxPayload(payload: unknown, level: number): 
     }
   }
 
-  return { level, newestAt: newestAt ?? "", newestTxid, fileCount: newestAt ? fileCount : 0 };
+  // `fileCount` reports the entries actually counted, even when none carried a readable
+  // timestamp. It used to be zeroed in that case (`newestAt ? fileCount : 0`), which let the
+  // COLLECTOR manufacture the empty state out of a parse problem — and as of 2026-08-14
+  // "successfully listed and empty" is a load-bearing measurement that
+  // assessLitestreamTierFreshness draws a wedge verdict from. The count-without-timestamp shape
+  // is now visible to it and classified as `remote-inventory-inconsistent`, not as emptiness.
+  return { level, newestAt: newestAt ?? "", newestTxid, fileCount };
 }
 
 function runLitestreamLtx(config: LitestreamRemoteInventoryConfig, level: number): Promise<unknown> {

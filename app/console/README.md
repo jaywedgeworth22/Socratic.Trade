@@ -50,7 +50,7 @@ of the existing UI):
   three-outcomes block on every approval card ("if you approve / if you
   reject / if you do nothing", expiry countdown), guardrail one-liners, the
   "did nothing on purpose" framing for quiet runs, and the vocabulary layer
-  (Running · Ask-first / Autopilot / Stopped / Exit-only / Winding down).
+  (Running / Autopilot / Stopped / Exit-only / Winding down).  Autopilot is auto-decide only.
 - From **TradeDeck**: the always-visible scope bar in the header, risk styled
   at the object, status-tone chips for lifecycle states, and the
   operator-density tables (positions, scorecards, tax lots).

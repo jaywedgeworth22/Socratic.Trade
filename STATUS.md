@@ -1,3 +1,172 @@
+## Current (2026-08-14 GROK — Monet loading-graphic / Lato leftover closed)
+
+Owner pickup of Monet's "iOS loading graphic and font..." session.  Product code
+was already on `main` (#2667 `73dab29d`).  The dropped session's last step — a
+computed-font check on live `socratictrade.com` — is now done: production login
+at 375×812 computes `lato` on `body` and the Google sign-in button, eight `woff2`
+files serve `font/woff2`, and `--font-sans` resolves through `--font-lato`.
+
+Native splash / unflipped wordmark / iOS Lato are already on TestFlight
+`1.0.13 (202608140722)` (`VALID`, `IN_BETA_TESTING`).  Last ship SHA `f9c89b9a`
+contains #2667.  #2692 later added iOS quote-sheet work (different lane); the
+splash / wordmark / Lato the owner asked for are already in 1.0.13, so no new
+ship was cut for this pickup.  Production 503 Monet saw was the known SEC ingest stall, not this change;
+site was 200 when this pickup started.
+
+Rollout: `docs/rollouts/2026-08-14-pickup-monet-loading-fonts.md`.
+Next action: owner updates TestFlight on the phone.  No code blockers.
+## Current (2026-08-14 GROK — Monet App / Issue Audit owner decisions)
+
+Four Monet leftovers.  Implementable one done; the rest stay owner-only.
+
+1. TestFlight invite — OWNER ONLY.  Not uniformly INVITED: John (`jo…comcast.net`) is INSTALLED on all four apps; Jay (`ma…jays.services`) is INSTALLED on Congress.Trade.  Other testers still INVITED.  Did not accept.
+2. Litestream Coolify rolling + B2 write keys — OWNER ONLY.  Did not flip deploy strategy or mint B2 keys.
+3. Congress.Trade trial — already 2 weeks in user-facing copy (#1835).  Offer verified 14 days (Infisical `STRIPE_TRIAL_DAYS`, ASC intro `TWO_WEEKS`).  Stale runbook fixed on `grok/ct-trial-copy`.
+4. ASC listings — EULA only on Socratic Trade; betaAppReviewDetails names/notes empty on CT + both Usage apps.  Documented; did not write ASC.
+
+Monet merge table all MERGED: #2680 #2681 #2682 #2684 #2685 #2687 #2709 #2712.
+
+Branch `grok/audit-owner-decisions`, worktree `~/apps/trading-grok-audit-decisions`.
+Rollout: `docs/rollouts/2026-08-14-monet-audit-owner-decisions.md`.
+
+## Current (2026-08-13 GROK — quote Key Stats dashes + tappable fill/position cards)
+
+Owner screenshot: GOOG iOS sheet showed $343.94 / +0.5% / volume / Alphabet, but P/E, EPS, yield, beta, 52W High/Low were all "—".  Footer proved the live chart fetch worked.
+
+Root cause (not a cosmetic dash):
+1. `fetchYahooFinanceQuote` already received `fiftyTwoWeekHigh=404.47` / `fiftyTwoWeekLow=197.46` on chart meta and **dropped them**.  `fastQuoteEnrichment` never mapped them.
+2. PE/EPS/div/beta are not on the keyless chart.  They come from crumb-authed Yahoo quoteSummary inside the full cascade.  Wave A Yahoo can finish in 1–3s; the cascade then waits for paid/scarce providers; the 6s budget times out and discards the already-fetched fields.
+3. `/api/quote` never read or wrote `symbol_field_latest`, so previously saved fundamentals stayed invisible and a successful open never updated the store.
+4. v7 `/finance/quote` is HTTP 401 without a crumb — not a keyless floor.
+
+Fix: map 52w on the chart floor; dedicated `enrichYahooFinanceSymbol` layer; durable seed + persist; entire iOS fill/position cards (and PWA position cards) open the same sheet.  n/a vs — convention kept.
+
+Branch `grok/quote-stats-and-card-taps`.  Rollout: `docs/rollouts/2026-08-13-quote-stats-and-card-taps.md`.
+## Current (2026-08-14 MONET — AGENTS.md records the "local gate does not compile Swift" trap)
+
+Docs-only, branch `monet/agents-swift-gate-trap`.  The four-command verify gate
+(`npm run lint` / `npx tsc --noEmit` / `npm test` / `npm run build`) and
+`scripts/land.sh` compile **zero Swift**, so a fully green local run proves nothing
+about `ios/**` — the first Swift compilation of any iOS change happens in CI.
+
+This is recorded because it cost a real CI cycle on 2026-08-13.  Merging `main` into
+`monet/apns-push` produced a duplicate `@Binding private var pendingDeepLink` and a
+second `init(pendingDeepLink:)` in `MobileControlView.swift`, and **git did not flag a
+conflict**: both sides had added the same declaration at slightly different offsets, so
+the text merge kept both copies and reported success.  6,563 vitest tests and a clean
+`next build` passed while the iOS app did not compile at all.  The compiler's third
+error, `ambiguous use of 'Preview'`, named an innocent file — the `#Preview` block was
+fine and singular, and only became ambiguous because there were suddenly two
+initializers to choose between.
+
+"Verify before claiming done" now carries a CAUTION block with the exact `xcodebuild
+build` and `xcodebuild test` invocations to run whenever a change **or a merge** touches
+`ios/**`.  A merge is the highest-risk case precisely because you did not write the code
+and have no reason to suspect it.
+
+## Current (2026-08-14 MONET — empty compaction level reads as a wedge)
+
+Deep compaction has produced nothing since ~2026-08-08 and the per-tier backup
+monitor called it healthy.  The terminal stage of a compaction wedge is not a
+frozen level, it is an EMPTY one: litestream retention keeps pruning the wedged
+level's pre-wedge objects while the wedge produces no replacements, so level 2
+went 171 objects (2026-08-12, frozen) to 0 objects (2026-08-14, empty) — and
+`fileCount <= 0` was classified `not-observable` / `no-activity-recorded` with
+the detail "This is normal for a level Litestream has not needed to produce".
+`/api/health` returned `litestreamDegradedReasons: []` for six days.
+
+Production snapshot read 2026-08-14T03:46Z (`durable_state`, namespace
+`litestream`): `status: "ok"`, `levelErrors: {}`, L1 fileCount 2032 / newest
+03:46:05Z / txid `00000000000468d8`, **L2 fileCount 0**, **L3 fileCount 0**, L9
+fileCount 2 / newest 00:00:06Z.  The listing SUCCEEDED — not a visibility
+failure.
+
+**PR #2709 MERGED** 2026-08-14T05:38Z as `a8f3ad86`; merge to `main`
+auto-deploys to production.  Adds a third tier state `"empty"` carrying a verdict
+(`wedged` / `upstream-wedged` / `expected`) and the feeder evidence behind it.
+An empty level is graded against its IMMEDIATE feeder, and duration comes from
+the feeder's file count via `CompactDB`'s one-file-per-interval-boundary
+guarantee: `floor((K-1)/2) * interval`.  L2 today is
+`floor(2031/2) x 30s = 8h27m` against a 2h threshold -> wedged; L3 ->
+`upstream-wedged` with copy naming L2 as the fix.  Suppressed on a fresh
+replica, an idle database, a superseded level, an all-empty prefix, and any
+stale / failed / inconsistent listing.  New `checks.storage.litestreamTiersDegraded`
+and `litestreamTierDegradedReasons`; `/api/health` `ok` deliberately does NOT
+flip to 503.
+
+Adversarial review round 2 found and fixed the one path that could silence the
+new alarm: `supersededBy` scanned every higher level, including level 9.  Level 9
+is a whole-DB snapshot (`CompactDB` shortcuts it to `db.Snapshot`), so its txid
+tracks the live database rather than level 3 — and in the window right after each
+daily snapshot that turned the L2 wedge into `expected/superseded degraded=false`
+with a false "promoted rather than lost" sentence.  It now consults only levels
+with a non-null `LITESTREAM_FEEDER_TIER`, pinned by a test on the production shape
+plus a positive test proving `superseded` still fires where it is genuinely true.
+
+**Blocker / next action is the OWNER's, not code:** the root cause is that every
+Coolify rolling deploy briefly runs two litestream writers against the same B2
+prefix; 0.5.12 has no fencing, colliding `MaxTXID` breaks `ltx.IsContiguous`, and
+the level-1 -> level-2 promotion fails permanently.  Repair needs a deploy-strategy
+change plus a one-time B2 delete.  This branch only makes it visible.
+
+Rollout: `docs/rollouts/2026-08-14-empty-tier-wedge-detection.md`.
+
+## Current (2026-08-13 GROK pickup — land leftover `monet/ship-pipeline-fix`)
+
+Monet hit quota with this branch finished and **no PR**.  GROK landed it from
+`~/apps/trading-monet-shipfix` without redesign.  Merged `origin/main` (`#2684`
+honest server stats) cleanly.  READY PR **#2687**, squash auto-merge armed,
+waiting required `verify`.  Local land.sh gates: tsc clean, 6600 passed /
+51 skipped (567 files + 1 skipped), build clean.
+
+Unchanged Monet scope: refuse bot merges without an elevated token + hourly
+fail-closed CI backstop; cron path-gate so backend-only commits do not ship
+TestFlight; strip `[AG]` anywhere in release notes; ios-fleet sha256 pin;
+version snapshot.  Rollout:
+`docs/rollouts/2026-08-13-ios-ship-pipeline-repair.md`.
+
+## Current (2026-08-13 ~3:45pm CT MONET — iOS ship pipeline repair)
+
+Bot-merged PRs land on `main` and dispatch NOTHING — not CI, not ios-ship.  ST is
+not exempt: PR #2675 (merged by `github-actions[bot]`, sha `ca38bb2979`) has 27
+runs on that sha and zero are `event: push`, while #2680 (human-merged) gets the
+full set.  Cause is GitHub's `GITHUB_TOKEN` recursion guard; `auto-merge-prs.yml`
+claimed to prefer `GH_PAT`/`SHEPHERD_TOKEN` but neither secret exists, so the
+fallback chain always resolved to `GITHUB_TOKEN`.
+
+Fixed on branch `monet/ship-pipeline-fix` (worktree `~/apps/trading-monet-shipfix`):
+auto-merge workflows + `merge-shepherd.sh` refuse to merge without an elevated
+token (self-activating the moment the owner adds one); `ci.yml` gains an hourly
+backstop cron with a fail-closed redundancy skip; `ios-ship.yml` drops the
+undocumented 1h rate override (fleet standing gate is 2.5h — ASC upload gaps went
+2.80h/2.58h before it, 1.60h/1.34h after) and gains `fetch-depth: 0`; a sha256 pin
+(`scripts/ios-fleet.sha256` + `ios-fleet-pin.sh`) guards the untracked shared
+tooling; `ios/project.yml` + pbxproj now record the actually-shipped 1.0.6 instead
+of a stale 1.0.1.
+
+Shared, UNVERSIONED tooling edits (live for all four fleet apps immediately;
+backup at `/Users/jay/apps/ios-fleet/.backup-monet-20260813/`): `ensure-tf-ready`
+now targets the build THIS run uploaded instead of "newest" (which is the previous
+ship for the first minutes after upload), and renders the mandatory TestFlight
+"What to Test" note.  Notes publishing is OPT-IN and defaults to a dry render —
+owner sign-off needed before any tester sees auto-generated copy.
+
+**Review round 2 (blockers fixed before landing).**  (1) The `*/30` cron had no
+path gate and was already shipping backend-only commits — run `31723515355`
+archived and shipped `39c6acee` (an alerts fix, zero files under `ios/`) to
+testers.  `scripts/ios-scheduled-ship-gate.sh` + a 13-assertion offline test now
+gate the scheduled path, and the test runs in CI on every PR.  (2) The
+release-notes agent-name filter was start-anchored while the fleet writes tags at
+the END — CT has 48 subjects with a non-leading `[AG]` and zero leading ones, so
+`[AG]` would have published to TestFlight.  Markers are now stripped anywhere and
+the deny-list gained a bracketed-`AG` backstop; verified zero leaks across 1500
+subjects per repo.  (3) Version snapshot re-read at review time: 1.0.8 /
+202608132022 (the train moved past 1.0.6 before the first commit was authored).
+
+Gates (node 24): lint 0 errors / 764 warnings (grandfathered), `tsc --noEmit`
+clean, vitest 563 files passed + 1 skipped and 6520 tests passed + 51 skipped,
+`npm run build` clean, ios ship-gate bash suite 13/13.  Rollout:
+`docs/rollouts/2026-08-13-ios-ship-pipeline-repair.md`.
 ## Current (2026-08-13 ~3:50pm CT MONET — durable litestream remote-inventory cache)
 
 PR #2665's per-tier backup monitor (`docs/rollouts/2026-08-12-backup-tier-monitor-real-coverage.md`)
@@ -1391,7 +1560,7 @@ tests, build clean. Rollout: `docs/rollouts/2026-08-02-data-provider-round2.md`.
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded. ~~litestream replicating~~ **CORRECTED 2026-08-06 (MONET): litestream→R2 is PAUSED (kill-switch since Aug 4) — no continuous DB backup; owner decision to resume** |
-| Data providers | `dataProvidersDegraded=true` — Massive capped to ~2y history (owner decision pending); filingapi STOPPED 6d. ~~FMP plan probe 403~~ (stale: FMP retired on ST 2026-08-04, health lanes show OFF by design) |
+| Data providers | Honesty rule (2026-08-13): `dataProvidersDegraded` only when the probe disagrees with the paid/configured plan or the provider is not working.  Massive `history_cap_blocked` on ~2.5y is healthy when Settings is Stocks Basic.  ~~FMP plan probe 403~~ (stale: FMP retired on ST 2026-08-04). |
 
 ## Blockers
 
