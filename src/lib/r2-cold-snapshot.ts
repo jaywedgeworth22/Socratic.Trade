@@ -64,7 +64,66 @@ export const R2_COLD_SNAPSHOT_MIN_PART_BYTES = 5 * 1024 * 1024;
 export const R2_COLD_SNAPSHOT_BUDGET_GUARD_PCT = 50;
 
 const DISABLED_AUDIT_KEY = "r2coldsnap:disabledAuditedReason";
+/** Persisted after every successful weekly upload — health reads this, never R2. */
+export const R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY = "r2coldsnap:lastSuccess";
+/** Last failure (observability only; does not alone fail health). */
+export const R2_COLD_SNAPSHOT_LAST_FAILURE_KEY = "r2coldsnap:lastFailure";
+/**
+ * Max age of the last successful cold snapshot for `checks.storage.r2Weekly.ok`.
+ * Matches Usage Monitor `R2_ARCHIVE_MAX_AGE_SECONDS` (weekly job + one-day slack).
+ */
+export const R2_ARCHIVE_MAX_AGE_SECONDS = 8 * 24 * 3600;
 const KEY_PATTERN = /^cold-snapshots\/app-\d{4}-\d{2}-\d{2}\.db$/;
+
+export interface R2ColdSnapshotLastSuccess {
+  key: string;
+  completedAt: string;
+  bytes: number;
+}
+
+export interface R2ColdSnapshotLastFailure {
+  key: string | null;
+  failedAt: string;
+  reason: string;
+}
+
+/**
+ * Public-safe shape for `checks.storage.r2Weekly` on GET /api/health.
+ * No credentials, bucket names, or endpoints — object key + age only.
+ */
+export interface R2WeeklyHealthStatus {
+  ok: boolean;
+  ageSeconds: number | null;
+  key: string | null;
+  reason: "archive_stale" | "archive_not_run" | null;
+}
+
+/**
+ * Cheap local reader for the weekly R2 cold-snapshot lane. Reads only the
+ * internal setting written on success — never performs S3/R2 network I/O.
+ * `ok` is true when the last success is within {@link R2_ARCHIVE_MAX_AGE_SECONDS}
+ * (8 days). A failed week does not flip `ok` false while the prior success is
+ * still inside that window (observability only; not folded into storageDegraded).
+ */
+export function getR2WeeklyHealthStatus(nowMs: number = Date.now()): R2WeeklyHealthStatus {
+  try {
+    const last = getInternalSetting<R2ColdSnapshotLastSuccess>(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY);
+    if (!last || typeof last.key !== "string" || !last.key || typeof last.completedAt !== "string") {
+      return { ok: false, ageSeconds: null, key: null, reason: "archive_not_run" };
+    }
+    const completedMs = Date.parse(last.completedAt);
+    if (!Number.isFinite(completedMs)) {
+      return { ok: false, ageSeconds: null, key: null, reason: "archive_not_run" };
+    }
+    const ageSeconds = Math.max(0, Math.floor((nowMs - completedMs) / 1000));
+    if (ageSeconds > R2_ARCHIVE_MAX_AGE_SECONDS) {
+      return { ok: false, ageSeconds, key: last.key, reason: "archive_stale" };
+    }
+    return { ok: true, ageSeconds, key: last.key, reason: null };
+  } catch {
+    return { ok: false, ageSeconds: null, key: null, reason: "archive_not_run" };
+  }
+}
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -465,6 +524,16 @@ export async function performR2ColdSnapshot(
     }
 
     const durationMs = Date.now() - startedAt;
+    const completedAt = new Date().toISOString();
+    try {
+      setInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY, {
+        key,
+        completedAt,
+        bytes: totalBytes,
+      } satisfies R2ColdSnapshotLastSuccess);
+    } catch {
+      /* health may lag until next success; never throw into the scheduler tick */
+    }
     audit("r2_cold_snapshot.success", {
       key,
       bytes: totalBytes,
@@ -477,6 +546,15 @@ export async function performR2ColdSnapshot(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (uploadId) await abortMultipartUpload(cfg, key, uploadId, deps);
+    try {
+      setInternalSetting(R2_COLD_SNAPSHOT_LAST_FAILURE_KEY, {
+        key,
+        failedAt: new Date().toISOString(),
+        reason: message.slice(0, 500),
+      } satisfies R2ColdSnapshotLastFailure);
+    } catch {
+      /* never throw */
+    }
     try {
       audit("r2_cold_snapshot.error", { key, error: message, durationMs: Date.now() - startedAt });
     } catch {

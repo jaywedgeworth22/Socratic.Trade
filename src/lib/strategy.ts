@@ -55,11 +55,17 @@ import { applyBrokerOrderPlacementPause, checkBrokerHealth, isOrderPlacementInfr
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
-import { resolveModelRotationForRun } from "./model-rotation";
+import { isModelRotationSentinel, resolveModelRotationForRun } from "./model-rotation";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload, detectLlmTruncation } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
 import { planLlmProviderAttempts, recordLlmProviderFailure } from "./llm-provider-cooldown";
-import { LlmCredentialRequiredError, LLM_MODEL_REQUIRED_STRATEGY_MESSAGE, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
+import {
+  LlmCredentialRequiredError,
+  LLM_MODEL_REQUIRED_STRATEGY_MESSAGE,
+  LLM_REQUIRED_STRATEGY_MESSAGE,
+  LLM_ROTATION_AVAILABILITY_UNAVAILABLE_STRATEGY_MESSAGE,
+  LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE
+} from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
@@ -524,7 +530,19 @@ export async function runStrategyOnce(
     // gate). A run that aborts before that point (account unavailable, over budget, no candidate
     // cleared the threshold) writes nothing, so it never skews the rotation weights with a run that
     // generated no proposal.
-    const { commit: commitRotation, ...rotationOverride } = await resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
+    const { commit: commitRotation, emptyReason, ...rotationOverride } = await resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
+    if (isModelRotationSentinel(policy.llmModel) && !rotationOverride.llmModel) {
+      // Do not collapse this into "Choose both team models" — rotation IS the model choice.
+      const reason =
+        emptyReason === "availability_unavailable"
+          ? LLM_ROTATION_AVAILABILITY_UNAVAILABLE_STRATEGY_MESSAGE
+          : LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE;
+      console.error(`[Strategy] ${reason}`);
+      audit("run_failed_rotation", { runId, userId, reason, emptyReason: emptyReason ?? "empty_pool" }, userId, connectedAccountId);
+      result = { runId, status: "failed", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "failed", reason, userId);
+      return result;
+    }
 
     // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for
     // over-budget providers whenever the monitor is configured (fire-and-forget, never blocks a run).
