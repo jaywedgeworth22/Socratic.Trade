@@ -129,7 +129,7 @@ export function MobileHomeTab({
           <div>
             <p className="text-xs uppercase tracking-wide text-faint">Mode</p>
             <p className="text-xl font-semibold" title={runState?.detail}>
-              {runState?.word ?? "unknown"}
+              {runState?.label ?? "unknown"}
             </p>
           </div>
           <div className="rounded-md border border-line bg-surface px-3 py-2 text-right">

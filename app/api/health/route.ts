@@ -131,6 +131,8 @@ export async function GET(request: Request) {
       }, null);
       checks.tradingLiveness = {
         activeAccounts: liveness.accounts.length,
+        autopilotAccounts: liveness.accounts.filter((a) => a.strategyAuthority === "decide").length,
+        runningAskFirstAccounts: liveness.accounts.filter((a) => a.strategyAuthority !== "decide").length,
         degraded: degradedCount,
         oldestCompletedRunAgeSeconds,
         marketOpen: liveness.marketOpen
