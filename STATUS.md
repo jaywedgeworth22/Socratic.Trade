@@ -1,3 +1,25 @@
+## Current (2026-08-14 MONET — AGENTS.md records the "local gate does not compile Swift" trap)
+
+Docs-only, branch `monet/agents-swift-gate-trap`.  The four-command verify gate
+(`npm run lint` / `npx tsc --noEmit` / `npm test` / `npm run build`) and
+`scripts/land.sh` compile **zero Swift**, so a fully green local run proves nothing
+about `ios/**` — the first Swift compilation of any iOS change happens in CI.
+
+This is recorded because it cost a real CI cycle on 2026-08-13.  Merging `main` into
+`monet/apns-push` produced a duplicate `@Binding private var pendingDeepLink` and a
+second `init(pendingDeepLink:)` in `MobileControlView.swift`, and **git did not flag a
+conflict**: both sides had added the same declaration at slightly different offsets, so
+the text merge kept both copies and reported success.  6,563 vitest tests and a clean
+`next build` passed while the iOS app did not compile at all.  The compiler's third
+error, `ambiguous use of 'Preview'`, named an innocent file — the `#Preview` block was
+fine and singular, and only became ambiguous because there were suddenly two
+initializers to choose between.
+
+"Verify before claiming done" now carries a CAUTION block with the exact `xcodebuild
+build` and `xcodebuild test` invocations to run whenever a change **or a merge** touches
+`ios/**`.  A merge is the highest-risk case precisely because you did not write the code
+and have no reason to suspect it.
+
 ## Current (2026-08-14 MONET — empty compaction level reads as a wedge)
 
 Deep compaction has produced nothing since ~2026-08-08 and the per-tier backup

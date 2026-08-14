@@ -96,6 +96,39 @@ is intentionally pinned to "warn" in `eslint.config.mjs` so the gate is green
 today while still surfacing the debt — promote those to "error" as you burn them
 down.
 
+> [!CAUTION]
+> **NONE of those four commands compile Swift. A fully green local gate proves nothing
+> about `ios/**`.** `scripts/land.sh` runs exactly this trio (tsc → vitest → next build),
+> so the FIRST Swift compilation of any iOS change happens in CI, not on your machine.
+>
+> This is not theoretical — it cost a CI cycle on 2026-08-13. Merging `main` into a
+> branch produced a DUPLICATE `@Binding private var pendingDeepLink` and a second
+> `init(pendingDeepLink:)` in `MobileControlView.swift`. Git did **not** flag a conflict:
+> both sides had added the same declaration at slightly different offsets, so the text
+> merge kept both copies and reported success. The full local gate passed — 6,563 tests,
+> clean build — while the iOS app did not compile at all. The compiler's third error,
+> `ambiguous use of 'Preview'`, pointed at an innocent `#Preview` block that was fine and
+> singular; it only became ambiguous because there were suddenly two initializers.
+>
+> **If your change (or your merge) touches `ios/**`, run the CI command locally before
+> pushing:**
+>
+> ```bash
+> xcodebuild build -project 'ios/Socratic Trade.xcodeproj' -scheme SocraticTrade \
+>   -destination 'generic/platform=iOS' \
+>   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+> ```
+>
+> To also run the Swift test target (99 tests as of 2026-08-13):
+>
+> ```bash
+> xcodebuild test -project 'ios/Socratic Trade.xcodeproj' -scheme SocraticTrade \
+>   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO
+> ```
+>
+> A merge is the highest-risk case precisely because it is the one where you did not
+> write the code and have no reason to suspect it.
+
 `npm run build` deletes and regenerates `.next/`. If a dev server is running
 (via Claude Code's preview tool or otherwise), it will start erroring with
 `ENOENT .next/server/...` afterward — restart it.
