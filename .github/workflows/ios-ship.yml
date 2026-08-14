@@ -96,17 +96,10 @@ jobs:
       # repo ships (it is not a git repo -- no history, no review, and apps.json
       # there carries this app's version train).
       #
-      # No IOS_TF_MIN_INTERVAL_SEC here. That variable is a PER-RUN override; this
-      # workflow used to pin it to 3600, which quietly halved the documented fleet
-      # standing gate of 2.5h (DEFAULT_MIN_INTERVAL_SEC=9000 in the fleet script,
-      # 2.5h in its README). Live evidence of the halving, consecutive ST upload
-      # gaps from App Store Connect: 2.80h and 2.58h before the override, then 1.60h
-      # and 1.34h after. The commit that added it (d6c79765) was fixing trailing
-      # commits stranded by the no-push-event defect -- and the `schedule` cron it
-      # added in the same commit already fixes that, because once the interval
-      # expires the next 30-minute tick sees HEAD != last-shipped sha and ships.
-      # If the owner wants 1h, change DEFAULT_MIN_INTERVAL_SEC + the fleet README
-      # together so it applies fleet-wide and stays documented.
+      # No IOS_TF_MIN_INTERVAL_SEC here. That variable is a PER-RUN override.
+      # Standing gate is DEFAULT_MIN_INTERVAL_SEC=3600 (1 hour) in the fleet
+      # script (owner 2026-08-14). The 30-minute cron picks up an unbuilt merge
+      # on the next eligible hour; same-HEAD ticks still exit 0 without shipping.
       - name: Ship SocraticTrade to TestFlight
         if: steps.gate.outputs.should_ship == '1'
         run: bash scripts/ios-ship-testflight.sh

@@ -15,6 +15,19 @@ site was 200 when this pickup started.
 
 Rollout: `docs/rollouts/2026-08-14-pickup-monet-loading-fonts.md`.
 Next action: owner updates TestFlight on the phone.  No code blockers.
+## Current (2026-08-14 GROK — Monet App / Issue Audit owner decisions)
+
+Four Monet leftovers.  Implementable one done; the rest stay owner-only.
+
+1. TestFlight invite — OWNER ONLY.  Not uniformly INVITED: John (`jo…comcast.net`) is INSTALLED on all four apps; Jay (`ma…jays.services`) is INSTALLED on Congress.Trade.  Other testers still INVITED.  Did not accept.
+2. Litestream Coolify rolling + B2 write keys — OWNER ONLY.  Did not flip deploy strategy or mint B2 keys.
+3. Congress.Trade trial — already 2 weeks in user-facing copy (#1835).  Offer verified 14 days (Infisical `STRIPE_TRIAL_DAYS`, ASC intro `TWO_WEEKS`).  Stale runbook fixed on `grok/ct-trial-copy`.
+4. ASC listings — EULA only on Socratic Trade; betaAppReviewDetails names/notes empty on CT + both Usage apps.  Documented; did not write ASC.
+
+Monet merge table all MERGED: #2680 #2681 #2682 #2684 #2685 #2687 #2709 #2712.
+
+Branch `grok/audit-owner-decisions`, worktree `~/apps/trading-grok-audit-decisions`.
+Rollout: `docs/rollouts/2026-08-14-monet-audit-owner-decisions.md`.
 
 ## Current (2026-08-13 GROK — quote Key Stats dashes + tappable fill/position cards)
 
