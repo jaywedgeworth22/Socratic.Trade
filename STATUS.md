@@ -15,8 +15,8 @@ Production snapshot read 2026-08-14T03:46Z (`durable_state`, namespace
 fileCount 2 / newest 00:00:06Z.  The listing SUCCEEDED — not a visibility
 failure.
 
-Branch `monet/empty-tier-wedge` (worktree `~/apps/trading-monet-tierwedge`),
-**PR #2709** READY with squash auto-merge armed.  Adds a third tier state `"empty"` carrying a verdict
+**PR #2709 MERGED** 2026-08-14T05:38Z as `a8f3ad86`; merge to `main`
+auto-deploys to production.  Adds a third tier state `"empty"` carrying a verdict
 (`wedged` / `upstream-wedged` / `expected`) and the feeder evidence behind it.
 An empty level is graded against its IMMEDIATE feeder, and duration comes from
 the feeder's file count via `CompactDB`'s one-file-per-interval-boundary
