@@ -1,5 +1,10 @@
 # Active Implementation Plan
 
+> **2026-08-14 GROK — unstick #2707 webpack `node:crypto`.** Merged origin/main
+> (clean). `src/lib/kalshi.ts` now imports bare `crypto` so Next/webpack
+> resolve.fallback applies. Rollout:
+> `docs/rollouts/2026-08-14-kalshi-node-crypto-webpack.md`.
+
 > **2026-08-14 GROK — Monet audit owner decisions (`grok/audit-owner-decisions`).**
 > Docs-only closeout of four leftovers.  CT trial already matches the 2-week
 > offer.  TestFlight accept, Coolify rolling+B2, and ASC listing writes stay

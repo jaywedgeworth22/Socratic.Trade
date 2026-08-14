@@ -1,3 +1,15 @@
+## Current (2026-08-14 GROK — unstick PR #2707 Kalshi/exits/options)
+
+Rematched `origin/main` (merge-tree clean; GitHub CONFLICTING was phantom).
+verify-hosted run 31762430767 failed `npm run build` with
+`UnhandledSchemeError: Reading from "node:crypto"` via
+`kalshi.ts` -> `kalshi-macro.ts` -> `strategy.ts` -> `scheduler.ts`.
+Fixed `src/lib/kalshi.ts` to `import crypto from "crypto"` (same Next/webpack
+scheme-plugin trap documented in `apns.ts`). Branch
+`grok/st-kalshi-exits-options`, worktree
+`~/apps/trading-grok-kalshi-exits`. Rollout:
+`docs/rollouts/2026-08-14-kalshi-node-crypto-webpack.md`.
+
 ## Current (2026-08-14 GROK — Monet loading-graphic / Lato leftover closed)
 
 Owner pickup of Monet's "iOS loading graphic and font..." session.  Product code
