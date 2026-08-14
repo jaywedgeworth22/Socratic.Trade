@@ -1,19 +1,19 @@
 import SwiftUI
 
 struct ActivityView: View {
-    @State private var presentedSymbol: PresentedSymbol?
+    @State private var presentedItem: PresentedMarketItem?
 
     var body: some View {
         SnapshotScaffold { snapshot in
             DailyActivityCard(snapshot: snapshot)
             SchedulerActivityCard(snapshot: snapshot)
-            FillActivitySection(fills: snapshot.performance?.fills ?? [], presentedSymbol: $presentedSymbol)
+            FillActivitySection(fills: snapshot.performance?.fills ?? [], presentedItem: $presentedItem)
             CommandActivitySection(commands: snapshot.recentCommands)
         }
         .navigationTitle("Activity")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $presentedSymbol) { presented in
-            SymbolInfoSheet(symbol: presented.symbol)
+        .sheet(item: $presentedItem) { item in
+            SymbolInfoSheet(item: item)
         }
     }
 }
@@ -77,7 +77,7 @@ private struct SchedulerActivityCard: View {
 
 private struct FillActivitySection: View {
     let fills: [FillEvent]
-    @Binding var presentedSymbol: PresentedSymbol?
+    @Binding var presentedItem: PresentedMarketItem?
 
     private var recentFills: [FillEvent] {
         Array(fills.sorted { $0.filledAt > $1.filledAt }.prefix(20))
@@ -94,7 +94,7 @@ private struct FillActivitySection: View {
                 )
             } else {
                 ForEach(recentFills) { fill in
-                    FillActivityRow(fill: fill, presentedSymbol: $presentedSymbol)
+                    FillActivityRow(fill: fill, presentedItem: $presentedItem)
                 }
             }
         }
@@ -103,34 +103,48 @@ private struct FillActivitySection: View {
 
 private struct FillActivityRow: View {
     let fill: FillEvent
-    @Binding var presentedSymbol: PresentedSymbol?
+    @Binding var presentedItem: PresentedMarketItem?
 
     var body: some View {
-        AppCard(padding: 13) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
-                        SymbolTapButton(symbol: fill.symbol, logoSize: 30, font: .title3.weight(.bold)) {
-                            presentedSymbol = PresentedSymbol(symbol: fill.symbol)
+        Button {
+            presentedItem = .fill(fill)
+        } label: {
+            AppCard(padding: 13) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 8) {
+                            TickerLogo(symbol: fill.symbol, size: 30)
+                            Text(fill.symbol)
+                                .font(.appTitle3.weight(.bold))
+                            Text(fill.side.uppercased())
+                                .font(.appCaption.weight(.semibold))
+                                .foregroundStyle(sideColor)
                         }
-                        Text(fill.side.uppercased())
-                            .font(.appCaption.weight(.semibold))
-                            .foregroundStyle(sideColor)
+                        Text("\(AppFormat.number(fill.quantity)) @ \(AppFormat.money(fill.price))")
+                            .font(.appSubheadline)
+                            .foregroundStyle(.secondary)
                     }
-                    Text("\(AppFormat.number(fill.quantity)) @ \(AppFormat.money(fill.price))")
-                        .font(.appSubheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(AppFormat.money(fill.notional))
-                        .font(.appTitle3.weight(.semibold))
-                    Text(AppFormat.dateTime(fill.filledAt))
-                        .font(.appFootnote)
-                        .foregroundStyle(.secondary)
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(AppFormat.money(fill.notional))
+                            .font(.appTitle3.weight(.semibold))
+                        Text(AppFormat.dateTime(fill.filledAt))
+                            .font(.appFootnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.appCaption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 6)
                 }
             }
         }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("\(fill.symbol) \(fill.side) fill")
+        .accessibilityHint("Opens fill and company details")
     }
 
     private var sideColor: Color {
