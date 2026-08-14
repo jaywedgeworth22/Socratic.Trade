@@ -326,6 +326,11 @@ async function validatePolicy(
   if (policy.tuning?.llmDailyCostBudgetUsd !== undefined && (!Number.isFinite(policy.tuning.llmDailyCostBudgetUsd) || policy.tuning.llmDailyCostBudgetUsd < 0)) return "tuning.llmDailyCostBudgetUsd must be a non-negative number (0 = no limit).";
   if (policy.atrStops !== undefined && typeof policy.atrStops !== "boolean") return "atrStops must be a boolean.";
   if (policy.brokerTrailingStops !== undefined && typeof policy.brokerTrailingStops !== "boolean") return "brokerTrailingStops must be a boolean.";
+  if (policy.brokerStopsForShorts !== undefined && typeof policy.brokerStopsForShorts !== "boolean") return "brokerStopsForShorts must be a boolean.";
+  if (policy.optionsTradingEnabled !== undefined && typeof policy.optionsTradingEnabled !== "boolean") return "optionsTradingEnabled must be a boolean.";
+  if (policy.optionsLiveOrdersEnabled !== undefined && typeof policy.optionsLiveOrdersEnabled !== "boolean") return "optionsLiveOrdersEnabled must be a boolean.";
+  if (policy.eventContractsEnabled !== undefined && typeof policy.eventContractsEnabled !== "boolean") return "eventContractsEnabled must be a boolean.";
+  if (policy.kalshiLiveOrdersEnabled !== undefined && typeof policy.kalshiLiveOrdersEnabled !== "boolean") return "kalshiLiveOrdersEnabled must be a boolean.";
   if (policy.riskRules.atrStopPeriod !== undefined && (!Number.isInteger(policy.riskRules.atrStopPeriod) || policy.riskRules.atrStopPeriod < 5 || policy.riskRules.atrStopPeriod > 100)) return "riskRules.atrStopPeriod must be an integer between 5 and 100.";
   if (policy.riskRules.atrStopMultiple !== undefined && (!Number.isFinite(policy.riskRules.atrStopMultiple) || policy.riskRules.atrStopMultiple <= 0 || policy.riskRules.atrStopMultiple > 10)) return "riskRules.atrStopMultiple must be between 0 (exclusive) and 10.";
   if (policy.maxGrossExposurePct !== undefined && (!Number.isFinite(policy.maxGrossExposurePct) || policy.maxGrossExposurePct <= 0 || policy.maxGrossExposurePct > 100)) return "maxGrossExposurePct must be between 0 and 100.";

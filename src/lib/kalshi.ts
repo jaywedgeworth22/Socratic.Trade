@@ -1,5 +1,6 @@
 /**
- * Kalshi event-market data client — DORMANT PLUMBING (nothing imports this yet).
+ * Kalshi event-market data client.  Prompt injection lives in kalshi-macro.ts;
+ * event-contract trading (live kill switch default OFF) lives in kalshi-trading.ts.
  *
  * Package K1 of the Kalshi integration design (see
  * docs/rollouts/2026-07-12-kalshi-data-fetcher.md): a self-contained, flag-gated fetcher for

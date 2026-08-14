@@ -128,6 +128,24 @@ export function listDormantFeatureStatus(env: EnvSource = process.env): DormantF
       readyToEnable: true,
       defaultWhenUnset: "off",
       note: "Diagnostic audit rows only. Safe for short canaries; watch DB growth. FULL variant stays off."
+    },
+    {
+      id: "kalshi-live-orders",
+      flag: "KALSHI_LIVE_ORDERS",
+      enabled: flagOn("KALSHI_LIVE_ORDERS", false, env),
+      readyToEnable: false,
+      defaultWhenUnset: "off",
+      blocker: "Also requires policy.kalshiLiveOrdersEnabled. Paper/dry-run is the only path until both are on.",
+      note: "Kill switch for live Kalshi event-contract money. Data context uses KALSHI_ENV only."
+    },
+    {
+      id: "options-live-orders",
+      flag: "policy.optionsLiveOrdersEnabled",
+      enabled: false,
+      readyToEnable: false,
+      defaultWhenUnset: "off",
+      blocker: "Paper Alpaca place/cancel first. Live option money stays off until the owner flips the Guardrails kill switch.",
+      note: "Options trading (`optionsTradingEnabled`) enables paper only. This flag is the live kill switch."
     }
   ];
 }

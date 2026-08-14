@@ -14,8 +14,15 @@ import type {
   ReviewedOrder,
   TimeInForce,
   BrokerGateway,
-  EquityOrderInput
+  EquityOrderInput,
+  OptionPosition
 } from "./types";
+import {
+  assertOptionOrderInput,
+  optionIntentToBrokerSide,
+  parseOccSymbol,
+  type OptionOrderInput
+} from "./option-orders";
 import { OrderValidationError } from "./types";
 import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import { mergeAccountCapabilities } from "./venue-contract";
@@ -63,6 +70,13 @@ const ALPACA_PROBE_TTL_MS = 2 * 60_000;
 // canonical definitions now live in ./money alongside normalizeSymbol so data-providers.ts and
 // the Alpaca stream workers can share them without importing this (much heavier) gateway module.
 export { toAlpacaSymbol, fromAlpacaSymbol };
+
+export function parseAlpacaOptionsLevel(account: Record<string, unknown>): AccountCapabilities["optionsLevel"] {
+  const raw = account.options_approved_level ?? account.options_trading_level ?? account.optionsApprovedLevel;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 4) return undefined;
+  return n as AccountCapabilities["optionsLevel"];
+}
 
 export function classifyAlpacaAccountType(account: Record<string, unknown>): AccountCapabilities["accountType"] {
   const rawType = String(account.account_type ?? account.accountType ?? "").toLowerCase();
@@ -347,11 +361,13 @@ class AlpacaBrokerGateway implements BrokerGateway {
       const rawAccountType = String(acc.account_type ?? "").toUpperCase();
       const accountType = classifyAlpacaAccountType(acc);
       const marginEnabled = accountType === "brokerage" && (shortSelling || rawAccountType === "MARGIN");
+      const optionsLevel = parseAlpacaOptionsLevel(acc);
       return mergeAccountCapabilities(this.isMcp ? "alpaca-mcp" : "alpaca", {
         equityTrading: true,
         shortSelling,
-        optionsTrading: false,
-        optionsOrders: false,
+        optionsTrading: optionsLevel != null ? optionsLevel > 0 : false,
+        optionsOrders: optionsLevel != null && optionsLevel >= 2,
+        optionsLevel,
         futuresTrading: false,
         cryptoTrading: false,
         marginEnabled,
@@ -731,6 +747,59 @@ class AlpacaBrokerGateway implements BrokerGateway {
       }
       return res;
     });
+  }
+
+  async placeOptionOrder(input: OptionOrderInput): Promise<ExecutedOrder> {
+    const parsed = parseOccSymbol(input.occSymbol);
+    if (!parsed) throw new OrderValidationError("Invalid OCC option symbol.");
+    const bad = assertOptionOrderInput(input);
+    if (bad) throw new OrderValidationError(bad);
+    const symbol = input.occSymbol.trim().toUpperCase().replace(/\s+/g, "");
+    try {
+      const raw = await this.trackHealth(() => this.alpaca.createOrder({
+        symbol,
+        qty: String(input.quantity),
+        side: optionIntentToBrokerSide(input.intent),
+        type: input.type,
+        time_in_force: "day",
+        limit_price: input.type === "limit" && input.limitPrice != null ? String(input.limitPrice) : undefined,
+        client_order_id: input.refId
+      }));
+      return {
+        orderId: raw.id,
+        refId: input.refId,
+        state: raw.status,
+        filledQuantity: optionalNumber(raw.filled_qty),
+        averagePrice: optionalNumber(raw.filled_avg_price),
+        raw
+      };
+    } catch (error: unknown) {
+      throw new Error(`Alpaca option order failed: ${formatAlpacaOrderError(error)}`);
+    }
+  }
+
+  async cancelOptionOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder> {
+    return this.cancelEquityOrder(accountNumber, orderId);
+  }
+
+  async getOptionPositions(accountNumber: string): Promise<OptionPosition[]> {
+    const rows = await this.getEquityPositions(accountNumber);
+    const out: OptionPosition[] = [];
+    for (const row of rows) {
+      const parsed = parseOccSymbol(row.symbol);
+      if (!parsed) continue;
+      out.push({
+        symbol: parsed.occSymbol,
+        underlyingSymbol: parsed.underlyingSymbol,
+        expirationDate: parsed.expirationDate,
+        optionType: parsed.optionType,
+        strikePrice: parsed.strikePrice,
+        quantity: row.quantity,
+        averageCost: row.averageCost,
+        marketValue: row.marketValue
+      });
+    }
+    return out;
   }
 
   async cancelEquityOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder> {

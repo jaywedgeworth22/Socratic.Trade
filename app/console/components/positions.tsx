@@ -8,7 +8,7 @@ import { memo } from "react";
 import Link from "next/link";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import type { OptionPosition } from "@/lib/types";
-import { deriveProtection, deriveUnmanagedShortCount, grossExposure, grossExposureWeightPct, unmanagedShortNotice } from "../lib/derive";
+import { deriveProtection, deriveUnmanagedShorts, grossExposure, grossExposureWeightPct, unmanagedShortNotice } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { Card, Dash, Empty, SignedText } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
@@ -39,7 +39,8 @@ export const PositionsCard = memo(function PositionsCard({ snapshot }: { snapsho
   const exposureCap = snapshot.policy.maxSymbolExposurePct;
   // Advisory only (mirrors the per-row muted protection state): shorts the app's stop
   // monitors deliberately skip while short selling is off. Same copy as Guardrails.
-  const unmanagedShorts = unmanagedShortNotice(deriveUnmanagedShortCount(positions, snapshot.policy));
+  const unmanaged = deriveUnmanagedShorts(positions, snapshot.policy);
+  const unmanagedShorts = unmanagedShortNotice(unmanaged.count, unmanaged.reason ?? undefined);
 
   // Computed once per position and shared by both the ≥lg table and the
   // <lg card list below, so the two layouts can never drift out of sync.

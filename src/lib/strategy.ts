@@ -166,6 +166,7 @@ import { isEscalationRegime } from "./regime-watch";
 import { getUpcomingEconomicEventsForPrompt } from "./economic-calendar";
 import { compactHeadlinesForPrompt } from "./prompt-headlines";
 import { fetchPolymarketContextForSymbols, formatPolymarketLinesForPrompt, type PolymarketMarketMatch } from "./polymarket-provider";
+import { fetchKalshiMacroContext, type KalshiMacroContext } from "./kalshi-macro";
 import { getOrRecordHeadlineFirstSeen, headlineFingerprint } from "./headline-first-seen";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
 import { computeMultiSignalSeverity } from "./regime-severity";
@@ -4906,6 +4907,12 @@ async function proposeTrades(input: {
       ).catch(() => ({}) as Record<string, PolymarketMarketMatch[]>)
     : {};
 
+  const kalshiMacro: KalshiMacroContext = await fetchKalshiMacroContext(input.userId).catch(() => ({
+    series: [],
+    lines: [],
+    signals: []
+  }));
+
   // Multi-signal regime severity (Lane 5, composite review E/high/S follow-up): blends VIX term
   // structure, HY credit spread, and market breadth (+ VVIX/SKEW when available) into one
   // continuous [0,1] severity reading, floored by the classified enum's own severity so it can
@@ -5494,6 +5501,16 @@ async function proposeTrades(input: {
     ...(Object.keys(macroDerived).length > 0 ? { macroDerived } : {}),
     ...(marketInternals ? { marketInternals } : {}),
     ...(marketSignals && Object.keys(marketSignals).length > 0 ? { marketSignals } : {}),
+    ...(kalshiMacro.lines.length > 0
+      ? {
+          eventMarkets: {
+            note: "Kalshi CFTC-regulated event contracts — implied YES probabilities from real-money books. Weight thin books (low open interest) down. Use as macro/regime context, never as a single-name trigger.",
+            asOf: kalshiMacro.asOf,
+            series: kalshiMacro.series,
+            markets: kalshiMacro.lines
+          }
+        }
+      : {}),
     ...(sectorComposition ? { sectorComposition } : {}),
     ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),

@@ -473,8 +473,9 @@ describe("deriveUnmanagedShortCount / unmanagedShortNotice — shorts skipped wh
   it("counts only shorts, and only while shortSellingEnabled is off", () => {
     expect(deriveUnmanagedShortCount([shortPos("TSLA"), longPos], { shortSellingEnabled: false })).toBe(1);
     expect(deriveUnmanagedShortCount([shortPos("TSLA"), shortPos("NVDA")], { shortSellingEnabled: false })).toBe(2);
-    // Short selling ON: every short is managed — never a false alarm.
-    expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true })).toBe(0);
+    // Short selling ON on Alpaca: every short is managed — never a false alarm.
+    expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true, activeBroker: "alpaca" })).toBe(0);
+    expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true, activeBroker: "robinhood" })).toBe(1);
     expect(deriveUnmanagedShortCount([longPos], { shortSellingEnabled: false })).toBe(0);
     expect(deriveUnmanagedShortCount(undefined, { shortSellingEnabled: false })).toBe(0);
   });

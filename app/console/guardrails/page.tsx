@@ -22,7 +22,7 @@ import {
   deriveReality,
   deriveRiskUtilization,
   deriveStateInfo,
-  deriveUnmanagedShortCount,
+  deriveUnmanagedShorts,
   unmanagedShortNotice,
   type UtilizationMeter
 } from "../lib/derive";
@@ -53,6 +53,7 @@ import {
   PANIC_BRAKE,
   PROTECTIVE_STOPS,
   SOCRATIC_OVERRIDE,
+  OPTIONS,
   SHORTS,
   TAX_RULES,
   TRIGGERS,
@@ -206,7 +207,8 @@ function AccountScopedGuardrailsPage() {
   const risk = deriveRiskUtilization(snapshot);
   const exposure = deriveExposureUtilization(snapshot, policy);
   // Same advisory copy as the Home positions card (shared helper — never drifts).
-  const unmanagedShorts = unmanagedShortNotice(deriveUnmanagedShortCount(snapshot.positions, policy));
+  const unmanaged = deriveUnmanagedShorts(snapshot.positions, policy);
+  const unmanagedShorts = unmanagedShortNotice(unmanaged.count, unmanaged.reason ?? undefined);
 
   // Universe / arrays are replace-whole-value fields → extraPatch.
   const extraPatch: PolicyPatchBody = {};
@@ -302,6 +304,12 @@ function AccountScopedGuardrailsPage() {
             <div key={def.path}>
               <PolicyFieldRow def={def} policy={policy} draft={draft} />
               {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" />}
+            </div>
+          ))}
+          <div className="con-card-title pt-3">Options And Event Contracts</div>
+          {OPTIONS.map((def) => (
+            <div key={def.path}>
+              <PolicyFieldRow def={def} policy={policy} draft={draft} />
             </div>
           ))}
         </div>
