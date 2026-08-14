@@ -706,7 +706,12 @@ describe("Litestream per-tier compaction freshness", () => {
     expect(report.degraded).toBe(false);
   });
 
-  it("distinguishes a failed level listing, an un-collected level, and a level with no files at all", () => {
+  // UPDATED 2026-08-14. This test previously asserted that level 3 — listed successfully with
+  // zero files — reported `not-observable` / `no-activity-recorded`. That expectation encoded
+  // the bug: a successful listing returning zero is a MEASUREMENT, and calling it "cannot
+  // observe" (with the detail "This is normal...") is what hid the deep-compaction outage. The
+  // three cases this test distinguishes are unchanged; the third one now lands in `empty`.
+  it("distinguishes a failed level listing, an un-collected level, and a level measured as empty", () => {
     const root = mkdtempSync(join(tmpdir(), "socratic-ltx-mixed-"));
     tempRoots.push(root);
     const now = Date.parse("2026-08-12T23:30:00.000Z");
@@ -717,9 +722,12 @@ describe("Litestream per-tier compaction freshness", () => {
       remoteInventory: {
         collectedAt: "2026-08-12T23:20:00.000Z",
         status: "partial",
+        // 4 files at level 2 spans only floor(3/2) x 300s = 5 minutes of compaction
+        // boundaries, far inside level 3's 6h threshold — so level 3's emptiness is reported
+        // as measured-but-not-yet-a-verdict rather than a wedge.
         levels: {
-          "2": remoteLevel(2, "2026-08-12T23:00:00.000Z", "000000000002324c", 171),
-          "3": remoteLevel(3, "", null, 0) // listed fine; the level has simply never produced
+          "2": remoteLevel(2, "2026-08-12T23:00:00.000Z", "000000000002324c", 4),
+          "3": remoteLevel(3, "", null, 0)
         },
         levelErrors: { "1": "dial tcp: connection refused" },
         skippedReason: null
@@ -730,10 +738,12 @@ describe("Litestream per-tier compaction freshness", () => {
     expect(tiers["1"]).toMatchObject({ state: "not-observable", reason: "remote-inventory-failed" });
     expect(tiers["1"].detail).toContain("connection refused");
     expect(tiers["2"].state).toBe("known");
-    expect(tiers["3"]).toMatchObject({ state: "not-observable", reason: "no-activity-recorded" });
+    expect(tiers["3"]).toMatchObject({ state: "empty", verdict: "expected", reason: "within-threshold", degraded: false });
     expect(tiers["9"]).toMatchObject({ state: "not-observable", reason: "remote-inventory-missing" });
-    expect(report.observedTiers).toBe(2);
-    expect(report.notObservableTiers).toBe(3);
+    // An empty level we listed successfully counts as OBSERVED — we measured it.
+    expect(report.observedTiers).toBe(3);
+    expect(report.notObservableTiers).toBe(2);
+    expect(report.degraded).toBe(false);
   });
 
   it("uses the documented default thresholds and accepts a caller-supplied override per tier", () => {
@@ -767,6 +777,343 @@ describe("Litestream per-tier compaction freshness", () => {
 
     const report = assessLitestreamTierFreshness(root, { nowMs: Date.now() });
     expect(byTier(report)["0"]).toMatchObject({ state: "not-observable" });
+    expect(report.degraded).toBe(false);
+  });
+});
+
+// =====================================================================================
+// EMPTY-LEVEL WEDGE DETECTION (2026-08-14).
+//
+// The terminal stage of a compaction wedge is not a frozen level — it is an EMPTY one.
+// Litestream's retention (`snapshot.retention: 168h`) keeps pruning a wedged level's
+// pre-wedge objects while the wedge produces no replacements, so level 2 in production
+// went 171 objects (2026-08-12, frozen) -> 0 objects (2026-08-14, empty).  Until this
+// change, `fileCount <= 0` was classified `not-observable` / `no-activity-recorded` with
+// the detail "This is normal for a level Litestream has not needed to produce", so the
+// MOST advanced stage of the failure was also its most reassuring-looking one.
+//
+// The rule: a level whose remote listing SUCCEEDED and returned zero objects is graded
+// against its immediate feeder.  Litestream v0.5.12's `Store.CompactDB` has no volume or
+// accumulation threshold — it skips only when it already ran this boundary or when
+// `srcInfo.MaxTXID <= dstInfo.MinTXID`, and an EMPTY destination has `MinTXID == 0`, so
+// that test can never hold while the feeder has files.  An empty level with a non-empty
+// feeder has therefore been offered work on every interval tick and produced nothing.
+// Duration comes from the feeder's file count: `CompactDB` permits at most one file per
+// level per interval boundary, so K retained files occupy >= K-1 boundaries.
+// =====================================================================================
+describe("Litestream empty-level wedge detection", () => {
+  function writeLtxFile(statePath: string, tier: string, name: string, mtime: Date) {
+    const dir = join(statePath, "ltx", tier);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, name);
+    writeFileSync(file, "ltx");
+    utimesSync(file, mtime, mtime);
+  }
+
+  function ltxName(txid: number): string {
+    const hex = txid.toString(16).padStart(16, "0");
+    return `${hex}-${hex}.ltx`;
+  }
+
+  function remoteLevel(level: number, newestAt: string, newestTxid: string | null, fileCount = 1) {
+    return { level, newestAt, newestTxid, fileCount };
+  }
+
+  function byTier(report: { tiers: Array<{ tier: string }> }) {
+    return Object.fromEntries(report.tiers.map((t) => [t.tier, t])) as Record<string, any>;
+  }
+
+  const tempRoots: string[] = [];
+  afterEach(() => {
+    for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  // ===================================================================================
+  // THE INCIDENT, read off the persisted remote-inventory snapshot in production
+  // (durable_state, namespace "litestream") at 2026-08-14T03:46Z:
+  //
+  //   status: "ok",  levelErrors: {},  skippedReason: null
+  //   level 1: fileCount 2032, newest 2026-08-14T03:46:05Z, txid 00000000000468d8
+  //   level 2: fileCount 0,    newest "",  txid null
+  //   level 3: fileCount 0,    newest "",  txid null
+  //   level 9: fileCount 2,    newest 2026-08-14T00:00:06Z, txid 0000000000043200
+  //
+  // The listing SUCCEEDED — this is not a visibility failure.  Deep compaction has
+  // produced nothing since ~2026-08-08 and `/api/health` reported no degraded reason for
+  // six days.  ROOT CAUSE (owner's to fix, out of scope here): every Coolify rolling
+  // deploy briefly runs two litestream writers against the same B2 prefix, and 0.5.12 has
+  // no fencing, so level-1 objects land with different MinTXID and identical MaxTXID;
+  // `ltx.IsContiguous` requires max > prevMax, so the 1 -> 2 promotion fails permanently.
+  // This test only asserts the monitor stops calling that state normal.
+  // ===================================================================================
+  it("calls the 2026-08-14 production shape a wedge instead of normal", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-empty-wedge-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-14T03:50:00.000Z");
+    // Level 0 healthy and advancing — exactly what kept every pre-existing signal green.
+    writeLtxFile(root, "0", ltxName(0x468d8), new Date(now - 30_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-14T03:46:10.000Z",
+        status: "ok",
+        levels: {
+          "1": remoteLevel(1, "2026-08-14T03:46:05.000Z", "00000000000468d8", 2032),
+          "2": remoteLevel(2, "", null, 0),
+          "3": remoteLevel(3, "", null, 0),
+          "9": remoteLevel(9, "2026-08-14T00:00:06.000Z", "0000000000043200", 2)
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    // Level 2 is THE wedge: its feeder holds 2,032 files spanning at least
+    // floor(2031/2) x 30s = 30,450s = 8h27m of compaction boundaries (the /2 absorbs the
+    // rolling-deploy double writer), against level 2's 2h threshold.
+    expect(tiers["2"]).toMatchObject({
+      state: "empty",
+      verdict: "wedged",
+      reason: "backlog-past-threshold",
+      degraded: true,
+      feederTier: "1",
+      feederFileCount: 2032,
+      backlogSpanSeconds: 30_450
+    });
+    // The alarm ships with arithmetic a reader can check, not an adjective.
+    expect(tiers["2"].detail).toContain("2032 file(s)");
+    expect(tiers["2"].detail).toContain("8h27m");
+
+    // Level 3 is empty only BECAUSE level 2 is (`srcLevel = dstLevel - 1` is literal in
+    // litestream's Compactor.Compact).  It is still a real gap in the replica, so it
+    // degrades — but its copy names level 2 as the thing to fix rather than presenting a
+    // second, independent fault.
+    expect(tiers["3"]).toMatchObject({
+      state: "empty",
+      verdict: "upstream-wedged",
+      reason: "upstream-wedged",
+      degraded: true,
+      feederTier: "2"
+    });
+    expect(tiers["3"].detail).toContain("Fixing level 2");
+
+    // Regression guard: the levels that ARE healthy must stay healthy and stay "known".
+    expect(tiers["0"]).toMatchObject({ state: "known", source: "local-ltx", degraded: false });
+    expect(tiers["1"]).toMatchObject({ state: "known", source: "remote-inventory", degraded: false });
+    expect(tiers["1"].newestTxid).toBe("00000000000468d8");
+    expect(tiers["9"]).toMatchObject({ state: "known", source: "remote-inventory", degraded: false });
+    expect(tiers["9"].ageSeconds).toBeLessThan(30 * 3600);
+
+    // What /api/health actually publishes: a degraded storage tier with a stated reason.
+    // Before this change both were absent — degraded false, reasons [].
+    expect(report.degraded).toBe(true);
+    expect(report.degradedReasons.length).toBeGreaterThan(0);
+    expect(report.degradedReasons.some((r) => r.includes("no objects at level 2"))).toBe(true);
+    // Five levels listed, five levels observed: emptiness is a measurement, not a blind spot.
+    expect(report.observedTiers).toBe(5);
+    expect(report.notObservableTiers).toBe(0);
+  });
+
+  // THE FALSE-ALARM GUARD, and it matters as much as the test above.  A monitor that cries
+  // wolf gets ignored, and "empty" is the NORMAL state of a young replica.
+  it("does not alarm on a brand-new replica whose higher levels have not been produced yet", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-fresh-replica-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-14T03:50:00.000Z");
+    writeLtxFile(root, "0", ltxName(0x100), new Date(now - 30_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-14T03:49:30.000Z",
+        status: "ok",
+        levels: {
+          // Six minutes of level-1 output: span = floor(5/2) x 30s = 60s, nowhere near
+          // level 2's 2h threshold.  Clearing that gate needs 481 level-1 files, which at
+          // one file per 30s boundary cannot happen inside ~4 hours of wall clock no matter
+          // how the compactor behaves.
+          "1": remoteLevel(1, "2026-08-14T03:49:00.000Z", "0000000000000100", 6),
+          "2": remoteLevel(2, "", null, 0),
+          "3": remoteLevel(3, "", null, 0),
+          "9": remoteLevel(9, "", null, 0)
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    expect(tiers["2"]).toMatchObject({ state: "empty", verdict: "expected", reason: "within-threshold", degraded: false });
+    expect(tiers["3"]).toMatchObject({ state: "empty", verdict: "expected", reason: "upstream-empty", degraded: false });
+    expect(tiers["9"]).toMatchObject({ state: "empty", verdict: "expected", degraded: false });
+    // Nothing is hidden — every empty level still says out loud that it is empty.
+    expect(tiers["2"].detail).toContain("no objects at level 2");
+    expect(report.degraded).toBe(false);
+    expect(report.degradedReasons).toEqual([]);
+  });
+
+  it("does not alarm on an idle database whose feeder has gone quiet", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-idle-empty-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-14T03:50:00.000Z");
+    // Quiet for three days: level 0 stopped, so level 1 stopped, so there is nothing for
+    // levels 2 and 3 to promote.  Level 1 keeps its 2,032 retained files the whole time,
+    // which is exactly why a file-count-only rule would false-alarm here.
+    writeLtxFile(root, "0", ltxName(0x468d8), new Date(now - 3 * 24 * 3_600_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-14T03:45:00.000Z",
+        status: "ok",
+        levels: {
+          // Newest level-1 object is 6 hours old, past level 1's own 4h threshold.
+          "1": remoteLevel(1, "2026-08-13T21:45:00.000Z", "00000000000468d8", 2032),
+          "2": remoteLevel(2, "", null, 0),
+          "3": remoteLevel(3, "", null, 0),
+          "9": remoteLevel(9, "2026-08-14T00:00:06.000Z", "00000000000468d8", 2)
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    expect(tiers["2"]).toMatchObject({ state: "empty", verdict: "expected", reason: "input-idle", degraded: false });
+    expect(tiers["2"].detail).toContain("idle rather than stuck");
+    expect(tiers["3"]).toMatchObject({ state: "empty", verdict: "expected", reason: "upstream-empty", degraded: false });
+    // Neither empty level contributes an alarm.  (Level 0 itself IS graded on age alone and
+    // three days of silence is past its 10-minute threshold — pre-existing, documented
+    // behaviour, and not what this rule is responsible for.)
+    expect(report.degradedReasons.some((r) => r.includes("level 2") || r.includes("level 3"))).toBe(false);
+  });
+
+  // A successful listing that returns nothing at EVERY remote level is a prefix, bucket, or
+  // credential mismatch — not four simultaneous independent wedges.
+  it("treats an entirely empty remote listing as a coverage problem, not four wedges", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-empty-prefix-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-14T03:50:00.000Z");
+    writeLtxFile(root, "0", ltxName(0x468d8), new Date(now - 30_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-14T03:45:00.000Z",
+        status: "ok",
+        levels: {
+          "1": remoteLevel(1, "", null, 0),
+          "2": remoteLevel(2, "", null, 0),
+          "3": remoteLevel(3, "", null, 0),
+          "9": remoteLevel(9, "", null, 0)
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    for (const tier of ["1", "2", "3", "9"]) {
+      expect(tiers[tier]).toMatchObject({ state: "not-observable", reason: "remote-inventory-empty" });
+    }
+    expect(report.degraded).toBe(false);
+  });
+
+  // "I cannot see it" and "it is wedged" must stay distinct.  Both shapes below carry the
+  // exact production numbers that DO produce a wedge when the inventory is trustworthy.
+  it("keeps a stale inventory honest instead of converting it into a wedge", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-empty-stale-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-14T03:50:00.000Z");
+    writeLtxFile(root, "0", ltxName(0x468d8), new Date(now - 30_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        // Four hours old — past LITESTREAM_REMOTE_INVENTORY_MAX_AGE_SECONDS (90 min).
+        collectedAt: new Date(now - 4 * 3_600_000).toISOString(),
+        status: "ok",
+        levels: {
+          "1": remoteLevel(1, "2026-08-14T03:46:05.000Z", "00000000000468d8", 2032),
+          "2": remoteLevel(2, "", null, 0),
+          "3": remoteLevel(3, "", null, 0),
+          "9": remoteLevel(9, "2026-08-14T00:00:06.000Z", "0000000000043200", 2)
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    for (const tier of ["1", "2", "3", "9"]) {
+      expect(tiers[tier]).toMatchObject({ state: "not-observable", reason: "remote-inventory-stale" });
+    }
+    expect(report.remoteInventoryState).toBe("stale");
+    expect(report.degraded).toBe(false);
+    expect(report.degradedReasons).toEqual([]);
+  });
+
+  it("keeps a failed level listing honest instead of converting it into a wedge", () => {
+    const root = mkdtempSync(join(tmpdir(), "socratic-ltx-empty-failed-"));
+    tempRoots.push(root);
+    const now = Date.parse("2026-08-14T03:50:00.000Z");
+    writeLtxFile(root, "0", ltxName(0x468d8), new Date(now - 30_000));
+
+    const report = assessLitestreamTierFreshness(root, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-14T03:46:10.000Z",
+        status: "partial",
+        levels: {
+          "1": remoteLevel(1, "2026-08-14T03:46:05.000Z", "00000000000468d8", 2032),
+          "3": remoteLevel(3, "", null, 0),
+          "9": remoteLevel(9, "2026-08-14T00:00:06.000Z", "0000000000043200", 2)
+        },
+        // Level 2's own listing failed.  We do not know whether it is empty.
+        levelErrors: { "2": "SignatureDoesNotMatch: request signature mismatch" },
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    expect(tiers["2"]).toMatchObject({ state: "not-observable", reason: "remote-inventory-failed" });
+    expect(tiers["2"].detail).toContain("SignatureDoesNotMatch");
+    // Level 3 is empty and its feeder cannot be seen — so no verdict is drawn about it
+    // either, rather than borrowing level 1's numbers to guess one.
+    expect(tiers["3"]).toMatchObject({ state: "not-observable", reason: "feeder-unobservable" });
+    expect(report.degraded).toBe(false);
+    expect(report.degradedReasons).toEqual([]);
+  });
+
+  // The collector could previously MANUFACTURE the empty state: summarizeLitestreamLtxPayload
+  // returned `fileCount: newestAt ? fileCount : 0`, so a listing of real objects none of which
+  // carried a parseable timestamp collapsed to zero.  With the wedge rule now drawing verdicts
+  // from emptiness, a parse problem must never be able to masquerade as one.
+  it("refuses to draw a verdict from an internally inconsistent level listing", () => {
+    const now = Date.parse("2026-08-14T03:50:00.000Z");
+    const report = assessLitestreamTierFreshness(undefined, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: "2026-08-14T03:46:10.000Z",
+        status: "ok",
+        levels: {
+          "1": remoteLevel(1, "2026-08-14T03:46:05.000Z", "00000000000468d8", 2032),
+          // Files counted, no readable timestamp on any of them.
+          "2": remoteLevel(2, "", null, 12),
+          // Zero files, yet a timestamp came back.
+          "3": remoteLevel(3, "2026-08-14T03:00:00.000Z", null, 0),
+          "9": remoteLevel(9, "2026-08-14T00:00:06.000Z", "0000000000043200", 2)
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    const tiers = byTier(report);
+
+    expect(tiers["2"]).toMatchObject({ state: "not-observable", reason: "remote-inventory-inconsistent" });
+    expect(tiers["3"]).toMatchObject({ state: "not-observable", reason: "remote-inventory-inconsistent" });
     expect(report.degraded).toBe(false);
   });
 });

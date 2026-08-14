@@ -402,6 +402,68 @@ export const LITESTREAM_TIER_STALE_AFTER_SECONDS: Record<LitestreamCompactionTie
   "9": 30 * 60 * 60
 };
 
+/**
+ * How often litestream OFFERS each level a compaction opportunity, in seconds.
+ *
+ * Transcribed, not chosen. Levels 1/2/3 are litestream v0.5.12's `DefaultCompactionLevels`
+ * (30s / 5m / 1h), which are in force because litestream.coolify.yml sets no `levels:` key.
+ * Level 0's 60s is that file's replica `sync-interval`, and level 9's 86400 is its
+ * `snapshot.interval: 24h`.
+ *
+ * LOCKSTEP TRAP: this map, LITESTREAM_FEEDER_TIER below, and LITESTREAM_COMPACTION_TIERS above
+ * are all hand-maintained against litestream.coolify.yml and litestream's own boot log. If the
+ * config ever grows an explicit `levels:` key, all three must be re-derived together — a level
+ * that is configured OFF would otherwise look permanently wedged to the empty-level rule below.
+ */
+export const LITESTREAM_LEVEL_PRODUCTION_INTERVAL_SECONDS: Record<LitestreamCompactionTier, number> = {
+  "0": 60,
+  "1": 30,
+  "2": 300,
+  "3": 3600,
+  "9": 86400
+};
+
+/**
+ * The level each compaction level actually reads FROM.
+ *
+ * `Compactor.Compact` in litestream v0.5.12 uses `srcLevel = dstLevel - 1` literally, so the
+ * feeder is always the IMMEDIATELY lower configured level — never "the nearest non-empty one".
+ * A level whose direct feeder is empty genuinely has nothing to promote, which is what keeps
+ * one root cause from firing an alarm at every level above it.
+ *
+ * Level 0 has no feeder (it is the pacemaker) and neither does level 9: `Store.CompactDB`
+ * shortcuts the snapshot level straight to `db.Snapshot`, i.e. it is fed by the database, not
+ * by level 3. Level 9 is handled separately below with level 1 used purely as a replica-AGE
+ * proxy, never as a feeder claim.
+ */
+export const LITESTREAM_FEEDER_TIER: Record<LitestreamCompactionTier, LitestreamCompactionTier | null> = {
+  "0": null,
+  "1": "0",
+  "2": "1",
+  "3": "2",
+  "9": null
+};
+
+/**
+ * Divides the file-count-derived backlog span before it is compared against a threshold.
+ *
+ * The span bound (see `backlogSpanSeconds` below) rests on litestream's one-file-per-level-per
+ * -interval-boundary guarantee — `Store.CompactDB` skips when
+ * `dstInfo.CreatedAt.After(prevCompactionAt)`. The ONE known way that guarantee breaks is the
+ * root cause of the 2026-08-08 wedge itself: a Coolify rolling deploy briefly runs two
+ * litestream writers against the same B2 prefix, and two writers can emit two level-1 objects
+ * for the same boundary. Two writers is the observed worst case, so halving restores the
+ * guarantee. The cost is halved sensitivity, which is the right direction of error here.
+ */
+export const LITESTREAM_BACKLOG_SPAN_SAFETY_DIVISOR = 2;
+
+/**
+ * Level 9 has no feeder, so an empty snapshot level cannot be graded by the backlog rule. This
+ * level's file count is borrowed ONLY as a lower bound on how long the replica has been alive
+ * and writing — an age proxy, explicitly labelled as such in the detail text.
+ */
+const LITESTREAM_SNAPSHOT_AGE_PROXY_TIER: LitestreamCompactionTier = "1";
+
 /** Where a tier's freshness signal actually came from. */
 export type LitestreamTierSource = "local-ltx" | "remote-inventory";
 
@@ -410,6 +472,14 @@ export type LitestreamTierSource = "local-ltx" | "remote-inventory";
  * human-readable `detail`, because a bare "unknown" reads as "we checked and found nothing"
  * when the truth is usually "we structurally cannot see this from here" — the exact
  * misreading that let five all-"unknown" tiers look like coverage for a day in production.
+ *
+ * REMOVED 2026-08-14: `"no-activity-recorded"`. It was applied to a level whose remote listing
+ * SUCCEEDED and returned zero objects, with the detail "This is normal for a level Litestream
+ * has not needed to produce" — an unconditional claim that is false in exactly the case that
+ * matters, and one this code never checked. A successful listing returning zero is a
+ * MEASUREMENT, not a coverage gap, so it now gets its own `state: "empty"` variant below with
+ * an auditable verdict. The member is deleted rather than left unused so nothing reaches for it
+ * again.
  */
 export type LitestreamTierUnobservableReason =
   | "no-state-path"
@@ -417,7 +487,33 @@ export type LitestreamTierUnobservableReason =
   | "remote-inventory-missing"
   | "remote-inventory-stale"
   | "remote-inventory-failed"
-  | "no-activity-recorded";
+  | "remote-inventory-empty"
+  | "remote-inventory-inconsistent"
+  | "feeder-unobservable";
+
+/**
+ * The verdict on a level that was successfully listed and holds nothing.
+ *
+ *  - `wedged`          — its feeder is advancing and holds a backlog spanning more wall clock
+ *                        than this level's threshold, so this level has been offered work on
+ *                        every interval tick across that span and produced nothing.
+ *  - `upstream-wedged` — this level is empty BECAUSE its feeder is empty and wedged. Reported
+ *                        as degraded (an empty rollup level is a real gap in the replica) but
+ *                        the detail names the feeder as the thing to fix, so one root cause
+ *                        never reads as two independent faults.
+ *  - `expected`        — measured empty with a benign, stated explanation: the feeder is idle,
+ *                        the feeder is itself empty-but-not-wedged, a higher level already
+ *                        promoted past this one, or the backlog is still inside the threshold.
+ */
+export type LitestreamTierEmptyVerdict = "wedged" | "upstream-wedged" | "expected";
+
+export type LitestreamTierEmptyReason =
+  | "backlog-past-threshold"
+  | "upstream-wedged"
+  | "upstream-empty"
+  | "input-idle"
+  | "superseded"
+  | "within-threshold";
 
 export type LitestreamTierFreshness =
   | {
@@ -432,6 +528,26 @@ export type LitestreamTierFreshness =
       degraded: boolean;
     }
   | {
+      // A level we DID see, which holds nothing. `newestActivityAt`/`newestTxid`/`ageSeconds`
+      // are absent rather than null: there is no artifact, so there is no field, and no
+      // consumer can accidentally format one. The feeder fields ARE the evidence for the
+      // verdict, so the alarm ships with arithmetic a reader can check.
+      tier: LitestreamCompactionTier;
+      label: string;
+      state: "empty";
+      source: LitestreamTierSource;
+      fileCount: 0;
+      thresholdSeconds: number;
+      verdict: LitestreamTierEmptyVerdict;
+      reason: LitestreamTierEmptyReason;
+      feederTier: LitestreamCompactionTier | null;
+      feederFileCount: number | null;
+      feederNewestActivityAt: string | null;
+      backlogSpanSeconds: number | null;
+      degraded: boolean;
+      detail: string;
+    }
+  | {
       tier: LitestreamCompactionTier;
       label: string;
       state: "not-observable";
@@ -440,12 +556,22 @@ export type LitestreamTierFreshness =
       detail: string;
     };
 
+/** A tier carrying a verdict (measured with data, or measured as empty) rather than a blind spot. */
+export function isLitestreamTierDegraded(tier: LitestreamTierFreshness): boolean {
+  return (tier.state === "known" || tier.state === "empty") && tier.degraded;
+}
+
 /** Overall provenance of the remote half of the report, for the admin panel's banner. */
 export type LitestreamRemoteInventoryState = "ok" | "partial" | "failed" | "skipped" | "missing" | "stale";
 
 export interface LitestreamTierFreshnessReport {
   tiers: LitestreamTierFreshness[];
   degraded: boolean;
+  /**
+   * One plain sentence per degraded tier, stating the measurement that produced the verdict.
+   * Published so an operator (or an external monitor) sees WHY without re-deriving it.
+   */
+  degradedReasons: string[];
   /** Count of tiers carrying a real signal — the honest "how much do we actually cover?" number. */
   observedTiers: number;
   notObservableTiers: number;
@@ -489,6 +615,12 @@ interface TierObservation {
   source: LitestreamTierSource;
   newestMs: number;
   newestTxid: string | null;
+  /**
+   * How many LTX objects the level holds right now. Plumbed through (rather than discarded, as
+   * it was until 2026-08-14) because it is the only duration evidence an EMPTY level above it
+   * can be graded against — see the backlog-span reasoning in assessLitestreamTierFreshness.
+   */
+  fileCount: number;
 }
 
 /**
@@ -512,7 +644,12 @@ function observeTierLocally(statePath: string, tier: LitestreamCompactionTier): 
     return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "failed";
   }
   if (!observation) return "missing";
-  return { source: "local-ltx", newestMs: observation.newestMs, newestTxid: observation.newestTxid };
+  return {
+    source: "local-ltx",
+    newestMs: observation.newestMs,
+    newestTxid: observation.newestTxid,
+    fileCount: observation.fileCount
+  };
 }
 
 function remoteInventoryState(
@@ -549,6 +686,16 @@ function remoteInventoryState(
  * A level with no usable signal reports `state: "not-observable"` with a specific reason,
  * never a bare "unknown".
  *
+ * THREE states, not two (2026-08-14). A level whose listing SUCCEEDED and returned zero objects
+ * reports `state: "empty"` with a `verdict`, because that is a MEASUREMENT and belongs nowhere
+ * near "we cannot see this". Until 2026-08-14 it was filed under `not-observable` with the
+ * reason `no-activity-recorded` and the detail "This is normal for a level Litestream has not
+ * needed to produce" — which is exactly backwards for the failure that was live in production
+ * at the time: level 2 held zero objects while level 1 held 2,032 and was still advancing, i.e.
+ * the level litestream most certainly DID need to produce. `/api/health` reported no degraded
+ * reason and the deep-compaction outage stayed invisible for six days. See
+ * docs/rollouts/2026-08-14-empty-tier-wedge-detection.md.
+ *
  * Never throws: a missing state directory, an unreadable path, or an absent inventory all
  * degrade to an explained `not-observable`, so this stays safe to call from any environment
  * (tests, local dev) where Litestream is not running at all.
@@ -573,6 +720,8 @@ export function assessLitestreamTierFreshness(
 
   const observations = new Map<LitestreamCompactionTier, TierObservation>();
   const blocked = new Map<LitestreamCompactionTier, { reason: LitestreamTierUnobservableReason; detail: string }>();
+  /** Levels whose listing SUCCEEDED and returned zero objects. A measurement, not a blind spot. */
+  const measuredEmpty = new Map<LitestreamCompactionTier, LitestreamTierSource>();
 
   for (const tier of LITESTREAM_COMPACTION_TIERS) {
     const local = statePath ? observeTierLocally(statePath, tier) : "missing";
@@ -630,15 +779,47 @@ export function assessLitestreamTierFreshness(
       continue;
     }
 
+    // Split the two conditions the pre-2026-08-14 code collapsed into one "no activity" bucket.
+    // "Zero objects" and "objects we could not read a timestamp off" are different facts, and
+    // only the first one is a measurement we are entitled to draw a verdict from.
     const newestMs = Date.parse(summary.newestAt);
-    if (summary.fileCount <= 0 || !Number.isFinite(newestMs)) {
+    const hasTimestamp = summary.newestAt.trim() !== "" && Number.isFinite(newestMs);
+    const isEmpty = summary.fileCount <= 0;
+    if (isEmpty !== !hasTimestamp) {
       blocked.set(tier, {
-        reason: "no-activity-recorded",
-        detail: `The remote replica holds no LTX files at level ${tier} yet, so there is no activity to measure freshness against.  This is normal for a level Litestream has not needed to produce.`
+        reason: "remote-inventory-inconsistent",
+        detail: isEmpty
+          ? `The replica listing for level ${tier} reported no files but still carried a timestamp, so it is internally inconsistent and nothing is claimed about this level.`
+          : `The replica listing for level ${tier} reported ${summary.fileCount} file(s) but no readable timestamp on any of them, so its freshness cannot be graded.`
       });
       continue;
     }
-    observations.set(tier, { source: "remote-inventory", newestMs, newestTxid: summary.newestTxid });
+    if (isEmpty) {
+      // MEASURED EMPTY. The listing succeeded and the answer is zero. Graded below, never
+      // filed under "not observable" — that variant means "we structurally cannot see this",
+      // and we can see this perfectly well.
+      measuredEmpty.set(tier, "remote-inventory");
+      continue;
+    }
+    observations.set(tier, {
+      source: "remote-inventory",
+      newestMs,
+      newestTxid: summary.newestTxid,
+      fileCount: summary.fileCount
+    });
+  }
+
+  // WHOLE-PREFIX GUARD. A successful listing that returns nothing at EVERY remote level is a
+  // wrong bucket / wrong path / brand-new prefix, not four simultaneous independent wedges.
+  const remoteTiers = LITESTREAM_COMPACTION_TIERS.filter((tier) => tier !== "0");
+  if (remoteTiers.every((tier) => measuredEmpty.has(tier))) {
+    for (const tier of remoteTiers) {
+      measuredEmpty.delete(tier);
+      blocked.set(tier, {
+        reason: "remote-inventory-empty",
+        detail: `Every remote compaction level listed empty, including level ${tier}.  A replica with no objects anywhere is a prefix, bucket, or credential mismatch — or a brand-new replica — rather than four independent wedges, so no verdict is drawn.`
+      });
+    }
   }
 
   // Level 0 is the pacemaker: every higher level only has work to do because level 0 produced
@@ -647,48 +828,275 @@ export function assessLitestreamTierFreshness(
   // txid has fallen behind a still-advancing level 0, past its threshold, is a real wedge.
   const referenceTxid = observations.get("0")?.newestTxid ?? null;
 
-  const tiers = LITESTREAM_COMPACTION_TIERS.map((tier): LitestreamTierFreshness => {
-    const thresholdSeconds = options.thresholdsSeconds?.[tier] ?? LITESTREAM_TIER_STALE_AFTER_SECONDS[tier];
+  // Clock for grading a REMOTE feeder's freshness. Deliberately the snapshot's own
+  // `collectedAt`, not `nowMs`: the snapshot may legitimately be up to
+  // LITESTREAM_REMOTE_INVENTORY_MAX_AGE_SECONDS old, and grading its contents against request
+  // time would silently downgrade a real wedge to "expected" purely as the snapshot ages —
+  // a miss manufactured by collector lag. Snapshot staleness is policed separately, above.
+  const collectedAtMs = inventory ? Date.parse(inventory.collectedAt) : Number.NaN;
+  const inventoryClockMs = Number.isFinite(collectedAtMs) ? collectedAtMs : nowMs;
+  const referenceMsFor = (observation: TierObservation): number =>
+    observation.source === "local-ltx" ? nowMs : inventoryClockMs;
+
+  const thresholdFor = (tier: LitestreamCompactionTier): number =>
+    options.thresholdsSeconds?.[tier] ?? LITESTREAM_TIER_STALE_AFTER_SECONDS[tier];
+
+  /**
+   * Lower bound, in seconds, on how long a level has been offered work it did not do.
+   *
+   * `Store.CompactDB` permits at most ONE file per level per interval boundary (it skips when
+   * `dstInfo.CreatedAt.After(prevCompactionAt)`), so K files retained at the feeder occupy at
+   * least K-1 distinct boundaries — i.e. the oldest still-present feeder file is at least
+   * (K-1) x interval old, and all K are in the listing right now, so they existed continuously
+   * across that span while the level above ticked with a non-empty source.
+   *
+   * A raw file-count threshold would NOT work here and the temptation should be named: the
+   * healthy replica measured 5,635 level-1 files on 2026-08-12 and the wedged one measured
+   * 2,032 on 2026-08-14 — the count went DOWN, because retention prunes every level regardless
+   * of health. Converting the count to wall clock is the part that is actually invariant.
+   */
+  const backlogSpanSeconds = (feeder: LitestreamCompactionTier, fileCount: number): number =>
+    Math.max(
+      0,
+      Math.floor((fileCount - 1) / LITESTREAM_BACKLOG_SPAN_SAFETY_DIVISOR)
+        * LITESTREAM_LEVEL_PRODUCTION_INTERVAL_SECONDS[feeder]
+    );
+
+  /** True when some HIGHER level already promoted past what the feeder holds — this level's
+   *  objects were moved up rather than lost, so an empty level here is expected. */
+  const supersededBy = (tier: LitestreamCompactionTier, feederTxid: string | null): LitestreamCompactionTier | null => {
+    if (!feederTxid) return null;
+    for (const candidate of LITESTREAM_COMPACTION_TIERS) {
+      if (candidate <= tier) continue;
+      const higher = observations.get(candidate);
+      if (!higher || higher.fileCount <= 0 || !higher.newestTxid) continue;
+      if (compareLitestreamTxid(higher.newestTxid, feederTxid) >= 0) return candidate;
+    }
+    return null;
+  };
+
+  // Ascending order matters: an empty level consults the verdict already computed for the level
+  // below it, so `upstream-wedged` can name a real, already-decided fault rather than re-deriving.
+  const decided = new Map<LitestreamCompactionTier, LitestreamTierFreshness>();
+
+  for (const tier of LITESTREAM_COMPACTION_TIERS) {
+    const thresholdSeconds = thresholdFor(tier);
     const label = LITESTREAM_TIER_LABELS[tier];
     const observation = observations.get(tier);
-    if (!observation) {
-      const block = blocked.get(tier) ?? {
-        reason: "remote-inventory-missing" as const,
-        detail: `No freshness signal is available for level ${tier}.`
-      };
-      return { tier, label, state: "not-observable", thresholdSeconds, reason: block.reason, detail: block.detail };
+
+    if (observation) {
+      const ageSeconds = Math.max(0, Math.round((nowMs - observation.newestMs) / 1000));
+      const overThreshold = ageSeconds > thresholdSeconds;
+      // Level 0 is graded on age alone — it IS the pacemaker, so there is nothing to lag behind.
+      const caughtUpWithLevel0 =
+        tier !== "0"
+        && observation.newestTxid !== null
+        && referenceTxid !== null
+        && compareLitestreamTxid(observation.newestTxid, referenceTxid) >= 0;
+
+      decided.set(tier, {
+        tier,
+        label,
+        state: "known",
+        source: observation.source,
+        newestActivityAt: new Date(observation.newestMs).toISOString(),
+        newestTxid: observation.newestTxid,
+        ageSeconds,
+        thresholdSeconds,
+        degraded: overThreshold && !caughtUpWithLevel0
+      });
+      continue;
     }
 
-    const ageSeconds = Math.max(0, Math.round((nowMs - observation.newestMs) / 1000));
-    const overThreshold = ageSeconds > thresholdSeconds;
-    // Level 0 is graded on age alone — it IS the pacemaker, so there is nothing to lag behind.
-    const caughtUpWithLevel0 =
-      tier !== "0"
-      && observation.newestTxid !== null
-      && referenceTxid !== null
-      && compareLitestreamTxid(observation.newestTxid, referenceTxid) >= 0;
+    const emptySource = measuredEmpty.get(tier);
+    if (emptySource) {
+      decided.set(tier, classifyEmptyTier(tier));
+      continue;
+    }
 
-    return {
+    const block = blocked.get(tier) ?? {
+      reason: "remote-inventory-missing" as const,
+      detail: `No freshness signal is available for level ${tier}.`
+    };
+    decided.set(tier, { tier, label, state: "not-observable", thresholdSeconds, reason: block.reason, detail: block.detail });
+  }
+
+  /**
+   * Grade a level we successfully listed and found empty.
+   *
+   * Mechanism this rests on, read from litestream v0.5.12 rather than assumed:
+   * `Store.monitorCompactionLevel` fires on every interval boundary, and `Store.CompactDB` has
+   * NO volume or accumulation threshold — it skips only when it already ran this boundary or
+   * when `srcInfo.MaxTXID <= dstInfo.MinTXID`. An EMPTY destination has `dstInfo.MinTXID == 0`,
+   * so that second test can never be true while the feeder holds anything. An empty level whose
+   * feeder is non-empty is therefore NOT "waiting for enough input"; it is a level that has been
+   * offered work on every tick and produced nothing.
+   */
+  function classifyEmptyTier(tier: LitestreamCompactionTier): LitestreamTierFreshness {
+    const thresholdSeconds = thresholdFor(tier);
+    const label = LITESTREAM_TIER_LABELS[tier];
+    const source = measuredEmpty.get(tier) ?? "remote-inventory";
+    const base = {
       tier,
       label,
-      state: "known",
-      source: observation.source,
-      newestActivityAt: new Date(observation.newestMs).toISOString(),
-      newestTxid: observation.newestTxid,
-      ageSeconds,
-      thresholdSeconds,
-      degraded: overThreshold && !caughtUpWithLevel0
+      state: "empty" as const,
+      source,
+      fileCount: 0 as const,
+      thresholdSeconds
     };
-  });
+    const expected = (
+      reason: LitestreamTierEmptyReason,
+      detail: string,
+      extra: Partial<{
+        feederTier: LitestreamCompactionTier | null;
+        feederFileCount: number | null;
+        feederNewestActivityAt: string | null;
+        backlogSpanSeconds: number | null;
+      }> = {}
+    ): LitestreamTierFreshness => ({
+      ...base,
+      verdict: "expected",
+      reason,
+      feederTier: extra.feederTier ?? null,
+      feederFileCount: extra.feederFileCount ?? null,
+      feederNewestActivityAt: extra.feederNewestActivityAt ?? null,
+      backlogSpanSeconds: extra.backlogSpanSeconds ?? null,
+      degraded: false,
+      detail
+    });
+
+    // Level 9 has no feeder: `CompactDB` shortcuts the snapshot level straight to `db.Snapshot`.
+    // Level 1 is borrowed ONLY as a lower bound on replica age, and the copy says so.
+    const isSnapshotLevel = LITESTREAM_FEEDER_TIER[tier] === null;
+    const evidenceTier = isSnapshotLevel ? LITESTREAM_SNAPSHOT_AGE_PROXY_TIER : LITESTREAM_FEEDER_TIER[tier]!;
+    const relation = isSnapshotLevel ? "age proxy" : "feeder";
+
+    if (isSnapshotLevel && tier === "0") {
+      // Level 0 is the pacemaker and is read locally; an empty ltx/0 is handled upstream as
+      // "not observable" and never reaches here. Guard anyway rather than invent a verdict.
+      return expected(
+        "input-idle",
+        `Level ${tier} holds no files and has no lower level to compare against, so no verdict is drawn.`
+      );
+    }
+
+    const evidence = observations.get(evidenceTier);
+    if (!evidence) {
+      const evidenceEmpty = measuredEmpty.has(evidenceTier);
+      if (!evidenceEmpty) {
+        return {
+          tier,
+          label,
+          state: "not-observable",
+          thresholdSeconds,
+          reason: "feeder-unobservable",
+          detail: `Level ${tier} holds no files, and level ${evidenceTier} — the ${relation} this verdict would rest on — cannot be observed right now, so no verdict is drawn.`
+        };
+      }
+      const upstream = decided.get(evidenceTier);
+      const upstreamWedged =
+        upstream?.state === "empty" && (upstream.verdict === "wedged" || upstream.verdict === "upstream-wedged");
+      if (upstreamWedged) {
+        return {
+          ...base,
+          verdict: "upstream-wedged",
+          reason: "upstream-wedged",
+          feederTier: evidenceTier,
+          feederFileCount: 0,
+          feederNewestActivityAt: null,
+          backlogSpanSeconds: null,
+          degraded: true,
+          detail: `The replica holds no objects at level ${tier}.  Level ${evidenceTier} is also empty and is itself wedged, so this level has had nothing to promote.  Fixing level ${evidenceTier} is what restores this one; it is not a second, independent fault.`
+        };
+      }
+      return expected(
+        "upstream-empty",
+        `The replica holds no objects at level ${tier}.  Level ${evidenceTier} is empty too, without a wedge verdict of its own, so there has been nothing to promote.`,
+        { feederTier: evidenceTier, feederFileCount: 0 }
+      );
+    }
+
+    const evidenceNewestAt = new Date(evidence.newestMs).toISOString();
+    const evidenceAgeSeconds = Math.max(0, Math.round((referenceMsFor(evidence) - evidence.newestMs) / 1000));
+    if (evidenceAgeSeconds > thresholdFor(evidenceTier)) {
+      return expected(
+        "input-idle",
+        `The replica holds no objects at level ${tier}.  Level ${evidenceTier} has not produced anything for ${describeDuration(evidenceAgeSeconds)} either, so the compaction cascade is idle rather than stuck.`,
+        { feederTier: isSnapshotLevel ? null : evidenceTier, feederFileCount: evidence.fileCount, feederNewestActivityAt: evidenceNewestAt }
+      );
+    }
+
+    const superseded = isSnapshotLevel ? null : supersededBy(tier, evidence.newestTxid);
+    if (superseded) {
+      return expected(
+        "superseded",
+        `The replica holds no objects at level ${tier}.  Level ${superseded} has already advanced to transaction ${observations.get(superseded)!.newestTxid}, so this level's objects were promoted rather than lost.`,
+        { feederTier: evidenceTier, feederFileCount: evidence.fileCount, feederNewestActivityAt: evidenceNewestAt }
+      );
+    }
+
+    const span = backlogSpanSeconds(evidenceTier, evidence.fileCount);
+    const shared = {
+      feederTier: isSnapshotLevel ? null : evidenceTier,
+      feederFileCount: evidence.fileCount,
+      feederNewestActivityAt: evidenceNewestAt,
+      backlogSpanSeconds: span
+    };
+    if (span <= thresholdSeconds) {
+      return expected(
+        "within-threshold",
+        `The replica holds no objects at level ${tier}.  Level ${evidenceTier} holds ${evidence.fileCount} file(s), spanning at least ${describeDuration(span)} — inside this level's ${describeDuration(thresholdSeconds)} threshold — so no verdict is drawn yet.`,
+        shared
+      );
+    }
+
+    const intervalText = describeDuration(LITESTREAM_LEVEL_PRODUCTION_INTERVAL_SECONDS[tier]);
+    return {
+      ...base,
+      ...shared,
+      verdict: "wedged",
+      reason: "backlog-past-threshold",
+      degraded: true,
+      detail: isSnapshotLevel
+        ? `The replica holds no objects at level ${tier}.  Level ${evidenceTier} holds ${evidence.fileCount} file(s) and last produced ${describeDuration(evidenceAgeSeconds)} ago, which puts the replica's own age at a minimum of ${describeDuration(span)} — past this level's ${describeDuration(thresholdSeconds)} threshold.  Level ${evidenceTier} is used here only as an age lower bound, not as a source this level compacts from.`
+        : `The replica holds no objects at level ${tier}.  Level ${evidenceTier} holds ${evidence.fileCount} file(s) spanning at least ${describeDuration(span)} of compaction boundaries and last produced ${describeDuration(evidenceAgeSeconds)} ago, so this level has had input available throughout.  Level ${tier} compaction is offered this work every ${intervalText} and has produced nothing, past its ${describeDuration(thresholdSeconds)} threshold.`
+    };
+  }
+
+  const tiers = LITESTREAM_COMPACTION_TIERS.map((tier) => decided.get(tier)!);
+  const degradedReasons = tiers.filter(isLitestreamTierDegraded).map((tier) =>
+    tier.state === "empty"
+      ? tier.detail
+      : `Level ${tier.tier} ("${tier.label}") last produced ${describeDuration((tier as Extract<LitestreamTierFreshness, { state: "known" }>).ageSeconds)} ago, past its ${describeDuration(tier.thresholdSeconds)} threshold, while level 0 kept advancing.`
+  );
 
   return {
     tiers,
-    degraded: tiers.some((t) => t.state === "known" && t.degraded),
-    observedTiers: tiers.filter((t) => t.state === "known").length,
+    degraded: tiers.some(isLitestreamTierDegraded),
+    degradedReasons,
+    // A level we successfully listed IS covered, whether or not it had contents. Counting an
+    // empty level as "not observable" would understate coverage in exactly the direction that
+    // made the two earlier versions of this monitor look sighted while they were blind.
+    observedTiers: tiers.filter((t) => t.state === "known" || t.state === "empty").length,
     notObservableTiers: tiers.filter((t) => t.state === "not-observable").length,
     remoteInventoryState: inventoryState,
     remoteInventoryCollectedAt: inventory?.collectedAt ?? null
   };
+}
+
+/** Compact, human-readable duration for alert and panel copy ("45m", "8h27m", "2d3h"). */
+export function describeDuration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  if (total < 60) return `${total}s`;
+  if (total < 3600) return `${Math.floor(total / 60)}m`;
+  if (total < 86400) {
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
+  }
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  return hours > 0 ? `${days}d${hours}h` : `${days}d`;
 }
 
 function fileFallback(statePath: string | undefined, nowMs: number): LitestreamRuntimeHealth | null {
