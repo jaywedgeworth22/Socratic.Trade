@@ -32,6 +32,7 @@ import {
 } from "./finalized-sizing-review";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { scanMarket, mergeQuoteData } from "./market";
+import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
 import { OperationLeaseOwnershipError } from "./operation-lease";
@@ -909,21 +910,23 @@ export async function executeProposal(
         userId,
         policy.connectedAccountId
       );
-      await sendNotification(
-        {
-          type: "provider_degraded",
-          title: `Stale Quote Warning: ${proposal.symbol} quote was ${ageText}`,
-          payload: {
-            proposalId,
-            symbol: proposal.symbol,
-            side: proposal.side,
-            ageSec: decision.quoteStale.ageSec,
-            limitPrice: proposal.limitPrice,
-            referencePrice: decision.quoteStale.referencePrice
-          }
-        },
-        { policy, userId }
-      );
+      if (currentMarketSession() === "regular") {
+        await sendNotification(
+          {
+            type: "provider_degraded",
+            title: `Stale Quote Warning: ${proposal.symbol} quote was ${ageText}`,
+            payload: {
+              proposalId,
+              symbol: proposal.symbol,
+              side: proposal.side,
+              ageSec: decision.quoteStale.ageSec,
+              limitPrice: proposal.limitPrice,
+              referencePrice: decision.quoteStale.referencePrice
+            }
+          },
+          { policy, userId }
+        );
+      }
     }
 
     // Auditable wash-sale trail on the approval path — never silent. For honored overrides the
