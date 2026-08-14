@@ -29,10 +29,12 @@ shipped.
     regular is `loaded`.
 - Confirmed the native half is already on TestFlight.  Last successful ship
   `~/.cache/ios-fleet/last-ship-socratic.txt` is `f9c89b9a` (2026-08-14 02:24 CDT).
-  `73dab29d` (#2667) is an ancestor of that SHA, and there are **zero** later
-  `ios/**` commits on `origin/main`.  ASC latest build `1.0.13 (202608140722)` is
-  `VALID`, `usesNonExemptEncryption=false`, `internalBuildState=IN_BETA_TESTING`.
-  A new ship would burn a sequence number for no iOS delta, so none was cut.
+  `73dab29d` (#2667) is an ancestor of that SHA.  After this pickup started,
+  #2692 landed more `ios/**` (quote Key Stats / tappable cards) — a different
+  lane.  ASC latest build `1.0.13 (202608140722)` is `VALID`,
+  `usesNonExemptEncryption=false`, `internalBuildState=IN_BETA_TESTING`, and
+  already contains the splash / unflipped wordmark / iOS Lato.  This pickup did
+  not cut a new ship just to fold in #2692.
 - iOS simulator rebuild of current `main` was started from
   `~/apps/trading-grok-lato-tf` but sat in `CreateBuildDescription` behind
   other seats' `xcodebuild`s.  Monet already screenshotted the splash on
@@ -75,7 +77,7 @@ node ~/apps/ios-fleet/asc-api.mjs GET \
   "/v1/builds/b9c97f70-e204-4ee9-93e4-a41daa5596c7?include=preReleaseVersion,buildBetaDetail"
 # 1.0.13 / 202608140722 / VALID / IN_BETA_TESTING
 git merge-base --is-ancestor 73dab29d f9c89b9a   # yes
-git rev-list --count f9c89b9a..origin/main -- ios/  # 0
+# later ios/ on main is #2692 quote-sheet only, not splash/Lato
 ```
 
 iOS simulator rebuild of this `main` was started (`xcodebuild` → iPhone 17 Pro)

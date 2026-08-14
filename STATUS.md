@@ -8,8 +8,9 @@ files serve `font/woff2`, and `--font-sans` resolves through `--font-lato`.
 
 Native splash / unflipped wordmark / iOS Lato are already on TestFlight
 `1.0.13 (202608140722)` (`VALID`, `IN_BETA_TESTING`).  Last ship SHA `f9c89b9a`
-contains #2667 and there are zero later `ios/**` commits, so no new ship was
-cut.  Production 503 Monet saw was the known SEC ingest stall, not this change;
+contains #2667.  #2692 later added iOS quote-sheet work (different lane); the
+splash / wordmark / Lato the owner asked for are already in 1.0.13, so no new
+ship was cut for this pickup.  Production 503 Monet saw was the known SEC ingest stall, not this change;
 site was 200 when this pickup started.
 
 Rollout: `docs/rollouts/2026-08-14-pickup-monet-loading-fonts.md`.
