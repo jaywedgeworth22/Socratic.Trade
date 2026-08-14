@@ -19,8 +19,8 @@
 //
 // SECRETS: read by name from the process env, which is how every other provider credential in this
 // app arrives (the Infisical runner injects them — see secrets-source.ts). Never logged.
-//   APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID (the APNs topic),
-//   plus one of APNS_P8 (raw PEM or base64), APNS_PRIVATE_KEY, APNS_PRIVATE_KEY_B64.
+//   key id, team id, bundle id (the APNs topic),
+//   plus the .p8 material via the APNS p8 env var, or the private-key / private-key-b64 env vars.
 //
 // FAIL SOFT: nothing in this module may take down a caller. The notify channel that uses it
 // (src/lib/notify.ts) treats a throw as an ordinary channel failure, and an unconfigured
@@ -83,8 +83,8 @@ export function decodeApnsPrivateKeyPem(raw: string): string | null {
  *  is decoded here but NOT parsed: a malformed key surfaces as a send-time channel error,
  *  not a boot/config crash.
  *
- *  Key names (Infisical/env): APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID, and one of
- *  APNS_P8 (raw PEM or base64), APNS_PRIVATE_KEY (raw PEM), APNS_PRIVATE_KEY_B64. */
+ *  Reads the key id, team id, bundle id, and the .p8 material via the APNS p8
+ *  env var, or the private-key / private-key-b64 env vars. */
 export function loadApnsConfig(env: ApnsEnvSource = process.env): ApnsConfig | null {
   const keyId = (env.APNS_KEY_ID ?? "").trim();
   const teamId = (env.APNS_TEAM_ID ?? "").trim();

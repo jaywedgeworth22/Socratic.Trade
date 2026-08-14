@@ -46,3 +46,9 @@ f4e99900d93a8d341202a29bf6f5fa7feb5b6e81:test/api-key-preview.test.ts:generic-ap
 # Fake test key fixture in test/wisesheets-provider.test.ts on PR #2365 introducing commit.
 # Fixed in later commit to test_wisesheets_key; fingerprint suppresses original commit scan finding.
 d79d3dfa3bd26ed2414373c2f7e3f492d5c99724:test/wisesheets-provider.test.ts:generic-api-key:44
+
+# PR #2708 / grok/apns-send: generic-api-key on a COMMENT that lists env var names
+# (APNS p8 / private-key / private-key-b64). No secret — the line is documentation
+# of which process-env names loadApnsConfig reads. Hosted gitleaks still scans the
+# introducing commit even after the comment is reworded.
+385278f804749693c6582cb0db0a57ae507454fe:src/lib/apns.ts:generic-api-key:23
