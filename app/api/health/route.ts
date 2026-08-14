@@ -409,6 +409,13 @@ export async function GET(request: Request) {
       litestreamSource: freshness.source,
       litestreamDegradedReasons: litestreamAssessment.reasons,
       litestreamTiers: litestreamTiers.tiers,
+      // Deliberately NOT folded into `litestreamDegradedReasons` above: that array is typed
+      // `LitestreamDegradationReason[]` and is produced solely by assessLitestreamRuntimeHealth
+      // grading the IPC daemon signal. Tier verdicts are a different assessor with different
+      // evidence, so they travel in their own flat, greppable pair — an external keyword monitor
+      // can be pointed at `litestreamTiersDegraded` without either signal muddying the other.
+      litestreamTiersDegraded: litestreamTiers.degraded,
+      litestreamTierDegradedReasons: litestreamTiers.degradedReasons,
       // How much of the five-level breakdown is actually covered right now. Published so an
       // external monitor can distinguish "all five levels healthy" from "we can see one level
       // and are blind to four" — the state that silently held for a day before 2026-08-12.
@@ -455,6 +462,13 @@ export async function GET(request: Request) {
           void alertStorageWarning(
             `litestream_tier_${tier.tier}_stale`,
             `Litestream "${tier.label}" (level ${tier.tier}) has not produced a new LTX file in the ${where} for ${Math.round(tier.ageSeconds / 60)} minutes (threshold ${Math.round(tier.thresholdSeconds / 60)} min), while level 0 kept advancing.`
+          );
+        } else if (tier.state === "empty" && tier.degraded) {
+          // Distinct alert key from `_stale`: a level that holds NOTHING states a different fact
+          // than one that stopped advancing, and the two should dedupe separately.
+          void alertStorageWarning(
+            `litestream_tier_${tier.tier}_empty_wedged`,
+            `Litestream "${tier.label}" (level ${tier.tier}) holds zero objects in the remote replica.  ${tier.detail}`
           );
         }
       }

@@ -1,3 +1,50 @@
+## Current (2026-08-14 MONET — empty compaction level reads as a wedge)
+
+Deep compaction has produced nothing since ~2026-08-08 and the per-tier backup
+monitor called it healthy.  The terminal stage of a compaction wedge is not a
+frozen level, it is an EMPTY one: litestream retention keeps pruning the wedged
+level's pre-wedge objects while the wedge produces no replacements, so level 2
+went 171 objects (2026-08-12, frozen) to 0 objects (2026-08-14, empty) — and
+`fileCount <= 0` was classified `not-observable` / `no-activity-recorded` with
+the detail "This is normal for a level Litestream has not needed to produce".
+`/api/health` returned `litestreamDegradedReasons: []` for six days.
+
+Production snapshot read 2026-08-14T03:46Z (`durable_state`, namespace
+`litestream`): `status: "ok"`, `levelErrors: {}`, L1 fileCount 2032 / newest
+03:46:05Z / txid `00000000000468d8`, **L2 fileCount 0**, **L3 fileCount 0**, L9
+fileCount 2 / newest 00:00:06Z.  The listing SUCCEEDED — not a visibility
+failure.
+
+Branch `monet/empty-tier-wedge` (worktree `~/apps/trading-monet-tierwedge`),
+**PR #2709** READY with squash auto-merge armed.  Adds a third tier state `"empty"` carrying a verdict
+(`wedged` / `upstream-wedged` / `expected`) and the feeder evidence behind it.
+An empty level is graded against its IMMEDIATE feeder, and duration comes from
+the feeder's file count via `CompactDB`'s one-file-per-interval-boundary
+guarantee: `floor((K-1)/2) * interval`.  L2 today is
+`floor(2031/2) x 30s = 8h27m` against a 2h threshold -> wedged; L3 ->
+`upstream-wedged` with copy naming L2 as the fix.  Suppressed on a fresh
+replica, an idle database, a superseded level, an all-empty prefix, and any
+stale / failed / inconsistent listing.  New `checks.storage.litestreamTiersDegraded`
+and `litestreamTierDegradedReasons`; `/api/health` `ok` deliberately does NOT
+flip to 503.
+
+Adversarial review round 2 found and fixed the one path that could silence the
+new alarm: `supersededBy` scanned every higher level, including level 9.  Level 9
+is a whole-DB snapshot (`CompactDB` shortcuts it to `db.Snapshot`), so its txid
+tracks the live database rather than level 3 — and in the window right after each
+daily snapshot that turned the L2 wedge into `expected/superseded degraded=false`
+with a false "promoted rather than lost" sentence.  It now consults only levels
+with a non-null `LITESTREAM_FEEDER_TIER`, pinned by a test on the production shape
+plus a positive test proving `superseded` still fires where it is genuinely true.
+
+**Blocker / next action is the OWNER's, not code:** the root cause is that every
+Coolify rolling deploy briefly runs two litestream writers against the same B2
+prefix; 0.5.12 has no fencing, colliding `MaxTXID` breaks `ltx.IsContiguous`, and
+the level-1 -> level-2 promotion fails permanently.  Repair needs a deploy-strategy
+change plus a one-time B2 delete.  This branch only makes it visible.
+
+Rollout: `docs/rollouts/2026-08-14-empty-tier-wedge-detection.md`.
+
 ## Current (2026-08-13 GROK pickup — land leftover `monet/ship-pipeline-fix`)
 
 Monet hit quota with this branch finished and **no PR**.  GROK landed it from

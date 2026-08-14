@@ -482,6 +482,77 @@ describe("Connection Health & Failure Routing", () => {
     }
   });
 
+  // 2026-08-14. The SAME wedge one stage later. Litestream's retention keeps pruning a wedged
+  // level while the wedge produces no replacements, so level 2 in production went 171 objects
+  // (frozen) to 0 objects (empty) — and the empty stage was classified "not observable / this is
+  // normal for a level Litestream has not needed to produce", so /api/health published
+  // `litestreamDegradedReasons: []` and no degraded storage tier for six days. This reproduces
+  // the persisted production snapshot against the real route.
+  it("/api/health flags an EMPTY deep-compaction level as wedged, with a stated reason, when its feeder is still advancing", async () => {
+    const { healthRoute, db } = await load();
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+
+    const inventoryMod = await import("../src/lib/litestream-remote-inventory");
+    const stateRoot = mkdtempSync(join(tmpdir(), "health-route-empty-wedge-"));
+    try {
+      const now = Date.now();
+      const dir = join(stateRoot, "ltx", "0");
+      mkdirSync(dir, { recursive: true });
+      const file = join(dir, "00000000000468d8-00000000000468d8.ltx");
+      writeFileSync(file, "ltx");
+      const fresh = new Date(now - 30_000);
+      utimesSync(file, fresh, fresh);
+      process.env.LITESTREAM_SOCKET_PATH = join(stateRoot, "missing.sock");
+      process.env.LITESTREAM_STATE_PATH = stateRoot;
+
+      // Persisted via durable_state, exactly as the scheduler writes it, so the route's own
+      // module instance reads the same row (see PR #2683 — the module-level cache never
+      // reached the route handlers).
+      inventoryMod.setLitestreamRemoteInventoryCache({
+        collectedAt: new Date(now - 4 * 60_000).toISOString(),
+        status: "ok",
+        levels: {
+          "1": { level: 1, newestAt: new Date(now - 4 * 60_000).toISOString(), newestTxid: "00000000000468d8", fileCount: 2032 },
+          "2": { level: 2, newestAt: "", newestTxid: null, fileCount: 0 },
+          "3": { level: 3, newestAt: "", newestTxid: null, fileCount: 0 },
+          "9": { level: 9, newestAt: new Date(now - 3.8 * 3_600_000).toISOString(), newestTxid: "0000000000043200", fileCount: 2 }
+        },
+        levelErrors: {},
+        skippedReason: null
+      });
+
+      const response = await healthRoute.GET(anonymousHealthRequest());
+      // A backup-compaction wedge is NOT a reason to 503: the route's own header comment records
+      // that a spurious 503 restarts the container, and a restart cannot clear a wedged B2
+      // compaction — the root cause is the rolling deploy's double-writer window, so restart
+      // loops would deepen the damage.
+      expect(response.status).toBe(200);
+      const body = await response.json();
+
+      // The pre-existing daemon-level signal stays silent, exactly as it did in production.
+      expect(body.checks.storage.litestreamDegradedReasons).toEqual([]);
+      expect(body.checks.storage.litestreamTiers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ tier: "1", state: "known", degraded: false }),
+          expect.objectContaining({ tier: "2", state: "empty", verdict: "wedged", degraded: true }),
+          expect.objectContaining({ tier: "3", state: "empty", verdict: "upstream-wedged", degraded: true }),
+          expect.objectContaining({ tier: "9", state: "known", degraded: false })
+        ])
+      );
+      expect(body.checks.storage.litestreamTiersDegraded).toBe(true);
+      expect(body.checks.storage.litestreamTierDegradedReasons.length).toBeGreaterThan(0);
+      expect(
+        body.checks.storage.litestreamTierDegradedReasons.some((r: string) => r.includes("no objects at level 2"))
+      ).toBe(true);
+      expect(body.checks.storageDegraded).toBe(true);
+      // Five levels listed, five observed: an empty level is measured, not a coverage gap.
+      expect(body.checks.storage.litestreamTierCoverage).toMatchObject({ observed: 5, notObservable: 0 });
+    } finally {
+      inventoryMod.setLitestreamRemoteInventoryCache(null);
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   // A THIRD, independent signal (2026-08-13): litestream's own log lines, teed to a local file
   // by scripts/coolify-prod-start.sh and scanned by src/lib/runtime-health.ts's
   // scanLitestreamRuntimeLogFile. This is deliberately independent of BOTH mechanisms above — it
