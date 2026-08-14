@@ -17,6 +17,7 @@ import type {
   TradingPolicy,
   Portfolio
 } from "@/lib/types";
+import { autonomyStatusLabel } from "@/lib/autonomy-labels";
 import { resolveDailyOpeningCap, type DailyOpeningCapMode } from "@/lib/policy-caps";
 import { isRunAllowedNow, nextMarketOpenHint, previousTradingDayStart } from "@/lib/market-hours";
 // NOT from "@/lib/benchmark" — that file imports history.ts → the db barrel, and this module is
@@ -97,14 +98,18 @@ export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, 
  *  (console chrome StateChip, Guardrails Autonomy panel, PWA header) MUST render
  *  one of these words via deriveStateInfo — never a private systemState→label
  *  map, which is how the PWA once said "Running" while the console said
- *  "Paused · market closed" for the same account. */
+ *  "Paused · market closed" for the same account.
+ *
+ *  Autopilot is NOT a run-state word.  It is the auto-decide authority label
+ *  (strategyAuthority === "decide").  Autonomy on + ask-first is Running/Active. */
 export type RunStateWord = "Running" | "Paused · market closed" | "Exit-only" | "Winding down" | "Stopped";
 
 export interface StateInfo {
   state: SystemState;
   /** State-only vocabulary word — no authority suffix (see RunStateWord). */
   word: RunStateWord;
-  /** Compound plain-words label, e.g. "Running · Ask-first". */
+  /** Human chip: Autopilot only when the account is auto-deciding; Running when
+   *  autonomy is on but still ask-first. */
   label: string;
   /** One-line honest explanation. */
   detail: string;
@@ -124,7 +129,6 @@ export function deriveStateInfo(
   policy: Pick<TradingPolicy, "systemState" | "strategyAuthority"> & { runDuringExtendedHours?: boolean },
   now: Date = new Date()
 ): StateInfo {
-  const authority = policy.strategyAuthority === "decide" ? "Autopilot" : "Ask-first";
   switch (policy.systemState) {
     case "active": {
       // undefined ≠ false: a payload that doesn't carry runDuringExtendedHours (older snapshot
@@ -141,9 +145,9 @@ export function deriveStateInfo(
           label: "Paused · market closed",
           detail:
             `Scheduled runs pause while the market is closed and resume automatically once it reopens ` +
-            `(next open ${nextMarketOpenHint(now, policy.runDuringExtendedHours === true)}). ` +
+            `(next open ${nextMarketOpenHint(now, policy.runDuringExtendedHours === true)}).  ` +
             (policy.strategyAuthority === "decide"
-              ? "Autonomous placement is paused too — nothing places itself outside market hours."
+              ? "Autopilot placement is paused too — nothing places itself outside market hours."
               : "Every trade still waits for your approval once runs resume."),
           tone: "muted",
           marketOpen: false
@@ -152,11 +156,11 @@ export function deriveStateInfo(
       return {
         state: "active",
         word: "Running",
-        label: `Running · ${authority}`,
+        label: autonomyStatusLabel("active", policy.strategyAuthority),
         detail:
           policy.strategyAuthority === "decide"
             ? "The strategy runs on schedule and may place orders itself, inside your guardrails."
-            : "The strategy runs on schedule. Every trade waits for your approval.",
+            : "The strategy runs on schedule.  Every trade waits for your approval.",
         tone: policy.strategyAuthority === "decide" ? "warn" : "pos",
         ...(marketOpen === undefined ? {} : { marketOpen: true })
       };

@@ -73,6 +73,35 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertTrue(oldestPersistedVerdict.rejected)
     }
 
+    func testPresentedMarketItemIdentifiesFillPositionAndCompany() throws {
+        let fill = try JSONDecoder().decode(
+            FillEvent.self,
+            from: Data(#"{"id":"fill-1","symbol":"GOOG","side":"buy","quantity":2,"price":343.94,"notional":687.88,"status":"filled","filledAt":"2026-08-13T20:00:00.000Z"}"#.utf8)
+        )
+        let position = try JSONDecoder().decode(
+            Position.self,
+            from: Data(#"{"symbol":"GOOG","quantity":10,"marketValue":3439.4,"averageCost":300,"sector":"Technology","industry":"Internet Content & Information"}"#.utf8)
+        )
+        let quote = try JSONDecoder().decode(
+            SymbolQuoteInfo.self,
+            from: Data(#"{"symbol":"GOOG","companyName":"Alphabet Inc.","price":343.94,"peRatio":26.4,"eps":10.12,"dividendYield":0.32,"beta":1.01,"fiftyTwoWeekHigh":404.47,"fiftyTwoWeekLow":197.46}"#.utf8)
+        )
+
+        XCTAssertEqual(PresentedMarketItem.company("GOOG").id, "company:GOOG")
+        XCTAssertEqual(PresentedMarketItem.fill(fill).id, "fill:fill-1")
+        XCTAssertEqual(PresentedMarketItem.position(position).id, "position:GOOG")
+        XCTAssertEqual(PresentedMarketItem.fill(fill).symbol, "GOOG")
+        XCTAssertEqual(PresentedMarketItem.position(position).symbol, "GOOG")
+        XCTAssertEqual(PresentedMarketItem.fill(fill).fill?.id, "fill-1")
+        XCTAssertNil(PresentedMarketItem.company("GOOG").fill)
+        XCTAssertEqual(PresentedMarketItem.position(position).position?.quantity, 10)
+        XCTAssertEqual(quote.fiftyTwoWeekHigh, 404.47)
+        XCTAssertEqual(quote.peRatio, 26.4)
+        XCTAssertEqual(AppFormat.peRatioDisplay(peRatio: quote.peRatio, eps: quote.eps), "26.4")
+        XCTAssertEqual(AppFormat.peRatioDisplay(peRatio: nil, eps: -1), "n/a")
+        XCTAssertEqual(AppFormat.peRatioDisplay(peRatio: nil, eps: nil), "—")
+    }
+
     @MainActor
     func testCommandSafetyGatesReadinessAndStalenessButKeepsProtectiveActions() throws {
         let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))

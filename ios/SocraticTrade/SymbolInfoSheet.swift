@@ -1,18 +1,27 @@
 import Foundation
 import SwiftUI
 
-/// Company-info sheet for a ticker — the mobile counterpart to the web console's symbol
-/// drilldown drawer (app/console/ui/symbol-drilldown.tsx). Presented from any row that shows a
-/// symbol (Activity fills, Markets positions/orders/watchlist/alerts) via a shared
-/// `PresentedSymbol` @State + `.sheet(item:)` and a `SymbolTapButton` (see AppComponents.swift).
-/// Fetches the same on-demand `/api/quote` cascade the web drawer falls back to for a symbol
-/// outside the last scan; every field degrades honestly to "—"/"n/a" instead of being
-/// fabricated. Backend remains authoritative — this reads only, no order/policy data here.
+/// Company / fill / position detail sheet — the mobile counterpart to the web console's
+/// symbol drilldown drawer (app/console/ui/symbol-drilldown.tsx). Presented from any row
+/// that shows a symbol via `PresentedMarketItem` (fill and position cards tap anywhere;
+/// logo-only rows still present `.company`). Fetches the same on-demand `/api/quote`
+/// cascade the web drawer uses; every field degrades honestly to "—"/"n/a" instead of
+/// being fabricated. Backend remains authoritative — this reads only.
 struct SymbolInfoSheet: View {
     @EnvironmentObject private var store: MobileStore
     @Environment(\.dismiss) private var dismiss
 
-    let symbol: String
+    let item: PresentedMarketItem
+
+    init(symbol: String) {
+        self.item = .company(symbol)
+    }
+
+    init(item: PresentedMarketItem) {
+        self.item = item
+    }
+
+    private var symbol: String { item.symbol }
 
     @State private var loadState: LoadState = .loading
 
@@ -30,6 +39,12 @@ struct SymbolInfoSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if let fill = item.fill {
+                        FillDetailCard(fill: fill)
+                    }
+                    if let position = item.position {
+                        PositionDetailCard(position: position)
+                    }
                     switch loadState {
                     case .loading:
                         loadingState
@@ -110,6 +125,71 @@ struct SymbolInfoSheet: View {
             return urlError.code == .cancelled
         }
         return false
+    }
+}
+
+private struct FillDetailCard: View {
+    let fill: FillEvent
+
+    private var sideColor: Color {
+        fill.side == "buy" || fill.side == "cover" ? AppPalette.positive : AppPalette.negative
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeading("Fill")
+            AppCard {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        StatusPill(fill.side.uppercased(), color: sideColor)
+                        Spacer()
+                        Text(AppFormat.dateTime(fill.filledAt))
+                            .font(.appCaption)
+                            .foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Quantity", value: AppFormat.number(fill.quantity))
+                    LabeledContent("Price", value: AppFormat.money(fill.price))
+                    LabeledContent("Notional", value: AppFormat.money(fill.notional))
+                    if !fill.status.isEmpty {
+                        LabeledContent("Status", value: fill.status.capitalized)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PositionDetailCard: View {
+    let position: Position
+
+    private var unrealized: Double? {
+        guard let averageCost = position.averageCost else { return nil }
+        return position.marketValue - position.quantity * averageCost
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeading("Position")
+            AppCard {
+                VStack(alignment: .leading, spacing: 10) {
+                    if position.quantity < 0 {
+                        StatusPill("Short", color: AppPalette.negative)
+                    }
+                    LabeledContent("Quantity", value: "\(AppFormat.number(abs(position.quantity))) shares")
+                    LabeledContent("Market Value", value: AppFormat.money(position.marketValue))
+                    LabeledContent("Average Cost", value: AppFormat.money(position.averageCost))
+                    if let unrealized {
+                        LabeledContent("Open P&L", value: AppFormat.money(unrealized))
+                    }
+                    if let sector = position.sector, !sector.isEmpty {
+                        LabeledContent("Sector", value: sector)
+                    }
+                    if let industry = position.industry, !industry.isEmpty, industry != position.sector {
+                        LabeledContent("Industry", value: industry)
+                    }
+                }
+            }
+        }
     }
 }
 

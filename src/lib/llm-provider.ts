@@ -65,6 +65,17 @@ function resolveRoleModel(
   return resolveOpenAiModel(policy);
 }
 
+/** Current OpenRouter Flash class. `google/gemini-flash-latest` 404s (verified 2026-08-14). */
+export const OPENROUTER_GEMINI_FLASH = "google/gemini-3.7-flash";
+/** OpenRouter Flash batch/offline variant (~50% cheaper, higher latency). */
+export const OPENROUTER_GEMINI_FLASH_BATCH = "google/gemini-3.7-flash:batch";
+/** Google AI Studio native Flash class. */
+export const NATIVE_GEMINI_FLASH = "gemini-3.7-flash";
+const OPENROUTER_GEMINI_FLASH_LITE = "google/gemini-3.5-flash-lite";
+const OPENROUTER_GEMINI_PRO = "google/gemini-3.1-pro-preview";
+const NATIVE_GEMINI_FLASH_LITE = "gemini-3.5-flash-lite";
+const NATIVE_GEMINI_PRO = "gemini-3.1-pro-preview";
+
 /**
  * Maps a catalog model ID to the native provider's supported model slug for direct API calls.
  */
@@ -73,6 +84,7 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
   if (m.includes("/")) {
     m = m.split("/").pop() || m;
   }
+  m = m.replace(/:batch$/i, "");
   const lower = m.toLowerCase();
 
   switch (family) {
@@ -87,9 +99,16 @@ export function nativeModelSlugForProvider(model: string, family: LlmModelFamily
       return "grok-4.5";
 
     case "gemini":
-      if (/flash.*lite/i.test(lower)) return "gemini-flash-lite-latest";
-      if (/pro/i.test(lower)) return "gemini-pro-latest";
-      return "gemini-flash-latest";
+      if (/flash.*lite/i.test(lower)) {
+        return /latest|3\.5/.test(lower) || lower === "gemini-flash-lite" ? NATIVE_GEMINI_FLASH_LITE : m;
+      }
+      if (/pro/i.test(lower)) {
+        return /latest/.test(lower) ? NATIVE_GEMINI_PRO : m;
+      }
+      if (/flash/i.test(lower)) {
+        return /latest|3\.6/.test(lower) || lower === "gemini-flash" ? NATIVE_GEMINI_FLASH : m;
+      }
+      return NATIVE_GEMINI_FLASH;
 
     case "deepseek":
       if (/r1|reasoner/i.test(lower)) return "deepseek-reasoner";
@@ -142,11 +161,11 @@ export function normalizeOpenRouterModelId(rawModel: string | undefined): string
     } else if (/^grok/i.test(model)) {
       model = "x-ai/grok-latest";
     } else if (/^gemini-flash-lite/i.test(model) || /^gemini-3.5-flash-lite$/i.test(model)) {
-      model = "google/gemini-3.5-flash-lite";
-    } else if (/^gemini-flash/i.test(model)) {
-      model = "google/gemini-flash-latest";
-    } else if (/^gemini-pro/i.test(model)) {
-      model = "google/gemini-pro-latest";
+      model = OPENROUTER_GEMINI_FLASH_LITE;
+    } else if (/^gemini-flash-latest$/i.test(model) || /^gemini-3.6-flash$/i.test(model) || /^gemini-flash$/i.test(model)) {
+      model = OPENROUTER_GEMINI_FLASH;
+    } else if (/^gemini-pro-latest$/i.test(model) || /^gemini-pro$/i.test(model)) {
+      model = OPENROUTER_GEMINI_PRO;
     } else if (/^gemini/i.test(model)) {
       model = `google/${model}`;
     } else if (/^gpt-sol/i.test(model) || /^gpt-5.6-sol$/i.test(model)) {
@@ -187,7 +206,15 @@ export function normalizeOpenRouterModelId(rawModel: string | undefined): string
       model = `openai/${model}`;
     }
   }
-  return model.replace(/^openrouter\//i, "").replace(/^xai\//i, "x-ai/").replace(/^moonshot\//i, "moonshotai/");
+  model = model.replace(/^openrouter\//i, "").replace(/^xai\//i, "x-ai/").replace(/^moonshot\//i, "moonshotai/");
+  // Dead / previous-class OpenRouter aliases → current Flash / Pro class.
+  if (/^google\/gemini-flash-latest(?::batch)?$/i.test(model) || /^google\/gemini-3\.6-flash(?::batch)?$/i.test(model)) {
+    return /:batch$/i.test(model) ? OPENROUTER_GEMINI_FLASH_BATCH : OPENROUTER_GEMINI_FLASH;
+  }
+  if (/^google\/gemini-pro-latest$/i.test(model)) {
+    return OPENROUTER_GEMINI_PRO;
+  }
+  return model;
 }
 
 

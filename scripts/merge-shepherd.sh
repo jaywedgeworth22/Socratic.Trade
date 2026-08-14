@@ -111,7 +111,16 @@ for num in $nums; do
     continue
   fi
 
-  if [ "$verify" = "SUCCESS" ]; then
+  if [ "$verify" = "SUCCESS" ] && [ "$HAS_PAT" != "1" ]; then
+    # Merging with the Actions GITHUB_TOKEN makes github-actions[bot] the merging
+    # identity, and GitHub raises no workflow events for GITHUB_TOKEN actions --
+    # the merge commit on main would then run NEITHER CI NOR ios-ship. Verified
+    # 2026-08-13 on PR #2675 (bot-merged, sha ca38bb2979: zero `event: push` runs)
+    # versus #2678/#2679/#2680 (human-merged: full run set). Report instead; the
+    # launchd driver runs with a real PAT and does merge.
+    row WAITING "$num" "$title  (green + armed; merge skipped -- no PAT, a bot merge would dispatch no post-merge CI)"
+
+  elif [ "$verify" = "SUCCESS" ]; then
     # Attempt the merge; the attempt itself resolves mergeability.
     if out=$(gh pr merge "$num" -R "$REPO" --squash 2>&1); then
       row MERGED "$num" "$title"
