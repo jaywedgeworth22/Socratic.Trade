@@ -300,7 +300,11 @@ export async function GET(request: Request) {
   // `"openrouterCredits":{"ok":false` (docs/rollouts/2026-07-18-openrouter-credit-health-signal.md),
   // which is unchanged by this projection.
   try {
-    const credits = await getOpenRouterCreditStatus();
+    // Bound the public probe.  A cache-miss credits fetch used to wait the
+    // full 8s timeout and, stacked behind a busy scheduler tick, pushed
+    // `/api/health` past UptimeRobot's 30s — pairing socratictrade.com
+    // downtime with a false "OpenRouter credits low" on the same URL.
+    const credits = await getOpenRouterCreditStatus(Date.now(), fetch, { maxWaitMs: 1_500 });
     if (credits) {
       const deps = (checks.dependencies ?? {}) as Record<string, { ok: boolean; degraded?: boolean }>;
       const existing = deps.openrouter;

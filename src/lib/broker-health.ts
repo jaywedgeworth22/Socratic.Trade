@@ -3,7 +3,16 @@ import { countRecentAuditEvents } from "./db-learning";
 import { ExecutionAccount, HealthSignals } from "./execution-mode";
 import { accountEquity } from "./risk-breaker";
 import { sendNotification } from "./notifications";
+import { isTransientNetworkError } from "./network-errors";
 import type { BrokerGateway, BrokerageAccount, SystemState, TradingPolicy } from "./types";
+
+/** Consecutive transient connectivity failures before an auto-halt.  One
+ *  `fetch failed` / dead socket must skip this tick, not kill Autopilot. */
+export const BROKER_CONNECTIVITY_HALT_STREAK = 3;
+
+export function brokerConnectivityStreakKey(userId: string, accountScope: string): string {
+  return `broker:connectivity-fail-streak:${userId}:${accountScope}`;
+}
 
 /**
  * Validates whether the broker connection is currently healthy and the account is ready for trading.
@@ -159,6 +168,7 @@ export async function applyBrokerOrderPlacementPause(input: {
   const marker = getBrokerPlacementPauseMarker(userId, accountScope);
 
   if (health.isHealthy) {
+    deleteInternalSetting(brokerConnectivityStreakKey(userId, accountScope));
     if (!marker) return { action: "none" };
     // Only auto-resume if we still own the halt (marker present) and state is still halted.
     // If the owner already re-armed to active, just clear the marker.
@@ -215,6 +225,19 @@ export async function applyBrokerOrderPlacementPause(input: {
   if (policy.systemState !== "active") {
     // close_only / liquidating: leave owner intent alone; still skip runs via health gate.
     return { action: "none" };
+  }
+
+  // Transient connectivity (dead keep-alive, one `fetch failed`) is not an
+  // order-path outage.  Skip this tick via isHealthy=false; only halt after a
+  // short consecutive streak so Autopilot survives a single socket blip.
+  if (health.category === "connectivity" && isTransientNetworkError(reason)) {
+    const streakKey = brokerConnectivityStreakKey(userId, accountScope);
+    const prev = getInternalSetting<number>(streakKey);
+    const next = (typeof prev === "number" && Number.isFinite(prev) ? prev : 0) + 1;
+    setInternalSetting(streakKey, next);
+    if (next < BROKER_CONNECTIVITY_HALT_STREAK) {
+      return { action: "none" };
+    }
   }
 
   // Flip active → halted.
