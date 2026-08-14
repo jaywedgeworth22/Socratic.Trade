@@ -71,4 +71,15 @@ describe("resolveLlmEndpoint", () => {
     const endpoint = resolveLlmEndpoint({ llmModel: "claude-sonnet-5" }, "user-with-no-keys");
     expect(endpoint.key).toBeUndefined();
   });
+
+  it("maps Flash-class aliases to current OpenRouter Gemini 3.7 Flash", async () => {
+    const { normalizeOpenRouterModelId, OPENROUTER_GEMINI_FLASH, OPENROUTER_GEMINI_FLASH_BATCH } =
+      await import("../src/lib/llm-provider");
+    expect(normalizeOpenRouterModelId("gemini-flash-latest")).toBe(OPENROUTER_GEMINI_FLASH);
+    expect(normalizeOpenRouterModelId("google/gemini-flash-latest")).toBe(OPENROUTER_GEMINI_FLASH);
+    expect(normalizeOpenRouterModelId("google/gemini-3.6-flash")).toBe(OPENROUTER_GEMINI_FLASH);
+    expect(normalizeOpenRouterModelId("google/gemini-3.6-flash:batch")).toBe(OPENROUTER_GEMINI_FLASH_BATCH);
+    expect(normalizeOpenRouterModelId("gemini-3.5-flash")).toBe("google/gemini-3.5-flash");
+    expect(normalizeOpenRouterModelId("google/gemini-3.7-flash")).toBe(OPENROUTER_GEMINI_FLASH);
+  });
 });

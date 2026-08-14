@@ -47,15 +47,21 @@ const GLOSSARY: GlossaryGroup[] = [
     entries: [
       {
         term: "Ask-first (propose)",
-        aliases: "propose authority approval",
+        aliases: "propose authority approval running active",
         definition:
-          "The strategy runs on schedule but every trade waits for your explicit approval. Nothing is placed until you approve it; ignoring a proposal lets it expire."
+          "Autonomy can be on (Running) while every trade still waits for your explicit approval.  This is not Autopilot.  Nothing is placed until you approve it; ignoring a proposal lets it expire."
       },
       {
         term: "Autopilot (decide)",
-        aliases: "decide authority autonomous",
+        aliases: "decide authority autonomous auto-decide",
         definition:
-          "The strategy may place orders itself, inside your guardrails. Manual 'Run once' runs are always forced back to Ask-first regardless of this setting."
+          "The app is making trades: the strategy may place orders itself, inside your guardrails.  Use Autopilot only for this auto-decide mode.  Manual Run Once runs are always forced back to Ask-first regardless of this setting."
+      },
+      {
+        term: "Running (active)",
+        aliases: "active running autonomy on",
+        definition:
+          "Scheduled runs are on for this account.  If authority is Ask-first, the chip says Running — not Autopilot.  If authority is Autopilot, the chip says Autopilot because the app may place orders."
       },
       {
         term: "Arming",

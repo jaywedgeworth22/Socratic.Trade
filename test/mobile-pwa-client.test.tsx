@@ -80,6 +80,8 @@ describe("mobile PWA run-state vocabulary (shared with the console — #2554)", 
     // Without runDuringExtendedHours the market window is unknowable — plain Running,
     // same undefined-vs-false rule as the console (see deriveStateInfo).
     expect(mobileRunState({ systemState: "active", strategyAuthority: "decide" })?.word).toBe("Running");
+    expect(mobileRunState({ systemState: "active", strategyAuthority: "decide" })?.label).toBe("Autopilot");
+    expect(mobileRunState({ systemState: "active", strategyAuthority: "propose" })?.label).toBe("Running");
   });
 
   it("says 'Paused · market closed' outside market hours exactly like the console (the PWA header once said 'Running')", () => {
