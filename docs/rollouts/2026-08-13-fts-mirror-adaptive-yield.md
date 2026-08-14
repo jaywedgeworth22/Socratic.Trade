@@ -15,4 +15,4 @@ Re-enabling the SEC ingest worker (owner directive) reproduced the 2026-08-10 ev
 
 ## Next Steps & Blockers
 
-- After this deploys: re-enable `SEC_INGEST_WORKER_ENABLED` and watch the first sync — stretches should be ≤~250ms (plus one worst-case row) and the site steady.  The ct-deploy-guard coalescer has been eating webhook deploys on ST — verify the deploy actually lands and retrigger via API if not.
+- **SUPERSEDED for re-enable.**  After this deployed, live receipts were `ftsMirrorBatch 279522ms (933 chunks)` — the 250ms yield bounded a stretch, not wall-clock.  Durable follow-up is `docs/rollouts/2026-08-14-bound-fts-mirror.md`.  Do **not** re-enable `SEC_INGEST_WORKER_ENABLED` until that bound lands.  The ct-deploy-guard coalescer has been eating webhook deploys on ST — verify the deploy actually lands and retrigger via API if not.

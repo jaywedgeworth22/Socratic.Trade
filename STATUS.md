@@ -1,3 +1,13 @@
+## Current (2026-08-14 GROK — bound per-document FTS mirror + durable resume)
+
+#2680's 250ms yield inside `insertDocumentChunkFtsBatch` did not bound wall-clock.  Live receipts after that "fix": `ftsMirrorBatch 279522ms (933 chunks)`, then 103s / 98s / 91s.  Every `embed_queued` task failed to advance (`Failed to advance checkpoint` + `Ingestion budget or capacity exceeded mid-task`).  Queue 3501 pending / 16 complete (~0.5%).  Lease is 60s and was heartbeated only during `storeDocument`.
+
+**Fix (this branch `grok/bound-fts-mirror`, issue #2715):** slice FTS at **20 chunks or 6s wall, whichever first** (`20 * (279522/933) = 5991.9ms`).  Resume from durable FTS row count.  Heartbeat the lease across the mirror.  Release immediately so the next tick continues.  `insertDocumentChunkFtsBatch` keeps its internal 250ms yield; the worker never feeds it 933 chunks.
+
+**This PR does not re-enable the worker.**  Re-enable `SEC_INGEST_WORKER_ENABLED` is the owner's call after this lands.  Do not flip Infisical.  Do not restart prod.
+
+Rollout: `docs/rollouts/2026-08-14-bound-fts-mirror.md`.
+
 ## Current (2026-08-14 MONET — AGENTS.md records the "local gate does not compile Swift" trap)
 
 Docs-only, branch `monet/agents-swift-gate-trap`.  The four-command verify gate

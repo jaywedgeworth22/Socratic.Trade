@@ -279,3 +279,316 @@ describe("nextFtsBatchGroupSize (2026-08-13 adaptive stretch budget)", () => {
     expect(size).toBe(1);
   });
 });
+
+describe("planFtsMirrorSlice (2026-08-14 bound above the 250ms yield)", () => {
+  it("computes the production 933/279522 receipt into a tick that stays inside 6s and 250ms sync", async () => {
+    const {
+      FTS_MIRROR_INCIDENT_CHUNKS,
+      FTS_MIRROR_INCIDENT_WALL_MS,
+      FTS_MIRROR_INCIDENT_MS_PER_CHUNK,
+      FTS_MIRROR_MAX_CHUNKS_PER_TICK,
+      FTS_MIRROR_TICK_BUDGET_MS,
+      FTS_MIRROR_SYNC_STRETCH_BUDGET_MS,
+      planFtsMirrorSlice
+    } = await import("../src/lib/rag/fts-mirror-bound");
+    const { FTS_BATCH_STRETCH_BUDGET_MS } = await import("../src/lib/db-learning");
+
+    expect(FTS_MIRROR_INCIDENT_CHUNKS).toBe(933);
+    expect(FTS_MIRROR_INCIDENT_WALL_MS).toBe(279_522);
+    expect(FTS_MIRROR_INCIDENT_MS_PER_CHUNK).toBe(279_522 / 933);
+    expect(FTS_MIRROR_SYNC_STRETCH_BUDGET_MS).toBe(250);
+    expect(FTS_BATCH_STRETCH_BUDGET_MS).toBe(FTS_MIRROR_SYNC_STRETCH_BUDGET_MS);
+
+    const first = planFtsMirrorSlice({
+      totalChunks: FTS_MIRROR_INCIDENT_CHUNKS,
+      offset: 0
+    });
+    expect(first.chunkCount).toBeGreaterThan(0);
+    expect(first.chunkCount).toBeLessThanOrEqual(FTS_MIRROR_MAX_CHUNKS_PER_TICK);
+    expect(first.offset).toBe(0);
+    expect(first.end).toBe(first.chunkCount);
+    expect(first.complete).toBe(false);
+    expect(first.worstCaseSyncStretchMs).toBe(250);
+    expect(first.worstCaseTickWallMs).toBeLessThanOrEqual(FTS_MIRROR_TICK_BUDGET_MS);
+    expect(first.chunkCount * FTS_MIRROR_INCIDENT_MS_PER_CHUNK).toBeLessThanOrEqual(
+      FTS_MIRROR_TICK_BUDGET_MS
+    );
+
+    // A full-document feed of 933 is exactly the incident: 279s wall, unbounded tick.
+    expect(933 * FTS_MIRROR_INCIDENT_MS_PER_CHUNK).toBe(FTS_MIRROR_INCIDENT_WALL_MS);
+    expect(933 * FTS_MIRROR_INCIDENT_MS_PER_CHUNK).toBeGreaterThan(FTS_MIRROR_TICK_BUDGET_MS);
+  });
+
+  it("resume starts after completed slices and never re-plans them", async () => {
+    const { planFtsMirrorSlice, FTS_MIRROR_INCIDENT_CHUNKS } = await import(
+      "../src/lib/rag/fts-mirror-bound"
+    );
+    const first = planFtsMirrorSlice({ totalChunks: FTS_MIRROR_INCIDENT_CHUNKS, offset: 0 });
+    const second = planFtsMirrorSlice({
+      totalChunks: FTS_MIRROR_INCIDENT_CHUNKS,
+      offset: first.end
+    });
+    expect(second.offset).toBe(first.end);
+    expect(second.offset).toBeGreaterThan(0);
+    expect(second.end).toBeGreaterThan(second.offset);
+    expect(second.offset).toBeGreaterThanOrEqual(first.end);
+  });
+
+  it("a 933-chunk filing takes more than one tick (never 279s in one call)", async () => {
+    const {
+      planFtsMirrorSlice,
+      FTS_MIRROR_INCIDENT_CHUNKS,
+      FTS_MIRROR_MAX_CHUNKS_PER_TICK
+    } = await import("../src/lib/rag/fts-mirror-bound");
+    let offset = 0;
+    let ticks = 0;
+    while (offset < FTS_MIRROR_INCIDENT_CHUNKS) {
+      ticks += 1;
+      const start = offset;
+      let doneThisTick = 0;
+      let elapsedMs = 0;
+      while (offset < FTS_MIRROR_INCIDENT_CHUNKS) {
+        const plan = planFtsMirrorSlice({
+          totalChunks: FTS_MIRROR_INCIDENT_CHUNKS,
+          offset,
+          chunksDoneThisTick: doneThisTick,
+          elapsedMs
+        });
+        if (plan.chunkCount <= 0) break;
+        offset = plan.end;
+        doneThisTick += plan.chunkCount;
+        elapsedMs = plan.worstCaseTickWallMs;
+      }
+      expect(offset - start).toBeLessThanOrEqual(FTS_MIRROR_MAX_CHUNKS_PER_TICK);
+      expect(ticks).toBeLessThan(200);
+    }
+    expect(offset).toBe(FTS_MIRROR_INCIDENT_CHUNKS);
+    expect(ticks).toBeGreaterThan(1);
+    expect(ticks).toBe(Math.ceil(FTS_MIRROR_INCIDENT_CHUNKS / FTS_MIRROR_MAX_CHUNKS_PER_TICK));
+  });
+
+  it("stops on wall-clock even when chunks remain (whichever first)", async () => {
+    const { planFtsMirrorSlice } = await import("../src/lib/rag/fts-mirror-bound");
+    const plan = planFtsMirrorSlice({
+      totalChunks: 933,
+      offset: 0,
+      elapsedMs: 6_000,
+      tickBudgetMs: 6_000
+    });
+    expect(plan.chunkCount).toBe(0);
+    expect(plan.stopReason).toBe("tick-budget");
+    expect(plan.complete).toBe(false);
+  });
+});
+
+describe("ftsMirrorLeaseExpiresDuringTick (heartbeat + tick cap)", () => {
+  it("the 279s no-heartbeat full-mirror scenario expires a 60s lease", async () => {
+    const { ftsMirrorLeaseExpiresDuringTick, FTS_MIRROR_INCIDENT_WALL_MS } = await import(
+      "../src/lib/rag/fts-mirror-bound"
+    );
+    expect(
+      ftsMirrorLeaseExpiresDuringTick({
+        tickBudgetMs: FTS_MIRROR_INCIDENT_WALL_MS,
+        heartbeatIntervalMs: null
+      })
+    ).toBe(true);
+  });
+
+  it("is no longer possible when the tick is capped and the 20s heartbeat runs", async () => {
+    const { ftsMirrorLeaseExpiresDuringTick } = await import("../src/lib/rag/fts-mirror-bound");
+    expect(ftsMirrorLeaseExpiresDuringTick()).toBe(false);
+    expect(
+      ftsMirrorLeaseExpiresDuringTick({
+        tickBudgetMs: 6_000,
+        heartbeatIntervalMs: 20_000,
+        leaseMs: 60_000
+      })
+    ).toBe(false);
+    // Even without heartbeat, a 6s tick cannot outlive a 60s lease.
+    expect(
+      ftsMirrorLeaseExpiresDuringTick({
+        tickBudgetMs: 6_000,
+        heartbeatIntervalMs: null,
+        leaseMs: 60_000
+      })
+    ).toBe(false);
+  });
+});
+
+describe("embed_queued FTS slice + durable resume", () => {
+  async function seedEmbedQueued(opts: { accession: string; chunks: number; storeAlreadyDone?: boolean }) {
+    const { writeLocalArtifact } = await import("../src/lib/web-sources/sec-filings");
+    const {
+      createSecIngestJob,
+      enqueueSecIngestTask,
+      claimSecIngestTasks,
+      advanceSecIngestTask,
+      transitionSecIngestJob
+    } = await import("../src/lib/db-rag-ingest");
+
+    const job = createSecIngestJob({
+      idempotencyKey: `fts-slice-${opts.accession}`,
+      corpusRevision: "corp-v1"
+    });
+    transitionSecIngestJob(job.id, "running");
+    const { task } = enqueueSecIngestTask({
+      jobId: job.id,
+      accession: opts.accession,
+      cik: "0000320193",
+      symbol: "AAPL",
+      payload: {
+        url: `https://www.sec.gov/Archives/edgar/data/320193/${opts.accession.replace(/-/g, "")}/aapl.htm`,
+        docType: "10-K",
+        filedAt: "2026-07-15",
+        acceptanceDateTime: "2026-07-15T21:37:12.000Z"
+      }
+    });
+
+    const raw = "<html><body>Item 1. Business<p>AAPL makes iPhones.</p></body></html>";
+    const chunks = Array.from({ length: opts.chunks }, (_, i) => ({
+      content_hash: `hash-${opts.accession}-${i.toString().padStart(4, "0")}`,
+      text: `chunk ${i} of ${opts.accession}`
+    }));
+    await writeLocalArtifact(task.cik, task.accession, 1, "raw-document.html", raw);
+    await writeLocalArtifact(task.cik, task.accession, 1, "sections.json", JSON.stringify([{ itemCode: "1", text: raw }]));
+    await writeLocalArtifact(task.cik, task.accession, 1, "chunks.json", JSON.stringify(chunks));
+    if (opts.storeAlreadyDone) {
+      await writeLocalArtifact(
+        task.cik,
+        task.accession,
+        1,
+        "storeResult.json",
+        JSON.stringify({ skipped: false, attempted: opts.chunks, indexed: opts.chunks, documentComplete: true })
+      );
+    }
+
+    let claimed = claimSecIngestTasks(job.id, { owner: "test-worker", leaseMs: 60_000, limit: 1 });
+    expect(claimed).toHaveLength(1);
+    const steps = [
+      ["discovered", "fetched"],
+      ["fetched", "validated"],
+      ["validated", "parsed"],
+      ["parsed", "facts_extracted"],
+      ["facts_extracted", "chunked"],
+      ["chunked", "embed_queued"]
+    ] as const;
+    for (const [from, to] of steps) {
+      expect(
+        advanceSecIngestTask({
+          taskId: claimed[0]!.id,
+          owner: "test-worker",
+          leaseToken: claimed[0]!.leaseToken || "",
+          expectedCheckpoint: from,
+          nextCheckpoint: to,
+          receipt: claimed[0]!.payload
+        })
+      ).toBe(true);
+      claimed = claimSecIngestTasks(job.id, { owner: "test-worker", leaseMs: 60_000, limit: 1 });
+      expect(claimed).toHaveLength(1);
+    }
+    return { jobId: job.id, task: claimed[0]! };
+  }
+
+  it("writes at most one tick of chunks, stays at embed_queued, and resumes without rewriting the first slice", async () => {
+    const { FTS_MIRROR_MAX_CHUNKS_PER_TICK } = await import("../src/lib/rag/fts-mirror-bound");
+    const { getSecIngestTask, claimSecIngestTasks } = await import("../src/lib/db-rag-ingest");
+    const { storeDocument } = await import("../src/lib/vector-db");
+    vi.mocked(storeDocument).mockClear();
+    vi.mocked(storeDocument).mockResolvedValue({
+      skipped: false,
+      attempted: 45,
+      indexed: 45,
+      documentComplete: true
+    } as any);
+
+    const accession = "0000320193-26-000099";
+    const { jobId, task } = await seedEmbedQueued({ accession, chunks: 45 });
+    const vectorDocId = `${accession}:1:document.html`;
+    const worker = new SecIngestWorker();
+
+    await worker.processTask(task);
+
+    const afterFirst = getSecIngestTask(task.id)!;
+    expect(afterFirst.checkpoint).toBe("embed_queued");
+    expect(afterFirst.status).toBe("retry_wait");
+    expect(afterFirst.stageAttempts).toBe(0);
+    const firstRows = getDb()
+      .prepare("SELECT content_hash FROM document_chunks_fts WHERE accession = ? ORDER BY content_hash")
+      .all(vectorDocId) as Array<{ content_hash: string }>;
+    expect(firstRows.length).toBe(FTS_MIRROR_MAX_CHUNKS_PER_TICK);
+    expect(firstRows[0]!.content_hash).toBe(`hash-${accession}-0000`);
+    expect(firstRows.at(-1)!.content_hash).toBe(`hash-${accession}-0019`);
+    expect(vi.mocked(storeDocument)).toHaveBeenCalledTimes(1);
+
+    const reclaimed = claimSecIngestTasks(jobId, {
+      owner: "test-worker",
+      leaseMs: 60_000,
+      limit: 1
+    });
+    expect(reclaimed).toHaveLength(1);
+    await worker.processTask(reclaimed[0]!);
+
+    const afterSecond = getSecIngestTask(task.id)!;
+    expect(afterSecond.checkpoint).toBe("embed_queued");
+    const secondRows = getDb()
+      .prepare("SELECT content_hash FROM document_chunks_fts WHERE accession = ? ORDER BY content_hash")
+      .all(vectorDocId) as Array<{ content_hash: string }>;
+    expect(secondRows.length).toBe(FTS_MIRROR_MAX_CHUNKS_PER_TICK * 2);
+    expect(secondRows.slice(0, 20).map((r) => r.content_hash)).toEqual(
+      firstRows.map((r) => r.content_hash)
+    );
+    expect(secondRows[20]!.content_hash).toBe(`hash-${accession}-0020`);
+    // storeDocument must not run again on the FTS-only resume.
+    expect(vi.mocked(storeDocument)).toHaveBeenCalledTimes(1);
+  });
+
+  it("finishes a small filing in one tick and advances to embedded", async () => {
+    const { getSecIngestTask } = await import("../src/lib/db-rag-ingest");
+    const { storeDocument } = await import("../src/lib/vector-db");
+    vi.mocked(storeDocument).mockClear();
+    vi.mocked(storeDocument).mockResolvedValue({
+      skipped: false,
+      attempted: 3,
+      indexed: 3,
+      documentComplete: true
+    } as any);
+
+    const accession = "0000320193-26-000098";
+    const { task } = await seedEmbedQueued({ accession, chunks: 3, storeAlreadyDone: true });
+    const worker = new SecIngestWorker();
+    await worker.processTask(task);
+
+    const after = getSecIngestTask(task.id)!;
+    expect(after.checkpoint).toBe("embedded");
+    expect(after.status).toBe("pending");
+    const rows = getDb()
+      .prepare("SELECT COUNT(*) AS n FROM document_chunks_fts WHERE accession = ?")
+      .get(`${accession}:1:document.html`) as { n: number };
+    expect(rows.n).toBe(3);
+    expect(vi.mocked(storeDocument)).not.toHaveBeenCalled();
+  });
+
+  it("keeps the capacity-exceeded throw and does not write FTS when storeDocument is incomplete", async () => {
+    const { getSecIngestTask } = await import("../src/lib/db-rag-ingest");
+    const { storeDocument } = await import("../src/lib/vector-db");
+    vi.mocked(storeDocument).mockClear();
+    vi.mocked(storeDocument).mockResolvedValue({
+      skipped: false,
+      attempted: 10,
+      indexed: 0,
+      documentComplete: false
+    } as any);
+
+    const accession = "0000320193-26-000097";
+    const { task } = await seedEmbedQueued({ accession, chunks: 10 });
+    const worker = new SecIngestWorker();
+    await expect(worker.processTask(task)).rejects.toThrow("Ingestion budget or capacity exceeded mid-task");
+
+    const after = getSecIngestTask(task.id)!;
+    expect(after.checkpoint).toBe("embed_queued");
+    const rows = getDb()
+      .prepare("SELECT COUNT(*) AS n FROM document_chunks_fts WHERE accession = ?")
+      .get(`${accession}:1:document.html`) as { n: number };
+    expect(rows.n).toBe(0);
+  });
+});

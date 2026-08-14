@@ -5,6 +5,7 @@ import {
   failSecIngestTask,
   heartbeatSecIngestTask,
   reconcileSecIngestJob,
+  releaseSecIngestTaskForResume,
   SecIngestTask
 } from "../db-rag-ingest";
 import { pineconeWuExhaustedUntil } from "../pinecone-wu-breaker";
@@ -15,8 +16,14 @@ import { parseFilingHtml } from "../web-sources/sec-parser";
 import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts";
 import { storeDocument } from "../vector-db";
 import { readLocalArtifact, writeLocalArtifact } from "../web-sources/sec-filings";
-import { insertDocumentChunkFtsBatch, getDb } from "../db";
+import { insertDocumentChunkFtsBatch, countDocumentChunkFts, getDb } from "../db";
 import { chunkDocument } from "./chunk";
+import {
+  FTS_MIRROR_HEARTBEAT_MS,
+  FTS_MIRROR_MAX_CHUNKS_PER_TICK,
+  FTS_MIRROR_TICK_BUDGET_MS,
+  planFtsMirrorSlice
+} from "./fts-mirror-bound";
 import crypto from "crypto";
 
 export class SecIngestWorker {
@@ -303,22 +310,27 @@ export class SecIngestWorker {
 
     if (checkpoint === "embed_queued") {
       heartbeat();
-      // Monthly Pinecone write-unit breaker: park the task until the marker expires BEFORE
-      // reading artifacts or spending a single embed token. This is a clean deferral (attempt
-      // refunded, next_retry_at = breaker expiry), NOT a retryable failure — the exponential
-      // failure backoff would otherwise grind hourly retries into a quota that cannot recover
-      // before the 1st of next month, and eventually dead-letter healthy filings.
-      const wuUntil = pineconeWuExhaustedUntil();
-      if (wuUntil) {
-        deferSecIngestTask({
-          taskId: task.id,
-          owner,
-          leaseToken,
-          deferUntil: wuUntil,
-          reasonType: "wu_exhausted_deferred",
-          reason: `Pinecone monthly write units exhausted; deferred until ${wuUntil}`
-        });
-        return;
+      const storeResultJson = await readLocalArtifact(task.cik, task.accession, sequence, "storeResult.json");
+      const ftsAlreadyStarted =
+        countDocumentChunkFts({ symbol: task.symbol, source: "sec-edgar", accession: vectorDocId }) > 0;
+      const storeAlreadyDone = Boolean(storeResultJson) || ftsAlreadyStarted;
+
+      // Monthly Pinecone write-unit breaker: park BEFORE spending a single embed token.
+      // Skip the gate when storeDocument already completed this stage — FTS writes are
+      // local SQLite and must not be blocked by a Pinecone quota we already paid.
+      if (!storeAlreadyDone) {
+        const wuUntil = pineconeWuExhaustedUntil();
+        if (wuUntil) {
+          deferSecIngestTask({
+            taskId: task.id,
+            owner,
+            leaseToken,
+            deferUntil: wuUntil,
+            reasonType: "wu_exhausted_deferred",
+            reason: `Pinecone monthly write units exhausted; deferred until ${wuUntil}`
+          });
+          return;
+        }
       }
       const rawContent = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
       const sectionsJson = await readLocalArtifact(task.cik, task.accession, sequence, "sections.json");
@@ -341,79 +353,124 @@ export class SecIngestWorker {
         sections
       };
 
-      // Keep the task lease alive across the long embed: storeDocument batches Voyage/Pinecone
-      // work and can easily outlast the 60s lease, after which another worker would reclaim the
-      // task and duplicate provider work. Heartbeat on a timer for the duration of the call.
-      const leaseHeartbeat = setInterval(heartbeat, 20_000);
+      // Heartbeat across storeDocument AND the FTS mirror.  #2680 yielded inside the
+      // batch helper but left this interval covering only storeDocument; a 88-279s
+      // mirror then expired the 60s lease and checkpoint advance failed.
+      const leaseHeartbeat = setInterval(heartbeat, FTS_MIRROR_HEARTBEAT_MS);
       leaseHeartbeat.unref?.();
-      let res;
       try {
-        res = await storeDocument(doc, "local", {
-          maxTokens: 400,
-          overlapRatio: 0.15
-        });
-      } finally {
-        clearInterval(leaseHeartbeat);
-      }
-
-      if (!res.documentComplete) {
-        // Breaker tripped mid-call (raced the gate above): same clean deferral, not a failure.
-        if (res.wuExhausted) {
-          deferSecIngestTask({
-            taskId: task.id,
-            owner,
-            leaseToken,
-            deferUntil: res.wuExhaustedUntil ?? new Date(Date.now() + 6 * 60 * 60_000).toISOString(),
-            reasonType: "wu_exhausted_deferred",
-            reason: `Pinecone monthly write units exhausted mid-store; deferred until ${res.wuExhaustedUntil ?? "next check"}`
+        if (!storeAlreadyDone) {
+          const res = await storeDocument(doc, "local", {
+            maxTokens: 400,
+            overlapRatio: 0.15
           });
-          return;
+
+          if (!res.documentComplete) {
+            // Breaker tripped mid-call (raced the gate above): same clean deferral, not a failure.
+            if (res.wuExhausted) {
+              deferSecIngestTask({
+                taskId: task.id,
+                owner,
+                leaseToken,
+                deferUntil: res.wuExhaustedUntil ?? new Date(Date.now() + 6 * 60 * 60_000).toISOString(),
+                reasonType: "wu_exhausted_deferred",
+                reason: `Pinecone monthly write units exhausted mid-store; deferred until ${res.wuExhaustedUntil ?? "next check"}`
+              });
+              return;
+            }
+            throw new Error("Ingestion budget or capacity exceeded mid-task");
+          }
+
+          await writeLocalArtifact(task.cik, task.accession, sequence, "storeResult.json", JSON.stringify(res));
         }
-        throw new Error("Ingestion budget or capacity exceeded mid-task");
-      }
 
-      await writeLocalArtifact(task.cik, task.accession, sequence, "storeResult.json", JSON.stringify(res));
-
-      // Lexical (FTS) indexing happens HERE — only after storeDocument reported a complete
-      // committed document — so hybrid retrieval can never surface chunks whose vector commit
-      // failed or is still retrying. insertDocumentChunkFts is idempotent per occurrence
-      // (delete+insert keyed on symbol/source/accession/hash), so a retry of this stage after a
-      // failed checkpoint advance does not duplicate rows.
-      const chunksJson = await readLocalArtifact(task.cik, task.accession, sequence, "chunks.json");
-      const ftsChunks = chunksJson
-        ? JSON.parse(chunksJson)
-        : chunkDocument(doc, { maxTokens: 400, overlapRatio: 0.15 });
-      // Match storeDocument's doc_id / chunk_occurrences.accession (vectorDocId), not the bare
-      // SEC accession, so corpus-wide lexical joins succeed for worker-ingested filings.
-      // insertDocumentChunkFtsBatch internally sub-batches + yields — see its header comment for
-      // why a single un-yielding transaction (this fix's first attempt) made the 2026-08-10 stall
-      // WORSE (665-chunk filing held the loop 65,977ms with zero yield points, proven live in
-      // prod via the [slow-sync] warning this replaced).
-      const ftsMirrorStart = Date.now();
-      await insertDocumentChunkFtsBatch(
-        ftsChunks.map((chunk: { content_hash: string; text: string }) => ({
+        // Lexical (FTS) indexing happens HERE — only after storeDocument reported a complete
+        // committed document — so hybrid retrieval can never surface chunks whose vector commit
+        // failed or is still retrying. insertDocumentChunkFts is idempotent per occurrence
+        // (delete+insert keyed on symbol/source/accession/hash).  The worker now feeds the
+        // batch helper a bounded slice per tick; insertDocumentChunkFtsBatch keeps its
+        // internal 250ms yield.  Resume cursor is the durable FTS row count.
+        const chunksJson = await readLocalArtifact(task.cik, task.accession, sequence, "chunks.json");
+        const ftsChunks: Array<{ content_hash: string; text: string }> = chunksJson
+          ? JSON.parse(chunksJson)
+          : chunkDocument(doc, { maxTokens: 400, overlapRatio: 0.15 });
+        const ftsRows = ftsChunks.map((chunk) => ({
           contentHash: chunk.content_hash,
           symbol: task.symbol,
           source: "sec-edgar",
           accession: vectorDocId,
           text: chunk.text
-        }))
-      );
-      const ftsMirrorMs = Date.now() - ftsMirrorStart;
-      if (ftsMirrorMs >= 5_000) {
-        console.log(`[worker] ftsMirrorBatch took ${ftsMirrorMs}ms (yielded) for ${vectorDocId} (${ftsChunks.length} chunks)`);
-      }
+        }));
 
-      const ok = advanceSecIngestTask({
-        taskId: task.id,
-        owner,
-        leaseToken,
-        expectedCheckpoint: "embed_queued",
-        nextCheckpoint: "embedded",
-        receipt: task.payload
-      });
-      if (!ok) throw new Error("Failed to advance checkpoint from embed_queued to embedded");
-      return;
+        const tickStartedAt = Date.now();
+        const startOffset = countDocumentChunkFts({
+          symbol: task.symbol,
+          source: "sec-edgar",
+          accession: vectorDocId
+        });
+        let offset = startOffset;
+        while (offset < ftsRows.length) {
+          const plan = planFtsMirrorSlice({
+            totalChunks: ftsRows.length,
+            offset,
+            chunksDoneThisTick: offset - startOffset,
+            elapsedMs: Date.now() - tickStartedAt
+          });
+          if (plan.chunkCount <= 0) break;
+          await insertDocumentChunkFtsBatch(ftsRows.slice(plan.offset, plan.end));
+          offset = plan.end;
+          heartbeat();
+          if (offset < ftsRows.length) await yieldEventLoop();
+        }
+
+        const ftsMirrorMs = Date.now() - tickStartedAt;
+        if (ftsMirrorMs >= 1_000) {
+          console.log(
+            `[worker] ftsMirrorSlice took ${ftsMirrorMs}ms for ${vectorDocId} (${startOffset}->${offset}/${ftsRows.length} chunks, cap ${FTS_MIRROR_MAX_CHUNKS_PER_TICK}/${FTS_MIRROR_TICK_BUDGET_MS}ms)`
+          );
+        }
+
+        const progress = {
+          ftsMirrorOffset: offset,
+          ftsMirrorTotal: ftsRows.length,
+          vectorDocId
+        };
+        await writeLocalArtifact(
+          task.cik,
+          task.accession,
+          sequence,
+          "fts-progress.json",
+          JSON.stringify(progress)
+        );
+
+        if (offset < ftsRows.length) {
+          const released = releaseSecIngestTaskForResume({
+            taskId: task.id,
+            owner,
+            leaseToken,
+            reasonType: "fts_mirror_sliced",
+            reason: `FTS mirror paused at ${offset}/${ftsRows.length} (tick budget ${FTS_MIRROR_TICK_BUDGET_MS}ms / ${FTS_MIRROR_MAX_CHUNKS_PER_TICK} chunks)`,
+            receipt: { ...task.payload, ...progress }
+          });
+          if (!released.applied) {
+            throw new Error("Failed to release embed_queued task after partial FTS mirror");
+          }
+          return;
+        }
+
+        const ok = advanceSecIngestTask({
+          taskId: task.id,
+          owner,
+          leaseToken,
+          expectedCheckpoint: "embed_queued",
+          nextCheckpoint: "embedded",
+          receipt: { ...task.payload, ...progress }
+        });
+        if (!ok) throw new Error("Failed to advance checkpoint from embed_queued to embedded");
+        return;
+      } finally {
+        clearInterval(leaseHeartbeat);
+      }
     }
 
     if (checkpoint === "embedded") {
