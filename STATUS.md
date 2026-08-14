@@ -1,3 +1,59 @@
+## Current (2026-08-13 GROK pickup — land leftover `monet/ship-pipeline-fix`)
+
+Monet hit quota with this branch finished and **no PR**.  GROK landed it from
+`~/apps/trading-monet-shipfix` without redesign.  Merged `origin/main` (`#2684`
+honest server stats) cleanly.  READY PR **#2687**, squash auto-merge armed,
+waiting required `verify`.  Local land.sh gates: tsc clean, 6600 passed /
+51 skipped (567 files + 1 skipped), build clean.
+
+Unchanged Monet scope: refuse bot merges without an elevated token + hourly
+fail-closed CI backstop; cron path-gate so backend-only commits do not ship
+TestFlight; strip `[AG]` anywhere in release notes; ios-fleet sha256 pin;
+version snapshot.  Rollout:
+`docs/rollouts/2026-08-13-ios-ship-pipeline-repair.md`.
+
+## Current (2026-08-13 ~3:45pm CT MONET — iOS ship pipeline repair)
+
+Bot-merged PRs land on `main` and dispatch NOTHING — not CI, not ios-ship.  ST is
+not exempt: PR #2675 (merged by `github-actions[bot]`, sha `ca38bb2979`) has 27
+runs on that sha and zero are `event: push`, while #2680 (human-merged) gets the
+full set.  Cause is GitHub's `GITHUB_TOKEN` recursion guard; `auto-merge-prs.yml`
+claimed to prefer `GH_PAT`/`SHEPHERD_TOKEN` but neither secret exists, so the
+fallback chain always resolved to `GITHUB_TOKEN`.
+
+Fixed on branch `monet/ship-pipeline-fix` (worktree `~/apps/trading-monet-shipfix`):
+auto-merge workflows + `merge-shepherd.sh` refuse to merge without an elevated
+token (self-activating the moment the owner adds one); `ci.yml` gains an hourly
+backstop cron with a fail-closed redundancy skip; `ios-ship.yml` drops the
+undocumented 1h rate override (fleet standing gate is 2.5h — ASC upload gaps went
+2.80h/2.58h before it, 1.60h/1.34h after) and gains `fetch-depth: 0`; a sha256 pin
+(`scripts/ios-fleet.sha256` + `ios-fleet-pin.sh`) guards the untracked shared
+tooling; `ios/project.yml` + pbxproj now record the actually-shipped 1.0.6 instead
+of a stale 1.0.1.
+
+Shared, UNVERSIONED tooling edits (live for all four fleet apps immediately;
+backup at `/Users/jay/apps/ios-fleet/.backup-monet-20260813/`): `ensure-tf-ready`
+now targets the build THIS run uploaded instead of "newest" (which is the previous
+ship for the first minutes after upload), and renders the mandatory TestFlight
+"What to Test" note.  Notes publishing is OPT-IN and defaults to a dry render —
+owner sign-off needed before any tester sees auto-generated copy.
+
+**Review round 2 (blockers fixed before landing).**  (1) The `*/30` cron had no
+path gate and was already shipping backend-only commits — run `31723515355`
+archived and shipped `39c6acee` (an alerts fix, zero files under `ios/`) to
+testers.  `scripts/ios-scheduled-ship-gate.sh` + a 13-assertion offline test now
+gate the scheduled path, and the test runs in CI on every PR.  (2) The
+release-notes agent-name filter was start-anchored while the fleet writes tags at
+the END — CT has 48 subjects with a non-leading `[AG]` and zero leading ones, so
+`[AG]` would have published to TestFlight.  Markers are now stripped anywhere and
+the deny-list gained a bracketed-`AG` backstop; verified zero leaks across 1500
+subjects per repo.  (3) Version snapshot re-read at review time: 1.0.8 /
+202608132022 (the train moved past 1.0.6 before the first commit was authored).
+
+Gates (node 24): lint 0 errors / 764 warnings (grandfathered), `tsc --noEmit`
+clean, vitest 563 files passed + 1 skipped and 6520 tests passed + 51 skipped,
+`npm run build` clean, ios ship-gate bash suite 13/13.  Rollout:
+`docs/rollouts/2026-08-13-ios-ship-pipeline-repair.md`.
 ## Current (2026-08-13 ~3:50pm CT MONET — durable litestream remote-inventory cache)
 
 PR #2665's per-tier backup monitor (`docs/rollouts/2026-08-12-backup-tier-monitor-real-coverage.md`)
