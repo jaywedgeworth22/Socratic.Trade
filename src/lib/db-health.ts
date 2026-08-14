@@ -687,16 +687,28 @@ export async function alertConnectionFailure(
       // Global failures: Route to admin email and health.
       const { getNotifyPrefs } = await import("./db");
       const prefs = getNotifyPrefs("local");
-      const { loadNotifyConfig, notify } = await import("./notify");
+      const { isPushoverDeliverable, loadNotifyConfig, notify, operatorPushoverUserKey } = await import("./notify");
 
       const fallbackEmail = operatorAlertEmail();
       const config = loadNotifyConfig();
 
-      // The operator's own channels are delivered by sendNotification inside the enabled-event
-      // gate. The fallback email remains an EXTRA lazy lane when the operator has no usable email
-      // preference, so it cannot double-send or bypass that gate.
-      const additionalDelivery =
-        fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
+      // Prefer Pushover when it can deliver (Resend costs money).  Email stays last resort.
+      const additionalDelivery = isPushoverDeliverable(prefs, config)
+        ? () =>
+            notify(
+              "local",
+              { title, body, kind: "provider_degraded", data: payload },
+              {
+                config,
+                prefs: {
+                  ...prefs,
+                  channels: ["pushover"],
+                  pushoverTarget: operatorPushoverUserKey(prefs),
+                  updatedAt: prefs.updatedAt
+                }
+              }
+            )
+        : fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
           ? () =>
               notify(
                 "local",
@@ -757,13 +769,27 @@ export async function alertStorageWarning(warningType: string, message: string):
     // Route to admin email
     const { getNotifyPrefs } = await import("./db");
     const prefs = getNotifyPrefs("local");
-    const { loadNotifyConfig, notify } = await import("./notify");
+    const { isPushoverDeliverable, loadNotifyConfig, notify, operatorPushoverUserKey } = await import("./notify");
 
     const fallbackEmail = operatorAlertEmail();
     const config = loadNotifyConfig();
 
-    const additionalDelivery =
-      fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
+    const additionalDelivery = isPushoverDeliverable(prefs, config)
+      ? () =>
+          notify(
+            "local",
+            { title, body, kind: "storage_warning", data: payload },
+            {
+              config,
+              prefs: {
+                ...prefs,
+                channels: ["pushover"],
+                pushoverTarget: operatorPushoverUserKey(prefs),
+                updatedAt: prefs.updatedAt
+              }
+            }
+          )
+      : fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
         ? () =>
             notify(
               "local",

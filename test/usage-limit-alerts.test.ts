@@ -57,6 +57,7 @@ describe("usage limit alerts", () => {
       subject: "[Socratic.Trade] Usage limit hit: Pinecone Write Unit daily fuse"
     });
     expect(String((calls[0]?.body as { text?: string }).text)).toContain("Inspect chunking and deduping");
+    expect(String((calls[0]?.body as { text?: string }).text)).toMatch(/\n\(sent by Socratic\.Trade\)$/);
 
     await alertUsageLimitHit({
       userId,
@@ -67,6 +68,33 @@ describe("usage limit alerts", () => {
     });
     expect(listNotificationEvents(userId, 10)).toHaveLength(1);
     expect(calls).toHaveLength(1);
+  });
+
+  it("prefers Pushover over the operator email fallback", async () => {
+    const userId = `limit-alert-pushover-${randomUUID()}`;
+    const calls: string[] = [];
+    vi.stubEnv("RESEND_API_KEY", "rk_test");
+    vi.stubEnv("NOTIFY_EMAIL_FROM", "alerts@example.test");
+    vi.stubEnv("USAGE_LIMIT_ALERT_EMAIL", "owner@example.test");
+    vi.stubEnv("PUSHOVER_APP_TOKEN", "pv-token");
+    vi.stubEnv("PUSHOVER_USER_KEY", "u1userkey");
+    vi.stubGlobal(
+      "fetch",
+      (async (url: string | URL) => {
+        calls.push(String(url));
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch
+    );
+
+    const { alertUsageLimitHit } = await import("../src/lib/usage-limit-alerts");
+    await alertUsageLimitHit({
+      userId,
+      provider: "Pinecone",
+      operation: "upsert-budget",
+      limitName: "Write Unit daily fuse",
+      status: "exceeded"
+    });
+    expect(calls).toEqual(["https://api.pushover.net/1/messages.json"]);
   });
 
   it("fences the real operator-email fallback during a delayed send", async () => {
