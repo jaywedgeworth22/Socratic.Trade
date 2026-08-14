@@ -100,6 +100,9 @@ describe("ops diagnostic snapshot", () => {
     expect(user).toBeDefined();
     expect(user!.accounts).toHaveLength(2);
     expect(user!.accounts.find((a) => a.connectedAccountId === rothId)?.label).toBe("Roth IRA");
+    const roth = user!.accounts.find((a) => a.connectedAccountId === rothId);
+    expect(roth?.authorityLabel === "Autopilot" || roth?.authorityLabel === "Ask-first").toBe(true);
+    expect(roth?.runStateLabel).toBeTruthy();
     expect(user!.recentRuns.some((r) => r.connectedAccountId === rothId && r.summary?.includes("not available"))).toBe(true);
     expect(user!.recentRuns.find((r) => r.id === runId)?.placedCount).toBe(1);
     expect(user!.recentAudit.some((a) => a.kind === "strategy_run" && a.accountLabel === "Roth IRA")).toBe(true);

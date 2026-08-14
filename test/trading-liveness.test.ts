@@ -269,7 +269,7 @@ describe("trading-liveness", () => {
     // on the ops snapshot). Other tests in this shared-DB file may also have left active
     // accounts behind, so this only checks shape/leakage, not exact counts.
     expect(Object.keys(body.checks.tradingLiveness).sort()).toEqual(
-      ["activeAccounts", "degraded", "marketOpen", "oldestCompletedRunAgeSeconds"].sort()
+      ["activeAccounts", "autopilotAccounts", "degraded", "marketOpen", "oldestCompletedRunAgeSeconds", "runningAskFirstAccounts"].sort()
     );
     expect(typeof body.checks.tradingLiveness.activeAccounts).toBe("number");
     expect(typeof body.checks.tradingLiveness.degraded).toBe("number");

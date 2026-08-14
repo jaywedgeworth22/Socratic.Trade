@@ -9,6 +9,8 @@ import {
   parseKnownUnavailabilityUntil,
   openHardStopReprobeWindow,
   healthReprobeLaneSettingKey,
+  usageMonitorProbeUrls,
+  probeFnForService,
 } from "../src/lib/health-lane-reprobe";
 import {
   logApiHealth,
@@ -110,5 +112,46 @@ describe("health-lane-reprobe", () => {
     expect(r.due).toBe(false);
     expect(r.reason).toBe("waiting_quota_or_known_until");
     expect(healthReprobeLaneSettingKey("alpha-vantage", "env")).toContain("alpha-vantage");
+  });
+
+  it("probes Usage Monitor at /api/ready then /api/health, never /health or /", () => {
+    expect(usageMonitorProbeUrls("https://usage.jays.services")).toEqual([
+      "https://usage.jays.services/api/ready",
+      "https://usage.jays.services/api/health",
+    ]);
+    const prev = process.env.USAGE_MONITOR_BASE_URL;
+    process.env.USAGE_MONITOR_BASE_URL = "https://usage.example.test/";
+    try {
+      expect(usageMonitorProbeUrls()).toEqual([
+        "https://usage.example.test/api/ready",
+        "https://usage.example.test/api/health",
+      ]);
+    } finally {
+      if (prev === undefined) delete process.env.USAGE_MONITOR_BASE_URL;
+      else process.env.USAGE_MONITOR_BASE_URL = prev;
+    }
+  });
+
+  it("usage-monitor probe succeeds on /api/ready 200 and ignores a login 307", async () => {
+    const seen: string[] = [];
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      seen.push(url);
+      if (url.endsWith("/api/ready")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response(null, { status: 307, headers: { Location: "/login" } });
+    }) as typeof fetch;
+    try {
+      const probe = probeFnForService("usage-monitor");
+      expect(probe).not.toBeNull();
+      const result = await probe!();
+      expect(result.ok).toBe(true);
+      expect(seen[0]).toMatch(/\/api\/ready$/);
+      expect(seen.some((u) => u.endsWith("/health") || /usage\.jays\.services\/$/.test(u))).toBe(false);
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
   });
 });

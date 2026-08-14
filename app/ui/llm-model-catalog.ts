@@ -77,8 +77,8 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "Google",
     options: [
       { value: "gemini-flash-lite-latest", label: "gemini-3.5-flash-lite - low-cost Gemini", tier: "$" },
-      { value: "gemini-flash-latest", label: "gemini-flash-latest - stable flagship Flash", tier: "$$", recommendedGreen: true },
-      { value: "gemini-pro-latest", label: "gemini-pro-latest - deepest Gemini reasoning", tier: "$$$", recommendedRed: true }
+      { value: "gemini-flash-latest", label: "gemini-3.7-flash - current flagship Flash", tier: "$$", recommendedGreen: true },
+      { value: "gemini-pro-latest", label: "gemini-3.1-pro-preview - deepest Gemini reasoning", tier: "$$$", recommendedRed: true }
     ]
   },
   {

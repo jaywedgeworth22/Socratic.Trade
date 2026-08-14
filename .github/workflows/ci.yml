@@ -47,8 +47,20 @@ on:
   workflow_dispatch:
   schedule:
     # Nightly full-gate canary on main: a continuous baseline independent of PR traffic,
-    # and it refreshes the .next build cache during quiet stretches.
+    # and it refreshes the .next build cache during quiet stretches. Runs unconditionally
+    # (the redundancy skip below deliberately exempts it) so the cache lineage stays warm.
     - cron: "47 7 * * *"
+    # Hourly backstop for commits that reach main WITHOUT dispatching a push event
+    # (2026-08-13). GitHub raises no workflow events for anything done with the
+    # repository's GITHUB_TOKEN, so a PR merged by github-actions[bot] lands on main and
+    # triggers nothing -- verified on PR #2675 (merge sha ca38bb2979: 27 runs on that sha,
+    # ZERO of them `event: push`) against #2678/#2679/#2680 (human-merged: full run set).
+    # auto-merge-prs.yml now refuses to arm without an elevated token, which is the root
+    # fix; this cron is the backstop for anything that still slips through (Dependabot, a
+    # future App install, a hand-merge from the GitHub UI by a bot identity).
+    # `schedule` is NOT subject to the recursion guard, so it always fires.
+    # The redundancy gate in `classify` makes almost every tick a ~10s no-op.
+    - cron: "17 * * * *"
 
 # Keep the active verification alive when another commit reaches the same PR. GitHub
 # concurrency still retains only the newest pending run, so intermediate pushes collapse
@@ -69,8 +81,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # Needed by the hourly-backstop redundancy check below, which asks the Actions
+      # API whether main's current HEAD already has a green CI run.
+      actions: read
     outputs:
       docs-only: ${{ steps.check.outputs.docs_only }}
+      redundant: ${{ steps.backstop.outputs.redundant }}
     steps:
       - name: Disable lingering sparse-checkout
         run: rm -rf ./* ./.git || true
@@ -132,12 +148,64 @@ jobs:
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Hourly-backstop redundancy gate. The `17 * * * *` cron exists only to verify main
+      # HEADs that arrived without a push event; when main HEAD already has a successful
+      # CI run there is nothing to do, so skip the ~15-minute suite. Applies ONLY to that
+      # cron -- the nightly `47 7 * * *` canary stays unconditional so the Next build-cache
+      # lineage keeps getting refreshed.
+      #
+      # FAIL-CLOSED: any API/parse problem leaves redundant=false, i.e. the full gate runs.
+      # A gate that skips on error would silently stop being a backstop at all.
+      - name: Skip hourly backstop when main HEAD is already verified
+        id: backstop
+        if: github.event_name == 'schedule' && github.event.schedule == '17 * * * *'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          THIS_RUN_ID: ${{ github.run_id }}
+          # This run's OWN head sha, which for a schedule event is main HEAD at trigger
+          # time -- and, crucially, is exactly the tree `actions/checkout` would give
+          # verify-hosted. Re-resolving main HEAD through the API could return a newer
+          # commit than this run would actually verify, so the answer would be about the
+          # wrong tree.
+          HEAD_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          head_sha="$HEAD_SHA"
+          if [ -z "$head_sha" ]; then
+            echo "No head sha on this run -- running the full gate (fail-closed)."
+            echo "redundant=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "this run's head sha (main HEAD at trigger): $head_sha"
+          # This run is itself attached to that sha and is in_progress, so exclude it
+          # explicitly rather than relying on its conclusion being null.
+          green="$(gh api "repos/${REPO}/actions/runs?head_sha=${head_sha}&per_page=100" \
+                     --jq "[.workflow_runs[]
+                            | select(.name == \"CI\")
+                            | select((.id|tostring) != \"${THIS_RUN_ID}\")
+                            | select(.conclusion == \"success\")] | length" 2>/dev/null || echo "")"
+          if ! printf '%s' "${green}" | grep -Eq '^[0-9]+$'; then
+            echo "Could not count prior CI runs for ${head_sha} -- running the full gate (fail-closed)."
+            echo "redundant=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$green" -gt 0 ]; then
+            echo "main HEAD ${head_sha} already has ${green} successful CI run(s) -- backstop not needed."
+            echo "redundant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main HEAD ${head_sha} has NO successful CI run -- this is exactly the case"
+            echo "the backstop exists for (a commit that reached main without a push event)."
+            echo "redundant=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # The one verification lane. Keeps the historic job id `verify-hosted` for
   # branch-protection/status continuity even though there is no longer a second lane to be
   # "hosted" in contrast to.
   verify-hosted:
     needs: [classify]
-    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' }}
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && needs.classify.outputs.redundant != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -201,6 +269,21 @@ jobs:
       # resolves over public HTTPS now (no deploy key), matching main's verify + deploy.yml.
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      # The scheduled ios-ship cron has no `paths:` filter of its own, so
+      # scripts/ios-scheduled-ship-gate.sh is the only thing keeping a
+      # backend-only commit from becoming a TestFlight build (run 31723515355
+      # shipped sha 39c6acee, a pure-backend alerts fix, before the gate
+      # existed). It executes ONLY on the Mac ship runner, so a defect in it
+      # would otherwise be invisible until testers were already being spammed.
+      # These tests are fully offline: throwaway git repos in a scratch dir, no
+      # network, no credentials, no xcodebuild, no App Store Connect.
+      - name: iOS ship-gate scripts (bash)
+        run: |
+          bash -n scripts/ios-scheduled-ship-gate.sh
+          bash -n scripts/test-ios-scheduled-ship-gate.sh
+          bash -n scripts/ios-fleet-pin.sh
+          bash -n scripts/ios-ship-testflight.sh
+          bash scripts/test-ios-scheduled-ship-gate.sh
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
@@ -234,12 +317,13 @@ jobs:
         env:
           CLASSIFY_RESULT: ${{ needs.classify.result }}
           DOCS_ONLY: ${{ needs.classify.outputs.docs-only }}
+          REDUNDANT: ${{ needs.classify.outputs.redundant }}
           HOSTED_RESULT: ${{ needs.verify-hosted.result }}
         run: |
           set -euo pipefail
           note() { echo "$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
           note "### verify gate"
-          note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a})"
+          note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a}, redundant: ${REDUNDANT:-n/a})"
           note "- verify-hosted (GitHub-hosted ubuntu-latest): ${HOSTED_RESULT}"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
@@ -248,6 +332,14 @@ jobs:
           fi
           if [ "$DOCS_ONLY" = "true" ]; then
             note "- RESULT: PASS — docs-only diff — gate skipped by path filter."
+            exit 0
+          fi
+          # Only the hourly backstop cron can set this, and only after confirming main
+          # HEAD already carries a successful CI run. It is never reachable from a
+          # pull_request / merge_group / push event, so it cannot short-circuit the
+          # required check on a PR.
+          if [ "$REDUNDANT" = "true" ]; then
+            note "- RESULT: PASS — hourly backstop: main HEAD already has a green CI run; suite skipped."
             exit 0
           fi
           if [ "$HOSTED_RESULT" = "success" ]; then

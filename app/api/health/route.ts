@@ -2,7 +2,8 @@ import { getInternalSetting, getServiceHealthSummaries, databasePath, resolveApi
 import { HEALTH_REASON_CONSECUTIVE_FAILURES } from "@/lib/db-health";
 import { activeEmbeddingProvider } from "@/lib/vector-db";
 import type { RagEmbedRerankProvider } from "@/lib/rag-metering";
-import { getProviderTierStatus } from "@/lib/provider-tier";
+import { getProviderTierStatus, isDataProvidersDegraded } from "@/lib/provider-tier";
+import { lookupRegisteredPlanTier } from "@/lib/provider-tier-plan";
 import { getLitestreamRemoteInventory } from "@/lib/litestream-remote-inventory";
 import {
   assessLitestreamRuntimeHealth,
@@ -131,6 +132,8 @@ export async function GET(request: Request) {
       }, null);
       checks.tradingLiveness = {
         activeAccounts: liveness.accounts.length,
+        autopilotAccounts: liveness.accounts.filter((a) => a.strategyAuthority === "decide").length,
+        runningAskFirstAccounts: liveness.accounts.filter((a) => a.strategyAuthority !== "decide").length,
         degraded: degradedCount,
         oldestCompletedRunAgeSeconds,
         marketOpen: liveness.marketOpen
@@ -141,14 +144,20 @@ export async function GET(request: Request) {
     // never let trading-liveness reporting break the liveness probe
   }
 
-  // Market-data paid-tier watchdog status (per the nightly provider-tier check). Surfaced here so the
-  // status/admin/health tool can show whether the Massive/FMP subscriptions are live; a key detected
-  // as "free" (lapsed sub) marks the section degraded but does NOT fail the liveness probe.
+  // Market-data tier honesty (nightly provider-tier check).  Surfaced so ops can see whether
+  // Massive is answering at the plan Settings says we paid for.  A deliberate downgrade to
+  // free or a lower paid SKU that MATCHES the configured plan is healthy — including Massive
+  // `history_cap_blocked` on a ~2.5y window when the configured tier is Stocks Basic.  Degrade
+  // only on a paid/expected mismatch or a probe failure.  Never 503s the liveness probe.
   try {
     const tiers = getProviderTierStatus();
     if (Object.keys(tiers).length > 0) {
       checks.dataProviders = tiers;
-      if (Object.values(tiers).some((t) => t?.tier === "free")) checks.dataProvidersDegraded = true;
+      const configuredPlans = {
+        massive: lookupRegisteredPlanTier("massive"),
+        fmp: lookupRegisteredPlanTier("fmp")
+      };
+      if (isDataProvidersDegraded(tiers, configuredPlans)) checks.dataProvidersDegraded = true;
     }
   } catch {
     // never let provider-tier reporting break the health probe
@@ -400,6 +409,13 @@ export async function GET(request: Request) {
       litestreamSource: freshness.source,
       litestreamDegradedReasons: litestreamAssessment.reasons,
       litestreamTiers: litestreamTiers.tiers,
+      // Deliberately NOT folded into `litestreamDegradedReasons` above: that array is typed
+      // `LitestreamDegradationReason[]` and is produced solely by assessLitestreamRuntimeHealth
+      // grading the IPC daemon signal. Tier verdicts are a different assessor with different
+      // evidence, so they travel in their own flat, greppable pair — an external keyword monitor
+      // can be pointed at `litestreamTiersDegraded` without either signal muddying the other.
+      litestreamTiersDegraded: litestreamTiers.degraded,
+      litestreamTierDegradedReasons: litestreamTiers.degradedReasons,
       // How much of the five-level breakdown is actually covered right now. Published so an
       // external monitor can distinguish "all five levels healthy" from "we can see one level
       // and are blind to four" — the state that silently held for a day before 2026-08-12.
@@ -446,6 +462,13 @@ export async function GET(request: Request) {
           void alertStorageWarning(
             `litestream_tier_${tier.tier}_stale`,
             `Litestream "${tier.label}" (level ${tier.tier}) has not produced a new LTX file in the ${where} for ${Math.round(tier.ageSeconds / 60)} minutes (threshold ${Math.round(tier.thresholdSeconds / 60)} min), while level 0 kept advancing.`
+          );
+        } else if (tier.state === "empty" && tier.degraded) {
+          // Distinct alert key from `_stale`: a level that holds NOTHING states a different fact
+          // than one that stopped advancing, and the two should dedupe separately.
+          void alertStorageWarning(
+            `litestream_tier_${tier.tier}_empty_wedged`,
+            `Litestream "${tier.label}" (level ${tier.tier}) holds zero objects in the remote replica.  ${tier.detail}`
           );
         }
       }

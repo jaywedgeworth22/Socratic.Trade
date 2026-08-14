@@ -79,7 +79,9 @@ export function loadNotifyConfig(): NotifyConfig {
       ntfyServer: process.env.NOTIFY_NTFY_SERVER ?? "https://ntfy.sh"
     },
     pushover: {
-      pushoverToken: process.env.PUSHOVER_APP_TOKEN ?? ""
+      // Subject-app token (PUSHOVER_ST_API_TOKEN) is the live ST identity; PUSHOVER_APP_TOKEN
+      // remains the generic alias.  Either one is enough to send.
+      pushoverToken: process.env.PUSHOVER_APP_TOKEN || process.env.PUSHOVER_ST_API_TOKEN || ""
     },
     email: {
       provider: "resend",
@@ -102,6 +104,16 @@ export function loadNotifyConfig(): NotifyConfig {
  * server env; an unset field falls back to env, so operator-configured env
  * keeps working for users who haven't pasted their own.
  */
+/** Operator Pushover user key: Settings target wins, then env. */
+export function operatorPushoverUserKey(prefs: NotifyPrefs): string {
+  return prefs.pushoverTarget?.trim() || process.env.PUSHOVER_USER_KEY?.trim() || "";
+}
+
+/** True when a Pushover send would actually be attempted. */
+export function isPushoverDeliverable(prefs: NotifyPrefs, cfg: NotifyConfig): boolean {
+  return Boolean(cfg.pushover.pushoverToken?.trim() && operatorPushoverUserKey(prefs));
+}
+
 export function loadUserNotifyConfig(userId: string, base: NotifyConfig = loadNotifyConfig()): NotifyConfig {
   const secrets = getNotifyPrefsSecrets(userId);
   return {
@@ -217,6 +229,13 @@ const NTFY_TITLE_TRANSLITERATIONS: ReadonlyArray<readonly [RegExp, string]> = [
   [/[\u2018\u2019]/g, "'"], // curly single quotes
   [/[\u201C\u201D]/g, '"'] // curly double quotes
 ];
+
+export const NOTIFY_EMAIL_SENT_BY = "(sent by Socratic.Trade)";
+
+/** Plain-text Resend body.  Footer names the sending app so a shared From address cannot hide it. */
+export function formatNotifyEmailText(title: string, body: string): string {
+  return `${title}\n\n${body}\n\n${NOTIFY_EMAIL_SENT_BY}`;
+}
 
 function sanitizeNtfyTitleHeader(text: string): string {
   if (!text) return text;
@@ -400,7 +419,7 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
 
   pushover: {
     available: (cfg) => !!cfg.pushover.pushoverToken,
-    target: (p) => p.pushoverTarget || "",
+    target: (p) => operatorPushoverUserKey(p),
     describe: (cfg) => ({
       id: "pushover",
       label: "Pushover",
@@ -442,7 +461,12 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
         {
           method: "POST",
           headers: { authorization: `Bearer ${cfg.email.resendKey}`, "content-type": "application/json" },
-          body: JSON.stringify({ from: cfg.email.from, to: [to], subject, text: `${msg.title}\n\n${msg.body}` })
+          body: JSON.stringify({
+            from: cfg.email.from,
+            to: [to],
+            subject,
+            text: formatNotifyEmailText(msg.title, msg.body)
+          })
         },
         timeoutMs,
         signal
@@ -541,7 +565,11 @@ export async function notify(
   const fetchImpl = deps.fetchImpl ?? fetch;
   const prefs = deps.prefs ?? getNotifyPrefs(userId);
   const results: NotifyChannelResult[] = [];
-  for (const id of prefs.channels ?? []) {
+  const requested = prefs.channels ?? [];
+  // Resend costs money.  When Pushover can deliver, skip email on this send.
+  const skipEmail = isPushoverDeliverable(prefs, cfg);
+  const channelIds = skipEmail ? requested.filter((id) => id !== "email") : requested;
+  for (const id of channelIds) {
     assertNotifyActive(deps);
     const channel = CHANNELS[id];
     if (!channel.available(cfg)) {
