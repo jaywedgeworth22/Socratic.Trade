@@ -218,6 +218,13 @@ const NTFY_TITLE_TRANSLITERATIONS: ReadonlyArray<readonly [RegExp, string]> = [
   [/[\u201C\u201D]/g, '"'] // curly double quotes
 ];
 
+export const NOTIFY_EMAIL_SENT_BY = "(sent by Socratic.Trade)";
+
+/** Plain-text Resend body.  Footer names the sending app so a shared From address cannot hide it. */
+export function formatNotifyEmailText(title: string, body: string): string {
+  return `${title}\n\n${body}\n\n${NOTIFY_EMAIL_SENT_BY}`;
+}
+
 function sanitizeNtfyTitleHeader(text: string): string {
   if (!text) return text;
   let out = text;
@@ -442,7 +449,12 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
         {
           method: "POST",
           headers: { authorization: `Bearer ${cfg.email.resendKey}`, "content-type": "application/json" },
-          body: JSON.stringify({ from: cfg.email.from, to: [to], subject, text: `${msg.title}\n\n${msg.body}` })
+          body: JSON.stringify({
+            from: cfg.email.from,
+            to: [to],
+            subject,
+            text: formatNotifyEmailText(msg.title, msg.body)
+          })
         },
         timeoutMs,
         signal
