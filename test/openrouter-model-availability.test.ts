@@ -42,4 +42,29 @@ describe("OpenRouter account model availability", () => {
       reason: "http_503"
     });
   });
+
+  it("reuses a stale cache after a later 429 instead of emptying rotation", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NODE_ENV", "production");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [{ id: "openai/gpt-5.6-sol" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      )
+      .mockResolvedValueOnce(new Response("", { status: 429 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await getOpenRouterUserModelAvailability("test-key", "stale-ref");
+    expect(first.status).toBe("available");
+    vi.advanceTimersByTime(6 * 60 * 1000);
+    const second = await getOpenRouterUserModelAvailability("test-key", "stale-ref");
+    expect(second.status).toBe("available");
+    if (second.status === "available") {
+      expect(isOpenRouterModelAvailable("gpt-5.6-sol", second.modelIds)).toBe(true);
+    }
+    vi.useRealTimers();
+  });
 });

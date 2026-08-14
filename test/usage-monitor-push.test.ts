@@ -896,5 +896,53 @@ describe("usage-monitor-push", () => {
       expect(ok).toBe(false); // batch as a whole was rejected; the caller skips the named row
       expect(collisions).toEqual(["socratic-trade:llm:cafe"]);
     });
+
+    it("live flush drops the named 409 row, retries the rest, and does not trip the breaker", async () => {
+      const { deriveUsageTelemetryV2IdempotencyKey } = await import("@jaywedgeworth22/congress-trading-shared");
+      const poisonSource = "live-collision-poison";
+      const okSource = "live-collision-sibling";
+      const poisonEventId = expectedTelemetryKey("llm", poisonSource);
+      const poisonV2Key = await deriveUsageTelemetryV2IdempotencyKey({
+        producerId: "socratic-trade",
+        eventId: poisonEventId,
+      });
+
+      let calls = 0;
+      push.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
+        calls += 1;
+        const body = JSON.parse(String(init?.body ?? "{}")) as { events: Array<{ eventId: string }> };
+        if (body.events.some((e) => e.eventId === poisonEventId)) {
+          return new Response(
+            JSON.stringify({ error: `Idempotency key collision for "${poisonV2Key}". Event content differs from the stored event.` }),
+            { status: 409, headers: { "content-type": "application/json" } }
+          );
+        }
+        return ack(body.events.length);
+      }) as unknown as typeof fetch);
+
+      push.pushLlmUsage({
+        sourceEventId: poisonSource,
+        provider: "openai",
+        userId: "local",
+        keySource: "operator",
+        totalTokens: 1,
+      });
+      push.pushLlmUsage({
+        sourceEventId: okSource,
+        provider: "anthropic",
+        userId: "local",
+        keySource: "operator",
+        totalTokens: 2,
+      });
+      await push.flushUsageMonitor();
+      expect(calls).toBe(1);
+      expect(push.__usageMonitorDebugState().breaker.consecutiveFailures).toBe(0);
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(1);
+
+      await push.flushUsageMonitor();
+      expect(calls).toBe(2);
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(0);
+      expect(push.__usageMonitorDebugState().breaker.consecutiveFailures).toBe(0);
+    });
   });
 });

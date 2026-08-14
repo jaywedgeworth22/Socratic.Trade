@@ -51,6 +51,8 @@ export interface AccountTradingLiveness {
   lastCompletedRunAgeSeconds: number | null;
   /** Failed runs, most-recent-first, before hitting a completed run (capped at MAX_RUN_LOOKBACK). */
   consecutiveFailedRuns: number;
+  /** decide = Autopilot (app places trades).  propose = Running / ask-first. */
+  strategyAuthority?: string;
   /** Whether the US equity market was open (regular session) at evaluation time — see the
    *  module docstring for why `stale_last_completed_run` is gated on this. */
   marketOpen: boolean;
@@ -158,9 +160,10 @@ export function getTradingLivenessSummary(now: number = Date.now()): TradingLive
         try {
           const policy = peekPolicy(userId, account.id);
           if (policy.systemState !== "active") continue;
-          accounts.push(
-            computeAccountTradingLiveness(userId, account.id, account.label || account.broker, now)
-          );
+          accounts.push({
+            ...computeAccountTradingLiveness(userId, account.id, account.label || account.broker, now),
+            strategyAuthority: policy.strategyAuthority
+          });
         } catch {
           // Skip an unreadable account's policy/runs rather than failing the whole summary.
         }

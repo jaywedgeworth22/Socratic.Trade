@@ -54,6 +54,35 @@ Gates (node 24): lint 0 errors / 764 warnings (grandfathered), `tsc --noEmit`
 clean, vitest 563 files passed + 1 skipped and 6520 tests passed + 51 skipped,
 `npm run build` clean, ios ship-gate bash suite 13/13.  Rollout:
 `docs/rollouts/2026-08-13-ios-ship-pipeline-repair.md`.
+## Current (2026-08-13 ~3:50pm CT MONET — durable litestream remote-inventory cache)
+
+PR #2665's per-tier backup monitor (`docs/rollouts/2026-08-12-backup-tier-monitor-real-coverage.md`)
+never actually reported in production: `checks.storage.litestreamTierCoverage` stayed
+`remoteInventoryState: "missing"` forever, forcing all 4 remote-only tiers permanently
+`not-observable`. Root cause (re-confirmed via read-only `task_journal` evidence before
+touching code): the collector scheduler lane genuinely worked (932 runs/24h, 0 errors), but
+`getLitestreamRemoteInventory()`'s snapshot lived in a bare module-level variable, and Next's
+build gives the scheduler and the API routes SEPARATE instantiations of
+`src/lib/litestream-remote-inventory.ts` — the writer's assignment and the reader's lookup were
+never the same variable. Fix: persist the snapshot through the existing
+`src/lib/db-durable-state.ts` `durable_state` primitive (no migration needed). `lastAttemptAtMs`
+(the 30-min collection gate) deliberately stays in-memory — reasoning + evidence in the rollout
+note and in a code comment at the call site. Two new tests use `vi.resetModules()` + fresh
+`await import(...)` to force genuinely separate module instances and prove the fix; both
+confirmed to fail against the pre-fix source. Full local gate green: tsc clean, 566/567 test
+files (6569/6620 tests, pre-existing skips), build succeeds, lint 0 errors. Worktree
+`/Users/jay/apps/trading-monet-inventory`, branch `monet/durable-inventory-cache`. Rollout:
+`docs/rollouts/2026-08-13-durable-inventory-cache.md`.
+## Current (2026-08-13 GROK — pickup Monet+Claude quota-cap)
+
+Owner-directed: Monet and Claude hit the session limit (resets 7pm CT).  Inventory +
+team of agents on leftover work.  Already merged today (not re-done): #2684 honest
+stats, #2682 real toggles, #2681 APNs, #2680 FTS yield, #2667 load/Lato, #2662 order
+cancel, #2666 r3.  In flight: unstick #2685+#2683 (phantom), land
+`monet/ship-pipeline-fix`, land Claude r4 leftover, quote Key-Stats dashes + tappable
+fill/position cards, CT/UM CF-account leftover.  Rollout:
+`docs/rollouts/2026-08-13-pickup-monet-claude-cap.md`.
+
 ## Current (2026-08-13 MONET — litestream compaction visibility: make a silent backup failure loud)
 
 Step 3 of a diagnosed fix (Steps 1/2 — disabling Coolify rolling replacement, a one-time B2
@@ -1418,7 +1447,7 @@ tests, build clean. Rollout: `docs/rollouts/2026-08-02-data-provider-round2.md`.
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded. ~~litestream replicating~~ **CORRECTED 2026-08-06 (MONET): litestream→R2 is PAUSED (kill-switch since Aug 4) — no continuous DB backup; owner decision to resume** |
-| Data providers | `dataProvidersDegraded=true` — Massive capped to ~2y history (owner decision pending); filingapi STOPPED 6d. ~~FMP plan probe 403~~ (stale: FMP retired on ST 2026-08-04, health lanes show OFF by design) |
+| Data providers | Honesty rule (2026-08-13): `dataProvidersDegraded` only when the probe disagrees with the paid/configured plan or the provider is not working.  Massive `history_cap_blocked` on ~2.5y is healthy when Settings is Stocks Basic.  ~~FMP plan probe 403~~ (stale: FMP retired on ST 2026-08-04). |
 
 ## Blockers
 

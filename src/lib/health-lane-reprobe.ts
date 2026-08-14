@@ -221,6 +221,17 @@ export function openHardStopReprobeWindow(
 
 type ProbeFn = () => Promise<{ ok: boolean; detail?: string; latencyMs?: number }>;
 
+/** Public JSON health paths on Usage Monitor. Exported for tests. */
+export function usageMonitorProbeUrls(baseRaw?: string): string[] {
+  const base = (
+    baseRaw ||
+    process.env.USAGE_MONITOR_BASE_URL ||
+    process.env.USAGE_MONITOR_URL ||
+    "https://usage.jays.services"
+  ).replace(/\/$/, "");
+  return [`${base}/api/ready`, `${base}/api/health`];
+}
+
 /** Cheap keyless / env probes for common stopped lanes. Unknown services only get a window open. */
 export function probeFnForService(service: string): ProbeFn | null {
   const s = service.toLowerCase();
@@ -285,11 +296,20 @@ export function probeFnForService(service: string): ProbeFn | null {
   if (s === "usage-monitor") {
     return async () => {
       const t0 = Date.now();
-      const base = (process.env.USAGE_MONITOR_URL || "https://usage.jays.services").replace(/\/$/, "");
-      let res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
-      if (!res || !res.ok) res = await fetch(base, { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) return { ok: false, detail: `HTTP ${res.status}`, latencyMs: Date.now() - t0 };
-      return { ok: true, latencyMs: Date.now() - t0 };
+      const urls = usageMonitorProbeUrls();
+      let lastStatus = 0;
+      for (const url of urls) {
+        // Never follow redirects: `/health` and `/` 307 to the login HTML (200),
+        // which would look like a healthy monitor while the real JSON lives at
+        // `/api/ready` and `/api/health`.
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(8000),
+          redirect: "manual"
+        }).catch(() => null);
+        if (res?.ok) return { ok: true, detail: url, latencyMs: Date.now() - t0 };
+        lastStatus = res?.status ?? lastStatus;
+      }
+      return { ok: false, detail: `HTTP ${lastStatus || "fetch-failed"}`, latencyMs: Date.now() - t0 };
     };
   }
   return null;

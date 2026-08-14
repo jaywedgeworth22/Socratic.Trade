@@ -187,6 +187,64 @@ describe("Connection Health & Failure Routing", () => {
     expect(body.checks.dependencies["rag-embed"].ok).toBe(true);
   });
 
+  it("/api/health does not flip dataProvidersDegraded on a matching free Massive plan", async () => {
+    const { healthRoute, db } = await load();
+    const { registerPlanTierLookupForTests } = await import("../src/lib/provider-tier-plan");
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    db.setInternalSetting("providerTier:status:local", {
+      massive: {
+        tier: "free",
+        at: new Date().toISOString(),
+        reason: "plan-access probe: ~2.5y blocked",
+        signal: "history_cap_blocked"
+      }
+    });
+    registerPlanTierLookupForTests((service) => (service === "massive" ? "free" : null));
+    try {
+      const response = await healthRoute.GET(anonymousHealthRequest());
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.checks.dataProviders.massive.tier).toBe("free");
+      expect(body.checks.dataProvidersDegraded).toBeUndefined();
+    } finally {
+      registerPlanTierLookupForTests((service) => db.getUserApiKey("local", service)?.planTier ?? null);
+    }
+  });
+
+  it("/api/health degrades when a paid Massive plan is history-capped or the probe fails", async () => {
+    const { healthRoute, db } = await load();
+    const { registerPlanTierLookupForTests } = await import("../src/lib/provider-tier-plan");
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    registerPlanTierLookupForTests((service) => (service === "massive" ? "starter" : null));
+    try {
+      db.setInternalSetting("providerTier:status:local", {
+        massive: {
+          tier: "free",
+          at: new Date().toISOString(),
+          reason: "plan-access probe: ~2.5y blocked HTTP 403",
+          signal: "history_cap_blocked"
+        }
+      });
+      let body = await (await healthRoute.GET(anonymousHealthRequest())).json();
+      expect(body.ok).toBe(true);
+      expect(body.checks.dataProvidersDegraded).toBe(true);
+
+      db.setInternalSetting("providerTier:status:local", {
+        massive: {
+          tier: "unknown",
+          at: new Date().toISOString(),
+          reason: "recent probe network/timeout error",
+          signal: "probe_error"
+        }
+      });
+      body = await (await healthRoute.GET(anonymousHealthRequest())).json();
+      expect(body.ok).toBe(true);
+      expect(body.checks.dataProvidersDegraded).toBe(true);
+    } finally {
+      registerPlanTierLookupForTests((service) => db.getUserApiKey("local", service)?.planTier ?? null);
+    }
+  });
+
   it("/api/health returns 503 when a critical global dependency fails, but stays 200 for user failures", async () => {
     const { healthRoute, db } = await load();
 

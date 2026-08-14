@@ -187,12 +187,17 @@ export async function eligibleRotationPool(userId: string): Promise<EligibleRota
   if (credentialPool.length === 0 || isTest) return { pool: credentialPool, skipped, availability: "not_checked" };
 
   const credential = resolveLlmCredential("openrouter", userId);
-  if (!credential.key) return { pool: [], skipped: MODEL_ROTATION_POOL.slice(), availability: "not_checked" };
+  if (!credential.key) {
+    // Native-key pool already filtered.  Do not empty it just because OpenRouter is unused.
+    return { pool: credentialPool, skipped, availability: "not_checked" };
+  }
   const availability = await getOpenRouterUserModelAvailability(credential.key, credential.keyRef);
   if (availability.status === "unavailable") {
+    // Fail OPEN to the credential-filtered pool.  A /models/user timeout or 429 must not
+    // wipe rotation — that aborted every scheduled run on 2026-08-13 (availabilityError=timeout).
     return {
-      pool: [],
-      skipped: MODEL_ROTATION_POOL.slice(),
+      pool: credentialPool,
+      skipped,
       availability: "unavailable",
       availabilityError: availability.reason
     };
@@ -259,10 +264,11 @@ function rotationSeatRepresentation(
  * immediately before the Green proposeTrades call). A run that aborts before that writes nothing, so
  * an aborted run never skews the representation weights nor logs a phantom pick with no
  * `proposedByModel` to match (Finding 3). `commit` is ALWAYS present (a no-op when neither seat
- * rotates, on an empty eligible pool, or on any storage error). Never throws: an empty pool or
- * storage error resolves the rotating seats to "" (the normal unconfigured/fail-closed state under
- * no-defaults) rather than letting the raw sentinel reach a provider. `random` is injectable for
- * deterministic tests and defaults to Math.random.
+ * rotates, on an empty eligible pool, or on any storage error). Never throws: an empty credential
+ * pool or storage error resolves the rotating seats to "" (the normal unconfigured/fail-closed
+ * state under no-defaults) rather than letting the raw sentinel reach a provider. An OpenRouter
+ * availability timeout/429 no longer empties a non-empty credential pool. `random` is injectable
+ * for deterministic tests and defaults to Math.random.
  */
 export async function resolveModelRotationForRun(input: {
   userId: string;
@@ -279,6 +285,8 @@ export async function resolveModelRotationForRun(input: {
   llmReasoningEffort?: LlmReasoningEffort;
   /** Same auto-set for a rotating RED seat (the reviewer's own per-team effort field). */
   redTeamReasoningEffort?: LlmReasoningEffort;
+  /** Set when a rotating GREEN/RED seat resolved to "" so the run can show the honest message. */
+  emptyReason?: "empty_pool" | "availability_unavailable";
   commit: () => void;
 }> {
   const rotateGreen = isModelRotationSentinel(input.policy.llmModel);
@@ -293,11 +301,12 @@ export async function resolveModelRotationForRun(input: {
       // reaches — instead of serving the raw "__rotate__" sentinel. The run then fails closed the
       // NORMAL way (key/model precheck → actionable Settings message / route-to-human), never a
       // provider call with a bogus model id.
+      const emptyReason = availability === "unavailable" ? "availability_unavailable" : "empty_pool";
       audit(
         "model_rotation_pick",
         {
           runId: input.runId,
-          outcome: availability === "unavailable" ? "availability_unavailable" : "empty_pool",
+          outcome: emptyReason,
           fallback: "",
           skipped,
           availabilityError
@@ -308,6 +317,7 @@ export async function resolveModelRotationForRun(input: {
       return {
         ...(rotateGreen ? { llmModel: "" } : {}),
         ...(rotateRed ? { redTeamLlmModel: "" } : {}),
+        emptyReason,
         commit: () => {}
       };
     }
@@ -391,6 +401,7 @@ export async function resolveModelRotationForRun(input: {
     return {
       ...(rotateGreen ? { llmModel: "" } : {}),
       ...(rotateRed ? { redTeamLlmModel: "" } : {}),
+      emptyReason: "empty_pool",
       commit: () => {}
     };
   }
