@@ -125,7 +125,16 @@ function isGeminiModel(model: string | undefined): boolean {
 }
 
 function geminiAllowsThinkingOff(model: string | undefined): boolean {
-  return /^(gemini-2\.5-(?:flash|flash-lite)|gemini-flash(?:-lite)?-latest)(?:$|[-.:_])/.test(lowerModel(model));
+  // 3.7 Flash (current default / flash-latest) has mandatory thinking.  Only the
+  // 2.5 Flash class still accepts a full off switch.
+  return /^(gemini-2\.5-(?:flash|flash-lite))(?:$|[-.:_])/.test(lowerModel(model));
+}
+
+function geminiSupportsMinimalThinking(model: string | undefined): boolean {
+  const lower = lowerModel(model);
+  // 3.7 Flash + the catalog alias that now resolves to it: high/medium/low only.
+  if (/gemini-3\.7-flash/.test(lower) || /gemini-flash-latest/.test(lower)) return false;
+  return isGeminiModel(model);
 }
 
 function isMistralReasoningEffortModel(model: string | undefined): boolean {
@@ -185,8 +194,16 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
       settingLabel: "Thinking Level",
       description: geminiAllowsThinkingOff(model)
         ? "Gemini thinking can be disabled or scaled on selected 2.5 Flash models."
-        : "Gemini thinking can be scaled, but this model family does not support turning it fully off.",
-      options: options(geminiAllowsThinkingOff(model) ? ["none", "minimal", "low", "medium", "high"] : ["minimal", "low", "medium", "high"])
+        : geminiSupportsMinimalThinking(model)
+          ? "Gemini thinking can be scaled, but this model family does not support turning it fully off."
+          : "Gemini 3.7 Flash thinking is mandatory (low/medium/high).",
+      options: options(
+        geminiAllowsThinkingOff(model)
+          ? ["none", "minimal", "low", "medium", "high"]
+          : geminiSupportsMinimalThinking(model)
+            ? ["minimal", "low", "medium", "high"]
+            : ["low", "medium", "high"]
+      )
     };
   }
   if (isMistralReasoningEffortModel(model)) {
