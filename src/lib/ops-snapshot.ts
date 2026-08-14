@@ -1,3 +1,4 @@
+import { autonomyAuthorityWord, autonomyStatusLabel } from "./autonomy-labels";
 import { getInternalSetting } from "./db-settings";
 import { getDb, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers, peekPolicy, getServiceHealthSummaries, databasePath } from "./db";
 import { getTaskJournalSummary } from "./db-task-journal";
@@ -59,6 +60,9 @@ export interface OpsAccountSnapshot {
   isActive: boolean;
   systemState: string;
   strategyAuthority: string;
+  /** Human run/authority words.  Autopilot only when decide + active. */
+  runStateLabel: string;
+  authorityLabel: string;
   llmModel: string | null;
   redTeamLlmModel: string | null;
   llmProvider: string | null;
@@ -327,6 +331,8 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
           isActive: account.isActive,
           systemState: policy.systemState,
           strategyAuthority: policy.strategyAuthority,
+          runStateLabel: autonomyStatusLabel(policy.systemState, policy.strategyAuthority),
+          authorityLabel: autonomyAuthorityWord(policy.strategyAuthority),
           llmModel: policy.llmModel ?? null,
           redTeamLlmModel: policy.redTeamLlmModel ?? null,
           llmProvider: greenEndpoint.provider,
@@ -354,6 +360,8 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
           isActive: account.isActive,
           systemState: "unknown",
           strategyAuthority: "unknown",
+          runStateLabel: "Stopped",
+          authorityLabel: "Ask-first",
           llmModel: null,
           redTeamLlmModel: null,
           llmProvider: null,

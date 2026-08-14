@@ -1,7 +1,8 @@
 import { normalizeOpenRouterModelId } from "./llm-provider";
 
 const AVAILABILITY_CACHE_TTL_MS = 5 * 60 * 1_000;
-const AVAILABILITY_TIMEOUT_MS = 5_000;
+/** 5s was too tight: every 2026-08-13 scheduled rotation timed out on /models/user. */
+const AVAILABILITY_TIMEOUT_MS = 12_000;
 
 type AvailabilityResult =
   | { status: "available"; modelIds: ReadonlySet<string> }
@@ -31,11 +32,18 @@ function abortAfter(ms: number): { signal: AbortSignal; cancel: () => void } {
  * preferences/guardrails, which is the relevant distinction from merely having an OpenRouter key.
  * Errors are deliberately returned as unavailable: rotation must not select an unknown model.
  */
+function cachedAvailability(cacheKey: string, allowStale: boolean): CachedAvailability | undefined {
+  const cached = availabilityCache.get(cacheKey);
+  if (!cached) return undefined;
+  if (allowStale || cached.expiresAt > Date.now()) return cached;
+  return undefined;
+}
+
 export async function getOpenRouterUserModelAvailability(key: string, keyRef?: string): Promise<AvailabilityResult> {
   if (process.env.NODE_ENV === "test") return { status: "not_checked" };
   const cacheKey = keyRef || "anonymous-key";
-  const cached = availabilityCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return { status: "available", modelIds: cached.modelIds };
+  const fresh = cachedAvailability(cacheKey, false);
+  if (fresh) return { status: "available", modelIds: fresh.modelIds };
 
   const timeout = abortAfter(AVAILABILITY_TIMEOUT_MS);
   try {
@@ -44,17 +52,27 @@ export async function getOpenRouterUserModelAvailability(key: string, keyRef?: s
       cache: "no-store",
       signal: timeout.signal
     });
-    if (!response.ok) return { status: "unavailable", reason: `http_${response.status}` };
+    if (!response.ok) {
+      const stale = cachedAvailability(cacheKey, true);
+      if (stale) return { status: "available", modelIds: stale.modelIds };
+      return { status: "unavailable", reason: `http_${response.status}` };
+    }
     const payload = (await response.json().catch(() => undefined)) as { data?: Array<{ id?: unknown }> } | undefined;
     const ids = new Set(
       Array.isArray(payload?.data)
         ? payload.data.filter((model) => typeof model.id === "string").map((model) => normalizeOpenRouterModelId(model.id as string))
         : []
     );
-    if (ids.size === 0) return { status: "unavailable", reason: "empty_model_list" };
+    if (ids.size === 0) {
+      const stale = cachedAvailability(cacheKey, true);
+      if (stale) return { status: "available", modelIds: stale.modelIds };
+      return { status: "unavailable", reason: "empty_model_list" };
+    }
     availabilityCache.set(cacheKey, { expiresAt: Date.now() + AVAILABILITY_CACHE_TTL_MS, modelIds: ids });
     return { status: "available", modelIds: ids };
   } catch (error) {
+    const stale = cachedAvailability(cacheKey, true);
+    if (stale) return { status: "available", modelIds: stale.modelIds };
     return { status: "unavailable", reason: error instanceof DOMException && error.name === "AbortError" ? "timeout" : "network_error" };
   } finally {
     timeout.cancel();

@@ -16,8 +16,22 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "1.0.1"
-    CURRENT_PROJECT_VERSION: "2"
+    # RECORD OF WHAT SHIPPED, not the source of truth for what ships next.
+    # The ship script passes MARKETING_VERSION / CURRENT_PROJECT_VERSION on the
+    # xcodebuild command line, so these values never decide a build; App Store
+    # Connect does (max of local counter, ASC, and this file, +1). Keeping them
+    # honest is what lets anyone answer "what version is this repo at?" without
+    # an ASC round trip.
+    #
+    # They had drifted badly: this file still said 1.0.1 / 2 on 2026-08-13 while
+    # ASC had shipped through 1.0.6 (202608131700, uploaded 2026-08-13 10:02 PT).
+    # `--sync-project-version` exists to prevent exactly that and is a silent
+    # no-op for this app: it seds project.pbxproj, and `xcodegen generate` runs
+    # AFTER it and rewrites the pbxproj from THIS file, restoring the stale
+    # value. Until the fleet script also writes project.yml, keep these in sync
+    # by hand whenever you notice drift.
+    MARKETING_VERSION: "1.0.8"
+    CURRENT_PROJECT_VERSION: "202608132022"
     INFOPLIST_KEY_CFBundleDisplayName: "Socratic Trade"
     INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.finance"
 

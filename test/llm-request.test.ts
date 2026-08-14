@@ -62,6 +62,8 @@ describe("llm-request — model resolution", () => {
     expect(reasoningCapabilityForModel("claude-fable-5")?.options.map((o) => o.value)).toEqual(["low", "medium", "high", "xhigh", "max"]);
     expect(reasoningCapabilityForModel("xai/grok-4.3")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high"]);
     expect(reasoningCapabilityForModel("gemini-2.5-flash")?.options.map((o) => o.value)).toEqual(["none", "minimal", "low", "medium", "high"]);
+    expect(reasoningCapabilityForModel("gemini-flash-latest")?.options.map((o) => o.value)).toEqual(["low", "medium", "high"]);
+    expect(reasoningCapabilityForModel("google/gemini-3.7-flash")?.options.map((o) => o.value)).toEqual(["low", "medium", "high"]);
     expect(reasoningCapabilityForModel("gemini-3.1-pro-preview")?.options.map((o) => o.value)).toEqual(["minimal", "low", "medium", "high"]);
     // Mistral (benchmark 2026-07-08 provider 400s): ONLY medium-3-5 has a reasoning
     // capability, and only high|none. small-2603 rejects the reasoning prompt mode outright,
