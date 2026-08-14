@@ -1,3 +1,20 @@
+## Current (2026-08-14 GROK — Monet loading-graphic / Lato leftover closed)
+
+Owner pickup of Monet's "iOS loading graphic and font..." session.  Product code
+was already on `main` (#2667 `73dab29d`).  The dropped session's last step — a
+computed-font check on live `socratictrade.com` — is now done: production login
+at 375×812 computes `lato` on `body` and the Google sign-in button, eight `woff2`
+files serve `font/woff2`, and `--font-sans` resolves through `--font-lato`.
+
+Native splash / unflipped wordmark / iOS Lato are already on TestFlight
+`1.0.13 (202608140722)` (`VALID`, `IN_BETA_TESTING`).  Last ship SHA `f9c89b9a`
+contains #2667 and there are zero later `ios/**` commits, so no new ship was
+cut.  Production 503 Monet saw was the known SEC ingest stall, not this change;
+site was 200 when this pickup started.
+
+Rollout: `docs/rollouts/2026-08-14-pickup-monet-loading-fonts.md`.
+Next action: owner updates TestFlight on the phone.  No code blockers.
+
 ## Current (2026-08-14 MONET — AGENTS.md records the "local gate does not compile Swift" trap)
 
 Docs-only, branch `monet/agents-swift-gate-trap`.  The four-command verify gate
