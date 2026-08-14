@@ -7,6 +7,7 @@ import {
   isNonPlanTierService,
   isRetiredMarketDataService,
   isValidPlanTierForService,
+  massivePlanAllowsDeepHistory,
   PLAN_TIER_REQUIRED_SERVICES,
   planTierOptionsForService,
   quotaWindowsForPlan,
@@ -23,6 +24,16 @@ beforeAll(() => {
 });
 
 describe("provider-tier-plan mapping", () => {
+  it("treats Massive Starter+ as deep-history capable and free/unknown as not", () => {
+    expect(massivePlanAllowsDeepHistory("starter")).toBe(true);
+    expect(massivePlanAllowsDeepHistory("developer")).toBe(true);
+    expect(massivePlanAllowsDeepHistory("advanced")).toBe(true);
+    expect(massivePlanAllowsDeepHistory("free")).toBe(false);
+    expect(massivePlanAllowsDeepHistory("unknown")).toBe(false);
+    expect(massivePlanAllowsDeepHistory(null)).toBe(false);
+    expect(massivePlanAllowsDeepHistory(undefined)).toBe(false);
+  });
+
   it("exposes free/power options for tiingo and free default", () => {
     const opts = planTierOptionsForService("tiingo");
     expect(opts?.map((o) => o.id)).toEqual(expect.arrayContaining(["free", "power", "unknown"]));

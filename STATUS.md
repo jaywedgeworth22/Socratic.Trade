@@ -1391,7 +1391,7 @@ tests, build clean. Rollout: `docs/rollouts/2026-08-02-data-provider-round2.md`.
 | Production (`socratictrade.com`) | `c117afb9` verified live ~05:35Z — SECOND organic cutover since the repair; `b7d88e42` builds next (serialized) |
 | Deploy mechanism | auto-deploy on push to `main` — **repaired 2026-08-02** (webhook HMAC secret was mismatched; see blocker 1) |
 | Core trading health | DB ok, scheduler ticking, 3 active accounts / 0 degraded. ~~litestream replicating~~ **CORRECTED 2026-08-06 (MONET): litestream→R2 is PAUSED (kill-switch since Aug 4) — no continuous DB backup; owner decision to resume** |
-| Data providers | `dataProvidersDegraded=true` — Massive capped to ~2y history (owner decision pending); filingapi STOPPED 6d. ~~FMP plan probe 403~~ (stale: FMP retired on ST 2026-08-04, health lanes show OFF by design) |
+| Data providers | Honesty rule (2026-08-13): `dataProvidersDegraded` only when the probe disagrees with the paid/configured plan or the provider is not working.  Massive `history_cap_blocked` on ~2.5y is healthy when Settings is Stocks Basic.  ~~FMP plan probe 403~~ (stale: FMP retired on ST 2026-08-04). |
 
 ## Blockers
 
