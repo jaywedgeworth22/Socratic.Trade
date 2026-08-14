@@ -1,6 +1,11 @@
 # Active Implementation Plan
 
 > **2026-08-13 GROK — r5 residue (`grok/claude-r5-residue`).** After #2682, implement the leftover `risk_advisory` tail reword + merge-gate.  Do not redo r4 (sibling `grok/claude-r4-pickup`).  Do not flip `VECTOR_ASOF_STRICT` or mint Reddit/X keys.  Owner-decision list in `docs/rollouts/2026-08-13-pickup-r5-residue.md`.
+> **2026-08-14 GROK — Monet audit owner decisions (`grok/audit-owner-decisions`).**
+> Docs-only closeout of four leftovers.  CT trial already matches the 2-week
+> offer.  TestFlight accept, Coolify rolling+B2, and ASC listing writes stay
+> owner-only.  Merge table #2680–#2682, #2684, #2685, #2687, #2709, #2712 all
+> MERGED.  Rollout: `docs/rollouts/2026-08-14-monet-audit-owner-decisions.md`.
 
 > **2026-08-13 GROK — fleet alert triage (`grok/fleet-alerts-aug13`).** Fix RH MCP extra args (#2576), cap Pinecone metadata under 40960, classify engine-overloaded 429s as transient (no usage-limit page), and stop the ST-health keyword monitor from pairing 503 deploys as "credits low." CT senate scout handshake reuse is the follow-up in the CT lane. Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
 
