@@ -24,19 +24,25 @@ type TierId = "0" | "1" | "2" | "3" | "9";
 type TierSource = "local-ltx" | "remote-inventory";
 type RemoteInventoryState = "ok" | "partial" | "failed" | "skipped" | "missing" | "stale";
 
-// Three states, deliberately: "we checked and it is fine", "we checked and it is wedged", and
-// "we cannot see this level at all". The last one used to be reported as a bare "unknown",
-// which read as coverage when it was really blindness — see the 2026-08-12 rollout note.
+// Three states, deliberately: "we measured it and here are its numbers" (known), "we measured it
+// and it holds nothing" (empty), and "we cannot see this level at all" (not-observable). The
+// last one used to be reported as a bare "unknown", which read as coverage when it was really
+// blindness — see the 2026-08-12 rollout note. "empty" was split out of not-observable on
+// 2026-08-14 for the mirror-image reason: a successful listing that returns zero is a
+// measurement, and filing it under "cannot see" hid a six-day deep-compaction outage.
+type TierEmptyVerdict = "wedged" | "upstream-wedged" | "expected";
+
 interface TierFreshness {
   tier: TierId;
   label: string;
-  state: "known" | "not-observable";
+  state: "known" | "empty" | "not-observable";
   source?: TierSource;
   newestActivityAt?: string;
   newestTxid?: string | null;
   ageSeconds?: number;
   thresholdSeconds: number;
   degraded?: boolean;
+  verdict?: TierEmptyVerdict;
   reason?: string;
   detail?: string;
 }
@@ -85,6 +91,24 @@ function parseTier(value: unknown): TierFreshness | undefined {
     reason: reason ?? readText(record?.reason) ?? undefined,
     detail
   });
+
+  // Handled BEFORE the not-observable fallthrough: an "empty" row that fell through would render
+  // as a warn-toned "Not observable", which is the wrong tone AND the wrong word for a level we
+  // listed successfully and found wedged.
+  if (record?.state === "empty") {
+    const verdict = record?.verdict;
+    return {
+      tier: tier as TierId,
+      label,
+      state: "empty",
+      source: record?.source === "local-ltx" ? "local-ltx" : "remote-inventory",
+      thresholdSeconds,
+      verdict: verdict === "wedged" || verdict === "upstream-wedged" ? verdict : "expected",
+      degraded: record?.degraded === true,
+      reason: readText(record?.reason) ?? undefined,
+      detail: readText(record?.detail) ?? "This compaction level holds no objects in the replica."
+    };
+  }
 
   if (record?.state !== "known") {
     return notObservable(
@@ -145,7 +169,9 @@ function parseBackupStatus(value: unknown): BackupStatusData | undefined {
   const coverage = {
     observed: typeof coverageRaw?.observed === "number" && Number.isFinite(coverageRaw.observed)
       ? coverageRaw.observed
-      : tiers.filter((t) => t.state === "known").length,
+      // A level we listed and found empty IS observed — see the server-side note on
+      // `observedTiers` in src/lib/runtime-health.ts.
+      : tiers.filter((t) => t.state === "known" || t.state === "empty").length,
     notObservable: typeof coverageRaw?.notObservable === "number" && Number.isFinite(coverageRaw.notObservable)
       ? coverageRaw.notObservable
       : tiers.filter((t) => t.state === "not-observable").length,
@@ -212,11 +238,13 @@ const REMOTE_INVENTORY_NOTE: Record<RemoteInventoryState, string> = {
 
 function tierTone(tier: TierFreshness): ChipTone {
   if (tier.state === "not-observable") return "warn";
+  if (tier.state === "empty") return tier.degraded ? "neg" : "warn";
   return tier.degraded ? "neg" : "pos";
 }
 
 function tierStatusLabel(tier: TierFreshness): string {
   if (tier.state === "not-observable") return "Not observable";
+  if (tier.state === "empty") return tier.degraded ? "Wedged" : "Empty";
   return tier.degraded ? "Stale" : "Healthy";
 }
 
@@ -433,7 +461,7 @@ export function BackupStatusClient() {
                   <div className="flex items-center gap-2">
                     <Dot tone={tierTone(tier)} pulse={false} />
                     <span className="font-semibold">{tierStatusLabel(tier)}</span>
-                    {tier.state === "known" && tier.source && (
+                    {tier.state !== "not-observable" && tier.source && (
                       <span className="ml-auto flex items-center gap-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
                         {tier.source === "local-ltx" ? <HardDrive size={11} /> : <Cloud size={11} />}
                         {TIER_SOURCE_LABEL[tier.source]}
@@ -444,7 +472,7 @@ export function BackupStatusClient() {
                     )}
                   </div>
 
-                  {tier.state === "not-observable" ? (
+                  {tier.state !== "known" ? (
                     <p className="mt-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
                       {sentenceGaps(tier.detail ?? "")}
                     </p>
@@ -504,6 +532,16 @@ export function BackupStatusClient() {
               health.{SENTENCE_GAP}A level counts as wedged only when it has fallen past its
               threshold <em>while level 0 kept advancing</em>, so an idle database never raises a
               false alarm.
+            </p>
+            <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+              A level that lists successfully and holds <em>nothing</em> is shown as
+              &ldquo;Empty&rdquo; rather than as a level we cannot see.{SENTENCE_GAP}It is called
+              wedged only when the level below it is still producing and holds a backlog spanning
+              more wall clock than this level&apos;s threshold &mdash; Litestream offers every
+              level a compaction opportunity on a fixed interval with no accumulation threshold,
+              so an empty level with a busy level below it has been offered that work on every
+              tick and produced nothing.{SENTENCE_GAP}Until 2026-08-14 this panel called that
+              state normal, and a six-day deep-compaction outage stayed invisible.
             </p>
           </Card>
         </>

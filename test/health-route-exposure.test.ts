@@ -111,6 +111,22 @@ describe("/api/health exposure", () => {
     for (const key of ["litestreamAgeSeconds", "litestreamState", "litestreamStatus", "litestreamDegradedReasons"]) {
       expect(body.checks.storage).toHaveProperty(key);
     }
+    // Weekly R2 cold snapshot (second-provider DR) — public so UM fleet backup can read it.
+    // Object key + age only; never credentials, bucket, or endpoint.
+    const r2Weekly = body.checks.storage.r2Weekly;
+    expect(r2Weekly).toEqual(
+      expect.objectContaining({
+        ok: expect.any(Boolean),
+      }),
+    );
+    expect(r2Weekly).toHaveProperty("ageSeconds");
+    expect(r2Weekly).toHaveProperty("key");
+    expect(r2Weekly).toHaveProperty("reason");
+    // Fresh test DB has never run a snapshot → archive_not_run; still must not 503.
+    expect(typeof r2Weekly.ok).toBe("boolean");
+    expect(r2Weekly.ok === true || r2Weekly.reason === "archive_not_run" || r2Weekly.reason === "archive_stale").toBe(
+      true,
+    );
     expect(body.checks.dependencies.pinecone.ok).toBe(true);
     // Lease timing stays public — only the owner string is redacted.
     expect(typeof body.checks.schedulerLease.ageSeconds).toBe("number");

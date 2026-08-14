@@ -390,7 +390,7 @@ describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
       { systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false },
       etDate("2026-06-10", 10, 0)
     );
-    expect(info.label).toBe("Running · Ask-first");
+    expect(info.label).toBe("Running");
     expect(info.marketOpen).toBe(true);
     expect(info.tone).toBe("pos");
   });
@@ -416,7 +416,7 @@ describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
         at
       );
       expect(info.marketOpen).toBe(true);
-      expect(info.label).toBe("Running · Ask-first");
+      expect(info.label).toBe("Running");
     }
   });
 
@@ -435,7 +435,7 @@ describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
     // keep the plain Running claim and set no marketOpen at all.
     const info = deriveStateInfo({ systemState: "active", strategyAuthority: "decide" }, etDate("2026-06-10", 8, 0));
     expect(info.marketOpen).toBeUndefined();
-    expect(info.label).toBe("Running · Autopilot");
+    expect(info.label).toBe("Autopilot");
     expect(info.tone).toBe("warn");
   });
 
@@ -453,7 +453,7 @@ describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
     // Running: word drops the authority suffix that label carries.
     const running = deriveStateInfo({ systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false }, openMarket);
     expect(running.word).toBe("Running");
-    expect(running.label).toBe("Running · Ask-first");
+    expect(running.label).toBe("Running");
     // Paused-market-closed: word IS the compound phrase — surfaces must not invent "Running".
     const paused = deriveStateInfo({ systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false }, closedMarket);
     expect(paused.word).toBe("Paused · market closed");
