@@ -73,6 +73,10 @@ npx vitest run test/transient-network-resilience.test.ts \
   test/openrouter-credits.test.ts test/broker-health-auto-pause.test.ts \
   test/health-alert-noise-gate.test.ts
 # 4 files / 30 passed
+
+npx vitest run test/account-mutation-pr2-strategy-loop.test.ts
+# 1/1 passed in 17s isolated; full-suite run previously timed out at 30s
+# so the case timeout is now 60s (two full runStrategyOnce passes).
 ```
 
 Full `lint` / `tsc` / `npm test` / `npm run build` run via `scripts/land.sh`.
