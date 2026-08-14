@@ -370,19 +370,29 @@ canonical tags: `Socratic.Trade`, `Congress.Trade`, `API-Usage-Monitor`,
 `Congress-Trading-Shared`), `SLACK_CHANNEL_ID` (per-repo channel override). Setup and FAQ:
 `docs/slack-coordination.md`.
 
+## Fleet docs (start here)
+
+| What | Live / repo path | GitHub |
+|------|------------------|--------|
+| Protocol | `/Users/jay/apps/AGENT-SYNC.md` | https://github.com/jaywedgeworth22/ai-fleet-coordinator/blob/main/AGENT-SYNC.md |
+| Effort boards | `/Users/jay/apps/EFFORT-LOG-PROTOCOL.md` | https://github.com/jaywedgeworth22/ai-fleet-coordinator/blob/main/EFFORT-LOG-PROTOCOL.md |
+| New app | `/Users/jay/Code/ai-fleet-coordinator/docs/ONBOARDING-NEW-APP.md` | https://github.com/jaywedgeworth22/ai-fleet-coordinator/blob/main/docs/ONBOARDING-NEW-APP.md |
+| New seat | `/Users/jay/Code/ai-fleet-coordinator/docs/ONBOARDING-NEW-AGENT.md` | https://github.com/jaywedgeworth22/ai-fleet-coordinator/blob/main/docs/ONBOARDING-NEW-AGENT.md |
+| UI copy | `/Users/jay/apps/FLEET-UI-COPY.md` | https://github.com/jaywedgeworth22/ai-fleet-coordinator/blob/main/FLEET-UI-COPY.md |
+
 ## Delegation & model economics (fleet rule — binding for every agent)
 
-- **Teams of sub-agents are the DEFAULT for substantial work.** Decompose non-trivial tasks
-  into parallel lanes, builder+verifier pairs, review/judge panels, and landing operators
-  wherever your platform supports them. Never serialize big work out of habit; never spawn
-  agents for trivial one-step tasks. Sub-teams follow the same coordination rules as
-  top-level agents (board reservations + #agent-sync claims).
-- **Right-size the model for EVERY task, including each sub-agent you spawn:** use the
-  lowest-cost model that completes that task very effectively. Small tier = mechanical
-  edits/mirrors/greps; mid tier = the default for well-specified implementation with tests
-  and for landing operators; frontier tier ONLY for ambiguous design, money-path-subtle
-  changes, and critical adversarial verification. Escalate a tier when a cheaper model's
-  output fails verification — not preemptively.
+- **Use sub-agents whenever they help.** Teams are the default for substantial work.
+  Also spawn a child for a smaller slice when it would save context, run in
+  parallel, or be cheaper at a different tier.  Do not serialize out of habit.
+  Skip only one-step work where spawn overhead exceeds the task.  Sub-teams
+  follow the same board + #agent-sync rules as top-level agents.
+- **Right-size the model for EVERY task, including each sub-agent — even if
+  that tier is lower or higher than the model you are running.**  Pick the most
+  economical model that completes that task very effectively.  Small = mechanical
+  edits/mirrors/greps; mid = default implementation + landing; frontier = design /
+  money-path / critical verify only.  Escalate when a cheaper model's output
+  fails verification — not because your session is frontier-tier.
 - **Same bar at every tier:** full gates, receipts, and board discipline apply no matter
   which model did the work.
 - Canonical reference: `/Users/jay/apps/AGENT-SYNC.md` — "Delegation & model economics".
