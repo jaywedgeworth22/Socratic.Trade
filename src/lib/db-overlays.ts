@@ -1,5 +1,5 @@
 // db-overlays.ts — owner-authored advisory strategy overlays (migration 81).
-import { randomUUID } from "node:crypto";
+import crypto from "crypto";
 import { getDb } from "./db";
 import { parseOverlayRegimes, type OverlayRegimeTag, type StrategyOverlay } from "./overlay-router";
 
@@ -62,7 +62,7 @@ export function createStrategyOverlay(input: {
   enabled?: boolean;
 }): StrategyOverlayRow {
   const now = new Date().toISOString();
-  const id = randomUUID();
+  const id = crypto.randomUUID();
   const regimes = input.marketRegimes && input.marketRegimes.length > 0 ? input.marketRegimes : (["any"] as OverlayRegimeTag[]);
   getDb()
     .prepare(
