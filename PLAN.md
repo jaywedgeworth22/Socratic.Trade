@@ -1,6 +1,11 @@
 # Active Implementation Plan
 
 > **2026-08-14 GROK — bound per-document FTS mirror (`grok/bound-fts-mirror`).**  #2680's 250ms yield did not bound wall-clock (933 chunks / 279522ms).  Slice at 20 chunks or 6s per tick, resume from FTS row count, heartbeat during FTS.  Do not re-enable the worker in this PR.  Issue #2715.  Rollout: `docs/rollouts/2026-08-14-bound-fts-mirror.md`.
+> **2026-08-14 GROK — Monet audit owner decisions (`grok/audit-owner-decisions`).**
+> Docs-only closeout of four leftovers.  CT trial already matches the 2-week
+> offer.  TestFlight accept, Coolify rolling+B2, and ASC listing writes stay
+> owner-only.  Merge table #2680–#2682, #2684, #2685, #2687, #2709, #2712 all
+> MERGED.  Rollout: `docs/rollouts/2026-08-14-monet-audit-owner-decisions.md`.
 
 > **2026-08-13 GROK — fleet alert triage (`grok/fleet-alerts-aug13`).** Fix RH MCP extra args (#2576), cap Pinecone metadata under 40960, classify engine-overloaded 429s as transient (no usage-limit page), and stop the ST-health keyword monitor from pairing 503 deploys as "credits low." CT senate scout handshake reuse is the follow-up in the CT lane. Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
 
