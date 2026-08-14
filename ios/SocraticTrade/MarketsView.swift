@@ -5,10 +5,11 @@ struct MarketsView: View {
     @State private var ticker = ""
     @State private var presentedSheet: MarketsSheet?
     @State private var presentedSymbol: PresentedSymbol?
+    @State private var presentedItem: PresentedMarketItem?
 
     var body: some View {
         SnapshotScaffold { snapshot in
-            PositionsSection(positions: snapshot.positions, presentedSymbol: $presentedSymbol)
+            PositionsSection(positions: snapshot.positions, presentedItem: $presentedItem)
             OrdersSection(
                 orders: snapshot.orders,
                 // The account this snapshot was taken from, sent with every cancel as the
@@ -43,6 +44,9 @@ struct MarketsView: View {
         .sheet(item: $presentedSymbol) { presented in
             SymbolInfoSheet(symbol: presented.symbol)
         }
+        .sheet(item: $presentedItem) { item in
+            SymbolInfoSheet(item: item)
+        }
     }
 }
 
@@ -54,7 +58,7 @@ private enum MarketsSheet: String, Identifiable {
 
 private struct PositionsSection: View {
     let positions: [Position]
-    @Binding var presentedSymbol: PresentedSymbol?
+    @Binding var presentedItem: PresentedMarketItem?
 
     var body: some View {
         VStack(spacing: 10) {
@@ -67,7 +71,7 @@ private struct PositionsSection: View {
                 )
             } else {
                 ForEach(positions) { position in
-                    PositionRow(position: position, presentedSymbol: $presentedSymbol)
+                    PositionRow(position: position, presentedItem: $presentedItem)
                 }
             }
         }
@@ -76,39 +80,53 @@ private struct PositionsSection: View {
 
 private struct PositionRow: View {
     let position: Position
-    @Binding var presentedSymbol: PresentedSymbol?
+    @Binding var presentedItem: PresentedMarketItem?
 
     var body: some View {
-        AppCard {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
-                        SymbolTapButton(symbol: position.symbol, logoSize: 26) {
-                            presentedSymbol = PresentedSymbol(symbol: position.symbol)
+        Button {
+            presentedItem = .position(position)
+        } label: {
+            AppCard {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 8) {
+                            TickerLogo(symbol: position.symbol, size: 26)
+                            Text(position.symbol)
+                                .font(.appHeadline)
+                            if position.quantity < 0 {
+                                StatusPill("Short", color: AppPalette.negative)
+                            }
                         }
-                        if position.quantity < 0 {
-                            StatusPill("Short", color: AppPalette.negative)
+                        Text("\(AppFormat.number(abs(position.quantity))) shares")
+                            .font(.appSubheadline)
+                            .foregroundStyle(.secondary)
+                        if let sector = position.sector, !sector.isEmpty {
+                            Text(sector)
+                                .font(.appCaption)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    Text("\(AppFormat.number(abs(position.quantity))) shares")
-                        .font(.appSubheadline)
-                        .foregroundStyle(.secondary)
-                    if let sector = position.sector, !sector.isEmpty {
-                        Text(sector)
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 5) {
+                        Text(AppFormat.money(position.marketValue))
+                            .font(.appHeadline)
+                        Text("Avg \(AppFormat.money(position.averageCost))")
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 5) {
-                    Text(AppFormat.money(position.marketValue))
-                        .font(.appHeadline)
-                    Text("Avg \(AppFormat.money(position.averageCost))")
-                        .font(.appCaption)
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.appCaption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 4)
                 }
             }
         }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("\(position.symbol) position")
+        .accessibilityHint("Opens position and company details")
     }
 }
 
