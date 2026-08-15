@@ -1,3 +1,11 @@
+## Current (2026-08-15 GROK — congress overlay fixture)
+
+`verify-hosted` on leftover audit PRs failed in `test/web-sources.test.ts`
+(`overlay.NVDA?.congress?.buyCount` undefined).  Hardcoded eFD mock date
+`06/16/2026` aged out of the 60-day overlay window on 2026-08-15.  Fixture
+now uses relative dates.  Branch `grok/congress-window-fixture`.  Rollout:
+`docs/rollouts/2026-08-15-congress-window-fixture.md`.
+
 ## Current (2026-08-14 GROK — stale ~1200s quotes + origin timeouts)
 
 Production 2026-08-13/14: Autopilot openings warned "quote was ~1200s old",
