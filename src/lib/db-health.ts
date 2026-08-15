@@ -35,7 +35,14 @@ export function isSoftHealthFailure(errorText: string | null | undefined): boole
     /\bkey pool exhausted\b/i.test(errorText) ||
     /\b25\/day cap\b/i.test(errorText) ||
     /\b25 requests per day\b/i.test(errorText) ||
-    /\bproactive daily call budget\b/i.test(errorText)
+    /\bproactive daily call budget\b/i.test(errorText) ||
+    // Caller-budget / AbortController cancellations.  GET /api/quote aborts the
+    // enrichment cascade at 6s; nasdaq-calendar's per-day fetch aborts at 8s.
+    // Those are expected and must not mint "<service> connection failed".
+    /\bthis operation was aborted\b/i.test(errorText) ||
+    /\bthe operation was aborted\b/i.test(errorText) ||
+    /\bAbortError\b/i.test(errorText) ||
+    /\bTimeoutError\b/i.test(errorText)
   );
 }
 

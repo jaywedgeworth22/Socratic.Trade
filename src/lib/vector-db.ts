@@ -48,6 +48,16 @@ import {
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 const RAG_CONNECTION_ALERT_PREFIX = "vectorStore:connectionAlert";
+const PINECONE_WU_BUDGET_SENTRY_KEY = "pinecone:wuBudgetSentryAt";
+const PINECONE_WU_BUDGET_SENTRY_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
+function shouldEmitPineconeWuBudgetSentry(nowMs: number = Date.now()): boolean {
+  const last = getInternalSetting<string>(PINECONE_WU_BUDGET_SENTRY_KEY);
+  const lastMs = last ? Date.parse(last) : Number.NaN;
+  if (Number.isFinite(lastMs) && nowMs - lastMs < PINECONE_WU_BUDGET_SENTRY_COOLDOWN_MS) return false;
+  setInternalSetting(PINECONE_WU_BUDGET_SENTRY_KEY, new Date(nowMs).toISOString());
+  return true;
+}
 const RAG_CONNECTION_ALERT_COOLDOWN_MS = 60 * 60_000;
 const VECTOR_COMMIT_LEASE_MS = 15 * 60_000;
 const VECTOR_RECONCILE_CONFIRMATION_GRACE_MS = 5 * 60_000;
@@ -3031,16 +3041,18 @@ async function storeContextsImpl(
       assertActive: options?.leaseGuard ? () => assertVectorStoreLease(options.leaseGuard) : undefined,
       signal: options?.leaseGuard?.signal
     }), options?.leaseGuard);
-    await settleRagSideEffect(captureRagSentryMessage("warning", "Pinecone write unit budget reached", {
-      provider: "pinecone",
-      operation: "upsert-budget",
-      source: userId === "local" ? "operator" : "user",
-      requestedEstimatedWriteUnits: writeBudget.requested,
-      allowedEstimatedWriteUnits: writeBudget.allowed,
-      skipped: writeUnitBudgetSkipped,
-      usedLast24h: writeBudget.used,
-      limitPer24h: writeBudget.limit
-    }, options?.leaseGuard), options?.leaseGuard);
+    if (shouldEmitPineconeWuBudgetSentry()) {
+      await settleRagSideEffect(captureRagSentryMessage("warning", "Pinecone write unit budget reached", {
+        provider: "pinecone",
+        operation: "upsert-budget",
+        source: userId === "local" ? "operator" : "user",
+        requestedEstimatedWriteUnits: writeBudget.requested,
+        allowedEstimatedWriteUnits: writeBudget.allowed,
+        skipped: writeUnitBudgetSkipped,
+        usedLast24h: writeBudget.used,
+        limitPer24h: writeBudget.limit
+      }, options?.leaseGuard), options?.leaseGuard);
+    }
     if (writeBudget.documents.length === 0) {
       const lastIngest = {
         at: new Date().toISOString(),
