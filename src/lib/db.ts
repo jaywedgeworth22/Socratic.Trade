@@ -2971,6 +2971,72 @@ const MIGRATIONS: Migration[] = [
         console.log(`[db] migration 78: backfilled ${changed} legacy enabledEvents row(s) with previously force-included event types`);
       }
     }
+  },
+  {
+    version: 79,
+    name: "trade_locks",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS trade_locks (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          connected_account_id TEXT NOT NULL,
+          scope TEXT NOT NULL CHECK(scope IN ('account','symbol')),
+          symbol TEXT NOT NULL DEFAULT '',
+          side TEXT NOT NULL CHECK(side IN ('long','short','*')),
+          reason TEXT NOT NULL,
+          trigger TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          until TEXT NOT NULL,
+          active INTEGER NOT NULL DEFAULT 1,
+          UNIQUE(user_id, connected_account_id, scope, symbol, side, trigger)
+        );
+        CREATE INDEX IF NOT EXISTS idx_trade_locks_active
+          ON trade_locks (user_id, connected_account_id, active, until);
+      `);
+    }
+  },
+  {
+    version: 80,
+    name: "vector_doc_lifecycle",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS vector_doc_lifecycle (
+          user_id TEXT NOT NULL,
+          vector_id TEXT NOT NULL,
+          doc_type TEXT NOT NULL,
+          first_seen_at TEXT NOT NULL,
+          last_retrieved_at TEXT,
+          retrieval_count INTEGER NOT NULL DEFAULT 0,
+          archived_at TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, vector_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_vector_doc_lifecycle_live
+          ON vector_doc_lifecycle (user_id, archived_at, doc_type);
+      `);
+    }
+  },
+  {
+    version: 81,
+    name: "strategy_overlays",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS strategy_overlays (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          market_regimes TEXT NOT NULL,
+          instructions TEXT NOT NULL,
+          priority INTEGER NOT NULL DEFAULT 100,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_strategy_overlays_user
+          ON strategy_overlays (user_id, enabled, priority);
+      `);
+    }
   }
 ];
 
@@ -4595,3 +4661,6 @@ export * from "./db-embed-stage";
 export * from "./db-signal-health";
 export * from "./db-lookahead-audit";
 export * from "./db-device-tokens";
+export * from "./db-trade-locks";
+export * from "./db-memory-lifecycle";
+export * from "./db-overlays";

@@ -247,6 +247,7 @@ async function validatePolicy(
   if (policy.socraticOverrideMaxPctOfNav !== undefined && (!Number.isFinite(policy.socraticOverrideMaxPctOfNav) || policy.socraticOverrideMaxPctOfNav <= 0 || policy.socraticOverrideMaxPctOfNav > 100)) return "socraticOverrideMaxPctOfNav must be between 0 and 100.";
   if (policy.sellToFundBuy !== undefined && !["off", "suggest", "propose", "automated"].includes(policy.sellToFundBuy)) return "sellToFundBuy must be off, suggest, propose, or automated.";
   if (policy.outcomeGradingMode !== undefined && !["raw", "alpha"].includes(policy.outcomeGradingMode)) return "outcomeGradingMode must be raw or alpha.";
+  if (policy.benchmarkMode !== undefined && !["market", "sector"].includes(policy.benchmarkMode)) return "benchmarkMode must be market or sector.";
   // NOTE: any non-empty id ≤64 chars is deliberately valid here — this includes custom provider
   // model ids AND the "__rotate__" rotation sentinel (LLM_MODEL_ROTATION_SENTINEL in
   // src/lib/llm-request.ts; resolved to a concrete model at run start by src/lib/model-rotation.ts).

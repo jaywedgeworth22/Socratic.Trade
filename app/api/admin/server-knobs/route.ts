@@ -1,0 +1,84 @@
+import { NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/auth/admin";
+import { audit } from "@/lib/db";
+import {
+  SERVER_KNOB_GROUPS,
+  listEffectiveServerKnobs,
+  resolveServerKnob,
+  serverKnobById,
+  setServerKnobOverride
+} from "@/lib/server-knobs";
+
+export const dynamic = "force-dynamic";
+
+// Admin/operator route for the server-level operational knobs (Admin > Operations panel):
+//   GET  -> catalog + effective value, provenance (override/env/default), and env reset target
+//     for every knob in SERVER_KNOBS_CATALOG.
+//   POST {id, value} -> set a DB override (boolean or number per the knob's type);
+//   POST {id, value: null} -> clear the override, falling back to env/default.
+// Admin-gated via the shared requireAdmin gate (same as app/api/admin/r2-usage — these are
+// UI-driven flips by a verified admin, not token-scripted backfills). Every write audits
+// `server_knob.changed` with the effective before/after values.
+
+function knobsPayload() {
+  return {
+    ok: true,
+    groups: SERVER_KNOB_GROUPS,
+    knobs: listEffectiveServerKnobs().map((row) => ({
+      id: row.spec.id,
+      group: row.spec.group,
+      label: row.spec.label,
+      description: row.spec.description,
+      type: row.spec.type,
+      defaultValue: row.spec.defaultValue,
+      min: row.spec.min,
+      max: row.spec.max,
+      effect: row.spec.effect,
+      value: row.value,
+      source: row.source,
+      envValue: row.envValue,
+      override: row.override
+    }))
+  };
+}
+
+export async function GET(request: Request) {
+  const denied = requireAdmin(request);
+  if (denied) return denied;
+  return NextResponse.json(knobsPayload());
+}
+
+export async function POST(request: Request) {
+  const denied = requireAdmin(request);
+  if (denied) return denied;
+
+  let id: string | undefined;
+  let value: unknown;
+  try {
+    const body = (await request.json()) as { id?: string; value?: unknown };
+    id = body?.id;
+    value = body?.value;
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const spec = id ? serverKnobById(id) : undefined;
+  if (!id || !spec) {
+    return NextResponse.json({ ok: false, error: `Unknown server knob: ${id ?? "(missing id)"}` }, { status: 400 });
+  }
+  if (value !== null) {
+    if (spec.type === "boolean" && typeof value !== "boolean") {
+      return NextResponse.json({ ok: false, error: `${id} expects a boolean value` }, { status: 400 });
+    }
+    if (spec.type === "number" && (typeof value !== "number" || !Number.isFinite(value))) {
+      return NextResponse.json({ ok: false, error: `${id} expects a finite number value` }, { status: 400 });
+    }
+  }
+
+  const from = resolveServerKnob(id);
+  setServerKnobOverride(id, value as boolean | number | null);
+  const to = resolveServerKnob(id);
+  audit("server_knob.changed", { id, from, to, override: value }, "local");
+
+  return NextResponse.json(knobsPayload());
+}

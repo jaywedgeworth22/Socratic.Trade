@@ -77,6 +77,11 @@ export interface PolicyContext {
    */
   isLiveExecution?: boolean;
   /**
+   * Active scoped trade locks for this account (symbol cooldown / losing streak).
+   * Overridable-by-default — same bucket as exposure caps, never a hard cage.
+   */
+  tradeLocks?: import("./db-trade-locks").TradeLockRow[];
+  /**
    * Day-trades already executed on this account over the rolling 5-business-day PDT window
    * (FINRA Rule 4210). Computed by db.countDayTradesInLastBusinessDays and threaded in like the
    * other precomputed counts (dailyOrderCount/dailyNotionalUsed). Absent ⇒ treated as 0.
@@ -623,6 +628,21 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   }
   if (proposal.side === "sell" && sellQuantityExceedsHoldings(proposal, context.positions)) {
     reasons.push(`Sell quantity exceeds current ${symbol} holdings.`);
+  }
+
+  // Per-symbol trade locks (cooldown / losing streak). Overridable preference — never a hard
+  // cage. Only opening sides are gated; sells/covers always flow.
+  const symbolLockAction = context.policy.riskRules?.symbolLockAction ?? "advisory";
+  if (isOpening && symbolLockAction === "close_only" && context.tradeLocks && context.tradeLocks.length > 0) {
+    const querySide = proposal.side === "short" ? "short" : "long";
+    const covering = context.tradeLocks.find((lock) => {
+      if (lock.side !== "*" && lock.side !== querySide) return false;
+      if (lock.scope === "account") return true;
+      return (lock.symbol ?? "").toUpperCase() === symbol;
+    });
+    if (covering) {
+      reasons.push(`symbol lock (${covering.trigger}): ${covering.reason}`);
+    }
   }
 
   // An exit (sell/cover) must carry a resolvable size. A size-less exit (neither quantity nor

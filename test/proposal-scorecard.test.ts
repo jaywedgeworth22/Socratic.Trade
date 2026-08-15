@@ -145,7 +145,7 @@ describe("buildProposalScorecard population", () => {
     expect(scorecard.dataPerspective?.maAlignment).toBe("above_both");
     expect(scorecard.dataPerspective?.priceVsMa).toEqual({ price: 100, sma50: 90, sma200: 80 });
     expect(scorecard.dataPerspective?.volume).toEqual({ current: 5_000_000, avg20d: 4_000_000 });
-    expect(scorecard.sniperPoints).toEqual({ idealBuy: 100, secondaryBuy: 95, stopLoss: 92, takeProfit: 118 });
+    expect(scorecard.sniperPoints).toEqual({ idealBuy: 100, secondaryBuy: 95, secondaryBuyBasis: "owner-set", stopLoss: 92, takeProfit: 118 });
     const attribution = scorecard.signalAttribution!;
     expect(attribution.technical + attribution.news + attribution.fundamentals + attribution.market).toBe(100);
     expect(scorecard.decisionChain).toEqual(["proposed"]);
@@ -172,17 +172,92 @@ describe("buildProposalScorecard population", () => {
     expect(ids).toEqual(["wash_sale", "data_adjustments"]);
   });
 
-  it("secondaryBuy exists ONLY when the owner knob is set, and mirrors for a short", () => {
+  it("secondaryBuy is omitted with neither an ATR read nor the owner knob, and the knob mirrors for a short", () => {
     const base = { referencePrice: 200 };
-    const withoutKnob = buildProposalScorecard({ proposal: buyProposal(base), decision: APPROVED, policy: policyWith() });
-    expect(withoutKnob.sniperPoints?.secondaryBuy).toBeUndefined();
+    const withoutEither = buildProposalScorecard({ proposal: buyProposal(base), decision: APPROVED, policy: policyWith() });
+    expect(withoutEither.sniperPoints?.secondaryBuy).toBeUndefined();
+    expect(withoutEither.sniperPoints?.secondaryBuyBasis).toBeUndefined();
     const shortSide = buildProposalScorecard({
       proposal: buyProposal({ ...base, side: "short" }),
       decision: APPROVED,
       policy: policyWith({ secondaryBuyPullbackPct: 10 })
     });
     expect(shortSide.sniperPoints?.secondaryBuy).toBe(220); // adverse-entry direction for a short is UP
+    expect(shortSide.sniperPoints?.secondaryBuyBasis).toBe("owner-set");
     expect(shortSide.coreConclusion?.noPositionAdvice).toContain("rally to $220.00");
+  });
+
+  describe("secondaryBuy pullback: ATR-derived by default, owner knob overrides", () => {
+    it("derives the pullback from ATR14 (half of ATR as a % of entry) when no knob is set", () => {
+      // atr14=4 on a $100 entry -> raw ATR% is 4%; half of that (2%) sits inside the 1-4% clamp band.
+      const scorecard = buildProposalScorecard({
+        proposal: buyProposal({ referencePrice: 100 }),
+        decision: APPROVED,
+        policy: policyWith(),
+        indicators: { atr14: 4 }
+      });
+      expect(scorecard.sniperPoints?.secondaryBuy).toBe(98);
+      expect(scorecard.sniperPoints?.secondaryBuyBasis).toBe("atr-derived");
+    });
+
+    it("the owner knob OVERRIDES the ATR derivation outright when both are available", () => {
+      const scorecard = buildProposalScorecard({
+        proposal: buyProposal({ referencePrice: 100 }),
+        decision: APPROVED,
+        policy: policyWith({ secondaryBuyPullbackPct: 7 }),
+        indicators: { atr14: 4 } // would derive 2% unassisted — the knob's 7% must win instead
+      });
+      expect(scorecard.sniperPoints?.secondaryBuy).toBe(93);
+      expect(scorecard.sniperPoints?.secondaryBuyBasis).toBe("owner-set");
+    });
+
+    it("is honestly omitted when neither a usable ATR read nor the knob exists", () => {
+      const noIndicators = buildProposalScorecard({
+        proposal: buyProposal({ referencePrice: 100 }),
+        decision: APPROVED,
+        policy: policyWith()
+      });
+      expect(noIndicators.sniperPoints).toEqual({ idealBuy: 100 }); // idealBuy still renders; no secondary basis exists
+      const zeroAtr = buildProposalScorecard({
+        proposal: buyProposal({ referencePrice: 100 }),
+        decision: APPROVED,
+        policy: policyWith(),
+        indicators: { atr14: 0 }
+      });
+      expect(zeroAtr.sniperPoints?.secondaryBuy).toBeUndefined();
+      expect(zeroAtr.sniperPoints?.secondaryBuyBasis).toBeUndefined();
+    });
+
+    it("clamps to the 1% floor for a near-zero ATR read", () => {
+      // atr14=1 on a $100 entry -> raw ATR% 1%; half (0.5%) is below the 1% floor, so it clamps up.
+      const scorecard = buildProposalScorecard({
+        proposal: buyProposal({ referencePrice: 100 }),
+        decision: APPROVED,
+        policy: policyWith(),
+        indicators: { atr14: 1 }
+      });
+      expect(scorecard.sniperPoints?.secondaryBuy).toBe(99);
+      expect(scorecard.sniperPoints?.secondaryBuyBasis).toBe("atr-derived");
+    });
+
+    it("clamps to the 4% cap for a large ATR read, and mirrors direction for a short", () => {
+      // atr14=20 on a $100 entry -> raw ATR% 20%; half (10%) is far above the 4% cap.
+      const long = buildProposalScorecard({
+        proposal: buyProposal({ referencePrice: 100 }),
+        decision: APPROVED,
+        policy: policyWith(),
+        indicators: { atr14: 20 }
+      });
+      expect(long.sniperPoints?.secondaryBuy).toBe(96);
+      const short = buildProposalScorecard({
+        proposal: buyProposal({ referencePrice: 100, side: "short" }),
+        decision: APPROVED,
+        policy: policyWith(),
+        indicators: { atr14: 20 }
+      });
+      expect(short.sniperPoints?.secondaryBuy).toBe(104); // adverse-entry direction for a short is UP
+      expect(short.sniperPoints?.secondaryBuyBasis).toBe("atr-derived");
+    });
   });
 
   it("maAlignment is honestly unknown with only one MA, and mixed between them", () => {
@@ -301,6 +376,14 @@ describe("scorecardIndicatorsFromBars", () => {
     expect(indicators.sma50).toBe(175.5); // mean of 151..200
     expect(indicators.sma200).toBe(100.5); // mean of 1..200
     expect(indicators.avgVolume20d).toBe(1_000);
+    expect(indicators.atr14).toBe(1); // close-only fallback: |close - prevClose| is 1 every bar
+  });
+
+  it("computes ATR14 from high/low/close bars, and omits it below period+1 bars", () => {
+    const bars = Array.from({ length: 15 }, () => ({ high: 105, low: 95, close: 100 }));
+    expect(scorecardIndicatorsFromBars(bars).atr14).toBe(10); // trueRange = max(10, 5, 5) every bar
+    const tooFew = Array.from({ length: 10 }, () => ({ high: 105, low: 95, close: 100 }));
+    expect(scorecardIndicatorsFromBars(tooFew).atr14).toBeUndefined();
   });
 
   it("omits what the series cannot support (short series, missing volumes)", () => {

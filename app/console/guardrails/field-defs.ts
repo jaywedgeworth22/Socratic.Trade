@@ -31,6 +31,20 @@ export const ESSENTIALS: FieldDef[] = [
   { path: "riskRules.accuracyBreakerWindow", label: "Hit-rate window", kind: "int", optional: true, looserWhen: "up", hint: `Optional second accuracy trigger: the rolling window of matured decisive outcomes (won/lost/flat on real trades) the hit-rate floor below is measured over. Only evaluates once a full window exists — never fires on a tiny sample. Blank = off.` },
   { path: "riskRules.accuracyBreakerMinHitRatePct", label: "Min hit rate", kind: "pct", optional: true, looserWhen: "down", hint: `Fires the accuracy breaker when the win rate over the hit-rate window drops below this floor. Needs the window above set. Blank = off.` },
   { path: "riskRules.accuracyBreakerRecoveryWins", label: "Breaker recovery streak", kind: "int", optional: true, looserWhen: "down", hint: `Once degraded, the accuracy-breaker marker clears after this many most-recent outcomes show no loss (default 2). Recovery clears the marker and notifies — it never flips a close-only account back on its own; you re-arm.` },
+  { path: "riskRules.symbolCooldownMinutes", label: "Per-symbol cooldown", kind: "int", optional: true, looserWhen: "up", hint: `Minutes after a close before the same symbol can be re-entered. Blank = off. ${ADVISORY_NOTE}` },
+  { path: "riskRules.symbolLosingStreakLimit", label: "Per-symbol losing streak", kind: "int", optional: true, looserWhen: "up", hint: `Writes a symbol lock after this many consecutive losing closes on that name. Blank = off. ${ADVISORY_NOTE}` },
+  {
+    path: "riskRules.symbolLockAction",
+    label: "Symbol-lock response",
+    kind: "select",
+    optional: true,
+    options: [
+      { value: "advisory", label: "Advisory — default" },
+      { value: "close_only", label: "Block new entries (overridable)" }
+    ],
+    looseRank: { advisory: 1, close_only: 0 },
+    hint: `What a per-symbol lock does. Advisory (default) is a receipt the agent can override. Block still honors autonomyOverride — never a hard cage.`
+  },
   { path: "runCadenceMinutes", label: "Run every", kind: "minutes" },
   { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on", hint: "Allows the system to run scheduled or event-triggered strategy scans during extended hours (pre-market and after-hours)." },
   { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on", hint: "Permits the agent to place orders configured to fill outside regular market hours." }
@@ -72,7 +86,7 @@ export const EXPOSURE: FieldDef[] = [
 
 export const ENTRY_QUALITY: FieldDef[] = [
   { path: "maxEntryDriftPct", label: "Max entry drift (%)", kind: "pct", optional: true, looserWhen: "up", hint: "Rejects a stale opening order whose price moved this far from where the idea was priced." },
-  { path: "secondaryBuyPullbackPct", label: "Secondary entry pullback (%)", kind: "pct", optional: true, hint: "Scorecard display only: adds a secondary entry level this far beyond the entry anchor (below it for a long).  Blank omits the level — nothing is ever traded from it." },
+  { path: "secondaryBuyPullbackPct", label: "Secondary entry pullback (%)", kind: "pct", optional: true, hint: "Scorecard display only: overrides the built-in ATR-derived secondary entry with this exact % beyond the entry anchor.  Blank keeps the automatic ATR-based distance (never traded from either)." },
   { path: "maxQuoteAgeSec", label: "Max quote age", kind: "seconds", optional: true, looserWhen: "up", hint: "Opening orders blocked on stale quotes. Blank = gate off. Missing timestamps count as stale when on." },
   { path: "maxFundamentalsAgeSec", label: "Max fundamentals age", kind: "seconds", optional: true, looserWhen: "up" },
   { path: "marketableLimitEntries", label: "Marketable-limit entries", kind: "bool", hint: "Converts opening market orders to tightly-priced limits so a fast tape can't fill arbitrarily far past the quote." }

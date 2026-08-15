@@ -93,7 +93,7 @@ const EVENT_HINT: Record<NotificationEventType, string> = {
   autonomy_halted_on_boot: "a restart halted trading autonomy until you re-arm it",
   option_alert: "an option contract changed status or expired",
   earningscalls_entitlement_blocked: "the EarningsCalls transcript program paused on a plan-entitlement problem",
-  risk_advisory: "a risk guardrail was breached but the agent is still in control (advisory)",
+  risk_advisory: "a risk guardrail was breached; nothing was blocked or changed (advisory)",
   protective_exit_failing: "a synthetic protective exit keeps failing and is still retrying",
   signal_health: "the AI's confidence signal is losing predictive power against matured outcomes (advisory)",
   lookahead_leak: "the weekly lookahead audit found decision inputs that differ when replayed from point-in-time data (advisory)",
@@ -825,13 +825,15 @@ function DataSourcesCard() {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-[length:var(--con-fs-sm)] font-semibold">{row.label}</span>
                         <Chip
-                          tone={row.source === "user" ? "pos" : row.source === "env" ? "accent" : "muted"}
+                          tone={row.source === "user" ? "pos" : row.source === "server" ? "info" : row.source === "env" ? "accent" : "muted"}
                           title={
                             row.source === "user"
                               ? "You overrode this for your account"
-                              : row.source === "env"
-                                ? "Following server Infisical/env"
-                                : "Catalog default"
+                              : row.source === "server"
+                                ? "Server-level override set by the operator in Admin > Operations"
+                                : row.source === "env"
+                                  ? "Following server Infisical/env"
+                                  : "Catalog default"
                           }
                         >
                           {row.source}
