@@ -67,6 +67,8 @@ export const CATALOG_SOURCES: CatalogSource[] = [
   { id: "alpha-vantage", label: "Alpha Vantage", status: "scarce", notes: "~25/day native keys; earnings calendar market-wide; often skipped when Alpaca news covers sentiment." },
   { id: "sec-xbrl", label: "SEC EDGAR XBRL", status: "keyless", notes: "Authoritative D/E, shares outstanding; slow." },
   { id: "sec-edgar-form4", label: "SEC Form 4 / insider web signals", status: "keyless", notes: "insiderSentiment overlay from cached web sources." },
+  { id: "sec-edgar-13f", label: "SEC 13F-HR superinvestor holdings", status: "keyless", notes: "Official EDGAR 13F books for a curated filer set. Observe only." },
+  { id: "ark-funds-holdings", label: "ARK official daily holdings CSVs", status: "keyless", notes: "ARKK/Q/W/G/F/X from assets.ark-funds.com. Observe only." },
   { id: "sec-filings-rag", label: "SEC 10-K/10-Q/8-K ingest → vector DB", status: "active", notes: "RAG corpus; presented as retrievedFinancialContext (not full corpus dump)." },
   { id: "filingapi", label: "FilingAPI.dev", status: "scarce", notes: "~50/day free; sector/earnings/insider." },
   { id: "congress.trade", label: "Congress.Trade peer", status: "peer", notes: "Disclosures/analytics default ON; fundamentals peer default OFF." },
@@ -299,6 +301,26 @@ export const CATALOG_FIELDS: CatalogField[] = [
       src("rapidapi-*", "insiders-rapidapi"),
       src("symbol_field_latest")
     ]
+  },
+  {
+    id: "thirteenFHoldings",
+    label: "13F superinvestor holdings",
+    category: "ownership_insider",
+    valueKind: "string",
+    description: "Tracked 13F-HR holders and QoQ adds/exits.",
+    provenanceRequired: true,
+    llmKey: "smartMoney",
+    sources: [src("sec-edgar-13f", "Official EDGAR", true)]
+  },
+  {
+    id: "arkHoldings",
+    label: "ARK daily holdings",
+    category: "ownership_insider",
+    valueKind: "string",
+    description: "Official ARK ETF weight and day-over-day adds/exits.",
+    provenanceRequired: true,
+    llmKey: "smartMoney",
+    sources: [src("ark-funds-holdings", "Official ARK CSV", true)]
   },
   // Analyst / news
   {

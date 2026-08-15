@@ -50,6 +50,7 @@ import { getStoredMcpOAuthTokens } from "./mcp-oauth";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { getSchedulerState } from "./scheduler";
 import { getCongressDataset, getInsiderDataset, getWebSourcesStatus, type CongressTrade } from "./web-sources";
+import { listRecentArkHoldings, listRecentThirteenFChanges } from "./db";
 import { readCongressScoreVerdict } from "./congress-score-gate";
 import { fetchMacroData, determineMarketRegime, type MacroData } from "./macro";
 import { deriveMacroMetrics } from "./macro-metrics";
@@ -1081,6 +1082,20 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
       insider: [...(getInsiderDataset()?.filings ?? [])]
         .sort((a, b) => (b.filedAt ?? "").localeCompare(a.filedAt ?? ""))
         .slice(0, 8),
+      thirteenF: listRecentThirteenFChanges(12).map((r) => ({
+        ticker: r.ticker,
+        filerName: r.filerName,
+        periodEnd: r.periodEnd,
+        shares: r.shares,
+        valueUsd: r.valueUsd
+      })),
+      ark: listRecentArkHoldings(12).map((r) => ({
+        ticker: r.ticker,
+        fund: r.fund,
+        asOf: r.asOf,
+        weightPct: r.weightPct,
+        shares: r.shares
+      })),
       // Item 2: cached congress-score go/no-go verdict (pass/fail + stats), null when never evaluated.
       // Surfaces whether the congressional scan signal is currently statistically validated; gating on it
       // is opt-in via policy.tuning.congressGoNoGoGating.

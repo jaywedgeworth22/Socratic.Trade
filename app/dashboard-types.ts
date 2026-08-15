@@ -113,10 +113,14 @@ export interface DashboardSnapshot {
     sec8k?: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
     earningsTranscripts?: FmpTranscriptStatus;
     technical?: { enabled: boolean; source: "tradingview" | "computed"; fetchedAt?: string; recordCount: number; due: boolean; ttlMs: number; secretConfigured: boolean };
+    thirteenF?: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
+    ark?: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number; asOf?: string };
   };
   smartMoney?: {
     congress: Array<{ symbol: string; member: string; chamber: string; side: "buy" | "sell"; amountLow?: number; amountHigh?: number; tradedAt: string; disclosedAt?: string }>;
     insider: Array<{ symbol: string; owner: string; buyTx: number; sellTx: number; filedAt: string }>;
+    thirteenF?: Array<{ ticker: string; filerName: string; periodEnd: string; shares: number; valueUsd: number }>;
+    ark?: Array<{ ticker: string; fund: string; asOf: string; weightPct: number; shares: number }>;
     /** Cached congress-score go/no-go verdict (pass/fail + stats); null when never evaluated.
      *  Nested here alongside the other smart-money congress data to match the server payload
      *  (src/lib/dashboard.ts). */

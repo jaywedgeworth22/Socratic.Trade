@@ -1,3 +1,13 @@
+## Current (2026-08-15 GROK — 13F + ARK + Form 4 idea sources)
+
+Owner: run 13F, ARK daily holdings, and Form 4 as thoroughly as possible and
+fully operational.  Official SEC EDGAR + official ARK CSVs only.  Observe-only
+(no auto-copy).  eToro CopyTrader stays off.
+
+Branch `grok/idea-sources-13f-ark-form4`, worktree
+`~/apps/trading-grok-idea-sources`.  Rollout:
+`docs/rollouts/2026-08-15-idea-sources-13f-ark-form4.md`.
+
 ## Current (2026-08-14 GROK — unstick PR #2707 Kalshi/exits/options)
 
 Rematched `origin/main` (merge-tree clean; GitHub CONFLICTING was phantom).

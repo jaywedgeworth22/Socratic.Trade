@@ -1,0 +1,331 @@
+/**
+ * Official SEC EDGAR 13F-HR ingest for a curated superinvestor set.
+ * Observe-only idea source — never auto-copies a filer's book.
+ */
+import { createHash } from "crypto";
+import {
+  audit,
+  getInternalSetting,
+  setInternalSetting,
+  lookupTickerByCusip,
+  upsertCusipTicker,
+  replaceThirteenFFiling,
+  listThirteenFHoldingsForTicker,
+  listLatestThirteenFPeriodByFiler,
+  listThirteenFHoldingsForFilerPeriod,
+  countThirteenFHoldings
+} from "../db";
+import { normalizeSymbol } from "../money";
+import { resolveSourceNumber } from "../source-settings";
+import { retryBackoffMs } from "./congress";
+import { politeFetchText, runRateLimited, secUserAgent } from "./http";
+import { padCik } from "./sec-filings";
+import type { WebSourceRefreshResult } from "./types";
+
+const DATASET_KEY = "webSource:13f:dataset";
+const ATTEMPT_KEY = "webSource:13f:lastAttempt";
+const SEC_BASE = "https://www.sec.gov";
+const OPENFIGI = "https://api.openfigi.com/v3/mapping";
+const DEFAULT_TTL_MS = 7 * 24 * 60 * 60_000;
+
+export const DEFAULT_13F_FILERS: readonly { cik: string; name: string; short: string }[] = [
+  { cik: "0001067983", name: "Berkshire Hathaway", short: "Berkshire" },
+  { cik: "0001336528", name: "Pershing Square Capital Management", short: "Pershing" },
+  { cik: "0001649339", name: "Scion Asset Management", short: "Burry" },
+  { cik: "0001079114", name: "Greenlight Capital", short: "Greenlight" },
+  { cik: "0001536411", name: "Duquesne Family Office", short: "Druckenmiller" },
+  { cik: "0001040273", name: "Third Point", short: "Third Point" },
+  { cik: "0001167483", name: "Tiger Global Management", short: "Tiger" },
+  { cik: "0001135730", name: "Coatue Management", short: "Coatue" },
+  { cik: "0000921669", name: "Icahn Associates", short: "Icahn" },
+  { cik: "0001418814", name: "ValueAct Capital", short: "ValueAct" },
+  { cik: "0001656456", name: "Appaloosa LP", short: "Tepper" },
+  { cik: "0001061768", name: "Baupost Group", short: "Baupost" }
+];
+
+export interface ThirteenFInfoRow {
+  cusip: string;
+  issuerName: string;
+  titleOfClass: string;
+  shares: number;
+  valueThousands: number;
+  sshPrnType: string;
+}
+
+export interface ThirteenFSignal {
+  bulletin: string;
+  filerCount: number;
+  addedBy: string[];
+  increasedBy: string[];
+  exitedBy: string[];
+  periodEnd?: string;
+}
+
+export interface ThirteenFDataset {
+  fetchedAt: string;
+  recordCount: number;
+  filers: number;
+}
+
+export function thirteenFTtlMs(): number {
+  const v = resolveSourceNumber("WEB_SOURCE_13F_TTL_MS");
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_TTL_MS;
+}
+
+export function getThirteenFDataset(): ThirteenFDataset | undefined {
+  return getInternalSetting<ThirteenFDataset>(DATASET_KEY);
+}
+
+export function isThirteenFRefreshDue(now: number = Date.now()): boolean {
+  const lastAttempt = getInternalSetting<string>(ATTEMPT_KEY);
+  if (lastAttempt && now - Date.parse(lastAttempt) < retryBackoffMs()) return false;
+  const dataset = getThirteenFDataset();
+  if (!dataset?.fetchedAt) return true;
+  return now - Date.parse(dataset.fetchedAt) >= thirteenFTtlMs();
+}
+
+/** Latest 13F-HR accession + folder from a company atom feed. */
+export function parseLatest13FFeed(atomXml: string): { dir: string; accession: string } | null {
+  for (const m of atomXml.matchAll(/href="([^"]*\/Archives\/edgar\/data\/[^"]*?index[^"]*)"/g)) {
+    const link = m[1];
+    const accession = link.match(/(\d{10}-\d{2}-\d{6})/)?.[1];
+    if (!accession) continue;
+    return { dir: link.replace(/\/[^/]+$/, "/"), accession };
+  }
+  return null;
+}
+
+export function pick13FXmls(indexJson: unknown): { infoTable?: string; primary?: string } {
+  const items = (indexJson as { directory?: { item?: Array<{ name?: string }> } })?.directory?.item;
+  if (!Array.isArray(items)) return {};
+  const names = items.map((i) => i?.name ?? "").filter(Boolean);
+  return {
+    infoTable: names.find((n) => /infoTable|informationtable|form13fInfoTable/i.test(n) && /\.xml$/i.test(n)),
+    primary: names.find((n) => /primary_doc|primary-doc|form13f/i.test(n) && /\.xml$/i.test(n))
+  };
+}
+
+export function parse13FPeriod(coverXml: string): string | undefined {
+  const raw =
+    coverXml.match(/<reportCalendarOrQuarter>([^<]+)<\/reportCalendarOrQuarter>/)?.[1]?.trim() ??
+    coverXml.match(/<periodOfReport>([^<]+)<\/periodOfReport>/)?.[1]?.trim();
+  if (!raw) return undefined;
+  const iso = raw.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  return iso;
+}
+
+export function parse13FInfoTable(xml: string): ThirteenFInfoRow[] {
+  const out: ThirteenFInfoRow[] = [];
+  const blocks = xml.split(/<infoTable[\s>]/i).slice(1);
+  for (const block of blocks) {
+    const cusip = (block.match(/<cusip>([^<]+)<\/cusip>/i)?.[1] ?? "").replace(/\s+/g, "").toUpperCase();
+    const issuerName = (block.match(/<nameOfIssuer>([^<]+)<\/nameOfIssuer>/i)?.[1] ?? "").replace(/\s+/g, " ").trim();
+    const titleOfClass = (block.match(/<titleOfClass>([^<]+)<\/titleOfClass>/i)?.[1] ?? "").trim();
+    const shares = Number(block.match(/<sshPrnamt>([\d.]+)<\/sshPrnamt>/i)?.[1] ?? 0);
+    const valueThousands = Number(block.match(/<value>([\d.]+)<\/value>/i)?.[1] ?? 0);
+    const sshPrnType = (block.match(/<sshPrnamtType>([^<]+)<\/sshPrnamtType>/i)?.[1] ?? "SH").trim();
+    if (!cusip || !Number.isFinite(shares) || shares <= 0) continue;
+    out.push({
+      cusip,
+      issuerName,
+      titleOfClass,
+      shares,
+      valueThousands: Number.isFinite(valueThousands) ? valueThousands : 0,
+      sshPrnType
+    });
+  }
+  return out;
+}
+
+export function previousQuarterEnd(periodEnd: string): string {
+  const [y, m] = periodEnd.split("-").map(Number);
+  const month = m - 3;
+  if (month > 0) {
+    const last = new Date(Date.UTC(y, month, 0));
+    return last.toISOString().slice(0, 10);
+  }
+  const last = new Date(Date.UTC(y - 1, 12 + month, 0));
+  return last.toISOString().slice(0, 10);
+}
+
+export function formatThirteenFEvidenceCard(ticker: string): string {
+  const rows = listThirteenFHoldingsForTicker(ticker, 24);
+  if (rows.length === 0) return "";
+  const lines = [`[SEC 13F holdings in ${ticker} — tracked filers, latest periods]`];
+  for (const r of rows.slice(0, 16)) {
+    lines.push(
+      `- ${r.periodEnd}: ${r.filerName} holds ${r.shares.toLocaleString()} sh / $${Math.round(r.valueUsd).toLocaleString()} [acc: ${r.accession}]`
+    );
+  }
+  return lines.join("\n");
+}
+
+export function getThirteenFSignals(symbols: string[]): Record<string, ThirteenFSignal> {
+  const wanted = new Set(symbols.map(normalizeSymbol).filter(Boolean));
+  const out: Record<string, ThirteenFSignal> = {};
+  for (const symbol of wanted) {
+    const current = listThirteenFHoldingsForTicker(symbol, 80);
+    if (current.length === 0) continue;
+    const latestPeriod = current[0].periodEnd;
+    const latest = current.filter((r) => r.periodEnd === latestPeriod);
+    const addedBy: string[] = [];
+    const increasedBy: string[] = [];
+    const exitedBy: string[] = [];
+    const seenFilers = new Set<string>();
+    for (const row of latest) {
+      if (seenFilers.has(row.filerCik)) continue;
+      seenFilers.add(row.filerCik);
+      const priorPeriod = previousQuarterEnd(row.periodEnd);
+      const prior = listThirteenFHoldingsForFilerPeriod(row.filerCik, priorPeriod).find(
+        (p) => p.ticker === symbol || p.cusip === row.cusip
+      );
+      if (!prior) addedBy.push(row.filerName);
+      else if (row.shares > prior.shares * 1.05) increasedBy.push(row.filerName);
+    }
+    const priorPeriods = listLatestThirteenFPeriodByFiler();
+    for (const { filerCik, periodEnd } of priorPeriods) {
+      if (periodEnd === latestPeriod) continue;
+      if (latest.some((r) => r.filerCik === filerCik)) continue;
+      const priorHold = listThirteenFHoldingsForFilerPeriod(filerCik, periodEnd).find((p) => p.ticker === symbol);
+      if (priorHold) exitedBy.push(priorHold.filerName);
+    }
+    const holders = latest.map((r) => r.filerName);
+    const bits: string[] = [];
+    if (addedBy.length) bits.push(`opened by ${addedBy.slice(0, 3).join(", ")}`);
+    if (increasedBy.length) bits.push(`increased by ${increasedBy.slice(0, 3).join(", ")}`);
+    if (exitedBy.length) bits.push(`exited by ${exitedBy.slice(0, 2).join(", ")}`);
+    if (bits.length === 0 && holders.length > 0) {
+      bits.push(`held by ${holders.slice(0, 3).join(", ")}${holders.length > 3 ? ` +${holders.length - 3}` : ""}`);
+    }
+    if (bits.length === 0) continue;
+    out[symbol] = {
+      bulletin: `13F (${latestPeriod}): ${symbol} ${bits.join("; ")}.`,
+      filerCount: holders.length,
+      addedBy,
+      increasedBy,
+      exitedBy,
+      periodEnd: latestPeriod
+    };
+  }
+  return out;
+}
+
+export async function resolveCusipsToTickers(
+  cusips: string[],
+  fetchImpl: typeof fetch = fetch
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const missing: string[] = [];
+  for (const raw of cusips) {
+    const cusip = raw.trim().toUpperCase();
+    if (!cusip) continue;
+    const cached = lookupTickerByCusip(cusip);
+    if (cached) out[cusip] = cached;
+    else missing.push(cusip);
+  }
+  const nowIso = new Date().toISOString();
+  for (let i = 0; i < missing.length; i += 10) {
+    const batch = missing.slice(i, i + 10);
+    try {
+      const res = await fetchImpl(OPENFIGI, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(batch.map((idValue) => ({ idType: "ID_CUSIP", idValue })))
+      });
+      if (!res.ok) continue;
+      const json = (await res.json()) as Array<{ data?: Array<{ ticker?: string; exchCode?: string }> }>;
+      json.forEach((entry, idx) => {
+        const ticker = entry.data?.find((d) => d.ticker)?.ticker;
+        if (!ticker) return;
+        const cusip = batch[idx];
+        const norm = normalizeSymbol(ticker);
+        if (!norm) return;
+        out[cusip] = norm;
+        upsertCusipTicker(cusip, norm, "openfigi", nowIso);
+      });
+    } catch {
+      // Mapping is best-effort; holdings still persist by CUSIP.
+    }
+  }
+  return out;
+}
+
+export async function refreshThirteenF(
+  now: number = Date.now(),
+  force = false,
+  fetchImpl: typeof fetch = fetch
+): Promise<WebSourceRefreshResult> {
+  if (!force && !isThirteenFRefreshDue(now)) {
+    const ds = getThirteenFDataset();
+    return {
+      id: "13f",
+      ok: true,
+      recordCount: ds?.recordCount ?? countThirteenFHoldings(),
+      sources: ds ? ["sec-edgar"] : [],
+      fetchedAt: ds?.fetchedAt ?? "",
+      skipped: true
+    };
+  }
+  setInternalSetting(ATTEMPT_KEY, new Date(now).toISOString());
+  const ua = secUserAgent();
+  let warning: string | undefined;
+  let ingested = 0;
+  const fetchedAt = new Date(now).toISOString();
+
+  const results = await runRateLimited([...DEFAULT_13F_FILERS], 250, async (filer) => {
+    try {
+      const atom = await politeFetchText(
+        `${SEC_BASE}/cgi-bin/browse-edgar?action=getcompany&CIK=${filer.cik}&type=13F-HR&count=5&output=atom`,
+        { headers: { "user-agent": ua, accept: "application/atom+xml" } }
+      );
+      const latest = parseLatest13FFeed(atom);
+      if (!latest) return 0;
+      const indexJson = JSON.parse(await politeFetchText(`${latest.dir}index.json`, { headers: { "user-agent": ua } }));
+      const xmls = pick13FXmls(indexJson);
+      if (!xmls.infoTable) return 0;
+      const infoXml = await politeFetchText(`${latest.dir}${xmls.infoTable}`, { headers: { "user-agent": ua } });
+      let period = "";
+      if (xmls.primary) {
+        const cover = await politeFetchText(`${latest.dir}${xmls.primary}`, { headers: { "user-agent": ua } });
+        period = parse13FPeriod(cover) ?? "";
+      }
+      if (!period) period = latest.accession.slice(0, 10);
+      const infoRows = parse13FInfoTable(infoXml);
+      const tickers = await resolveCusipsToTickers(
+        infoRows.map((r) => r.cusip),
+        fetchImpl
+      );
+      const rows = infoRows.map((r) => ({
+        id: createHash("sha256").update(`${latest.accession}:${r.cusip}`).digest("hex").slice(0, 32),
+        filerCik: padCik(filer.cik),
+        filerName: filer.short,
+        periodEnd: period,
+        accession: latest.accession,
+        cusip: r.cusip,
+        ticker: tickers[r.cusip] ?? lookupTickerByCusip(r.cusip) ?? "",
+        issuerName: r.issuerName,
+        titleOfClass: r.titleOfClass,
+        shares: r.shares,
+        valueUsd: r.valueThousands * 1000,
+        sshPrnType: r.sshPrnType,
+        fetchedAt
+      }));
+      replaceThirteenFFiling(rows);
+      return rows.length;
+    } catch (error) {
+      warning = error instanceof Error ? error.message : "13f fetch failed";
+      return 0;
+    }
+  });
+  ingested = results.reduce((s, n) => s + (n ?? 0), 0);
+  const recordCount = countThirteenFHoldings();
+  const ok = ingested > 0 || recordCount > 0;
+  const dataset: ThirteenFDataset = {
+    fetchedAt: ingested > 0 ? fetchedAt : getThirteenFDataset()?.fetchedAt ?? fetchedAt,
+    recordCount,
+    filers: DEFAULT_13F_FILERS.length
+  };
+  setInternalSetting(DATASET_KEY, dataset);
+  audit("web_source_refresh", { id: "13f", ok, recordCount, fresh: ingested, warning });
+  return { id: "13f", ok, recordCount, sources: ["sec-edgar"], fetchedAt: dataset.fetchedAt, warning };
+}

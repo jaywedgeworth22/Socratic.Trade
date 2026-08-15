@@ -49,7 +49,7 @@ export const SOURCE_SETTING_GROUPS: Record<
   },
   web_sources: {
     title: "Web sources",
-    blurb: "Congress, insider Form 4, FINRA short volume, technicals — on/off and windows."
+    blurb: "Congress, insider Form 4, 13F, ARK holdings, FINRA short volume, technicals — on/off and windows."
   },
   rag: {
     title: "RAG / retrieval",
@@ -234,6 +234,71 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     description: "Insider transaction rapid filings.",
     type: "boolean",
     defaultValue: true
+  },
+  {
+    id: "WEB_SOURCE_INSIDER_WATCHLIST",
+    group: "web_sources",
+    label: "Form 4 watchlist targeting",
+    description: "Also pull Form 4s for tickers on your watchlists, not only the current EDGAR feed.",
+    type: "boolean",
+    defaultValue: true
+  },
+  {
+    id: "WEB_SOURCE_INSIDER_WINDOW_DAYS",
+    group: "web_sources",
+    label: "Form 4 window (days)",
+    description: "How long an open-market Form 4 stays in the rolling sentiment window.",
+    type: "number",
+    defaultValue: 30,
+    min: 7,
+    max: 180
+  },
+  {
+    id: "WEB_SOURCE_INSIDER_MAX_FILINGS",
+    group: "web_sources",
+    label: "Form 4 filings per refresh",
+    description: "Ownership XMLs parsed each daily refresh (current feed + watchlist).",
+    type: "number",
+    defaultValue: 60,
+    min: 10,
+    max: 200,
+    advanced: true
+  },
+  {
+    id: "WEB_SOURCE_13F",
+    group: "web_sources",
+    label: "SEC 13F superinvestor holdings",
+    description: "Official 13F-HR books for a curated filer set (Berkshire, Pershing, Burry, and others).  Observe only.",
+    type: "boolean",
+    defaultValue: true
+  },
+  {
+    id: "WEB_SOURCE_13F_TTL_MS",
+    group: "web_sources",
+    label: "13F refresh interval (ms)",
+    description: "How often to re-pull latest 13F-HR filings.  Default weekly.",
+    type: "number",
+    defaultValue: 604800000,
+    min: 86400000,
+    advanced: true
+  },
+  {
+    id: "WEB_SOURCE_ARK",
+    group: "web_sources",
+    label: "ARK official daily holdings",
+    description: "ARKK/ARKQ/ARKW/ARKG/ARKF/ARKX holdings from ARK's published CSVs.  Observe only.",
+    type: "boolean",
+    defaultValue: true
+  },
+  {
+    id: "WEB_SOURCE_ARK_TTL_MS",
+    group: "web_sources",
+    label: "ARK refresh interval (ms)",
+    description: "How often to re-pull ARK fund CSVs.  Default daily.",
+    type: "number",
+    defaultValue: 86400000,
+    min: 3600000,
+    advanced: true
   },
   {
     id: "WEB_SOURCE_FINRA",

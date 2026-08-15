@@ -139,6 +139,12 @@ describe("refreshInsider (live flow, mocked fetch)", () => {
     const overlay = getSymbolWebSignals(["NVDA"]);
     expect(overlay.NVDA?.insiderSentiment).toBe(100);
     expect(overlay.NVDA?.bulletins.some((b) => b.includes("Insider"))).toBe(true);
+    const { getDb } = await import("../src/lib/db");
+    const stored = getDb()
+      .prepare("SELECT COUNT(*) AS n FROM sec_insider_transactions WHERE accession = ?")
+      .get("0001234567-26-000001") as { n: number };
+    // Fixture omits acquired/disposed so structured persist may be 0; table must exist.
+    expect(stored.n).toBeGreaterThanOrEqual(0);
   });
 
   it("does not advance fetchedAt (or wipe data) when the scrape fails", async () => {

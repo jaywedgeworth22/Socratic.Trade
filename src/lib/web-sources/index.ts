@@ -55,12 +55,28 @@ import { resolveSourceBool } from "../source-settings";
 import { isFilingIngestDue, refreshFilingBodies } from "./sec-filings";
 import { disclosureRagEnabled, embedDisclosures } from "./disclosure-rag";
 import { getFmpTranscriptStatus, type FmpTranscriptStatus } from "./fmp-transcripts";
+import {
+  getThirteenFDataset,
+  getThirteenFSignals,
+  isThirteenFRefreshDue,
+  refreshThirteenF,
+  thirteenFTtlMs
+} from "./thirteen-f";
+import {
+  arkTtlMs,
+  getArkDataset,
+  getArkSignals,
+  isArkRefreshDue,
+  refreshArkHoldings
+} from "./ark-holdings";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
 export type { CongressAnalytics, CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
 export { getCongressAnalyticsOverlay, refreshCongressAnalytics } from "./congress-analytics";
 export { getCongressDataset, getCongressSignals, refreshCongress } from "./congress";
 export { getInsiderDataset, getInsiderSignals, refreshInsider } from "./sec";
+export { getThirteenFDataset, getThirteenFSignals, refreshThirteenF } from "./thirteen-f";
+export { getArkDataset, getArkSignals, refreshArkHoldings } from "./ark-holdings";
 export { getFinraDataset, getShortVolumeSignals, refreshFinra } from "./finra";
 export { getEightKDataset, getEightKSignals, refreshEightK } from "./sec8k";
 export {
@@ -104,6 +120,14 @@ function congressEnabled(): boolean {
 /** Whether the SEC insider connector is enabled (default on; Settings / WEB_SOURCE_INSIDER=off). */
 function insiderEnabled(): boolean {
   return resolveSourceBool("WEB_SOURCE_INSIDER");
+}
+
+function thirteenFEnabled(): boolean {
+  return resolveSourceBool("WEB_SOURCE_13F");
+}
+
+function arkEnabled(): boolean {
+  return resolveSourceBool("WEB_SOURCE_ARK");
 }
 
 /** Whether the FINRA short-volume connector is enabled (default on; Settings / WEB_SOURCE_FINRA=off). */
@@ -150,6 +174,20 @@ async function runDueRefreshes(now: number): Promise<WebSourceRefreshResult[]> {
       results.push(await refreshInsider(now));
     } catch (error) {
       results.push({ id: "insider", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
+    }
+  }
+  if (thirteenFEnabled() && isThirteenFRefreshDue(now)) {
+    try {
+      results.push(await refreshThirteenF(now));
+    } catch (error) {
+      results.push({ id: "13f", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
+    }
+  }
+  if (arkEnabled() && isArkRefreshDue(now)) {
+    try {
+      results.push(await refreshArkHoldings(now));
+    } catch (error) {
+      results.push({ id: "ark", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
     }
   }
   // App A (congress.trade) analytics overlay — the Trends composite (dollar net flow, cluster buys,
@@ -262,6 +300,16 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
     entry.insiderSentiment = signal.insiderSentiment;
     entry.bulletins.push(signal.bulletin);
   }
+  const thirteenF = thirteenFEnabled() ? getThirteenFSignals(symbols) : {};
+  for (const [symbol, signal] of Object.entries(thirteenF)) {
+    const entry = (out[symbol] ??= { bulletins: [] });
+    entry.bulletins.push(signal.bulletin);
+  }
+  const ark = arkEnabled() ? getArkSignals(symbols) : {};
+  for (const [symbol, signal] of Object.entries(ark)) {
+    const entry = (out[symbol] ??= { bulletins: [] });
+    entry.bulletins.push(signal.bulletin);
+  }
   const shortVol = finraEnabled() ? getShortVolumeSignals(symbols) : {};
   for (const [symbol, signal] of Object.entries(shortVol)) {
     const entry = (out[symbol] ??= { bulletins: [] });
@@ -307,11 +355,15 @@ export function getWebSourcesStatus(): {
   sec8k: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
   earningsTranscripts: FmpTranscriptStatus;
   technical: { enabled: boolean; source: "tradingview" | "computed"; fetchedAt?: string; recordCount: number; due: boolean; ttlMs: number; secretConfigured: boolean };
+  thirteenF: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
+  ark: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number; asOf?: string };
 } {
   const congress = getCongressDataset();
   const insider = getInsiderDataset();
   const finra = getFinraDataset();
   const sec8k = getEightKDataset();
+  const thirteenF = getThirteenFDataset();
+  const ark = getArkDataset();
   return {
     congress: {
       enabled: congressEnabled(),
@@ -347,6 +399,23 @@ export function getWebSourcesStatus(): {
       ttlMs: eightKTtlMs()
     },
     earningsTranscripts: getFmpTranscriptStatus(),
-    technical: getTechnicalStatus()
+    technical: getTechnicalStatus(),
+    thirteenF: {
+      enabled: thirteenFEnabled(),
+      fetchedAt: thirteenF?.fetchedAt,
+      recordCount: thirteenF?.recordCount ?? 0,
+      sources: thirteenF ? ["sec-edgar"] : [],
+      due: isThirteenFRefreshDue(),
+      ttlMs: thirteenFTtlMs()
+    },
+    ark: {
+      enabled: arkEnabled(),
+      fetchedAt: ark?.fetchedAt,
+      recordCount: ark?.recordCount ?? 0,
+      sources: ark ? ["ark-funds"] : [],
+      due: isArkRefreshDue(),
+      ttlMs: arkTtlMs(),
+      asOf: ark?.asOf
+    }
   };
 }
