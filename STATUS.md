@@ -5,6 +5,16 @@ Connections kept showing Gemini and DeepSeek keys after the owner removed them. 
 The last-48h failed Gemini/DeepSeek calls were **OpenRouter** (`llm_usage.provider=openrouter`), not native.  Strategy/Red Team prefer OpenRouter when that key exists.
 
 Fix on `grok/stop-ghost-native-keys`, issue #2728 / PR #2729: never remigrate a tombstone; do not auto-seed Gemini/DeepSeek; tombstone existing `migrated from env` rows on boot.  Owner then had the Infisical source deleted: ST prod `/` no longer has `GEMINI_API_KEY` or `DEEPSEEK_API_KEY`.  `infisical-secrets-safe.sh set` refuses LLM runtime names.  Rollout: `docs/rollouts/2026-08-15-stop-ghost-native-keys.md`.
+## Current (2026-08-14 GROK — ban grepping secrets files for KEY=value lines)
+
+Owner: change agent rules so nobody dumps `~/.secrets/global-api-keys` into a
+transcript.  Rotation is already done; do not re-litigate it.
+
+Added the handoff-file grep trap to AGENT-SYNC, TEMPLATE-AGENTS, this
+`AGENTS.md`, and the secret-safety skill.  Names only: `grep -oE`.
+Branch `grok/secret-file-grep-ban`.
+
+Rollout: `docs/rollouts/2026-08-14-secret-file-grep-ban.md`.
 
 ## Current (2026-08-15 GROK — account-config Title Case)
 
@@ -414,6 +424,17 @@ Owner screenshot 8:06–8:44am CT plus 7d Uptime/Sentry.  Four distinct app bugs
 ST 503s pair with the keyword "OpenRouter credits low" monitor because that monitor hit the same `/api/health` URL and treated 5xx as down.  Allowed 4xx/5xx on that keyword monitor so only the credits substring pages.
 
 Branch `grok/fleet-alerts-aug13`.  Rollout: `docs/rollouts/2026-08-13-fleet-alert-triage.md`.
+
+## Current (2026-08-14 GROK — ban grepping secrets files for KEY=value lines)
+
+Owner: change agent rules so nobody dumps `~/.secrets/global-api-keys` into a
+transcript.  Rotation is already done; do not re-litigate it.
+
+Added the handoff-file grep trap to AGENT-SYNC, TEMPLATE-AGENTS, this
+`AGENTS.md`, and the secret-safety skill.  Names only: `grep -oE`.
+Branch `grok/secret-file-grep-ban`.
+
+Rollout: `docs/rollouts/2026-08-14-secret-file-grep-ban.md`.
 
 ## Current (2026-08-13 GROK — Settings Saving… + ROIC Individual actually binds)
 
