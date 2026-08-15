@@ -1,3 +1,11 @@
+## Current (2026-08-15 GROK — model family identity for Results / benchmarks / history)
+
+Owner: Gemini 3.7 Flash must roll up as `gemini-flash-latest` (same for every Flash Lite, every Pro, every Opus, every Sonnet, and so on).  `canonicalModelId` already had the family table; Results and Red-Team efficacy still keyed off the wire slug (`google/gemini-3.7-flash`), so history split.
+
+Branch `grok/model-family-identity`, issue #2724.  Red stamps the catalog family on the verdict.  Efficacy, critic-failure attribution, closed-lot models, and the approval-card compare path all go through `canonicalModelId`.  Usage merge and model-stats already did; they now also merge two reviewer-perf rows that canonicalize onto the same family.
+
+Rollout: `docs/rollouts/2026-08-15-model-family-identity.md`.
+
 ## Current (2026-08-14 GROK — bound per-document FTS mirror + durable resume)
 
 #2680's 250ms yield inside `insertDocumentChunkFtsBatch` did not bound wall-clock.  Live receipts after that "fix": `ftsMirrorBatch 279522ms (933 chunks)`, then 103s / 98s / 91s.  Every `embed_queued` task failed to advance (`Failed to advance checkpoint` + `Ingestion budget or capacity exceeded mid-task`).  Queue 3501 pending / 16 complete (~0.5%).  Lease is 60s and was heartbeated only during `storeDocument`.

@@ -10,6 +10,7 @@ import { memo, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, CircleAlert, Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
 import { requestedExitQuantity } from "@/lib/broker-held-orders";
 import { isModelRotationSentinel } from "@/lib/llm-request";
+import { canonicalModelId } from "@/lib/model-identity";
 import { normalizeSymbol } from "@/lib/money";
 import { resolveDailyOpeningCap } from "@/lib/policy-caps";
 import type { PendingProposal, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "@/lib/types";
@@ -91,13 +92,7 @@ function matchedDecision(snapshot: DashboardSnapshot | null, pending: PendingPro
 }
 
 export function normalizeModelId(model: string | null | undefined): string {
-  if (!model) return "";
-  let cleaned = model.trim().toLowerCase().replace(/^openrouter\//i, "");
-  const slashIdx = cleaned.indexOf("/");
-  if (slashIdx !== -1) {
-    cleaned = cleaned.slice(slashIdx + 1);
-  }
-  return cleaned;
+  return canonicalModelId(model);
 }
 
 function modelProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {

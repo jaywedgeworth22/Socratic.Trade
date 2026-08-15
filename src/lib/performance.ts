@@ -1,5 +1,6 @@
 import { clearStopPlans, deriveExitContractFromOpening, getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listRecentMaturedSkippedCounterfactuals, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
+import { canonicalModelId } from "./model-identity";
 import { normalizeSymbol } from "./money";
 import { aggregateSourceValue, type SourceValueObservation } from "./source-value";
 import type {
@@ -1282,10 +1283,10 @@ export function getRedTeamEfficacy(
 
   const byModelMap = new Map<string, RedTeamVetoRecord[]>();
   for (const record of records) {
-    const model = record.model?.trim() || "unattributed";
+    const model = canonicalModelId(record.model) || "unattributed";
     const bucket = byModelMap.get(model);
-    if (bucket) bucket.push(record);
-    else byModelMap.set(model, [record]);
+    if (bucket) bucket.push({ ...record, model });
+    else byModelMap.set(model, [{ ...record, model }]);
   }
 
   const resolvedDenominator = maturedVetoes + unresolvableVetoes;
@@ -1635,8 +1636,8 @@ function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: str
     confidence: typeof p.confidenceScore === "number" ? p.confidenceScore : undefined,
     sector,
     dominantFactor,
-    entryModel: typeof p.proposedByModel === "string" && p.proposedByModel ? p.proposedByModel : undefined,
-    reviewedByModel: typeof p.reviewedByModel === "string" && p.reviewedByModel ? p.reviewedByModel : undefined
+    entryModel: typeof p.proposedByModel === "string" && p.proposedByModel ? canonicalModelId(p.proposedByModel) || undefined : undefined,
+    reviewedByModel: typeof p.reviewedByModel === "string" && p.reviewedByModel ? canonicalModelId(p.reviewedByModel) || undefined : undefined
   };
 }
 
