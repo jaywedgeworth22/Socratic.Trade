@@ -9,6 +9,13 @@ scheme-plugin trap documented in `apns.ts`). Branch
 `grok/st-kalshi-exits-options`, worktree
 `~/apps/trading-grok-kalshi-exits`. Rollout:
 `docs/rollouts/2026-08-14-kalshi-node-crypto-webpack.md`.
+## Current (2026-08-15 GROK — stop ghost Gemini/DeepSeek keys)
+
+Connections kept showing Gemini and DeepSeek keys after the owner removed them.  Cause: Infisical ST prod `/` still has `GEMINI_API_KEY` / `DEEPSEEK_API_KEY`; every Coolify boot ran `migrateLocalEnvCredentials`, which copied them onto `local` and treated a delete tombstone as empty.  Prod rows are labeled `migrated from env` (2026-07-24).
+
+The last-48h failed Gemini/DeepSeek calls were **OpenRouter** (`llm_usage.provider=openrouter`), not native.  Strategy/Red Team prefer OpenRouter when that key exists.
+
+Fix on `grok/stop-ghost-native-keys`, issue #2728 / PR #2729: never remigrate a tombstone; do not auto-seed Gemini/DeepSeek; tombstone existing `migrated from env` rows on boot.  Owner then had the Infisical source deleted: ST prod `/` no longer has `GEMINI_API_KEY` or `DEEPSEEK_API_KEY`.  `infisical-secrets-safe.sh set` refuses LLM runtime names.  Rollout: `docs/rollouts/2026-08-15-stop-ghost-native-keys.md`.
 ## Current (2026-08-14 GROK — ban grepping secrets files for KEY=value lines)
 
 Owner: change agent rules so nobody dumps `~/.secrets/global-api-keys` into a

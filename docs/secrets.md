@@ -5,6 +5,14 @@ the app through the Infisical runner, which injects them as env vars at startup.
 secrets-related values that stay on the box are the **bootstrap** (how to reach Infisical). Nothing
 else — no API keys, no `ENCRYPTION_KEY`, no broker tokens — lives in `.env.local`.
 
+**LLM runtime keys are not Infisical secrets for this app.** `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`,
+`DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`, `OPENROUTER_API_KEY`, and siblings belong
+on Connections (`user_api_keys`). Do not put them back in Infisical ST `prod` `/`.
+`scripts/infisical-secrets-safe.sh set` refuses those names. Deleted from Infisical
+2026-08-15 (GEMINI/DEEPSEEK were the last remaining). `OPENROUTER_ADMIN_KEY` is an
+agent admin credential, not an app chat key.
+
 Infisical Cloud is the managed SaaS (`infisical login` → their cloud, free tier: 5 identities / 3
 projects / 3 envs / unlimited secrets). It's open-source, so you can self-host later with no app
 change. Infisical is the **only** secrets-manager path the app supports.
