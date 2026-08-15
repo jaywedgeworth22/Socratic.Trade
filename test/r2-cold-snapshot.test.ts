@@ -220,7 +220,7 @@ describe("planMultipartParts", () => {
 });
 
 describe("selectColdSnapshotsToPrune", () => {
-  it("keeps the newest 4 and returns older snapshot keys for deletion", () => {
+  it("keeps the newest N and returns older snapshot keys for deletion", () => {
     const keys = [
       "cold-snapshots/app-2026-07-05.db",
       "cold-snapshots/app-2026-07-12.db",
@@ -232,6 +232,13 @@ describe("selectColdSnapshotsToPrune", () => {
     expect(selectColdSnapshotsToPrune(keys, 4).sort()).toEqual([
       "cold-snapshots/app-2026-07-05.db",
       "cold-snapshots/app-2026-07-12.db",
+    ]);
+    expect(selectColdSnapshotsToPrune(keys, 1).sort()).toEqual([
+      "cold-snapshots/app-2026-07-05.db",
+      "cold-snapshots/app-2026-07-12.db",
+      "cold-snapshots/app-2026-07-19.db",
+      "cold-snapshots/app-2026-07-26.db",
+      "cold-snapshots/app-2026-08-02.db",
     ]);
   });
 
@@ -290,7 +297,7 @@ describe("drainR2ColdSnapshotJobs", () => {
     expect(result.drained).toBe(0);
   });
 
-  it("backs up, multipart-uploads with correct part math, prunes to newest 4, cleans temp, completes the job", async () => {
+  it("backs up, multipart-uploads with correct part math, prunes to newest 1, cleans temp, completes the job", async () => {
     setCreds();
     const now = Date.UTC(2026, 7, 9, 3, 20, 0);
     enqueueDueNow(now);
@@ -331,11 +338,15 @@ describe("drainR2ColdSnapshotJobs", () => {
     expect(completeXml).toContain("etag-2");
     expect(completeXml).toContain("etag-3");
 
-    // Retention pruned exactly the two oldest snapshot keys — nothing else.
+    // Retention pruned every older snapshot key — nothing else.  Default retain is 1
+    // because the live DB is ~4 GB of a 10 GB R2 free tier.
     const deletes = s3.requests.filter((r) => r.method === "DELETE");
     expect(deletes.map((r) => decodeURIComponent(new URL(r.url).pathname)).sort()).toEqual([
       "/socratic-trade-bucket/cold-snapshots/app-2026-07-05.db",
       "/socratic-trade-bucket/cold-snapshots/app-2026-07-12.db",
+      "/socratic-trade-bucket/cold-snapshots/app-2026-07-19.db",
+      "/socratic-trade-bucket/cold-snapshots/app-2026-07-26.db",
+      "/socratic-trade-bucket/cold-snapshots/app-2026-08-02.db",
     ]);
 
     // Temp file removed; job completed.
