@@ -20,6 +20,24 @@ Advisory-tail reword / settings-surface sweep is NOT in these five commits (it r
 #2682) — left alone.
 
 Rollout: `docs/rollouts/2026-08-13-claude-r4-pickup.md`.
+## Current (2026-08-14 GROK — stale ~1200s quotes + origin timeouts)
+
+Production 2026-08-13/14: Autopilot openings warned "quote was ~1200s old",
+UptimeRobot Connection-Timeout'd `socratictrade.com` (and the paired OpenRouter
+credits keyword monitor) every ~15-20 min, and Coolify logs showed Alpaca
+`fetch failed` + `UND_ERR_SOCKET` / "other side closed" then auto-halt.
+
+Branch `grok/prod-error-triage`, worktree `~/apps/trading-grok-prod-triage`,
+issue #2714.  Retry dead sockets (fetch + Alpaca SDK); require 3 consecutive
+transient connectivity failures before auto-halt; treat budget aborts as soft
+health; bound `/api/health` credits check to 1.5s; dedup Pinecone WU Sentry;
+don't page stale-quote warnings after the regular session.
+
+Not in this branch (owner/ops): filingapi 401 (do not mint a key); Litestream
+L2/L3 empty wedge (visible via #2709); congress.trade latency probes.
+
+Rollout: `docs/rollouts/2026-08-14-stale-quotes-origin-timeouts.md`.
+
 ## Current (2026-08-14 GROK — Monet loading-graphic / Lato leftover closed)
 
 Owner pickup of Monet's "iOS loading graphic and font..." session.  Product code

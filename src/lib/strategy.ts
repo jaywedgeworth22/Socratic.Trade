@@ -3420,22 +3420,27 @@ export async function runStrategyOnce(
           userId,
           connectedAccountId
         );
-        await sendNotification(
-          {
-            type: "provider_degraded",
-            title: `Stale Quote Warning: ${normalizedProposal.symbol} quote was ${ageText}`,
-            payload: {
-              runId,
-              proposalId,
-              symbol: normalizedProposal.symbol,
-              side: normalizedProposal.side,
-              ageSec: decision.quoteStale.ageSec,
-              limitPrice: normalizedProposal.limitPrice,
-              referencePrice: decision.quoteStale.referencePrice
-            }
-          },
-          { policy, userId }
-        );
+        // After the regular session the last print is *supposed* to be minutes
+        // old (Yahoo regularMarketTime ~15–20m, official close + clock).  Still
+        // audit + convert to a limit; do not page as if the cascade is broken.
+        if (currentMarketSession() === "regular") {
+          await sendNotification(
+            {
+              type: "provider_degraded",
+              title: `Stale Quote Warning: ${normalizedProposal.symbol} quote was ${ageText}`,
+              payload: {
+                runId,
+                proposalId,
+                symbol: normalizedProposal.symbol,
+                side: normalizedProposal.side,
+                ageSec: decision.quoteStale.ageSec,
+                limitPrice: normalizedProposal.limitPrice,
+                referencePrice: decision.quoteStale.referencePrice
+              }
+            },
+            { policy, userId }
+          );
+        }
       }
 
       // Pre-veto fold-in (Option 2): the two PRE-POLICY vetoes (deterministic-bear filter + approval-

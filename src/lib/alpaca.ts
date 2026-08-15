@@ -23,6 +23,7 @@ import { toBrokerSide, isRejectedOrCanceledState } from "./broker-side";
 import { audit, getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
 import { logApiHealth } from "./db-health";
 import { fetchDailyOHLC } from "./history";
+import { isTransientNetworkError } from "./network-errors";
 
 /**
  * Fill in a usable price for any symbol the broker didn't quote (>0). Alpaca's latest-quote feed
@@ -239,21 +240,35 @@ class AlpacaBrokerGateway implements BrokerGateway {
   // generic here would collapse those returns to `unknown` at every call site.
   private async trackHealth(fn: () => Promise<any>): Promise<any> {
     const start = Date.now();
-    try {
-      const result = await fn();
-      logApiHealth({ service: "alpaca-broker", ok: true, latencyMs: Date.now() - start, keySource: this.keySource, userId: this.userId });
-      return result;
-    } catch (err) {
-      logApiHealth({
-        service: "alpaca-broker",
-        ok: false,
-        latencyMs: Date.now() - start,
-        errorText: err instanceof Error ? err.message : String(err),
-        keySource: this.keySource,
-        userId: this.userId
-      });
-      throw err;
+    const attempts = 2;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        const result = await fn();
+        logApiHealth({ service: "alpaca-broker", ok: true, latencyMs: Date.now() - start, keySource: this.keySource, userId: this.userId });
+        return result;
+      } catch (err) {
+        lastErr = err;
+        // Alpaca's keep-alive pool reuses a socket the origin already closed
+        // (UND_ERR_SOCKET / "other side closed").  One retry on a fresh
+        // connection recovers the quote/account read; the first miss is not
+        // logged so a recovered blip cannot feed the consecutive-failure streak.
+        if (attempt + 1 < attempts && isTransientNetworkError(err)) {
+          await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+          continue;
+        }
+        logApiHealth({
+          service: "alpaca-broker",
+          ok: false,
+          latencyMs: Date.now() - start,
+          errorText: err instanceof Error ? err.message : String(err),
+          keySource: this.keySource,
+          userId: this.userId
+        });
+        throw err;
+      }
     }
+    throw lastErr;
   }
 
   private async callMcp<T>(toolName: string, args: Record<string, unknown>, fallbackFn: () => Promise<T>): Promise<T> {
