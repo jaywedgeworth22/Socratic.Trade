@@ -5,6 +5,10 @@
 #   bash scripts/infisical-secrets-safe.sh set KEY=VALUE --projectId ID --env prod
 #   bash scripts/infisical-secrets-safe.sh has KEY --projectId ID --env prod
 #   bash scripts/infisical-secrets-safe.sh names --projectId ID --env prod
+#   bash scripts/infisical-secrets-safe.sh delete KEY --projectId ID --env prod
+#
+# LLM provider API keys must NEVER be stored in Infisical for Socratic.Trade.
+# They belong on Connections (user_api_keys). `set` refuses those names.
 #
 # Forbidden (agents must not run these):
 #   infisical secrets                 # bare list prints every value
@@ -18,8 +22,21 @@ info() { echo "infisical-secrets-safe: $*" >&2; }
 
 command -v infisical >/dev/null 2>&1 || die "infisical CLI not found"
 
+# Runtime LLM keys for this app live on Connections, not Infisical. Agents have
+# re-created GEMINI_API_KEY / DEEPSEEK_API_KEY in Infisical and then "fixed" the
+# app to copy them onto the primary user. Refuse the write.
+LLM_RUNTIME_KEYS="OPENAI_API_KEY ANTHROPIC_API_KEY XAI_API_KEY GEMINI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY MOONSHOT_API_KEY KIMI_API_KEY MOONSHOTAI_API_KEY OPENROUTER_API_KEY META_API_KEY"
+
+is_llm_runtime_key() {
+  local key="$1"
+  for k in $LLM_RUNTIME_KEYS; do
+    [ "$k" = "$key" ] && return 0
+  done
+  return 1
+}
+
 cmd="${1:-}"; shift || true
-[ -n "$cmd" ] || die "missing command (set|has|names)"
+[ -n "$cmd" ] || die "missing command (set|has|names|delete)"
 
 # Reject known-leaky patterns if someone passes them by mistake
 for a in "$@"; do
@@ -46,6 +63,9 @@ case "$cmd" in
       *) die "set argument must be KEY=VALUE" ;;
     esac
     key="${pair%%=*}"
+    if is_llm_runtime_key "$key"; then
+      die "refusing to set $key — LLM runtime keys must not live in Infisical for Socratic.Trade; paste them on Connections"
+    fi
     # never echo value
     infisical secrets set "$pair" "$@" >/dev/null
     info "set ok key=$key"
@@ -76,6 +96,13 @@ case "$cmd" in
     else
       die "jq required for names"
     fi
+    ;;
+  delete)
+    key="${1:-}"; shift || true
+    [ -n "$key" ] || die "usage: delete KEY --projectId ID --env ENV"
+    # Default CLI type is personal; project secrets are shared.
+    infisical secrets delete "$key" --type shared --silent "$@" >/dev/null
+    info "deleted key=$key"
     ;;
   *)
     die "unknown command: $cmd"

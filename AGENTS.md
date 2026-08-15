@@ -616,10 +616,19 @@ paternalism that keeps creeping back in from every agent (Claude, Codex, others)
     actually resolves for you, and `/admin/llm-usage` breaks spend down per
     distinct key fingerprint (`keyRef`) and per user.
   - Trap that makes this worse: `migrateLocalEnvCredentials`
-    (`src/lib/db-api-keys.ts`) seeds the primary user's key store from env ONCE,
-    and `resolveLlmCredential` reads the DB row BEFORE env — so a key stored in
-    the DB permanently shadows `OPENROUTER_API_KEY`. Rotating the Infisical
-    secret alone changes nothing until that row is replaced via Connections.
+    (`src/lib/db-api-keys.ts`) used to seed the primary user's key store from env
+    (and later PRs even re-seeded over a delete tombstone). That is why Gemini
+    and DeepSeek keys kept reappearing on Connections after every Coolify deploy.
+    Gemini/DeepSeek are no longer auto-seeded; a delete tombstone is honored.
+  - **No LLM runtime keys in Infisical for this app** (owner, 2026-08-15, after
+    the same keys were deleted from Infisical more than once). Do not
+    `infisical secrets set` `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`,
+    `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`,
+    `OPENROUTER_API_KEY`, or siblings. Those belong on Connections. Infra
+    knobs (`GEMINI_RPM_LIMIT`) and `OPENROUTER_ADMIN_KEY` (agent admin, not app
+    chat) are not this class. `scripts/infisical-secrets-safe.sh set` refuses
+    the runtime names. Prior code-only PRs (#1856 closed; #2210/#2213 then
+    *allowed* env to overwrite tombstones) did not remove the Infisical source.
 
 ## Cursor Cloud specific instructions
 

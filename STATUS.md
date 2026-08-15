@@ -4,7 +4,7 @@ Connections kept showing Gemini and DeepSeek keys after the owner removed them. 
 
 The last-48h failed Gemini/DeepSeek calls were **OpenRouter** (`llm_usage.provider=openrouter`), not native.  Strategy/Red Team prefer OpenRouter when that key exists.
 
-Fix on `grok/stop-ghost-native-keys`, issue #2728: never remigrate a tombstone; do not auto-seed Gemini/DeepSeek; tombstone existing `migrated from env` rows on boot.  Rollout: `docs/rollouts/2026-08-15-stop-ghost-native-keys.md`.
+Fix on `grok/stop-ghost-native-keys`, issue #2728 / PR #2729: never remigrate a tombstone; do not auto-seed Gemini/DeepSeek; tombstone existing `migrated from env` rows on boot.  Owner then had the Infisical source deleted: ST prod `/` no longer has `GEMINI_API_KEY` or `DEEPSEEK_API_KEY`.  `infisical-secrets-safe.sh set` refuses LLM runtime names.  Rollout: `docs/rollouts/2026-08-15-stop-ghost-native-keys.md`.
 
 ## Current (2026-08-15 GROK — account-config Title Case)
 

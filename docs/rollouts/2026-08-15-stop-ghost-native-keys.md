@@ -22,7 +22,7 @@ Touched:
 
 ## Decisions & Trade-offs
 
-- Did not delete Infisical `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` at ST prod `/`.  They are unused for strategy/Red Team when OpenRouter is present; leaving them avoids a secret-manager edit.  They will no longer land on Connections.
+- Owner follow-up the same day: delete the Infisical source.  `GEMINI_API_KEY` and `DEEPSEEK_API_KEY` removed from ST Infisical `prod` `/` (shared type).  Verified gone via names-only listing.  Left `GEMINI_RPM_LIMIT` / project metadata and `OPENROUTER_ADMIN_KEY` (agent admin, not app chat).  Shared project had no LLM runtime names.  `infisical-secrets-safe.sh set` now refuses those names so the next agent cannot write them back.
 - Chat (`llmForModel`) still goes native if a user later pastes a Gemini/DeepSeek key.  Strategy/Red Team still prefer OpenRouter first via `resolveLlmEndpoint`.
 - Did not stop migrating other LLM env keys (OpenAI / Anthropic / xAI / OpenRouter).  Only Gemini and DeepSeek were present in Infisical and were the keys the owner saw come back.
 
@@ -36,7 +36,7 @@ Touched:
 ## Next Steps & Blockers
 
 - After this merges, the next prod boot tombstones the two env-seeded rows.  Connections should stop showing Gemini/DeepSeek unless the owner pastes them.
-- Optional owner follow-up: remove `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` from Infisical ST prod `/` so they are not injected into the container at all.
+- Infisical ST prod `/` no longer has LLM runtime API keys.  Next Coolify boot will not re-inject Gemini/DeepSeek.  Combined with the tombstone/no-seed code, Connections should stay clean.
 - Red Team 45s hard abort (the actual failure mode of those OpenRouter calls) is still open.
 
 ## Zero-Code Findings
