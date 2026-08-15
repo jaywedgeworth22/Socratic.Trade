@@ -55,7 +55,8 @@ npx vitest run test/trade-locks.test.ts test/memory-decay.test.ts test/overlay-r
 
 ## 5. Next Steps & Blockers
 
-- Wait for #2689 then #2691 to auto-merge (required `verify` / `verify-hosted`).
+- 2026-08-15: #2721/#2691 `verify-hosted` failed after midnight UTC on `test/web-sources.test.ts` (`overlay.NVDA?.congress?.buyCount` undefined).  The live-flow stub used hardcoded `06/16/2026` disclosedAt; the 60-day window cutoff is exactly 2026-08-15T00:00Z.  Fixture dates are now relative to `Date.now()`.
+- #2689 (r4 leftover) is superseded by this stack once #2721 merges — do not race it.
 - After this PR merges: owner can opt into overlays (`tuning.strategyOverlaysEnabled`) and symbol locks via Guardrails.
 - Overlay console CRUD panel and weekly memory-decay scheduler job remain follow-ups.
 - Parked owner decisions unchanged: Reddit/X keys; `VECTOR_ASOF_STRICT` flip after a fresh coverage receipt.

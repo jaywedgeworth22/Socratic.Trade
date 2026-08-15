@@ -1,8 +1,8 @@
 ## Current (2026-08-14 GROK — Monet backend r5 pickup)
 
-Owner asked to finish Monet's "Backend updates (ST - Monet)" chat after the usage cap.  Ingestion/FTS hotfix (#2680) and toggles (#2682) were already live.  Leftover r4 (#2689) and advisory-tail residue (#2691) are rebased onto current main and armed for squash auto-merge.
+Owner asked to finish Monet's "Backend updates (ST - Monet)" chat after the usage cap.  Ingestion/FTS hotfix (#2680) and toggles (#2682) were already live.  Round 5 is on `grok/monet-backend-r5` as **#2721** (locks / memory decay / overlays / chat cancel / scorecard alpha; migrations 79–81).  Prompt version `agentic-strategy@2.6.0`.
 
-Round 5 is implemented on `grok/monet-backend-r5`: scoped trade locks (migration 79), vector-memory decay/archive (80), strategy overlay library (81, default off), Coach SSE `chat-turn` + cancel + stage-budget skip, scorecard `avgAlphaPct` when lots are stamped from a real benchmark series.  Prompt version `agentic-strategy@2.6.0`.  Settings risk_advisory helper now says "nothing was blocked or changed."
+2026-08-15: rematched `origin/main` (includes #2720) then `verify-hosted` failed on `test/web-sources.test.ts` after midnight UTC — the live-flow stub's `06/16/2026` disclosedAt aged out of the 60-day window.  Fixture dates are now relative to `Date.now()`.  #2689 is held (superseded by this stack).  #2691 is independent residue.
 
 Rollout: `docs/rollouts/2026-08-14-monet-backend-r5.md`.
 
