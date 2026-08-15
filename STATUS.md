@@ -1,3 +1,11 @@
+## Current (2026-08-15 GROK — stop ghost Gemini/DeepSeek keys)
+
+Connections kept showing Gemini and DeepSeek keys after the owner removed them.  Cause: Infisical ST prod `/` still has `GEMINI_API_KEY` / `DEEPSEEK_API_KEY`; every Coolify boot ran `migrateLocalEnvCredentials`, which copied them onto `local` and treated a delete tombstone as empty.  Prod rows are labeled `migrated from env` (2026-07-24).
+
+The last-48h failed Gemini/DeepSeek calls were **OpenRouter** (`llm_usage.provider=openrouter`), not native.  Strategy/Red Team prefer OpenRouter when that key exists.
+
+Fix on `grok/stop-ghost-native-keys`, issue #2728: never remigrate a tombstone; do not auto-seed Gemini/DeepSeek; tombstone existing `migrated from env` rows on boot.  Rollout: `docs/rollouts/2026-08-15-stop-ghost-native-keys.md`.
+
 ## Current (2026-08-15 GROK — account-config Title Case)
 
 Capabilities sheet on Connections was mixing Title Case chips (`Connected`, `Disabled`) with sentence-case values (`Whole shares`, `regular + extended`).  Labels and chips now match: `Fractional Shares`, `Whole Shares`, `Regular + Extended`, `Orders · Level N`.

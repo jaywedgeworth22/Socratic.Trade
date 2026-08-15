@@ -1061,15 +1061,41 @@ export function purgeProcessEnvUserKeys(): void {
 }
 
 /**
+ * Native Gemini / DeepSeek keys must not be auto-copied from Infisical/Coolify env onto the
+ * primary Connections account. Production strategy/Red Team already prefer OpenRouter when that
+ * key exists; env-seeded native rows kept reappearing after the owner deleted them because every
+ * deploy re-injected GEMINI_API_KEY / DEEPSEEK_API_KEY and migrate treated a delete-tombstone as
+ * empty. Env values (if present) are still purged below so they cannot silently serve after a
+ * delete. A user who actually pastes a native key keeps it.
+ */
+const DO_NOT_AUTO_SEED_FROM_ENV = new Set(["gemini", "deepseek"]);
+
+/**
  * One-time, idempotent migration of the operator's env broker/LLM keys into the `local` user's
  * per-user key store. Safe to call repeatedly (only seeds a service `local` doesn't already have a
- * key for) and on every boot. Returns which services were seeded. Call from the server boot hook,
- * NOT the hot resolver path. Shared-tier keys (market data, RAG, macro) are NOT migrated — they stay
- * a global env fallback for all users.
+ * key for) and on every boot. Never overwrites a delete tombstone. Returns which services were
+ * seeded (and which env-seeded Gemini/DeepSeek ghosts were tombstoned). Call from the server boot
+ * hook, NOT the hot resolver path. Shared-tier keys (market data, RAG, macro) are NOT migrated —
+ * they stay a global env fallback for all users.
  */
-export function migrateLocalEnvCredentials(): { migrated: string[] } {
+export function migrateLocalEnvCredentials(): { migrated: string[]; tombstoned: string[] } {
   const migrated: string[] = [];
+  const tombstoned: string[] = [];
+
+  for (const svc of DO_NOT_AUTO_SEED_FROM_ENV) {
+    const row = getUserApiKey(LOCAL_USER, svc);
+    if (row && row.apiKey !== DELETED_KEY_TOMBSTONE && row.label === "migrated from env") {
+      try {
+        deleteUserApiKey(LOCAL_USER, svc);
+        tombstoned.push(svc);
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+
   for (const svc of LOCAL_ENV_MIGRATION_SERVICES) {
+    if (DO_NOT_AUTO_SEED_FROM_ENV.has(svc)) continue;
     const vars = ALL_SERVICE_ENV_VARS[svc] ?? (API_KEY_ENV_MAP[svc] ? [API_KEY_ENV_MAP[svc]] : []);
     let envVal: string | undefined;
     for (const v of vars) {
@@ -1080,7 +1106,10 @@ export function migrateLocalEnvCredentials(): { migrated: string[] } {
       }
     }
     const currentKey = getUserApiKey(LOCAL_USER, svc)?.apiKey;
-    if (envVal && (!currentKey || currentKey === DELETED_KEY_TOMBSTONE)) {
+    // A delete tombstone is a user decision. Coolify re-injects env on every deploy; do not
+    // treat "__DISABLED__" as "missing" and write the env value back onto Connections.
+    if (currentKey === DELETED_KEY_TOMBSTONE) continue;
+    if (envVal && !currentKey) {
       try {
         upsertUserApiKey(LOCAL_USER, svc, envVal, "migrated from env");
         migrated.push(svc);
@@ -1091,7 +1120,7 @@ export function migrateLocalEnvCredentials(): { migrated: string[] } {
   }
   // Purge process.env of all user-providable and LLM keys post-migration
   purgeProcessEnvUserKeys();
-  return { migrated };
+  return { migrated, tombstoned };
 }
 
 // ── Connected accounts ──────────────────────────────────────────────────────
