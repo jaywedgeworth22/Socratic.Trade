@@ -112,7 +112,7 @@ final class TabPreferences: ObservableObject {
 struct MobileControlView: View {
     @EnvironmentObject private var store: MobileStore
     @StateObject private var tabPreferences = TabPreferences()
-    @State private var selectedTab: AppTab = .home
+    @State private var selectedTab: AppTab = MobileControlView.initialTab()
     @State private var morePath: [AppTab] = []
     /// Proposal id a deep link asked for, handed to whichever ProposalsView is on screen.
     @State private var focusedProposalId: String?
@@ -204,6 +204,27 @@ struct MobileControlView: View {
             // exists, and one that arrives while signed out waits here until it does.
             apply(pendingDeepLink)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .ascSelectTab)) { note in
+            if let raw = note.object as? String, let tab = AppTab(rawValue: raw) {
+                selection.wrappedValue = tab
+            }
+        }
+    }
+
+    /// `-ASCScreenshotTab home|proposals|markets|activity|insights` or UserDefaults `ascScreenshotTab`.
+    private static func initialTab() -> AppTab {
+        #if DEBUG
+        if let idx = ProcessInfo.processInfo.arguments.firstIndex(of: "-ASCScreenshotTab"),
+           ProcessInfo.processInfo.arguments.indices.contains(idx + 1),
+           let tab = AppTab(rawValue: ProcessInfo.processInfo.arguments[idx + 1]) {
+            return tab
+        }
+        if let raw = UserDefaults.standard.string(forKey: "ascScreenshotTab"),
+           let tab = AppTab(rawValue: raw) {
+            return tab
+        }
+        #endif
+        return .home
     }
 
     /// Deep links reuse the SAME rerouting `selection` binding as in-app jumps, so a link to an
@@ -247,6 +268,10 @@ struct MobileControlView: View {
         case .more: EmptyView()
         }
     }
+}
+
+extension Notification.Name {
+    static let ascSelectTab = Notification.Name("ascSelectTab")
 }
 
 /// The overflow + customization screen: every destination stays reachable here, and
