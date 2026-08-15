@@ -1625,7 +1625,8 @@ export function insertDocumentChunkFts(
  *  group of them. */
 const FTS_BATCH_MAX_ROWS = 40;
 const FTS_BATCH_MIN_ROWS = 1;
-const FTS_BATCH_STRETCH_BUDGET_MS = 250;
+/** Keep in lockstep with `FTS_MIRROR_SYNC_STRETCH_BUDGET_MS` in fts-mirror-bound.ts. */
+export const FTS_BATCH_STRETCH_BUDGET_MS = 250;
 
 /** Pure sizing policy for the adaptive FTS mirror batches — exported for deterministic tests.
  *  Over budget halves (floor 1); under half the budget doubles (ceiling 40); in between holds. */
@@ -1671,4 +1672,19 @@ export async function insertDocumentChunkFtsBatch(
       await yieldEventLoop();
     }
   }
+}
+
+/** Durable resume cursor: how many FTS rows this occurrence already wrote. */
+export function countDocumentChunkFts(input: {
+  symbol: string;
+  source: string;
+  accession: string;
+}): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM document_chunks_fts
+       WHERE symbol = ? AND source = ? AND accession = ?`
+    )
+    .get(input.symbol, input.source, input.accession) as { n: number };
+  return Number(row?.n ?? 0);
 }
