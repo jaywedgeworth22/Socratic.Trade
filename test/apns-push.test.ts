@@ -347,6 +347,17 @@ describe("APNs configuration", () => {
     expect(config?.privateKeyPem).toBe(testKeyPem);
     expect(getApnsProviderToken(config!, Date.now()).split(".")).toHaveLength(3);
   });
+
+  it("accepts APNS_P8 as raw PEM so Infisical can store the .p8 without a base64 wrap", () => {
+    const config = loadApnsConfig({
+      APNS_KEY_ID: "K1",
+      APNS_TEAM_ID: "T1",
+      APNS_BUNDLE_ID: "trade.socratic.app",
+      APNS_P8: testKeyPem
+    });
+    expect(config?.privateKeyPem.trim()).toBe(testKeyPem.trim());
+    expect(apnsConfigured(config)).toBe(true);
+  });
 });
 
 // ── Deep links + collapse ids ─────────────────────────────────────────────────
@@ -509,8 +520,9 @@ describe("push respects the user's existing per-event notification preferences",
     setNotifyPrefs(userId, { channels: ["apns"] });
 
     const { transport, calls } = recordingTransport(() => okResponse);
-    const cases: Array<{ type: "pending_approval" | "fill" | "price_alert" | "run_failed"; payload: unknown; path: string }> = [
+    const cases: Array<{ type: "pending_approval" | "kill_switch" | "fill" | "price_alert" | "run_failed"; payload: unknown; path: string }> = [
       { type: "pending_approval", payload: { proposalId: "p1", proposal: { symbol: "AAPL", side: "buy" } }, path: "/console/approvals?proposal=p1" },
+      { type: "kill_switch", payload: { reason: "Volatility panic brake — halt new entries" }, path: "/console/activity" },
       { type: "fill", payload: { fill: { symbol: "AAPL", side: "buy", status: "filled", quantity: 1, price: 1, notional: 1 } }, path: "/console/orders?symbol=AAPL" },
       { type: "price_alert", payload: { alert: { id: "a1", symbol: "TSLA" }, currentPrice: 1 }, path: "/console/watchlist?symbol=TSLA" },
       { type: "run_failed", payload: { runId: "r1", summary: "boom" }, path: "/console/activity" }

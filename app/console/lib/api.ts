@@ -140,13 +140,12 @@ export interface RunOnceResult {
   /** "started": the route launched the run and returned before it finished (real runs can take
    *  several minutes on LLM-heavy steps) — the run keeps executing server-side; track it via the
    *  existing Activity/snapshot polling, not this response. */
-  status: "completed" | "failed" | "started";
+  status: "completed" | "failed" | "started" | "queued";
   summary: string;
 }
 
-/** Manual run — the server forces manual runs to propose-only authority. Async: the route races
- *  the run against a bounded window and may return `status: "started"` (202) instead of waiting
- *  for the whole run to finish — see app/api/strategy/run/route.ts. */
+/** Manual run — the server forces manual runs to propose-only authority. Async: the route
+ *  persists a run id and returns `status: "queued"` (202) before executing. */
 export function runOnce(): Promise<RunOnceResult> {
   return request<RunOnceResult>("/api/strategy/run", { method: "POST", body: JSON.stringify({ manual: true }) });
 }
