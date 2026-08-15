@@ -19,7 +19,8 @@
 //
 // SECRETS: read by name from the process env, which is how every other provider credential in this
 // app arrives (the Infisical runner injects them — see secrets-source.ts). Never logged.
-//   APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID (the APNs topic), APNS_PRIVATE_KEY_B64 (base64 .p8).
+//   key id, team id, bundle id (the APNs topic),
+//   plus the .p8 material via the APNS p8 env var, or the private-key / private-key-b64 env vars.
 //
 // FAIL SOFT: nothing in this module may take down a caller. The notify channel that uses it
 // (src/lib/notify.ts) treats a throw as an ordinary channel failure, and an unconfigured
@@ -58,23 +59,40 @@ export interface ApnsConfig {
   privateKeyPem: string;
 }
 
+function looksLikePem(value: string): boolean {
+  return value.includes("BEGIN") && value.includes("PRIVATE KEY");
+}
+
+/** Accept raw PEM, escaped-newline PEM, or standard base64 of the .p8. */
+export function decodeApnsPrivateKeyPem(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const unescaped = trimmed.includes("\\n") ? trimmed.replace(/\\n/g, "\n") : trimmed;
+  if (looksLikePem(unescaped)) return unescaped;
+  try {
+    const decoded = Buffer.from(trimmed, "base64").toString("utf8");
+    if (looksLikePem(decoded)) return decoded;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 /** Read the APNs credential set from the environment. Returns null when ANY part is missing —
  *  the caller degrades to "push unavailable" rather than half-configuring a send. The private key
- *  is base64-decoded here but NOT parsed: a malformed key surfaces as a send-time channel error,
- *  not a boot/config crash. */
+ *  is decoded here but NOT parsed: a malformed key surfaces as a send-time channel error,
+ *  not a boot/config crash.
+ *
+ *  Reads the key id, team id, bundle id, and the .p8 material via the APNS p8
+ *  env var, or the private-key / private-key-b64 env vars. */
 export function loadApnsConfig(env: ApnsEnvSource = process.env): ApnsConfig | null {
   const keyId = (env.APNS_KEY_ID ?? "").trim();
   const teamId = (env.APNS_TEAM_ID ?? "").trim();
   const bundleId = (env.APNS_BUNDLE_ID ?? "").trim();
-  const keyB64 = (env.APNS_PRIVATE_KEY_B64 ?? "").trim();
-  if (!keyId || !teamId || !bundleId || !keyB64) return null;
-  let privateKeyPem = "";
-  try {
-    privateKeyPem = Buffer.from(keyB64, "base64").toString("utf8");
-  } catch {
-    return null;
-  }
-  if (!privateKeyPem.trim()) return null;
+  const rawKey = (env.APNS_P8 ?? env.APNS_PRIVATE_KEY ?? env.APNS_PRIVATE_KEY_B64 ?? "").trim();
+  if (!keyId || !teamId || !bundleId || !rawKey) return null;
+  const privateKeyPem = decodeApnsPrivateKeyPem(rawKey);
+  if (!privateKeyPem) return null;
   return { keyId, teamId, bundleId, privateKeyPem };
 }
 
