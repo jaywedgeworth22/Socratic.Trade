@@ -724,6 +724,15 @@ async function tick(): Promise<void> {
     )
     .catch((err) => console.error("[scheduler] mobile-command worker error:", err));
 
+  void import("./strategy-run-requests")
+    .then(({ processPendingStrategyRunRequests }) =>
+      journalLane("strategy-run-drain", {}, async () => {
+        const result = await processPendingStrategyRunRequests({ limit: 1 });
+        return { status: result.processed > 0 ? ("ok" as const) : ("skipped" as const), summary: `processed=${result.processed}` };
+      })
+    )
+    .catch((err) => console.error("[scheduler] strategy-run worker error:", err));
+
   // Durable due-jobs: drain due 15m/1h intraday outcome-sampling jobs (db-jobs.ts + outcome-engine's
   // drainDueIntradaySampleJobs) so sampling survives process downtime instead of depending on a
   // strategy run coincidentally landing inside the narrow tolerance window.

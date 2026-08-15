@@ -63,6 +63,7 @@ const DELETE_TABLES_BY_USER_ID = [
   // Added by the G9(b) coverage cross-check (2026-07-01) — previously missing:
   "api_health_log",
   "mobile_commands",
+  "strategy_run_requests",
   "rag_usage",
   "take_profit_trims",
   // Added 2026-07-05: due_jobs (src/lib/db-jobs.ts) is user-scoped (nullable user_id — system-wide
@@ -268,6 +269,9 @@ export function getAccountDeletionBlockers(userId: string): AccountDeletionBlock
   const activeMobileCommands = db
     .prepare("SELECT COUNT(*) AS count FROM mobile_commands WHERE user_id = ? AND status IN ('queued','running')")
     .get(userId) as { count: number };
+  const activeStrategyRunRequests = db
+    .prepare("SELECT COUNT(*) AS count FROM strategy_run_requests WHERE user_id = ? AND status IN ('queued','running')")
+    .get(userId) as { count: number };
   const activeReplacements = db
     .prepare("SELECT COUNT(*) AS count FROM order_replacements WHERE user_id = ? AND status IN ('cancel_requested', 'cancel_confirmed', 'replacement_claiming', 'replacement_submitted')")
     .get(userId) as { count: number };
@@ -283,7 +287,7 @@ export function getAccountDeletionBlockers(userId: string): AccountDeletionBlock
     .get(userId) as { count: number };
   const activeUserOperations = countActiveUserOperations(userId);
   return {
-    runningStrategyRuns: runningStrategyRuns.count,
+    runningStrategyRuns: runningStrategyRuns.count + activeStrategyRunRequests.count,
     placingProposals: placingProposals.count,
     pendingReconciliationFills: pendingReconciliationFills.count,
     activeMobileCommands: activeMobileCommands.count,

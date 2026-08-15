@@ -163,6 +163,7 @@ export function installAccountWriteFenceTriggers(database: Database.Database): v
     "provider_usage_outbox",
     "rag_usage",
     "strategy_runs",
+    "strategy_run_requests",
     "task_journal",
     "trade_proposals"
   ]);
@@ -3035,6 +3036,26 @@ const MIGRATIONS: Migration[] = [
         );
         CREATE INDEX IF NOT EXISTS idx_strategy_overlays_user
           ON strategy_overlays (user_id, enabled, priority);
+      `);
+    }
+  },
+  {
+    version: 82,
+    name: "strategy_run_requests",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS strategy_run_requests (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          manual INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
+          result TEXT,
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          finished_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_strategy_run_requests_user_status
+          ON strategy_run_requests (user_id, status, created_at);
       `);
     }
   }

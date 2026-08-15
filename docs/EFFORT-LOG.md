@@ -1,3 +1,5 @@
+- **[Socratic.Trade][GROK] Durable strategy-run queue (202 + run id) — IN PROGRESS 2026-08-15 (branch `grok/durable-strategy-run`, worktree `~/apps/trading-grok-durable-run`).**  Persist UUID before 202; worker + scheduler drain.  Replaces in-process 8s race.  Rollout: `docs/rollouts/2026-08-15-durable-strategy-run.md`.
+
 - **[Socratic.Trade][GROK] Point AGENTS.md at Mac background-jobs master list — IN PR 2026-08-15 (branch `grok/mac-process-list`).**  Canonical `~/apps/MAC-LOCAL-PROCESSES.md` + pinned Note `[FLEET, Grok] Mac background jobs master list`.
 - **[Socratic.Trade][GROK] Account-config Title Case (Fractional Shares, Whole Shares, Regular + Extended) — IN PROGRESS 2026-08-15 (branch `grok/account-config-title-case`, issue #2726).**  Capabilities sheet chips now match Connected / Disabled capitalization.
 - **[Socratic.Trade][GROK] Collapse model versions onto family identity for results/benchmarks/history — COMPLETED 2026-08-15 (merged #2725 `d7b48398`, issue #2724).**  `gemini-3.7-flash` → `gemini-flash-latest`; same for Flash Lite / Pro / Opus / Sonnet / etc.
