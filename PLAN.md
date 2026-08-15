@@ -1,5 +1,10 @@
 # Active Implementation Plan
 
+> **2026-08-14 GROK — unstick #2707 webpack `node:crypto`.** Merged origin/main
+> (clean). `src/lib/kalshi.ts` now imports bare `crypto` so Next/webpack
+> resolve.fallback applies. Rollout:
+> `docs/rollouts/2026-08-14-kalshi-node-crypto-webpack.md`.
+
 > **2026-08-14 GROK — bound per-document FTS mirror (`grok/bound-fts-mirror`).**  #2680's 250ms yield did not bound wall-clock (933 chunks / 279522ms).  Slice at 20 chunks or 6s per tick, resume from FTS row count, heartbeat during FTS.  Do not re-enable the worker in this PR.  Issue #2715.  Rollout: `docs/rollouts/2026-08-14-bound-fts-mirror.md`.
 > **2026-08-13 GROK — r5 residue (`grok/claude-r5-residue`).** After #2682, implement the leftover `risk_advisory` tail reword + merge-gate.  Do not redo r4 (sibling `grok/claude-r4-pickup`).  Do not flip `VECTOR_ASOF_STRICT` or mint Reddit/X keys.  Owner-decision list in `docs/rollouts/2026-08-13-pickup-r5-residue.md`.
 > **2026-08-14 GROK — Monet backend r5 pickup (`grok/monet-backend-r5`).** Finish Monet's Backend-updates chat: land leftover r4 #2689 + residue #2691, then r5 locks/memory/overlays/chat-SSE/scorecard-alpha (migrations 79–81). Rollout: `docs/rollouts/2026-08-14-monet-backend-r5.md`.

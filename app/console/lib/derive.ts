@@ -351,25 +351,46 @@ function deriveBaseProtection(
   };
 }
 
-/** Count of open short positions the app has deliberately stopped managing because
- *  shortSellingEnabled is off: every enforcement layer (synthetic stop monitor,
- *  proactive risk exits, broker-protective-stops) skips shorts entirely while the
- *  toggle is off — see the muted/unsafe branch in deriveBaseProtection above. This
- *  only surfaces that existing state as a number for banners; it never gates or
- *  acts. 0 whenever short selling is on (all shorts managed) or no shorts are held. */
+export type UnmanagedShortReason = "shorts_disabled" | "broker_unprotected" | "stops_disabled";
+
+/** Count of open shorts the app will not protect with a broker-held buy-stop.
+ *  Short selling off: every enforcement layer skips shorts.  Short selling on
+ *  but not Alpaca, or brokerStopsForShorts off: synthetic-only / unmanaged. */
 export function deriveUnmanagedShortCount(
   positions: EquityPosition[] | undefined,
-  policy: Pick<TradingPolicy, "shortSellingEnabled">
+  policy: Pick<TradingPolicy, "shortSellingEnabled" | "brokerStopsForShorts" | "activeBroker">
 ): number {
-  if (policy.shortSellingEnabled) return 0;
-  return (positions ?? []).filter((p) => p.quantity < 0).length;
+  return deriveUnmanagedShorts(positions, policy).count;
+}
+
+export function deriveUnmanagedShorts(
+  positions: EquityPosition[] | undefined,
+  policy: Pick<TradingPolicy, "shortSellingEnabled" | "brokerStopsForShorts" | "activeBroker">
+): { count: number; reason: UnmanagedShortReason | null } {
+  const shorts = (positions ?? []).filter((p) => p.quantity < 0);
+  if (shorts.length === 0) return { count: 0, reason: null };
+  if (!policy.shortSellingEnabled) return { count: shorts.length, reason: "shorts_disabled" };
+  const alpaca = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
+  if (!alpaca && policy.activeBroker) return { count: shorts.length, reason: "broker_unprotected" };
+  if (policy.brokerStopsForShorts === false) return { count: shorts.length, reason: "stops_disabled" };
+  return { count: 0, reason: null };
 }
 
 /** Advisory banner copy for unmanaged shorts — shared verbatim by the Home
  *  positions card and the Guardrails Short selling panel so the two surfaces
  *  can never drift. Null when there is nothing to say. */
-export function unmanagedShortNotice(count: number): string | null {
+export function unmanagedShortNotice(count: number, reason: UnmanagedShortReason = "shorts_disabled"): string | null {
   if (count <= 0) return null;
+  if (reason === "broker_unprotected") {
+    return count === 1
+      ? "1 short position has no broker-held buy-stop — live shorts are Alpaca-only.  Close it or move it to Alpaca for resting cover protection."
+      : `${count} short positions have no broker-held buy-stop — live shorts are Alpaca-only.  Close them or move them to Alpaca for resting cover protection.`;
+  }
+  if (reason === "stops_disabled") {
+    return count === 1
+      ? "1 short position is unmanaged because broker-held short buy-stops are off — turn them on, or close it."
+      : `${count} short positions are unmanaged because broker-held short buy-stops are off — turn them on, or close them.`;
+  }
   return count === 1
     ? "1 short position is unmanaged while short selling is off — enable shorting to resume protection, or close it."
     : `${count} short positions are unmanaged while short selling is off — enable shorting to resume protection, or close them.`;

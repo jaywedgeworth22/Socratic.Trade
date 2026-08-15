@@ -51,6 +51,8 @@ import {
   listBrokerProtectiveStops,
   upsertBrokerProtectiveStop,
   getDb,
+  getStopPlans,
+  persistedOrFallbackStopPct,
   type BrokerProtectiveStop,
   listPendingBracketTeardowns,
   removePendingBracketTeardown,
@@ -80,6 +82,18 @@ function auditStopSkipped(
 }
 import { normalizeSymbol } from "./money";
 import { livePreflightBlocks } from "./preflight-live-guard";
+import {
+  canArmProtectiveTrail,
+  clampHaltedReplacementStop,
+  fixedProtectiveStopPrice,
+  impliedTrailExtreme,
+  positionMarkPrice,
+  protectiveExitSide,
+  protectiveSideOf,
+  trailRatchetTighter,
+  trailingTriggerFromExtreme,
+  type ProtectiveSide
+} from "./protective-stop-math";
 import type { BrokerGateway, EquityOrder, EquityPosition, ExecutionMode, FillSource, StopPlanStyle, TradingPolicy } from "./types";
 
 /**
@@ -144,6 +158,17 @@ export function desiredBrokerStopKind(policy: TradingPolicy, executionMode: Exec
   if (brokerTrailingStopsEnabled(policy, executionMode)) return "trailing";
   if (brokerProtectiveStopsEnabled(policy, executionMode)) return "fixed";
   return null;
+}
+
+/**
+ * Broker-held buy-stops for shorts.  Default ON when short selling is on.
+ * Live shorts stay Alpaca-only — Robinhood MCP cannot short, and unofficial
+ * Webull is never a placement venue.
+ */
+export function brokerStopsForShortsEnabled(policy: TradingPolicy): boolean {
+  if (policy.shortSellingEnabled !== true) return false;
+  if (policy.brokerStopsForShorts === false) return false;
+  return policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
 }
 
 /**
@@ -376,17 +401,38 @@ export async function reconcileBrokerProtectiveStops(args: {
 
   const kind = desiredBrokerStopKind(policy, executionMode);
   const source: FillSource = executionMode === "broker/live" ? "live" : "paper";
+  const shortsEnabled = brokerStopsForShortsEnabled(policy);
+  const livePositions = new Map<string, EquityPosition>();
+  for (const p of positions) {
+    if (p.quantity > 0.000001) livePositions.set(normalizeSymbol(p.symbol), p);
+    else if (shortsEnabled && p.quantity < -0.000001) livePositions.set(normalizeSymbol(p.symbol), p);
+  }
+  let stopContracts: Record<string, ReturnType<typeof getStopPlans>[string]> = {};
+  try {
+    stopContracts = getStopPlans(accountNumber, userId);
+  } catch {
+    stopContracts = {};
+  }
+  const longStopPct = policy.riskRules?.stopLossPct ?? 0;
+  const shortStopPct = policy.riskRules?.shortStopLossPct ?? longStopPct;
+  const sideOf = (pos: EquityPosition): ProtectiveSide => protectiveSideOf(pos);
+  const stopPctFor = (pos: EquityPosition, sym: string): number => {
+    const fallback = sideOf(pos) === "short" ? shortStopPct : longStopPct;
+    return persistedOrFallbackStopPct(stopContracts[sym], fallback);
+  };
+  const fillSideFor = (symbol: string, order?: EquityOrder): "sell" | "cover" => {
+    const pos = livePositions.get(normalizeSymbol(symbol));
+    if (pos) return protectiveExitSide(sideOf(pos));
+    const raw = String(order?.side ?? "").trim().toLowerCase();
+    return raw === "buy" || raw === "cover" ? "cover" : "sell";
+  };
   // Narrow the account-wide kind for one symbol per its own stop plan (never widen/invent beyond
   // what the account already has enabled — see the stopPlanBySymbol param doc above). An "atr" plan
-  // deliberately never maps to the fixed lane here: this reconciler only knows the account's flat
-  // `stopLossPct`, not the pinned per-symbol ATR distance (that's computed and applied entirely
-  // within generateProactiveRiskProposals/enrichOpeningProposal in strategy.ts) — resting a
-  // broker-held stop at the flat % would silently contradict the ATR distance the plan actually
-  // pins. Narrowing to "never invent a mispriced broker stop" leaves the ATR plan's protection to
-  // the always-on, correctly-priced synthetic monitor instead (Codex review, PR #1371).
+  // maps to the fixed lane ONLY when the Exit Contract persisted a stop price or resolved % at fill;
+  // otherwise we still refuse a mispriced flat-% broker stop (Codex review, PR #1371).
   const kindForSymbol = (sym: string): "fixed" | "trailing" | null => {
     const plan = stopPlanBySymbol[sym] ?? "default";
-    if (plan === "none" || plan === "atr") return null;
+    if (plan === "none") return null;
     // `kind` picks TRAILING first when an account has both lanes enabled (desiredBrokerStopKind's
     // own precedence) — so `kind === "trailing"` already correctly reflects trailing-lane
     // availability regardless of whether fixed is ALSO enabled. But that same precedence means an
@@ -396,6 +442,13 @@ export async function reconcileBrokerProtectiveStops(args: {
     // precedence-resolved `kind` (Codex review, PR #1371).
     if (plan === "trailing") return kind === "trailing" ? "trailing" : null;
     if (plan === "fixed") return brokerProtectiveStopsEnabled(policy, executionMode) ? "fixed" : null;
+    if (plan === "atr") {
+      const contract = stopContracts[sym];
+      const hasContract =
+        (typeof contract?.stopPrice === "number" && contract.stopPrice > 0) ||
+        (typeof contract?.resolvedStopPct === "number" && contract.resolvedStopPct > 0);
+      return hasContract && brokerProtectiveStopsEnabled(policy, executionMode) ? "fixed" : null;
+    }
     return kind;
   };
 
@@ -413,7 +466,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       source,
       executionMode,
       symbol: normalizeSymbol(row.symbol),
-      side: "sell",
+      side: fillSideFor(row.symbol, order),
       quantity: qty,
       price,
       notional: qty * price,
@@ -449,7 +502,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       source,
       executionMode,
       symbol: normalizeSymbol(intent.symbol),
-      side: "sell",
+      side: fillSideFor(intent.symbol, order),
       quantity: qty,
       price,
       notional: qty * price,
@@ -549,7 +602,6 @@ export async function reconcileBrokerProtectiveStops(args: {
     return out;
   }
 
-  const stopPct = policy.riskRules?.stopLossPct ?? 0;
   const trailPct = policy.riskRules?.trailingStopPct ?? 0;
   // Native trailing_stop orders exist only on the Alpaca REST lane. An `alpaca-mcp` account can be
   // configured with ONLY an MCP endpoint (no REST keys), and the gateway's trailing branch goes
@@ -576,7 +628,7 @@ export async function reconcileBrokerProtectiveStops(args: {
     const cov = liveExitOrderCoverage(
       orders.filter((o) => !cancelled.has(o.id) && o.id !== excludeOrderId),
       sym,
-      "long"
+      sideOf(pos)
     );
     if (cov.unknownQty) return 0;
     return Math.max(full - cov.coveredQty, 0);
@@ -608,26 +660,30 @@ export async function reconcileBrokerProtectiveStops(args: {
   // mark alone) means enabling broker-held trailing can never arm a LOOSER trigger than the trail
   // already protecting the position after a rally-then-pullback. Only ever ratchets UP (section 3).
   const trailingTriggerPrice = (pos: EquityPosition, sym: string): number => {
-    const mark = pos.marketValue / pos.quantity;
-    const trackedExtreme = extremePriceBySymbol[sym] ?? 0;
-    return round2(Math.max(mark, pos.averageCost, trackedExtreme) * (1 - trailPct / 100));
+    return trailingTriggerFromExtreme(
+      positionMarkPrice(pos),
+      pos.averageCost,
+      extremePriceBySymbol[sym] ?? 0,
+      trailPct,
+      sideOf(pos)
+    );
   };
 
-  // Whether a broker-held TRAILING stop at `stopPrice` may be armed for this symbol right now
-  // without being LOOSER than the app-defined trail already protecting the position (Codex review,
-  // PR #1331, three rounds):
-  //  - Native lane (Alpaca): the broker seeds its trail from the CURRENT mark, not from history —
-  //    so it may only be placed when the mark is at/above BOTH entry and the app's own tracked
-  //    high-water mark (a pullback from either would make the native trail's starting point, and
-  //    therefore its trigger, looser than the app's).
-  //  - Ratcheted lane: the trigger is an explicit price computed from the SAME tracked extreme, so
-  //    it only fails when actually already breached (trigger at/above the mark).
-  // Shared by section 3 (must not cancel an existing stop into a replacement that would be refused
-  // here — that would strand the position with neither) and section 4 (the actual placement gate).
   const canArmTrailingNow = (pos: EquityPosition, sym: string, stopPrice: number): boolean => {
-    const mark = pos.marketValue / pos.quantity;
-    const trackedExtreme = extremePriceBySymbol[sym] ?? 0;
-    return nativeTrailing ? mark >= Math.max(pos.averageCost, trackedExtreme) : stopPrice < mark;
+    return canArmProtectiveTrail({
+      mark: positionMarkPrice(pos),
+      avgCost: pos.averageCost,
+      trackedExtreme: extremePriceBySymbol[sym] ?? 0,
+      stopPrice,
+      nativeTrailing,
+      side: sideOf(pos)
+    });
+  };
+
+  const fixedStopPrice = (pos: EquityPosition, sym: string): number => {
+    const contract = stopContracts[sym];
+    if (typeof contract?.stopPrice === "number" && contract.stopPrice > 0) return round2(contract.stopPrice);
+    return fixedProtectiveStopPrice(pos.averageCost, stopPctFor(pos, sym), sideOf(pos));
   };
 
   // Would section 4 actually be able to PLACE a right-sized replacement for this symbol THIS tick?
@@ -647,14 +703,9 @@ export async function reconcileBrokerProtectiveStops(args: {
     return trigger > 0 && canArmTrailingNow(pos, sym, trigger);
   };
 
-  // Long positions only: Robinhood is long-only, and the trailing lane deliberately starts with
-  // longs too — Alpaca shorts keep the synthetic monitor's trailing coverage (a short's broker-held
-  // trail is a follow-up; note it in the rollout doc before extending). Computed UP FRONT
-  // (before any cancel) so the guards below know which positions are still open.
-  const liveLongs = new Map<string, EquityPosition>();
-  for (const p of positions) {
-    if (p.quantity > 0.000001) liveLongs.set(normalizeSymbol(p.symbol), p);
-  }
+  // Open positions this lane will protect. Longs always; shorts only when
+  // brokerStopsForShortsEnabled (Alpaca + short selling on). Computed UP FRONT
+  // so cancel/teardown guards know which positions are still open.
   // Would a live REPLACEMENT stop be blocked (broker/live without ALLOW_LIVE_TRADING)? If so, we must
   // not cancel an OPEN position's only stop with no replacement — that would leave it unprotected.
   // Cancels for CLOSED positions stay risk-reducing and are never blocked.
@@ -715,7 +766,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         // accepted). KEEP the marker so a later tick can reconcile it — dropping it would lose the only
         // handle to a possibly-live broker stop (double-sell/orphan risk). If still halted+live, also
         // re-queue so section 4 reuses the ref (broker idempotency then rejects a duplicate placement).
-        if (haltedProtectOnly && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) haltedRightsizeSymbols.add(rowSym);
+        if (haltedProtectOnly && livePositions.has(rowSym) && kindForSymbol(rowSym) !== null) haltedRightsizeSymbols.add(rowSym);
         continue;
       }
       // Synthetic placeholder marker (no real order behind it). KEEP it until section 4 actually places
@@ -725,7 +776,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       // registration stays disabled (Codex review, PR #1738). Section 4 excludes pending_replace rows
       // from its `existing` guard so the kept marker still places; a successful placement upserts the
       // same row id to `resting`, a failed one re-persists the marker.
-      if (haltedProtectOnly && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) {
+      if (haltedProtectOnly && livePositions.has(rowSym) && kindForSymbol(rowSym) !== null) {
         haltedRightsizeSymbols.add(rowSym);
         continue; // keep the marker — section 4 owns resolving it this tick
       }
@@ -756,8 +807,8 @@ export async function reconcileBrokerProtectiveStops(args: {
       // so the durable right-size retry marker is authorized ONLY when a live cancel is about to run
       // for an oversized stop while halted — never on the escape-hatch path or a non-halted cancel.
       let markRightsizeOnCancel = false;
-      if ((liveReplaceBlocked || haltedProtectOnly) && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) {
-        const rowPos = liveLongs.get(rowSym);
+      if ((liveReplaceBlocked || haltedProtectOnly) && livePositions.has(rowSym) && kindForSymbol(rowSym) !== null) {
+        const rowPos = livePositions.get(rowSym);
         const rowKind = kindForSymbol(rowSym);
         // "Oversized" is judged against the UNCOVERED remainder (`desiredStopQuantity`), NOT the whole
         // position — another live exit order (a bracket leg, a manual sell) may already cover part of
@@ -774,13 +825,14 @@ export async function reconcileBrokerProtectiveStops(args: {
         // cancelling the ratcheted stop into a looser replacement during a halt (Codex review, PR #1738).
         // Idempotent (guarded per-symbol); section 3's loop then leaves it as-is.
         if (rowKind === "trailing" && row.trailPercent && row.trailPercent > 0 && !extremePriceBySymbol[rowSym]) {
-          let e = row.stopPrice / (1 - row.trailPercent / 100);
+          const side = rowPos ? sideOf(rowPos) : "long";
+          let e = impliedTrailExtreme(row.stopPrice, row.trailPercent, side);
           const lo = orders.find((o) => o.id === row.brokerOrderId);
           if (lo && typeof lo.stopPrice === "number" && lo.stopPrice > 0) {
-            const oe = lo.stopPrice / (1 - row.trailPercent / 100);
-            if (Number.isFinite(oe) && oe > 0) e = Math.max(e, oe);
+            const oe = impliedTrailExtreme(lo.stopPrice, row.trailPercent, side);
+            if (oe > 0) e = side === "short" ? (e > 0 ? Math.min(e, oe) : oe) : Math.max(e, oe);
           }
-          if (Number.isFinite(e) && e > 0) extremePriceBySymbol[rowSym] = e;
+          if (e > 0) extremePriceBySymbol[rowSym] = e;
         }
         // Halted + oversized: retry the cancel ONLY if a right-sized replacement can actually be placed
         // this tick (else cancelling would strand the position — no synthetic fallback registers while
@@ -853,7 +905,7 @@ export async function reconcileBrokerProtectiveStops(args: {
     // Section 1 already dropped any marker whose position closed; a surviving one is live, so this
     // cancel-on-close section leaves it for section 4 (Codex review, PR #1738).
     if (row.status === "pending_replace") continue;
-    if (!liveLongs.has(normalizeSymbol(row.symbol))) {
+    if (!livePositions.has(normalizeSymbol(row.symbol))) {
       try {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
         deleteBrokerProtectiveStop(row.id, userId);
@@ -882,7 +934,7 @@ export async function reconcileBrokerProtectiveStops(args: {
     // that survive are live right-size retries section 4 will place.
     if (row.status === "pending_replace") continue;
     const sym = normalizeSymbol(row.symbol);
-    if (!liveLongs.has(sym)) continue; // already torn down above (position closed)
+    if (!livePositions.has(sym)) continue; // already torn down above (position closed)
     if (kindForSymbol(sym) !== null) continue;
     try {
       await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
@@ -962,7 +1014,9 @@ export async function reconcileBrokerProtectiveStops(args: {
     if (stop.kind !== "trailing" || !(stop.trailPercent && stop.trailPercent > 0)) continue;
     const sym = normalizeSymbol(stop.symbol);
     if (extremePriceBySymbol[sym]) continue;
-    let impliedExtreme = stop.stopPrice / (1 - stop.trailPercent / 100);
+    const livePos = livePositions.get(sym);
+    const side = livePos ? sideOf(livePos) : "long";
+    let impliedExtreme = impliedTrailExtreme(stop.stopPrice, stop.trailPercent, side);
     // The DB row's `stopPrice` is written ONCE at placement for a NATIVE trailing stop (it records
     // the trigger the trail STARTED from) and is never repriced while the broker silently ratchets
     // its own trigger upward — so a stop placed at entry and then left alone through a rally pins
@@ -976,14 +1030,16 @@ export async function reconcileBrokerProtectiveStops(args: {
     // (e.g. a failed fetch left `orders` empty). Codex review, PR #1331.
     const liveOrder = orders.find((o) => o.id === stop.brokerOrderId);
     if (liveOrder && typeof liveOrder.stopPrice === "number" && liveOrder.stopPrice > 0) {
-      const orderImpliedExtreme = liveOrder.stopPrice / (1 - stop.trailPercent / 100);
-      if (Number.isFinite(orderImpliedExtreme) && orderImpliedExtreme > 0) {
-        impliedExtreme = Math.max(impliedExtreme, orderImpliedExtreme);
+      const orderImpliedExtreme = impliedTrailExtreme(liveOrder.stopPrice, stop.trailPercent, side);
+      if (orderImpliedExtreme > 0) {
+        impliedExtreme = side === "short"
+          ? (impliedExtreme > 0 ? Math.min(impliedExtreme, orderImpliedExtreme) : orderImpliedExtreme)
+          : Math.max(impliedExtreme, orderImpliedExtreme);
       }
     }
     if (Number.isFinite(impliedExtreme) && impliedExtreme > 0) extremePriceBySymbol[sym] = impliedExtreme;
   }
-  for (const [sym, pos] of liveLongs) {
+  for (const [sym, pos] of livePositions) {
     const existingStop = existingStops.find((r) => normalizeSymbol(r.symbol) === sym);
     const symKind = kindForSymbol(sym);
     if (symKind === null) {
@@ -1119,7 +1175,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       }
       // Where section 4 would place this stop's trigger today (informational for native trailing —
       // the broker moves that trigger itself).
-      const newStopPrice = symKind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
+      const newStopPrice = symKind === "fixed" ? fixedStopPrice(pos, sym) : trailingTriggerPrice(pos, sym);
 
       let mismatchNote: string | undefined;
       if (existingStop.kind !== symKind) {
@@ -1130,7 +1186,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         if (Math.abs(existingStop.stopPrice - newStopPrice) > 0.02) mismatchNote = "stop price drift";
       } else if (Math.abs((existingStop.trailPercent ?? 0) - trailPct) > 0.0001) {
         mismatchNote = `trail % ${existingStop.trailPercent ?? 0} -> ${trailPct}`;
-      } else if (!nativeTrailing && newStopPrice - existingStop.stopPrice >= Math.max(0.02, existingStop.stopPrice * 0.001)) {
+      } else if (!nativeTrailing && trailRatchetTighter(existingStop.stopPrice, newStopPrice, sideOf(pos))) {
         mismatchNote = `trail ratchet ${existingStop.stopPrice} -> ${newStopPrice}`;
       }
 
@@ -1284,7 +1340,7 @@ export async function reconcileBrokerProtectiveStops(args: {
     }, userId, policy.connectedAccountId);
   };
 
-  for (const [sym, pos] of liveLongs) {
+  for (const [sym, pos] of livePositions) {
     if (existing.has(sym)) continue;
     // While halted, place ONLY for a symbol whose oversized stop was just cancelled for right-sizing.
     // Any other open long here has no stop (a pending_cancel row keeps it in `existing`, so it was
@@ -1423,21 +1479,15 @@ export async function reconcileBrokerProtectiveStops(args: {
       }, userId, policy.connectedAccountId);
       continue;
     }
-    let stopPrice = symKind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
-    // Halted right-size floor: a fixed replacement placed the same tick a tighter stop was cancelled
-    // must not be LOOSER than that stop (a halt allows only risk-reducing corrections). For a sell stop
-    // tighter == higher, so clamp UP to the floor. Trailing is already arm-gated against loosening
-    // (canArmTrailingNow), and native trailing carries no explicit trigger, so the clamp is fixed-only
-    // (Codex review, PR #1738).
+    let stopPrice = symKind === "fixed" ? fixedStopPrice(pos, sym) : trailingTriggerPrice(pos, sym);
     if (symKind === "fixed" && haltedProtectOnly) {
-      const floor = haltedRightsizeFloor.get(sym);
-      if (floor && floor > stopPrice) stopPrice = floor;
+      stopPrice = clampHaltedReplacementStop(stopPrice, haltedRightsizeFloor.get(sym), sideOf(pos));
     }
     if (!(stopPrice > 0)) continue;
     // Never arm a broker trail that would be LOOSER than the app-defined one (Codex review, PR
     // #1331, three rounds — see canArmTrailingNow's doc comment for the native-vs-ratcheted logic).
     if (symKind === "trailing" && !canArmTrailingNow(pos, sym, stopPrice)) {
-      const mark = pos.marketValue / pos.quantity;
+      const mark = positionMarkPrice(pos);
       auditStopSkipped({
         symbol: sym,
         kind: symKind,
@@ -1470,7 +1520,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       const exec = await gateway.placeEquityOrder({
         accountNumber,
         symbol: sym,
-        side: "sell",
+        side: protectiveExitSide(sideOf(pos)),
         type: "stop_market",
         quantity: qty,
         // Native trailing (Alpaca): the gateway translates trailPercent to a trailing_stop order

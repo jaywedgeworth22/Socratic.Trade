@@ -1197,6 +1197,32 @@ export interface TradingPolicy {
   // rejected. Requires broker-side support (Robinhood does not currently support
   // equity shorting via MCP). See docs/phase-7-strategy.md §C.
   shortSellingEnabled?: boolean;
+  /**
+   * Broker-held buy-stops for open shorts (Alpaca paper + live). Default ON
+   * when short selling is on.  Off keeps shorts on the synthetic monitor only.
+   * Robinhood/Webull never get this lane.
+   */
+  brokerStopsForShorts?: boolean;
+  /**
+   * Options place/cancel. Default OFF. Paper Alpaca works when this is on;
+   * live option money also requires `optionsLiveOrdersEnabled`.
+   */
+  optionsTradingEnabled?: boolean;
+  /**
+   * Kill switch for LIVE option orders. Default OFF — paper-only until the
+   * owner turns this on after a paper round-trip.
+   */
+  optionsLiveOrdersEnabled?: boolean;
+  /**
+   * Kalshi (and later other venue) event-contract sleeve. Default OFF.
+   * Enables paper/dry-run only until `kalshiLiveOrdersEnabled` is also on.
+   */
+  eventContractsEnabled?: boolean;
+  /**
+   * Kill switch for LIVE Kalshi orders. Default OFF. Also requires env
+   * `KALSHI_LIVE_ORDERS=on`. Either off = dry-run only.
+   */
+  kalshiLiveOrdersEnabled?: boolean;
   // SHORT_SELLING: Per-order notional cap for short positions. Should be lower
   // than maxOrderNotional per the design doc's risk guidance.
   maxShortOrderNotional?: number;
@@ -2504,6 +2530,21 @@ export interface BrokerGateway {
   reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder>;
   placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder>;
   cancelEquityOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder>;
+  /**
+   * Optional options placement surface. Implemented on Alpaca only. Callers MUST
+   * go through `evaluateOptionOrderPolicy` first — live money stays off by default.
+   */
+  placeOptionOrder?(input: {
+    accountNumber: string;
+    occSymbol: string;
+    intent: "buy_to_open" | "sell_to_close" | "buy_to_close" | "sell_to_open";
+    quantity: number;
+    type: "market" | "limit";
+    limitPrice?: number;
+    timeInForce?: TimeInForce;
+    refId: string;
+  }): Promise<ExecutedOrder>;
+  cancelOptionOrder?(accountNumber: string, orderId: string): Promise<ExecutedOrder>;
   /**
    * Identify and cancel the still-resting sibling legs (take-profit/stop-loss) of a broker-native
    * bracket order (Alpaca order_class "bracket", Tradier "otoco"), given the ORIGINAL entry order's

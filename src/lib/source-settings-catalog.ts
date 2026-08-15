@@ -437,6 +437,45 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     defaultValue: 0.5,
     min: 0,
     max: 1
+  },
+
+  // ── Kalshi event-market macro context (public GET /markets; KALSHI_ENV
+  // enables the data client. Trading is a separate default-off module.) ──
+  {
+    id: "KALSHI_CONTEXT",
+    group: "enrichment",
+    label: "Kalshi macro event markets",
+    description:
+      "Inject curated Kalshi event-contract probabilities (Fed, CPI, recession, NFP, GDP) into the strategist prompt as macro context.  Public market data — KALSHI_ENV=demo or prod enables the fetcher.  Off omits the block.",
+    type: "boolean",
+    defaultValue: true
+  },
+  {
+    id: "KALSHI_MACRO_SERIES",
+    group: "enrichment",
+    label: "Kalshi series tickers",
+    description:
+      "Comma-separated Kalshi series tickers to fetch.  Blank uses Fed decision, CPI YoY, NBER recession, NFP, and GDP.",
+    type: "string",
+    defaultValue: ""
+  },
+  {
+    id: "KALSHI_MAX_MARKETS_PER_SERIES",
+    group: "enrichment",
+    label: "Kalshi markets per series",
+    description: "Cap on open markets kept per series, most-liquid first.",
+    type: "number",
+    defaultValue: 4,
+    min: 1,
+    max: 12
+  },
+  {
+    id: "KALSHI_INCLUDE_ELECTIONS",
+    group: "enrichment",
+    label: "Include Kalshi election series",
+    description: "Also fetch presidential / Senate / House series.  Default off — elections are noisier as equity-regime evidence.",
+    type: "boolean",
+    defaultValue: false
   }
 ] as const;
 

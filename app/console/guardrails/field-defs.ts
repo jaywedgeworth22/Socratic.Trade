@@ -121,10 +121,18 @@ export const PANIC_BRAKE: FieldDef[] = [
 ];
 
 export const SHORTS: FieldDef[] = [
-  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: `Also requires the broker to allow shorting on this account. Every short must carry a short stop-loss. ${ADVISORY_NOTE}` },
+  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: `Also requires the broker to allow shorting on this account.  Live shorts are Alpaca-only.  Every short must carry a short stop-loss.  ${ADVISORY_NOTE}` },
+  { path: "brokerStopsForShorts", label: "Broker-held short buy-stops", kind: "bool", looserWhen: "off", hint: `On Alpaca, rest a GTC buy-stop above the market for each open short so a cover survives app downtime.  Default on when shorting is on.  Off keeps shorts on the app monitor only.  ${ADVISORY_NOTE}` },
   { path: "maxShortOrderNotional", label: "Max short order", kind: "money", optional: true, looserWhen: "up" },
   { path: "maxShortExposurePct", label: "Max short exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
   { path: "riskRules.shortStopLossPct", label: "Short stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Defaults to 8%. Every short carries a stop — a short without one is rejected." }
+];
+
+export const OPTIONS: FieldDef[] = [
+  { path: "optionsTradingEnabled", label: "Options trading", kind: "bool", looserWhen: "on", hint: `Place and cancel single-leg option orders on Alpaca paper.  Robinhood stays display-only.  ${ADVISORY_NOTE}` },
+  { path: "optionsLiveOrdersEnabled", label: "Live option orders", kind: "bool", looserWhen: "on", hint: `Kill switch for live Alpaca option money.  Default off — paper only until this is on.  ${ADVISORY_NOTE}` },
+  { path: "eventContractsEnabled", label: "Event contracts", kind: "bool", looserWhen: "on", hint: `Kalshi event-contract sleeve.  Paper/dry-run only until Live Kalshi Orders is also on.  ${ADVISORY_NOTE}` },
+  { path: "kalshiLiveOrdersEnabled", label: "Live Kalshi orders", kind: "bool", looserWhen: "on", hint: `Kill switch for live Kalshi money.  Also requires env KALSHI_LIVE_ORDERS=on.  Default off.  ${ADVISORY_NOTE}` }
 ];
 
 export const HYGIENE: FieldDef[] = [
@@ -276,6 +284,7 @@ export const ALL_DEFS: FieldDef[] = [
   ...PROTECTIVE_STOPS,
   ...PANIC_BRAKE,
   ...SHORTS,
+  ...OPTIONS,
   ...HYGIENE,
   ...TAX_RULES,
   ...UNIVERSE_FLOOR,

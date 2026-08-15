@@ -1,3 +1,14 @@
+## Current (2026-08-14 GROK — unstick PR #2707 Kalshi/exits/options)
+
+Rematched `origin/main` (merge-tree clean; GitHub CONFLICTING was phantom).
+verify-hosted run 31762430767 failed `npm run build` with
+`UnhandledSchemeError: Reading from "node:crypto"` via
+`kalshi.ts` -> `kalshi-macro.ts` -> `strategy.ts` -> `scheduler.ts`.
+Fixed `src/lib/kalshi.ts` to `import crypto from "crypto"` (same Next/webpack
+scheme-plugin trap documented in `apns.ts`). Branch
+`grok/st-kalshi-exits-options`, worktree
+`~/apps/trading-grok-kalshi-exits`. Rollout:
+`docs/rollouts/2026-08-14-kalshi-node-crypto-webpack.md`.
 ## Current (2026-08-15 GROK — stop ghost Gemini/DeepSeek keys)
 
 Connections kept showing Gemini and DeepSeek keys after the owner removed them.  Cause: Infisical ST prod `/` still has `GEMINI_API_KEY` / `DEEPSEEK_API_KEY`; every Coolify boot ran `migrateLocalEnvCredentials`, which copied them onto `local` and treated a delete tombstone as empty.  Prod rows are labeled `migrated from env` (2026-07-24).

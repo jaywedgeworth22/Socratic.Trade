@@ -226,10 +226,10 @@ would destroy the disallowed basis); losses *inside* an IRA create no lock.
 
 ## F. Deferred / future
 
-- **Broker-held short trails (Alpaca)** — deferred; `reconcileBrokerProtectiveStops` only
-  arms broker-held trailing for longs today (`liveLongs`, `p.quantity > 0`) — a short's trailing
-  stop is synthetic-monitor-only even on Alpaca. (Native Alpaca trailing stops for LONGS shipped
-  2026-07-10 — see "Broker-held trailing stops" in §B; this item is the narrower short-side gap.)
+- **Broker-held short buy-stops (Alpaca)** — shipped 2026-08-13. `reconcileBrokerProtectiveStops`
+  now includes open shorts when `shortSellingEnabled` and `brokerStopsForShorts` (default on)
+  and the venue is Alpaca. Places a GTC buy-stop (cover) above entry. Native trailing is
+  side-aware. Robinhood/Webull stay out of this lane.
 - **Short-specific take-profit notional** — not yet a field (shorts use
   `takeProfitPct`).
 

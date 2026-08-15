@@ -103,6 +103,10 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 | Robinhood broker-held stops | `policy.robinhoodBrokerStops` default off | Per-account policy |
 | Apple Sign-In (web) | `AUTH_APPLE_ID` / `AUTH_APPLE_SECRET` | **Waiting on secrets.** Code path live. Infisical keys (no values here): `AUTH_APPLE_ID`, `AUTH_APPLE_SECRET` — or mint from `AUTH_APPLE_TEAM_ID` + `AUTH_APPLE_KEY_ID` + `AUTH_APPLE_PRIVATE_KEY` (SIWA .p8 PEM, not ASC/APNs). |
 | Kalshi / options / short-sell capability | dormant per-account double gates | Phase 1 design landed |
+| Kalshi macro prompt context | `KALSHI_CONTEXT` (default on) + `KALSHI_ENV` | Public data; inert without `KALSHI_ENV` |
+| Kalshi live event orders | `KALSHI_LIVE_ORDERS` + `kalshiLiveOrdersEnabled` both off | Dry-run until both on |
+| Alpaca paper options | `optionsTradingEnabled` default off | Paper place/cancel when on; live needs `optionsLiveOrdersEnabled` |
+| Broker-held short buy-stops | `brokerStopsForShorts` default on | Alpaca only; requires `shortSellingEnabled` |
 
 ---
 
