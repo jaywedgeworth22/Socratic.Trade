@@ -1,3 +1,9 @@
+## Current (2026-08-15 GROK — account-config Title Case)
+
+Capabilities sheet on Connections was mixing Title Case chips (`Connected`, `Disabled`) with sentence-case values (`Whole shares`, `regular + extended`).  Labels and chips now match: `Fractional Shares`, `Whole Shares`, `Regular + Extended`, `Orders · Level N`.
+
+Branch `grok/account-config-title-case`, issue #2726.  Rollout: `docs/rollouts/2026-08-15-account-config-title-case.md`.
+
 ## Current (2026-08-15 GROK — model family identity for Results / benchmarks / history)
 
 Owner: Gemini 3.7 Flash must roll up as `gemini-flash-latest` (same for every Flash Lite, every Pro, every Opus, every Sonnet, and so on).  `canonicalModelId` already had the family table; Results and Red-Team efficacy still keyed off the wire slug (`google/gemini-3.7-flash`), so history split.
