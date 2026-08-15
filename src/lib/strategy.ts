@@ -428,7 +428,7 @@ export function rememberEvidenceAgeAnomalyDedupKey(
 
 export async function runStrategyOnce(
   userId: string = "local",
-  options: { manual?: boolean; connectedAccountId?: string; runStateOverride?: "close_only" } = {}
+  options: { manual?: boolean; connectedAccountId?: string; runStateOverride?: "close_only"; runId?: string } = {}
 ): Promise<StrategyResult> {
   // Snapshot the target account exactly once. An explicit override targets a scheduler-selected
   // account; otherwise the active policy supplies the id. Every later read/write stays bound to
@@ -437,7 +437,7 @@ export async function runStrategyOnce(
   // scoped to the target account so a different account isn't blocked.
   const connectedAccountId = options.connectedAccountId ?? getPolicy(userId).connectedAccountId;
   
-  const runId = crypto.randomUUID();
+  const runId = options.runId ?? crypto.randomUUID();
   // One immutable point-in-time boundary for every retrieval and evidence receipt in this run.
   // Passing this through prevents a later retrieval step from seeing data published mid-run.
   const runAsOf = new Date().toISOString();
