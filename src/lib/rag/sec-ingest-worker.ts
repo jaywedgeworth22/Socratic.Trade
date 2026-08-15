@@ -17,6 +17,7 @@ import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts"
 import { storeDocument } from "../vector-db";
 import { readLocalArtifact, writeLocalArtifact } from "../web-sources/sec-filings";
 import { insertDocumentChunkFtsBatch, countDocumentChunkFts, getDb } from "../db";
+import { serverKnobBool } from "../server-knobs";
 import { chunkDocument } from "./chunk";
 import {
   FTS_MIRROR_HEARTBEAT_MS,
@@ -41,6 +42,10 @@ export class SecIngestWorker {
     // interval would start overlapping runTick() calls that claim extra batches and run
     // EDGAR/Voyage/Pinecone work concurrently. Skip the tick while one is still in flight.
     this.intervalId = setInterval(() => {
+      // Server-knob park: while SEC_INGEST_WORKER_ENABLED resolves off, the loop stays alive but
+      // skips ticks, so an Admin > Operations flip resumes ingest within one interval + knob-cache
+      // TTL — no redeploy.  Cheap: the knob read is cached (~15s) between ticks.
+      if (!secIngestWorkerEnabled()) return;
       if (this.tickInFlight) return;
       this.tickInFlight = true;
       void this.runTick()
@@ -546,16 +551,13 @@ export class SecIngestWorker {
 // globalThis-pinned so Next.js HMR / a test runner's module re-evaluation cannot spawn a second
 // interval or register duplicate signal handlers on the one real process.
 
-function flagOn(value: string | undefined): boolean {
-  return ["1", "true", "on", "yes"].includes(String(value ?? "").trim().toLowerCase());
-}
-
 /** Opt-in gate (default OFF). The durable checkpoint state machine and DB primitives
  *  (db-rag-ingest.ts) are production-ready, but nothing seeds jobs automatically — jobs only exist
  *  after an explicit POST /api/admin/sec-ingest {action:"seed"} call. See
- *  docs/rollouts/2026-07-18-sec-ingest-worker-wiring.md. */
+ *  docs/rollouts/2026-07-18-sec-ingest-worker-wiring.md. Now a server knob (Admin > Operations DB
+ *  override > SEC_INGEST_WORKER_ENABLED env > off) so the loop can be parked/resumed at runtime. */
 export function secIngestWorkerEnabled(): boolean {
-  return flagOn(process.env.SEC_INGEST_WORKER_ENABLED);
+  return serverKnobBool("SEC_INGEST_WORKER_ENABLED");
 }
 
 type SecIngestWorkerHost = typeof globalThis & {
@@ -574,11 +576,11 @@ function registerSecIngestShutdownHooksOnce(): void {
   process.once("SIGINT", shutdown);
 }
 
-/** Idempotent: start the SEC ingest worker once, only when SEC_INGEST_WORKER_ENABLED. Called
- *  unconditionally from background-worker-startup.ts, matching how startStreams() calls each
- *  individually-gated stream starter. */
+/** Idempotent: start the SEC ingest worker loop once. Called unconditionally from
+ *  background-worker-startup.ts. The loop itself checks secIngestWorkerEnabled() every tick and
+ *  parks while it resolves off, so the SEC_INGEST_WORKER_ENABLED server knob can pause/resume the
+ *  worker at runtime without a redeploy. */
 export function startSecIngestWorker(): void {
-  if (!secIngestWorkerEnabled()) return;
   if (host.__secIngestWorkerInstance) return;
   const worker = new SecIngestWorker();
   host.__secIngestWorkerInstance = worker;

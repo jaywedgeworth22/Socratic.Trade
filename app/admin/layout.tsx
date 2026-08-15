@@ -16,6 +16,7 @@ import {
   DatabaseBackup,
   Layers,
   Server,
+  SlidersHorizontal,
   FileText,
   Monitor,
   Moon,
@@ -76,6 +77,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Data catalog",
     desc: "All fields + possible sources, RAG/numeric completeness %, provenance policy.",
     icon: Database
+  },
+  {
+    href: "/admin/operations",
+    label: "Operations",
+    desc: "Server-level pause and kill switches: workers, streams, budgets — flipped at runtime, no redeploy.",
+    icon: SlidersHorizontal
   },
   {
     href: "/admin/server",

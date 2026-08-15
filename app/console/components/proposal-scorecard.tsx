@@ -141,8 +141,21 @@ export function ProposalScorecardBlock({
                   <dd className="con-num font-semibold">{sniper.idealBuy !== undefined ? fmtMoney(sniper.idealBuy) : EM_DASH}</dd>
                 </div>
                 {sniper.secondaryBuy !== undefined && (
-                  <div title="Owner-configured secondary entry (secondaryBuyPullbackPct).  Display only — nothing is traded from it.">
-                    <dt className="text-[color:var(--con-faint)]">Secondary</dt>
+                  <div
+                    title={
+                      sniper.secondaryBuyBasis === "owner-set"
+                        ? "Owner-configured secondary entry (secondaryBuyPullbackPct override).  Display only — nothing is traded from it."
+                        : "Volatility-aware secondary entry derived from ATR(14), clamped 1-4%.  Display only — nothing is traded from it."
+                    }
+                  >
+                    <dt className="flex items-center gap-1 text-[color:var(--con-faint)]">
+                      Secondary
+                      {sniper.secondaryBuyBasis && (
+                        <span className="text-[length:var(--con-fs-2xs)] uppercase tracking-wide text-[color:var(--con-faint)]">
+                          {sniper.secondaryBuyBasis === "owner-set" ? "owner-set" : "ATR"}
+                        </span>
+                      )}
+                    </dt>
                     <dd className="con-num font-semibold">{fmtMoney(sniper.secondaryBuy)}</dd>
                   </div>
                 )}

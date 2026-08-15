@@ -31,6 +31,7 @@ import { envFlagOn } from "./rag/env-flag";
 import { normalizeSymbol } from "./money";
 import type { ContextDocument, RetrievalStatus, RetrievedChunk, StoreContextsResult } from "./vector-db";
 import type { FillEvent, FillSource, MarketFactorBreakdown, TradeProposal } from "./types";
+import { bumpVectorDocRetrieved } from "./db-memory-lifecycle";
 
 /** Source tag for closed-lot experience vectors — the "dedicated namespace" within the index. */
 export const EXPERIENCE_MEMORY_SOURCE = "experience-memory";
@@ -655,6 +656,15 @@ export async function retrieveDecisionExperiences(
         : injected.length > 0
           ? "ok"
           : "ok_empty";
+
+    try {
+      bumpVectorDocRetrieved({
+        userId: input.userId,
+        vectorIds: injected.map((row) => row.id)
+      });
+    } catch {
+      // Lifecycle table is additive; a missing migration/table must never fail retrieval.
+    }
 
     return {
       analogsBlock,

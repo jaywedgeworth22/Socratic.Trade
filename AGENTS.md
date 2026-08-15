@@ -742,8 +742,10 @@ Folder **Coding**, pin when able. Helper: `/Users/jay/apps/apple-notes-coding.sh
 ## Two spaces between sentences (owner — ALL contexts)
 
 Two spaces after sentence terminators in **all** human-readable prose for every
-agent: web, PWA, iOS UI, **App Store Connect listing fields** (description,
-promotional text, What's New, review notes), push/email, help, privacy, owner
-Notes. HTML must preserve the gap (NBSP+space / SENTENCE_GAP). Canonical:
-`/Users/jay/apps/FLEET-UI-COPY.md`.
+agent: web, PWA, iOS UI, **every App Store Connect field** (description,
+promotional text, What's New, **App Review notes**, **IAP / subscription
+review notes**, subscription localization descriptions), push/email, help,
+privacy, owner Notes.  HTML must preserve the gap (NBSP+space / SENTENCE_GAP).
+Store listing copy must be accurate (corpus, trial length).  Canonical:
+`/Users/jay/apps/AGENT-SYNC.md` § Two spaces and `/Users/jay/apps/FLEET-UI-COPY.md`.
 

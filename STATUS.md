@@ -7,6 +7,36 @@
 **This PR does not re-enable the worker.**  Re-enable `SEC_INGEST_WORKER_ENABLED` is the owner's call after this lands.  Do not flip Infisical.  Do not restart prod.
 
 Rollout: `docs/rollouts/2026-08-14-bound-fts-mirror.md`.
+## Current (2026-08-14 GROK — Monet backend r5 pickup)
+
+Owner asked to finish Monet's "Backend updates (ST - Monet)" chat after the usage cap.  Ingestion/FTS hotfix (#2680) and toggles (#2682) were already live.  Round 5 is on `grok/monet-backend-r5` as **#2721** (locks / memory decay / overlays / chat cancel / scorecard alpha; migrations 79–81).  Prompt version `agentic-strategy@2.6.0`.
+
+2026-08-15: rematched `origin/main` (includes #2720) then `verify-hosted` failed on `test/web-sources.test.ts` after midnight UTC — the live-flow stub's `06/16/2026` disclosedAt aged out of the 60-day window.  Fixture dates are now relative to `Date.now()`.  #2689 is held (superseded by this stack).  #2691 is independent residue.
+
+Rollout: `docs/rollouts/2026-08-14-monet-backend-r5.md`.
+
+## Current (2026-08-13 GROK — Claude r4 leftover pickup)
+
+Claude hit quota mid Round 4.  `origin/agent/claude` is gone; five local r4 commits sat on
+`~/apps/trading-claude` at `40d5c087`.  r3 already merged as #2666.  Toggles slice yielded to
+Monet and merged as #2682 (migration 78).  APNs claimed migration 77.
+
+Picked up in a new worktree (`~/apps/trading-grok-r4`, branch `grok/claude-r4-pickup`) from
+`origin/main` `77bbb77f`.  Cherry-picked oldest-first:
+
+1. `1ac172a9` outcome benchmarks (`^GSPC` + GICS sector, ETF fallback)
+2. `9f7f870f` ATR-derived `secondaryBuy` pullback
+3. `293d4bb5` server-knob Operations panel
+4. `cb645a02` congress-stream level-based resume + honest effect copy
+5. `40d5c087` strategist prompt data-age stamps
+
+No schema bump in these five (main stays at 78).  Conflicts: `vector-db.ts` kept main's
+`resolveSourceBool` and r4's `serverKnobBool`; `STRATEGY_PROMPT_VERSION` bumped to
+`agentic-strategy@2.5.0` because main already used 2.4.0 for the venue-contract prompt.
+Advisory-tail reword / settings-surface sweep is NOT in these five commits (it rode Monet
+#2682) — left alone.
+
+Rollout: `docs/rollouts/2026-08-13-claude-r4-pickup.md`.
 ## Current (2026-08-14 GROK — stale ~1200s quotes + origin timeouts)
 
 Production 2026-08-13/14: Autopilot openings warned "quote was ~1200s old",

@@ -6,6 +6,7 @@
 // secrets injected after build (e.g. via Infisical at start:secrets) are reflected
 // immediately without a rebuild.
 
+import { isAppleWebAuthConfigured } from "../../src/lib/auth/apple-web";
 import { signIn } from "../../src/lib/auth/auth";
 import { HeaderLogo } from "../console/ui/header-logo";
 
@@ -14,7 +15,7 @@ export const metadata = { title: "Sign in" };
 
 const googleConfigured = !!(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET);
 const githubConfigured = !!(process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET);
-const appleConfigured = !!(process.env.AUTH_APPLE_ID && process.env.AUTH_APPLE_SECRET);
+const appleConfigured = isAppleWebAuthConfigured();
 const anyProviderConfigured = googleConfigured || githubConfigured || appleConfigured;
 
 /** Value props — keep in sync with iOS LoginView feature bullets. */
