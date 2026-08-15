@@ -72,7 +72,10 @@ export interface PolymarketMarketMatch {
 // minutes gives headroom without going stale for a same-run repeat lookup (e.g. a held position
 // that is also a scan candidate).
 const DEFAULT_TTL_MS = 10 * 60_000;
-function polymarketTtlMs(): number {
+// Exported so the prompt-assembly layer (strategy.ts) can state the REAL cache-age upper bound in
+// the strategist prompt's block-level freshness note (data-age audit, 2026-08-13) instead of
+// hardcoding a duplicate constant that could drift from this one.
+export function polymarketTtlMs(): number {
   const value = Number(process.env.POLYMARKET_CACHE_TTL_MS);
   return Number.isFinite(value) && value > 0 ? value : DEFAULT_TTL_MS;
 }

@@ -18,6 +18,11 @@
 //      order), kinds with enough credited samples and better outcomes rank somewhat higher; unseen
 //      kinds get a neutral prior; nothing is ever excluded, and any failure falls open to the
 //      incoming order. Off-switch: RETRIEVAL_USEFULNESS_WEIGHTING=off.
+//
+// Basis note (r4): the ':alpha' rows below are credited straight from each horizon's spyExcessPct
+// as written by outcome-engine.ts, unchanged in shape here — but that figure's BASIS changed from
+// the SPY ETF to the S&P 500 index (^GSPC, SPY fallback), or a symbol's own GICS sector
+// index/ETF under policy.benchmarkMode === 'sector'. See outcome-horizons.ts's header.
 import { audit, getPolicy } from "./db";
 import {
   creditRetrievalUsefulness,
