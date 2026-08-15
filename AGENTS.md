@@ -694,6 +694,16 @@ with the Hetzner servers it monitored.
 The script calls `GET /api/ops/snapshot` (token via `x-ops-token`). See
 `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`. Rule: `.cursor/rules/ops-diagnostics.mdc`.
 
+## iOS agent build loop (owner 2026-08-13)
+
+Canonical: `/Users/jay/apps/AGENT-SYNC.md` § iOS agent build loop. Onboarding: `ios/CLAUDE.md`.
+
+- Do **not** stand up, debug, or narrate Xcode MCP (`build_sim`, `mcpbridge`).
+- `xcodebuild` / `xcrun simctl` via bash are pre-approved. Run them. Do not ask.
+- User-visible changes need `xcrun simctl io booted screenshot …` before you claim done.
+- Do not hand-edit `.pbxproj` / entitlements / xibs. This app uses XcodeGen: edit `ios/project.yml`, then `xcodegen generate`.
+- `@Observable` + `@MainActor`; `NavigationStack`; light theme default.
+
 ## iOS native ship (TestFlight, no Xcode UI)
 
 Agents ship the native app without opening Xcode:
