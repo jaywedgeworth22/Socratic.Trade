@@ -407,7 +407,7 @@ export async function debateProposal(
               }
               console.warn("Red Team LLM call failed:", why);
               const failureKind: RedTeamDebateResult["failureKind"] = response.status === 429 ? "rate_limited" : "provider_error";
-              return { text: undefined, debate: unavailable(`Red Team review unavailable — ${why}`, failureKind, attempt.model) };
+              return { text: undefined, debate: unavailable(`Red Team review unavailable — ${why}`, failureKind, attemptCanonicalModel) };
             }
 
             const payload = await response.json();
@@ -425,7 +425,7 @@ export async function debateProposal(
               ...extractLlmUsage(payload)
             });
             const text = extractLlmText(payload);
-            finalModel = attempt.model;
+            finalModel = attemptCanonicalModel;
 
             if (!text) {
               // An HTTP-200 with EMPTY content is a provider-side glitch (overloaded/deprecated
@@ -439,7 +439,7 @@ export async function debateProposal(
               }
               return {
                 text: undefined,
-                debate: unavailable("Red Team review returned no response.", "malformed_response", attempt.model)
+                debate: unavailable("Red Team review returned no response.", "malformed_response", attemptCanonicalModel)
               };
             }
 
@@ -477,7 +477,7 @@ export async function debateProposal(
                 debate: unavailable(
                   "Red Team returned multiple conflicting verdict blocks (ambiguous response); treating the review as unavailable.",
                   "malformed_response",
-                  attempt.model
+                  attemptCanonicalModel
                 )
               };
             }
@@ -507,7 +507,7 @@ export async function debateProposal(
                     ? "Red Team model refused to answer (safety-filter style response); treating the review as unavailable."
                     : "Red Team returned an unparseable response (not valid JSON); treating the review as unavailable.",
                   "malformed_response",
-                  attempt.model
+                  attemptCanonicalModel
                 )
               };
             }
@@ -533,7 +533,7 @@ export async function debateProposal(
                 debate: unavailable(
                   "Red Team returned a malformed verdict (missing/unknown 'verdict'); treating the review as unavailable.",
                   "malformed_response",
-                  attempt.model
+                  attemptCanonicalModel
                 )
               };
             }
@@ -544,7 +544,7 @@ export async function debateProposal(
                 rejected: verdict.verdict === "reject",
                 available: true,
                 reason: verdict.reason,
-                model: attempt.model
+                model: attemptCanonicalModel
               }
             };
           } catch (err) {

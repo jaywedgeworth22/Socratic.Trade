@@ -1058,6 +1058,73 @@ export function deferSecIngestTask(input: {
 }
 
 /**
+ * Park a leased task so the next tick can reclaim it immediately and continue
+ * in-stage work (FTS mirror slices).  Unlike `deferSecIngestTask` this does
+ * NOT clamp retry to now+60s — a 933-chunk filing is ~47 slices, and a 60s
+ * pause between them would add ~47 minutes of idle queue time.
+ *
+ * Stage attempt is refunded (same reason as defer): slice-yields must not
+ * march a healthy filing toward dead_letter (`max_stage_attempts` is 6).
+ * Attempt outcome stays `retry_wait` (existing CHECK); the receipt carries
+ * the durable FTS offset.
+ */
+export function releaseSecIngestTaskForResume(input: {
+  taskId: string;
+  owner: string;
+  leaseToken: string;
+  reasonType: string;
+  reason: string;
+  receipt?: Record<string, unknown>;
+  now?: Date;
+}): SecIngestFailureResult {
+  const reasonType = requiredTerminalReason(input.reasonType, "reasonType");
+  const reason = requiredTerminalReason(input.reason, "reason");
+  const database = getDb();
+  const now = input.now ?? new Date();
+  const nowIso = now.toISOString();
+  const release = database.transaction((): SecIngestFailureResult => {
+    const row = database
+      .prepare(
+        `SELECT t.* FROM sec_ingest_tasks t
+         JOIN sec_ingest_jobs j ON j.id = t.job_id
+         WHERE t.id = ? AND j.status = 'running' AND t.status = 'leased'
+           AND t.lease_owner = ? AND t.lease_token = ? AND t.lease_expires_at > ?`
+      )
+      .get(input.taskId, input.owner, input.leaseToken, nowIso) as RawTaskRow | undefined;
+    if (!row) return { applied: false };
+    const info = database
+      .prepare(
+        `UPDATE sec_ingest_tasks SET status = 'retry_wait', next_retry_at = ?,
+           stage_attempts = CASE WHEN stage_attempts > 0 THEN stage_attempts - 1 ELSE 0 END,
+           lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
+           last_error_type = ?, last_error = ?, last_error_json = NULL, updated_at = ?
+         WHERE id = ? AND status = 'leased' AND lease_owner = ? AND lease_token = ?`
+      )
+      .run(nowIso, reasonType, reason, nowIso, input.taskId, input.owner, input.leaseToken);
+    if (info.changes !== 1) return { applied: false };
+    const attempt = database
+      .prepare(
+        `UPDATE sec_ingest_task_attempts
+         SET outcome = 'retry_wait', finished_at = ?, error_type = ?, error = ?, receipt_json = ?
+         WHERE task_id = ? AND lease_token = ? AND lease_owner = ? AND outcome = 'claimed'`
+      )
+      .run(
+        nowIso,
+        reasonType,
+        reason,
+        input.receipt === undefined ? null : stableSecIngestJson(input.receipt),
+        input.taskId,
+        input.leaseToken,
+        input.owner
+      );
+    if (attempt.changes !== 1) throw new Error("SEC ingest claim has no matching attempt receipt");
+    database.prepare("UPDATE sec_ingest_jobs SET updated_at = ? WHERE id = ?").run(nowIso, row.job_id);
+    return { applied: true, status: "retry_wait", nextRetryAt: nowIso };
+  });
+  return release.immediate() as SecIngestFailureResult;
+}
+
+/**
  * Operator requeue: put dead-lettered tasks back in play with a fresh stage-attempt budget and
  * reopen their `complete_with_errors` jobs so the worker will claim them again. For recovery
  * after an infra-level cause (EDGAR access block, a since-fixed bug) buried healthy filings —

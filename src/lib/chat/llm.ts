@@ -14,6 +14,7 @@ import { llmFetch, reasoningCapabilityForModel, withLlmRequestBounds } from "../
 import type { LlmReasoningEffort } from "../types";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
+import { decideStageBudget } from "./stage-budget";
 
 /** Per-user attribution for the LLM usage ledger. When `userId` is set, run() records a usage row. */
 export interface LlmUsageOpts {
@@ -358,7 +359,8 @@ export class AnthropicLLM implements ChatLLM {
     return this.model;
   }
 
-  async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
+  async run(args: LlmRunArgs): Promise<LlmResult> {
+    const { system, message, tools, executeTool, history } = args;
     const messages: any[] = [];
     let promptTokens = 0;
     let completionTokens = 0;
@@ -390,6 +392,27 @@ export class AnthropicLLM implements ChatLLM {
             [{ type: "text", text: system }];
 
     for (let step = 0; step < MAX_STEPS; step++) {
+      if (args.abortSignal?.aborted) {
+        args.onStage?.({ stage: "error", reason: "cancelled" });
+        break;
+      }
+      if (typeof args.deadlineMs === "number") {
+        const budget = decideStageBudget({
+          stepIndex: step,
+          deadlineMs: args.deadlineMs,
+          minStageBudgetMs: args.minStageBudgetMs
+        });
+        if (budget.action === "skip") {
+          args.onStage?.({
+            stage: "stage_skipped",
+            reason: budget.reason,
+            remainingMs: budget.remainingMs,
+            minStageMs: budget.minStageMs
+          });
+          break;
+        }
+      }
+      args.onStage?.({ stage: "thinking" });
       const baseBody = { model: this.model, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) };
       const requestBody = reasoningCapabilityForModel(this.model)
         ? withLlmRequestBounds(baseBody, "anthropic-messages", {
@@ -477,7 +500,8 @@ export class OpenAILLM implements ChatLLM {
     return this.model;
   }
 
-  async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
+  async run(args: LlmRunArgs): Promise<LlmResult> {
+    const { system, message, tools, executeTool, history } = args;
     // Build OpenAI messages array. Prior user/assistant turns first, then the current message.
     const messages: any[] = [];
     let promptTokens = 0;
@@ -510,6 +534,27 @@ export class OpenAILLM implements ChatLLM {
     const generationIds: string[] = [];
 
     for (let step = 0; step < MAX_STEPS; step++) {
+      if (args.abortSignal?.aborted) {
+        args.onStage?.({ stage: "error", reason: "cancelled" });
+        break;
+      }
+      if (typeof args.deadlineMs === "number") {
+        const budget = decideStageBudget({
+          stepIndex: step,
+          deadlineMs: args.deadlineMs,
+          minStageBudgetMs: args.minStageBudgetMs
+        });
+        if (budget.action === "skip") {
+          args.onStage?.({
+            stage: "stage_skipped",
+            reason: budget.reason,
+            remainingMs: budget.remainingMs,
+            minStageMs: budget.minStageMs
+          });
+          break;
+        }
+      }
+      args.onStage?.({ stage: "thinking" });
       const baseBody: Record<string, any> = {
         model: this.model,
         messages,

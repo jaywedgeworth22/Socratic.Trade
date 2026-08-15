@@ -113,7 +113,11 @@ const DELETE_TABLES_BY_USER_ID = [
   "task_journal",
   // Added 2026-08-05: headline_first_seen (src/lib/db.ts, migration 66) — per-user first
   // observation timestamps for news headlines used by evidence-age receipts (#837).
-  "headline_first_seen"
+  "headline_first_seen",
+  // Added 2026-08-14: r5 scoped locks / memory lifecycle / overlays (migrations 79–81).
+  "trade_locks",
+  "vector_doc_lifecycle",
+  "strategy_overlays"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];

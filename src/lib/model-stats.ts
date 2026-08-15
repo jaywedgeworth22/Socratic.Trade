@@ -255,11 +255,25 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
     if (!row.model || row.model === REVIEWER_UNATTRIBUTED_MODEL) continue;
     const model = cleanModelId(row.model);
     modelSet.add(model);
-    reviewerByModel.set(model, {
+    const incoming: ReviewerPerf = {
       maturedVetoes: row.maturedVetoes,
       vetoValueAddRate: row.vetoValueAddRate,
       survivorRiskHitRate: row.survivorRiskHitRate,
       avgReturnPct: row.avgReturnPct
+    };
+    const existing = reviewerByModel.get(model);
+    if (!existing) {
+      reviewerByModel.set(model, incoming);
+      continue;
+    }
+    const n1 = existing.maturedVetoes;
+    const n2 = incoming.maturedVetoes;
+    const n = n1 + n2;
+    reviewerByModel.set(model, {
+      maturedVetoes: n,
+      vetoValueAddRate: n > 0 ? (existing.vetoValueAddRate * n1 + incoming.vetoValueAddRate * n2) / n : 0,
+      survivorRiskHitRate: n > 0 ? (existing.survivorRiskHitRate * n1 + incoming.survivorRiskHitRate * n2) / n : 0,
+      avgReturnPct: n > 0 ? (existing.avgReturnPct * n1 + incoming.avgReturnPct * n2) / n : 0
     });
   }
 

@@ -26,6 +26,16 @@ const DEFAULT_PATH = "/api/stream";
 const MAX_BACKOFF_MS = 60_000;
 const INITIAL_BACKOFF_MS = 1_000;
 
+// Parked-loop self-poll cadence (see runLoop). 15s + the ~15s server-knob cache TTL keeps a
+// flip back on effective well inside the advertised "about a minute".
+const DEFAULT_PARK_POLL_MS = 15_000;
+let parkPollMs = DEFAULT_PARK_POLL_MS;
+
+/** Test hook: shrink the park self-poll so park/resume tests run in milliseconds. */
+export function setCongressParkPollMsForTests(ms?: number): void {
+  parkPollMs = typeof ms === "number" && ms > 0 ? ms : DEFAULT_PARK_POLL_MS;
+}
+
 interface StreamState {
   started: boolean;
   closing: boolean;
@@ -43,8 +53,35 @@ function flagOn(value: string | undefined): boolean {
   return ["1", "true", "on", "yes"].includes(String(value ?? "").trim().toLowerCase());
 }
 
+// Server-knob resolver injection: this module must stay edge-bundle-safe (no static Node-only
+// imports — see the module header), so it cannot read the DB-backed server-knobs store itself.
+// The Node-only startup path registers a resolver (server-knob-supervisor.ts) that consults the
+// CONGRESS_STREAM_ENABLED server knob; without one (unit tests, edge bundle) the env flag governs.
+type CongressStreamEnabledResolver = () => boolean | undefined;
+let serverEnabledResolver: CongressStreamEnabledResolver | undefined;
+
+export function setCongressStreamEnabledResolver(fn: CongressStreamEnabledResolver | undefined): void {
+  serverEnabledResolver = fn;
+}
+
 export function congressStreamEnabled(): boolean {
+  try {
+    const v = serverEnabledResolver?.();
+    if (typeof v === "boolean") return v;
+  } catch {
+    // fail open to env
+  }
   return flagOn(process.env.CONGRESS_STREAM_ENABLED);
+}
+
+/** True only when an injected resolver explicitly says OFF — the mid-stream park signal. Kept
+ *  separate from congressStreamEnabled() so env-only unit tests of connectOnce are unaffected. */
+function serverParkRequested(): boolean {
+  try {
+    return serverEnabledResolver?.() === false;
+  } catch {
+    return false;
+  }
 }
 
 function baseUrl(): string {
@@ -220,7 +257,7 @@ export async function connectOnce(): Promise<void> {
         console.warn("[congress-stream] dropped unparseable SSE message", { event: msg.event, id: msg.id });
       }
     }
-    if (state.closing) {
+    if (state.closing || serverParkRequested()) {
       try {
         await reader.cancel();
       } catch {
@@ -233,6 +270,15 @@ export async function connectOnce(): Promise<void> {
 
 async function runLoop(): Promise<void> {
   while (!state.closing) {
+    if (!congressStreamEnabled()) {
+      // Server-knob park: mirror the alpaca streams — keep this single loop alive as a slow
+      // self-poll so a flip back on resumes level-based, with no external re-invoke.  Exiting
+      // the loop here raced the supervisor's 30s rising-edge poll: an off->on bounce inside one
+      // window read as on->on (no edge) and left the stream parked while Admin > Operations
+      // showed it on.  `closing` stays false — this is a pause, not a shutdown.
+      await sleep(parkPollMs);
+      continue;
+    }
     try {
       await connectOnce();
     } catch (err) {

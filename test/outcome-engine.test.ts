@@ -751,6 +751,216 @@ describe("benchmark-alpha outcome grading (outcomeGradingMode)", () => {
   });
 });
 
+describe("benchmark basis (policy.benchmarkMode) — r4: index-vs-ETF/sector series", () => {
+  // Fixed side-adjusted return for every symbol below: 1d +4%, 1w +15%.
+  const SYM_BARS: OHLCBar[] = [
+    { time: "2026-06-10", close: 100 },
+    { time: "2026-06-11", close: 104 },
+    { time: "2026-06-17", close: 115 }
+  ];
+  // Every benchmark series below has a DIFFERENT growth rate so a test can prove exactly which
+  // series fed spyExcessPct from the resulting number, not just the benchmarkBasis label.
+  const GSPC_BARS: OHLCBar[] = [ // +1% / +2% -> excess 3 / 13
+    { time: "2026-06-10", close: 5000 },
+    { time: "2026-06-11", close: 5050 },
+    { time: "2026-06-17", close: 5100 }
+  ];
+  const SPY_ONLY_BARS: OHLCBar[] = [ // +2% / +4% -> excess 2 / 11
+    { time: "2026-06-10", close: 500 },
+    { time: "2026-06-11", close: 510 },
+    { time: "2026-06-17", close: 520 }
+  ];
+  const XLK_BARS: OHLCBar[] = [ // +0.5% / +5% -> excess 3.5 / 10
+    { time: "2026-06-10", close: 200 },
+    { time: "2026-06-11", close: 201 },
+    { time: "2026-06-17", close: 210 }
+  ];
+  const SP500_60_BARS: OHLCBar[] = [ // +3% / +6% -> excess 1 / 9 (the one live sector INDEX)
+    { time: "2026-06-10", close: 250 },
+    { time: "2026-06-11", close: 257.5 },
+    { time: "2026-06-17", close: 265 }
+  ];
+  const XLRE_BARS: OHLCBar[] = [ // +2.5% / +7% -> excess 1.5 / 8
+    { time: "2026-06-10", close: 300 },
+    { time: "2026-06-11", close: 307.5 },
+    { time: "2026-06-17", close: 321 }
+  ];
+
+  async function seedPlacedCase(
+    userId: string,
+    symbol: string,
+    sector?: string
+  ): Promise<void> {
+    const { insertFillEvent, upsertSocraticDecisionCase } = await import("../src/lib/db");
+    upsertSocraticDecisionCase({
+      userId,
+      proposalId: `prop-${symbol}`,
+      accountNumber: "acct",
+      symbol,
+      side: "buy",
+      status: "placed",
+      authority: "decide",
+      thesis: "Test",
+      rationale: "r4 benchmark-basis coverage.",
+      action: `BUY ${symbol} $1000`,
+      // Mirrors evidenceForDecision (socratic-runtime.ts): the "candidate" evidence item's `data`
+      // is the scan quote, which carries `sector` — the SAME source sectorForDecisionCase reads
+      // at grading time for both placed and blocked/rejected cases.
+      ...(sector
+        ? { evidence: [{ kind: "candidate" as const, title: "scan", summary: "scan", symbol, data: { sector } }] }
+        : {})
+    });
+    insertFillEvent({
+      userId,
+      proposalId: `prop-${symbol}`,
+      accountNumber: "acct",
+      source: "paper",
+      symbol,
+      side: "buy",
+      quantity: 10,
+      price: 100,
+      notional: 1000,
+      status: "filled",
+      filledAt: "2026-06-10T14:30:00.000Z"
+    });
+  }
+
+  it("default benchmarkMode 'market' prefers ^GSPC over SPY: row records benchmarkBasis '^GSPC' and spyExcessPct matches the INDEX's return, not SPY's", async () => {
+    const userId = `oe-bench-market-index-${randomUUID()}`;
+    const { getSocraticDecisionCase } = await import("../src/lib/db");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    await seedPlacedCase(userId, "MKTA");
+
+    await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      fetchOHLC: makeFetchOHLC({ MKTA: SYM_BARS, "^GSPC": GSPC_BARS, SPY: SPY_ONLY_BARS }),
+      fetchQuote: async () => undefined,
+      llm: async () => undefined
+    });
+
+    const rows = getSocraticDecisionCase("prop-MKTA", userId)?.outcome?.outcomes ?? [];
+    const oneDay = rows.find((r) => r.horizon === "1d");
+    const oneWeek = rows.find((r) => r.horizon === "1w");
+    expect(oneDay?.benchmarkBasis).toBe("^GSPC");
+    expect(oneDay?.spyExcessPct).toBe(3); // would be 2 if SPY had won instead of ^GSPC
+    expect(oneWeek?.benchmarkBasis).toBe("^GSPC");
+    expect(oneWeek?.spyExcessPct).toBe(13); // would be 11 off SPY
+  });
+
+  it("market mode falls back to SPY, honestly labeled 'SPY(fallback)', when the ^GSPC series is unavailable this run", async () => {
+    const userId = `oe-bench-market-fallback-${randomUUID()}`;
+    const { getSocraticDecisionCase } = await import("../src/lib/db");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    await seedPlacedCase(userId, "MKTB");
+
+    await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      fetchOHLC: makeFetchOHLC({ MKTB: SYM_BARS, SPY: SPY_ONLY_BARS }), // no ^GSPC key -> null
+      fetchQuote: async () => undefined,
+      llm: async () => undefined
+    });
+
+    const rows = getSocraticDecisionCase("prop-MKTB", userId)?.outcome?.outcomes ?? [];
+    const oneDay = rows.find((r) => r.horizon === "1d");
+    expect(oneDay?.benchmarkBasis).toBe("SPY(fallback)");
+    expect(oneDay?.spyExcessPct).toBe(2);
+  });
+
+  it("benchmarkMode 'sector': a known sector whose index isn't Yahoo-servable (Technology) grades against its ETF, receipted via benchmarkBasis", async () => {
+    const userId = `oe-bench-sector-etf-${randomUUID()}`;
+    const { getSocraticDecisionCase, setPolicy } = await import("../src/lib/db");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    setPolicy({ ...DEFAULT_POLICY, benchmarkMode: "sector" }, userId);
+    await seedPlacedCase(userId, "SECA", "Technology");
+
+    await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      // Market bars are ALSO present so a wrongly-market-graded row would be distinguishable.
+      fetchOHLC: makeFetchOHLC({ SECA: SYM_BARS, XLK: XLK_BARS, "^GSPC": GSPC_BARS, SPY: SPY_ONLY_BARS }),
+      fetchQuote: async () => undefined,
+      llm: async () => undefined
+    });
+
+    const rows = getSocraticDecisionCase("prop-SECA", userId)?.outcome?.outcomes ?? [];
+    const oneDay = rows.find((r) => r.horizon === "1d");
+    const oneWeek = rows.find((r) => r.horizon === "1w");
+    expect(oneDay?.benchmarkBasis).toBe("XLK"); // no index mapped for Technology -> straight to the ETF, no "(fallback)" suffix
+    expect(oneDay?.spyExcessPct).toBe(3.5);
+    expect(oneWeek?.spyExcessPct).toBe(10);
+  });
+
+  it("benchmarkMode 'sector' with an unmapped/unknown sector honestly falls back to the market benchmark", async () => {
+    const userId = `oe-bench-sector-unmapped-${randomUUID()}`;
+    const { getSocraticDecisionCase, setPolicy } = await import("../src/lib/db");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    setPolicy({ ...DEFAULT_POLICY, benchmarkMode: "sector" }, userId);
+    await seedPlacedCase(userId, "SECB", "Some Unmapped Sector");
+
+    await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      fetchOHLC: makeFetchOHLC({ SECB: SYM_BARS, "^GSPC": GSPC_BARS, SPY: SPY_ONLY_BARS }),
+      fetchQuote: async () => undefined,
+      llm: async () => undefined
+    });
+
+    const rows = getSocraticDecisionCase("prop-SECB", userId)?.outcome?.outcomes ?? [];
+    const oneDay = rows.find((r) => r.horizon === "1d");
+    expect(oneDay?.benchmarkBasis).toBe("^GSPC");
+    expect(oneDay?.spyExcessPct).toBe(3);
+  });
+
+  it("benchmarkMode 'sector' grades Real Estate against the live-verified S&P 500 Real Estate INDEX directly (no ETF fallback needed)", async () => {
+    const userId = `oe-bench-sector-index-${randomUUID()}`;
+    const { getSocraticDecisionCase, setPolicy } = await import("../src/lib/db");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    setPolicy({ ...DEFAULT_POLICY, benchmarkMode: "sector" }, userId);
+    await seedPlacedCase(userId, "SECC", "Real Estate");
+
+    await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      fetchOHLC: makeFetchOHLC({
+        SECC: SYM_BARS,
+        "^SP500-60": SP500_60_BARS,
+        XLRE: XLRE_BARS,
+        "^GSPC": GSPC_BARS,
+        SPY: SPY_ONLY_BARS
+      }),
+      fetchQuote: async () => undefined,
+      llm: async () => undefined
+    });
+
+    const rows = getSocraticDecisionCase("prop-SECC", userId)?.outcome?.outcomes ?? [];
+    const oneDay = rows.find((r) => r.horizon === "1d");
+    expect(oneDay?.benchmarkBasis).toBe("^SP500-60");
+    expect(oneDay?.spyExcessPct).toBe(1);
+  });
+
+  it("benchmarkMode 'sector' falls back to the sector ETF, honestly labeled '(fallback)', when the Real Estate index series is unavailable this run", async () => {
+    const userId = `oe-bench-sector-index-fallback-${randomUUID()}`;
+    const { getSocraticDecisionCase, setPolicy } = await import("../src/lib/db");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+    const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    setPolicy({ ...DEFAULT_POLICY, benchmarkMode: "sector" }, userId);
+    await seedPlacedCase(userId, "SECD", "Real Estate");
+
+    await matureSocraticDecisionOutcomes(userId, {
+      now: NOW,
+      // No "^SP500-60" key -> null: the index tier fails, XLRE is the honest fallback.
+      fetchOHLC: makeFetchOHLC({ SECD: SYM_BARS, XLRE: XLRE_BARS, "^GSPC": GSPC_BARS, SPY: SPY_ONLY_BARS }),
+      fetchQuote: async () => undefined,
+      llm: async () => undefined
+    });
+
+    const rows = getSocraticDecisionCase("prop-SECD", userId)?.outcome?.outcomes ?? [];
+    const oneDay = rows.find((r) => r.horizon === "1d");
+    expect(oneDay?.benchmarkBasis).toBe("XLRE(fallback)");
+    expect(oneDay?.spyExcessPct).toBe(1.5);
+  });
+});
+
 describe("callLessonLlm — empty-model guard (rotation sentinel / no-defaults)", () => {
   it("returns undefined and makes NO fetch when the model resolves empty but a key is present", async () => {
     const userId = `oe-lesson-nomodel-${randomUUID()}`;

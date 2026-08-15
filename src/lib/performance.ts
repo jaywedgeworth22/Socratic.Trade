@@ -1,5 +1,6 @@
 import { clearStopPlans, deriveExitContractFromOpening, getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listRecentMaturedSkippedCounterfactuals, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
+import { canonicalModelId } from "./model-identity";
 import { normalizeSymbol } from "./money";
 import { aggregateSourceValue, type SourceValueObservation } from "./source-value";
 import type {
@@ -52,6 +53,8 @@ export interface ClosedLot {
   entryPrice?: number;
   entryAt?: string;
   exitAt?: string;
+  /** Same-window benchmark excess (%) when a daily close series was available; omitted otherwise. */
+  alphaPct?: number;
   /** Run that opened this lot — joins to the per-run `signal_snapshot` audit for efficacy analysis. */
   entryRunId?: string;
   /** Agent confidence (1–100) assigned to the opening proposal, for calibration analysis. */
@@ -100,6 +103,9 @@ export interface ThesisStat {
   winCount?: number;
   /** Count of lots with returnPct < 0. */
   lossCount?: number;
+  /** Mean same-window benchmark excess when at least one lot has alphaPct. */
+  avgAlphaPct?: number;
+  shrunkAvgAlphaPct?: number;
 }
 
 /** Realized-outcome stats grouped by the market regime a position was opened in. */
@@ -113,6 +119,8 @@ export interface RegimeStat {
   shrunkAvgReturnPct: number;
   avgDaysHeld?: number;
   shortTermPct?: number;
+  avgAlphaPct?: number;
+  shrunkAvgAlphaPct?: number;
 }
 
 /** An open (unclosed) tax lot with its entry date, for holding-period / tax analysis. */
@@ -122,6 +130,33 @@ export interface OpenLot {
   entryPrice: number;
   side: "long" | "short";
   entryAt?: string;
+}
+
+/** Close on or immediately before `iso`. Bars must be chronological. */
+function closeOnOrBefore(bars: Array<{ date: string; close: number }>, iso?: string): number | undefined {
+  if (!iso || bars.length === 0) return undefined;
+  const day = iso.slice(0, 10);
+  let found: number | undefined;
+  for (const bar of bars) {
+    if (bar.date <= day && Number.isFinite(bar.close) && bar.close > 0) found = bar.close;
+    if (bar.date > day) break;
+  }
+  return found;
+}
+
+/** Stamp alphaPct = lot.returnPct − benchmark raw % over the same entry→exit window. Never fabricates. */
+export function stampClosedLotAlpha(
+  lots: ClosedLot[],
+  benchBars: Array<{ date: string; close: number }>
+): ClosedLot[] {
+  return lots.map((lot) => {
+    const entry = closeOnOrBefore(benchBars, lot.entryAt);
+    const exit = closeOnOrBefore(benchBars, lot.exitAt);
+    if (entry == null || exit == null || entry <= 0) return lot;
+    const benchPct = ((exit - entry) / entry) * 100;
+    const signedBench = lot.side === "short" ? -benchPct : benchPct;
+    return { ...lot, alphaPct: Number((lot.returnPct - signedBench).toFixed(2)) };
+  });
 }
 
 export function recordPortfolioSnapshot(input: {
@@ -682,6 +717,8 @@ export interface SectorStat {
   shrunkAvgReturnPct: number;
   avgDaysHeld?: number;
   shortTermPct?: number;
+  avgAlphaPct?: number;
+  shrunkAvgAlphaPct?: number;
 }
 
 export function getSectorScorecard(
@@ -1246,10 +1283,10 @@ export function getRedTeamEfficacy(
 
   const byModelMap = new Map<string, RedTeamVetoRecord[]>();
   for (const record of records) {
-    const model = record.model?.trim() || "unattributed";
+    const model = canonicalModelId(record.model) || "unattributed";
     const bucket = byModelMap.get(model);
-    if (bucket) bucket.push(record);
-    else byModelMap.set(model, [record]);
+    if (bucket) bucket.push({ ...record, model });
+    else byModelMap.set(model, [{ ...record, model }]);
   }
 
   const resolvedDenominator = maturedVetoes + unresolvableVetoes;
@@ -1497,12 +1534,15 @@ function aggregateClosedLots(
     lossReturnAbsSum: number;
     lossCount: number;
     downsideSqSum: number;
+    alphaSum: number;
+    alphaCount: number;
   }>();
   for (const lot of closedLots) {
     const key = keyFn(lot);
     const cur = byKey.get(key) ?? {
       pnl: 0, returnSum: 0, wins: 0, trades: 0, daysHeldSum: 0, daysHeldCount: 0, shortTermCount: 0,
-      winReturnSum: 0, winCount: 0, lossReturnAbsSum: 0, lossCount: 0, downsideSqSum: 0
+      winReturnSum: 0, winCount: 0, lossReturnAbsSum: 0, lossCount: 0, downsideSqSum: 0,
+      alphaSum: 0, alphaCount: 0
     };
     cur.pnl += lot.pnl;
     cur.returnSum += lot.returnPct;
@@ -1530,6 +1570,10 @@ function aggregateClosedLots(
     }
     const downsideClamped = Math.min(lot.returnPct, 0);
     cur.downsideSqSum += downsideClamped * downsideClamped;
+    if (typeof lot.alphaPct === "number" && Number.isFinite(lot.alphaPct)) {
+      cur.alphaSum += lot.alphaPct;
+      cur.alphaCount += 1;
+    }
     byKey.set(key, cur);
   }
   return Array.from(byKey.entries())
@@ -1550,7 +1594,9 @@ function aggregateClosedLots(
       avgLossPct: s.lossCount > 0 ? Number((s.lossReturnAbsSum / s.lossCount).toFixed(2)) : undefined,
       downsideDeviationPct: s.trades > 0 ? Number(Math.sqrt(s.downsideSqSum / s.trades).toFixed(2)) : undefined,
       winCount: s.trades > 0 ? s.winCount : undefined,
-      lossCount: s.trades > 0 ? s.lossCount : undefined
+      lossCount: s.trades > 0 ? s.lossCount : undefined,
+      avgAlphaPct: s.alphaCount > 0 ? Number((s.alphaSum / s.alphaCount).toFixed(2)) : undefined,
+      shrunkAvgAlphaPct: s.alphaCount > 0 ? Number((s.alphaSum / (s.alphaCount + prior)).toFixed(2)) : undefined
     }))
     .sort((a, b) => b.totalPnl - a.totalPnl);
 }
@@ -1590,8 +1636,8 @@ function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: str
     confidence: typeof p.confidenceScore === "number" ? p.confidenceScore : undefined,
     sector,
     dominantFactor,
-    entryModel: typeof p.proposedByModel === "string" && p.proposedByModel ? p.proposedByModel : undefined,
-    reviewedByModel: typeof p.reviewedByModel === "string" && p.reviewedByModel ? p.reviewedByModel : undefined
+    entryModel: typeof p.proposedByModel === "string" && p.proposedByModel ? canonicalModelId(p.proposedByModel) || undefined : undefined,
+    reviewedByModel: typeof p.reviewedByModel === "string" && p.reviewedByModel ? canonicalModelId(p.reviewedByModel) || undefined : undefined
   };
 }
 

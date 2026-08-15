@@ -24,6 +24,8 @@ describe("canonicalModelId (shared with src/lib/model-stats.ts via src/lib/model
     expect(canonicalModelId("anthropic/claude-sonnet-5")).toBe("claude-sonnet-5");
     expect(canonicalModelId("openrouter/anthropic/claude-sonnet-5")).toBe("claude-sonnet-5");
     expect(canonicalModelId("openai/gpt-5.4-mini")).toBe("gpt-5.4-mini");
+    expect(canonicalModelId("google/gemini-3.7-flash")).toBe("gemini-flash-latest");
+    expect(canonicalModelId("claude-opus-4-8")).toBe("claude-opus-5");
   });
 
   it("maps null/blank models to '' (legacy rows without model tracking)", () => {
@@ -78,6 +80,18 @@ describe("aggregateUsageByModel", () => {
     ];
     const aggs = aggregateUsageByModel(rows);
     expect(aggs.map((a) => a.canonicalId)).toEqual(["gpt-5.4-mini", "claude-sonnet-5"]);
+  });
+
+  it("merges Gemini Flash version slugs into one family row", () => {
+    const rows: UsageLike[] = [
+      row({ provider: "openrouter", model: "google/gemini-3.7-flash", calls: 3, costUsd: 0.3 }),
+      row({ provider: "openrouter", model: "gemini-flash-latest", calls: 2, costUsd: 0.2 }),
+      row({ provider: "gemini", model: "gemini-3.5-flash", calls: 1, costUsd: 0.1 })
+    ];
+    const [agg] = aggregateUsageByModel(rows);
+    expect(agg.canonicalId).toBe("gemini-flash-latest");
+    expect(agg.calls).toBe(6);
+    expect(agg.costUsd).toBeCloseTo(0.6);
   });
 
   it("does not mutate the input rows (read-only aggregation)", () => {

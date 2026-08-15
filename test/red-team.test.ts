@@ -349,7 +349,7 @@ describe("debateProposal LLM request bounds", () => {
       rejected: false,
       available: true,
       reason: "No fatal flaw found.",
-      model: "openai/gpt-4.1-mini"
+      model: "gpt-5.4-mini"
     });
     expect(bodies).toHaveLength(1);
     expect(bodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.adversaryReview);
@@ -416,7 +416,7 @@ describe("debateProposal — Claude Red Team (via OpenRouter)", () => {
       rejected: true,
       available: true,
       reason: "Overbought into earnings.",
-      model: "anthropic/claude-opus-4-8"
+      model: "claude-opus-5"
     });
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain("openrouter.ai");

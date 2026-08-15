@@ -115,6 +115,7 @@ export function AssistantChat() {
   const [historyState, setHistoryState] = useState<"loading" | "ready" | "failed">("loading");
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [inFlightClientTurnId, setInFlightClientTurnId] = useState<string | null>(null);
   const [model, setModel] = useState("");
   const [reasoningEffort, setReasoningEffort] = useState<LlmReasoningEffort>("medium");
   /** Per-provider key availability ({} until loaded — treated as available so
@@ -284,6 +285,7 @@ export function AssistantChat() {
           : [...m, { id: userId, role: "user", text, at: new Date().toISOString() }]
       );
       setSending(true);
+      setInFlightClientTurnId(clientTurnId);
       try {
         // clientTurnId is the retry-safety rail: the server records the user turn
         // BEFORE calling the provider, and dedupes on this id — so a Retry gets a
@@ -325,6 +327,7 @@ export function AssistantChat() {
         toast.push("neg", "Message not answered", message);
       } finally {
         setSending(false);
+        setInFlightClientTurnId(null);
       }
     },
     [input, sending, clearing, keyMissing, customPending, modelUnselected, model, reasoningEffort, toast]
@@ -638,6 +641,22 @@ export function AssistantChat() {
               <Send size={14} aria-hidden /> Send
             </button>
           </Tooltip>
+          {sending && inFlightClientTurnId ? (
+            <button
+              type="button"
+              className="con-btn h-9 shrink-0"
+              title="Cancel this turn.  In-flight work is kept as a partial reply."
+              onClick={() => {
+                void fetch("/api/chat/cancel", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ clientTurnId: inFlightClientTurnId })
+                });
+              }}
+            >
+              Cancel
+            </button>
+          ) : null}
         </div>
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)]">
           <Tooltip

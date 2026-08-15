@@ -95,6 +95,9 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // Outcome grading stays on raw side-adjusted returns by default (byte-identical behavior).
   // "alpha" is the opt-in benchmark-relative companion grade — see TradingPolicy.outcomeGradingMode.
   outcomeGradingMode: "raw",
+  // spyExcessPct grades against the market (^GSPC/SPY) by default; "sector" is the opt-in
+  // per-symbol GICS sector index/ETF grade — see TradingPolicy.benchmarkMode.
+  benchmarkMode: "market",
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
   // Account-relative by default: four full-sized 5%-of-NAV openings can fit in one day. A user can

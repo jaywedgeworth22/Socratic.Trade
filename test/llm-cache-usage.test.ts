@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { estimateLlmCostUsd, extractLlmUsage } from "../src/lib/llm-usage";
+import { estimateLlmCostUsd, extractLlmUsage, remapOpenRouterTelemetry } from "../src/lib/llm-usage";
 
 // Prompt-cache accounting: extractLlmUsage must surface cache-read/creation tokens from every
 // provider's usage shape, and estimateLlmCostUsd must price cached tokens at the discounted rate
@@ -112,5 +112,21 @@ describe("estimateLlmCostUsd — cache-aware pricing", () => {
     expect(bare).toBeCloseTo((1000 * 5 + 100 * 30) / 1_000_000, 10);
     expect(twopart).toBe(bare);
     expect(threepart).toBe(bare);
+  });
+});
+
+describe("remapOpenRouterTelemetry — family identity", () => {
+  it("maps OpenRouter Gemini Flash wire slugs onto gemini-flash-latest", () => {
+    expect(remapOpenRouterTelemetry("openrouter", "google/gemini-3.7-flash")).toEqual({
+      provider: "gemini",
+      model: "gemini-flash-latest"
+    });
+    expect(remapOpenRouterTelemetry("openrouter", "google/gemini-3.5-flash-lite").model).toBe("gemini-flash-lite-latest");
+    expect(remapOpenRouterTelemetry("openrouter", "google/gemini-3.1-pro-preview").model).toBe("gemini-pro-latest");
+  });
+
+  it("maps every Claude Opus slug onto claude-opus-5", () => {
+    expect(remapOpenRouterTelemetry("openrouter", "anthropic/claude-opus-4-8").model).toBe("claude-opus-5");
+    expect(remapOpenRouterTelemetry("anthropic", "claude-opus-4-8").model).toBe("claude-opus-5");
   });
 });

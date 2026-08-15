@@ -12,6 +12,11 @@ import type { ConnectedAccount, TaxationType } from "@/lib/types";
 import { mergeAccountCapabilities } from "@/lib/venue-contract";
 import { activateAccount, ConsoleApiError } from "../lib/api";
 import { deriveStateInfo, realityForAccount } from "../lib/derive";
+import {
+  accountFractionalSharesLabel,
+  accountOptionsTradingLabel,
+  accountSessionHoursLabel
+} from "../lib/labels";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Sheet } from "../ui/sheet";
@@ -990,21 +995,17 @@ function CapabilitiesSheet({
           <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
             <span className="font-medium flex items-center gap-1.5"><Zap className="size-4 text-[color:var(--con-accent)]" /> Options Trading</span>
             <Chip tone={caps?.optionsOrders ? "pos" : "muted"}>
-              {caps?.optionsOrders
-                ? `Orders · level ${caps.optionsLevel ?? "?"}`
-                : caps?.optionsTrading
-                  ? `Positions only · level ${caps.optionsLevel ?? "?"}`
-                  : "Disabled"}
+              {accountOptionsTradingLabel(caps)}
             </Chip>
           </div>
           <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
-            <span className="font-medium">Fractional shares</span>
-            <Chip tone={caps?.fractional ? "pos" : "muted"}>{caps?.fractional ? "Yes" : "Whole shares"}</Chip>
+            <span className="font-medium">Fractional Shares</span>
+            <Chip tone={caps?.fractional ? "pos" : "muted"}>{accountFractionalSharesLabel(caps?.fractional)}</Chip>
           </div>
           <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
             <span className="font-medium">Sessions</span>
             <Chip tone="muted">
-              {caps?.overnightHours ? "regular + extended + overnight" : caps?.extendedHours ? "regular + extended" : "regular only"}
+              {accountSessionHoursLabel(caps)}
             </Chip>
           </div>
           <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
@@ -1020,7 +1021,7 @@ function CapabilitiesSheet({
           <p className="text-[color:var(--con-muted)]">
             {caps
               ? "Broker capabilities confirmed via live API probe."
-              : "Gateway connected. Capabilities default to standard equity trading until initial execution probe."}
+              : "Gateway connected.  Capabilities default to standard equity trading until initial execution probe."}
           </p>
         </div>
 
