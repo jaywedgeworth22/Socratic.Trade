@@ -1,3 +1,16 @@
+## Current (2026-08-13 GROK — r5 residue: advisory-tail reword + parked owner decisions)
+
+After Monet #2682 (real toggles) and Claude's yielded `r4-toggles-superseded` salvage, the
+only well-specified leftover that does **not** collide with the sibling `grok/claude-r4-pickup`
+lane is the shared `risk_advisory` tail.  Old copy ("the agent is still in control") is a lie
+for owner-initiated actions (cancel-dust).  Reworded to "nothing was blocked or changed" in
+SMS/push + Discord fallback, with tests + a force-include merge-gate adapted to #2682 names.
+
+Claude's settings-surface sweep found no other lying toggles (FMP "intent only" caveat is
+honest; Autopilot glossary is accurate).  Parked for the owner, not invented: Reddit/X keys,
+`VECTOR_ASOF_STRICT` flip (honesty copy only), r5 design slices, settings/page.tsx label
+until r4 PR merges.  Branch `grok/claude-r5-residue`.  Rollout:
+`docs/rollouts/2026-08-13-pickup-r5-residue.md`.
 ## Current (2026-08-14 GROK — Monet backend r5 pickup)
 
 Owner asked to finish Monet's "Backend updates (ST - Monet)" chat after the usage cap.  Ingestion/FTS hotfix (#2680) and toggles (#2682) were already live.  Round 5 is on `grok/monet-backend-r5` as **#2721** (locks / memory decay / overlays / chat cancel / scorecard alpha; migrations 79–81).  Prompt version `agentic-strategy@2.6.0`.

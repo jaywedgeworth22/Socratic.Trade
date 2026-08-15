@@ -1,5 +1,6 @@
 # Active Implementation Plan
 
+> **2026-08-13 GROK — r5 residue (`grok/claude-r5-residue`).** After #2682, implement the leftover `risk_advisory` tail reword + merge-gate.  Do not redo r4 (sibling `grok/claude-r4-pickup`).  Do not flip `VECTOR_ASOF_STRICT` or mint Reddit/X keys.  Owner-decision list in `docs/rollouts/2026-08-13-pickup-r5-residue.md`.
 > **2026-08-14 GROK — Monet backend r5 pickup (`grok/monet-backend-r5`).** Finish Monet's Backend-updates chat: land leftover r4 #2689 + residue #2691, then r5 locks/memory/overlays/chat-SSE/scorecard-alpha (migrations 79–81). Rollout: `docs/rollouts/2026-08-14-monet-backend-r5.md`.
 
 > **2026-08-13 GROK — Claude r4 leftover pickup (`grok/claude-r4-pickup`).** Cherry-pick five unpushed r4 slices (benchmarks, ATR pullback, ops panel, opspanel fixes, data-age) onto current main.  No new schema version (main already at 78).  Prompt version lands as `agentic-strategy@2.5.0`.  Advisory-tail leftover stays with Monet #2682.  Rollout: `docs/rollouts/2026-08-13-claude-r4-pickup.md`.
