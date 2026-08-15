@@ -109,6 +109,18 @@ afterEach(async () => {
 });
 
 describe("connection-health alert gate: hard streak required", () => {
+  it("five caller-budget aborts stay silent (soft, not an outage)", async () => {
+    const { logApiHealth, getLaneHealth, isSoftHealthFailure } = await import("../src/lib/db-health");
+    expect(isSoftHealthFailure("This operation was aborted")).toBe(true);
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service: "nasdaq-calendar", ok: false, errorText: "This operation was aborted" });
+    }
+    await settleAlerts();
+    expect(getLaneHealth("nasdaq-calendar", null).reason).not.toBe("Last 5 consecutive calls all failed");
+    expect(await alertKinds()).toEqual([]);
+    expect(sentry.captureMessage).not.toHaveBeenCalled();
+  });
+
   it("one transient failure on a cold low-frequency lane does NOT alert", async () => {
     const { logApiHealth, getLaneHealth } = await import("../src/lib/db-health");
 

@@ -37,6 +37,7 @@ import {
   type ApiKeySource
 } from "./db";
 import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
+import { isAbortOrTimeoutError, isCallerSignalAborted, isTransientNetworkError } from "./network-errors";
 import { apiCircuitBreakerShouldSkip, CircuitOpenError } from "./api-circuit-breaker";
 import { expiresAtRespectingMarketClose } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
@@ -673,6 +674,18 @@ export async function fetchWithRetry(
         response = await fetch(url, init);
       } catch (error) {
         options.durableAttempt?.onTransportError?.(error);
+        // Dead keep-alive sockets (`fetch failed` / UND_ERR_SOCKET) are worth one
+        // retry.  A caller AbortSignal (quote 6s budget, calendar 8s) is not —
+        // retrying after the budget expired only burns more time.
+        if (
+          attempt < retries &&
+          isTransientNetworkError(error) &&
+          !isCallerSignalAborted(init) &&
+          !isAbortOrTimeoutError(error)
+        ) {
+          await guardedFetchBackoff(backoffMs * (attempt + 1), options.guard);
+          continue;
+        }
         throw error;
       }
       options.durableAttempt?.onResponse?.(response);
@@ -733,6 +746,9 @@ export async function fetchWithRetry(
         errorText,
         keySource: options.keySource,
         userId: options.userId,
+        // Budget aborts are expected (soft).  Surviving socket deaths stay hard
+        // so a real outage still trips the consecutive-failure streak.
+        ...(isAbortOrTimeoutError(err) ? { soft: true } : {})
       });
     }
     if (options.service && !options.durableAttempt) {
