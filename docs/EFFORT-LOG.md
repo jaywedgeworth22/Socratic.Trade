@@ -1,3 +1,5 @@
+- **[Socratic.Trade][GROK] #2733 webpack node:crypto — IN PROGRESS 2026-08-15.** `strategy-run-requests.ts` used `node:crypto`; bare `crypto` so Next webpack can compile. Same trap as Kalshi #2707.
+- **[Socratic.Trade][GROK] Durable strategy-run queue (202 + run id) — IN PROGRESS 2026-08-15 (branch `grok/durable-strategy-run`, worktree `~/apps/trading-grok-durable-run`).**  Persist UUID before 202; worker + scheduler drain.  Replaces in-process 8s race.  Rollout: `docs/rollouts/2026-08-15-durable-strategy-run.md`.
 - **[Socratic.Trade][GROK] ASC screenshot tab launch arg — IN PROGRESS 2026-08-15 (branch `grok/asc-screenshot-tab`, worktree `~/apps/trading-grok-asc-tab`).**  DEBUG `-ASCScreenshotTab` + preview fixtures.  No version-key clobber.  Rollout: `docs/rollouts/2026-08-15-asc-screenshot-tab.md`.
 
 - **[Socratic.Trade][GROK] Ban grepping secrets files for KEY=value lines — IN PROGRESS 2026-08-14 (branch `grok/secret-file-grep-ban`).**  `grep '^[A-Z0-9_]+='` on `~/.secrets/global-api-keys` prints values.  Rule in AGENT-SYNC + AGENTS.md + secret-safety: names only via `grep -oE`.
