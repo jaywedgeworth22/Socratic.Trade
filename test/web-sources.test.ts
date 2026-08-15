@@ -216,7 +216,18 @@ describe("getSymbolWebSignals (persisted overlay)", () => {
 });
 
 describe("refreshCongress (live flow, mocked fetch)", () => {
+  function recentMdY(daysAgo: number): string {
+    const d = new Date(Date.now() - daysAgo * 24 * 60 * 60_000);
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    return `${mm}/${dd}/${d.getUTCFullYear()}`;
+  }
+
   function stubEfdSuccess() {
+    // Keep these inside the 60-day default congress window. Hardcoded 2026-06-16
+    // aged out on 2026-08-15 UTC and failed CI on main after #2720.
+    const filed = recentMdY(3);
+    const traded = recentMdY(7);
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       const u = String(url);
       const method = init?.method ?? "GET";
@@ -231,13 +242,13 @@ describe("refreshCongress (live flow, mocked fetch)", () => {
       }
       if (u.endsWith("/search/report/data/") && method === "POST") {
         return new Response(
-          JSON.stringify({ data: [["John", "Boozman", "Boozman, John (Senator)", '<a href="/search/view/ptr/abc-1/">PTR for 06/16/2026</a>', "06/16/2026"]] }),
+          JSON.stringify({ data: [["John", "Boozman", "Boozman, John (Senator)", `<a href="/search/view/ptr/abc-1/">PTR for ${filed}</a>`, filed]] }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
       if (u.includes("/search/view/ptr/")) {
         return new Response(
-          `<tbody><tr><td>1</td><td>06/10/2026</td><td>Joint</td><td>NVDA</td><td>NVIDIA</td><td>Stock</td><td>Purchase</td><td>$1,001 - $15,000</td><td>--</td></tr></tbody>`,
+          `<tbody><tr><td>1</td><td>${traded}</td><td>Joint</td><td>NVDA</td><td>NVIDIA</td><td>Stock</td><td>Purchase</td><td>$1,001 - $15,000</td><td>--</td></tr></tbody>`,
           { status: 200 }
         );
       }
