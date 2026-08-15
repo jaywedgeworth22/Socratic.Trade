@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "./db";
-import { runStrategyOnce } from "./strategy";
-import type { StrategyResult } from "./types";
+import { runStrategyOnce, type StrategyResult } from "./strategy";
 
 export type StrategyRunRequestStatus = "queued" | "running" | "completed" | "failed";
 
