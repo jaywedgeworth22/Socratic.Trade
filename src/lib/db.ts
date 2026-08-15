@@ -3064,8 +3064,25 @@ const MIGRATIONS: Migration[] = [
     name: "idea_sources_13f_ark_form4",
     up: (database) => {
       database.exec(`
-        ALTER TABLE sec_insider_transactions ADD COLUMN symbol TEXT NOT NULL DEFAULT '';
+        CREATE TABLE IF NOT EXISTS sec_insider_transactions (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          insider_name TEXT NOT NULL,
+          relationship TEXT NOT NULL,
+          side TEXT NOT NULL,
+          shares REAL NOT NULL,
+          price REAL NOT NULL,
+          period_of_report TEXT NOT NULL,
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0,
+          transaction_code TEXT NOT NULL DEFAULT '',
+          symbol TEXT NOT NULL DEFAULT ''
+        );
       `);
+      const cols = database.prepare("PRAGMA table_info(sec_insider_transactions)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "symbol")) {
+        database.exec("ALTER TABLE sec_insider_transactions ADD COLUMN symbol TEXT NOT NULL DEFAULT ''");
+      }
       database.exec(`
         CREATE INDEX IF NOT EXISTS idx_sec_insider_transactions_symbol
           ON sec_insider_transactions(symbol);
