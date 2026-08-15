@@ -412,6 +412,11 @@ canonical tags: `Socratic.Trade`, `Congress.Trade`, `API-Usage-Monitor`,
 | New app | `/Users/jay/Code/ai-fleet-coordinator/docs/ONBOARDING-NEW-APP.md` | https://github.com/jaywedgeworth22/ai-fleet-coordinator/blob/main/docs/ONBOARDING-NEW-APP.md |
 | New seat | `/Users/jay/Code/ai-fleet-coordinator/docs/ONBOARDING-NEW-AGENT.md` | https://github.com/jaywedgeworth22/ai-fleet-coordinator/blob/main/docs/ONBOARDING-NEW-AGENT.md |
 | UI copy | `/Users/jay/apps/FLEET-UI-COPY.md` | https://github.com/jaywedgeworth22/ai-fleet-coordinator/blob/main/FLEET-UI-COPY.md |
+| Mac processes | `/Users/jay/apps/MAC-LOCAL-PROCESSES.md` | https://github.com/jaywedgeworth22/ai-fleet-coordinator/blob/main/docs/MAC-LOCAL-PROCESSES.md |
+
+## Mac local processes (binding)
+
+If you create, change, load, bootout, or retire a LaunchAgent, cron row, login item, pm2 KeepAlive job, **or any helper script other agents are expected to run**, you **must** add or update a row on `/Users/jay/apps/MAC-LOCAL-PROCESSES.md` **and** refresh the pinned Apple Note `[FLEET, Grok] Mac background jobs master list` in the same change.  Say whether it is **always-on** or **on-demand**.  A new background Python/Node/bash job that is not on the list is unfinished work.  Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Mac local processes.
 
 ## Delegation & model economics (fleet rule — binding for every agent)
 
@@ -742,8 +747,10 @@ Folder **Coding**, pin when able. Helper: `/Users/jay/apps/apple-notes-coding.sh
 ## Two spaces between sentences (owner — ALL contexts)
 
 Two spaces after sentence terminators in **all** human-readable prose for every
-agent: web, PWA, iOS UI, **App Store Connect listing fields** (description,
-promotional text, What's New, review notes), push/email, help, privacy, owner
-Notes. HTML must preserve the gap (NBSP+space / SENTENCE_GAP). Canonical:
-`/Users/jay/apps/FLEET-UI-COPY.md`.
+agent: web, PWA, iOS UI, **every App Store Connect field** (description,
+promotional text, What's New, **App Review notes**, **IAP / subscription
+review notes**, subscription localization descriptions), push/email, help,
+privacy, owner Notes.  HTML must preserve the gap (NBSP+space / SENTENCE_GAP).
+Store listing copy must be accurate (corpus, trial length).  Canonical:
+`/Users/jay/apps/AGENT-SYNC.md` § Two spaces and `/Users/jay/apps/FLEET-UI-COPY.md`.
 

@@ -35,7 +35,8 @@ import { captureCoachLearning } from "./coach-learning";
 import { classifyIntent, getLLM } from "./llm";
 import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
 import { buildTools, type ToolDeps } from "./tools";
-import type { ChatDraft, ChatLLM, ChatQuote, ChatReply, ToolSchema } from "./types";
+import type { ChatDraft, ChatLLM, ChatQuote, ChatReply, LlmRunArgs, ToolSchema } from "./types";
+import { emitDashboardEvent } from "../events";
 import {
   assertUserOperationClaim,
   runWithUserWriteEpoch,
@@ -95,7 +96,15 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     input_schema: t.input_schema
   }));
 
-  return async function handleTurn(args: { userId: string; message: string; clientTurnId?: string }): Promise<ChatReply> {
+  return async function handleTurn(args: {
+    userId: string;
+    message: string;
+    clientTurnId?: string;
+    abortSignal?: AbortSignal;
+    deadlineMs?: number;
+    minStageBudgetMs?: number;
+    onStage?: LlmRunArgs["onStage"];
+  }): Promise<ChatReply> {
     return withUserWriteOperation(args.userId, "chat-turn", async (operationClaim) => {
     const { userId, message, clientTurnId } = args;
     const writeEpoch = operationClaim.epoch;
@@ -413,7 +422,19 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
       tools: toolSchemas,
       executeTool,
       context: { memorySummary: boundedMemory },
-      history
+      history,
+      abortSignal: args.abortSignal,
+      deadlineMs: args.deadlineMs,
+      minStageBudgetMs: args.minStageBudgetMs ?? policy.tuning?.chatStageMinBudgetMs,
+      onStage: (stage) => {
+        args.onStage?.(stage);
+        emitDashboardEvent({
+          type: "chat-turn",
+          userId,
+          at: new Date().toISOString(),
+          detail: { turnKey, ...stage }
+        });
+      }
     });
     assertTurnActive();
     rememberFmpProvenance(result.citations ?? []);

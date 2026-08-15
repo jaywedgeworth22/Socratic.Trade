@@ -29,6 +29,7 @@ import type { Account, Profile, Session, User } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import type { Provider } from "next-auth/providers";
 import { canonicalizeLegacyAuthEnv } from "../public-origin";
+import { isAppleWebAuthConfigured, resolveAppleClientSecret } from "./apple-web";
 import { normalizeAuthEmail, selectVerifiedGitHubEmail, type GitHubEmail } from "./github-email";
 import { decodeSessionToken, encodeSessionToken } from "./session-token";
 
@@ -64,13 +65,16 @@ if (process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET) {
   );
 }
 
-if (process.env.AUTH_APPLE_ID && process.env.AUTH_APPLE_SECRET) {
-  providers.push(
-    Apple({
-      clientId: process.env.AUTH_APPLE_ID,
-      clientSecret: process.env.AUTH_APPLE_SECRET
-    })
-  );
+if (isAppleWebAuthConfigured()) {
+  const appleSecret = resolveAppleClientSecret();
+  if (appleSecret && process.env.AUTH_APPLE_ID) {
+    providers.push(
+      Apple({
+        clientId: process.env.AUTH_APPLE_ID,
+        clientSecret: appleSecret
+      })
+    );
+  }
 }
 
 async function verifiedGitHubEmail(accessToken: string | undefined, fallbackEmail?: string | null): Promise<string | undefined> {

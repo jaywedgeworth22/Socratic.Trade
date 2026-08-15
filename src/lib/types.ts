@@ -35,6 +35,11 @@ export type LlmReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" 
  * (spyExcessPct), so a rising market's beta can't teach the loop that every long was a good
  * decision. See TradingPolicy.outcomeGradingMode. */
 export type OutcomeGradingMode = "raw" | "alpha";
+/** What spyExcessPct is measured against: "market" (default, byte-identical to before this knob
+ * existed) = the S&P 500 index (^GSPC, SPY ETF fallback); "sector" = the symbol's own GICS sector
+ * index/ETF when its sector is known and mappable, market otherwise. See
+ * TradingPolicy.benchmarkMode and outcome-horizons.ts's sectorBenchmarkEntry. */
+export type BenchmarkMode = "market" | "sector";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
@@ -92,7 +97,7 @@ export const NOTIFICATION_EVENT_TYPES = [
   "option_alert",
   "earningscalls_entitlement_blocked",
   // Advisory guardrail breach (e.g. the drawdown breaker in advisory mode): a configured risk
-  // threshold was crossed but NOTHING halted or was blocked — the agent is still in control.
+  // threshold was crossed but NOTHING halted or was blocked — nothing was blocked or changed.
   // Deliberately NOT "kill_switch" (nothing flipped state) so owners don't learn to ignore
   // kill-switch alerts.
   "risk_advisory",
@@ -351,6 +356,15 @@ export interface TuningSettings {
    * silent haircut). Owner-adjustable; turning it off restores today's sizing exactly.
    */
   signalHealthAutoThrottle?: boolean;
+  /**
+   * Advisory overlay library (default off). When true, matching owner-authored
+   * strategy_overlays rows are injected as DATA in the strategist prompt.
+   */
+  strategyOverlaysEnabled?: boolean;
+  /** Max overlays injected per run. Default 2. */
+  maxActiveOverlays?: number;
+  /** Skip a Coach tool-loop step after the first when remaining time is below this (ms). Default 15000. 0 = never skip. */
+  chatStageMinBudgetMs?: number;
   /**
    * Deterministic fundamentals hard-veto on BUYS, applied model-free in deterministicBearFilter
    * (independent of the Bull/Bear LLMs). Veto a buy when the candidate's free-cash-flow yield is
@@ -789,6 +803,21 @@ export interface RiskRules {
    */
   accuracyBreakerAction?: "advisory" | "close_only";
   /**
+   * Per-symbol post-close cooldown (minutes). Unset/<=0 disables. Advisory by default;
+   * `symbolLockAction` can opt into close_only for the locked name only.
+   */
+  symbolCooldownMinutes?: number;
+  /**
+   * Consecutive losing closes on one symbol that write a symbol lock. Unset/<=0 disables.
+   */
+  symbolLosingStreakLimit?: number;
+  /**
+   * What a per-symbol lock does. advisory (DEFAULT): receipt + overridable policy gate.
+   * close_only: the lock still does not halt the account — it only blocks new entries in
+   * that symbol unless autonomyOverride passes (same overridable-preference bucket).
+   */
+  symbolLockAction?: "advisory" | "close_only";
+  /**
    * Allow synthetic trailing-stops to fire exits even when systemState is 'halted'.
    * Never registers or updates to looser stops, but will trigger existing ones.
    */
@@ -1048,6 +1077,17 @@ export interface TradingPolicy {
    */
   outcomeGradingMode?: OutcomeGradingMode;
   /**
+   * What spyExcessPct (every horizon row, regardless of outcomeGradingMode) is measured against.
+   * Default "market" (unset = "market" too — nothing changes for an owner who never touches this
+   * knob): the S&P 500 INDEX, SPY as the automatic ETF fallback. "sector" grades each symbol
+   * against its OWN GICS sector index/ETF (via the symbol's sector already stored on the
+   * decision's candidate evidence / counterfactual row) when the sector is known and mappable;
+   * an unknown/unmapped sector honestly falls back to the market benchmark. See
+   * outcome-horizons.ts (sectorBenchmarkEntry, resolveBenchmarkSeries) and outcome-engine.ts.
+   * Owner-adjustable preference, not a cage.
+   */
+  benchmarkMode?: BenchmarkMode;
+  /**
    * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).
    * When non-empty, a TRANSIENT primary failure (HTTP 429/5xx or timeout) transparently re-issues the
    * SAME request against each model in order; the first success serves the run. The failover is
@@ -1189,10 +1229,12 @@ export interface TradingPolicy {
    */
   maxEntryDriftPct?: number;
   /**
-   * Owner knob for the scorecard's `sniperPoints.secondaryBuy` level: a secondary entry this far
-   * (%) beyond the entry anchor in the pullback direction (below it for a long, above it for a
-   * short). PURELY informational — rendered on the scorecard, never traded automatically.
-   * Undefined (the default) omits the level entirely; no hardcoded fallback ever fills it in.
+   * OVERRIDE for the scorecard's `sniperPoints.secondaryBuy` level: a secondary entry this far (%)
+   * beyond the entry anchor in the pullback direction (below it for a long, above it for a short).
+   * When set, this owner-chosen % wins outright over the built-in volatility-aware ATR derivation
+   * (half of ATR(14) as a % of the entry anchor, clamped 1-4%). PURELY informational — rendered on
+   * the scorecard, never traded automatically. Undefined (the default) leaves the ATR derivation in
+   * control; the level is omitted entirely only when neither this knob nor a usable ATR read exists.
    */
   secondaryBuyPullbackPct?: number;
   /**
@@ -1388,11 +1430,15 @@ export interface ProposalScorecard {
     priceVsMa: { price: number; sma50?: number; sma200?: number };
     volume: { current?: number; avg20d?: number };
   };
-  /** Key price levels reusing referencePrice + the bracket legs. `secondaryBuy` exists ONLY when
-   * the owner knob policy.secondaryBuyPullbackPct is set — never a silent hardcoded number. */
+  /** Key price levels reusing referencePrice + the bracket legs. `secondaryBuy` is volatility-aware
+   * BY DEFAULT — half of ATR(14) as a % of the entry anchor, clamped 1-4% — and exists whenever that
+   * ATR read or the owner override policy.secondaryBuyPullbackPct is available; it is never a silent
+   * hardcoded number, and is genuinely omitted only when neither basis exists. `secondaryBuyBasis`
+   * discloses which one produced it. */
   sniperPoints?: {
     idealBuy?: number;
     secondaryBuy?: number;
+    secondaryBuyBasis?: "atr-derived" | "owner-set";
     stopLoss?: number;
     takeProfit?: number;
   };
@@ -1443,6 +1489,8 @@ export interface TradeProposal {
    * to bucket by (do NOT build the scorecard now; see the lane-5 rollout doc).
    */
   entryRegimeSeverity?: number;
+  /** Overlay ids injected into this run's prompt (advisory DATA only). */
+  appliedOverlayIds?: string[];
   confidenceScore?: number;
   /**
    * The FAILOVER-AWARE model that actually generated this proposal (the Green/Bull step's served
@@ -1660,10 +1708,17 @@ export interface SocraticOutcomeHorizonRow {
   /** Side-adjusted % return over this horizon (positive = the decided/considered direction worked;
    * mirrors returnSinceProposalPct's sign convention). Present only when resolution === 'ok'. */
   returnPct?: number;
-  /** returnPct minus the same-window SPY return under the same side convention (long: vs holding
-   * SPY; short: vs shorting SPY). Undefined when no SPY series covered the window (15m/1h have no
-   * intraday SPY basis). */
+  /** returnPct minus the same-window benchmark return under the same side convention (long: vs
+   * holding the benchmark; short: vs shorting it). The field name is legacy (kept so history
+   * doesn't orphan) but the basis is no longer always SPY: as of the ^GSPC/sector-index rollout
+   * (outcome-horizons.ts) it's the S&P 500 INDEX by default, or a GICS sector index/ETF under
+   * policy.benchmarkMode 'sector' — see `benchmarkBasis` for exactly which series this row used.
+   * Undefined when no benchmark series covered the window (15m/1h have no intraday basis). */
   spyExcessPct?: number;
+  /** Honest disclosure of exactly which series backed `spyExcessPct` on this row, e.g. "^GSPC",
+   * "SPY(fallback)", "^SP500-60", "XLK(fallback)" — see resolveBenchmarkSeries/sectorBenchmarkEntry
+   * (outcome-horizons.ts). Present only alongside a defined `spyExcessPct`. */
+  benchmarkBasis?: string;
   /** Optional % return of the alternative actually taken instead (reserved; populated when an
    * alternative join exists — never fabricated). */
   altReturnPct?: number;

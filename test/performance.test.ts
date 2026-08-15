@@ -363,7 +363,7 @@ describe("getThesisScorecard", () => {
     expect(efficacy.survivorRiskHitRate).toBe(50); // 1 of 2 matured vetoes missed a winner
     expect(efficacy.avgReturnPct).toBe(0); // (-10 + 10) / 2
 
-    const modelA = efficacy.byModel.find((m) => m.model === "openai/gpt-4.1-mini");
+    const modelA = efficacy.byModel.find((m) => m.model === "gpt-5.4-mini");
     expect(modelA?.maturedVetoes).toBe(2);
     expect(modelA?.vetoValueAddRate).toBe(50);
     expect(modelA?.survivorRiskHitRate).toBe(50);
@@ -371,6 +371,27 @@ describe("getThesisScorecard", () => {
     expect(efficacy.byModel.find((m) => m.model === "claude-opus")).toBeUndefined();
 
     expect(efficacy.records).toHaveLength(2);
+  });
+
+  it("getRedTeamEfficacy merges Gemini Flash version slugs onto gemini-flash-latest", async () => {
+    const { audit, insertSkippedCounterfactualCandidate, markSkippedCounterfactualMatured } = await import("../src/lib/db");
+    const userId = `redteam-eff-flash-${randomUUID()}`;
+
+    audit("proposal_rejected_by_red_team", { runId: "run-flash-1", symbol: "AAPL", side: "buy", model: "google/gemini-3.7-flash" }, userId);
+    insertSkippedCounterfactualCandidate({ userId, runId: "run-flash-1", symbol: "AAPL", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 100, horizonDays: 5, targetDate: "2026-06-06" });
+    markSkippedCounterfactualMatured({ id: `${userId}:run-flash-1:AAPL:5`, userId, exitDate: "2026-06-06", exitPrice: 90, returnPct: -10 });
+
+    audit("proposal_rejected_by_red_team", { runId: "run-flash-2", symbol: "MSFT", side: "buy", model: "gemini-flash-latest" }, userId);
+    insertSkippedCounterfactualCandidate({ userId, runId: "run-flash-2", symbol: "MSFT", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 200, horizonDays: 5, targetDate: "2026-06-06" });
+    markSkippedCounterfactualMatured({ id: `${userId}:run-flash-2:MSFT:5`, userId, exitDate: "2026-06-06", exitPrice: 180, returnPct: -10 });
+
+    const efficacy = getRedTeamEfficacy(userId);
+    expect(efficacy.byModel).toHaveLength(1);
+    expect(efficacy.byModel[0]).toMatchObject({
+      model: "gemini-flash-latest",
+      maturedVetoes: 2,
+      vetoValueAddRate: 100
+    });
   });
 
   it("getRedTeamEfficacy side-adjusts SHORT vetoes (a short's counterfactual close-price-up is a value-add)", async () => {

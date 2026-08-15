@@ -332,6 +332,26 @@ describe("aggregateModelStats — reviewer veto value-add", () => {
     expect(stats.some((s) => s.model === "unattributed")).toBe(false);
   });
 
+  it("merges reviewer perf rows that canonicalize onto the same family", () => {
+    const stats = aggregateModelStats({
+      usageRows: [],
+      latencyEvents: [],
+      benchmarkSummaries: NO_BENCH,
+      closedLots: [],
+      reviewerPerfByModel: [
+        { model: "google/gemini-3.7-flash", maturedVetoes: 10, vetoValueAddRate: 60, survivorRiskHitRate: 40, avgReturnPct: -2 },
+        { model: "gemini-flash-latest", maturedVetoes: 10, vetoValueAddRate: 40, survivorRiskHitRate: 60, avgReturnPct: 2 }
+      ]
+    });
+    expect(statFor(stats, "gemini-flash-latest", "red").reviewerPerf).toEqual({
+      maturedVetoes: 20,
+      vetoValueAddRate: 50,
+      survivorRiskHitRate: 50,
+      avgReturnPct: 0
+    });
+    expect(stats.some((s) => s.model === "google/gemini-3.7-flash")).toBe(false);
+  });
+
   it("leaves reviewerPerf null on RED rows without matching veto data (and defaults to null with no input)", () => {
     const stats = aggregateModelStats({
       usageRows: [{ model: "xai/grok-4.3", context: "strategy", calls: 1, costUsd: 0.01 }],

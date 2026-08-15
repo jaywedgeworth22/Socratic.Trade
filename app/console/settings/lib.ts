@@ -61,7 +61,7 @@ export interface SourceFeatureRow {
   advanced?: boolean;
   caveat?: string;
   value: boolean | number | string;
-  source: "user" | "env" | "default";
+  source: "user" | "server" | "env" | "default";
 }
 
 export interface SourceFeaturesResponse {

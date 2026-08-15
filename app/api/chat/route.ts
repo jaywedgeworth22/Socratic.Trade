@@ -17,6 +17,8 @@ import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
 import { ALL_LLM_REASONING_EFFORTS } from "@/lib/llm-request";
 import type { LlmReasoningEffort } from "@/lib/types";
 import { NextResponse } from "next/server";
+import { registerChatTurn, releaseChatTurn } from "@/lib/chat/turn-registry";
+import { getPolicy } from "@/lib/db";
 
 /** The explicit offline path: the deterministic MockLLM, intentionally keyless. Anything else is a real
  *  provider and must resolve a credential. An empty/absent hint is NOT mock and is accepted only when
@@ -150,8 +152,31 @@ export async function POST(request: Request) {
       llmFromProvider(providerHint, userId, reasoningEffort) ??
       getLLM(userId, { reasoningEffort });
     const orchestrate = makeOrchestrator(buildProductionDeps(), llm);
-    const reply = await orchestrate({ userId, message: body.message, clientTurnId });
-    return NextResponse.json(reply);
+    const turnKey = `chat:${userId}:${clientTurnId ?? globalThis.crypto.randomUUID()}`;
+    let handle;
+    try {
+      handle = registerChatTurn({ turnKey, userId });
+    } catch (err) {
+      if (err instanceof Error && "status" in err && (err as Error & { status: number }).status === 409) {
+        return NextResponse.json({ error: "chat_turn_in_flight", turnKey }, { status: 409 });
+      }
+      throw err;
+    }
+    const policy = getPolicy(userId);
+    const deadlineMs = Date.now() + Math.max(15_000, Number(process.env.CHAT_TURN_DEADLINE_MS ?? 120_000));
+    try {
+      const reply = await orchestrate({
+        userId,
+        message: body.message,
+        clientTurnId,
+        abortSignal: handle.controller.signal,
+        deadlineMs,
+        minStageBudgetMs: policy.tuning?.chatStageMinBudgetMs
+      });
+      return NextResponse.json({ ...reply, turnKey });
+    } finally {
+      releaseChatTurn(turnKey);
+    }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("[chat] orchestrator error:", message);
