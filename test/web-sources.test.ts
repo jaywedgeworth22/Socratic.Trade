@@ -216,18 +216,16 @@ describe("getSymbolWebSignals (persisted overlay)", () => {
 });
 
 describe("refreshCongress (live flow, mocked fetch)", () => {
-  function recentMdY(daysAgo: number): string {
-    const d = new Date(Date.now() - daysAgo * 24 * 60 * 60_000);
-    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const dd = String(d.getUTCDate()).padStart(2, "0");
-    return `${mm}/${dd}/${d.getUTCFullYear()}`;
+  /** Calendar dates inside the 60-day overlay window.  Hardcoded 2026-06-16
+   *  filings fell out of `DEFAULT_WINDOW_DAYS` on 2026-08-15 and failed CI. */
+  function mdyDaysAgo(days: number, now = Date.now()): string {
+    const d = new Date(now - days * 24 * 60 * 60_000);
+    return `${String(d.getUTCMonth() + 1).padStart(2, "0")}/${String(d.getUTCDate()).padStart(2, "0")}/${d.getUTCFullYear()}`;
   }
 
   function stubEfdSuccess() {
-    // Keep these inside the 60-day default congress window. Hardcoded 2026-06-16
-    // aged out on 2026-08-15 UTC and failed CI on main after #2720.
-    const filed = recentMdY(3);
-    const traded = recentMdY(7);
+    const filedAt = mdyDaysAgo(10);
+    const tradedAt = mdyDaysAgo(14);
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       const u = String(url);
       const method = init?.method ?? "GET";
@@ -242,13 +240,13 @@ describe("refreshCongress (live flow, mocked fetch)", () => {
       }
       if (u.endsWith("/search/report/data/") && method === "POST") {
         return new Response(
-          JSON.stringify({ data: [["John", "Boozman", "Boozman, John (Senator)", `<a href="/search/view/ptr/abc-1/">PTR for ${filed}</a>`, filed]] }),
+          JSON.stringify({ data: [["John", "Boozman", "Boozman, John (Senator)", `<a href="/search/view/ptr/abc-1/">PTR for ${filedAt}</a>`, filedAt]] }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
       if (u.includes("/search/view/ptr/")) {
         return new Response(
-          `<tbody><tr><td>1</td><td>${traded}</td><td>Joint</td><td>NVDA</td><td>NVIDIA</td><td>Stock</td><td>Purchase</td><td>$1,001 - $15,000</td><td>--</td></tr></tbody>`,
+          `<tbody><tr><td>1</td><td>${tradedAt}</td><td>Joint</td><td>NVDA</td><td>NVIDIA</td><td>Stock</td><td>Purchase</td><td>$1,001 - $15,000</td><td>--</td></tr></tbody>`,
           { status: 200 }
         );
       }
