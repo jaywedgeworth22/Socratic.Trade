@@ -58,7 +58,8 @@ export function __resetOpenRouterCreditCache(): void {
  */
 export async function getOpenRouterCreditStatus(
   nowMs: number = Date.now(),
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = fetch,
+  options?: { maxWaitMs?: number }
 ): Promise<OpenRouterCreditStatus | null> {
   // Resolve as the primary operator user: env LLM keys are migrated into `local`'s per-user store
   // at boot, so this is where the production OpenRouter key lives (the no-userId path only resolves
@@ -75,10 +76,11 @@ export async function getOpenRouterCreditStatus(
 
   const threshold = thresholdUsd();
   const checkedAt = new Date(nowMs).toISOString();
+  const waitMs = Math.max(200, Math.min(options?.maxWaitMs ?? FETCH_TIMEOUT_MS, FETCH_TIMEOUT_MS));
   try {
     const res = await fetcher(CREDITS_URL, {
       headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+      signal: AbortSignal.timeout(waitMs)
     });
     if (!res.ok) {
       // A read failure (401/5xx/etc.) must not masquerade as "low balance". Keep serving the last

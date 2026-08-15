@@ -95,4 +95,22 @@ describe("openrouter credit status", () => {
     await getOpenRouterCreditStatus(1000 + 600001, fetcher);
     expect(calls).toHaveLength(2);
   });
+
+  it("serves the last good balance when a refresh is aborted by the health budget", async () => {
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey("local", "openrouter", "sk-or-test");
+    process.env.OPENROUTER_CREDIT_CHECK_INTERVAL_MS = "1000";
+    const { getOpenRouterCreditStatus, __resetOpenRouterCreditCache } = await import("../src/lib/openrouter-credits");
+    __resetOpenRouterCreditCache();
+    const { fetcher } = makeFetcher({ data: { total_credits: 75, total_usage: 25 } });
+    const first = (await getOpenRouterCreditStatus(1000, fetcher))!;
+    expect(first.remainingUsd).toBe(50);
+
+    const aborting = (async () => {
+      throw Object.assign(new Error("This operation was aborted"), { name: "TimeoutError" });
+    }) as unknown as typeof fetch;
+    const stale = (await getOpenRouterCreditStatus(1000 + 60_000, aborting))!;
+    expect(stale.remainingUsd).toBe(50);
+    expect(stale.ok).toBe(true);
+  });
 });
