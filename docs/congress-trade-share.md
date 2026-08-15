@@ -1,6 +1,7 @@
 # Sharing market data with congress.trade (App A)
 
-**Status:** implemented (2026-06-22), **OFF by default**. See
+**Status:** implemented (2026-06-22); **prod Infisical `CONGRESS_SHARE_ENABLED=on` 2026-08-13**
+(still requires `CONGRESS_TRADE_TOKEN`).  Code default remains off for local.  See
 `src/lib/congress-share.ts`, `app/api/admin/congress-share/route.ts`, and the
 hooks in `src/lib/market.ts` (after-scan) and `src/lib/scheduler.ts` (nightly).
 

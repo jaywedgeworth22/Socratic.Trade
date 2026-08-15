@@ -1,12 +1,13 @@
 // Canonical model identity — the single source of truth for collapsing a route-qualified
-// model ID onto the bare catalog name.
+// or versioned model ID onto the catalog family name.
 //
-// Under universal OpenRouter routing, an LLM call records a route-qualified model
-// (`anthropic/claude-sonnet-5`, `openai/gpt-4o`), while the same model called directly — and
-// the offline benchmark JSON and the model-picker catalog — uses the bare name
-// (`claude-sonnet-5`, `gpt-4o`). Everything that keys on the model (cost, latency, realized-P&L
-// / win-rate benchmark, reviewer efficacy, the Usage cost page) must canonicalize to the bare
-// name so live, historical, and benchmark stats align across the routing cutover.
+// Under universal OpenRouter routing, an LLM call records a route-qualified / dated slug
+// (`google/gemini-3.7-flash`, `anthropic/claude-sonnet-4-6`), while the picker catalog and
+// offline benchmark JSON use the family id (`gemini-flash-latest`, `claude-sonnet-5`).
+// Everything that keys on the model (cost, latency, realized-P&L / win-rate, reviewer
+// efficacy, Usage, Results) must collapse every version of a line onto that family so
+// live, historical, and benchmark stats do not fragment (gemini-3.7-flash + gemini-flash-latest
+// are one Flash row; every Opus is one Opus row; every Sonnet is one Sonnet row).
 //
 // This consolidates two previously-duplicated definitions: `cleanModelId` (src/lib/model-stats.ts,
 // AG / PR #1703) and `canonicalModelId` (app/admin/llm-usage/model-merge.ts, PR #1716). The logic

@@ -1,6 +1,7 @@
 // db-proposals.ts — trade proposal CRUD
 import { audit, getDb } from "./db";
 import { scopeAccount } from "./db-execution";
+import { canonicalModelId } from "./model-identity";
 import { normalizeSymbol } from "./money";
 import type {
   DecisionStep,
@@ -759,7 +760,7 @@ export function getRedTeamCriticFailureStats(userId: string = "local", windowDay
     failures += 1;
     const kind = typeof verdict.failureKind === "string" && verdict.failureKind ? verdict.failureKind : "unavailable";
     byKind[kind] = (byKind[kind] ?? 0) + 1;
-    const model = typeof verdict.model === "string" && verdict.model.trim() ? verdict.model.trim() : undefined;
+    const model = typeof verdict.model === "string" && verdict.model.trim() ? canonicalModelId(verdict.model) || undefined : undefined;
     const attributionKey = `${model ?? ""}|${kind}`;
     const entry = byAttribution.get(attributionKey) ?? { model, kind, count: 0 };
     entry.count += 1;

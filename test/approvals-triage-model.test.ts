@@ -132,14 +132,14 @@ describe("approvals triage helpers", () => {
       expect(normalizeModelId("")).toBe("");
     });
 
-    it("strips openrouter/ prefix and vendor prefixes", () => {
-      expect(normalizeModelId("openrouter/google/gemini-2.5-flash")).toBe("gemini-2.5-flash");
-      expect(normalizeModelId("google/gemini-2.5-flash")).toBe("gemini-2.5-flash");
+    it("strips routing prefixes and collapses versions onto the catalog family", () => {
+      expect(normalizeModelId("openrouter/google/gemini-2.5-flash")).toBe("gemini-flash-latest");
+      expect(normalizeModelId("google/gemini-3.7-flash")).toBe("gemini-flash-latest");
       expect(normalizeModelId("openrouter/openai/gpt-4o")).toBe("gpt-4o");
       expect(normalizeModelId("openai/gpt-4o")).toBe("gpt-4o");
       expect(normalizeModelId("gpt-4o")).toBe("gpt-4o");
-      expect(normalizeModelId("openrouter/~anthropic/claude-sonnet-latest")).toBe("claude-sonnet-latest");
-      expect(normalizeModelId("~anthropic/claude-sonnet-latest")).toBe("claude-sonnet-latest");
+      expect(normalizeModelId("openrouter/~anthropic/claude-sonnet-latest")).toBe("claude-sonnet-5");
+      expect(normalizeModelId("~anthropic/claude-sonnet-latest")).toBe("claude-sonnet-5");
     });
   });
 

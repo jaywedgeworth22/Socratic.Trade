@@ -9,6 +9,7 @@
 import crypto from "crypto";
 import { audit, getDb } from "./db";
 import { apiKeyEnvVarForService, DELETED_KEY_TOMBSTONE, getUserApiKey, keyFingerprint, LOCAL_USER, maskApiKeyPreview, type LlmKeySource } from "./db-api-keys";
+import { canonicalModelId } from "./model-identity";
 import { pushLlmUsage } from "./usage-monitor-push";
 export { keyFingerprint };
 
@@ -216,13 +217,15 @@ export function providerRequestIdFromPayload(provider: string, payload: unknown)
 }
 
 /**
- * Strips the routing prefix (e.g. "openai/") from OpenRouter models to yield the canonical model
- * identity for usage and benchmark persistence, so that historical stats aren't fragmented when
- * routing through OpenRouter.
+ * Maps a served (provider, model) pair onto the catalog family identity used for usage,
+ * Results, and price-benchmark history. OpenRouter vendor prefixes become the native family
+ * (`google` → `gemini`); the model is always `canonicalModelId` so `google/gemini-3.7-flash`
+ * and `gemini-flash-latest` land in the same bucket (same for every Opus, every Sonnet, …).
  */
 export function remapOpenRouterTelemetry(provider: string, model: string): { provider: string; model: string };
 export function remapOpenRouterTelemetry(provider: string, model: string | undefined): { provider: string; model: string | undefined };
 export function remapOpenRouterTelemetry(provider: string, model: string | undefined): { provider: string; model: string | undefined } {
+  const family = model ? canonicalModelId(model) || undefined : undefined;
   if (provider === "openrouter" && model) {
     const slashIdx = model.indexOf("/");
     if (slashIdx !== -1) {
@@ -230,10 +233,13 @@ export function remapOpenRouterTelemetry(provider: string, model: string | undef
       if (p === "google") p = "gemini";
       if (p === "mistralai") p = "mistral";
       if (p === "x-ai") p = "xai";
-      return { provider: p, model: model.slice(slashIdx + 1) };
+      if (p === "meta-llama") p = "meta";
+      if (p === "moonshotai") p = "moonshot";
+      return { provider: p, model: family ?? model.slice(slashIdx + 1) };
     }
+    return { provider, model: family ?? model };
   }
-  return { provider, model };
+  return { provider, model: family ?? model };
 }
 
 /** Record one LLM call against a user. Never throws — usage accounting must not break an LLM run. */

@@ -32,8 +32,10 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 | Flag / gate | Default | Ready? | How to enable safely |
 |-------------|---------|--------|----------------------|
 | `LANDING_PAGE_ENABLED` | **ON** (unset) | Live | Set `off` only for private deploys. Pages: `/welcome`, `/how-it-works`, `/strategy`. |
-| `CSP_ENABLED` | off | **Yes** (report-only) | Set `on`. Keep `CSP_REPORT_ONLY` unset/on. Watch `[csp-report]` logs. **Do not** set `CSP_REPORT_ONLY=off` until clean. |
+| `CSP_ENABLED` | off (prod Infisical **on** 2026-08-13, report-only) | **Live** (report-only) | `CSP_REPORT_ONLY=on`. Watch `[csp-report]` logs. **Do not** set `CSP_REPORT_ONLY=off` until clean. |
 | `USAGE_BUDGET_ENFORCE` | off | **Yes** | Set `on` when usage-monitor budget-status is trusted. Fail-open on monitor outage. |
+| `CONGRESS_SHARE_ENABLED` | off (prod Infisical **on** 2026-08-13) | **Live** | Requires `CONGRESS_TRADE_TOKEN` (CT INGEST_TOKEN). Nightly batch + after-scan refs. Keep `CONGRESS_SHARE_FUNDAMENTALS_ENABLED` off unless App A #46 is confirmed. |
+| `WEB_SOURCE_SEC8K_FULL_BODY` | off (prod Infisical **on** 2026-08-13) | **Live** (bounded) | Limit 5/cycle + `WEB_SOURCE_SEC8K_FULL_BODY_BUDGET_MS=12000` (cap 60s). Adaptive FTS-mirror batching. Watch `[slow-sync]` / backlog. |
 | `VECTOR_EMBED_CLEAN_TEXT` | off (prod Infisical **on** 2026-08-12) | **Yes** (rev-tagged) | Set `on` → new vectors `embed_rev=2`. Reindex/backfill before treating corpus as one space; never purge rev-1 early. |
 | `RAG_EMBED_DISCLOSURES` | off (prod Infisical **on** 2026-08-12) | **Yes** (cost) | Parser path tested. OpenRouter/bge-m3 + Pinecone spend. |
 | `RAG_MULTIQUERY` | off (prod Infisical **on** 2026-08-12) | **Yes** (paid embed + run-budget) | Facet sub-queries. Guarded by `RAG_RUN_BUDGET_ENABLED`. |
@@ -46,8 +48,7 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 
 | Flag / gate | Default | Blocker |
 |-------------|---------|---------|
-| `VECTOR_ASOF_STRICT` | off | Needs as_of_epoch_ms coverage proof before fail-closed undated drops |
-| `WEB_SOURCE_SEC8K_FULL_BODY` | off | FTS/corpus budget + backlog health |
+| `VECTOR_ASOF_STRICT` | off | **Honesty (2026-08-13):** this is the fail-CLOSED as-of mode.  When ON *and* the caller passed `asOf`, undated / un-epoch'd chunks are dropped (server clause loses the `$exists` escape; post-fetch `isWithinAsOf` also drops).  Chat / live strategy omit `asOf`, so flipping this flag does **not** change today's live desk.  It only tightens dated retrieval (backtest, lookahead audit, replay).  The 2026-07-07 epoch backfill reported 0 undated vectors then, but that is not a standing proof — new ingest can reintroduce undated metadata.  **Do not flip** until a fresh coverage receipt (drop-count audit / `GET /api/admin/rag-coverage`) shows undated inventory is acceptable.  Owner decision, not an agent flip. |
 | `SEC_INGEST_WORKER_ENABLED` | off | Seed via `/api/admin/sec-ingest`; confirm queue/DLQ first |
 | `WEB_SOURCE_FMP_TRANSCRIPTS` + `FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED` | both off | Dual gate: entitled FMP plan **and** owner commercial storage rights |
 | `RAG_PERSIST_CANDIDATE_POOL_FULL` | off | Full pool persistence — too heavy for always-on |
@@ -84,7 +85,7 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 | Massive short interest | `MASSIVE_API_KEY` + enable flag | Inert without key |
 | Quiver enrichment | `QUIVER_API_KEY` | Never registered without key |
 | Webull unofficial | `WEBULL_UNOFFICIAL_ENABLED=off` | Unofficial path |
-| Congress share outbound | `CONGRESS_SHARE_ENABLED=off` | Cross-app share |
+| Congress share outbound | `CONGRESS_SHARE_ENABLED` **on** (2026-08-13) | Live — token + flag. Fundamentals stay off. |
 | Alpaca price event streams | `STREAMS_ALPACA_PRICE_EVENTS_ENABLED` | Streaming |
 
 ---
@@ -96,11 +97,11 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 | Usage-budget hard enforce | `USAGE_BUDGET_ENFORCE=off` | Ready — see table above |
 | Infisical primary bridge writer | `INFISICAL_ST_PRIMARY_WRITER_ENABLED=false` | Usage-monitor primary credentials |
 | Landing / welcome / strategy | `LANDING_PAGE_ENABLED` unset → **ON** | Explicit off → 404 |
-| CSP headers | `CSP_ENABLED=off` | Ready as report-only; `/api/csp-report` |
+| CSP headers | `CSP_ENABLED=on` + `CSP_REPORT_ONLY=on` (2026-08-13) | Live report-only; `/api/csp-report`. Do not enforce-block. |
 | Sentry session replay | `NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=false` | Privacy/cost |
 | Dev background workers | `DEV_BACKGROUND_WORKERS=off` | **Keep off** in local UI QA |
 | Robinhood broker-held stops | `policy.robinhoodBrokerStops` default off | Per-account policy |
-| Apple Sign-In (web) | `AUTH_APPLE_ID` / `AUTH_APPLE_SECRET` | Owner secrets |
+| Apple Sign-In (web) | `AUTH_APPLE_ID` / `AUTH_APPLE_SECRET` | **Waiting on secrets.** Code path live. Infisical keys (no values here): `AUTH_APPLE_ID`, `AUTH_APPLE_SECRET` — or mint from `AUTH_APPLE_TEAM_ID` + `AUTH_APPLE_KEY_ID` + `AUTH_APPLE_PRIVATE_KEY` (SIWA .p8 PEM, not ASC/APNs). |
 | Kalshi / options / short-sell capability | dormant per-account double gates | Phase 1 design landed |
 | Kalshi macro prompt context | `KALSHI_CONTEXT` (default on) + `KALSHI_ENV` | Public data; inert without `KALSHI_ENV` |
 | Kalshi live event orders | `KALSHI_LIVE_ORDERS` + `kalshiLiveOrdersEnabled` both off | Dry-run until both on |
@@ -149,3 +150,4 @@ bot token, Pinecone/OpenRouter/Voyage keys, Coolify tokens, Infisical identities
 
 Inventory first cut: GROK 2026-07-22. Owner enablement pass: CURSOR 2026-07-24.
 Readiness checklist + collectors: CURSOR 2026-07-27 (`cursor/dormant-features-impl-1c6c`).
+Ungate share + 8-K (bounded) + CSP report-only + UM read token: GROK 2026-08-13 (`grok/st-ungate-share-8k-apple-csp`). Apple web still waiting on `AUTH_APPLE_*`.

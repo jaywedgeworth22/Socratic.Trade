@@ -9,6 +9,72 @@ scheme-plugin trap documented in `apns.ts`). Branch
 `grok/st-kalshi-exits-options`, worktree
 `~/apps/trading-grok-kalshi-exits`. Rollout:
 `docs/rollouts/2026-08-14-kalshi-node-crypto-webpack.md`.
+## Current (2026-08-15 GROK — account-config Title Case)
+
+Capabilities sheet on Connections was mixing Title Case chips (`Connected`, `Disabled`) with sentence-case values (`Whole shares`, `regular + extended`).  Labels and chips now match: `Fractional Shares`, `Whole Shares`, `Regular + Extended`, `Orders · Level N`.
+
+Branch `grok/account-config-title-case`, issue #2726.  Rollout: `docs/rollouts/2026-08-15-account-config-title-case.md`.
+
+## Current (2026-08-15 GROK — model family identity for Results / benchmarks / history)
+
+Owner: Gemini 3.7 Flash must roll up as `gemini-flash-latest` (same for every Flash Lite, every Pro, every Opus, every Sonnet, and so on).  `canonicalModelId` already had the family table; Results and Red-Team efficacy still keyed off the wire slug (`google/gemini-3.7-flash`), so history split.
+
+Branch `grok/model-family-identity`, issue #2724.  Red stamps the catalog family on the verdict.  Efficacy, critic-failure attribution, closed-lot models, and the approval-card compare path all go through `canonicalModelId`.  Usage merge and model-stats already did; they now also merge two reviewer-perf rows that canonicalize onto the same family.
+
+Rollout: `docs/rollouts/2026-08-15-model-family-identity.md`.
+
+## Current (2026-08-14 GROK — bound per-document FTS mirror + durable resume)
+
+#2680's 250ms yield inside `insertDocumentChunkFtsBatch` did not bound wall-clock.  Live receipts after that "fix": `ftsMirrorBatch 279522ms (933 chunks)`, then 103s / 98s / 91s.  Every `embed_queued` task failed to advance (`Failed to advance checkpoint` + `Ingestion budget or capacity exceeded mid-task`).  Queue 3501 pending / 16 complete (~0.5%).  Lease is 60s and was heartbeated only during `storeDocument`.
+
+**Fix (this branch `grok/bound-fts-mirror`, issue #2715):** slice FTS at **20 chunks or 6s wall, whichever first** (`20 * (279522/933) = 5991.9ms`).  Resume from durable FTS row count.  Heartbeat the lease across the mirror.  Release immediately so the next tick continues.  `insertDocumentChunkFtsBatch` keeps its internal 250ms yield; the worker never feeds it 933 chunks.
+
+**This PR does not re-enable the worker.**  Re-enable `SEC_INGEST_WORKER_ENABLED` is the owner's call after this lands.  Do not flip Infisical.  Do not restart prod.
+
+Rollout: `docs/rollouts/2026-08-14-bound-fts-mirror.md`.
+## Current (2026-08-13 GROK — r5 residue: advisory-tail reword + parked owner decisions)
+
+After Monet #2682 (real toggles) and Claude's yielded `r4-toggles-superseded` salvage, the
+only well-specified leftover that does **not** collide with the sibling `grok/claude-r4-pickup`
+lane is the shared `risk_advisory` tail.  Old copy ("the agent is still in control") is a lie
+for owner-initiated actions (cancel-dust).  Reworded to "nothing was blocked or changed" in
+SMS/push + Discord fallback, with tests + a force-include merge-gate adapted to #2682 names.
+
+Claude's settings-surface sweep found no other lying toggles (FMP "intent only" caveat is
+honest; Autopilot glossary is accurate).  Parked for the owner, not invented: Reddit/X keys,
+`VECTOR_ASOF_STRICT` flip (honesty copy only), r5 design slices, settings/page.tsx label
+until r4 PR merges.  Branch `grok/claude-r5-residue`.  Rollout:
+`docs/rollouts/2026-08-13-pickup-r5-residue.md`.
+## Current (2026-08-14 GROK — Monet backend r5 pickup)
+
+Owner asked to finish Monet's "Backend updates (ST - Monet)" chat after the usage cap.  Ingestion/FTS hotfix (#2680) and toggles (#2682) were already live.  Round 5 is on `grok/monet-backend-r5` as **#2721** (locks / memory decay / overlays / chat cancel / scorecard alpha; migrations 79–81).  Prompt version `agentic-strategy@2.6.0`.
+
+2026-08-15: rematched `origin/main` (includes #2720) then `verify-hosted` failed on `test/web-sources.test.ts` after midnight UTC — the live-flow stub's `06/16/2026` disclosedAt aged out of the 60-day window.  Fixture dates are now relative to `Date.now()`.  #2689 is held (superseded by this stack).  #2691 is independent residue.
+
+Rollout: `docs/rollouts/2026-08-14-monet-backend-r5.md`.
+
+## Current (2026-08-13 GROK — Claude r4 leftover pickup)
+
+Claude hit quota mid Round 4.  `origin/agent/claude` is gone; five local r4 commits sat on
+`~/apps/trading-claude` at `40d5c087`.  r3 already merged as #2666.  Toggles slice yielded to
+Monet and merged as #2682 (migration 78).  APNs claimed migration 77.
+
+Picked up in a new worktree (`~/apps/trading-grok-r4`, branch `grok/claude-r4-pickup`) from
+`origin/main` `77bbb77f`.  Cherry-picked oldest-first:
+
+1. `1ac172a9` outcome benchmarks (`^GSPC` + GICS sector, ETF fallback)
+2. `9f7f870f` ATR-derived `secondaryBuy` pullback
+3. `293d4bb5` server-knob Operations panel
+4. `cb645a02` congress-stream level-based resume + honest effect copy
+5. `40d5c087` strategist prompt data-age stamps
+
+No schema bump in these five (main stays at 78).  Conflicts: `vector-db.ts` kept main's
+`resolveSourceBool` and r4's `serverKnobBool`; `STRATEGY_PROMPT_VERSION` bumped to
+`agentic-strategy@2.5.0` because main already used 2.4.0 for the venue-contract prompt.
+Advisory-tail reword / settings-surface sweep is NOT in these five commits (it rode Monet
+#2682) — left alone.
+
+Rollout: `docs/rollouts/2026-08-13-claude-r4-pickup.md`.
 ## Current (2026-08-14 GROK — stale ~1200s quotes + origin timeouts)
 
 Production 2026-08-13/14: Autopilot openings warned "quote was ~1200s old",
