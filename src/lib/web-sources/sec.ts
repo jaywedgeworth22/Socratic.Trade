@@ -12,17 +12,21 @@
 // captures the latest filings and merges them into a rolling window, so over time
 // the dataset covers whichever symbols insiders actually traded — never fabricated.
 
-import { audit, getInternalSetting, setInternalSetting } from "../db";
+import { audit, getInternalSetting, listUsers, listWatchlistSymbols, setInternalSetting } from "../db";
 import { normalizeSymbol } from "../money";
+import { resolveSourceBool, resolveSourceNumber } from "../source-settings";
 import type { WebSourceRefreshResult } from "./types";
 import { retryBackoffMs } from "./congress";
 import { politeFetchText, runRateLimited, secUserAgent } from "./http";
+import { parseAndSaveForm4 } from "./sec-facts";
+import { loadTickerCikMap } from "./sec8k";
+import { padCik } from "./sec-filings";
 
 const DATASET_KEY = "webSource:insider:dataset";
 const ATTEMPT_KEY = "webSource:insider:lastAttempt";
 const DEFAULT_TTL_MS = 24 * 60 * 60_000; // daily
 const DEFAULT_WINDOW_DAYS = 30; // how long an insider filing stays in the rolling window
-const DEFAULT_MAX_FILINGS = 30; // ownership XMLs parsed per refresh (politeness: ~2 reqs each)
+const DEFAULT_MAX_FILINGS = 60; // ownership XMLs parsed per refresh (politeness: ~2 reqs each)
 const SEC_BASE = "https://www.sec.gov";
 
 export interface InsiderFiling {
@@ -52,13 +56,21 @@ export interface InsiderSignal {
 }
 
 export function insiderTtlMs(): number {
-  const v = Number(process.env.WEB_SOURCE_INSIDER_TTL_MS ?? DEFAULT_TTL_MS);
+  const fromSettings = resolveSourceNumber("WEB_SOURCE_INSIDER_TTL_MS");
+  const v = fromSettings > 0 ? fromSettings : Number(process.env.WEB_SOURCE_INSIDER_TTL_MS ?? DEFAULT_TTL_MS);
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_TTL_MS;
 }
 
 function windowDays(): number {
-  const v = Number(process.env.WEB_SOURCE_INSIDER_WINDOW_DAYS ?? DEFAULT_WINDOW_DAYS);
+  const fromSettings = resolveSourceNumber("WEB_SOURCE_INSIDER_WINDOW_DAYS");
+  const v = fromSettings > 0 ? fromSettings : Number(process.env.WEB_SOURCE_INSIDER_WINDOW_DAYS ?? DEFAULT_WINDOW_DAYS);
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_WINDOW_DAYS;
+}
+
+function maxFilings(): number {
+  const fromSettings = resolveSourceNumber("WEB_SOURCE_INSIDER_MAX_FILINGS");
+  const v = fromSettings > 0 ? fromSettings : Number(process.env.WEB_SOURCE_INSIDER_MAX_FILINGS ?? DEFAULT_MAX_FILINGS);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_FILINGS;
 }
 
 export function getInsiderDataset(): InsiderDataset | undefined {
@@ -233,25 +245,97 @@ export function isInsiderRefreshDue(now: number = Date.now()): boolean {
   return now - Date.parse(dataset.fetchedAt) >= insiderTtlMs();
 }
 
-async function scrapeRecentForm4s(now: number): Promise<InsiderFiling[]> {
-  const ua = secUserAgent();
-  const feed = await politeFetchText(
-    `${SEC_BASE}/cgi-bin/browse-edgar?action=getcurrent&type=4&count=100&output=atom`,
-    { headers: { "user-agent": ua, accept: "application/atom+xml" } }
-  );
-  const filings = parseCurrentForm4Feed(feed).slice(0, Number(process.env.WEB_SOURCE_INSIDER_MAX_FILINGS ?? DEFAULT_MAX_FILINGS));
+function cikFromEdgarDir(dir: string): string {
+  const raw = dir.match(/\/data\/(\d+)\//)?.[1] ?? "";
+  return raw ? padCik(raw) : "";
+}
+
+function persistForm4Xml(xml: string, dir: string, accession: string, parsed: InsiderFiling | null): void {
+  const cik =
+    xml.match(/<issuerCik>([^<]+)<\/issuerCik>/)?.[1]?.trim() ||
+    cikFromEdgarDir(dir);
+  if (!cik) return;
+  try {
+    parseAndSaveForm4(xml, cik, accession, parsed?.symbol ?? "");
+  } catch {
+    // Structured persist is additive; sentiment dataset still stores the filing.
+  }
+}
+
+async function fetchForm4FromDirs(
+  filings: Array<{ dir: string; accession: string }>,
+  ua: string
+): Promise<InsiderFiling[]> {
   const parsed = await runRateLimited(filings, 250, async ({ dir, accession }) => {
     try {
       const indexJson = JSON.parse(await politeFetchText(`${dir}index.json`, { headers: { "user-agent": ua } }));
       const xmlName = pickOwnershipXml(indexJson);
       if (!xmlName) return null;
       const xml = await politeFetchText(`${dir}${xmlName}`, { headers: { "user-agent": ua } });
-      return parseForm4Xml(xml, { accession });
+      const filing = parseForm4Xml(xml, { accession });
+      persistForm4Xml(xml, dir, accession, filing);
+      return filing;
     } catch {
       return null;
     }
   });
   return parsed.filter((f): f is InsiderFiling => f !== null);
+}
+
+function allWatchlistSymbols(): string[] {
+  const out = new Set<string>();
+  for (const userId of listUsers()) {
+    for (const item of listWatchlistSymbols(userId)) {
+      if (item.symbol) out.add(normalizeSymbol(item.symbol));
+    }
+  }
+  return [...out];
+}
+
+async function scrapeRecentForm4s(now: number): Promise<InsiderFiling[]> {
+  const ua = secUserAgent();
+  const cap = maxFilings();
+  const feed = await politeFetchText(
+    `${SEC_BASE}/cgi-bin/browse-edgar?action=getcurrent&type=4&count=100&output=atom`,
+    { headers: { "user-agent": ua, accept: "application/atom+xml" } }
+  );
+  const current = parseCurrentForm4Feed(feed).slice(0, cap);
+  const out = await fetchForm4FromDirs(current, ua);
+
+  if (!resolveSourceBool("WEB_SOURCE_INSIDER_WATCHLIST")) return out;
+  const remaining = Math.max(0, cap - current.length);
+  if (remaining === 0) return out;
+
+  let tickerCik: Record<string, string> = {};
+  try {
+    tickerCik = await loadTickerCikMap(now);
+  } catch {
+    return out;
+  }
+  const watch = allWatchlistSymbols().filter((s) => tickerCik[s]).slice(0, 20);
+  const seen = new Set(current.map((f) => f.accession));
+  const extra: Array<{ dir: string; accession: string }> = [];
+  for (const symbol of watch) {
+    if (extra.length >= remaining) break;
+    try {
+      const cik = tickerCik[symbol];
+      const atom = await politeFetchText(
+        `${SEC_BASE}/cgi-bin/browse-edgar?action=getcompany&CIK=${cik}&type=4&owner=include&count=8&output=atom`,
+        { headers: { "user-agent": ua, accept: "application/atom+xml" } }
+      );
+      for (const hit of parseCurrentForm4Feed(atom)) {
+        if (seen.has(hit.accession)) continue;
+        seen.add(hit.accession);
+        extra.push(hit);
+        if (extra.length >= remaining) break;
+      }
+    } catch {
+      // Skip one symbol; keep the rest of the watchlist pass.
+    }
+  }
+  if (extra.length === 0) return out;
+  const more = await fetchForm4FromDirs(extra.slice(0, remaining), ua);
+  return [...out, ...more];
 }
 
 /** Merge fresh filings into the rolling window, deduped by accession, pruned to window. */

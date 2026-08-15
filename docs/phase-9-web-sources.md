@@ -198,7 +198,12 @@ records completion under the active embed revision; scoped runs deliberately do 
 | `WEB_SOURCE_INSIDER` | `on` | `off` disables the SEC insider connector |
 | `WEB_SOURCE_INSIDER_TTL_MS` | 24h | refresh cadence |
 | `WEB_SOURCE_INSIDER_WINDOW_DAYS` | 30 | rolling window kept |
-| `WEB_SOURCE_INSIDER_MAX_FILINGS` | 30 | ownership XMLs parsed per refresh |
+| `WEB_SOURCE_INSIDER_MAX_FILINGS` | 60 | ownership XMLs parsed per refresh |
+| `WEB_SOURCE_INSIDER_WATCHLIST` | `on` | also pull Form 4s for watchlist tickers |
+| `WEB_SOURCE_13F` | `on` | official 13F-HR books for curated superinvestors |
+| `WEB_SOURCE_13F_TTL_MS` | 7d | 13F refresh cadence |
+| `WEB_SOURCE_ARK` | `on` | official ARK daily holdings CSVs |
+| `WEB_SOURCE_ARK_TTL_MS` | 24h | ARK refresh cadence |
 | `SEC_EDGAR_USER_AGENT` | generic | SEC fair-access UA (set your contact) |
 | `WEB_SOURCE_FMP_TRANSCRIPTS` | `off` | enables transcript endpoint use; still requires rights confirmation |
 | `FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED` | `off` | operator assertion that persistence, embedding, retrieval, and display are permitted |

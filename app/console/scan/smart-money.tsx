@@ -142,6 +142,8 @@ export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot })
     (b.disclosedAt ?? b.tradedAt ?? "").localeCompare(a.disclosedAt ?? a.tradedAt ?? "")
   );
   const insider = snapshot.smartMoney?.insider ?? [];
+  const thirteenF = snapshot.smartMoney?.thirteenF ?? [];
+  const ark = snapshot.smartMoney?.ark ?? [];
   const ws = snapshot.webSources;
 
   return (
@@ -222,6 +224,70 @@ export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot })
           <div className="flex flex-col px-2 pb-3 pt-1">
             {insider.map((f, i) => (
               <InsiderRow key={`${f.symbol}-${f.owner}-${f.filedAt}-${i}`} f={f} />
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card
+        title={
+          <span className="flex items-center gap-2" title="Latest 13F-HR holdings from a curated set of official SEC filers.  Observe only — the app does not auto-copy these books.">
+            13F Superinvestors
+            <FeedFreshness meta={ws?.thirteenF} />
+          </span>
+        }
+        action={
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            {feedSubtitle(ws?.thirteenF, thirteenF.length, "SEC 13F-HR holdings")}
+          </span>
+        }
+        padded={false}
+      >
+        {thirteenF.length === 0 ? (
+          <Empty>No 13F holdings cached yet.  The weekly SEC pull fills this after the next refresh.</Empty>
+        ) : (
+          <div className="flex flex-col px-2 pb-3 pt-1">
+            {thirteenF.map((r, i) => (
+              <div key={`${r.ticker}-${r.filerName}-${r.periodEnd}-${i}`} className="con-row flex items-center gap-2 rounded-control px-2 py-1.5 text-[length:var(--con-fs-sm)]">
+                <SymbolButton symbol={r.ticker} />
+                <span className="min-w-0 truncate text-[color:var(--con-muted)]">{r.filerName}</span>
+                <span className="con-num hidden whitespace-nowrap text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] sm:inline">
+                  {r.shares.toLocaleString()} sh
+                </span>
+                <span className="ml-auto whitespace-nowrap text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{r.periodEnd}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card
+        title={
+          <span className="flex items-center gap-2" title="Official ARK ETF daily holdings CSVs.  Observe only.">
+            ARK Holdings
+            <FeedFreshness meta={ws?.ark} />
+          </span>
+        }
+        action={
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            {feedSubtitle(ws?.ark, ark.length, "ARK official CSVs")}
+          </span>
+        }
+        padded={false}
+      >
+        {ark.length === 0 ? (
+          <Empty>No ARK holdings cached yet.  The daily official CSV pull fills this after the next refresh.</Empty>
+        ) : (
+          <div className="flex flex-col px-2 pb-3 pt-1">
+            {ark.map((r, i) => (
+              <div key={`${r.fund}-${r.ticker}-${r.asOf}-${i}`} className="con-row flex items-center gap-2 rounded-control px-2 py-1.5 text-[length:var(--con-fs-sm)]">
+                <Chip tone="info">{r.fund}</Chip>
+                <SymbolButton symbol={r.ticker} />
+                <span className="con-num hidden whitespace-nowrap text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] sm:inline">
+                  {r.weightPct.toFixed(2)}%
+                </span>
+                <span className="ml-auto whitespace-nowrap text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{r.asOf}</span>
+              </div>
             ))}
           </div>
         )}

@@ -199,8 +199,8 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
     // 2.4.0: venue-contract prompt (broker-named, shorts/options/sessions fenced)
     // 2.5.0: predictionMarkets documented + data-age honesty line (news/predictionMarkets caveats)
     // 2.6.0: strategyOverlays named in DATA-NOT-COMMAND
-    // 2.7.0: rematch — keep Kalshi `eventMarkets` line from grok/st-kalshi-exits-options
-    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.7.0");
+    // 2.8.0: 13F + ARK + Form 4 idea-source bulletins on smartMoney
+    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.8.0");
   });
 
   it("(a) buildBullSystem/buildRedTeamReviewSystem carry the data-not-command clause; reflection only by reference", async () => {

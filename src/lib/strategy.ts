@@ -1420,10 +1420,14 @@ export async function runStrategyOnce(
                   if (informationRouting.structured.needs.includes("financial_facts")) {
                     factsCard = formatCompanyFactsEvidenceCard(cik);
                   }
-                  if (informationRouting.structured.needs.includes("insider_transactions")) {
-                    insiderCard = formatInsiderTransactionsEvidenceCard(cik);
-                  }
+                  insiderCard = formatInsiderTransactionsEvidenceCard(cik, sym);
                 }
+                const { formatThirteenFEvidenceCard } = await import("./web-sources/thirteen-f");
+                const { formatArkEvidenceCard } = await import("./web-sources/ark-holdings");
+                const thirteenFCard = formatThirteenFEvidenceCard(sym);
+                const arkCard = formatArkEvidenceCard(sym);
+                if (thirteenFCard) insiderCard = [insiderCard, thirteenFCard].filter(Boolean).join("\n\n");
+                if (arkCard) insiderCard = [insiderCard, arkCard].filter(Boolean).join("\n\n");
               } catch (err) {
                 console.warn(`[Strategy] failed to fetch structured facts for ${sym}:`, err);
               }

@@ -150,7 +150,12 @@ export async function ingestCompanyFacts(cik: string): Promise<void> {
 /**
  * Parses Form 4 XML string using cheerio and writes entries into `sec_insider_transactions`.
  */
-export function parseAndSaveForm4(xmlContent: string, cik: string, accession: string): number {
+export function parseAndSaveForm4(
+  xmlContent: string,
+  cik: string,
+  accession: string,
+  symbol = ""
+): number {
   const db = getDb();
   const $ = cheerio.load(xmlContent, { xmlMode: true });
   const paddedCik = padCik(cik);
@@ -183,8 +188,8 @@ export function parseAndSaveForm4(xmlContent: string, cik: string, accession: st
 
   const insertStmt = db.prepare(`
     INSERT OR REPLACE INTO sec_insider_transactions (
-      id, cik, accession, insider_name, relationship, side, shares, price, period_of_report, is_10b5_1, transaction_code
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, cik, accession, insider_name, relationship, side, shares, price, period_of_report, is_10b5_1, transaction_code, symbol
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   db.transaction(() => {
@@ -226,7 +231,8 @@ export function parseAndSaveForm4(xmlContent: string, cik: string, accession: st
           price,
           periodOfReport,
           is10b5_1,
-          transactionCode
+          transactionCode,
+          symbol.trim().toUpperCase()
         );
       }
       count++;
@@ -270,17 +276,19 @@ export function formatCompanyFactsEvidenceCard(cik: string): string {
 /**
  * Format structured Form 4 insider transactions for a symbol into a clean narrative Evidence Card.
  */
-export function formatInsiderTransactionsEvidenceCard(cik: string): string {
+export function formatInsiderTransactionsEvidenceCard(cik: string, symbol?: string): string {
   const db = getDb();
   const paddedCik = padCik(cik);
+  const ticker = (symbol ?? "").trim().toUpperCase();
 
   const txs = db.prepare(`
     SELECT insider_name, relationship, side, shares, price, period_of_report, is_10b5_1, transaction_code, accession
     FROM sec_insider_transactions
-    WHERE cik = ? AND transaction_code IN ('P', 'S')
+    WHERE transaction_code IN ('P', 'S')
+      AND (cik = ? OR (? != '' AND symbol = ?))
     ORDER BY period_of_report DESC, price DESC
     LIMIT 30
-  `).all(paddedCik) as Array<{
+  `).all(paddedCik, ticker, ticker) as Array<{
     insider_name: string;
     relationship: string;
     side: string;
@@ -294,7 +302,7 @@ export function formatInsiderTransactionsEvidenceCard(cik: string): string {
 
   if (txs.length === 0) return "";
 
-  const lines = [`[SEC Insider Transactions (Form 4) for CIK ${paddedCik}]`];
+  const lines = [`[SEC Insider Transactions (Form 4) for ${ticker || `CIK ${paddedCik}`}]`];
   for (const t of txs) {
     const codeLabel = t.transaction_code || "?";
     lines.push(

@@ -3058,6 +3058,77 @@ const MIGRATIONS: Migration[] = [
           ON strategy_run_requests (user_id, status, created_at);
       `);
     }
+  },
+  {
+    version: 83,
+    name: "idea_sources_13f_ark_form4",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_insider_transactions (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          insider_name TEXT NOT NULL,
+          relationship TEXT NOT NULL,
+          side TEXT NOT NULL,
+          shares REAL NOT NULL,
+          price REAL NOT NULL,
+          period_of_report TEXT NOT NULL,
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0,
+          transaction_code TEXT NOT NULL DEFAULT '',
+          symbol TEXT NOT NULL DEFAULT ''
+        );
+      `);
+      const cols = database.prepare("PRAGMA table_info(sec_insider_transactions)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "symbol")) {
+        database.exec("ALTER TABLE sec_insider_transactions ADD COLUMN symbol TEXT NOT NULL DEFAULT ''");
+      }
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_sec_insider_transactions_symbol
+          ON sec_insider_transactions(symbol);
+        CREATE TABLE IF NOT EXISTS cusip_ticker_map (
+          cusip TEXT PRIMARY KEY,
+          ticker TEXT NOT NULL,
+          source TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS sec_13f_holdings (
+          id TEXT PRIMARY KEY,
+          filer_cik TEXT NOT NULL,
+          filer_name TEXT NOT NULL,
+          period_end TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          cusip TEXT NOT NULL,
+          ticker TEXT NOT NULL DEFAULT '',
+          issuer_name TEXT NOT NULL,
+          title_of_class TEXT NOT NULL DEFAULT '',
+          shares REAL NOT NULL,
+          value_usd REAL NOT NULL,
+          ssh_prn_type TEXT NOT NULL DEFAULT 'SH',
+          fetched_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_13f_holdings_ticker_period
+          ON sec_13f_holdings(ticker, period_end);
+        CREATE INDEX IF NOT EXISTS idx_sec_13f_holdings_filer_period
+          ON sec_13f_holdings(filer_cik, period_end);
+        CREATE TABLE IF NOT EXISTS ark_holdings (
+          id TEXT PRIMARY KEY,
+          as_of TEXT NOT NULL,
+          fund TEXT NOT NULL,
+          ticker TEXT NOT NULL,
+          company TEXT NOT NULL,
+          cusip TEXT NOT NULL DEFAULT '',
+          shares REAL NOT NULL,
+          market_value_usd REAL NOT NULL,
+          weight_pct REAL NOT NULL,
+          fetched_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ark_holdings_ticker_asof
+          ON ark_holdings(ticker, as_of);
+        CREATE INDEX IF NOT EXISTS idx_ark_holdings_fund_asof
+          ON ark_holdings(fund, as_of);
+      `);
+    }
   }
 ];
 
@@ -4685,3 +4756,4 @@ export * from "./db-device-tokens";
 export * from "./db-trade-locks";
 export * from "./db-memory-lifecycle";
 export * from "./db-overlays";
+export * from "./db-idea-sources";
