@@ -591,4 +591,31 @@ describe("embed_queued FTS slice + durable resume", () => {
       .get(`${accession}:1:document.html`) as { n: number };
     expect(rows.n).toBe(0);
   });
+
+  it("defers a daily write-fuse skip instead of throwing capacity-exceeded", async () => {
+    const { getSecIngestTask } = await import("../src/lib/db-rag-ingest");
+    const { storeDocument } = await import("../src/lib/vector-db");
+    vi.mocked(storeDocument).mockClear();
+    vi.mocked(storeDocument).mockResolvedValue({
+      skipped: true,
+      attempted: 10,
+      indexed: 0,
+      writeUnitBudgetSkipped: 10,
+      documentComplete: false
+    } as any);
+
+    const accession = "0000320193-26-000096";
+    const { task } = await seedEmbedQueued({ accession, chunks: 10 });
+    const worker = new SecIngestWorker();
+    await worker.processTask(task);
+
+    const after = getSecIngestTask(task.id)!;
+    expect(after.checkpoint).toBe("embed_queued");
+    expect(after.status).toBe("retry_wait");
+    expect(after.lastErrorType).toBe("wu_exhausted_deferred");
+    const rows = getDb()
+      .prepare("SELECT COUNT(*) AS n FROM document_chunks_fts WHERE accession = ?")
+      .get(`${accession}:1:document.html`) as { n: number };
+    expect(rows.n).toBe(0);
+  });
 });

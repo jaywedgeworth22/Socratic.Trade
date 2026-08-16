@@ -12,23 +12,16 @@
 // (free=2, individual=20, professional=40 app cap) unless ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL
 // overrides. Per-run fetch budget follows the same tier (free-safe 8, Individual default 80).
 
-import fs from "fs";
-import path from "path";
 import { fetchWithRetry } from "../data-providers";
 import { audit } from "../db";
 import {
   getUserApiKey,
-  listUsers,
-  listWatchlistSymbols,
   LOCAL_USER,
   resolveApiKeyWithSource
 } from "../db-api-keys";
-import { listRecentlyHeldSymbolsAllUsers, listRecentlyHeldSymbolValuesAllUsers } from "../db-fills";
 import { logApiHealth } from "../db-health";
 import { hasIngestedAccession, insertIngestedAccession } from "../db-learning";
-import { getPolicy } from "../db-profiles";
 import { getInternalSetting, setInternalSetting } from "../db-settings";
-import { symbolsForPolicyUniverse } from "../index-universes";
 import { normalizeSymbol } from "../money";
 import { admitProviderRequests, withProviderLimit } from "../provider-rate-limit";
 import { lookupRegisteredPlanTier, roicTranscriptQuartersForPlan } from "../provider-tier-plan";
@@ -38,8 +31,8 @@ import {
   roicTranscriptsKillSwitchOn
 } from "../roic-transcripts-gate";
 import { resolveSourceNumber } from "../source-settings";
-import { getTechnicalWatchlist } from "./technical";
-import { storeDocument } from "../vector-db";
+import { rankDemandFirstSymbols, rankHighInterestSymbols } from "../rag/demand-first-symbols";
+import { hasPineconeWriteBudget, storeDocument } from "../vector-db";
 
 export { ROIC_TRANSCRIPT_DOC_TYPE, ROIC_TRANSCRIPT_SOURCE, roicTranscriptsKillSwitchOn };
 
@@ -137,9 +130,30 @@ export function recentFiscalPeriods(
   return out;
 }
 
+export type RoicIngestPhase = "latest" | "deepen";
+
 export interface RoicCursor {
   queue: string[];
   updatedAt: string;
+  phase: RoicIngestPhase;
+}
+
+export function sortRoicPeriodsNewestFirst<T extends { year: number; quarter: number }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => b.year - a.year || b.quarter - a.quarter);
+}
+
+/** Latest-only pass takes one period; deepen uses the plan-tier quarter cap. */
+export function roicDepthForPhase(phase: RoicIngestPhase, userId?: string): number {
+  return phase === "latest" ? 1 : quartersPerSymbol(userId);
+}
+
+export function selectRoicPeriodsForPhase<T extends { year: number; quarter: number }>(
+  periods: T[],
+  phase: RoicIngestPhase,
+  depth: number
+): T[] {
+  const cap = phase === "latest" ? 1 : Math.max(1, depth);
+  return sortRoicPeriodsNewestFirst(periods).slice(0, cap);
 }
 
 export function readRoicCursor(): RoicCursor | null {
@@ -151,15 +165,17 @@ export function readRoicCursor(): RoicCursor | null {
   const updatedAt = typeof (raw as { updatedAt?: unknown }).updatedAt === "string"
     ? (raw as { updatedAt: string }).updatedAt
     : "";
-  return { queue: symbols, updatedAt };
+  const rawPhase = (raw as { phase?: unknown }).phase;
+  const phase: RoicIngestPhase = rawPhase === "deepen" ? "deepen" : "latest";
+  return { queue: symbols, updatedAt, phase };
 }
 
-function writeRoicCursor(queue: string[], nowIso: string): void {
+function writeRoicCursor(queue: string[], nowIso: string, phase: RoicIngestPhase): void {
   if (queue.length === 0) {
     setInternalSetting(CURSOR_KEY, null);
     return;
   }
-  setInternalSetting(CURSOR_KEY, { queue, updatedAt: nowIso } satisfies RoicCursor);
+  setInternalSetting(CURSOR_KEY, { queue, updatedAt: nowIso, phase } satisfies RoicCursor);
 }
 
 export function isRoicTranscriptRefreshDue(now: number = Date.now()): boolean {
@@ -182,6 +198,7 @@ export interface RoicTranscriptRefreshResult {
   due: boolean;
   enabled: boolean;
   remaining: number;
+  phase: RoicIngestPhase;
 }
 
 export interface RoicTranscriptTurn {
@@ -520,91 +537,13 @@ export async function ingestRoicTranscriptToRag(
   }
 }
 
-function loadManifestRank(manifestPath: string = path.resolve("data/rag-universe-manifest.json")): Map<string, number> {
-  const rank = new Map<string, number>();
-  try {
-    const raw = fs.readFileSync(manifestPath, "utf8");
-    const parsed = JSON.parse(raw) as { issuers?: Array<{ ticker?: unknown; rank?: unknown }> };
-    for (const issuer of parsed.issuers ?? []) {
-      const ticker = typeof issuer.ticker === "string" ? normalizeSymbol(issuer.ticker) : "";
-      const r = typeof issuer.rank === "number" ? issuer.rank : undefined;
-      if (ticker && r !== undefined && !rank.has(ticker)) rank.set(ticker, r);
-    }
-  } catch {
-    // Non-fatal tail-fill.
-  }
-  return rank;
-}
+export { rankDemandFirstSymbols as rankRoicUniverseSymbols } from "../rag/demand-first-symbols";
 
 /**
- * Holdings by value, then watchlists, technical watchlist, each user's policy
- * index universe, then the 1k-issuer RAG manifest.  A symbol appears once at
- * its best tier so the cursor fills what the desk actually trades first.
- */
-export function rankRoicUniverseSymbols(options?: { symbols?: string[]; now?: number }): string[] {
-  if (options?.symbols?.length) {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const raw of options.symbols) {
-      const s = normalizeSymbol(raw);
-      if (!s || seen.has(s)) continue;
-      seen.add(s);
-      out.push(s);
-    }
-    return out;
-  }
-
-  const now = options?.now ?? Date.now();
-  const seen = new Set<string>();
-  const out: string[] = [];
-  const push = (raw: string) => {
-    const s = normalizeSymbol(raw);
-    if (!s || seen.has(s)) return;
-    seen.add(s);
-    out.push(s);
-  };
-
-  try {
-    const held = [...listRecentlyHeldSymbolValuesAllUsers(30, now).entries()]
-      .filter(([, value]) => value > 0)
-      .sort((a, b) => b[1] - a[1]);
-    for (const [symbol] of held) push(symbol);
-  } catch {
-    for (const s of listRecentlyHeldSymbolsAllUsers(30, now)) push(s);
-  }
-
-  for (const userId of listUsers()) {
-    try {
-      for (const item of listWatchlistSymbols(userId)) push(item.symbol);
-    } catch {
-      // ignore per-user watchlist errors
-    }
-  }
-
-  try {
-    for (const s of getTechnicalWatchlist()) push(s);
-  } catch {
-    // ignore
-  }
-
-  for (const userId of listUsers()) {
-    try {
-      for (const s of symbolsForPolicyUniverse(getPolicy(userId))) push(s);
-    } catch {
-      // ignore per-user policy errors
-    }
-  }
-
-  const manifest = [...loadManifestRank().entries()].sort((a, b) => a[1] - b[1]);
-  for (const [symbol] of manifest) push(symbol);
-
-  return out;
-}
-
-/**
- * Demand-first then universe-wide ROIC transcript pass.  List-first so we
- * request only periods ROIC actually has.  Skip already-ingested accessions.
- * Cursor continues mid-universe across scheduler ticks instead of sleeping 24h.
+ * Two-pass ingest: latest transcript for the demand-first universe, then extra
+ * quarters only for held/watchlist/technical names.  List-first so we request
+ * only periods ROIC actually has.  Skip already-ingested accessions.  Cursor
+ * continues mid-universe across scheduler ticks instead of sleeping 24h.
  */
 export async function refreshRoicTranscriptsIfDue(options?: {
   force?: boolean;
@@ -622,87 +561,111 @@ export async function refreshRoicTranscriptsIfDue(options?: {
     symbolsConsidered: 0,
     due: enabled && isRoicTranscriptRefreshDue(now),
     enabled,
-    remaining: 0
+    remaining: 0,
+    phase: "latest"
   };
   if (!enabled) return base;
   if (!options?.force && !isRoicTranscriptRefreshDue(now)) return base;
-
-  const nowIso = new Date(now).toISOString();
-  let queue: string[];
-  const existing = options?.force || options?.symbols?.length ? null : readRoicCursor();
-  if (existing && existing.queue.length > 0) {
-    queue = existing.queue;
-  } else {
-    queue = rankRoicUniverseSymbols({ symbols: options?.symbols, now });
+  // Daily Pinecone write fuse is already spent: keep the cursor and skip the ROIC fetch
+  // loop.  storeDocument would refuse each new transcript after opening no useful work.
+  if (!hasPineconeWriteBudget(options?.userId ?? "local")) {
+    return { ...base, due: true };
   }
 
+  const nowIso = new Date(now).toISOString();
+  const existing = options?.force || options?.symbols?.length ? null : readRoicCursor();
+  let phase: RoicIngestPhase = existing?.phase ?? "latest";
+  let queue: string[] = existing && existing.queue.length > 0
+    ? existing.queue
+    : rankDemandFirstSymbols({ symbols: options?.symbols, now });
+  if (!existing || existing.queue.length === 0) phase = "latest";
+
+  const deepenQueue = (): string[] => {
+    if (options?.symbols?.length) {
+      return rankDemandFirstSymbols({ symbols: options.symbols, now });
+    }
+    return rankHighInterestSymbols({ now });
+  };
+
   base.symbolsConsidered = queue.length;
-  const depth = quartersPerSymbol(options?.userId);
   const budget = maxTranscriptsPerRun(options?.userId);
   let remainingBudget = budget;
 
-  while (queue.length > 0 && remainingBudget > 0) {
-    const symbol = queue[0]!;
-    let index: RoicCallIndexRow[] = [];
-    try {
-      remainingBudget -= 1;
-      base.attempted += 1;
-      index = await fetchRoicCallIndex(symbol, options?.userId);
-    } catch {
-      queue.shift();
-      continue;
-    }
-
-    const periods = (index.length > 0
-      ? index.map((row) => ({ year: row.year, quarter: row.quarter, date: row.date }))
-      : recentFiscalPeriods(new Date(now), depth).map((p) => ({ ...p, date: undefined }))
-    ).slice(0, depth);
-
-    let symbolDone = true;
-    for (const period of periods) {
-      const accession = roicTranscriptAccession(symbol, period.year, period.quarter);
-      if (hasIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE)) {
-        base.skippedAlreadyStored += 1;
+  const walkQueue = async (): Promise<void> => {
+    const depth = roicDepthForPhase(phase, options?.userId);
+    while (queue.length > 0 && remainingBudget > 0) {
+      const symbol = queue[0]!;
+      let index: RoicCallIndexRow[] = [];
+      try {
+        remainingBudget -= 1;
+        base.attempted += 1;
+        index = await fetchRoicCallIndex(symbol, options?.userId);
+      } catch {
+        queue.shift();
         continue;
       }
-      if (remainingBudget <= 0) {
-        symbolDone = false;
-        break;
-      }
-      remainingBudget -= 1;
-      base.attempted += 1;
-      try {
-        const item = await fetchRoicTranscript(symbol, period.year, period.quarter, options?.userId);
-        if (!item) {
-          base.skippedNoContent += 1;
+
+      const rawPeriods = index.length > 0
+        ? index.map((row) => ({ year: row.year, quarter: row.quarter, date: row.date }))
+        : recentFiscalPeriods(new Date(now), depth).map((p) => ({ ...p, date: undefined as string | undefined }));
+      const periods = selectRoicPeriodsForPhase(rawPeriods, phase, depth);
+
+      let symbolDone = true;
+      for (const period of periods) {
+        const accession = roicTranscriptAccession(symbol, period.year, period.quarter);
+        if (hasIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE)) {
+          base.skippedAlreadyStored += 1;
           continue;
         }
-        if (!item.date && period.date) item.date = period.date;
-        const ok = await ingestRoicTranscriptToRag(item, options?.userId);
-        if (ok) base.ingested += 1;
-        else base.skippedNoContent += 1;
-      } catch {
-        base.skippedNoContent += 1;
+        if (remainingBudget <= 0) {
+          symbolDone = false;
+          break;
+        }
+        remainingBudget -= 1;
+        base.attempted += 1;
+        try {
+          const item = await fetchRoicTranscript(symbol, period.year, period.quarter, options?.userId);
+          if (!item) {
+            base.skippedNoContent += 1;
+            continue;
+          }
+          if (!item.date && period.date) item.date = period.date;
+          const ok = await ingestRoicTranscriptToRag(item, options?.userId);
+          if (ok) base.ingested += 1;
+          else base.skippedNoContent += 1;
+        } catch {
+          base.skippedNoContent += 1;
+        }
       }
-    }
 
-    if (symbolDone) queue.shift();
-    else break;
+      if (symbolDone) queue.shift();
+      else break;
+    }
+  };
+
+  await walkQueue();
+  if (queue.length === 0 && phase === "latest" && remainingBudget > 0) {
+    phase = "deepen";
+    queue = deepenQueue();
+    base.symbolsConsidered += queue.length;
+    await walkQueue();
   }
 
-  writeRoicCursor(queue, nowIso);
+  writeRoicCursor(queue, nowIso, phase);
   setInternalSetting(LAST_ATTEMPT_KEY, nowIso);
   if (queue.length === 0) {
     setInternalSetting(LAST_COMPLETE_KEY, nowIso);
   }
   base.remaining = queue.length;
+  base.phase = phase;
   audit("roic_transcript_refresh", {
     attempted: base.attempted,
     ingested: base.ingested,
     skippedNoContent: base.skippedNoContent,
     skippedAlreadyStored: base.skippedAlreadyStored,
     symbolsConsidered: base.symbolsConsidered,
-    remaining: base.remaining
+    remaining: base.remaining,
+    phase
   });
   return { ...base, due: true };
 }

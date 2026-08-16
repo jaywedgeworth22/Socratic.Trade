@@ -31,6 +31,8 @@ import { dedupeSimilar, type DedupeSimilarReport } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
 import { estimateRagDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled, type RagEmbedRerankProvider } from "./rag-metering";
+import { pineconeMonthToDateWriteUnits } from "./pinecone-monthly-pace";
+import { pineconeTrialState } from "./pinecone-trial-window";
 import { candidatePoolPersistEnabled, recordCandidatePool, candidatePoolFullPersistEnabled, recordCandidatePoolFull, type CandidateDisposition } from "./rag/candidate-pool";
 import { isOverLlmBudget } from "./llm-budget";
 import { sendNotification } from "./notifications";
@@ -547,7 +549,8 @@ function ingestBudgetEnabled(): boolean {
 }
 
 function ingestMaxTextsPerDay(): number {
-  return Math.floor(numericEnv("RAG_INGEST_MAX_TEXTS_PER_DAY", DEFAULT_INGEST_MAX_TEXTS_PER_DAY, 1));
+  const configured = Math.floor(numericEnv("RAG_INGEST_MAX_TEXTS_PER_DAY", DEFAULT_INGEST_MAX_TEXTS_PER_DAY, 1));
+  return pineconeTrialState(Date.now(), pineconeMonthToDateWriteUnits()).effectiveTextsPerDay || configured;
 }
 
 function remainingIngestTexts(userId: string, requested: number): { allowed: number; used: number; limit: number } {
@@ -587,7 +590,69 @@ function pineconeWriteBudgetEnabled(): boolean {
 }
 
 function pineconeMaxWriteUnitsPerDay(): number {
-  return Math.floor(numericEnv("RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY", DEFAULT_PINECONE_WRITE_UNITS_PER_DAY, 1));
+  const configured = Math.floor(numericEnv("RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY", DEFAULT_PINECONE_WRITE_UNITS_PER_DAY, 1));
+  return pineconeTrialState(Date.now(), pineconeMonthToDateWriteUnits()).effectiveDailyWriteUnits || configured;
+}
+
+/**
+ * App-side rolling-24h write fuse copy.  This is not a Pinecone outage: retrieval stays up,
+ * and new upserts resume as the 24h window rolls.  The configured cap is
+ * RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY (trial installs are often 2.5M).
+ */
+export const PINECONE_DAILY_WU_FUSE_RECOMMENDATION =
+  "This is the app's rolling-24h write fuse, not a Pinecone outage.  Retrieval still works.  During a Standard trial ingest stays full-steam until about $45 of credit remains, then paces the rest to the trial end.  After the trial it snaps to free-tier 60k WU/day.";
+
+/** True when the daily write fuse still has room (or is disabled).  Fail-open like the text budget. */
+export function hasPineconeWriteBudget(userId: string = "local"): boolean {
+  if (!pineconeWriteBudgetEnabled()) return true;
+  return usedPineconeWriteUnitsLast24h(userId) < pineconeMaxWriteUnitsPerDay();
+}
+
+async function notifyPineconeDailyWriteFuse(input: {
+  userId: string;
+  used: number;
+  limit: number;
+  requested: number;
+  skipped: number;
+  exceeded: boolean;
+  leaseGuard?: VectorStoreLeaseGuard;
+}): Promise<void> {
+  const budgetPayload = {
+    requestedEstimatedWriteUnits: input.requested,
+    allowedEstimatedWriteUnits: Math.max(0, input.limit - input.used),
+    skipped: input.skipped,
+    usedLast24h: input.used,
+    limitPer24h: input.limit
+  };
+  audit("vector_write_unit_budget", budgetPayload, input.userId);
+  await settleRagSideEffect(alertUsageLimitHit({
+    userId: input.userId,
+    provider: "Pinecone",
+    operation: "upsert-budget",
+    limitName: "Write Unit daily fuse",
+    status: input.exceeded ? "exceeded" : "warning",
+    used: input.used,
+    limit: input.limit,
+    attempted: input.requested,
+    skipped: input.skipped,
+    unit: "estimated WUs",
+    recommendation: PINECONE_DAILY_WU_FUSE_RECOMMENDATION
+  }, {
+    assertActive: input.leaseGuard ? () => assertVectorStoreLease(input.leaseGuard) : undefined,
+    signal: input.leaseGuard?.signal
+  }), input.leaseGuard);
+  if (shouldEmitPineconeWuBudgetSentry()) {
+    await settleRagSideEffect(captureRagSentryMessage("warning", "Pinecone write unit budget reached", {
+      provider: "pinecone",
+      operation: "upsert-budget",
+      source: input.userId === "local" ? "operator" : "user",
+      requestedEstimatedWriteUnits: input.requested,
+      allowedEstimatedWriteUnits: budgetPayload.allowedEstimatedWriteUnits,
+      skipped: input.skipped,
+      usedLast24h: input.used,
+      limitPer24h: input.limit
+    }, input.leaseGuard), input.leaseGuard);
+  }
 }
 
 function usedPineconeWriteUnitsLast24h(userId: string): number {
@@ -3027,36 +3092,15 @@ async function storeContextsImpl(
       usedLast24h: writeBudget.used,
       limitPer24h: writeBudget.limit
     };
-    audit("vector_write_unit_budget", budgetPayload, userId);
-    await settleRagSideEffect(alertUsageLimitHit({
+    await notifyPineconeDailyWriteFuse({
       userId,
-      provider: "Pinecone",
-      operation: "upsert-budget",
-      limitName: "Write Unit daily fuse",
-      status: writeBudget.documents.length === 0 ? "exceeded" : "warning",
       used: writeBudget.used,
       limit: writeBudget.limit,
-      attempted: writeBudget.requested,
+      requested: writeBudget.requested,
       skipped: writeUnitBudgetSkipped,
-      unit: "estimated WUs",
-      recommendation:
-        "50k/day should be enough for normal incremental single-trader use. If this fires outside a planned backfill, inspect chunking, deduping, and repeated agent writes before raising the cap."
-    }, {
-      assertActive: options?.leaseGuard ? () => assertVectorStoreLease(options.leaseGuard) : undefined,
-      signal: options?.leaseGuard?.signal
-    }), options?.leaseGuard);
-    if (shouldEmitPineconeWuBudgetSentry()) {
-      await settleRagSideEffect(captureRagSentryMessage("warning", "Pinecone write unit budget reached", {
-        provider: "pinecone",
-        operation: "upsert-budget",
-        source: userId === "local" ? "operator" : "user",
-        requestedEstimatedWriteUnits: writeBudget.requested,
-        allowedEstimatedWriteUnits: writeBudget.allowed,
-        skipped: writeUnitBudgetSkipped,
-        usedLast24h: writeBudget.used,
-        limitPer24h: writeBudget.limit
-      }, options?.leaseGuard), options?.leaseGuard);
-    }
+      exceeded: writeBudget.documents.length === 0,
+      leaseGuard: options?.leaseGuard
+    });
     if (writeBudget.documents.length === 0) {
       const lastIngest = {
         at: new Date().toISOString(),
@@ -3788,6 +3832,30 @@ async function storeDocumentImpl(
       skipped: true,
       wuExhausted: true,
       wuExhaustedUntil: storeDocWuUntil,
+      documentComplete: false
+    };
+  }
+  // Daily write fuse: refuse BEFORE provider discovery and beginVectorCommit.  The monthly
+  // breaker above parks on a calendar marker; this one parks when the rolling 24h ledger is
+  // already at the configured cap so incremental lanes (ROIC transcripts, filings, 8-Ks) do
+  // not open-and-abort a commit for every new document after the fuse is spent.
+  if (!hasPineconeWriteBudget(userId)) {
+    const used = usedPineconeWriteUnitsLast24h(userId);
+    const limit = pineconeMaxWriteUnitsPerDay();
+    await notifyPineconeDailyWriteFuse({
+      userId,
+      used,
+      limit,
+      requested: 0,
+      skipped: chunked.length,
+      exceeded: true,
+      leaseGuard: options.leaseGuard
+    });
+    return {
+      attempted: chunked.length,
+      indexed: 0,
+      skipped: true,
+      writeUnitBudgetSkipped: chunked.length,
       documentComplete: false
     };
   }

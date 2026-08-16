@@ -1336,6 +1336,7 @@ export async function runStrategyOnce(
       try {
         const { retrieveContextDetailed, defaultMinScore, defaultRelevanceFloor, defaultDedupeSimilarity, formatChunkWithProvenance } =
           await import("./vector-db");
+        const { orderChunksForProposer } = await import("./rag/proposer-format");
         // hyde-multiquery-retrieval (2026-07-05): both flag-gated, default OFF — when off, `variants`
         // is always `[]` below and `retrieveContextDetailed` gets no `queries` option, so this pass is
         // byte-for-byte the single-query call it was before this item.
@@ -1477,7 +1478,7 @@ export async function runStrategyOnce(
         if (validContexts.length > 0 || contexts.some((c) => c.factsCard || c.insiderCard)) {
           ragContext = contexts
             .map((context) => {
-              const formattedChunks = context.chunks
+              const formattedChunks = orderChunksForProposer(context.chunks)
                 .map((chunk) => {
                   const serializedText = formatChunkWithProvenance(chunk, context.sym);
                   ragPromptCandidates.push({

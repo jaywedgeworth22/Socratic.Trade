@@ -35,6 +35,7 @@
 
 import { audit, getInternalSetting, setInternalSetting } from "./db";
 import { alertStorageWarning } from "./db-health";
+import { pineconeTrialState } from "./pinecone-trial-window";
 
 /** Internal-settings key holding `{ month: "YYYY-MM", units, updatedAt }` for the current month. */
 export const PINECONE_MONTH_WU_KEY = "pinecone:monthWriteUnits";
@@ -85,10 +86,14 @@ export function pineconeMonthWindow(nowMs: number = Date.now()): PineconeMonthWi
  */
 export function pineconeMonthlyWuBudget(): number {
   const raw = process.env.PINECONE_MONTHLY_WU_BUDGET;
-  if (raw == null || String(raw).trim() === "") return 0;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-  return Math.floor(parsed);
+  let configured = 0;
+  if (raw != null && String(raw).trim() !== "") {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) configured = Math.floor(parsed);
+  }
+  // After the Standard trial, Infisical often still has 0 (off). Snap to the free-tier
+  // monthly pace so bulk backfill cannot walk into the Starter 2M-WU wall.
+  return pineconeTrialState().effectiveMonthlyWriteUnits || configured;
 }
 
 interface MonthCounterRow {

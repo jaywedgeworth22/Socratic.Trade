@@ -17,6 +17,7 @@ import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { refreshLitestreamRemoteInventoryIfDue } from "./litestream-remote-inventory";
 import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
+import { maybeAdvisePineconeTrialRollback } from "./pinecone-trial-window";
 import { runWatchlistDigestIfDue } from "./watchlist-digest";
 import { runAuditPruneIfDue } from "./audit-prune";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth } from "./broker-health";
@@ -43,7 +44,7 @@ import {
   refreshFilingBodies,
   refreshFmpTranscripts
 } from "./web-sources";
-import { symbolsForPolicyUniverse } from "./index-universes";
+import { rankDemandFirstSymbols } from "./rag/demand-first-symbols";
 import { acquireOrRenewLeadership, releaseLease, LEASE_OWNER } from "./scheduler-lease";
 import { reconcilePendingFills } from "./strategy-execution";
 import { safeErrorMessage } from "./telemetry-sanitize";
@@ -556,6 +557,9 @@ async function tick(): Promise<void> {
   void journalLane("r2-usage-check", {}, () => runR2UsageCheckIfDue())
     .catch((err) => console.error("[scheduler] r2 usage check error:", err));
 
+  void journalLane("pinecone-trial-rollback", {}, () => maybeAdvisePineconeTrialRollback())
+    .catch((err) => console.error("[scheduler] pinecone trial rollback error:", err));
+
   // Daily R2 free-tier digest (owner opt-in 2026-07-31): fresh check + notify()
   // summary of MTD usage and month-end pace, whether or not anything crossed.
   // Separate watermark from the 6h check; disable with R2_USAGE_DAILY_DIGEST=off.
@@ -578,29 +582,10 @@ async function tick(): Promise<void> {
   const filingIngestDue = isFilingIngestDue();
   const transcriptIngestDue = isFmpTranscriptRefreshDue();
   if ((filingIngestDue || transcriptIngestDue) && checkMonthlyLlmSpendCeiling().ok) {
-    // DEMAND-FIRST ordering: ingestion is capped per run, so queue order decides which
-    // symbols' filings the strategy can actually retrieve against. Watchlist names and the
-    // last scan's candidate set (which force-includes held positions) go first; the broad
-    // index universe fills the tail. Until 2026-07-09 this was one alphabetical Set union,
-    // so the corpus warmed from "A" while the names decisions cite waited years.
-    const symbolSet = new Set<string>();
-    for (const userId of listUsers()) {
-      try {
-        for (const item of listWatchlistSymbols(userId)) symbolSet.add(item.symbol);
-      } catch {
-        // don't let a single user's DB error block the others
-      }
-    }
-    for (const s of getTechnicalWatchlist()) symbolSet.add(s);
-    for (const userId of listUsers()) {
-      try {
-        const policy = getPolicy(userId);
-        for (const s of symbolsForPolicyUniverse(policy)) symbolSet.add(s);
-      } catch {
-        // don't let a single user's DB error block the others
-      }
-    }
-    const symbols = Array.from(symbolSet);
+    // DEMAND-FIRST: held-by-value, watchlist, technical, policy universe, then the
+    // 1k-issuer manifest.  Insertion order is the ingest order; a Set union used to
+    // drop value ranking so the desk's names waited behind the alphabet.
+    const symbols = rankDemandFirstSymbols();
     // These producers spend from the same Voyage/Pinecone budgets and share the durable RAG_REINDEX
     // lease. Keep their scheduler admission ordered too, so a same-tick refresh does not make one
     // producer race into a benign busy result while the other starts embedding.
