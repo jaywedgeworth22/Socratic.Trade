@@ -187,7 +187,7 @@ private struct ProposalQueueSummary: View {
                 .frame(width: 46, height: 46)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(snapshot.pendingProposals.count) awaiting review")
+                    Text("\(snapshot.pendingProposals.count) Proposals For Review")
                         .font(.appHeadline)
                     Text("\(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority)) · backend validation remains final")
                         .font(.appCaption)
@@ -261,8 +261,18 @@ private struct ProposalCard: View {
 
                 VStack(alignment: .leading, spacing: 7) {
                     DetailLine(label: "Order", value: orderDescription)
-                    if let priceDrift = priceDriftDescription {
-                        DetailLine(label: "Price", value: priceDrift)
+                    if let proposed = priceReview.proposedValue {
+                        DetailLine(label: "Proposed", value: proposed)
+                    }
+                    if let now = priceReview.nowValue {
+                        DetailLine(label: "Now", value: now)
+                    }
+                    DetailLine(label: "Target", value: priceReview.targetValue)
+                    if let delay = priceReview.delayValue {
+                        DetailLine(label: "Delay", value: delay)
+                    }
+                    if let stop = priceReview.stop, stop > 0 {
+                        DetailLine(label: "Stop", value: AppFormat.money(stop))
                     }
                     if let thesis = proposal.proposal.tradeThesisTag, !thesis.isEmpty {
                         DetailLine(label: "Thesis", value: thesis)
@@ -283,6 +293,13 @@ private struct ProposalCard: View {
                    !rationale.isEmpty {
                     Text(rationale)
                         .font(.appSubheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let note = priceReview.missingTargetNote {
+                    Label(note, systemImage: "target")
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -339,16 +356,8 @@ private struct ProposalCard: View {
         proposal.executionMode == "broker/live" ? "dollarsign.circle.fill" : "questionmark.circle"
     }
 
-    /// Decision-critical drift: reference price at proposal time vs the latest revalidated
-    /// price, e.g. "$200.00 → $202.20 (+1.1%)".  Rendered only when both prices decoded.
-    private var priceDriftDescription: String? {
-        guard
-            let reference = proposal.proposalReferencePrice,
-            let current = proposal.proposalCurrentPrice,
-            reference > 0
-        else { return nil }
-        let driftPct = (current - reference) / reference * 100
-        return "\(AppFormat.money(reference)) → \(AppFormat.money(current)) (\(AppFormat.percent(driftPct, signed: true)))"
+    private var priceReview: ProposalPriceReview {
+        ProposalPriceReview.from(proposal)
     }
 
     private var orderDescription: String {

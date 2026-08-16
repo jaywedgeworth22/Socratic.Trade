@@ -1,3 +1,15 @@
+## Current (2026-08-15 GROK — iOS Proposals For Review + price delay)
+
+Owner: the Home count subtitle should say **Proposals For Review**, not
+"Awaiting Review".  Review cards must show the price at proposal time, the live
+price, the proposer's guessed target when they had one, and how much the delay
+changed the trade.  When a proposer leaves the target blank, Green + Red debate
+whether a target and a staged exit (partial stops / partial takes) would help.
+
+Branch `grok/ios-proposals-for-review`, worktree
+`~/apps/trading-grok-proposals-review`.  Rollout:
+`docs/rollouts/2026-08-15-ios-proposals-for-review.md`.
+
 ## Current (2026-08-15 GROK — 13F + ARK + Form 4 idea sources)
 
 Owner: run 13F, ARK daily holdings, and Form 4 as thoroughly as possible and

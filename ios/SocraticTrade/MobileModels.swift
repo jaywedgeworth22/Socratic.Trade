@@ -316,7 +316,22 @@ struct Proposal: Decodable {
     let confidenceScore: Double?
     let proposedByModel: String?
     let reviewedByModel: String?
+    let bracketTakeProfit: Double?
+    let bracketStopLoss: Double?
+    let exitPlan: String?
+    let scorecard: ProposalScorecardSnippet?
     let redTeamVerdict: RedTeamVerdict?
+}
+
+/// Enough of the server scorecard to recover a target/stop when the bracket legs are missing.
+struct ProposalScorecardSnippet: Decodable {
+    let sniperPoints: SniperPoints?
+
+    struct SniperPoints: Decodable {
+        let takeProfit: Double?
+        let stopLoss: Double?
+        let idealBuy: Double?
+    }
 }
 
 struct RedTeamVerdict: Decodable {
