@@ -164,6 +164,16 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     expect(MODEL_ROTATION_POOL).toContain("mistral-medium-latest");
     expect(MODEL_ROTATION_POOL).toContain("kimi-latest");
   });
+
+  it("fail-open after /models/user timeout still drops known-dead OpenRouter slugs", async () => {
+    const { applyRotationAvailabilityFailOpen, MODEL_ROTATION_POOL } = await import("../src/lib/model-rotation");
+    const safe = applyRotationAvailabilityFailOpen(MODEL_ROTATION_POOL);
+    expect(safe).not.toContain("kimi-latest");
+    expect(safe).not.toContain("claude-fable-5");
+    expect(safe).toContain("gpt-5.4-mini");
+    expect(safe).toContain("gemini-flash-latest");
+    expect(safe.length).toBe(MODEL_ROTATION_POOL.length - 2);
+  });
 });
 
 describe("eligibleRotationPool (credential-missing skip)", () => {

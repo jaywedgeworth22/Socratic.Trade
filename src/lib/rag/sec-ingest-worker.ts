@@ -6,6 +6,7 @@ import {
   heartbeatSecIngestTask,
   reconcileSecIngestJob,
   releaseSecIngestTaskForResume,
+  requeueSecIngestDeadLetters,
   SecIngestTask
 } from "../db-rag-ingest";
 import { pineconeWuExhaustedUntil } from "../pinecone-wu-breaker";
@@ -27,6 +28,11 @@ import {
 } from "./fts-mirror-bound";
 import crypto from "crypto";
 
+/** Hard cap on tasks one tick may claim+process.  Prod has ~500 running jobs; claiming
+ *  5 per job let a single tick lease thousands of facts_extracted rows and hang for
+ *  hours on chunkDocument, so later jobs never ran (2156 pending since 2026-08-10). */
+export const SEC_INGEST_TASKS_PER_TICK = 5;
+
 export class SecIngestWorker {
   private active = false;
   private intervalId: NodeJS.Timeout | null = null;
@@ -38,6 +44,25 @@ export class SecIngestWorker {
   async start() {
     if (this.active) return;
     this.active = true;
+    // Prod dead-lettered ~1k embed_queued filings as "Ingestion budget or capacity
+    // exceeded mid-task" instead of parking them.  Requeue only that misclassified
+    // error so they resume when the daily WU fuse has room.  Other dead letters stay.
+    try {
+      const revived = requeueSecIngestDeadLetters({
+        errorTypeLike: "worker-error",
+        errorLike: "Ingestion budget or capacity exceeded%"
+      });
+      if (revived.requeuedTasks > 0) {
+        console.warn(
+          `[SecIngestWorker] requeued ${revived.requeuedTasks} budget-misclassified dead letters (${revived.reopenedJobs} jobs reopened)`
+        );
+      }
+    } catch (error) {
+      console.warn(
+        "[SecIngestWorker] budget-dead-letter requeue failed:",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
     // Serialize ticks: fetching/embedding routinely outlasts intervalMs, and an unguarded
     // interval would start overlapping runTick() calls that claim extra batches and run
     // EDGAR/Voyage/Pinecone work concurrently. Skip the tick while one is still in flight.
@@ -79,11 +104,13 @@ export class SecIngestWorker {
     const db = getDb();
     const activeJobs = db.prepare("SELECT id FROM sec_ingest_jobs WHERE status = 'running'").all() as any[];
 
+    let remaining = SEC_INGEST_TASKS_PER_TICK;
     for (const job of activeJobs) {
+      if (remaining <= 0) break;
       const tasks = claimSecIngestTasks(job.id, {
         owner: this.workerId,
         leaseMs: 60000,
-        limit: 5
+        limit: remaining
       });
 
       for (const task of tasks) {
@@ -104,6 +131,8 @@ export class SecIngestWorker {
           });
         }
       }
+
+      remaining -= tasks.length;
 
       // Nothing else flips a job from 'running' to a terminal status once its tasks finish — the
       // seeder seals intake up front but does not itself watch for completion. Reconcile here (cheap,

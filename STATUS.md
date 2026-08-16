@@ -1,3 +1,13 @@
+## Current (2026-08-16 GROK — 48h money-path + ingest)
+
+Owner: explain rotation fail-open and 422s, then fix those plus Red timeout, and unstick SEC/ROIC/RAG ingest (Pinecone stay builder/free-ready).
+
+- Rotation fail-open: when `/models/user` times out we still used the full catalog, including `kimi-latest` / `claude-fable-5` whose OpenRouter slugs 404.  Fail-open now drops those known-dead ids.
+- 422: Alpaca HTTP reject.  Sub-penny limits on T (`24.865`) now round to `$0.01` at the Alpaca boundary.
+- Red Team: same `llmFetchCapturing` + `strategyLlmTimeoutMs` path as Green (no 45s hard abort).  Adversary output cap 2500.
+- Ingest: cherry-picked ROIC single-flight.  Requeue ~1k `embed_queued` dead letters that were misclassified budget-exceeded.  Budget skip defers 1h instead of dead-lettering.  Worker tick now claims at most 5 tasks across all jobs (prod had 521 running jobs claiming 5 each, so 2156 Aug-10 `facts_extracted` never ran).  Sibling #2748 owns the daily WU fuse park.
+
+Branch `grok/48h-money-path-ingest`, issue #2749.  Rollout: `docs/rollouts/2026-08-16-48h-money-path-ingest.md`.
 ## Current (2026-08-16 GROK — ROIC single-flight + L2 shrink)
 
 Owner: continue Litestream L2/L3, FilingAPI, and ROIC universe ingest until they actually work.
@@ -107,6 +117,22 @@ No extra broker fan-out; peer lots are last recorded snapshots.
 
 Branch `grok/ticker-desk-sheet`.  Rollout:
 `docs/rollouts/2026-08-16-ticker-desk-sheet.md`.
+## Current (2026-08-16 GROK — ROIC single-flight + L2 shrink)
+
+Owner: continue Litestream L2/L3, FilingAPI, and ROIC universe ingest until they actually work.
+
+Branch `grok/roic-singleflight`, worktree `~/apps/trading-grok-ops-roic`.
+
+#2741 is live (`4bd3bcc0` contains `b28a76ad`).  The new 6h due check wrote `lastAttemptAt` only at the end of a walk, so every 60s tick started another ROIC refresh.  Prod stacked 714 running `roic-transcript-refresh` rows and crashed about every 22 minutes (`last_restart_type=crash`).  Stopped the app, stamped `lastAttemptAt`, aborted the stacked journal rows, and restarted the existing image.  This PR single-flights the walk, stamps start immediately, persists the cursor after each symbol, and treats `lastAttempt` as a 30-minute in-flight window (a leftover cursor still resumes).
+
+Litestream: L1 shrink keep-400 is in progress on B2 so the first L2 compact is small enough to finish.  L9 snapshots remain the restore floor.
+
+FilingAPI: Infisical `FILINGAPI` is the same dead 32-char trial key (401).  Free signup is claimed.  Do not charge the owner's Stripe (that is ST's merchant account).  Owner Plus checkout on filingapi.dev is still required.
+
+ROIC coverage before the pile-up: 46 transcripts across USB / OXY / SHEL (Individual 20-quarter depth).  After this lands the cursor can walk the rest of the universe without crashing the box.
+
+Rollout: `docs/rollouts/2026-08-16-roic-singleflight.md`.
+
 ## Current (2026-08-16 GROK — overlay CRUD + Polymarket deepen + ASOF receipt)
 
 Owner: (1) full overlay product + expansions; (2) defer weekly hard-delete; (3) no Reddit/X — deepen Polymarket including sector/macro tilts; (4) run VECTOR_ASOF_STRICT coverage.

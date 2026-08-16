@@ -199,6 +199,38 @@ describe("EDGAR 403 handling and dead-letter requeue (2026-08-09 outage class)",
     expect(reclaimed).toHaveLength(1);
     expect(reclaimed[0]!.id).toBe(task.id);
   });
+
+  it("requeues only budget-misclassified dead letters when errorLike is set", async () => {
+    const budget = makeClaimedTask("idemp-requeue-budget", "0000798354-26-000099");
+    const other = makeClaimedTask("idemp-requeue-other", "0000798354-26-000098");
+    const { failSecIngestTask, requeueSecIngestDeadLetters, getSecIngestTask } =
+      await import("../src/lib/db-rag-ingest");
+
+    failSecIngestTask({
+      taskId: budget.task.id,
+      owner: "test-worker",
+      leaseToken: budget.task.leaseToken || "",
+      retryable: false,
+      errorType: "worker-error",
+      error: "Ingestion budget or capacity exceeded mid-task"
+    });
+    failSecIngestTask({
+      taskId: other.task.id,
+      owner: "test-worker",
+      leaseToken: other.task.leaseToken || "",
+      retryable: false,
+      errorType: "worker-error",
+      error: "HTTP 403 for https://www.sec.gov/Archives/..."
+    });
+
+    const result = requeueSecIngestDeadLetters({
+      errorTypeLike: "worker-error",
+      errorLike: "Ingestion budget or capacity exceeded%"
+    });
+    expect(result.requeuedTasks).toBe(1);
+    expect(getSecIngestTask(budget.task.id)!.status).toBe("retry_wait");
+    expect(getSecIngestTask(other.task.id)!.status).toBe("dead_letter");
+  });
 });
 
 describe("insertDocumentChunkFtsBatch (2026-08-10 lock-contention fix, sub-batched + yielded)", () => {
@@ -590,6 +622,36 @@ describe("embed_queued FTS slice + durable resume", () => {
       .prepare("SELECT COUNT(*) AS n FROM document_chunks_fts WHERE accession = ?")
       .get(`${accession}:1:document.html`) as { n: number };
     expect(rows.n).toBe(0);
+  });
+
+  it("runTick claims at most SEC_INGEST_TASKS_PER_TICK tasks across all running jobs", async () => {
+    const { SEC_INGEST_TASKS_PER_TICK } = await import("../src/lib/rag/sec-ingest-worker");
+    const processed: string[] = [];
+    const worker = new SecIngestWorker();
+    worker.processTask = async (task) => {
+      processed.push(task.id);
+    };
+
+    for (let i = 0; i < 3; i++) {
+      const job = createSecIngestJob({
+        idempotencyKey: `tick-cap-${i}-${randomUUID()}`,
+        corpusRevision: "corp-v1"
+      });
+      transitionSecIngestJob(job.id, "running");
+      for (let t = 0; t < 3; t++) {
+        enqueueSecIngestTask({
+          jobId: job.id,
+          accession: `0000320193-26-00020${i}${t}`,
+          cik: "0000320193",
+          symbol: "AAPL",
+          payload: { url: "https://www.sec.gov/x", docType: "10-K", filedAt: "2026-07-15" }
+        });
+      }
+    }
+
+    await worker.runTick();
+    expect(processed).toHaveLength(SEC_INGEST_TASKS_PER_TICK);
+    expect(SEC_INGEST_TASKS_PER_TICK).toBe(5);
   });
 
   it("defers a daily write-fuse skip instead of throwing capacity-exceeded", async () => {

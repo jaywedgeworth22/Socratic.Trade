@@ -120,7 +120,7 @@ describe("llm-request — model resolution", () => {
     expect(LLM_OUTPUT_TOKEN_CAPS.strategyProposal).toBe(4000);
     // Every OTHER cap is untouched — still tied to the shared default.
     expect(LLM_OUTPUT_TOKEN_CAPS.strategyTuning).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
-    expect(LLM_OUTPUT_TOKEN_CAPS.adversaryReview).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
+    expect(LLM_OUTPUT_TOKEN_CAPS.adversaryReview).toBe(2500);
     expect(LLM_OUTPUT_TOKEN_CAPS.postMortemReflection).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
     expect(LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
     expect(LLM_OUTPUT_TOKEN_CAPS.learningReview).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
