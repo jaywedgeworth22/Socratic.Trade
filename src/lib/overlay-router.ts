@@ -3,7 +3,7 @@
 // (or "any"), sorted by priority. Pure — no DB. Overlays are DATA, never able
 // to override risk limits (same trust tier as ownerCoaching).
 
-import type { MarketRegime } from "./market-regime";
+import { regimeFromLabel, type MarketRegime } from "./market-regime";
 
 export type OverlayRegimeTag = MarketRegime | "any";
 
@@ -41,9 +41,21 @@ export function parseOverlayRegimes(raw: unknown): OverlayRegimeTag[] {
   return ["any"];
 }
 
+const REGIME_ENUMS = new Set<string>(["crisis", "risk-off", "cautious-inverted", "neutral", "risk-on", "unknown"]);
+
+/** Accepts a typed enum or a persisted `determineMarketRegime` label. */
+export function normalizeOverlayRegime(regime: string | undefined): OverlayRegimeTag {
+  const raw = String(regime ?? "").trim();
+  if (!raw) return "unknown";
+  if (raw === "any") return "any";
+  if (REGIME_ENUMS.has(raw)) return raw as OverlayRegimeTag;
+  return regimeFromLabel(raw);
+}
+
 function matchesRegime(overlay: StrategyOverlay, regime: string): boolean {
   const tags = overlay.marketRegimes.length > 0 ? overlay.marketRegimes : (["any"] as OverlayRegimeTag[]);
-  return tags.includes("any") || tags.includes(regime as OverlayRegimeTag);
+  const normalized = normalizeOverlayRegime(regime);
+  return tags.includes("any") || tags.includes(normalized);
 }
 
 /**

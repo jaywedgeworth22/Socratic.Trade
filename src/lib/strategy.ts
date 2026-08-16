@@ -4982,7 +4982,8 @@ async function proposeTrades(input: {
   const activeOverlays = loadActiveOverlays({
     userId: input.userId,
     policy: input.policy,
-    regime: currentMarketRegime
+    // Enum, not determineMarketRegime's persisted label — the router matches crisis/risk-on/…
+    regime: classifyMarketRegime(macro).regime
   });
   const regimeSeverity = !input.policy.tuning?.regimeSeverityScoring
     ? undefined
@@ -5504,7 +5505,7 @@ async function proposeTrades(input: {
             overlays: activeOverlays.map((overlay) => ({
               id: overlay.id,
               name: overlay.name,
-              instructions: overlay.instructions
+              instructions: containData("coach", `strategyOverlays:${overlay.id}`, overlay.instructions)
             }))
           }
         }
@@ -5638,6 +5639,13 @@ async function proposeTrades(input: {
     { name: "learnedContext", text: input.learnedContext ?? "" },
     { name: "closestHistoricalAnalogs", text: input.experienceAnalogs ?? "" },
     { name: "ownerCoaching", text: input.ownerCoaching ?? "" },
+    ...activeOverlays.map(
+      (overlay) =>
+        ({
+          name: `strategyOverlays:${overlay.id}`,
+          text: overlay.instructions
+        }) satisfies UntrustedPromptField
+    ),
     ...(input.marketScan?.topCandidates ?? []).flatMap((candidate) => {
       const sym = normalizeSymbol(candidate.symbol);
       const fields: UntrustedPromptField[] = [];

@@ -13,6 +13,9 @@ FilingAPI: Infisical `FILINGAPI` is the same dead 32-char trial key (401).  Free
 ROIC coverage before the pile-up: 46 transcripts across USB / OXY / SHEL (Individual 20-quarter depth).  After this lands the cursor can walk the rest of the universe without crashing the box.
 
 Rollout: `docs/rollouts/2026-08-16-roic-singleflight.md`.
+## Current (2026-08-16 GROK — overlay regime match hotfix)
+
+#2743 shipped Overlays, but live apply passed `determineMarketRegime` labels (`Risk-On (Low Volatility)`) into a router that matches enums (`risk-on`).  Only `any` overlays could fire.  Branch `grok/overlay-regime-match`.  Rollout: `docs/rollouts/2026-08-16-overlay-regime-match.md`.
 ## Current (2026-08-16 GROK — 13F + ARK + Form 4 operational)
 
 #2735 closed.  Live `f0fd2b70` after #2736 + #2747 + #2758:
