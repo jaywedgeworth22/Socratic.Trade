@@ -1,3 +1,11 @@
+## Current (2026-08-16 GROK — ASC EULA + Coolify rolling already off)
+
+Owner authorized ASC writes and the Coolify rolling steps.  ST custom EULA
+was patched to two spaces.  What's New cannot be edited on first version
+`1.0.0` (Apple STATE_ERROR).  Coolify `socratic-app` already has consistent
+container names and a 60s health-check start period — no flip.  B2 L2 cleanup
+was not authorized in this ask.  Receipt:
+`docs/rollouts/2026-08-16-asc-eula-coolify.md`.
 ## Current (2026-08-16 GROK — 13F/ARK ops fix)
 
 #2736 is live (schema 83) but not fully operational.  Prod receipts:
