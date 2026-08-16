@@ -528,6 +528,43 @@ struct SymbolQuoteInfo: Decodable {
     let daysToEarnings: Double?
 }
 
+/// Size+direction of the same symbol on another of this user's accounts, plus the
+/// current account's persisted exit contract.  Decoded from GET `/api/symbol-desk`.
+struct SymbolDeskInfo: Decodable {
+    struct PeerAccount: Decodable, Identifiable {
+        var id: String { accountId }
+        let accountId: String
+        let label: String
+        let environment: String?
+        let direction: String
+        let quantity: Double
+    }
+
+    struct Exit: Decodable {
+        let style: String?
+        let rationale: String?
+        let stopPrice: Double?
+        let takeProfitPrice: Double?
+        let trailPercent: Double?
+        let resolvedStopPct: Double?
+        let invalidation: String?
+        let maxHoldingUntil: String?
+        let trimBand: Double?
+    }
+
+    struct Pending: Decodable, Identifiable {
+        let id: String
+        let side: String
+        let quantity: Double?
+        let rationale: String?
+    }
+
+    let symbol: String
+    let peerAccounts: [PeerAccount]
+    let exit: Exit?
+    let pending: [Pending]
+}
+
 struct CommandEnvelope: Decodable {
     let command: MobileCommand
     let deduped: Bool?

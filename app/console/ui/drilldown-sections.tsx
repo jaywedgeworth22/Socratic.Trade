@@ -8,6 +8,8 @@
 import Link from "next/link";
 import { type ReactNode } from "react";
 import type { EquityOrder, EquityPosition, PendingProposal } from "@/lib/types";
+import type { PeerAccountHolding, SymbolDeskExit } from "@/lib/symbol-desk";
+import { type ProtectionInfo } from "../lib/derive";
 import { friendlySource, orderedSourceEntries, provenanceLabel } from "@/lib/dashboard-ui";
 import { cx, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { plainLabel, thesisTagLabel } from "../lib/labels";
@@ -64,6 +66,135 @@ function sideChip(side: string) {
     <Chip tone={SIDE_TONE[side] ?? "muted"} title={`Proposed order side: ${side}`}>
       {side.toUpperCase()}
     </Chip>
+  );
+}
+
+export function ExitPlanSection({
+  symbol,
+  protection,
+  exit
+}: {
+  symbol: string;
+  protection: ProtectionInfo;
+  exit?: SymbolDeskExit;
+}) {
+  const hasNumbers =
+    typeof exit?.stopPrice === "number" ||
+    typeof exit?.takeProfitPrice === "number" ||
+    typeof exit?.trailPercent === "number" ||
+    typeof exit?.resolvedStopPct === "number" ||
+    typeof exit?.trimBand === "number";
+  return (
+    <Section
+      title="Exit plan"
+      titleHint={`How this account currently plans to cut a loss or harvest profit in ${symbol}: a resting broker stop, an app-managed stop or trail, staged take-profit trims, and any kill condition written at entry.`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {protection.label ? (
+          <Chip tone={protection.tone === "pos" ? "pos" : protection.tone === "warn" ? "warn" : "muted"}>
+            {protection.label}
+          </Chip>
+        ) : (
+          <Chip tone="muted">No stop armed</Chip>
+        )}
+        {typeof exit?.trimBand === "number" && exit.trimBand > 0 && (
+          <Chip tone="accent" title="How many take-profit bands have already been harvested on this lot.">
+            Trim band {exit.trimBand} done
+          </Chip>
+        )}
+      </div>
+      <p className="mt-2 text-[length:var(--con-fs-sm)] leading-snug text-[color:var(--con-ink)]">
+        {protection.detail}
+      </p>
+      {hasNumbers && (
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {typeof exit?.stopPrice === "number" && (
+            <div>
+              <div className="con-card-title mb-0.5">Stop</div>
+              <div className="con-num text-[length:var(--con-fs-sm)]">{fmtMoney(exit.stopPrice)}</div>
+            </div>
+          )}
+          {typeof exit?.takeProfitPrice === "number" && (
+            <div>
+              <div className="con-card-title mb-0.5">Take profit</div>
+              <div className="con-num text-[length:var(--con-fs-sm)]">{fmtMoney(exit.takeProfitPrice)}</div>
+            </div>
+          )}
+          {typeof exit?.trailPercent === "number" && (
+            <div>
+              <div className="con-card-title mb-0.5">Trail</div>
+              <div className="con-num text-[length:var(--con-fs-sm)]">{fmtPct(exit.trailPercent, 1, false)}</div>
+            </div>
+          )}
+          {typeof exit?.resolvedStopPct === "number" && (
+            <div>
+              <div className="con-card-title mb-0.5">Stop distance</div>
+              <div className="con-num text-[length:var(--con-fs-sm)]">{fmtPct(exit.resolvedStopPct, 1, false)}</div>
+            </div>
+          )}
+        </div>
+      )}
+      {exit?.invalidation && (
+        <p className="mt-2 text-[length:var(--con-fs-sm)] leading-snug text-[color:var(--con-faint)]">
+          Kill condition: {exit.invalidation}
+        </p>
+      )}
+      {exit?.rationale && (
+        <p className="mt-1 text-[length:var(--con-fs-sm)] leading-snug text-[color:var(--con-faint)]">
+          Why this plan: {exit.rationale}
+        </p>
+      )}
+      {exit?.maxHoldingUntil && (
+        <p className="mt-1 text-[length:var(--con-fs-sm)] leading-snug text-[color:var(--con-faint)]">
+          Time stop after {exit.maxHoldingUntil.slice(0, 10)}.
+        </p>
+      )}
+    </Section>
+  );
+}
+
+export function PeerAccountsSection({
+  symbol,
+  peers,
+  onSwitch
+}: {
+  symbol: string;
+  peers: PeerAccountHolding[];
+  onSwitch?: (accountId: string) => void;
+}) {
+  if (peers.length === 0) return null;
+  return (
+    <Section
+      title="Other accounts"
+      titleHint={`Same owner, different account.  Only size and direction — open that account to see cost, P&amp;L, and the full exit plan.`}
+    >
+      <ul className="flex flex-col">
+        {peers.map((peer) => (
+          <li key={peer.accountId} className="con-row -mx-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded px-1 py-1.5 text-[length:var(--con-fs-sm)]">
+            <Chip tone={peer.direction === "short" ? "neg" : "pos"}>
+              {peer.direction === "short" ? "Short" : "Long"}
+            </Chip>
+            <span className="con-num">{fmtQty(peer.quantity)} sh</span>
+            <span className="text-[color:var(--con-ink)]">{peer.label}</span>
+            {peer.environment && (
+              <span className="text-[color:var(--con-faint)]">{peer.environment}</span>
+            )}
+            {onSwitch && (
+              <button
+                type="button"
+                className="ml-auto font-semibold text-[color:var(--con-accent)] hover:underline"
+                onClick={() => onSwitch(peer.accountId)}
+              >
+                Use this account
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
+        Last recorded lot on another account of yours — not a live broker refresh.  Switching loads that account&apos;s full book.
+      </p>
+    </Section>
   );
 }
 

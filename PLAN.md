@@ -1,5 +1,10 @@
 # Active Implementation Plan
 
+> **2026-08-16 GROK — ticker desk sheet (`grok/ticker-desk-sheet`).** Ticker
+> tap shows current lot, persisted exit/harvest plan, pending rationale, and
+> other-account size+direction with switch.  RAG/full debate is v2.  Rollout:
+> `docs/rollouts/2026-08-16-ticker-desk-sheet.md`.
+
 > **2026-08-14 GROK — unstick #2707 webpack `node:crypto`.** Merged origin/main
 > (clean). `src/lib/kalshi.ts` now imports bare `crypto` so Next/webpack
 > resolve.fallback applies. Rollout:

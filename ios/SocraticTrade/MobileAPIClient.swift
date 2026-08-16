@@ -158,6 +158,20 @@ struct MobileAPIClient {
         return try await send(request)
     }
 
+    /// Current-account exit contract + other-account size/direction for the ticker sheet.
+    func symbolDesk(_ symbol: String) async throws -> SymbolDeskInfo {
+        var components = URLComponents(url: baseURL.appending(path: "/api/symbol-desk"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "symbol", value: symbol)]
+        guard let url = components?.url else {
+            throw MobileAPIError.network(URLError(.badURL))
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "accept")
+        return try await send(request)
+    }
+
     /// Session-authed APNs token registration.  The response body is not consumed: the only
     /// thing the app needs to know is whether the server accepted the token, which is the
     /// status code.

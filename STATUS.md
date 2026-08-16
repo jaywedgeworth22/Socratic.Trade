@@ -1,3 +1,15 @@
+## Current (2026-08-16 GROK — ticker desk sheet)
+
+Tapping a ticker on web, PWA, and iOS now shows the current lot (qty, avg
+cost, open P&L), the persisted exit plan (stop / take-profit / trail /
+harvest band / kill condition), pending ideas with their rationale, and a
+size+direction mention of the same name on another of the user's accounts
+with a switch control.  No extra broker fan-out; peer lots are last
+recorded snapshots.  RAG/full debate left for v2.
+
+Branch `grok/ticker-desk-sheet`.  Rollout:
+`docs/rollouts/2026-08-16-ticker-desk-sheet.md`.
+
 ## Current (2026-08-15 GROK — 13F + ARK + Form 4 idea sources)
 
 Owner: run 13F, ARK daily holdings, and Form 4 as thoroughly as possible and
@@ -103,6 +115,18 @@ Advisory-tail reword / settings-surface sweep is NOT in these five commits (it r
 #2682) — left alone.
 
 Rollout: `docs/rollouts/2026-08-13-claude-r4-pickup.md`.
+## Current (2026-08-16 GROK — ticker desk sheet)
+
+Tapping a ticker on web, PWA, and iOS now shows the current lot (qty, avg
+cost, open P&amp;L), the persisted exit plan (stop / take-profit / trail /
+harvest band / kill condition), pending ideas with their rationale, and a
+size+direction mention of the same name on another of the user's accounts
+with a switch control.  No extra broker fan-out; peer lots are last
+recorded snapshots.  RAG/full debate left for v2.
+
+Branch `grok/ticker-desk-sheet`.  Rollout:
+`docs/rollouts/2026-08-16-ticker-desk-sheet.md`.
+
 ## Current (2026-08-14 GROK — stale ~1200s quotes + origin timeouts)
 
 Production 2026-08-13/14: Autopilot openings warned "quote was ~1200s old",
