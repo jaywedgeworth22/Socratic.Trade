@@ -1,3 +1,17 @@
+## Current (2026-08-16 GROK — overlay CRUD + Polymarket deepen + ASOF receipt)
+
+Owner: (1) full overlay product + expansions; (2) defer weekly hard-delete; (3) no Reddit/X — deepen Polymarket including sector/macro tilts; (4) run VECTOR_ASOF_STRICT coverage.
+
+Branch `grok/overlay-poly-asof`, worktree `~/apps/trading-grok-overlay-poly`.
+
+Overlays: Strategy → Overlays card (enable, max active, starters, CRUD, would-fire preview).  Starters seed disabled.
+
+Polymarket: company + curated sector/theme + US macro block.  Tilt is a label from question kind × Yes price.  No 0-100 score.
+
+ASOF dry-run on live `socratic-trade`: 13076 scanned, 13076 epoch'd, 0 undated, 0 errors.  Did not flip the flag.
+
+Rollout: `docs/rollouts/2026-08-16-overlay-poly-asof.md`.  Receipt: `docs/rollouts/2026-08-16-asof-strict-coverage.md`.
+
 ## Current (2026-08-16 GROK — Litestream L1 suffix + FilingAPI + ROIC universe)
 
 Owner: actually unstick L2/L3, fix FilingAPI (mint if the global key is dead), and ingest ROIC.ai earnings calls across the universe with useful history, stored so the LLM can read many accurately.
