@@ -7,15 +7,15 @@ Tapping a ticker should read like a desk blotter for that name, not only a quote
 ## Changes Made
 
 - `src/lib/symbol-desk.ts` + `GET /api/symbol-desk` — peer lots from the last portfolio snapshot (size + direction only), current-account exit contract, pending proposals.
-- Web drawer: Exit Plan + Other Accounts (switch via existing `activateAccount`).
-- PWA `MobileSymbolSheet` and iOS `SymbolInfoSheet` consume the same payload.  iOS also resolves the current lot from the snapshot when the sheet opened from a company-only tap.
+- Web console drawer (desktop + phone widths): Exit Plan, Other Accounts (switch via `activateAccount`), Last desk call.
+- iOS `SymbolInfoSheet` consumes the same `/api/symbol-desk` payload and resolves the current lot from the snapshot on a company-only tap.
 
 ## Decisions & Trade-offs
 
 - V1 does **not** dump RAG corpora or full green/red debate transcripts.  Pending-proposal rationale is the honest abstract already stored on the idea.  Full debate stays on Approvals / the in-flight proposals-review lane.
 - Other-account lots come from the last recorded portfolio snapshot, labeled as last-recorded — no extra live broker fan-out on every tap.
 - Peer mention never includes average cost or P&L.
-- Did not steal `grok/ios-proposals-for-review`.
+- **PWA is out of scope** (owner 2026-08-16).  Desk extras were removed from `MobileSymbolSheet`.  Clients are iOS + the website.  Did not steal `grok/ios-proposals-for-review`.
 
 ## Verification State
 

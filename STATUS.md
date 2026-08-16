@@ -1,11 +1,11 @@
 ## Current (2026-08-16 GROK — ticker desk sheet)
 
-Tapping a ticker on web, PWA, and iOS now shows the current lot (qty, avg
-cost, open P&L), the persisted exit plan (stop / take-profit / trail /
-harvest band / kill condition), pending ideas with their rationale, and a
-size+direction mention of the same name on another of the user's accounts
-with a switch control.  No extra broker fan-out; peer lots are last
-recorded snapshots.  RAG/full debate left for v2.
+Tapping a ticker on the website (desktop and phone widths) and iOS now
+shows the current lot (qty, avg cost, open P&L), the persisted exit plan,
+pending ideas, last Green/Red call, and a size+direction mention of the
+same name on another of the user's accounts with a switch control.  PWA
+is not a product surface (owner 2026-08-16) — no further `/mobile` work.
+No extra broker fan-out; peer lots are last recorded snapshots.
 
 Branch `grok/ticker-desk-sheet`.  Rollout:
 `docs/rollouts/2026-08-16-ticker-desk-sheet.md`.

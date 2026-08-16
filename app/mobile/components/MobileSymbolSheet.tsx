@@ -28,48 +28,6 @@ type PositionFacts = {
   averageCost?: number;
 };
 
-type DeskPeer = {
-  accountId: string;
-  label: string;
-  environment?: string;
-  direction: "long" | "short";
-  quantity: number;
-};
-
-type DeskExit = {
-  style?: string;
-  rationale?: string;
-  stopPrice?: number;
-  takeProfitPrice?: number;
-  trailPercent?: number;
-  resolvedStopPct?: number;
-  invalidation?: string;
-  trimBand?: number;
-};
-
-type DeskPending = {
-  id: string;
-  side: string;
-  quantity?: number;
-  rationale?: string;
-};
-
-type DeskLastCall = {
-  id: string;
-  side?: string;
-  status: string;
-  green?: string;
-  red?: string;
-  outcome?: string;
-};
-
-type SymbolDesk = {
-  peerAccounts?: DeskPeer[];
-  exit?: DeskExit;
-  pending?: DeskPending[];
-  lastCall?: DeskLastCall;
-};
-
 function money(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   const n = Number(value);
@@ -122,7 +80,6 @@ export function MobileSymbolSheet({
 }) {
   const normalized = symbol.trim().toUpperCase();
   const [quote, setQuote] = useState<QuoteInfo | null>(null);
-  const [desk, setDesk] = useState<SymbolDesk | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -132,17 +89,11 @@ export function MobileSymbolSheet({
     setError(null);
     void (async () => {
       try {
-        const [quoteRes, deskRes] = await Promise.all([
-          fetch(`/api/quote?symbol=${encodeURIComponent(normalized)}`, { cache: "no-store" }),
-          fetch(`/api/symbol-desk?symbol=${encodeURIComponent(normalized)}`, { cache: "no-store" })
-        ]);
-        const body = (await quoteRes.json().catch(() => ({}))) as QuoteInfo;
+        const response = await fetch(`/api/quote?symbol=${encodeURIComponent(normalized)}`, { cache: "no-store" });
+        const body = (await response.json().catch(() => ({}))) as QuoteInfo;
         if (cancelled) return;
-        if (!quoteRes.ok) throw new Error(body.error ?? `quote ${quoteRes.status}`);
+        if (!response.ok) throw new Error(body.error ?? `quote ${response.status}`);
         setQuote(body);
-        if (deskRes.ok) {
-          setDesk((await deskRes.json()) as SymbolDesk);
-        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Quote fetch failed.");
       } finally {
@@ -190,60 +141,6 @@ export function MobileSymbolSheet({
             <p>Market value {money(position.marketValue)}</p>
             <p>Average cost {money(position.averageCost)}</p>
             {unrealized !== undefined ? <p>Open P&amp;L {money(unrealized)}</p> : null}
-          </div>
-        ) : null}
-
-        {desk?.exit ? (
-          <div className="mb-3 space-y-1 rounded-md border border-line bg-surface p-3 text-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-faint">Exit Plan</p>
-            {desk.exit.style ? <p className="capitalize">{desk.exit.style} plan</p> : null}
-            {typeof desk.exit.stopPrice === "number" ? <p>Stop {money(desk.exit.stopPrice)}</p> : null}
-            {typeof desk.exit.takeProfitPrice === "number" ? <p>Take profit {money(desk.exit.takeProfitPrice)}</p> : null}
-            {typeof desk.exit.trailPercent === "number" ? <p>Trail {percent(desk.exit.trailPercent)}</p> : null}
-            {typeof desk.exit.trimBand === "number" ? <p>Take-profit band {desk.exit.trimBand} already harvested</p> : null}
-            {desk.exit.invalidation ? <p className="text-muted">Kill condition: {desk.exit.invalidation}</p> : null}
-            {desk.exit.rationale ? <p className="text-muted">{desk.exit.rationale}</p> : null}
-          </div>
-        ) : null}
-
-        {(desk?.pending?.length ?? 0) > 0 ? (
-          <div className="mb-3 space-y-2 rounded-md border border-line bg-surface p-3 text-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-faint">Waiting For You</p>
-            {desk?.pending?.map((item) => (
-              <p key={item.id}>
-                {item.side.toUpperCase()}
-                {typeof item.quantity === "number" ? ` ${number(item.quantity)} sh` : ""}
-                {item.rationale ? ` — ${item.rationale}` : ""}
-              </p>
-            ))}
-          </div>
-        ) : null}
-
-        {(desk?.peerAccounts?.length ?? 0) > 0 ? (
-          <div className="mb-3 space-y-2 rounded-md border border-line bg-surface p-3 text-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-faint">Other Accounts</p>
-            {desk?.peerAccounts?.map((peer) => (
-              <p key={peer.accountId}>
-                {peer.direction === "short" ? "Short" : "Long"} {number(peer.quantity)} sh on {peer.label}
-                {peer.environment ? ` (${peer.environment})` : ""}
-              </p>
-            ))}
-            <p className="text-xs text-faint">
-              Size and direction only.  Switch accounts from Home to see that book.
-            </p>
-          </div>
-        ) : null}
-
-        {desk?.lastCall ? (
-          <div className="mb-3 space-y-1 rounded-md border border-line bg-surface p-3 text-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-faint">Last Desk Call</p>
-            <p>
-              {desk.lastCall.side ? `${desk.lastCall.side} · ` : ""}
-              {desk.lastCall.status.replace(/_/g, " ")}
-              {desk.lastCall.outcome ? ` · ${desk.lastCall.outcome}` : ""}
-            </p>
-            {desk.lastCall.green ? <p>Green: {desk.lastCall.green}</p> : null}
-            {desk.lastCall.red ? <p className="text-muted">{desk.lastCall.red}</p> : null}
           </div>
         ) : null}
 

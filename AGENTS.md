@@ -594,12 +594,22 @@ paternalism that keeps creeping back in from every agent (Claude, Codex, others)
   any rule the app enforces gets a user-controlled off-switch with honest annotation, never a scolding
   ritual or an immovable block. If the owner set it, follow their intent and let them change or
   override it.
+- **Clients are iOS + the website (desktop and mobile viewports).** Owner 2026-08-16: the PWA
+  (`/mobile`, `app/mobile/**`) is not a product they use. Do **not** spend design, features,
+  or verify time on PWA parity. Put ticker sheets, desk blotters, and new UI on
+  `ios/SocraticTrade/**` and the console website (`app/console/**`), and check the site at
+  both desktop and phone widths. Leave existing `/mobile` code alone unless it is broken for
+  a real user or blocks the site/iOS path.
 
 ## Don't
 
 - Don't run destructive git operations (`reset --hard`, force-push, branch
  deletion) without explicit user confirmation in the current conversation,
  even if a previous session was authorized to push.
+
+- **Don't invest in the PWA.** Owner 2026-08-16: effort goes to the native iOS app and
+  the website's desktop + mobile views. Do not add features, restyles, or "PWA parity"
+  work under `app/mobile/**` unless the owner asks.
 
 - **Don't grep a secrets handoff file for `KEY=` lines.** `grep '^[A-Z0-9_]+=' ~/.secrets/global-api-keys` prints every value into the transcript. Names only: `grep -oE '^[A-Z][A-Z0-9_]*'`. See AGENT-SYNC.md § Handoff-file grep trap.
 
