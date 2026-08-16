@@ -8,6 +8,12 @@ Owner: explain rotation fail-open and 422s, then fix those plus Red timeout, and
 - Ingest: cherry-picked ROIC single-flight.  Requeue ~1k `embed_queued` dead letters that were misclassified budget-exceeded.  Budget skip defers 1h instead of dead-lettering.  Worker tick now claims at most 5 tasks across all jobs (prod had 521 running jobs claiming 5 each, so 2156 Aug-10 `facts_extracted` never ran).  Sibling #2748 owns the daily WU fuse park.
 
 Branch `grok/48h-money-path-ingest`, issue #2749.  Rollout: `docs/rollouts/2026-08-16-48h-money-path-ingest.md`.
+## Current (2026-08-16 GROK — 13F + ARK + Form 4 operational)
+
+#2735 closed.  Live `f0fd2b70` after #2736 + #2747 + #2758:
+Form 4 537 (340 ticker), 13F 413 / 12/12 ISO quarter-ends, ARK 222
+across ARKK/Q/W/G/F/X as-of 2026-08-14.  Observe-only.
+
 ## Current (2026-08-16 GROK — 48h prod error triage, Pinecone daily write fuse)
 
 Pinecone trial is healthy ($238 of $300).  The "Usage limit hit" is the app's
