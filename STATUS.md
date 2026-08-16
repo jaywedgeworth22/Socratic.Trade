@@ -1,3 +1,9 @@
+## Current (2026-08-16 GROK — 13F + ARK + Form 4 operational)
+
+#2735 closed.  Live `f0fd2b70` after #2736 + #2747 + #2758:
+Form 4 537 (340 ticker), 13F 413 / 12/12 ISO quarter-ends, ARK 222
+across ARKK/Q/W/G/F/X as-of 2026-08-14.  Observe-only.
+
 ## Current (2026-08-16 GROK — 48h prod error triage, Pinecone daily write fuse)
 
 Pinecone trial is healthy ($238 of $300).  The "Usage limit hit" is the app's
@@ -33,6 +39,16 @@ was patched to two spaces.  What's New cannot be edited on first version
 container names and a 60s health-check start period — no flip.  B2 L2 cleanup
 was not authorized in this ask.  Receipt:
 `docs/rollouts/2026-08-16-asc-eula-coolify.md`.
+## Current (2026-08-16 GROK — ARK official CSV fallback)
+
+#2747 is live.  13F is complete in prod (413 rows, 12/12 filers, ISO
+quarter-ends).  ARK stayed 0 because `ark-funds.com` document-table is a
+Cloudflare 403 and the throw skipped the working
+`assets.ark-funds.com` CSV fallback.
+
+Branch `grok/ark-csv-fallback`.  Use the official CSV URL when the table
+is blocked.  Empty ARK retries after 2 minutes, not 1 hour.
+
 ## Current (2026-08-16 GROK — 13F/ARK ops fix)
 
 #2736 is live (schema 83) but not fully operational.  Prod receipts:
