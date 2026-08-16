@@ -2,11 +2,12 @@
 
 ## 1. Context & Objective
 
-Owner: the Home count should say **Proposals For Review** under the number, not
-"Awaiting Review".  On the review list, show the price at proposal time, the
-live price, the proposer's guessed target, and how much delay changed the
-trade.  When a proposer leaves the target blank, Green + Red debate whether a
-target and a staged exit would help.
+Owner: the Home tile title is **Proposals for Review** above the count, with
+nothing under the number so it matches Open P&L height.  On the review list,
+show the price at proposal time, the live price, the proposer's guessed
+target, and how much delay changed the trade.  When a proposer leaves the
+target blank, Green + Red debate whether a target and a staged exit would
+help.
 
 ## 2. Changes Made
 
@@ -21,10 +22,11 @@ target and a staged exit would help.
 - Delay is side-aware: a buy that rose is worse; a short that rose is better.
 - Missing target shows the Green Team `exitPlan` when present, otherwise a
   short fallback that the panel should debate a target and staged exits.
-- Green Team prompt `agentic-strategy@2.9.0` requires that debate in `exitPlan`
+- Green Team prompt `agentic-strategy@2.10.0` requires that debate in `exitPlan`
   when the target is omitted, and prefers a staged-exit note even when a single
   target is set.  Red Team Job 3 reviews a missing target without inventing an
-  exit objection when the levels are already coherent.
+  exit objection when the levels are already coherent.  2.9.0 on main is
+  Polymarket sector/theme + macro tilt labels (#2743); this lane bumps on top.
 - Optional `TradeProposal.exitPlan` is sanitized (trim, 2k cap) and decoded on
   iOS.
 
@@ -64,7 +66,10 @@ docs/rollouts/2026-08-15-ios-proposals-for-review.md
 ```bash
 npx tsc --noEmit
 npx vitest run test/strategy-hardening.test.ts test/strategy-exit-plan-prompts.test.ts test/strategy-prompt-safety.test.ts
-# 97 targeted tests green.  tsc clean.
+# 97 targeted tests green on the first pass.  tsc clean.
+# Merged origin/main (4bd3bcc0 / #2743) 2026-08-16; real conflict only in
+# test/strategy-prompt-safety.test.ts (both sides pinned 2.9.0).  Bumped to
+# 2.10.0 and re-armed #2740.  Full lint/tsc/test/build rerun before push.
 # xcodebuild test against iPhone 17 Pro failed because this Mac has no iOS 26.5
 # simulator runtime after the freeze (`simctl list runtimes` is empty).  CI Mac
 # runner compiles Swift.
@@ -72,7 +77,8 @@ npx vitest run test/strategy-hardening.test.ts test/strategy-exit-plan-prompts.t
 
 ## 5. Next Steps & Blockers
 
-- Owner: update TestFlight after this lands to see the card.
+- Ship TestFlight after #2740 merges so the owner can see the Home tile and
+  price rows on a device.
 - Web approval card still uses the compact `$200 → $202` line.  Same fields
   could be promoted there later.
 - Existing pending proposals without `exitPlan` get the fallback note until

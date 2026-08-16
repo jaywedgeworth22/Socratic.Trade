@@ -1,4 +1,4 @@
-## Current (2026-08-15 GROK — iOS Proposals For Review + price delay)
+## Current (2026-08-16 GROK — iOS Proposals for Review + price delay)
 
 Owner: the Home tile title is **Proposals for Review** above the count,
 with nothing under the number so it matches the Open P&L card height.  Review cards must show the price at proposal time, the live
@@ -7,7 +7,9 @@ changed the trade.  When a proposer leaves the target blank, Green + Red debate
 whether a target and a staged exit (partial stops / partial takes) would help.
 
 Branch `grok/ios-proposals-for-review`, worktree
-`~/apps/trading-grok-proposals-review`.  Rollout:
+`~/apps/trading-grok-proposals-review`.  Merged `origin/main` (#2743 overlays
++ Polymarket tilts) and bumped the strategy prompt to `agentic-strategy@2.10.0`
+so the exitPlan debate sits on top of 2.9.0.  PR #2740.  Rollout:
 `docs/rollouts/2026-08-15-ios-proposals-for-review.md`.
 ## Current (2026-08-16 GROK — overlay CRUD + Polymarket deepen + ASOF receipt)
 
