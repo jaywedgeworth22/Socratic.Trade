@@ -414,6 +414,11 @@ final class MobileStore: ObservableObject {
                     reconcileTrackedCommands([command])
                 }
             } else {
+                if commandType.hasPrefix("proposal.") {
+                    // Queue ACK is enough to leave "Sending…".  A slow snapshot
+                    // reload must not lock the card on a 30s timeout.
+                    busyOperations.remove(operationID)
+                }
                 reconcileTrackedCommands([command])
                 await load()
                 reconcileTrackedCommands([command])

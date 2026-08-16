@@ -608,8 +608,9 @@ paternalism that keeps creeping back in from every agent (Claude, Codex, others)
  even if a previous session was authorized to push.
 
 - **Don't invest in the PWA.** Owner 2026-08-16: effort goes to the native iOS app and
-  the website's desktop + mobile views. Do not add features, restyles, or "PWA parity"
-  work under `app/mobile/**` unless the owner asks.
+  the website's desktop + mobile views. `/mobile` and `mobile.socratictrade.com` now
+  redirect to `/console`.  Do not add features, restyles, or "PWA parity" work under
+  `app/mobile/**` unless the owner asks.
 
 - **Don't grep a secrets handoff file for `KEY=` lines.** `grep '^[A-Z0-9_]+=' ~/.secrets/global-api-keys` prints every value into the transcript. Names only: `grep -oE '^[A-Z][A-Z0-9_]*'`. See AGENT-SYNC.md § Handoff-file grep trap.
 

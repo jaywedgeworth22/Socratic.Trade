@@ -33,6 +33,7 @@ import type {
   TaxSettings,
   TradingPolicy
 } from "./types";
+import { retryProposalRedTeam } from "./retry-red-team";
 import { executeProposal, LiveApprovalConfirmationError, LiveApprovalConfirmation } from "./strategy-execution";
 
 export const MOBILE_COMMAND_TYPES = [
@@ -43,6 +44,7 @@ export const MOBILE_COMMAND_TYPES = [
   "strategy.liquidating",
   "proposal.approve",
   "proposal.reject",
+  "proposal.retry_red_team",
   "account.activate",
   "order.cancel",
   "watchlist.add",
@@ -554,6 +556,7 @@ function normalizeCommandPayload(commandType: MobileCommandType, rawPayload: unk
       return Object.keys(liveConfirmation).length > 0 ? { proposalId, liveConfirmation } : { proposalId };
     }
     case "proposal.reject":
+    case "proposal.retry_red_team":
       return { proposalId: requireString(payload, "proposalId") };
     case "account.activate":
       return { accountId: requireString(payload, "accountId") };
@@ -960,6 +963,8 @@ async function runCommand(command: MobileCommandRecord): Promise<unknown> {
       rejectProposal(proposalId, command.userId);
       return { ok: true, status: "rejected", proposalId };
     }
+    case "proposal.retry_red_team":
+      return retryProposalRedTeam(String(payload.proposalId), command.userId);
     case "account.activate": {
       const accountId = String(payload.accountId);
       setActiveConnectedAccount(accountId, command.userId);
