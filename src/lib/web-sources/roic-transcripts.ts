@@ -4,8 +4,9 @@
 //   v3 list: GET /v3.0.0/earnings-calls?identifier=EXCHANGE:SYM
 //   v3 body: GET /v3.0.0/earnings-calls/{NASDAQ:SYM}?fiscal_year=&fiscal_quarter=
 //   v2 fallback: GET /v2/company/earnings-calls/latest/{SYM} (latest only)
-// into the shared RAG vector store (doc_type "earnings-transcript", source "roic-earnings-transcript").
-// Prefer ROIC over free EarningsCalls previews when the owner has a paid/entitled ROIC key.
+// Local-complete first: earningscalls_transcripts.content (survives Individual expiry).
+// Pinecone: extractive earnings-summary for latest/deepen; full-body only for the
+// latest high-interest call (proposer-corpus rev 3). Archive = local only.
 //
 // Scheduler: refreshRoicTranscriptsIfDue (wired from scheduler.ts). Opt-in = ROIC key present;
 // kill-switch ROIC_TRANSCRIPTS_DISABLED=1. Quarters-per-symbol follow Connections plan tier
@@ -20,6 +21,11 @@ import {
   resolveApiKeyWithSource
 } from "../db-api-keys";
 import { logApiHealth } from "../db-health";
+import {
+  getEarningsCallsTranscript,
+  markEarningsCallsTranscriptIngested,
+  upsertEarningsCallsTranscript
+} from "../db-earningscalls";
 import { hasIngestedAccession, insertIngestedAccession } from "../db-learning";
 import { getInternalSetting, setInternalSetting } from "../db-settings";
 import { normalizeSymbol } from "../money";
@@ -132,7 +138,8 @@ export function recentFiscalPeriods(
   return out;
 }
 
-export type RoicIngestPhase = "latest" | "deepen";
+export type RoicIngestPhase = "latest" | "deepen" | "archive";
+export type RoicPineconeWriteClass = "full-body" | "highlight-only" | "local-only";
 
 export interface RoicCursor {
   queue: string[];
@@ -144,9 +151,34 @@ export function sortRoicPeriodsNewestFirst<T extends { year: number; quarter: nu
   return [...rows].sort((a, b) => b.year - a.year || b.quarter - a.quarter);
 }
 
-/** Latest-only pass takes one period; deepen uses the plan-tier quarter cap. */
+/** Latest-only pass takes one period; deepen/archive use the plan-tier quarter cap. */
 export function roicDepthForPhase(phase: RoicIngestPhase, userId?: string): number {
   return phase === "latest" ? 1 : quartersPerSymbol(userId);
+}
+
+/**
+ * Approved proposer-corpus write class for one call (rev 3).
+ * Latest high-interest stays full-body until a transcript FTS mirror exists.
+ * Other latest/deepen calls write extractive earnings-summary only.
+ * Archive is local cache so we keep Individual history after the tier ends.
+ */
+export function roicPineconeWriteClass(args: {
+  phase: RoicIngestPhase;
+  symbol: string;
+  newestPeriod: boolean;
+  highInterest: ReadonlySet<string>;
+}): RoicPineconeWriteClass {
+  if (args.phase === "archive") return "local-only";
+  if (args.highInterest.has(normalizeSymbol(args.symbol)) && args.newestPeriod) {
+    return "full-body";
+  }
+  return "highlight-only";
+}
+
+/** Universe minus held/watchlist/technical — extra Individual history, local only. */
+export function archiveRoicQueue(now?: number): string[] {
+  const high = new Set(rankHighInterestSymbols({ now }));
+  return rankDemandFirstSymbols({ now }).filter((symbol) => !high.has(symbol));
 }
 
 export function selectRoicPeriodsForPhase<T extends { year: number; quarter: number }>(
@@ -168,7 +200,8 @@ export function readRoicCursor(): RoicCursor | null {
     ? (raw as { updatedAt: string }).updatedAt
     : "";
   const rawPhase = (raw as { phase?: unknown }).phase;
-  const phase: RoicIngestPhase = rawPhase === "deepen" ? "deepen" : "latest";
+  const phase: RoicIngestPhase =
+    rawPhase === "deepen" ? "deepen" : rawPhase === "archive" ? "archive" : "latest";
   return { queue: symbols, updatedAt, phase };
 }
 
@@ -230,6 +263,7 @@ export function isRoicTranscriptRefreshDue(now: number = Date.now()): boolean {
 export interface RoicTranscriptRefreshResult {
   attempted: number;
   ingested: number;
+  cachedLocally: number;
   skippedNoContent: number;
   skippedAlreadyStored: number;
   symbolsConsidered: number;
@@ -500,11 +534,86 @@ function speakerSections(item: RoicTranscriptItem): Array<{ itemCode: string; it
   }));
 }
 
+export function persistRoicTranscriptLocally(transcript: RoicTranscriptItem): boolean {
+  if (!transcript.content || transcript.content.length < 200) return false;
+  const accession = roicTranscriptAccession(transcript.symbol, transcript.year, transcript.quarter);
+  upsertEarningsCallsTranscript({
+    symbol: transcript.symbol,
+    fiscalYear: transcript.year,
+    fiscalQuarter: transcript.quarter,
+    eventDate: transcript.date,
+    content: transcript.content,
+    fetchedAt: new Date().toISOString(),
+    sourceMeta: JSON.stringify({ provider: "roic", accession })
+  });
+  return true;
+}
+
+export function roicItemFromLocalCache(
+  symbol: string,
+  year: number,
+  quarter: number
+): RoicTranscriptItem | null {
+  const row = getEarningsCallsTranscript(symbol, year, quarter);
+  if (!row?.content || row.content.length < 200) return null;
+  return {
+    symbol: normalizeSymbol(symbol),
+    year,
+    quarter,
+    date: row.eventDate,
+    content: row.content,
+    turns: []
+  };
+}
+
+function hasLocalTranscriptContent(symbol: string, year: number, quarter: number): boolean {
+  return roicItemFromLocalCache(symbol, year, quarter) !== null;
+}
+
+function isRoicRagIngested(symbol: string, year: number, quarter: number, accession: string): boolean {
+  if (hasIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE)) return true;
+  return Boolean(getEarningsCallsTranscript(symbol, year, quarter)?.ingestedAt);
+}
+
+async function storeRoicEarningsSummary(
+  transcript: RoicTranscriptItem,
+  accession: string,
+  published: string,
+  observed: string
+): Promise<boolean> {
+  try {
+    const { generateAndStoreDocumentAbstract, tradeHighlightChunksFromText } = await import(
+      "../rag/document-summarizer"
+    );
+    const result = await generateAndStoreDocumentAbstract({
+      ticker: transcript.symbol,
+      accessionOrEventId: accession,
+      sourceType: "earnings-summary",
+      headline: `${transcript.symbol} earnings call highlights ${transcript.year} Q${transcript.quarter}`,
+      chunks: tradeHighlightChunksFromText(transcript.content, {
+        maxChunks: 8,
+        formHint: "earnings",
+        sections: speakerSections(transcript)
+      }),
+      publishedAt: published,
+      acceptanceDatetime: observed
+    });
+    return !result.error;
+  } catch (err) {
+    console.warn(
+      `[roic-transcripts] abstract failed for ${accession}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+    return false;
+  }
+}
+
 export async function ingestRoicTranscriptToRag(
   transcript: RoicTranscriptItem,
-  userId?: string
-): Promise<boolean> {
-  if (!transcript.content || transcript.content.length < 200) return false;
+  userId?: string,
+  writeClass: RoicPineconeWriteClass = "full-body"
+): Promise<"ingested" | "cached" | "failed"> {
+  if (!persistRoicTranscriptLocally(transcript)) return "failed";
 
   const doc_id = `roic-transcript-${transcript.symbol.toLowerCase()}-${transcript.year}-q${transcript.quarter}`;
   const accession = roicTranscriptAccession(transcript.symbol, transcript.year, transcript.quarter);
@@ -512,80 +621,76 @@ export async function ingestRoicTranscriptToRag(
   const published = publishedAtIso(transcript.date, transcript.year, transcript.quarter);
   const observed = new Date().toISOString();
 
-  try {
-    const result = await storeDocument(
-      {
-        doc_id,
-        title,
-        doc_type: ROIC_TRANSCRIPT_DOC_TYPE,
-        source: ROIC_TRANSCRIPT_SOURCE,
-        text: transcript.content,
-        ticker: transcript.symbol,
-        published_at: published,
-        acceptance_datetime: observed,
-        sections: speakerSections(transcript)
-      },
-      userId ?? "local",
-      { parserRevision: "roic-transcript-speakers-v1", documentKey: accession }
-    );
+  if (writeClass === "local-only") return "cached";
+  if (!hasPineconeWriteBudget(userId ?? "local")) return "cached";
 
-    if (!result || result.error || result.wuExhausted || result.unconfigured || !result.documentComplete) {
-      return false;
+  let fullBodyOk = writeClass !== "full-body";
+  if (writeClass === "full-body") {
+    try {
+      const result = await storeDocument(
+        {
+          doc_id,
+          title,
+          doc_type: ROIC_TRANSCRIPT_DOC_TYPE,
+          source: ROIC_TRANSCRIPT_SOURCE,
+          text: transcript.content,
+          ticker: transcript.symbol,
+          published_at: published,
+          acceptance_datetime: observed,
+          sections: speakerSections(transcript)
+        },
+        userId ?? "local",
+        { parserRevision: "roic-transcript-speakers-v1", documentKey: accession }
+      );
+      fullBodyOk = Boolean(
+        result && !result.error && !result.wuExhausted && !result.unconfigured && result.documentComplete
+      );
+      if (fullBodyOk) {
+        insertIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE, transcript.symbol, result!.indexed);
+      }
+    } catch (err) {
+      console.error(`[roic-transcripts] failed to store RAG document for ${doc_id}:`, err);
+      fullBodyOk = false;
     }
+  }
 
-    insertIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE, transcript.symbol, result.indexed);
+  const summaryOk = await storeRoicEarningsSummary(transcript, accession, published, observed);
+  if (writeClass === "highlight-only" && summaryOk) {
+    insertIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE, transcript.symbol, 8);
+  }
+
+  const ragOk = writeClass === "full-body" ? fullBodyOk : summaryOk;
+  if (ragOk) {
+    markEarningsCallsTranscriptIngested(transcript.symbol, transcript.year, transcript.quarter, observed);
     audit("roic_transcript_ingested", {
       symbol: transcript.symbol,
       year: transcript.year,
       quarter: transcript.quarter,
       doc_id,
       accession,
+      writeClass,
       userId
     });
     logApiHealth({
       service: "roic",
       ok: true,
-      errorText: `Ingested ${transcript.symbol} Q${transcript.quarter} ${transcript.year} transcript into RAG`,
+      errorText: `Ingested ${transcript.symbol} Q${transcript.quarter} ${transcript.year} transcript (${writeClass})`,
       userId
     });
-
-    try {
-      const { generateAndStoreDocumentAbstract, tradeHighlightChunksFromText } = await import(
-        "../rag/document-summarizer"
-      );
-      await generateAndStoreDocumentAbstract({
-        ticker: transcript.symbol,
-        accessionOrEventId: accession,
-        sourceType: "earnings-summary",
-        headline: `${transcript.symbol} earnings call highlights ${transcript.year} Q${transcript.quarter}`,
-        chunks: tradeHighlightChunksFromText(transcript.content, {
-          maxChunks: 8,
-          formHint: "earnings",
-          sections: speakerSections(transcript)
-        }),
-        publishedAt: published,
-        acceptanceDatetime: observed
-      });
-    } catch (err) {
-      console.warn(
-        `[roic-transcripts] abstract failed for ${accession}:`,
-        err instanceof Error ? err.message : String(err)
-      );
-    }
-    return true;
-  } catch (err) {
-    console.error(`[roic-transcripts] failed to store RAG document for ${doc_id}:`, err);
-    return false;
+    return "ingested";
   }
+  return "cached";
 }
 
 export { rankDemandFirstSymbols as rankRoicUniverseSymbols } from "../rag/demand-first-symbols";
 
 /**
- * Two-pass ingest: latest transcript for the demand-first universe, then extra
- * quarters only for held/watchlist/technical names.  List-first so we request
- * only periods ROIC actually has.  Skip already-ingested accessions.  Cursor
- * continues mid-universe across scheduler ticks instead of sleeping 24h.
+ * Three-pass ingest (approved proposer-corpus rev 3):
+ *   latest  — one newest call for the demand-first universe
+ *   deepen  — Individual quarter cap for held/watchlist/technical
+ *   archive — same cap for the rest of the universe, local cache only
+ * Fetch from ROIC even when the Pinecone write fuse is spent so the Individual
+ * window still fills `earningscalls_transcripts`.  Cursor continues mid-universe.
  */
 export async function refreshRoicTranscriptsIfDue(options?: {
   force?: boolean;
@@ -598,6 +703,7 @@ export async function refreshRoicTranscriptsIfDue(options?: {
   const base: RoicTranscriptRefreshResult = {
     attempted: 0,
     ingested: 0,
+    cachedLocally: 0,
     skippedNoContent: 0,
     skippedAlreadyStored: 0,
     symbolsConsidered: 0,
@@ -614,11 +720,6 @@ export async function refreshRoicTranscriptsIfDue(options?: {
       due: true,
       remaining: readRoicCursor()?.queue.length ?? 0
     };
-  }
-  // Daily Pinecone write fuse is already spent: keep the cursor and skip the ROIC fetch
-  // loop.  storeDocument would refuse each new transcript after opening no useful work.
-  if (!hasPineconeWriteBudget(options?.userId ?? "local")) {
-    return { ...base, due: true };
   }
 
   const run = runRoicTranscriptRefresh(base, now, options);
@@ -652,16 +753,42 @@ async function runRoicTranscriptRefresh(
     : rankDemandFirstSymbols({ symbols: options?.symbols, now });
   if (!existing || existing.queue.length === 0) phase = "latest";
 
+  const highInterest = new Set(rankHighInterestSymbols({ now }));
   const deepenQueue = (): string[] => {
     if (options?.symbols?.length) {
       return rankDemandFirstSymbols({ symbols: options.symbols, now });
     }
     return rankHighInterestSymbols({ now });
   };
+  const nextArchiveQueue = (): string[] => {
+    if (options?.symbols?.length) return [];
+    return archiveRoicQueue(now);
+  };
+
+  const advanceEmptyPhase = (): boolean => {
+    if (queue.length > 0) return false;
+    if (phase === "latest") {
+      phase = "deepen";
+      queue = deepenQueue();
+      return true;
+    }
+    if (phase === "deepen") {
+      phase = "archive";
+      queue = nextArchiveQueue();
+      return true;
+    }
+    return false;
+  };
 
   base.symbolsConsidered = queue.length;
   const budget = maxTranscriptsPerRun(options?.userId);
   let remainingBudget = budget;
+
+  const recordIngest = (status: "ingested" | "cached" | "failed"): void => {
+    if (status === "ingested") base.ingested += 1;
+    else if (status === "cached") base.cachedLocally += 1;
+    else base.skippedNoContent += 1;
+  };
 
   const walkQueue = async (): Promise<void> => {
     const depth = roicDepthForPhase(phase, options?.userId);
@@ -684,10 +811,30 @@ async function runRoicTranscriptRefresh(
       const periods = selectRoicPeriodsForPhase(rawPeriods, phase, depth);
 
       let symbolDone = true;
-      for (const period of periods) {
+      for (let periodIndex = 0; periodIndex < periods.length; periodIndex++) {
+        const period = periods[periodIndex]!;
         const accession = roicTranscriptAccession(symbol, period.year, period.quarter);
-        if (hasIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE)) {
-          base.skippedAlreadyStored += 1;
+        const writeClass = roicPineconeWriteClass({
+          phase,
+          symbol,
+          newestPeriod: periodIndex === 0,
+          highInterest
+        });
+        if (hasLocalTranscriptContent(symbol, period.year, period.quarter)) {
+          if (writeClass === "local-only" || isRoicRagIngested(symbol, period.year, period.quarter, accession)) {
+            base.skippedAlreadyStored += 1;
+            continue;
+          }
+          const cached = roicItemFromLocalCache(symbol, period.year, period.quarter);
+          if (!cached) {
+            base.skippedAlreadyStored += 1;
+            continue;
+          }
+          try {
+            recordIngest(await ingestRoicTranscriptToRag(cached, options?.userId, writeClass));
+          } catch {
+            base.cachedLocally += 1;
+          }
           continue;
         }
         if (remainingBudget <= 0) {
@@ -703,9 +850,7 @@ async function runRoicTranscriptRefresh(
             continue;
           }
           if (!item.date && period.date) item.date = period.date;
-          const ok = await ingestRoicTranscriptToRag(item, options?.userId);
-          if (ok) base.ingested += 1;
-          else base.skippedNoContent += 1;
+          recordIngest(await ingestRoicTranscriptToRag(item, options?.userId, writeClass));
         } catch {
           base.skippedNoContent += 1;
         }
@@ -722,12 +867,12 @@ async function runRoicTranscriptRefresh(
   };
 
   await walkQueue();
-  if (queue.length === 0 && phase === "latest" && remainingBudget > 0) {
-    phase = "deepen";
-    queue = deepenQueue();
+  while (remainingBudget > 0 && queue.length === 0 && advanceEmptyPhase()) {
     base.symbolsConsidered += queue.length;
+    if (queue.length === 0) continue;
     await walkQueue();
   }
+  if (queue.length === 0) advanceEmptyPhase();
 
   writeRoicCursor(queue, nowIso, phase);
   if (queue.length === 0) {
@@ -738,6 +883,7 @@ async function runRoicTranscriptRefresh(
   audit("roic_transcript_refresh", {
     attempted: base.attempted,
     ingested: base.ingested,
+    cachedLocally: base.cachedLocally,
     skippedNoContent: base.skippedNoContent,
     skippedAlreadyStored: base.skippedAlreadyStored,
     symbolsConsidered: base.symbolsConsidered,

@@ -1,5 +1,6 @@
 # Active Implementation Plan
 
+> **2026-08-16 GROK — ROIC Individual harvest (`grok/roic-harvest`).**  Use the remaining Individual window for universe breadth plus 20-quarter depth on high-interest names, then archive the rest locally.  Storage follows approved proposer-corpus rev 3 (#2760): extractive highlights in Pinecone, full bodies in `earningscalls_transcripts`.  No second panel.  Rollout: `docs/rollouts/2026-08-16-roic-harvest.md`.
 > **2026-08-16 GROK — ROIC single-flight (`grok/roic-singleflight`).**  Every 60s tick started another universe walk because `lastAttemptAt` was written only at the end.  714 stacked journal rows crashed prod ~every 22 minutes.  Single-flight + start watermark + incremental cursor.  L1 keep-400 shrink still running so L2 can compact.  FilingAPI still needs an owner Plus key.  Rollout: `docs/rollouts/2026-08-16-roic-singleflight.md`.
 > **2026-08-16 GROK — overlay regime match hotfix (`grok/overlay-regime-match`).**  Live apply now passes the classified enum; router also accepts persisted labels.  Overlay text is contained as `coach` and scanned as untrusted.  Rollout: `docs/rollouts/2026-08-16-overlay-regime-match.md`.
 

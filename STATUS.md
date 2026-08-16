@@ -1,3 +1,20 @@
+## Current (2026-08-16 GROK — ROIC Individual harvest)
+
+Owner: get all we can from ROIC Individual (couple of weeks left) — breadth across the universe plus depth on names of most interest.  Expert panel already decided storage in `docs/designs/2026-08-16-proposer-corpus-storage.md` rev 3 (#2760).  No second panel.
+
+This branch implements the transcript slice of that decision:
+
+- Persist every fetched call into `earningscalls_transcripts` first (survives Individual expiry).
+- Do not skip the ROIC walk when the Pinecone write fuse is spent.
+- `latest` → one newest call for the demand-first universe.
+- `deepen` → 20 quarters for held / watchlist / technical.
+- `archive` → 20 quarters for everyone else, local cache only.
+- Pinecone: extractive `earnings-summary` for latest/deepen; full-body only for the newest high-interest call (transcript exception until FTS exists).
+
+#2750 `1867addd` single-flight is on `main`; Coolify deploy was in_progress at harvest start.  FilingAPI still owner Plus.
+
+Rollout: `docs/rollouts/2026-08-16-roic-harvest.md`.
+
 ## Current (2026-08-16 GROK — ROIC single-flight + L2 shrink)
 
 Owner: continue Litestream L2/L3, FilingAPI, and ROIC universe ingest until they actually work.

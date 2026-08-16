@@ -623,7 +623,7 @@ async function tick(): Promise<void> {
     );
   }
 
-  // ROIC.ai full-text transcripts (key = opt-in; ROIC_TRANSCRIPTS_DISABLED=1 kill-switch).
+  // ROIC.ai transcripts: latest-then-deepen-then-archive (key = opt-in; ROIC_TRANSCRIPTS_DISABLED=1).
   // Prefer this over free EarningsCalls previews when the ROIC individual plan is configured.
   // Holdings → watchlist, last N fiscal quarters, cap ROIC_TRANSCRIPTS_MAX_PER_RUN.
   // Library helpers existed earlier without a scheduler caller — that left zero ROIC saves.
