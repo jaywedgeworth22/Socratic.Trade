@@ -4,6 +4,21 @@
 Form 4 537 (340 ticker), 13F 413 / 12/12 ISO quarter-ends, ARK 222
 across ARKK/Q/W/G/F/X as-of 2026-08-14.  Observe-only.
 
+## Current (2026-08-16 GROK — 48h prod error triage, Pinecone daily write fuse)
+
+Pinecone trial is healthy ($238 of $300).  The "Usage limit hit" is the app's
+rolling-24h write fuse at the trial cap of 2.5M estimated WUs, not a Pinecone
+outage.  Retrieval still works.  Did not raise the cap.
+
+Park incremental ingest when the fuse is spent.  Trial ingest stays full-steam
+until ~$45 remains, then paces to the trial end.  On 2026-08-30 UTC snaps to
+free-tier 60k WU/day.  ROIC/FMP/SEC now take the **latest** transcript and
+latest 10-K/10-Q for the universe first, then extra history only for
+held/watchlist/technical names.  Expert consensus: keep full bodies in SQLite
+FTS + artifacts; do not LLM-summarize ingest; after trial put only extractive
+highlights + N best sections in Pinecone.  Branch `grok/prod-error-triage-48h`.
+
+Rollout: `docs/rollouts/2026-08-16-prod-error-triage-48h.md`.
 ## Current (2026-08-16 GROK — review UX: approve speed, prices, retry red team, agent controls)
 
 Owner: Approve hung on "Sending approve…".  Review cards hid live vs proposed
