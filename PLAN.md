@@ -3,6 +3,7 @@
 > **2026-08-16 GROK — overlay regime match hotfix (`grok/overlay-regime-match`).**  Live apply now passes the classified enum; router also accepts persisted labels.  Overlay text is contained as `coach` and scanned as untrusted.  Rollout: `docs/rollouts/2026-08-16-overlay-regime-match.md`.
 
 > **2026-08-16 GROK — overlay CRUD + Polymarket deepen + ASOF (`grok/overlay-poly-asof`).**  Full overlay UI on Strategy; Polymarket sector/theme + macro tilts; ASOF dry-run receipt (13076/13076 epoch'd).  No Reddit/X.  Weekly hard-delete deferred.  Rollout: `docs/rollouts/2026-08-16-overlay-poly-asof.md`.  Merged #2743.
+> **2026-08-16 GROK — ASC EULA + Coolify rolling already off (`grok/asc-eula-100`).**  Owner-authorized ASC writes.  Coolify `socratic-app` already has consistent container names + 60s start period.  What's New blocked on first versions.  Rollout: `docs/rollouts/2026-08-16-asc-eula-coolify.md`.
 > **2026-08-16 GROK — ticker desk sheet (`grok/ticker-desk-sheet`).** Ticker
 > tap on iOS + website (desktop/mobile viewports) shows current lot, exit
 > plan, pending rationale, last Green/Red call, and other-account
