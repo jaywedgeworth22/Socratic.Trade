@@ -8,6 +8,14 @@ Owner: explain rotation fail-open and 422s, then fix those plus Red timeout, and
 - Ingest: cherry-picked ROIC single-flight.  Requeue ~1k `embed_queued` dead letters that were misclassified budget-exceeded.  Budget skip defers 1h instead of dead-lettering.  Worker tick now claims at most 5 tasks across all jobs (prod had 521 running jobs claiming 5 each, so 2156 Aug-10 `facts_extracted` never ran).  Sibling #2748 owns the daily WU fuse park.
 
 Branch `grok/48h-money-path-ingest`, issue #2749.  Rollout: `docs/rollouts/2026-08-16-48h-money-path-ingest.md`.
+## Current (2026-08-16 GROK — ASC EULA + Coolify rolling already off)
+
+Owner authorized ASC writes and the Coolify rolling steps.  ST custom EULA
+was patched to two spaces.  What's New cannot be edited on first version
+`1.0.0` (Apple STATE_ERROR).  Coolify `socratic-app` already has consistent
+container names and a 60s health-check start period — no flip.  B2 L2 cleanup
+was not authorized in this ask.  Receipt:
+`docs/rollouts/2026-08-16-asc-eula-coolify.md`.
 ## Current (2026-08-16 GROK — 13F/ARK ops fix)
 
 #2736 is live (schema 83) but not fully operational.  Prod receipts:
