@@ -40,7 +40,10 @@ Owner decisions after the Monet r5 pickup: (1) build the overlay library fully a
 
 ## 4. Verification State
 
-Targeted vitest on overlay/polymarket/prompt-safety tests, then land.sh trio.
+- Targeted vitest: polymarket-signals + polymarket-provider + r5-db-modules (30).
+- `scripts/land.sh` (Node 24): tsc clean; vitest 6846 passed / 51 skipped; next build clean. Lint exit 0 (grandfathered warnings only).
+- Browser: Strategy → Overlays on `localhost:3016`. Load Starters wrote 4 templates (Risk-Off Posture, Earnings Season, Choppy Tape, Trend Continuation). First paint after seed stayed empty because a slower in-flight GET overwrote the list; reload showed all four. Follow-up commit applies seed/create/patch/delete from the mutation response and ignores stale GETs.
+- ASOF dry-run: scanned=13076 skippedHasEpoch=13076 skippedUndated=0 errors=0.
 
 ## 5. Next Steps
 

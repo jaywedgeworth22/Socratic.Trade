@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TradingPolicy } from "@/lib/types";
 import { MARKET_REGIME_LABELS, type MarketRegime } from "@/lib/market-regime";
 import { selectActiveOverlays, type OverlayRegimeTag, type StrategyOverlay } from "@/lib/overlay-router";
@@ -32,12 +32,19 @@ export function OverlaysPanel({
     marketRegimes: ["any"] as OverlayRegimeTag[],
     priority: 100
   });
+  const loadSeq = useRef(0);
+
+  const applyOverlays = useCallback((next: OverlayRow[] | undefined, seq: number) => {
+    if (seq !== loadSeq.current) return;
+    setOverlays(next ?? []);
+  }, []);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/overlays");
+    const seq = ++loadSeq.current;
+    const res = await fetch("/api/overlays", { cache: "no-store" });
     const body = (await res.json()) as { overlays?: OverlayRow[] };
-    setOverlays(body.overlays ?? []);
-  }, []);
+    applyOverlays(body.overlays, seq);
+  }, [applyOverlays]);
 
   useEffect(() => {
     void load();
@@ -65,6 +72,7 @@ export function OverlaysPanel({
   async function createOverlay() {
     setError(null);
     setStatus("saving");
+    const seq = ++loadSeq.current;
     const res = await fetch("/api/overlays", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -75,24 +83,38 @@ export function OverlaysPanel({
       setError("Could not create overlay.");
       return;
     }
+    const body = (await res.json()) as { overlay?: OverlayRow };
     setDraft({ name: "", instructions: "", marketRegimes: ["any"], priority: 100 });
-    await load();
+    if (body.overlay && seq === loadSeq.current) {
+      setOverlays((current) => [...current, body.overlay!]);
+    } else {
+      await load();
+    }
     setStatus("saved");
   }
 
   async function seedStarters() {
+    setError(null);
     setStatus("saving");
-    await fetch("/api/overlays", {
+    const seq = ++loadSeq.current;
+    const res = await fetch("/api/overlays", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ seed: true })
     });
-    await load();
+    if (!res.ok) {
+      setStatus("error");
+      setError("Could not load starters.");
+      return;
+    }
+    const body = (await res.json()) as { overlays?: OverlayRow[] };
+    applyOverlays(body.overlays, seq);
     setStatus("saved");
   }
 
   async function patchOverlay(id: string, patch: Partial<OverlayRow>) {
     setStatus("saving");
+    const seq = ++loadSeq.current;
     const res = await fetch(`/api/overlays/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -103,14 +125,29 @@ export function OverlaysPanel({
       setError("Could not update overlay.");
       return;
     }
-    await load();
+    const body = (await res.json()) as { overlay?: OverlayRow };
+    if (body.overlay && seq === loadSeq.current) {
+      setOverlays((current) => current.map((row) => (row.id === id ? body.overlay! : row)));
+    } else {
+      await load();
+    }
     setStatus("saved");
   }
 
   async function removeOverlay(id: string) {
     setStatus("saving");
-    await fetch(`/api/overlays/${id}`, { method: "DELETE" });
-    await load();
+    const seq = ++loadSeq.current;
+    const res = await fetch(`/api/overlays/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      setStatus("error");
+      setError("Could not delete overlay.");
+      return;
+    }
+    if (seq === loadSeq.current) {
+      setOverlays((current) => current.filter((row) => row.id !== id));
+    } else {
+      await load();
+    }
     setStatus("saved");
   }
 
