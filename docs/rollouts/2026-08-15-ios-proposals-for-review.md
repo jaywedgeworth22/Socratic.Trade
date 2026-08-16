@@ -67,9 +67,10 @@ docs/rollouts/2026-08-15-ios-proposals-for-review.md
 npx tsc --noEmit
 npx vitest run test/strategy-hardening.test.ts test/strategy-exit-plan-prompts.test.ts test/strategy-prompt-safety.test.ts
 # 97 targeted tests green on the first pass.  tsc clean.
-# Merged origin/main (4bd3bcc0 / #2743) 2026-08-16; real conflict only in
-# test/strategy-prompt-safety.test.ts (both sides pinned 2.9.0).  Bumped to
-# 2.10.0 and re-armed #2740.  Full lint/tsc/test/build rerun before push.
+# land.sh 2026-08-16: tsc clean; 592 files / 6849 tests passed; next build clean.
+# npm run lint: 0 errors (grandfathered warnings only).
+# Merged origin/main twice (real 2.9.0 pin conflict, then phantom after #2742).
+# CI verify green on 9f39a6d3.  Squash-merged #2740 as c1db7d12 2026-08-16T20:13:56Z.
 # xcodebuild test against iPhone 17 Pro failed because this Mac has no iOS 26.5
 # simulator runtime after the freeze (`simctl list runtimes` is empty).  CI Mac
 # runner compiles Swift.
@@ -77,8 +78,8 @@ npx vitest run test/strategy-hardening.test.ts test/strategy-exit-plan-prompts.t
 
 ## 5. Next Steps & Blockers
 
-- Ship TestFlight after #2740 merges so the owner can see the Home tile and
-  price rows on a device.
+- Ship TestFlight so the owner can see the Home tile and price rows on a
+  device.  Web auto-deploy does not update the native app.
 - Web approval card still uses the compact `$200 → $202` line.  Same fields
   could be promoted there later.
 - Existing pending proposals without `exitPlan` get the fallback note until
