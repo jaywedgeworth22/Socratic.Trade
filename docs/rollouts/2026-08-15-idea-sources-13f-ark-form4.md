@@ -56,9 +56,10 @@ gate (tsc → test → build) before PR.
 
 ## Next Steps & Blockers
 
-None for enablement — defaults are on.  First production refresh happens on
-the next scheduler tick after deploy.  Do not expect 13F tickers until
-OpenFIGI or an ARK CSV has mapped the CUSIP.
+Follow-up: `docs/rollouts/2026-08-16-idea-sources-ops-fix.md`.  First
+production refresh wrote 13F periods as accession CIKs, missed filers
+whose information table is not named `form13fInfoTable.xml`, and locked
+ARK at 0 rows for 24h by setting `fetchedAt` on an empty success.
 
 ## Zero-Code Findings
 
