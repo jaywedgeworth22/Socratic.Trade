@@ -13,6 +13,12 @@ FilingAPI: Infisical `FILINGAPI` is the same dead 32-char trial key (401).  Free
 ROIC coverage before the pile-up: 46 transcripts across USB / OXY / SHEL (Individual 20-quarter depth).  After this lands the cursor can walk the rest of the universe without crashing the box.
 
 Rollout: `docs/rollouts/2026-08-16-roic-singleflight.md`.
+## Current (2026-08-16 GROK — 13F + ARK + Form 4 operational)
+
+#2735 closed.  Live `f0fd2b70` after #2736 + #2747 + #2758:
+Form 4 537 (340 ticker), 13F 413 / 12/12 ISO quarter-ends, ARK 222
+across ARKK/Q/W/G/F/X as-of 2026-08-14.  Observe-only.
+
 ## Current (2026-08-16 GROK — 48h prod error triage, Pinecone daily write fuse)
 
 Pinecone trial is healthy ($238 of $300).  The "Usage limit hit" is the app's
