@@ -24,11 +24,19 @@ struct SymbolInfoSheet: View {
     private var symbol: String { item.symbol }
 
     @State private var loadState: LoadState = .loading
+    @State private var desk: SymbolDeskInfo?
 
     private enum LoadState {
         case loading
         case loaded(SymbolQuoteInfo)
         case failed(String)
+    }
+
+    private var resolvedPosition: Position? {
+        if let position = item.position { return position }
+        return store.snapshot?.positions.first {
+            $0.symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == normalized
+        }
     }
 
     private var normalized: String {
@@ -42,8 +50,28 @@ struct SymbolInfoSheet: View {
                     if let fill = item.fill {
                         FillDetailCard(fill: fill)
                     }
-                    if let position = item.position {
+                    if let position = resolvedPosition {
                         PositionDetailCard(position: position)
+                    }
+                    if let exit = desk?.exit {
+                        ExitPlanCard(exit: exit)
+                    }
+                    if let pending = desk?.pending, !pending.isEmpty {
+                        PendingIdeasCard(items: pending)
+                    }
+                    if let lastCall = desk?.lastCall {
+                        LastCallCard(call: lastCall)
+                    }
+                    if let peers = desk?.peerAccounts, !peers.isEmpty {
+                        PeerAccountsCard(peers: peers) { accountId in
+                            Task {
+                                await store.submit(
+                                    "account.activate",
+                                    payload: ["accountId": accountId],
+                                    operationID: "symbol-desk-\(accountId)"
+                                )
+                            }
+                        }
                     }
                     switch loadState {
                     case .loading:
@@ -101,8 +129,11 @@ struct SymbolInfoSheet: View {
     private func load() async {
         loadState = .loading
         do {
-            let info = try await store.fetchSymbolQuote(normalized)
+            async let quoteTask = store.fetchSymbolQuote(normalized)
+            async let deskTask = store.fetchSymbolDesk(normalized)
+            let info = try await quoteTask
             loadState = .loaded(info)
+            desk = try? await deskTask
         } catch is CancellationError {
             // Sheet dismissed mid-fetch — nothing left to show.
         } catch {
@@ -187,6 +218,127 @@ private struct PositionDetailCard: View {
                     if let industry = position.industry, !industry.isEmpty, industry != position.sector {
                         LabeledContent("Industry", value: industry)
                     }
+                }
+            }
+        }
+    }
+}
+
+private struct ExitPlanCard: View {
+    let exit: SymbolDeskInfo.Exit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeading("Exit Plan")
+            AppCard {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let style = exit.style, !style.isEmpty {
+                        LabeledContent("Style", value: style.capitalized)
+                    }
+                    if let stop = exit.stopPrice {
+                        LabeledContent("Stop", value: AppFormat.money(stop))
+                    }
+                    if let take = exit.takeProfitPrice {
+                        LabeledContent("Take Profit", value: AppFormat.money(take))
+                    }
+                    if let trail = exit.trailPercent {
+                        LabeledContent("Trail", value: AppFormat.percent(trail))
+                    }
+                    if let band = exit.trimBand {
+                        LabeledContent("Harvested Band", value: AppFormat.number(band))
+                    }
+                    if let invalidation = exit.invalidation, !invalidation.isEmpty {
+                        Text(invalidation)
+                            .font(.appCaption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let rationale = exit.rationale, !rationale.isEmpty {
+                        Text(rationale)
+                            .font(.appCaption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PendingIdeasCard: View {
+    let items: [SymbolDeskInfo.Pending]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeading("Waiting For You")
+            AppCard {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(items) { item in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(item.side.uppercased())\(item.quantity.map { " \(AppFormat.number($0)) sh" } ?? "")")
+                                .font(.appSubheadline.weight(.semibold))
+                            if let rationale = item.rationale, !rationale.isEmpty {
+                                Text(rationale)
+                                    .font(.appCaption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct LastCallCard: View {
+    let call: SymbolDeskInfo.LastCall
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeading("Last Desk Call")
+            AppCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(call.side.map { "\($0) · " } ?? "")\(call.status.replacingOccurrences(of: "_", with: " "))\(call.outcome.map { " · \($0)" } ?? "")")
+                        .font(.appSubheadline.weight(.semibold))
+                    if let green = call.green, !green.isEmpty {
+                        Text("Green: \(green)")
+                            .font(.appCaption)
+                    }
+                    if let red = call.red, !red.isEmpty {
+                        Text(red)
+                            .font(.appCaption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PeerAccountsCard: View {
+    let peers: [SymbolDeskInfo.PeerAccount]
+    let onSwitch: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeading("Other Accounts")
+            AppCard {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(peers) { peer in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(peer.direction == "short" ? "Short" : "Long") \(AppFormat.number(peer.quantity)) sh")
+                                    .font(.appSubheadline.weight(.semibold))
+                                Text(peer.label)
+                                    .font(.appCaption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Use") { onSwitch(peer.accountId) }
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                    Text("Size and direction only.  Switching loads that account's full book.")
+                        .font(.appCaption2)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
