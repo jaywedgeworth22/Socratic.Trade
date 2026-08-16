@@ -56,6 +56,10 @@ import {
   EARNINGSCALLS_TRANSCRIPT_SOURCE,
   earningsCallsTranscriptsEnabled
 } from "../earningscalls-gate";
+import {
+  ROIC_TRANSCRIPT_SOURCE,
+  roicTranscriptsEnabled
+} from "../roic-transcripts-gate";
 
 function toolEvidenceFamily(name: string): EvidenceSourceFamily {
   if (name === "kb_search") return "filings";
@@ -325,6 +329,7 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
             // collaterally strip them.
             const safeChunks = kbChunks(sanitized).filter((row) => {
               if (row.source === EARNINGSCALLS_TRANSCRIPT_SOURCE) return earningsCallsTranscriptsEnabled();
+              if (row.source === ROIC_TRANSCRIPT_SOURCE) return roicTranscriptsEnabled();
               return row.source !== FMP_TRANSCRIPT_SOURCE &&
                 String(row.doc_type ?? "").toLowerCase() !== FMP_TRANSCRIPT_DOC_TYPE;
             });

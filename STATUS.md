@@ -1,3 +1,17 @@
+## Current (2026-08-16 GROK — Litestream L1 suffix + FilingAPI + ROIC universe)
+
+Owner: actually unstick L2/L3, fix FilingAPI (mint if the global key is dead), and ingest ROIC.ai earnings calls across the universe with useful history, stored so the LLM can read many accurately.
+
+Branch `grok/litestream-filingapi-roic`, worktree `~/apps/trading-grok-ops-roic`.
+
+Litestream: live log still `non-contiguous (431e5-43206)->(43225-43247)`.  B2 L1 had 5959 files / 18 holes / 11 twins.  Deleted the prefix before the newest contiguous suffix (`4a86` onward).  L0/L9 untouched.
+
+FilingAPI: handoff and Infisical are the same 32-char key; vendor 401 Invalid API key.  Free-trial signup is already claimed on the owner's emails.  Added a real re-probe and env trim.  A live key still needs a Plus checkout on filingapi.dev.
+
+ROIC: retrieval no longer strips ROIC chunks when FMP/EarningsCalls are off.  List-first, skip-if-stored, speaker sections + earnings-summary digest, universe cursor, Individual 20 quarters, Infisical max-per-run 120.
+
+Rollout: `docs/rollouts/2026-08-16-litestream-filingapi-roic.md`.
+
 ## Current (2026-08-15 GROK — 13F + ARK + Form 4 idea sources)
 
 Owner: run 13F, ARK daily holdings, and Form 4 as thoroughly as possible and

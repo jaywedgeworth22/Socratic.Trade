@@ -135,7 +135,7 @@ import {
   type FmpTranscriptRightsGenerationClaim
 } from "./web-sources/fmp-transcripts";
 import { earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
-import { roicTranscriptsEnabled } from "./web-sources/roic-transcripts";
+import { roicTranscriptsEnabled } from "./roic-transcripts-gate";
 import { deterministicFilingsRetrievalQuery, strategyInformationRouting } from "./rag/information-routing";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)

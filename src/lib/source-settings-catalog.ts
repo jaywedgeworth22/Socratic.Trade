@@ -377,11 +377,11 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     group: "transcripts",
     label: "ROIC transcripts per run",
     description:
-      "Max transcript fetches per scheduler pass.  Free ROIC is 5 req/min; Individual is 300/min.  20 is a safe paid-or-free bump from the old 12.",
+      "Max transcript fetches per scheduler pass.  Free ROIC is 5 req/min (keep this small).  Individual is 300/min and 20 quarters of history — 80 is the paid default so the universe can actually fill.",
     type: "number",
-    defaultValue: 20,
+    defaultValue: 80,
     min: 1,
-    max: 50
+    max: 300
   },
   {
     id: "PUBLIC_EXECUTION_ENABLED",
