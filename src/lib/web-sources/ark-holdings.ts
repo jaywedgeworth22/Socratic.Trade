@@ -73,7 +73,7 @@ export function isArkRefreshDue(now: number = Date.now()): boolean {
   const lastAttempt = getInternalSetting<string>(ATTEMPT_KEY);
   if (lastAttempt && now - Date.parse(lastAttempt) < retryBackoffMs()) return false;
   const dataset = getArkDataset();
-  if (!dataset?.fetchedAt) return true;
+  if (!dataset?.fetchedAt || (dataset.recordCount ?? 0) <= 0) return true;
   return now - Date.parse(dataset.fetchedAt) >= arkTtlMs();
 }
 
@@ -273,10 +273,11 @@ export async function refreshArkHoldings(now: number = Date.now(), force = false
 
   const recordCount = countArkHoldings();
   const ok = freshRows > 0 || recordCount > 0;
+  const prev = getArkDataset();
   const dataset: ArkDataset = {
-    fetchedAt: freshRows > 0 ? fetchedAt : getArkDataset()?.fetchedAt ?? fetchedAt,
+    fetchedAt: freshRows > 0 ? fetchedAt : prev?.fetchedAt ?? "",
     recordCount,
-    asOf: latestAsOf ?? getArkDataset()?.asOf
+    asOf: latestAsOf ?? prev?.asOf
   };
   setInternalSetting(DATASET_KEY, dataset);
   audit("web_source_refresh", { id: "ark", ok, recordCount, fresh: freshRows, warning });
