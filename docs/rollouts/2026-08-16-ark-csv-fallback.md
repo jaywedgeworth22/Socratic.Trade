@@ -35,7 +35,8 @@ Focused vitest + `scripts/land.sh` before PR.
 
 ## Next Steps & Blockers
 
-After deploy, confirm `ark_holdings` > 0 and close #2735.
+Confirmed on live `f0fd2b70`: `ark_holdings` 222 rows, 6 funds as-of
+2026-08-14.  #2735 closed.
 
 ## Zero-Code Findings
 
