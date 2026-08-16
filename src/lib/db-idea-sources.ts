@@ -126,6 +126,18 @@ export function countThirteenFHoldings(): number {
   return row.n;
 }
 
+/** Drop accession-CIK leftovers after a filer is re-ingested with a real quarter-end. */
+export function purgeInvalidThirteenFPeriods(filerCik: string): number {
+  const info = getDb()
+    .prepare(
+      `DELETE FROM sec_13f_holdings
+       WHERE filer_cik = ?
+         AND period_end NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`
+    )
+    .run(filerCik);
+  return info.changes;
+}
+
 export function replaceArkFundDay(rows: ArkHoldingRow[]): void {
   if (rows.length === 0) return;
   const db = getDb();

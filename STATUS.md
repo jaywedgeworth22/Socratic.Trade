@@ -6,6 +6,20 @@ was patched to two spaces.  What's New cannot be edited on first version
 container names and a 60s health-check start period — no flip.  B2 L2 cleanup
 was not authorized in this ask.  Receipt:
 `docs/rollouts/2026-08-16-asc-eula-coolify.md`.
+## Current (2026-08-16 GROK — 13F/ARK ops fix)
+
+#2736 is live (schema 83) but not fully operational.  Prod receipts:
+Form 4 537 (340 with ticker), 13F 210 rows / 7 of 12 filers with
+`period_end` = accession CIK, ARK 0 rows with `fetchedAt` set so TTL
+locked the retry.
+
+Fixes on `grok/idea-sources-ops-fix` (worktree
+`~/apps/trading-grok-idea-sources-ops`, issue #2735): parse `06-30-2026`
+and namespaced `<ns1:infoTable>`, pick unnamed info-table XML, do not
+treat `form13f_YYYYMMDD.xml` as the cover, skip persist without a real
+quarter-end, stay due when `okFilers` is incomplete or ARK count is 0.
+
+Rollout: `docs/rollouts/2026-08-16-idea-sources-ops-fix.md`.
 
 ## Current (2026-08-16 GROK — iOS Proposals for Review + price delay)
 

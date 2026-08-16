@@ -8,16 +8,26 @@ import {
   parseLatest13FFeed,
   pick13FXmls,
   previousQuarterEnd,
-  getThirteenFSignals
+  getThirteenFSignals,
+  isThirteenFRefreshDue,
+  normalizeEdgarDate,
+  xmlTagText
 } from "../src/lib/web-sources/thirteen-f";
 import {
   extractArkCsvHref,
   parseArkCsvDate,
   parseArkHoldingsCsv,
   previousArkAsOf,
-  getArkSignals
+  getArkSignals,
+  isArkRefreshDue
 } from "../src/lib/web-sources/ark-holdings";
-import { replaceThirteenFFiling, replaceArkFundDay, upsertCusipTicker } from "../src/lib/db";
+import {
+  replaceThirteenFFiling,
+  replaceArkFundDay,
+  upsertCusipTicker,
+  purgeInvalidThirteenFPeriods,
+  setInternalSetting
+} from "../src/lib/db";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-idea-${randomUUID()}.db`)}`;
@@ -65,9 +75,36 @@ describe("13F parsers", () => {
 
   it("parses period and info-table rows", () => {
     expect(parse13FPeriod("<reportCalendarOrQuarter>2026-03-31</reportCalendarOrQuarter>")).toBe("2026-03-31");
+    expect(parse13FPeriod("<ns1:reportCalendarOrQuarter>06-30-2026</ns1:reportCalendarOrQuarter>")).toBe(
+      "2026-06-30"
+    );
+    expect(normalizeEdgarDate("06-30-2026")).toBe("2026-06-30");
+    expect(xmlTagText("<ns1:cusip>02079K305</ns1:cusip>", "cusip")).toBe("02079K305");
     const rows = parse13FInfoTable(INFO_XML);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ cusip: "037833100", shares: 12_000_000, valueThousands: 2_500_000 });
+    const nsRows = parse13FInfoTable(`<ns1:informationTable>
+      <ns1:infoTable>
+        <ns1:nameOfIssuer>ALPHABET INC</ns1:nameOfIssuer>
+        <ns1:titleOfClass>CAP STK CL A</ns1:titleOfClass>
+        <ns1:cusip>02079K305</ns1:cusip>
+        <ns1:value>366304</ns1:value>
+        <ns1:shrsOrPrnAmt><ns1:sshPrnamt>1025000</ns1:sshPrnamt><ns1:sshPrnamtType>SH</ns1:sshPrnamtType></ns1:shrsOrPrnAmt>
+      </ns1:infoTable>
+    </ns1:informationTable>`);
+    expect(nsRows).toHaveLength(1);
+    expect(nsRows[0]).toMatchObject({ cusip: "02079K305", shares: 1_025_000, valueThousands: 366_304 });
+  });
+
+  it("picks unnamed information-table XML and does not treat form13f_YYYYMMDD as the cover", () => {
+    const berkshire = {
+      directory: { item: [{ name: "56757.xml" }, { name: "primary_doc.xml" }] }
+    };
+    expect(pick13FXmls(berkshire)).toEqual({ infoTable: "56757.xml", primary: "primary_doc.xml" });
+    const druck = {
+      directory: { item: [{ name: "form13f_20260630.xml" }, { name: "primary_doc.xml" }] }
+    };
+    expect(pick13FXmls(druck)).toEqual({ infoTable: "form13f_20260630.xml", primary: "primary_doc.xml" });
   });
 
   it("computes the prior quarter-end", () => {
@@ -139,5 +176,44 @@ describe("ARK parsers", () => {
     expect(signals.TSLA.bulletin).toMatch(/ARK/);
     expect(signals.TSLA.bulletin).toMatch(/ARKK|held/);
     expect(signals.MSFT).toBeUndefined();
+  });
+
+  it("stays due when ARK last wrote an empty dataset", () => {
+    setInternalSetting("webSource:ark:lastAttempt", "2020-01-01T00:00:00.000Z");
+    setInternalSetting("webSource:ark:dataset", {
+      fetchedAt: "2026-08-15T22:06:00.179Z",
+      recordCount: 0
+    });
+    expect(isArkRefreshDue(Date.parse("2026-08-16T12:00:00.000Z"))).toBe(true);
+  });
+});
+
+describe("13F refresh due + leftover purge", () => {
+  it("stays due when a prior run missed filers or used a CIK as the period", () => {
+    setInternalSetting("webSource:13f:lastAttempt", "2020-01-01T00:00:00.000Z");
+    setInternalSetting("webSource:13f:dataset", {
+      fetchedAt: "2026-08-15T22:06:00.179Z",
+      recordCount: 210,
+      filers: 12
+    });
+    expect(isThirteenFRefreshDue(Date.parse("2026-08-16T12:00:00.000Z"))).toBe(true);
+    replaceThirteenFFiling([
+      {
+        id: "bad-period",
+        filerCik: "0001656456",
+        filerName: "Tepper",
+        periodEnd: "0001656456",
+        accession: "acc-bad",
+        cusip: "037833100",
+        ticker: "AAPL",
+        issuerName: "APPLE INC",
+        titleOfClass: "COM",
+        shares: 1,
+        valueUsd: 1,
+        sshPrnType: "SH",
+        fetchedAt: "2026-08-15T22:06:00.179Z"
+      }
+    ]);
+    expect(purgeInvalidThirteenFPeriods("0001656456")).toBeGreaterThan(0);
   });
 });
