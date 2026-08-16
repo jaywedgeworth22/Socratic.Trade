@@ -2,6 +2,7 @@
 import crypto from "crypto";
 import { getDb } from "./db";
 import { parseOverlayRegimes, type OverlayRegimeTag, type StrategyOverlay } from "./overlay-router";
+import { OVERLAY_STARTER_TEMPLATES } from "./overlay-templates";
 
 export interface StrategyOverlayRow extends StrategyOverlay {
   userId: string;
@@ -132,4 +133,24 @@ export function updateStrategyOverlay(
 export function deleteStrategyOverlay(userId: string, id: string): boolean {
   const result = getDb().prepare(`DELETE FROM strategy_overlays WHERE user_id = ? AND id = ?`).run(userId, id);
   return Number(result.changes ?? 0) > 0;
+}
+
+export function seedStrategyOverlayTemplates(userId: string): StrategyOverlayRow[] {
+  const existing = listStrategyOverlays(userId);
+  const existingNames = new Set(existing.map((row) => row.name.toLowerCase()));
+  const created: StrategyOverlayRow[] = [];
+  for (const template of OVERLAY_STARTER_TEMPLATES) {
+    if (existingNames.has(template.name.toLowerCase())) continue;
+    created.push(
+      createStrategyOverlay({
+        userId,
+        name: template.name,
+        marketRegimes: template.marketRegimes,
+        instructions: template.instructions,
+        priority: template.priority,
+        enabled: false
+      })
+    );
+  }
+  return created;
 }

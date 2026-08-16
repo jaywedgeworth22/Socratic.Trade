@@ -276,20 +276,37 @@ describe("polymarket-provider", () => {
 
   // ── formatPolymarketLinesForPrompt (pure formatting) ────────────────────────
 
-  it("formatPolymarketLinesForPrompt bounds to MAX_MARKETS_PER_SYMBOL, whole-percent formats, and attributes Polymarket", async () => {
-    const { formatPolymarketLinesForPrompt, MAX_MARKETS_PER_SYMBOL } = await import("../src/lib/polymarket-provider");
+  it("formatPolymarketLinesForPrompt attributes Polymarket with Yes/No and a labeled tilt", async () => {
+    const { formatPolymarketLinesForPrompt } = await import("../src/lib/polymarket-provider");
     const markets = [
-      { question: "Will Apple beat earnings estimates?", impliedProbabilityPct: 62.4, outcomeLabel: "Yes", volume24h: 1784.3, volumeTotal: 268_663.9 },
-      { question: "Will Apple release a foldable iPhone before 2027?", impliedProbabilityPct: 90.5, outcomeLabel: "Yes" },
-      { question: "Will Apple stock hit $300 in 2026?", impliedProbabilityPct: 12.3 },
-      { question: "A fourth market that must be dropped by the bound", impliedProbabilityPct: 50 }
+      {
+        question: "Will Apple beat earnings estimates?",
+        impliedProbabilityPct: 62.4,
+        outcomeLabel: "Yes",
+        yesPct: 62.4,
+        noPct: 37.6,
+        scope: "company" as const,
+        kind: "earnings_beat" as const,
+        crowdLean: "yes_favored" as const,
+        tilt: "bullish" as const,
+        bookDepth: "ok" as const,
+        volume24h: 1784.3
+      },
+      {
+        question: "Will Apple stock hit $300 in 2026?",
+        impliedProbabilityPct: 12.3,
+        scope: "company" as const,
+        tilt: "unclear" as const
+      }
     ];
     const lines = formatPolymarketLinesForPrompt(markets);
-    expect(lines).toHaveLength(MAX_MARKETS_PER_SYMBOL);
-    expect(lines[0]).toBe('Polymarket: "Will Apple beat earnings estimates?" — Yes 62% (24h vol $1.8K, total vol $268.7K)');
-    expect(lines[1]).toBe('Polymarket: "Will Apple release a foldable iPhone before 2027?" — Yes 91%');
-    expect(lines[2]).toBe('Polymarket: "Will Apple stock hit $300 in 2026?" — 12%');
-    expect(lines.every((l) => l.startsWith("Polymarket: "))).toBe(true);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('Polymarket (company): "Will Apple beat earnings estimates?"');
+    expect(lines[0]).toContain("Yes 62%");
+    expect(lines[0]).toContain("No 38%");
+    expect(lines[0]).toContain("tilt bullish");
+    expect(lines[1]).toContain("tilt unclear — read the question");
+    expect(lines.every((line) => line.startsWith("Polymarket ("))).toBe(true);
   });
 
   it("formatPolymarketLinesForPrompt returns [] for undefined/empty input — never a placeholder", async () => {

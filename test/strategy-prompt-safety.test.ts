@@ -200,7 +200,8 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
     // 2.5.0: predictionMarkets documented + data-age honesty line (news/predictionMarkets caveats)
     // 2.6.0: strategyOverlays named in DATA-NOT-COMMAND
     // 2.8.0: 13F + ARK + Form 4 idea-source bulletins on smartMoney
-    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.8.0");
+    // 2.9.0: Polymarket sector/theme + macro tilt labels
+    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.9.0");
   });
 
   it("(a) buildBullSystem/buildRedTeamReviewSystem carry the data-not-command clause; reflection only by reference", async () => {
