@@ -49,6 +49,8 @@ const LAST_COMPLETE_KEY = "webSource:roicTranscripts:lastCompleteAt";
 const LAST_ATTEMPT_KEY = "webSource:roicTranscripts:lastAttemptAt";
 const CURSOR_KEY = "webSource:roicTranscripts:cursor";
 const DEFAULT_COMPLETE_TTL_HOURS = 6;
+/** A started run that has not yet persisted a cursor is treated as in-flight. */
+export const ROIC_REFRESH_RUN_STALE_MS = 30 * 60 * 1_000;
 const DEFAULT_MAX_TRANSCRIPTS_PER_RUN_FREE = 8;
 const DEFAULT_MAX_TRANSCRIPTS_PER_RUN_PAID = 80;
 
@@ -162,15 +164,51 @@ function writeRoicCursor(queue: string[], nowIso: string): void {
   setInternalSetting(CURSOR_KEY, { queue, updatedAt: nowIso } satisfies RoicCursor);
 }
 
+export interface RoicRefreshDueState {
+  enabled: boolean;
+  cursorQueueLength: number;
+  lastCompleteAt?: string | null;
+  lastAttemptAt?: string | null;
+  now: number;
+  completeTtlMs: number;
+  runStaleMs: number;
+}
+
+/**
+ * Pure due decision.  A leftover mid-universe cursor always resumes.  lastComplete
+ * is the 6h quiet period after a full walk.  lastAttempt only covers the in-flight
+ * window so a crash before the first cursor write retries after runStaleMs instead
+ * of stacking a new walk on every 60s scheduler tick (that pile-up crashed prod
+ * every ~22 minutes on 2026-08-16).
+ */
+export function roicRefreshDueFromState(state: RoicRefreshDueState): boolean {
+  if (!state.enabled) return false;
+  if (state.cursorQueueLength > 0) return true;
+  const completeTs = parseStamp(state.lastCompleteAt);
+  if (completeTs !== undefined && state.now - completeTs < state.completeTtlMs) return false;
+  const attemptTs = parseStamp(state.lastAttemptAt);
+  if (attemptTs !== undefined && state.now - attemptTs < state.runStaleMs) return false;
+  return true;
+}
+
+function parseStamp(value: unknown): number | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  const ts = Date.parse(value);
+  return Number.isFinite(ts) ? ts : undefined;
+}
+
 export function isRoicTranscriptRefreshDue(now: number = Date.now()): boolean {
   if (!roicTranscriptsEnabled()) return false;
   const cursor = readRoicCursor();
-  if (cursor && cursor.queue.length > 0) return true;
-  const last = getInternalSetting<unknown>(LAST_COMPLETE_KEY) ?? getInternalSetting<unknown>(LAST_ATTEMPT_KEY);
-  if (typeof last !== "string" || !last) return true;
-  const ts = Date.parse(last);
-  if (!Number.isFinite(ts)) return true;
-  return now - ts >= completeTtlMs();
+  return roicRefreshDueFromState({
+    enabled: true,
+    cursorQueueLength: cursor?.queue.length ?? 0,
+    lastCompleteAt: getInternalSetting<string>(LAST_COMPLETE_KEY),
+    lastAttemptAt: getInternalSetting<string>(LAST_ATTEMPT_KEY),
+    now,
+    completeTtlMs: completeTtlMs(),
+    runStaleMs: ROIC_REFRESH_RUN_STALE_MS
+  });
 }
 
 export interface RoicTranscriptRefreshResult {
@@ -183,6 +221,10 @@ export interface RoicTranscriptRefreshResult {
   enabled: boolean;
   remaining: number;
 }
+
+const roicRefreshHost = globalThis as unknown as {
+  __roicTranscriptRefreshInFlight?: Promise<RoicTranscriptRefreshResult>;
+};
 
 export interface RoicTranscriptTurn {
   speaker: string;
@@ -626,8 +668,38 @@ export async function refreshRoicTranscriptsIfDue(options?: {
   };
   if (!enabled) return base;
   if (!options?.force && !isRoicTranscriptRefreshDue(now)) return base;
+  if (!options?.force && roicRefreshHost.__roicTranscriptRefreshInFlight) {
+    return {
+      ...base,
+      due: true,
+      remaining: readRoicCursor()?.queue.length ?? 0
+    };
+  }
 
+  const run = runRoicTranscriptRefresh(base, now, options);
+  roicRefreshHost.__roicTranscriptRefreshInFlight = run;
+  try {
+    return await run;
+  } finally {
+    if (roicRefreshHost.__roicTranscriptRefreshInFlight === run) {
+      roicRefreshHost.__roicTranscriptRefreshInFlight = undefined;
+    }
+  }
+}
+
+async function runRoicTranscriptRefresh(
+  base: RoicTranscriptRefreshResult,
+  now: number,
+  options?: {
+    force?: boolean;
+    symbols?: string[];
+    userId?: string;
+  }
+): Promise<RoicTranscriptRefreshResult> {
   const nowIso = new Date(now).toISOString();
+  // Stamp start immediately so the next 60s tick is not due while this walk runs.
+  setInternalSetting(LAST_ATTEMPT_KEY, nowIso);
+
   let queue: string[];
   const existing = options?.force || options?.symbols?.length ? null : readRoicCursor();
   if (existing && existing.queue.length > 0) {
@@ -637,6 +709,7 @@ export async function refreshRoicTranscriptsIfDue(options?: {
   }
 
   base.symbolsConsidered = queue.length;
+  writeRoicCursor(queue, nowIso);
   const depth = quartersPerSymbol(options?.userId);
   const budget = maxTranscriptsPerRun(options?.userId);
   let remainingBudget = budget;
@@ -650,6 +723,7 @@ export async function refreshRoicTranscriptsIfDue(options?: {
       index = await fetchRoicCallIndex(symbol, options?.userId);
     } catch {
       queue.shift();
+      writeRoicCursor(queue, nowIso);
       continue;
     }
 
@@ -686,12 +760,15 @@ export async function refreshRoicTranscriptsIfDue(options?: {
       }
     }
 
-    if (symbolDone) queue.shift();
-    else break;
+    if (symbolDone) {
+      queue.shift();
+      writeRoicCursor(queue, nowIso);
+    } else {
+      writeRoicCursor(queue, nowIso);
+      break;
+    }
   }
 
-  writeRoicCursor(queue, nowIso);
-  setInternalSetting(LAST_ATTEMPT_KEY, nowIso);
   if (queue.length === 0) {
     setInternalSetting(LAST_COMPLETE_KEY, nowIso);
   }
